@@ -10,7 +10,7 @@ from enum import Enum
 from math import isfinite
 from typing import Iterable
 
-CONTRACT_VERSION = "1.0.0"
+CONTRACT_VERSION = "1.1.0"
 
 
 class SignalState(str, Enum):
@@ -49,6 +49,19 @@ _PRECEDENCE = {
     SignalKind.OTHER: 8,
 }
 
+# A candidate may be shown only after every configured gate has supplied evidence.
+# Upstream services should return PASS when a gate applies but no rule applies.
+_DEFAULT_REQUIRED_KINDS = (
+    SignalKind.SAFETY,
+    SignalKind.LEGAL_ELIGIBILITY,
+    SignalKind.USER_HARD_CONSTRAINT,
+    SignalKind.NPL_HARD_NEGATIVE,
+    SignalKind.CULTURAL_REQUIREMENT,
+    SignalKind.CONTEXT_ELIGIBILITY,
+    SignalKind.IDENTITY_ALIGNMENT,
+    SignalKind.FIT_CONFIDENCE,
+)
+
 
 @dataclass(frozen=True)
 class DecisionSignal:
@@ -69,14 +82,14 @@ class DecisionSignal:
             raise ValueError("state must be a SignalState")
         if not isinstance(self.signal_id, str) or not self.signal_id.strip():
             raise ValueError("signal_id must not be empty")
-        if not self.reason_code.strip():
+        if not isinstance(self.reason_code, str) or not self.reason_code.strip():
             raise ValueError("reason_code must not be empty")
-        if not self.explanation.strip():
+        if not isinstance(self.explanation, str) or not self.explanation.strip():
             raise ValueError("explanation must not be empty")
         if self.confidence is not None:
             if not isfinite(self.confidence) or not 0.0 <= self.confidence <= 1.0:
                 raise ValueError("confidence must be finite and between 0 and 1")
-        if not self.source_version.strip():
+        if not isinstance(self.source_version, str) or not self.source_version.strip():
             raise ValueError("source_version must not be empty")
 
 
@@ -86,15 +99,24 @@ class ArbitrationRequest:
     candidate_id: str
     signals: tuple[DecisionSignal, ...]
     minimum_fit_confidence: float = 0.70
-    policy_version: str = "1.0.0"
+    policy_version: str = "1.1.0"
+    required_kinds: tuple[SignalKind, ...] = _DEFAULT_REQUIRED_KINDS
 
     def __post_init__(self) -> None:
-        if not self.request_id.strip():
+        if not isinstance(self.request_id, str) or not self.request_id.strip():
             raise ValueError("request_id must not be empty")
-        if not self.candidate_id.strip():
+        if not isinstance(self.candidate_id, str) or not self.candidate_id.strip():
             raise ValueError("candidate_id must not be empty")
-        if not self.policy_version.strip():
+        if not isinstance(self.policy_version, str) or not self.policy_version.strip():
             raise ValueError("policy_version must not be empty")
+        if not isinstance(self.signals, tuple):
+            raise ValueError("signals must be a tuple")
+        if not isinstance(self.required_kinds, tuple):
+            raise ValueError("required_kinds must be a tuple")
+        if any(not isinstance(kind, SignalKind) for kind in self.required_kinds):
+            raise ValueError("required_kinds must contain only SignalKind values")
+        if len(self.required_kinds) != len(set(self.required_kinds)):
+            raise ValueError("required_kinds must not contain duplicates")
         if not isfinite(self.minimum_fit_confidence) or not 0 <= self.minimum_fit_confidence <= 1:
             raise ValueError("minimum_fit_confidence must be finite and between 0 and 1")
         ids = [signal.signal_id for signal in self.signals]
@@ -170,9 +192,26 @@ def arbitrate(request: ArbitrationRequest) -> ArbitrationResult:
             for signal in non_veto_blocks
         ], signals)
 
+    present_kinds = {signal.kind for signal in signals}
+    missing_required_kinds = [
+        kind for kind in request.required_kinds
+        if kind is not SignalKind.FIT_CONFIDENCE and kind not in present_kinds
+    ]
+    if missing_required_kinds:
+        return _result(request, DecisionVerdict.REVIEW, [
+            ArbitrationReason(
+                "REQUIRED_SIGNAL_MISSING",
+                None,
+                f"Required gate '{kind.value}' supplied no evidence; display is not authorized.",
+            )
+            for kind in missing_required_kinds
+        ], signals)
+
+    required_kinds = set(request.required_kinds)
     unknown_required = [
         signal for signal in signals
-        if signal.required and signal.state is SignalState.UNKNOWN
+        if (signal.required or signal.kind in required_kinds)
+        and signal.state is SignalState.UNKNOWN
     ]
     if unknown_required:
         reasons = [
