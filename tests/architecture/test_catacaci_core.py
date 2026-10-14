@@ -63,6 +63,14 @@ class CaTaCaCiCoreTests(unittest.TestCase):
         ))
         self.assertEqual(result.verdict, DecisionVerdict.BLOCK)
 
+    def test_non_veto_block_fails_to_review(self):
+        result = arbitrate(request(
+            signal("fit", SignalKind.FIT_CONFIDENCE, confidence=0.95),
+            signal("identity", SignalKind.IDENTITY_ALIGNMENT, SignalState.BLOCK),
+        ))
+        self.assertEqual(result.verdict, DecisionVerdict.REVIEW)
+        self.assertEqual(result.reasons[0].code, "NON_VETO_SIGNAL_BLOCKED")
+
     def test_required_unknown_fails_to_review(self):
         result = arbitrate(request(
             signal("fit", SignalKind.FIT_CONFIDENCE, confidence=0.90),
@@ -94,6 +102,13 @@ class CaTaCaCiCoreTests(unittest.TestCase):
     def test_invalid_confidence_is_rejected(self):
         with self.assertRaises(ValueError):
             signal("fit", SignalKind.FIT_CONFIDENCE, confidence=1.01)
+
+    def test_invalid_signal_state_is_rejected(self):
+        with self.assertRaises(ValueError):
+            DecisionSignal(
+                signal_id="bad-state", kind=SignalKind.SAFETY, state="maybe",
+                reason_code="TEST", explanation="Invalid state",
+            )
 
     def test_duplicate_signal_ids_are_rejected(self):
         s = signal("same", SignalKind.SAFETY)
