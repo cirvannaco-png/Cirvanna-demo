@@ -13,9 +13,9 @@
     {
       "id": "catacaci",
       "target": "packages/identity-intelligence/catacaci",
-      "status": "specification-first",
+      "status": "initial-core-implemented",
       "purpose": "Canonical arbitration core: CAL verdicts; TAL temporal learning; CAM counterfactual audits; CIL privacy-governed collective intelligence; VSL versioned value-system governance.",
-      "promotionGate": "Define typed decision contract, invariants, conflict precedence, explanations, and regression tests."
+      "promotionGate": "Require evidence for every configured gate; add adversarial and property-based tests; validate signal provenance/calibration; connect trusted upstream services and the end-to-end display gate. TAL, CAM, CIL, and VSL remain unimplemented."
     },
     {
       "id": "cdic",
