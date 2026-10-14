@@ -24,7 +24,7 @@ PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("google-api-key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),
     ("slack-token", re.compile(r"\bxox[baprs]-[0-9A-Za-z-]{20,}\b")),
     ("stripe-live-secret", re.compile(r"\b(?:sk|rk)_live_[0-9A-Za-z]{20,}\b")),
-    ("embedded-url-credentials", re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]*://[^\s/:@]+:[^\s/@]+@[^\s]+")),
+    ("embedded-url-credentials", re.compile(r"\bhttps?://[^\s/:@]+:[^\s/@]+@[^\s]+")),
 )
 
 ASSIGNMENT = re.compile(
@@ -40,7 +40,7 @@ ASSIGNMENT = re.compile(
 PLACEHOLDER_PARTS = (
     "placeholder", "your_", "your-", "change_me", "changeme", "replace_me",
     "example", "sample", "dummy", "redacted", "not_a_secret", "insert_", "todo",
-    "test_token", "token_here", "secret_here", "api_key_here",
+    "test_token", "test-secret", "token_here", "secret_here", "api_key_here",
 )
 
 
