@@ -127,7 +127,8 @@ def main() -> int:
         print(f"Found {len(findings)} potential secret(s); inspect privately and rotate any exposed credential.")
         return 1
     print("Secret-pattern scan passed: no configured high-confidence credential patterns found.")
-    print("Note: this lightweight scan is not a substitute for provider-side secret scanning.")
+    print("LIMITATION: database/cache/broker connection URIs with embedded credentials in legacy source snapshots are not checked by the HTTP(S)-userinfo pattern.")
+    print("Review and externalize those settings before promoting any source candidate; this scan is not a substitute for provider-side secret scanning.")
     return 0
 
 
