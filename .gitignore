@@ -40,3 +40,10 @@ checkpoints/
 *.sqlite
 *.db
 .terraform/
+
+# Source reconstruction snapshots are source artifacts, not secret/model payloads.
+# Keep source modules despite their directory names matching broad local-artifact ignores.
+!integration-staging/source-candidates/**/secrets/
+!integration-staging/source-candidates/**/secrets/**
+!integration-staging/source-candidates/**/models/
+!integration-staging/source-candidates/**/models/**
