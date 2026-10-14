@@ -6,8 +6,11 @@ CaTaCaCi governs the decision process. CAL is the final arbitration authority—
 
 ## Initial contract
 
+The current arbitration contract is **1.1.0**.
+
 - **Verdicts:** `SHOW`, `BLOCK`, and `REVIEW`. Only `SHOW` authorizes display; `REVIEW` is fail-closed.
 - **Hard-veto precedence:** safety, legal eligibility, user hard constraints, NPL hard negatives, cultural requirements, and context eligibility cannot be overridden by high scores.
+- **Required gate coverage:** safety, legal eligibility, user hard constraints, NPL hard negatives, cultural requirements, context eligibility, identity alignment, and fit confidence are required by default. A missing gate routes to `REVIEW`; a required gate marked optional upstream cannot bypass this rule.
 - **Unknown evidence:** an unknown required signal routes to `REVIEW`; it is never silently treated as a pass.
 - **Fit confidence:** missing confidence or confidence below the configured threshold routes to `REVIEW`. Conflicting fit-confidence sources are not averaged; a disagreement greater than 0.10 routes to `REVIEW`.
 - **Determinism:** signals are ordered deterministically, identifiers must be unique, and confidence values must be finite and within [0, 1].
