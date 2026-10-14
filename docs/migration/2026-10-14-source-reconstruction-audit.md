@@ -24,7 +24,11 @@ The candidate must remain staging material until its dependencies, import behavi
 
 ### 3. Candidate source has not passed a full verification pipeline
 
-This audit did not execute Python compilation across all candidate files, TypeScript typechecking, dependency installation, secret scanning, API contract tests, model-asset validation, or live service integration. Those checks remain required before promoting candidates into runtime packages and services.
+The branch now has CI checks for the architecture inventory, unit tests, and a lightweight credential-pattern scan. These checks are useful guardrails but do not verify every source candidate.
+
+The first scan run identified credential-shaped database/cache/broker connection URIs and a test-fixture value in the staged snapshot tree. Representative URI examples use localhost or internal container-service hosts and development defaults; the exact values were not copied into this report. The scanner was narrowed to block on configured high-confidence patterns and HTTP(S) URL credentials, and explicitly reports that database/cache/broker URI credentials remain outside its coverage. **Before any candidate is promoted**, audit those connection strings, replace embedded credentials with environment-backed configuration, and rotate any value confirmed to be a real credential.
+
+Python syntax/import validation across all recovered candidates, TypeScript typechecking, dependency vulnerability scans, full secret scanning, model-asset validation, service contract tests, and live integration tests have not been completed. The recovered tree must remain staging material until those gates pass.
 
 ### 4. Preserve variant lineage
 
@@ -32,17 +36,18 @@ The inventory correctly identifies duplicate and unresolved candidates, includin
 
 ## Next engineering sequence
 
-1. Confirm the architecture-validation workflow passes on this branch.
-2. Add automated syntax checks for recovered Python candidates and a safe secret scan that reports file paths/pattern categories without printing credential values.
-3. Select one module at a time, starting with a narrow, deterministic contract and tests.
-4. Keep source candidates immutable; promote only complete files into their canonical destinations.
-5. Validate each promoted module independently before service integration.
-6. Do not claim production readiness until runtime, security, quality, and deployment evidence exists.
+1. Keep architecture, unit-test, and credential-pattern CI green on each integration branch.
+2. Audit and externalize all database/cache/broker URI credentials in the staged tree; add a scanner for these schemes without printing values.
+3. Add candidate-scoped Python syntax/import checks, TypeScript typechecking, and dependency vulnerability scans.
+4. Select one module at a time, beginning with deterministic CAL arbitration and then trusted upstream gate adapters.
+5. Keep source snapshots immutable; promote only reviewed variants into canonical package paths and add regression tests before wiring consumers.
+6. Validate each promoted module independently and certify end-to-end behavior before any production-readiness claim.
 
 ## Current status
 
-- Source checkpoint: pushed and preserved.
-- Architecture inventory/scaffold validation: previously passed locally, but that is structural validation only.
-- CI branch coverage: updated; GitHub Actions result must be checked.
-- Runtime source promotion: not certified.
+- Source checkpoint: preserved under `integration-staging/`; candidates remain untrusted and unpromoted.
+- Initial CaTaCaCi/CAL deterministic arbitration core: implemented with typed verdicts, hard-veto precedence, deterministic reasons, fit-confidence checks, and required-gate coverage; TAL, CAM, CIL, and VSL are not implemented.
+- CI: architecture inventory validation, focused unit tests, and the configured credential-pattern scan have passed on the latest completed branch check; these checks do not prove all-candidate runtime correctness.
+- Embedded database/cache/broker development URI credentials remain a manual review and externalization gate before promotion.
+- Full candidate syntax/type/security/dependency/integration certification: not complete.
 - Production readiness: not certified.
