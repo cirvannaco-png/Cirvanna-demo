@@ -1,0 +1,16 @@
+{
+  "library_id": "cirvanna_cultural_identity_v3_0",
+  "version": "3.0.0",
+  "schema_version": "3.0",
+  "compiled_at": "2026-01-16T12:00:00.000Z",
+  "last_reviewed": "2026-02-21T10:00:00.000Z",
+  "reviewed_by": "cultural_committee_v3",
+  "compiler_version": "3.0.1",
+  "checksum": "sha256:9a3e7b2c8d4f6a1b5c9e8d2f4a6b8c9e1d3f5a7b",
+  "compression": "msgpack_ready",
+  "size_estimate": {
+    "uncompressed_kb": 85,
+    "compressed_kb": 32,
+    "memory_footprint_mb": 12
+  }
+}

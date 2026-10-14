@@ -1,0 +1,7 @@
+{
+  "id": "ut_constraint_validation",
+  "description": "Test constraint validation speed",
+  "test_cases": 5000,
+  "expected_throughput_rps": 1000,
+  "max_execution_time_ms": 10
+}

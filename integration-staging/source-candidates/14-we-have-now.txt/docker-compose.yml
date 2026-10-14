@@ -1,0 +1,130 @@
+version: '3.8'
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: eepl
+      POSTGRES_USER: eepl
+      POSTGRES_PASSWORD: eeplpassword
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - eepl-network
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    networks:
+      - eepl-network
+
+  cfrp:
+    build: ./services/cfrp
+    ports:
+      - "8003:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379/3
+      - DATABASE_URL=postgresql://eepl:eeplpassword@postgres:5432/eepl
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - eepl-network
+
+  fci:
+    build: ./services/fci
+    ports:
+      - "8004:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    volumes:
+      - ./models:/app/models
+    depends_on:
+      - redis
+    networks:
+      - eepl-network
+
+  virtual-twin:
+    build: ./services/virtual-twin
+    environment:
+      - REDIS_URL=redis://redis:6379/1
+    networks:
+      - eepl-network
+
+  marketplace:
+    build: ./services/marketplace
+    environment:
+      - REDIS_URL=redis://redis:6379/2
+      - DATABASE_URL=postgresql://eepl:eeplpassword@postgres:5432/eepl
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - eepl-network
+
+  eepl-api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://eepl:eeplpassword@postgres:5432/eepl
+      - REDIS_URL=redis://redis:6379/0
+      - CFRP_URL=http://cfrp:8003
+      - FCI_URL=http://fci:8004
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    depends_on:
+      - postgres
+      - redis
+      - cfrp
+      - fci
+      - virtual-twin
+      - marketplace
+    networks:
+      - eepl-network
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - eepl-network
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ./monitoring/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml
+    depends_on:
+      - prometheus
+    networks:
+      - eepl-network
+
+  mlflow:
+    image: mlflow:latest
+    ports:
+      - "5000:5000"
+    command: mlflow server --host 0.0.0.0 --backend-store-uri postgresql://eepl:eeplpassword@postgres:5432/eepl --default-artifact-root /mlflow
+    volumes:
+      - mlflow-data:/mlflow
+    depends_on:
+      - postgres
+    networks:
+      - eepl-network
+
+networks:
+  eepl-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  mlflow-data:

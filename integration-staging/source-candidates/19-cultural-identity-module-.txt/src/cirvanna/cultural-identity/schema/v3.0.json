@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schema.cirvanna.ai/cultural-identity/v3.0",
+  "title": "Cultural Identity Schema v3.0",
+  "type": "object",
+  "properties": {
+    "metadata": { "$ref": "#/definitions/Metadata" },
+    "profiles": { "$ref": "#/definitions/Profiles" },
+    "validation_system": { "$ref": "#/definitions/ValidationSystem" }
+  },
+  "required": ["metadata", "profiles", "validation_system"],
+  "definitions": {
+    "Metadata": {
+      "type": "object",
+      "properties": {
+        "library_id": { "type": "string" },
+        "version": { "type": "string" },
+        "schema_version": { "type": "string" },
+        "compiled_at": { "type": "string", "format": "date-time" },
+        "last_reviewed": { "type": "string", "format": "date-time" },
+        "reviewed_by": { "type": "string" }
+      }
+    }
+  }
+}

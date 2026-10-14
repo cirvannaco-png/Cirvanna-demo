@@ -1,0 +1,22 @@
+{
+  "name": "cirvanna-3.2",
+  "version": "1.0.0",
+  "description": "Dynamic, optimized, ethically bulletproof decision engine for fashion recommendations",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "node -e \"import('./dist/tester').then(m => m.CirvannaTester.runAllTests())\"",
+    "example": "node -e \"import('./dist/examples').then(m => m.quickExample())\"",
+    "benchmark": "node -e \"import('./dist/tester').then(m => m.CirvannaTester.runPerformanceTest(1000))\""
+  },
+  "keywords": ["ai", "fashion", "recommendation", "ethical-ai", "decision-engine"],
+  "author": "Kelson Kiiru",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

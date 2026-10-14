@@ -1,0 +1,7 @@
+{
+  "id": "it_full_pipeline",
+  "description": "End-to-end validation pipeline",
+  "concurrent_users": 100,
+  "duration_seconds": 300,
+  "success_rate": 0.995
+}

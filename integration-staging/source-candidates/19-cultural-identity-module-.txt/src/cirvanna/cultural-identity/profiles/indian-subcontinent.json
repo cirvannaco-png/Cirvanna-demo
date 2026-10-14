@@ -1,0 +1,110 @@
+{
+  "id": "cid_indian_subcontinent_001",
+  "civilization": "Indian",
+  "subculture": "Pan-Indian",
+  "religious_affiliation": "Multi-religious",
+  "observance_level": "contextual",
+  "regions": ["in", "pk", "bd", "lk", "np"],
+  "diaspora": {
+    "us": {
+      "rules": ["fusion_allowed", "maintain_core_symbols"]
+    },
+    "uk": {
+      "rules": ["traditional_for_ceremonies"]
+    }
+  },
+  "last_reviewed": "2026-01-20T00:00:00.000Z",
+  "reviewed_by": "indian_cultural_board_005",
+  "community_consensus_level": 0.94,
+  "decay_rate": 0.01,
+  "last_validated": "2026-01-20T00:00:00.000Z",
+  "demographics": {
+    "religious_rules": {
+      "hindu": ["saffron_significant", "red_auspicious"],
+      "sikh": ["turban_mandatory_male", "kara_visible"],
+      "muslim": ["modesty_requirements"],
+      "christian": ["western_influences_allowed"]
+    }
+  },
+  "constraints": {
+    "immutable": [
+      "traditional_body_coverage",
+      "headwear_if_cultural",
+      "symbolic_integrity",
+      "regional_identity"
+    ],
+    "contextual": {
+      "daily": ["comfortable_draping", "pattern_density_low"],
+      "ceremonial": ["headwear_mandatory", "ornamentation_high"],
+      "festive": ["color_intensity_high", "auspicious_symbols"],
+      "religious": ["modest_coverage", "ritual_appropriate"]
+    }
+  },
+  "grammar": {
+    "invariants": {
+      "coverage": {
+        "torso": true,
+        "modesty_standards": true
+      },
+      "silhouette": {
+        "drape_based": true,
+        "forbidden": ["excessive_revealing"]
+      },
+      "symbolism": {
+        "motifs_culturally_meaningful": true,
+        "religious_symbols_respected": true
+      }
+    },
+    "rules": {
+      "colors": {
+        "symbolic_mapping": true,
+        "occasion_specific": true
+      },
+      "materials": ["cotton", "silk", "wool"],
+      "ornamentation": {
+        "traditional_techniques": true,
+        "symbolic_placement": true
+      }
+    },
+    "expression": {
+      "allowed": ["color_shade", "pattern_density", "drape_style"],
+      "forbidden": ["symbolic_violation", "religious_disrespect"],
+      "budget": 0.3
+    }
+  },
+  "symbols": {
+    "saffron": {
+      "meaning": "renunciation",
+      "allowed": ["religious", "ceremonial"],
+      "forbidden": ["casual", "commercial"],
+      "severity": 0,
+      "sensitivity": 0.97
+    },
+    "bindi": {
+      "meaning": "spiritual_sight",
+      "allowed": ["all"],
+      "gender": "female",
+      "severity": 1,
+      "sensitivity": 0.9
+    },
+    "turban": {
+      "meaning": "honor",
+      "allowed": ["all"],
+      "gender": "male",
+      "severity": 0,
+      "sensitivity": 0.96
+    },
+    "mehendi": {
+      "meaning": "celebration",
+      "allowed": ["festive", "ceremonial", "wedding"],
+      "gender": "female",
+      "severity": 2,
+      "sensitivity": 0.82
+    }
+  },
+  "performance_flags": {
+    "fast_path": true,
+    "cache_symbols": true,
+    "precompute_validations": true
+  }
+}

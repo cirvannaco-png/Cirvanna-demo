@@ -1,0 +1,167 @@
+version: "3.9"
+
+x-common-env: &common-env
+  DATABASE_URL: postgresql+asyncpg://cirvanna:cirvanna@postgres:5432/cirvanna
+  REDIS_URL: redis://redis:6379/0
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+  NEO4J_URI: bolt://neo4j:7687
+  NEO4J_USER: neo4j
+  NEO4J_PASSWORD: password
+  QDRANT_URL: http://qdrant:6333
+  OTLP_ENDPOINT: http://jaeger:4317
+  JWT_SECRET: dev-secret-do-not-use-in-prod
+  ITEM_SERVICE_URL: http://item-service:8000
+  GRAPH_SERVICE_URL: http://graph-service:8000
+  RECOMMENDATION_SERVICE_URL: http://recommendation-service:8000
+  PERCEPTION_SERVICE_URL: http://perception-service:8000
+  SYNC_SERVICE_URL: http://sync-service:8000
+  CELERY_BROKER_URL: redis://redis:6379/1
+  MLFLOW_TRACKING_URI: http://mlflow:5000
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  postgres:
+    <<: *restart
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: cirvanna
+      POSTGRES_PASSWORD: cirvanna
+      POSTGRES_DB: cirvanna
+    ports: ["5432:5432"]
+    volumes: ["pg_data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cirvanna"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  neo4j:
+    <<: *restart
+    image: neo4j:5-community
+    environment:
+      NEO4J_AUTH: neo4j/password
+      NEO4J_PLUGINS: '["apoc"]'
+    ports: ["7474:7474", "7687:7687"]
+    volumes: ["neo4j_data:/data"]
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "password", "RETURN 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    <<: *restart
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    volumes: ["redis_data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  rabbitmq:
+    <<: *restart
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports: ["5672:5672", "15672:15672"]
+    volumes: ["rabbit_data:/var/lib/rabbitmq"]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  qdrant:
+    <<: *restart
+    image: qdrant/qdrant:v1.8.2
+    ports: ["6333:6333", "6334:6334"]
+    volumes: ["qdrant_data:/qdrant/storage"]
+
+  jaeger:
+    <<: *restart
+    image: jaegertracing/all-in-one:1.56
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports: ["16686:16686", "4317:4317", "4318:4318"]
+
+  mlflow:
+    <<: *restart
+    build:
+      context: .
+      dockerfile: mlflow/Dockerfile
+    environment:
+      MLFLOW_BACKEND_STORE_URI: postgresql://cirvanna:cirvanna@postgres:5432/mlflow
+      MLFLOW_DEFAULT_ARTIFACT_ROOT: /mlartifacts
+    ports: ["5000:5000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    volumes: ["mlflow_artifacts:/mlartifacts"]
+
+  item-service:
+    <<: *restart
+    build: { context: ., dockerfile: services/item-service/Dockerfile }
+    environment: *common-env
+    ports: ["8001:8000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+
+  graph-service:
+    <<: *restart
+    build: { context: ., dockerfile: services/graph-service/Dockerfile }
+    environment: *common-env
+    ports: ["8002:8000"]
+    depends_on:
+      neo4j: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+
+  recommendation-service:
+    <<: *restart
+    build: { context: ., dockerfile: services/recommendation-service/Dockerfile }
+    environment: *common-env
+    ports: ["8003:8000"]
+    depends_on: [qdrant, redis, graph-service]
+
+  perception-service:
+    <<: *restart
+    build: { context: ., dockerfile: services/perception-service/Dockerfile }
+    environment: *common-env
+    ports: ["8004:8000"]
+    depends_on: [rabbitmq, redis]
+
+  perception-worker:
+    <<: *restart
+    build: { context: ., dockerfile: services/perception-service/Dockerfile }
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2
+    environment: *common-env
+    depends_on: [rabbitmq, redis]
+
+  sync-service:
+    <<: *restart
+    build: { context: ., dockerfile: services/sync-service/Dockerfile }
+    environment: *common-env
+    ports: ["8005:8000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+
+  api-gateway:
+    <<: *restart
+    build: { context: ., dockerfile: services/api-gateway/Dockerfile }
+    environment: *common-env
+    ports: ["8080:8000"]
+    depends_on: [item-service, graph-service, recommendation-service, perception-service, sync-service]
+
+volumes:
+  pg_data: {}
+  neo4j_data: {}
+  redis_data: {}
+  rabbit_data: {}
+  qdrant_data: {}
+  mlflow_artifacts: {}

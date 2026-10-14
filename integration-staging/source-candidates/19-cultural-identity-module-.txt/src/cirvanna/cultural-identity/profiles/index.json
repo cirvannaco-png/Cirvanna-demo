@@ -1,0 +1,25 @@
+{
+  "by_identity_id": {
+    "cid_chinese_han_001": 0,
+    "cid_russian_slavic_001": 1,
+    "cid_african_yoruba_001": 2,
+    "cid_muslim_ummah_001": 3,
+    "cid_indian_subcontinent_001": 4,
+    "cid_japanese_001": 5
+  },
+  "by_civilization": {
+    "Chinese": [0],
+    "Russian": [1],
+    "African": [2],
+    "Islamic": [3],
+    "Indian": [4],
+    "Japanese": [5]
+  },
+  "by_region": {
+    "east_asia": [0, 5],
+    "eastern_europe": [1],
+    "west_africa": [2],
+    "global": [3],
+    "south_asia": [4]
+  }
+}

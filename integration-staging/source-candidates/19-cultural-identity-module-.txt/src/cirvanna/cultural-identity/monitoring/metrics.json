@@ -1,0 +1,34 @@
+{
+  "performance_metrics": [
+    "validation_latency_p50",
+    "validation_latency_p95",
+    "validation_latency_p99",
+    "cache_hit_rate",
+    "memory_usage_mb",
+    "cpu_usage_percent"
+  ],
+  "accuracy_metrics": [
+    "symbol_resolution_accuracy",
+    "context_matching_accuracy",
+    "cultural_sensitivity_score",
+    "false_positive_rate",
+    "false_negative_rate"
+  ],
+  "health_checks": [
+    {
+      "name": "schema_integrity",
+      "interval_seconds": 300,
+      "severity": "critical"
+    },
+    {
+      "name": "cache_health",
+      "interval_seconds": 60,
+      "severity": "high"
+    },
+    {
+      "name": "performance_baseline",
+      "interval_seconds": 900,
+      "severity": "medium"
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "id": "rt_backward_compatibility",
+  "description": "Ensure compatibility with v2.x",
+  "test_scenarios": 50,
+  "must_pass": true
+}

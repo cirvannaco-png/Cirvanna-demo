@@ -1,0 +1,128 @@
+{
+  "id": "cid_japanese_001",
+  "civilization": "Japanese",
+  "subculture": "Mainstream",
+  "religious_affiliation": "Shinto/Buddhist",
+  "observance_level": "contextual",
+  "regions": ["jp"],
+  "diaspora": {
+    "us": {
+      "rules": ["modern_adaptations_allowed", "respect_traditional_forms"]
+    },
+    "br": {
+      "rules": ["festive_adaptations_allowed"]
+    }
+  },
+  "last_reviewed": "2026-02-01T00:00:00.000Z",
+  "reviewed_by": "japanese_cultural_advisor_006",
+  "community_consensus_level": 0.96,
+  "decay_rate": 0.01,
+  "last_validated": "2026-02-01T00:00:00.000Z",
+  "demographics": {
+    "age_rules": {
+      "child": ["bright_colors", "simple_patterns", "yukata_allowed"],
+      "adult": ["formal_kimono_for_ceremonies", "seasonal_appropriateness"],
+      "elder": ["subdued_colors", "traditional_patterns"]
+    },
+    "gender_rules": {
+      "male": ["kimono_left_over_right", "obi_at_back", "subdued_colors"],
+      "female": ["kimono_left_over_right", "obi_at_back", "broader_color_range"]
+    }
+  },
+  "constraints": {
+    "immutable": [
+      "proper_wrapping_direction_left_over_right_for_living",
+      "seasonal_motifs_appropriate",
+      "modest_coverage"
+    ],
+    "contextual": {
+      "daily": ["casual_kimono_or_yukata", "subdued_patterns"],
+      "ceremonial": ["formal_kimono_with_kamon", "specific_colors", "proper_obi"],
+      "festive": ["bright_colors", "celebratory_motifs", "furisode_for_unmarried_women"],
+      "mourning": ["black_kimono", "white_undergarments", "no_patterns"]
+    }
+  },
+  "grammar": {
+    "invariants": {
+      "coverage": {
+        "torso_covered": true,
+        "legs_covered": true,
+        "minimum_index": 0.8
+      },
+      "silhouette": {
+        "primary": "cylindrical_a_line",
+        "forbidden": ["body_hugging", "excessive_reveal"]
+      },
+      "symbolism": {
+        "wrapping_direction": "left_over_right_for_living",
+        "motifs_seasonal": true,
+        "family_crests_signify_formality": true
+      }
+    },
+    "rules": {
+      "colors": {
+        "red": ["celebration", "vitality"],
+        "white": ["purity", "prayer"],
+        "black": ["formality", "mourning"],
+        "gold": ["imperial", "festive"],
+        "purple": ["nobility"]
+      },
+      "materials": ["silk", "cotton", "hemp", "polyester_blends_allowed_for_casual"],
+      "ornamentation": {
+        "obi_styles": ["taiko_musubi", "bunko_musubi", "choken_musubi"],
+        "kamon_placement": ["chest", "back", "sleeves"],
+        "embroidery": "minimal"
+      }
+    },
+    "expression": {
+      "allowed": ["sleeve_length", "pattern_density", "obi_tying_style", "fabric_weight"],
+      "forbidden": ["improper_wrapping", "wrong_season_motif", "missing_kamon_when_required"],
+      "budget": 0.3
+    }
+  },
+  "symbols": {
+    "cherry_blossom": {
+      "meaning": "ephemeral_beauty",
+      "allowed": ["spring", "festive"],
+      "forbidden": ["winter"],
+      "severity": 1,
+      "sensitivity": 0.9
+    },
+    "crane": {
+      "meaning": "longevity",
+      "allowed": ["all"],
+      "severity": 2,
+      "sensitivity": 0.85
+    },
+    "turtle": {
+      "meaning": "longevity",
+      "allowed": ["all"],
+      "severity": 2,
+      "sensitivity": 0.8
+    },
+    "pine": {
+      "meaning": "constancy",
+      "allowed": ["new_year", "winter"],
+      "severity": 2,
+      "sensitivity": 0.8
+    },
+    "wave": {
+      "meaning": "resilience",
+      "allowed": ["all"],
+      "severity": 3,
+      "sensitivity": 0.7
+    },
+    "kamon": {
+      "meaning": "family_identity",
+      "allowed": ["ceremonial", "formal"],
+      "forbidden": ["casual"],
+      "severity": 1,
+      "sensitivity": 0.9
+    }
+  },
+  "performance_flags": {
+    "fast_path": true,
+    "cache_symbols": true,
+    "precompute_validations": true
+  }
+}

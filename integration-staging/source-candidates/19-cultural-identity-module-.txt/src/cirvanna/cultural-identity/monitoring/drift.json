@@ -1,0 +1,20 @@
+{
+  "tracking": {
+    "enabled": true,
+    "granularity": "per_profile",
+    "sampling_rate": 0.1
+  },
+  "detection": {
+    "thresholds": {
+      "symbolic_drift": 0.15,
+      "contextual_drift": 0.25,
+      "aesthetic_drift": 0.40
+    },
+    "algorithms": ["statistical_analysis", "pattern_recognition"]
+  },
+  "response": {
+    "automatic": false,
+    "human_review_required": true,
+    "community_validation": "recommended"
+  }
+}
