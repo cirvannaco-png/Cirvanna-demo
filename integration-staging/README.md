@@ -4,7 +4,7 @@ This directory contains extracted candidates from the merged source file. It is 
 
 ## Safety status
 - No existing application file was overwritten.
-- The CDIC v5 source fragment originally extracted as `requirements.txt` begins with a Python docstring delimiter and is not an installable pip requirements file. Its exact bytes are preserved as `requirements.source.txt`, and the source manifest records the original declared path separately from the staged path so dependency tooling does not attempt to install source text.
+- The CDIC v5 source fragment originally extracted as `requirements.txt` begins with a Python docstring delimiter and is not an installable pip requirements file. Its exact bytes are preserved as `requirements.source`, and the source manifest records the original declared path separately from the staged path so dependency tooling does not attempt to install source text.
 - Each source document/version has a separate directory.
 - Repeated paths within a source section receive `.__duplicate_N` suffixes.
 - These files are not yet certified, integrated, or production-ready.
