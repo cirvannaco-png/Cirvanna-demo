@@ -2,7 +2,11 @@ name: Architecture validation
 
 on:
   push:
-    branches: [main, "architecture/**"]
+    branches:
+      - main
+      - "architecture/**"
+      - "integration/**"
+      - "migration/**"
   pull_request:
     branches: [main]
   workflow_dispatch:
