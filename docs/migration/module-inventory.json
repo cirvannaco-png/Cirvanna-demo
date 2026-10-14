@@ -1,0 +1,404 @@
+{
+  "schemaVersion": "1.0.0",
+  "repository": "cirvannaco-png/Cirvanna-demo",
+  "generatedAt": "2026-10-14",
+  "intakeArtifact": {
+    "name": "merged(0).txt",
+    "lineCount": 52551,
+    "sourceSnapshotCount": 31,
+    "runtimeSourcePromoted": false,
+    "note": "Original upload is not copied into this repository. References preserve source lineage for controlled migration."
+  },
+  "modules": [
+    {
+      "id": "catacaci",
+      "target": "packages/identity-intelligence/catacaci",
+      "status": "specification-first",
+      "purpose": "Canonical arbitration core: CAL verdicts; TAL temporal learning; CAM counterfactual audits; CIL privacy-governed collective intelligence; VSL versioned value-system governance.",
+      "promotionGate": "Define typed decision contract, invariants, conflict precedence, explanations, and regression tests."
+    },
+    {
+      "id": "cdic",
+      "target": "packages/identity-intelligence/cdic",
+      "status": "legacy-candidate",
+      "purpose": "Existing identity/coverage decision engine; keep behind an adapter until semantics are aligned with CaTaCaCi.",
+      "promotionGate": "Select canonical snapshot; fix validator semantics, cache behavior, hash stability, and decision tests."
+    },
+    {
+      "id": "decision-engine",
+      "target": "packages/identity-intelligence/decision-engine",
+      "status": "legacy-candidate",
+      "purpose": "TypeScript decision-engine skeleton and its utility, validation, intent-contract, USI and arbitration-oriented modules.",
+      "promotionGate": "Compare with CDIC and CaTaCaCi contracts; do not duplicate shared decision behavior."
+    },
+    {
+      "id": "eepl",
+      "target": "packages/identity-intelligence/eepl",
+      "status": "legacy-candidate",
+      "purpose": "Eligibility and contextual policy: age, location, occasion, climate and explicit operational constraints.",
+      "promotionGate": "Select V2 candidate only after import, behavior, and policy tests."
+    },
+    {
+      "id": "cultural-identity",
+      "target": "packages/identity-intelligence/cultural-identity",
+      "status": "schema-candidate",
+      "purpose": "Versioned cultural identity requirements, rules, schema, and metadata.",
+      "promotionGate": "Validate schemas and provenance; remove unsupported inference and establish consent/versioning."
+    },
+    {
+      "id": "usi",
+      "target": "packages/identity-intelligence/usi",
+      "status": "specification-first",
+      "purpose": "User Style Index and identity/style alignment; distinct from fit confidence and demographic inference.",
+      "promotionGate": "Create a stable interface and preference provenance before importing candidate logic."
+    },
+    {
+      "id": "npl",
+      "target": "packages/preferences/npl",
+      "status": "legacy-candidate",
+      "purpose": "Explicit and learned negative preferences, hard vetoes, durable exclusions, audit history, and user correction.",
+      "promotionGate": "Prove precedence and explainability; ensure exclusions do not silently learn from noisy events."
+    },
+    {
+      "id": "fci",
+      "target": "packages/fit-intelligence/fci",
+      "status": "legacy-candidate",
+      "purpose": "Fit Confidence Index: calibrated fit confidence, residual model, uncertainty, and friction policies.",
+      "promotionGate": "Reconcile duplicate model versions; validate calibration on held-out evidence."
+    },
+    {
+      "id": "cfrp",
+      "target": "packages/fit-intelligence/cfrp",
+      "status": "name-and-contract-unresolved",
+      "purpose": "CFRP V6 source candidate. Do not equate CFRP with the separately remembered CRFP label without a contract comparison.",
+      "promotionGate": "Resolve acronym, ownership, interfaces, and overlap with FCI before integration."
+    },
+    {
+      "id": "dermalsight",
+      "target": "services/dermalsight",
+      "status": "legacy-candidate",
+      "purpose": "Skin perception and clinically sensitive outputs; consent, quality gates, uncertainty, privacy, and safe user-facing language.",
+      "promotionGate": "Review bias, image handling, clinical claims, thresholds, security, and test coverage."
+    },
+    {
+      "id": "virtual-twin",
+      "target": "services/virtual-twin",
+      "status": "duplicate-candidates",
+      "purpose": "Avatar/body representation, body reconstruction, and measurement extraction.",
+      "promotionGate": "Separate domain/application/infrastructure concerns; select a complete multi-file implementation over a monolith."
+    },
+    {
+      "id": "virtual-try-on",
+      "target": "services/virtual-try-on",
+      "status": "truncated-duplicate-candidates",
+      "purpose": "Garment simulation and visualization orchestration.",
+      "promotionGate": "Choose a complete source generation; remove sample secrets; verify Docker, API, model assets, and rendering tests."
+    },
+    {
+      "id": "wardrobe",
+      "target": "services/wardrobe-service",
+      "status": "partial-multi-service-candidate",
+      "purpose": "Wardrobe and catalog domain; source also proposes item, graph, recommendation, perception, sync, and import services.",
+      "promotionGate": "Split by deployment/data ownership, verify complete files, and avoid duplicated catalog logic."
+    },
+    {
+      "id": "xari",
+      "target": "services/xari",
+      "status": "legacy-name-reconciliation",
+      "purpose": "Assistant/orchestration product known as Xari; historical snapshots use Tari and Xyra.",
+      "promotionGate": "Reconcile versions and service scope before establishing executable entry points."
+    }
+  ],
+  "sourceSnapshots": [
+    {
+      "artifact": "CDIC .txt",
+      "lineStart": 3,
+      "lineEnd": 1962,
+      "targets": [
+        "packages/identity-intelligence/cdic"
+      ],
+      "note": "TypeScript CDIC engine candidate."
+    },
+    {
+      "artifact": "CDIC V4.txt",
+      "lineStart": 1963,
+      "lineEnd": 2474,
+      "targets": [
+        "packages/identity-intelligence/cdic"
+      ],
+      "note": "Python V4 generation; language and architecture differ from the TypeScript candidate."
+    },
+    {
+      "artifact": "CDIC v5.txt",
+      "lineStart": 2475,
+      "lineEnd": 4470,
+      "targets": [
+        "packages/identity-intelligence/cdic"
+      ],
+      "note": "Python V5 unified-engine candidate; dependencies and tests unverified."
+    },
+    {
+      "artifact": "CDIC.txt",
+      "lineStart": 4471,
+      "lineEnd": 6187,
+      "targets": [
+        "packages/identity-intelligence/cdic"
+      ],
+      "note": "Additional Python implementation generation; compare rather than overwrite."
+    },
+    {
+      "artifact": "CFRP V6.txt",
+      "lineStart": 6188,
+      "lineEnd": 7999,
+      "targets": [
+        "packages/fit-intelligence/cfrp"
+      ],
+      "note": "Distinct CFRP name; not reconciled with CRFP."
+    },
+    {
+      "artifact": "EEPL V2.0.txt",
+      "lineStart": 8000,
+      "lineEnd": 10055,
+      "targets": [
+        "packages/identity-intelligence/eepl"
+      ],
+      "note": "V2 source candidate."
+    },
+    {
+      "artifact": "EEPL.txt",
+      "lineStart": 10056,
+      "lineEnd": 11753,
+      "targets": [
+        "packages/identity-intelligence/eepl"
+      ],
+      "note": "Earlier/alternate generation."
+    },
+    {
+      "artifact": "FCI (1).txt",
+      "lineStart": 11754,
+      "lineEnd": 12658,
+      "targets": [
+        "packages/fit-intelligence/fci"
+      ],
+      "note": "Single-file FCI generation."
+    },
+    {
+      "artifact": "FCI .txt",
+      "lineStart": 12659,
+      "lineEnd": 13670,
+      "targets": [
+        "packages/fit-intelligence/fci"
+      ],
+      "note": "Modular FCI candidate."
+    },
+    {
+      "artifact": "FCI V2.0.txt",
+      "lineStart": 13671,
+      "lineEnd": 14960,
+      "targets": [
+        "packages/fit-intelligence/fci"
+      ],
+      "note": "V2 candidate; imports and behavior unverified."
+    },
+    {
+      "artifact": "Fit Confidence Index repository .txt",
+      "lineStart": 14961,
+      "lineEnd": 15972,
+      "targets": [
+        "packages/fit-intelligence/fci"
+      ],
+      "note": "Duplicate modular version; compare with FCI V2."
+    },
+    {
+      "artifact": "NPL V2.txt",
+      "lineStart": 15973,
+      "lineEnd": 16946,
+      "targets": [
+        "packages/preferences/npl"
+      ],
+      "note": "TypeScript NPL with repositories and audit components."
+    },
+    {
+      "artifact": "Tari improved .txt",
+      "lineStart": 16947,
+      "lineEnd": 18499,
+      "targets": [
+        "services/xari"
+      ],
+      "note": "Legacy Tari-named Python orchestration source."
+    },
+    {
+      "artifact": "We have now.txt",
+      "lineStart": 18500,
+      "lineEnd": 19951,
+      "targets": [
+        "services/xari",
+        "services/recommendation-service",
+        "packages/fit-intelligence/fci"
+      ],
+      "note": "Integrated stack description/candidate; production claims are unverified."
+    },
+    {
+      "artifact": "Xyra.txt",
+      "lineStart": 19952,
+      "lineEnd": 22450,
+      "targets": [
+        "services/xari"
+      ],
+      "note": "Historical Xyra-named generation; reconcile against Tari and canonical Xari scope."
+    },
+    {
+      "artifact": "``` fci-repo-.txt",
+      "lineStart": 22451,
+      "lineEnd": 22473,
+      "targets": [
+        "packages/fit-intelligence/fci"
+      ],
+      "note": "FCI tree-only note."
+    },
+    {
+      "artifact": "```.txt",
+      "lineStart": 22474,
+      "lineEnd": 24026,
+      "targets": [
+        "services/xari"
+      ],
+      "note": "Duplicate Tari-style source with alternate packaging."
+    },
+    {
+      "artifact": "cirvanna skeleton 🩻🩻.txt",
+      "lineStart": 24027,
+      "lineEnd": 26238,
+      "targets": [
+        "packages/identity-intelligence/decision-engine",
+        "packages/identity-intelligence/catacaci"
+      ],
+      "note": "TypeScript decision-engine skeleton; not proof that CaTaCaCi is implemented."
+    },
+    {
+      "artifact": "cultural identity module .txt",
+      "lineStart": 26239,
+      "lineEnd": 27435,
+      "targets": [
+        "packages/identity-intelligence/cultural-identity"
+      ],
+      "note": "Cultural identity schema/configuration candidates; validate metadata and checksums."
+    },
+    {
+      "artifact": "identity decision engine .txt",
+      "lineStart": 27436,
+      "lineEnd": 29389,
+      "targets": [
+        "packages/identity-intelligence/cdic",
+        "packages/identity-intelligence/decision-engine"
+      ],
+      "note": "Repeated TypeScript identity-engine candidate."
+    },
+    {
+      "artifact": "skin analysis .txt",
+      "lineStart": 29390,
+      "lineEnd": 30455,
+      "targets": [
+        "services/dermalsight"
+      ],
+      "note": "Monolithic skin analysis implementation; sensitive-perception review required."
+    },
+    {
+      "artifact": "skin analysis repo .txt",
+      "lineStart": 30456,
+      "lineEnd": 31477,
+      "targets": [
+        "services/dermalsight"
+      ],
+      "note": "Modular candidate; compare with monolith."
+    },
+    {
+      "artifact": "virtual Tryon (1).txt",
+      "lineStart": 31478,
+      "lineEnd": 34831,
+      "targets": [
+        "services/virtual-try-on"
+      ],
+      "note": "Duplicate candidate; ends with an incomplete source statement."
+    },
+    {
+      "artifact": "virtual Tryon (2).txt",
+      "lineStart": 34832,
+      "lineEnd": 38185,
+      "targets": [
+        "services/virtual-try-on"
+      ],
+      "note": "Duplicate candidate; ends with an incomplete source statement."
+    },
+    {
+      "artifact": "virtual Tryon.txt",
+      "lineStart": 38186,
+      "lineEnd": 41529,
+      "targets": [
+        "services/virtual-try-on"
+      ],
+      "note": "Variant includes extra configuration but is not fully complete."
+    },
+    {
+      "artifact": "virtual Tryon improved.txt",
+      "lineStart": 41530,
+      "lineEnd": 44883,
+      "targets": [
+        "services/virtual-try-on"
+      ],
+      "note": "Improved-labeled candidate; still ends with incomplete source."
+    },
+    {
+      "artifact": "virtual Twin.txt",
+      "lineStart": 44884,
+      "lineEnd": 45557,
+      "targets": [
+        "services/virtual-twin"
+      ],
+      "note": "Single-file Python generation."
+    },
+    {
+      "artifact": "virtual twin (1).txt",
+      "lineStart": 45558,
+      "lineEnd": 46234,
+      "targets": [
+        "services/virtual-twin"
+      ],
+      "note": "Near-duplicate single-file generation."
+    },
+    {
+      "artifact": "virtual twin mixed format .txt",
+      "lineStart": 46235,
+      "lineEnd": 47197,
+      "targets": [
+        "services/virtual-twin"
+      ],
+      "note": "Combined implementation and product claims; multi-file source is preferable."
+    },
+    {
+      "artifact": "wardrobe 2,3 and 4 .txt",
+      "lineStart": 47198,
+      "lineEnd": 50327,
+      "targets": [
+        "services/wardrobe-service",
+        "services/catalog-service",
+        "services/api-gateway",
+        "services/graph-service",
+        "services/recommendation-service",
+        "services/perception-service",
+        "services/sync-service"
+      ],
+      "note": "Multi-service source; several sections are partial and need extraction by file boundary."
+    },
+    {
+      "artifact": "wardrobe part 1.txt",
+      "lineStart": 50328,
+      "lineEnd": 52551,
+      "targets": [
+        "services/wardrobe-service",
+        "services/catalog-service"
+      ],
+      "note": "Root configuration/common-module candidate; source says further parts were still to follow."
+    }
+  ]
+}
