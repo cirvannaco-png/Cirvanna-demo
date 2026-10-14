@@ -1,0 +1,16 @@
+{
+  "name": "@cirvanna/cdic-legacy-candidate",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Isolated CDIC TypeScript v7 migration candidate. Not an application runtime.",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
