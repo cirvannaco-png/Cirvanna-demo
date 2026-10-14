@@ -7,6 +7,7 @@ This directory contains extracted candidates from the merged source file. It is 
 - Each source document/version has a separate directory.
 - Repeated paths within a source section receive `.__duplicate_N` suffixes.
 - These files are not yet certified, integrated, or production-ready.
+- Some candidate configurations contain embedded local database/broker development credentials; externalize them through environment/configuration management and review them before promoting any candidate. The lightweight pattern scan does not certify database/broker URI safety.
 - Review `source-manifest.json` before selecting canonical versions.
 
 ## Extraction counts
