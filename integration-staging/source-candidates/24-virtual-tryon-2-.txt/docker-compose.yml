@@ -1,0 +1,208 @@
+version: '3.8'
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:14-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cirvanna}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cirvanna123}
+      POSTGRES_DB: ${POSTGRES_DB:-cirvanna}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cirvanna}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+
+  ais:
+    build: 
+      context: ./ais
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - GPU_ENABLED=${GPU_ENABLED:-false}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - S3_BUCKET=${S3_BUCKET:-cirvanna-meshes}
+    volumes:
+      - ./ais/models:/app/models
+      - model_cache:/app/cache
+    ports:
+      - "8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    logging: *default-logging
+
+  gsis:
+    build:
+      context: ./gsis
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+    volumes:
+      - ./gsis/migrations:/app/migrations
+    ports:
+      - "8002:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *default-logging
+
+  dtae_fce:
+    build:
+      context: ./dtae_fce
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    volumes:
+      - ./dtae_fce/models:/app/models
+    ports:
+      - "8003:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    logging: *default-logging
+
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    ports:
+      - "8080:80"
+      - "8081:81"
+    depends_on:
+      - ais
+      - gsis
+      - dtae_fce
+    logging: *default-logging
+
+  admin:
+    build:
+      context: ./admin
+      dockerfile: Dockerfile
+    ports:
+      - "8082:8000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      - postgres
+      - redis
+    logging: *default-logging
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    logging: *default-logging
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana-dashboard.json:/etc/grafana/provisioning/dashboards/dashboard.json
+      - ./monitoring/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    logging: *default-logging
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"
+      - "4318:4318"
+    logging: *default-logging
+
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    volumes:
+      - ./ais:/app/ais
+      - ./gsis:/app/gsis
+      - ./dtae_fce:/app/dtae_fce
+      - ./shared:/app/shared
+      - ./celery_app.py:/app/celery_app.py
+    command: celery -A celery_app worker --loglevel=info --concurrency=4
+    depends_on:
+      - redis
+      - postgres
+    logging: *default-logging
+
+  celery_beat:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    volumes:
+      - ./dtae_fce:/app/dtae_fce
+      - ./shared:/app/shared
+      - ./celery_app.py:/app/celery_app.py
+    command: celery -A celery_app beat --loglevel=info --schedule=/var/run/celerybeat-schedule
+    depends_on:
+      - redis
+      - postgres
+    logging: *default-logging
+
+volumes:
+  postgres_data:
+  redis_data:
+  model_cache:
+  prometheus_data:
+  grafana_data:

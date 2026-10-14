@@ -1,0 +1,36 @@
+{
+  "name": "cirvanna-cultural-identity",
+  "version": "3.0.0",
+  "description": "Cultural Identity Library for Cirvanna",
+  "main": "src/cirvanna/cultural-identity/index.js",
+  "types": "src/cirvanna/cultural-identity/index.d.ts",
+  "files": [
+    "src/",
+    "tests/",
+    "docs/",
+    "schemas/"
+  ],
+  "scripts": {
+    "validate": "node scripts/validate-schema.js",
+    "test": "node scripts/run-tests.js",
+    "build": "node scripts/compile-library.js",
+    "prepublishOnly": "npm run validate && npm test"
+  },
+  "dependencies": {
+    "ajv": "^8.12.0",
+    "bloom-filters": "^1.3.9",
+    "lru-cache": "^10.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cirvanna/cultural-identity.git"
+  },
+  "license": "MIT"
+}

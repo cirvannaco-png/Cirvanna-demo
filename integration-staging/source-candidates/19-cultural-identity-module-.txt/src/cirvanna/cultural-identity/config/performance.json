@@ -1,0 +1,34 @@
+{
+  "cache_config": {
+    "symbol_lookup": {
+      "type": "bloom_filter",
+      "false_positive_rate": 0.01,
+      "capacity": 10000,
+      "pre_warm": true
+    },
+    "profile_cache": {
+      "type": "lru",
+      "max_entries": 100,
+      "ttl_ms": 300000
+    },
+    "validation_cache": {
+      "type": "lfu",
+      "max_entries": 500,
+      "ttl_ms": 600000
+    }
+  },
+  "monitoring_points": [
+    {
+      "id": "mp_lookup_latency",
+      "description": "Symbol ontology lookup time",
+      "threshold_ms": 5,
+      "alert_on_exceed": true
+    },
+    {
+      "id": "mp_validation_throughput",
+      "description": "Validations per second",
+      "threshold_rps": 1000,
+      "alert_on_drop": true
+    }
+  ]
+}

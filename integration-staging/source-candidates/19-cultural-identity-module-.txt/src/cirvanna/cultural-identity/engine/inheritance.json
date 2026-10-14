@@ -1,0 +1,14 @@
+{
+  "merge_strategy": "deep_merge_with_override",
+  "conflict_resolution": "source_precedence",
+  "validation": {
+    "check_circular_deps": true,
+    "validate_inheritance_chains": true,
+    "detect_contradictions": true
+  },
+  "performance": {
+    "precompute_inheritance": true,
+    "cache_inheritance_chains": true,
+    "lazy_loading": true
+  }
+}

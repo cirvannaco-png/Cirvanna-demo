@@ -1,0 +1,7 @@
+{
+  "id": "ut_symbol_resolution",
+  "description": "Verify symbol lookup accuracy",
+  "test_cases": 1000,
+  "expected_accuracy": 0.999,
+  "max_execution_time_ms": 5
+}

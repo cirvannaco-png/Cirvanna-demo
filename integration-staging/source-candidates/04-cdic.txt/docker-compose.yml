@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  cdic:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - CDIC_SECRET_KEY=${CDIC_SECRET_KEY:-"your-default-secret-key-must-be-at-least-32-characters"}
+      - REDIS_URL=redis://redis:6379/0
+      - LOG_LEVEL=INFO
+      - CLARIFICATION_BUDGET_PER_SESSION=2
+      - DECISION_TIMEOUT_SECONDS=30.0
+    volumes:
+      - ./audit:/app/audit
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - cdic-network
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - cdic-network
+
+volumes:
+  redis_data:
+
+networks:
+  cdic-network:
+    driver: bridge

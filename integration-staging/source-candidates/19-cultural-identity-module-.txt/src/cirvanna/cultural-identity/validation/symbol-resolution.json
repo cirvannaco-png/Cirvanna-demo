@@ -1,0 +1,14 @@
+{
+  "lookup_strategy": "trie_based",
+  "conflict_resolution": {
+    "hierarchy": ["profile", "civilization", "region", "global"],
+    "fallback": "most_specific",
+    "ambiguity_threshold": 0.3
+  },
+  "unknown_symbol_action": "warn",
+  "caching": {
+    "hot_symbols_ttl": 300000,
+    "cold_symbols_ttl": 3600000,
+    "invalidation_strategy": "time_based"
+  }
+}

@@ -2,7 +2,11 @@ name: Architecture validation
 
 on:
   push:
-    branches: [main, "architecture/**"]
+    branches:
+      - main
+      - "architecture/**"
+      - "integration/**"
+      - "migration/**"
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -25,3 +29,5 @@ jobs:
         run: python scripts/validate_architecture.py
       - name: Run architecture tests
         run: python -m unittest discover -s tests/architecture -v
+      - name: Audit source for credential patterns
+        run: python scripts/scan_source_secrets.py

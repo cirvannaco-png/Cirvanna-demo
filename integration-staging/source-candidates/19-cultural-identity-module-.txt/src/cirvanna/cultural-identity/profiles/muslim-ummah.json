@@ -1,0 +1,109 @@
+{
+  "id": "cid_muslim_ummah_001",
+  "civilization": "Islamic",
+  "subculture": "Ummah",
+  "religious_affiliation": "Islam",
+  "observance_level": "strict",
+  "regions": ["global"],
+  "diaspora": {
+    "us": {
+      "rules": ["adapt_to_local_customs", "maintain_core_modesty"]
+    },
+    "eu": {
+      "rules": ["conservative_preferred"]
+    }
+  },
+  "last_reviewed": "2026-01-18T00:00:00.000Z",
+  "reviewed_by": "islamic_scholar_004",
+  "community_consensus_level": 0.99,
+  "decay_rate": 0.002,
+  "last_validated": "2026-01-18T00:00:00.000Z",
+  "demographics": {
+    "gender_rules": {
+      "male": ["shoulders_covered", "knee_covered", "loose_fit"],
+      "female": ["full_body_covered", "head_covered", "loose_fit"]
+    }
+  },
+  "constraints": {
+    "immutable": [
+      "modesty_torso_covered",
+      "limbs_covered",
+      "head_covered_if_female",
+      "non_imitative_design"
+    ],
+    "contextual": {
+      "daily": ["loose_fit_allowed", "color_variation_medium"],
+      "ceremonial": ["full_observance", "headwear_mandatory"],
+      "festive": ["color_allowed_modest", "embellishment_limited"],
+      "prayer": ["clean_garments", "modest_attire"]
+    }
+  },
+  "grammar": {
+    "invariants": {
+      "coverage": {
+        "torso": true,
+        "arms": true,
+        "legs": true,
+        "minimum_index": 0.9
+      },
+      "silhouette": {
+        "loose_fit_required": true,
+        "forbidden": ["tight_clothing", "revealing_cuts"]
+      },
+      "symbolism": {
+        "religious_symbols_respected": true,
+        "modesty_primary": true
+      }
+    },
+    "rules": {
+      "colors": {
+        "modest_palette": true,
+        "cultural_variations": true
+      },
+      "materials": ["natural_fabrics"],
+      "ornamentation": {
+        "excessive_forbidden": true,
+        "modest_decoration": true
+      }
+    },
+    "expression": {
+      "allowed": ["fabric_texture", "color_shade", "regional_adaptations"],
+      "forbidden": ["tightness_violation", "imitative_design"],
+      "budget": 0.2
+    }
+  },
+  "symbols": {
+    "hijab": {
+      "meaning": "modesty",
+      "allowed": ["all"],
+      "gender": "female",
+      "severity": 0,
+      "sensitivity": 0.98
+    },
+    "kufi": {
+      "meaning": "piety",
+      "allowed": ["all"],
+      "gender": "male",
+      "severity": 2,
+      "sensitivity": 0.8
+    },
+    "thobe": {
+      "meaning": "modesty",
+      "allowed": ["all"],
+      "severity": 1,
+      "sensitivity": 0.85
+    },
+    "kaaba_motif": {
+      "meaning": "holiness",
+      "allowed": ["religious", "ceremonial"],
+      "forbidden": ["casual", "commercial"],
+      "severity": 0,
+      "sensitivity": 0.95
+    }
+  },
+  "performance_flags": {
+    "fast_path": true,
+    "cache_symbols": true,
+    "precompute_validations": true
+  }
+}

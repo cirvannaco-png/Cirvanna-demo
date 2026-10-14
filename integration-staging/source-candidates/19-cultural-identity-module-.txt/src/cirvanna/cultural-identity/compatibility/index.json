@@ -1,0 +1,9 @@
+{
+  "backward_compatible": ["2.0", "2.1"],
+  "forward_compatible": true,
+  "migration_path": {
+    "from_version": "2.x",
+    "automated": true,
+    "validation_required": true
+  }
+}

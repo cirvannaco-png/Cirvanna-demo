@@ -1,0 +1,58 @@
+{
+  "matrix": {
+    "Chinese": {
+      "Japanese": 0.7,
+      "Russian": 0.5,
+      "African": 0.3,
+      "Islamic": 0.4,
+      "Indian": 0.6
+    },
+    "Japanese": {
+      "Chinese": 0.7,
+      "Russian": 0.4,
+      "African": 0.3,
+      "Islamic": 0.3,
+      "Indian": 0.5
+    },
+    "Russian": {
+      "Chinese": 0.5,
+      "Japanese": 0.4,
+      "African": 0.4,
+      "Islamic": 0.4,
+      "Indian": 0.5
+    },
+    "African": {
+      "Chinese": 0.3,
+      "Japanese": 0.3,
+      "Russian": 0.4,
+      "Islamic": 0.6,
+      "Indian": 0.5
+    },
+    "Islamic": {
+      "Chinese": 0.4,
+      "Japanese": 0.3,
+      "Russian": 0.4,
+      "African": 0.6,
+      "Indian": 0.6
+    },
+    "Indian": {
+      "Chinese": 0.6,
+      "Japanese": 0.5,
+      "Russian": 0.5,
+      "African": 0.5,
+      "Islamic": 0.6
+    }
+  },
+  "fusion_rules": [
+    {
+      "cultures": ["Chinese", "Japanese"],
+      "recommendation": "Respect both traditions; prioritize context"
+    },
+    {
+      "cultures": ["African", "Islamic"],
+      "recommendation": "Ensure modesty and textile semantics align"
+    }
+  ],
+  "default_compatibility": 0.5,
+  "sensitivity_threshold": 0.7
+}

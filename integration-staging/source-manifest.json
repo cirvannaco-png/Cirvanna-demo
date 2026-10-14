@@ -1,0 +1,5060 @@
+{
+  "source_file": "cirvanna-source.txt",
+  "source_bytes": 1780970,
+  "warning": "Staged candidates only. Duplicate and competing versions are preserved separately; no files promoted to application paths.",
+  "sections": [
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "extracted_files": 27
+    },
+    {
+      "source_section": "./CDIC V4.txt",
+      "section_slug": "02-cdic-v4.txt",
+      "extracted_files": 0
+    },
+    {
+      "source_section": "./CDIC v5.txt",
+      "section_slug": "03-cdic-v5.txt",
+      "extracted_files": 22
+    },
+    {
+      "source_section": "./CDIC.txt",
+      "section_slug": "04-cdic.txt",
+      "extracted_files": 15
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "extracted_files": 46
+    },
+    {
+      "source_section": "./EEPL V2.0.txt",
+      "section_slug": "06-eepl-v2.0.txt",
+      "extracted_files": 12
+    },
+    {
+      "source_section": "./EEPL.txt",
+      "section_slug": "07-eepl.txt",
+      "extracted_files": 8
+    },
+    {
+      "source_section": "./FCI  (1).txt",
+      "section_slug": "08-fci-1-.txt",
+      "extracted_files": 0
+    },
+    {
+      "source_section": "./FCI .txt",
+      "section_slug": "09-fci-.txt",
+      "extracted_files": 11
+    },
+    {
+      "source_section": "./FCI V2.0.txt",
+      "section_slug": "10-fci-v2.0.txt",
+      "extracted_files": 14
+    },
+    {
+      "source_section": "./Fit Confidence Index repository .txt",
+      "section_slug": "11-fit-confidence-index-repository-.txt",
+      "extracted_files": 11
+    },
+    {
+      "source_section": "./NPL V2.txt",
+      "section_slug": "12-npl-v2.txt",
+      "extracted_files": 8
+    },
+    {
+      "source_section": "./Tari improved .txt",
+      "section_slug": "13-tari-improved-.txt",
+      "extracted_files": 20
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "extracted_files": 27
+    },
+    {
+      "source_section": "./Xyra.txt",
+      "section_slug": "15-xyra.txt",
+      "extracted_files": 26
+    },
+    {
+      "source_section": "./``` fci-repo-.txt",
+      "section_slug": "16-fci-repo-.txt",
+      "extracted_files": 0
+    },
+    {
+      "source_section": "./```.txt",
+      "section_slug": "17-txt",
+      "extracted_files": 20
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "extracted_files": 38
+    },
+    {
+      "source_section": "./cultural identity module .txt",
+      "section_slug": "19-cultural-identity-module-.txt",
+      "extracted_files": 26
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "extracted_files": 27
+    },
+    {
+      "source_section": "./skin analysis .txt",
+      "section_slug": "21-skin-analysis-.txt",
+      "extracted_files": 0
+    },
+    {
+      "source_section": "./skin analysis repo .txt",
+      "section_slug": "22-skin-analysis-repo-.txt",
+      "extracted_files": 14
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "extracted_files": 27
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "extracted_files": 27
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "extracted_files": 27
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "extracted_files": 27
+    },
+    {
+      "source_section": "./virtual Twin .txt",
+      "section_slug": "27-virtual-twin-.txt",
+      "extracted_files": 0
+    },
+    {
+      "source_section": "./virtual twin  (1).txt",
+      "section_slug": "28-virtual-twin-1-.txt",
+      "extracted_files": 0
+    },
+    {
+      "source_section": "./virtual twin mixed format .txt",
+      "section_slug": "29-virtual-twin-mixed-format-.txt",
+      "extracted_files": 0
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "extracted_files": 52
+    },
+    {
+      "source_section": "./wardrobe part 1.txt",
+      "section_slug": "31-wardrobe-part-1.txt",
+      "extracted_files": 12
+    }
+  ],
+  "files": [
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "source_line": 10,
+      "declared_path": "src/types/index.ts",
+      "staged_path": "source-candidates/01-cdic-.txt/src/types/index.ts",
+      "bytes": 81,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "source_line": 17,
+      "declared_path": "src/types/core.ts",
+      "staged_path": "source-candidates/01-cdic-.txt/src/types/core.ts",
+      "bytes": 380,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "source_line": 26,
+      "declared_path": "src/types/analysis.ts",
+      "staged_path": "source-candidates/01-cdic-.txt/src/types/analysis.ts",
+      "bytes": 1413,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "source_line": 81,
+      "declared_path": "src/types/decisions.ts",
+      "staged_path": "source-candidates/01-cdic-.txt/src/types/decisions.ts",
+      "bytes": 707,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "source_line": 108,
+      "declared_path": "src/constants/index.ts",
+      "staged_path": "source-candidates/01-cdic-.txt/src/constants/index.ts",
+      "bytes": 82,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "source_line": 115,
+      "declared_path": "src/constants/regions.ts",
+      "staged_path": "source-candidates/01-cdic-.txt/src/constants/regions.ts",
+      "bytes": 263,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "source_line": 123,
+      "declared_path": "src/constants/patterns.ts",
+      "staged_path": "source-candidates/01-cdic-.txt/src/constants/patterns.ts",
+      "bytes": 150,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "source_line": 131,
+      "declared_path": "src/constants/seasons.ts",
+      "staged_path": "source-candidates/01-cdic-.txt/src/constants/seasons.ts",
+      "bytes": 401,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "source_line": 145,
+      "declared_path": "src/structures/atomic.ts",
+      "staged_path": "source-candidates/01-cdic-.txt/src/structures/atomic.ts",
+      "bytes": 542,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "source_line": 176,
+      "declared_path": "src/structures/ring-buffer.ts",
+      "staged_path": "source-candidates/01-cdic-.txt/src/structures/ring-buffer.ts",
+      "bytes": 815,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "source_line": 217,
+      "declared_path": "src/structures/deterministic-random.ts",
+      "staged_path": "source-candidates/01-cdic-.txt/src/structures/deterministic-random.ts",
+      "bytes": 502,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "source_line": 237,
+      "declared_path": "src/validation/input-validator.ts",
+      "staged_path": "source-candidates/01-cdic-.txt/src/validation/input-validator.ts",
+      "bytes": 8915,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "source_line": 518,
+      "declared_path": "src/analysis/coverage-analyzer.ts",
+      "staged_path": "source-candidates/01-cdic-.txt/src/analysis/coverage-analyzer.ts",
+      "bytes": 3523,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "source_line": 653,
+      "declared_path": "src/analysis/identity-analyzer.ts",
+      "staged_path": "source-candidates/01-cdic-.txt/src/analysis/identity-analyzer.ts",
+      "bytes": 1062,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "source_line": 698,
+      "declared_path": "src/analysis/wardrobe-analyzer.ts",
+      "staged_path": "source-candidates/01-cdic-.txt/src/analysis/wardrobe-analyzer.ts",
+      "bytes": 4758,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "source_line": 869,
+      "declared_path": "src/analysis/trend-analyzer.ts",
+      "staged_path": "source-candidates/01-cdic-.txt/src/analysis/trend-analyzer.ts",
+      "bytes": 2737,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "source_line": 976,
+      "declared_path": "src/composition/identity-composer.ts",
+      "staged_path": "source-candidates/01-cdic-.txt/src/composition/identity-composer.ts",
+      "bytes": 1324,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "source_line": 1023,
+      "declared_path": "src/composition/decision-composer.ts",
+      "staged_path": "source-candidates/01-cdic-.txt/src/composition/decision-composer.ts",
+      "bytes": 4212,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "source_line": 1172,
+      "declared_path": "src/caching/optimized-cache.ts",
+      "staged_path": "source-candidates/01-cdic-.txt/src/caching/optimized-cache.ts",
+      "bytes": 1522,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "source_line": 1246,
+      "declared_path": "src/resilience/circuit-breaker.ts",
+      "staged_path": "source-candidates/01-cdic-.txt/src/resilience/circuit-breaker.ts",
+      "bytes": 1308,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "source_line": 1306,
+      "declared_path": "src/engine/identity-decision-engine.ts",
+      "staged_path": "source-candidates/01-cdic-.txt/src/engine/identity-decision-engine.ts",
+      "bytes": 7963,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "source_line": 1568,
+      "declared_path": "src/integration/beauty-ai-engine.ts",
+      "staged_path": "source-candidates/01-cdic-.txt/src/integration/beauty-ai-engine.ts",
+      "bytes": 5466,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "source_line": 1748,
+      "declared_path": "src/index.ts",
+      "staged_path": "source-candidates/01-cdic-.txt/src/index.ts",
+      "bytes": 1664,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "source_line": 1806,
+      "declared_path": "src/health-check.ts",
+      "staged_path": "source-candidates/01-cdic-.txt/src/health-check.ts",
+      "bytes": 63,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "source_line": 1812,
+      "declared_path": "package.json",
+      "staged_path": "source-candidates/01-cdic-.txt/package.json",
+      "bytes": 1006,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "source_line": 1855,
+      "declared_path": "tsconfig.json",
+      "staged_path": "source-candidates/01-cdic-.txt/tsconfig.json",
+      "bytes": 655,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC .txt",
+      "section_slug": "01-cdic-.txt",
+      "source_line": 1889,
+      "declared_path": "README.md",
+      "staged_path": "source-candidates/01-cdic-.txt/README.md",
+      "bytes": 428,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC v5.txt",
+      "section_slug": "03-cdic-v5.txt",
+      "source_line": 4956,
+      "declared_path": "src/cdic/__init__.py",
+      "staged_path": "source-candidates/03-cdic-v5.txt/src/cdic/__init__.py",
+      "bytes": 237,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC v5.txt",
+      "section_slug": "03-cdic-v5.txt",
+      "source_line": 4970,
+      "declared_path": "src/cdic/common/__init__.py",
+      "staged_path": "source-candidates/03-cdic-v5.txt/src/cdic/common/__init__.py",
+      "bytes": 375,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC v5.txt",
+      "section_slug": "03-cdic-v5.txt",
+      "source_line": 4984,
+      "declared_path": "src/cdic/common/enums.py",
+      "staged_path": "source-candidates/03-cdic-v5.txt/src/cdic/common/enums.py",
+      "bytes": 1068,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC v5.txt",
+      "section_slug": "03-cdic-v5.txt",
+      "source_line": 5050,
+      "declared_path": "src/cdic/common/structs.py",
+      "staged_path": "source-candidates/03-cdic-v5.txt/src/cdic/common/structs.py",
+      "bytes": 3704,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC v5.txt",
+      "section_slug": "03-cdic-v5.txt",
+      "source_line": 5167,
+      "declared_path": "src/cdic/common/caches.py",
+      "staged_path": "source-candidates/03-cdic-v5.txt/src/cdic/common/caches.py",
+      "bytes": 1096,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC v5.txt",
+      "section_slug": "03-cdic-v5.txt",
+      "source_line": 5211,
+      "declared_path": "src/cdic/common/utils.py",
+      "staged_path": "source-candidates/03-cdic-v5.txt/src/cdic/common/utils.py",
+      "bytes": 1701,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC v5.txt",
+      "section_slug": "03-cdic-v5.txt",
+      "source_line": 5258,
+      "declared_path": "src/cdic/engines/__init__.py",
+      "staged_path": "source-candidates/03-cdic-v5.txt/src/cdic/engines/__init__.py",
+      "bytes": 220,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC v5.txt",
+      "section_slug": "03-cdic-v5.txt",
+      "source_line": 5266,
+      "declared_path": "src/cdic/engines/ctif_gpu.py",
+      "staged_path": "source-candidates/03-cdic-v5.txt/src/cdic/engines/ctif_gpu.py",
+      "bytes": 9891,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC v5.txt",
+      "section_slug": "03-cdic-v5.txt",
+      "source_line": 5481,
+      "declared_path": "src/cdic/engines/wdls_vectorized.py",
+      "staged_path": "source-candidates/03-cdic-v5.txt/src/cdic/engines/wdls_vectorized.py",
+      "bytes": 9189,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC v5.txt",
+      "section_slug": "03-cdic-v5.txt",
+      "source_line": 5693,
+      "declared_path": "src/cdic/engines/option_generator.py",
+      "staged_path": "source-candidates/03-cdic-v5.txt/src/cdic/engines/option_generator.py",
+      "bytes": 8048,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC v5.txt",
+      "section_slug": "03-cdic-v5.txt",
+      "source_line": 5876,
+      "declared_path": "src/cdic/core/__init__.py",
+      "staged_path": "source-candidates/03-cdic-v5.txt/src/cdic/core/__init__.py",
+      "bytes": 232,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC v5.txt",
+      "section_slug": "03-cdic-v5.txt",
+      "source_line": 5884,
+      "declared_path": "src/cdic/core/supporting.py",
+      "staged_path": "source-candidates/03-cdic-v5.txt/src/cdic/core/supporting.py",
+      "bytes": 4469,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC v5.txt",
+      "section_slug": "03-cdic-v5.txt",
+      "source_line": 6007,
+      "declared_path": "src/cdic/core/metrics.py",
+      "staged_path": "source-candidates/03-cdic-v5.txt/src/cdic/core/metrics.py",
+      "bytes": 2478,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC v5.txt",
+      "section_slug": "03-cdic-v5.txt",
+      "source_line": 6084,
+      "declared_path": "src/cdic/core/engine.py",
+      "staged_path": "source-candidates/03-cdic-v5.txt/src/cdic/core/engine.py",
+      "bytes": 24279,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC v5.txt",
+      "section_slug": "03-cdic-v5.txt",
+      "source_line": 6627,
+      "declared_path": "src/cdic/api/__init__.py",
+      "staged_path": "source-candidates/03-cdic-v5.txt/src/cdic/api/__init__.py",
+      "bytes": 54,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC v5.txt",
+      "section_slug": "03-cdic-v5.txt",
+      "source_line": 6633,
+      "declared_path": "src/cdic/api/app.py",
+      "staged_path": "source-candidates/03-cdic-v5.txt/src/cdic/api/app.py",
+      "bytes": 4295,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC v5.txt",
+      "section_slug": "03-cdic-v5.txt",
+      "source_line": 6752,
+      "declared_path": "src/cdic/api/dependencies.py",
+      "staged_path": "source-candidates/03-cdic-v5.txt/src/cdic/api/dependencies.py",
+      "bytes": 145,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC v5.txt",
+      "section_slug": "03-cdic-v5.txt",
+      "source_line": 6760,
+      "declared_path": "src/cdic/config.py",
+      "staged_path": "source-candidates/03-cdic-v5.txt/src/cdic/config.py",
+      "bytes": 1453,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC v5.txt",
+      "section_slug": "03-cdic-v5.txt",
+      "source_line": 6795,
+      "declared_path": "tests/test_engine.py",
+      "staged_path": "source-candidates/03-cdic-v5.txt/tests/test_engine.py",
+      "bytes": 729,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC v5.txt",
+      "section_slug": "03-cdic-v5.txt",
+      "source_line": 6823,
+      "declared_path": "requirements.txt",
+      "staged_path": "source-candidates/03-cdic-v5.txt/requirements.txt",
+      "bytes": 607,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC v5.txt",
+      "section_slug": "03-cdic-v5.txt",
+      "source_line": 6858,
+      "declared_path": "docker-compose.yml",
+      "staged_path": "source-candidates/03-cdic-v5.txt/docker-compose.yml",
+      "bytes": 691,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC v5.txt",
+      "section_slug": "03-cdic-v5.txt",
+      "source_line": 6897,
+      "declared_path": "README.md",
+      "staged_path": "source-candidates/03-cdic-v5.txt/README.md",
+      "bytes": 482,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC.txt",
+      "section_slug": "04-cdic.txt",
+      "source_line": 4479,
+      "declared_path": "src/cdic/config.py",
+      "staged_path": "source-candidates/04-cdic.txt/src/cdic/config.py",
+      "bytes": 1467,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC.txt",
+      "section_slug": "04-cdic.txt",
+      "source_line": 4537,
+      "declared_path": "src/cdic/enums.py",
+      "staged_path": "source-candidates/04-cdic.txt/src/cdic/enums.py",
+      "bytes": 1027,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC.txt",
+      "section_slug": "04-cdic.txt",
+      "source_line": 4598,
+      "declared_path": "src/cdic/models.py",
+      "staged_path": "source-candidates/04-cdic.txt/src/cdic/models.py",
+      "bytes": 3599,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC.txt",
+      "section_slug": "04-cdic.txt",
+      "source_line": 4715,
+      "declared_path": "src/cdic/utils/monitor.py",
+      "staged_path": "source-candidates/04-cdic.txt/src/cdic/utils/monitor.py",
+      "bytes": 1856,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC.txt",
+      "section_slug": "04-cdic.txt",
+      "source_line": 4774,
+      "declared_path": "src/cdic/utils/hasher.py",
+      "staged_path": "source-candidates/04-cdic.txt/src/cdic/utils/hasher.py",
+      "bytes": 899,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC.txt",
+      "section_slug": "04-cdic.txt",
+      "source_line": 4813,
+      "declared_path": "src/cdic/utils/doctrine.py",
+      "staged_path": "source-candidates/04-cdic.txt/src/cdic/utils/doctrine.py",
+      "bytes": 1518,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC.txt",
+      "section_slug": "04-cdic.txt",
+      "source_line": 4866,
+      "declared_path": "src/cdic/utils/circuit_breaker.py",
+      "staged_path": "source-candidates/04-cdic.txt/src/cdic/utils/circuit_breaker.py",
+      "bytes": 1863,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC.txt",
+      "section_slug": "04-cdic.txt",
+      "source_line": 4929,
+      "declared_path": "src/cdic/utils/locking.py",
+      "staged_path": "source-candidates/04-cdic.txt/src/cdic/utils/locking.py",
+      "bytes": 2987,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC.txt",
+      "section_slug": "04-cdic.txt",
+      "source_line": 5021,
+      "declared_path": "src/cdic/utils/cache.py",
+      "staged_path": "source-candidates/04-cdic.txt/src/cdic/utils/cache.py",
+      "bytes": 1579,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC.txt",
+      "section_slug": "04-cdic.txt",
+      "source_line": 5079,
+      "declared_path": "src/cdic/utils/random.py",
+      "staged_path": "source-candidates/04-cdic.txt/src/cdic/utils/random.py",
+      "bytes": 924,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC.txt",
+      "section_slug": "04-cdic.txt",
+      "source_line": 5114,
+      "declared_path": "src/cdic/engine.py",
+      "staged_path": "source-candidates/04-cdic.txt/src/cdic/engine.py",
+      "bytes": 28618,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC.txt",
+      "section_slug": "04-cdic.txt",
+      "source_line": 5841,
+      "declared_path": "src/cdic/app.py",
+      "staged_path": "source-candidates/04-cdic.txt/src/cdic/app.py",
+      "bytes": 5255,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC.txt",
+      "section_slug": "04-cdic.txt",
+      "source_line": 6007,
+      "declared_path": "requirements.txt",
+      "staged_path": "source-candidates/04-cdic.txt/requirements.txt",
+      "bytes": 239,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC.txt",
+      "section_slug": "04-cdic.txt",
+      "source_line": 6048,
+      "declared_path": "docker-compose.yml",
+      "staged_path": "source-candidates/04-cdic.txt/docker-compose.yml",
+      "bytes": 1051,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CDIC.txt",
+      "section_slug": "04-cdic.txt",
+      "source_line": 6101,
+      "declared_path": "README.md",
+      "staged_path": "source-candidates/04-cdic.txt/README.md",
+      "bytes": 780,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 12378,
+      "declared_path": "src/infrastructure/redis_client.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/infrastructure/redis_client.py",
+      "bytes": 1501,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 12431,
+      "declared_path": "src/infrastructure/s3_client.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/infrastructure/s3_client.py",
+      "bytes": 646,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 12455,
+      "declared_path": "src/actor/cfrp_actor.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/actor/cfrp_actor.py",
+      "bytes": 1578,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 12513,
+      "declared_path": "src/core/epistemic_invariants.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/core/epistemic_invariants.py",
+      "bytes": 2713,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 12590,
+      "declared_path": "src/core/epistemic_context.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/core/epistemic_context.py",
+      "bytes": 1688,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 12639,
+      "declared_path": "src/core/learning_prior.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/core/learning_prior.py",
+      "bytes": 1832,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 12697,
+      "declared_path": "src/core/epistemic_state.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/core/epistemic_state.py",
+      "bytes": 4390,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 12816,
+      "declared_path": "src/core/reinforcement_log.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/core/reinforcement_log.py",
+      "bytes": 1585,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 12865,
+      "declared_path": "src/core/cfrp_instance.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/core/cfrp_instance.py",
+      "bytes": 5894,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13011,
+      "declared_path": "src/core/cfrp_manager.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/core/cfrp_manager.py",
+      "bytes": 1253,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13054,
+      "declared_path": "src/usi/usi_integration.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/usi/usi_integration.py",
+      "bytes": 1963,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13106,
+      "declared_path": "src/skin/skin_biology.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/skin/skin_biology.py",
+      "bytes": 661,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13133,
+      "declared_path": "src/skin/skin_tone.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/skin/skin_tone.py",
+      "bytes": 1205,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13186,
+      "declared_path": "src/skin/undertone.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/skin/undertone.py",
+      "bytes": 803,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13219,
+      "declared_path": "src/skin/texture.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/skin/texture.py",
+      "bytes": 731,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13244,
+      "declared_path": "src/skin/conditions.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/skin/conditions.py",
+      "bytes": 472,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13266,
+      "declared_path": "src/skin/albinism.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/skin/albinism.py",
+      "bytes": 832,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13298,
+      "declared_path": "src/skin/datasets.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/skin/datasets.py",
+      "bytes": 373,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13310,
+      "declared_path": "src/skin/skin_analysis.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/skin/skin_analysis.py",
+      "bytes": 2309,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13370,
+      "declared_path": "src/body/anthropometry.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/body/anthropometry.py",
+      "bytes": 731,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13405,
+      "declared_path": "src/body/body_shape.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/body/body_shape.py",
+      "bytes": 819,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13435,
+      "declared_path": "src/body/avatar.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/body/avatar.py",
+      "bytes": 205,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13447,
+      "declared_path": "src/crypto/quantum_safe.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/crypto/quantum_safe.py",
+      "bytes": 469,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13464,
+      "declared_path": "src/secrets/vault_manager.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/secrets/vault_manager.py",
+      "bytes": 1182,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13507,
+      "declared_path": "src/observability/metrics.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/observability/metrics.py",
+      "bytes": 1707,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13535,
+      "declared_path": "src/observability/tracing.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/observability/tracing.py",
+      "bytes": 1108,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13570,
+      "declared_path": "src/observability/logger.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/observability/logger.py",
+      "bytes": 1643,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13617,
+      "declared_path": "src/lineage/tracker.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/lineage/tracker.py",
+      "bytes": 2957,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13702,
+      "declared_path": "src/ai/explainable.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/ai/explainable.py",
+      "bytes": 2168,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13758,
+      "declared_path": "src/ai/anomaly_detector.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/ai/anomaly_detector.py",
+      "bytes": 1104,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13789,
+      "declared_path": "src/ai/bias_detector.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/ai/bias_detector.py",
+      "bytes": 1034,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13818,
+      "declared_path": "src/chaos/injector.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/chaos/injector.py",
+      "bytes": 956,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13847,
+      "declared_path": "src/disaster/recovery_manager.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/disaster/recovery_manager.py",
+      "bytes": 1067,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13878,
+      "declared_path": "src/performance/lru_cache.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/performance/lru_cache.py",
+      "bytes": 622,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13904,
+      "declared_path": "src/performance/connection_pool.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/performance/connection_pool.py",
+      "bytes": 887,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13937,
+      "declared_path": "src/performance/query_optimizer.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/performance/query_optimizer.py",
+      "bytes": 697,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13963,
+      "declared_path": "src/performance/compression_manager.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/performance/compression_manager.py",
+      "bytes": 480,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13983,
+      "declared_path": "src/security/security_scanner.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/security/security_scanner.py",
+      "bytes": 179,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 13995,
+      "declared_path": "src/security/rate_limiter.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/security/rate_limiter.py",
+      "bytes": 520,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 14016,
+      "declared_path": "src/loadbalancer/adaptive_load_balancer.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/loadbalancer/adaptive_load_balancer.py",
+      "bytes": 204,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 14026,
+      "declared_path": "src/loadbalancer/auto_scaler.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/loadbalancer/auto_scaler.py",
+      "bytes": 185,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 14038,
+      "declared_path": "src/loadbalancer/global_router.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/loadbalancer/global_router.py",
+      "bytes": 412,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 14054,
+      "declared_path": "src/operations/slo_manager.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/operations/slo_manager.py",
+      "bytes": 432,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 14075,
+      "declared_path": "src/operations/runbook_executor.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/src/operations/runbook_executor.py",
+      "bytes": 235,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 14087,
+      "declared_path": "main.py",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/main.py",
+      "bytes": 2525,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./CFRP V6.txt",
+      "section_slug": "05-cfrp-v6.txt",
+      "source_line": 14160,
+      "declared_path": "requirements.txt",
+      "staged_path": "source-candidates/05-cfrp-v6.txt/requirements.txt",
+      "bytes": 125,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./EEPL V2.0.txt",
+      "section_slug": "06-eepl-v2.0.txt",
+      "source_line": 8006,
+      "declared_path": "src/config/config.py",
+      "staged_path": "source-candidates/06-eepl-v2.0.txt/src/config/config.py",
+      "bytes": 1174,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./EEPL V2.0.txt",
+      "section_slug": "06-eepl-v2.0.txt",
+      "source_line": 8053,
+      "declared_path": "src/core/domain/entities.py",
+      "staged_path": "source-candidates/06-eepl-v2.0.txt/src/core/domain/entities.py",
+      "bytes": 3198,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./EEPL V2.0.txt",
+      "section_slug": "06-eepl-v2.0.txt",
+      "source_line": 8178,
+      "declared_path": "src/core/ports/repository.py",
+      "staged_path": "source-candidates/06-eepl-v2.0.txt/src/core/ports/repository.py",
+      "bytes": 2491,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./EEPL V2.0.txt",
+      "section_slug": "06-eepl-v2.0.txt",
+      "source_line": 8278,
+      "declared_path": "src/core/ports/cfrp_client.py",
+      "staged_path": "source-candidates/06-eepl-v2.0.txt/src/core/ports/cfrp_client.py",
+      "bytes": 421,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./EEPL V2.0.txt",
+      "section_slug": "06-eepl-v2.0.txt",
+      "source_line": 8299,
+      "declared_path": "src/core/eepl.py",
+      "staged_path": "source-candidates/06-eepl-v2.0.txt/src/core/eepl.py",
+      "bytes": 17623,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./EEPL V2.0.txt",
+      "section_slug": "06-eepl-v2.0.txt",
+      "source_line": 8710,
+      "declared_path": "src/infrastructure/external/climate_service.py",
+      "staged_path": "source-candidates/06-eepl-v2.0.txt/src/infrastructure/external/climate_service.py",
+      "bytes": 10870,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./EEPL V2.0.txt",
+      "section_slug": "06-eepl-v2.0.txt",
+      "source_line": 9011,
+      "declared_path": "src/infrastructure/external/marketplace_service.py",
+      "staged_path": "source-candidates/06-eepl-v2.0.txt/src/infrastructure/external/marketplace_service.py",
+      "bytes": 6423,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./EEPL V2.0.txt",
+      "section_slug": "06-eepl-v2.0.txt",
+      "source_line": 9182,
+      "declared_path": "src/infrastructure/external/virtual_twin_service.py",
+      "staged_path": "source-candidates/06-eepl-v2.0.txt/src/infrastructure/external/virtual_twin_service.py",
+      "bytes": 12411,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./EEPL V2.0.txt",
+      "section_slug": "06-eepl-v2.0.txt",
+      "source_line": 9477,
+      "declared_path": "src/infrastructure/database/postgres_repository.py",
+      "staged_path": "source-candidates/06-eepl-v2.0.txt/src/infrastructure/database/postgres_repository.py",
+      "bytes": 13875,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./EEPL V2.0.txt",
+      "section_slug": "06-eepl-v2.0.txt",
+      "source_line": 9797,
+      "declared_path": "run.py",
+      "staged_path": "source-candidates/06-eepl-v2.0.txt/run.py",
+      "bytes": 4398,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./EEPL V2.0.txt",
+      "section_slug": "06-eepl-v2.0.txt",
+      "source_line": 9928,
+      "declared_path": "requirements.txt",
+      "staged_path": "source-candidates/06-eepl-v2.0.txt/requirements.txt",
+      "bytes": 96,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./EEPL V2.0.txt",
+      "section_slug": "06-eepl-v2.0.txt",
+      "source_line": 9940,
+      "declared_path": "schema.sql",
+      "staged_path": "source-candidates/06-eepl-v2.0.txt/schema.sql",
+      "bytes": 1888,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./EEPL.txt",
+      "section_slug": "07-eepl.txt",
+      "source_line": 10058,
+      "declared_path": "src/config/config.py",
+      "staged_path": "source-candidates/07-eepl.txt/src/config/config.py",
+      "bytes": 1174,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./EEPL.txt",
+      "section_slug": "07-eepl.txt",
+      "source_line": 10103,
+      "declared_path": "src/core/domain/entities.py",
+      "staged_path": "source-candidates/07-eepl.txt/src/core/domain/entities.py",
+      "bytes": 3198,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./EEPL.txt",
+      "section_slug": "07-eepl.txt",
+      "source_line": 10226,
+      "declared_path": "src/infrastructure/external/climate_service.py",
+      "staged_path": "source-candidates/07-eepl.txt/src/infrastructure/external/climate_service.py",
+      "bytes": 11181,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./EEPL.txt",
+      "section_slug": "07-eepl.txt",
+      "source_line": 10534,
+      "declared_path": "src/infrastructure/external/marketplace_service.py",
+      "staged_path": "source-candidates/07-eepl.txt/src/infrastructure/external/marketplace_service.py",
+      "bytes": 6485,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./EEPL.txt",
+      "section_slug": "07-eepl.txt",
+      "source_line": 10704,
+      "declared_path": "src/infrastructure/external/virtual_twin_service.py",
+      "staged_path": "source-candidates/07-eepl.txt/src/infrastructure/external/virtual_twin_service.py",
+      "bytes": 12878,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./EEPL.txt",
+      "section_slug": "07-eepl.txt",
+      "source_line": 11006,
+      "declared_path": "src/infrastructure/database/postgres_repository.py",
+      "staged_path": "source-candidates/07-eepl.txt/src/infrastructure/database/postgres_repository.py",
+      "bytes": 14013,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./EEPL.txt",
+      "section_slug": "07-eepl.txt",
+      "source_line": 11326,
+      "declared_path": "src/core/eepl.py",
+      "staged_path": "source-candidates/07-eepl.txt/src/core/eepl.py",
+      "bytes": 17639,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./EEPL.txt",
+      "section_slug": "07-eepl.txt",
+      "source_line": 11735,
+      "declared_path": "src/core/ports/cfrp_client.py",
+      "staged_path": "source-candidates/07-eepl.txt/src/core/ports/cfrp_client.py",
+      "bytes": 421,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./FCI .txt",
+      "section_slug": "09-fci-.txt",
+      "source_line": 12665,
+      "declared_path": "src/fci/models.py",
+      "staged_path": "source-candidates/09-fci-.txt/src/fci/models.py",
+      "bytes": 1138,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./FCI .txt",
+      "section_slug": "09-fci-.txt",
+      "source_line": 12710,
+      "declared_path": "src/fci/bayesian.py",
+      "staged_path": "source-candidates/09-fci-.txt/src/fci/bayesian.py",
+      "bytes": 5097,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./FCI .txt",
+      "section_slug": "09-fci-.txt",
+      "source_line": 12832,
+      "declared_path": "src/fci/neural.py",
+      "staged_path": "source-candidates/09-fci-.txt/src/fci/neural.py",
+      "bytes": 680,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./FCI .txt",
+      "section_slug": "09-fci-.txt",
+      "source_line": 12858,
+      "declared_path": "src/fci/calibration.py",
+      "staged_path": "source-candidates/09-fci-.txt/src/fci/calibration.py",
+      "bytes": 2767,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./FCI .txt",
+      "section_slug": "09-fci-.txt",
+      "source_line": 12935,
+      "declared_path": "src/fci/friction.py",
+      "staged_path": "source-candidates/09-fci-.txt/src/fci/friction.py",
+      "bytes": 4584,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./FCI .txt",
+      "section_slug": "09-fci-.txt",
+      "source_line": 13051,
+      "declared_path": "src/fci/metrics.py",
+      "staged_path": "source-candidates/09-fci-.txt/src/fci/metrics.py",
+      "bytes": 6810,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./FCI .txt",
+      "section_slug": "09-fci-.txt",
+      "source_line": 13226,
+      "declared_path": "src/fci/pipeline.py",
+      "staged_path": "source-candidates/09-fci-.txt/src/fci/pipeline.py",
+      "bytes": 5375,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./FCI .txt",
+      "section_slug": "09-fci-.txt",
+      "source_line": 13358,
+      "declared_path": "tests/test_fci.py",
+      "staged_path": "source-candidates/09-fci-.txt/tests/test_fci.py",
+      "bytes": 5730,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./FCI .txt",
+      "section_slug": "09-fci-.txt",
+      "source_line": 13488,
+      "declared_path": "examples/usage.py",
+      "staged_path": "source-candidates/09-fci-.txt/examples/usage.py",
+      "bytes": 4237,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./FCI .txt",
+      "section_slug": "09-fci-.txt",
+      "source_line": 13613,
+      "declared_path": "requirements.txt",
+      "staged_path": "source-candidates/09-fci-.txt/requirements.txt",
+      "bytes": 48,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./FCI .txt",
+      "section_slug": "09-fci-.txt",
+      "source_line": 13625,
+      "declared_path": "README.md",
+      "staged_path": "source-candidates/09-fci-.txt/README.md",
+      "bytes": 704,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./FCI V2.0.txt",
+      "section_slug": "10-fci-v2.0.txt",
+      "source_line": 13677,
+      "declared_path": "src/fci/__init__.py",
+      "staged_path": "source-candidates/10-fci-v2.0.txt/src/fci/__init__.py",
+      "bytes": 557,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./FCI V2.0.txt",
+      "section_slug": "10-fci-v2.0.txt",
+      "source_line": 13694,
+      "declared_path": "src/fci/models.py",
+      "staged_path": "source-candidates/10-fci-v2.0.txt/src/fci/models.py",
+      "bytes": 2054,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./FCI V2.0.txt",
+      "section_slug": "10-fci-v2.0.txt",
+      "source_line": 13751,
+      "declared_path": "src/fci/morphology.py",
+      "staged_path": "source-candidates/10-fci-v2.0.txt/src/fci/morphology.py",
+      "bytes": 1840,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./FCI V2.0.txt",
+      "section_slug": "10-fci-v2.0.txt",
+      "source_line": 13810,
+      "declared_path": "src/fci/skin.py",
+      "staged_path": "source-candidates/10-fci-v2.0.txt/src/fci/skin.py",
+      "bytes": 2328,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./FCI V2.0.txt",
+      "section_slug": "10-fci-v2.0.txt",
+      "source_line": 13881,
+      "declared_path": "src/fci/bayesian.py",
+      "staged_path": "source-candidates/10-fci-v2.0.txt/src/fci/bayesian.py",
+      "bytes": 5097,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./FCI V2.0.txt",
+      "section_slug": "10-fci-v2.0.txt",
+      "source_line": 14003,
+      "declared_path": "src/fci/neural.py",
+      "staged_path": "source-candidates/10-fci-v2.0.txt/src/fci/neural.py",
+      "bytes": 699,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./FCI V2.0.txt",
+      "section_slug": "10-fci-v2.0.txt",
+      "source_line": 14030,
+      "declared_path": "src/fci/calibration.py",
+      "staged_path": "source-candidates/10-fci-v2.0.txt/src/fci/calibration.py",
+      "bytes": 2792,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./FCI V2.0.txt",
+      "section_slug": "10-fci-v2.0.txt",
+      "source_line": 14108,
+      "declared_path": "src/fci/friction.py",
+      "staged_path": "source-candidates/10-fci-v2.0.txt/src/fci/friction.py",
+      "bytes": 4584,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./FCI V2.0.txt",
+      "section_slug": "10-fci-v2.0.txt",
+      "source_line": 14224,
+      "declared_path": "src/fci/metrics.py",
+      "staged_path": "source-candidates/10-fci-v2.0.txt/src/fci/metrics.py",
+      "bytes": 6810,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./FCI V2.0.txt",
+      "section_slug": "10-fci-v2.0.txt",
+      "source_line": 14399,
+      "declared_path": "src/fci/pipeline.py",
+      "staged_path": "source-candidates/10-fci-v2.0.txt/src/fci/pipeline.py",
+      "bytes": 8615,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./FCI V2.0.txt",
+      "section_slug": "10-fci-v2.0.txt",
+      "source_line": 14586,
+      "declared_path": "tests/test_fci.py",
+      "staged_path": "source-candidates/10-fci-v2.0.txt/tests/test_fci.py",
+      "bytes": 7169,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./FCI V2.0.txt",
+      "section_slug": "10-fci-v2.0.txt",
+      "source_line": 14742,
+      "declared_path": "examples/usage.py",
+      "staged_path": "source-candidates/10-fci-v2.0.txt/examples/usage.py",
+      "bytes": 5548,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./FCI V2.0.txt",
+      "section_slug": "10-fci-v2.0.txt",
+      "source_line": 14902,
+      "declared_path": "requirements.txt",
+      "staged_path": "source-candidates/10-fci-v2.0.txt/requirements.txt",
+      "bytes": 48,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./FCI V2.0.txt",
+      "section_slug": "10-fci-v2.0.txt",
+      "source_line": 14914,
+      "declared_path": "README.md",
+      "staged_path": "source-candidates/10-fci-v2.0.txt/README.md",
+      "bytes": 1134,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Fit Confidence Index repository .txt",
+      "section_slug": "11-fit-confidence-index-repository-.txt",
+      "source_line": 14967,
+      "declared_path": "src/fci/models.py",
+      "staged_path": "source-candidates/11-fit-confidence-index-repository-.txt/src/fci/models.py",
+      "bytes": 1138,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Fit Confidence Index repository .txt",
+      "section_slug": "11-fit-confidence-index-repository-.txt",
+      "source_line": 15012,
+      "declared_path": "src/fci/bayesian.py",
+      "staged_path": "source-candidates/11-fit-confidence-index-repository-.txt/src/fci/bayesian.py",
+      "bytes": 5097,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Fit Confidence Index repository .txt",
+      "section_slug": "11-fit-confidence-index-repository-.txt",
+      "source_line": 15134,
+      "declared_path": "src/fci/neural.py",
+      "staged_path": "source-candidates/11-fit-confidence-index-repository-.txt/src/fci/neural.py",
+      "bytes": 680,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Fit Confidence Index repository .txt",
+      "section_slug": "11-fit-confidence-index-repository-.txt",
+      "source_line": 15160,
+      "declared_path": "src/fci/calibration.py",
+      "staged_path": "source-candidates/11-fit-confidence-index-repository-.txt/src/fci/calibration.py",
+      "bytes": 2767,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Fit Confidence Index repository .txt",
+      "section_slug": "11-fit-confidence-index-repository-.txt",
+      "source_line": 15237,
+      "declared_path": "src/fci/friction.py",
+      "staged_path": "source-candidates/11-fit-confidence-index-repository-.txt/src/fci/friction.py",
+      "bytes": 4584,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Fit Confidence Index repository .txt",
+      "section_slug": "11-fit-confidence-index-repository-.txt",
+      "source_line": 15353,
+      "declared_path": "src/fci/metrics.py",
+      "staged_path": "source-candidates/11-fit-confidence-index-repository-.txt/src/fci/metrics.py",
+      "bytes": 6810,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Fit Confidence Index repository .txt",
+      "section_slug": "11-fit-confidence-index-repository-.txt",
+      "source_line": 15528,
+      "declared_path": "src/fci/pipeline.py",
+      "staged_path": "source-candidates/11-fit-confidence-index-repository-.txt/src/fci/pipeline.py",
+      "bytes": 5375,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Fit Confidence Index repository .txt",
+      "section_slug": "11-fit-confidence-index-repository-.txt",
+      "source_line": 15660,
+      "declared_path": "tests/test_fci.py",
+      "staged_path": "source-candidates/11-fit-confidence-index-repository-.txt/tests/test_fci.py",
+      "bytes": 5730,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Fit Confidence Index repository .txt",
+      "section_slug": "11-fit-confidence-index-repository-.txt",
+      "source_line": 15790,
+      "declared_path": "examples/usage.py",
+      "staged_path": "source-candidates/11-fit-confidence-index-repository-.txt/examples/usage.py",
+      "bytes": 4237,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Fit Confidence Index repository .txt",
+      "section_slug": "11-fit-confidence-index-repository-.txt",
+      "source_line": 15915,
+      "declared_path": "requirements.txt",
+      "staged_path": "source-candidates/11-fit-confidence-index-repository-.txt/requirements.txt",
+      "bytes": 48,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Fit Confidence Index repository .txt",
+      "section_slug": "11-fit-confidence-index-repository-.txt",
+      "source_line": 15927,
+      "declared_path": "README.md",
+      "staged_path": "source-candidates/11-fit-confidence-index-repository-.txt/README.md",
+      "bytes": 704,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./NPL V2.txt",
+      "section_slug": "12-npl-v2.txt",
+      "source_line": 16025,
+      "declared_path": "config/index.ts",
+      "staged_path": "source-candidates/12-npl-v2.txt/config/index.ts",
+      "bytes": 553,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./NPL V2.txt",
+      "section_slug": "12-npl-v2.txt",
+      "source_line": 16049,
+      "declared_path": "logger/index.ts",
+      "staged_path": "source-candidates/12-npl-v2.txt/logger/index.ts",
+      "bytes": 180,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./NPL V2.txt",
+      "section_slug": "12-npl-v2.txt",
+      "source_line": 16064,
+      "declared_path": "entities/ISCEntity.ts",
+      "staged_path": "source-candidates/12-npl-v2.txt/entities/ISCEntity.ts",
+      "bytes": 401,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./NPL V2.txt",
+      "section_slug": "12-npl-v2.txt",
+      "source_line": 16081,
+      "declared_path": "entities/PendingEvolutionEntity.ts",
+      "staged_path": "source-candidates/12-npl-v2.txt/entities/PendingEvolutionEntity.ts",
+      "bytes": 270,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./NPL V2.txt",
+      "section_slug": "12-npl-v2.txt",
+      "source_line": 16095,
+      "declared_path": "entities/PermanentExclusionEntity.ts",
+      "staged_path": "source-candidates/12-npl-v2.txt/entities/PermanentExclusionEntity.ts",
+      "bytes": 397,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./NPL V2.txt",
+      "section_slug": "12-npl-v2.txt",
+      "source_line": 16837,
+      "declared_path": "ppl/PositivePreferenceLayer.ts",
+      "staged_path": "source-candidates/12-npl-v2.txt/ppl/PositivePreferenceLayer.ts",
+      "bytes": 274,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./NPL V2.txt",
+      "section_slug": "12-npl-v2.txt",
+      "source_line": 16896,
+      "declared_path": "tests/unit/ISCEngine.test.ts",
+      "staged_path": "source-candidates/12-npl-v2.txt/tests/unit/ISCEngine.test.ts",
+      "bytes": 266,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./NPL V2.txt",
+      "section_slug": "12-npl-v2.txt",
+      "source_line": 16913,
+      "declared_path": "index.ts",
+      "staged_path": "source-candidates/12-npl-v2.txt/index.ts",
+      "bytes": 1287,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Tari improved .txt",
+      "section_slug": "13-tari-improved-.txt",
+      "source_line": 33896,
+      "declared_path": "src/tari/__init__.py",
+      "staged_path": "source-candidates/13-tari-improved-.txt/src/tari/__init__.py",
+      "bytes": 18,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Tari improved .txt",
+      "section_slug": "13-tari-improved-.txt",
+      "source_line": 33901,
+      "declared_path": "src/tari/config.py",
+      "staged_path": "source-candidates/13-tari-improved-.txt/src/tari/config.py",
+      "bytes": 4822,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Tari improved .txt",
+      "section_slug": "13-tari-improved-.txt",
+      "source_line": 34036,
+      "declared_path": "src/tari/orchestrator/gateway.py",
+      "staged_path": "source-candidates/13-tari-improved-.txt/src/tari/orchestrator/gateway.py",
+      "bytes": 5080,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Tari improved .txt",
+      "section_slug": "13-tari-improved-.txt",
+      "source_line": 34148,
+      "declared_path": "src/tari/orchestrator/__init__.py",
+      "staged_path": "source-candidates/13-tari-improved-.txt/src/tari/orchestrator/__init__.py",
+      "bytes": 22,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Tari improved .txt",
+      "section_slug": "13-tari-improved-.txt",
+      "source_line": 34153,
+      "declared_path": "src/tari/orchestrator/agents/__init__.py",
+      "staged_path": "source-candidates/13-tari-improved-.txt/src/tari/orchestrator/agents/__init__.py",
+      "bytes": 16,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Tari improved .txt",
+      "section_slug": "13-tari-improved-.txt",
+      "source_line": 34158,
+      "declared_path": "src/tari/orchestrator/agents/conversation_agent.py",
+      "staged_path": "source-candidates/13-tari-improved-.txt/src/tari/orchestrator/agents/conversation_agent.py",
+      "bytes": 7038,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Tari improved .txt",
+      "section_slug": "13-tari-improved-.txt",
+      "source_line": 34321,
+      "declared_path": "src/tari/orchestrator/agents/retrieval_agent.py",
+      "staged_path": "source-candidates/13-tari-improved-.txt/src/tari/orchestrator/agents/retrieval_agent.py",
+      "bytes": 6768,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Tari improved .txt",
+      "section_slug": "13-tari-improved-.txt",
+      "source_line": 34475,
+      "declared_path": "src/tari/orchestrator/agents/outfit_agent.py",
+      "staged_path": "source-candidates/13-tari-improved-.txt/src/tari/orchestrator/agents/outfit_agent.py",
+      "bytes": 7053,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Tari improved .txt",
+      "section_slug": "13-tari-improved-.txt",
+      "source_line": 34635,
+      "declared_path": "src/tari/orchestrator/agents/tryon_agent.py",
+      "staged_path": "source-candidates/13-tari-improved-.txt/src/tari/orchestrator/agents/tryon_agent.py",
+      "bytes": 3818,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Tari improved .txt",
+      "section_slug": "13-tari-improved-.txt",
+      "source_line": 34738,
+      "declared_path": "src/tari/orchestrator/agents/learning_agent.py",
+      "staged_path": "source-candidates/13-tari-improved-.txt/src/tari/orchestrator/agents/learning_agent.py",
+      "bytes": 3346,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Tari improved .txt",
+      "section_slug": "13-tari-improved-.txt",
+      "source_line": 34822,
+      "declared_path": "src/tari/orchestrator/memory/memory_service.py",
+      "staged_path": "source-candidates/13-tari-improved-.txt/src/tari/orchestrator/memory/memory_service.py",
+      "bytes": 5134,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Tari improved .txt",
+      "section_slug": "13-tari-improved-.txt",
+      "source_line": 34934,
+      "declared_path": "src/tari/orchestrator/knowledge_graph.py",
+      "staged_path": "source-candidates/13-tari-improved-.txt/src/tari/orchestrator/knowledge_graph.py",
+      "bytes": 1443,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Tari improved .txt",
+      "section_slug": "13-tari-improved-.txt",
+      "source_line": 34976,
+      "declared_path": "src/tari/orchestrator/evaluation/offline_eval.py",
+      "staged_path": "source-candidates/13-tari-improved-.txt/src/tari/orchestrator/evaluation/offline_eval.py",
+      "bytes": 1271,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Tari improved .txt",
+      "section_slug": "13-tari-improved-.txt",
+      "source_line": 35011,
+      "declared_path": "src/tari/orchestrator/evaluation/online_eval.py",
+      "staged_path": "source-candidates/13-tari-improved-.txt/src/tari/orchestrator/evaluation/online_eval.py",
+      "bytes": 978,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Tari improved .txt",
+      "section_slug": "13-tari-improved-.txt",
+      "source_line": 35042,
+      "declared_path": "src/tari/orchestrator/observability/tracing.py",
+      "staged_path": "source-candidates/13-tari-improved-.txt/src/tari/orchestrator/observability/tracing.py",
+      "bytes": 672,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Tari improved .txt",
+      "section_slug": "13-tari-improved-.txt",
+      "source_line": 35066,
+      "declared_path": "src/tari/api/endpoints.py",
+      "staged_path": "source-candidates/13-tari-improved-.txt/src/tari/api/endpoints.py",
+      "bytes": 3641,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Tari improved .txt",
+      "section_slug": "13-tari-improved-.txt",
+      "source_line": 35179,
+      "declared_path": "src/tari/api/app.py",
+      "staged_path": "source-candidates/13-tari-improved-.txt/src/tari/api/app.py",
+      "bytes": 3169,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Tari improved .txt",
+      "section_slug": "13-tari-improved-.txt",
+      "source_line": 35278,
+      "declared_path": "requirements.txt",
+      "staged_path": "source-candidates/13-tari-improved-.txt/requirements.txt",
+      "bytes": 742,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Tari improved .txt",
+      "section_slug": "13-tari-improved-.txt",
+      "source_line": 35318,
+      "declared_path": "docker-compose.yml",
+      "staged_path": "source-candidates/13-tari-improved-.txt/docker-compose.yml",
+      "bytes": 1198,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Tari improved .txt",
+      "section_slug": "13-tari-improved-.txt",
+      "source_line": 35385,
+      "declared_path": "README.md",
+      "staged_path": "source-candidates/13-tari-improved-.txt/README.md",
+      "bytes": 647,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "source_line": 18532,
+      "declared_path": "src/__init__.py",
+      "staged_path": "source-candidates/14-we-have-now.txt/src/__init__.py",
+      "bytes": 13,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "source_line": 18540,
+      "declared_path": "src/config/__init__.py",
+      "staged_path": "source-candidates/14-we-have-now.txt/src/config/__init__.py",
+      "bytes": 13,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "source_line": 18548,
+      "declared_path": "src/config/config.py",
+      "staged_path": "source-candidates/14-we-have-now.txt/src/config/config.py",
+      "bytes": 1456,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "source_line": 18607,
+      "declared_path": "src/core/__init__.py",
+      "staged_path": "source-candidates/14-we-have-now.txt/src/core/__init__.py",
+      "bytes": 13,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "source_line": 18615,
+      "declared_path": "src/core/domain/__init__.py",
+      "staged_path": "source-candidates/14-we-have-now.txt/src/core/domain/__init__.py",
+      "bytes": 13,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "source_line": 18623,
+      "declared_path": "src/core/domain/entities.py",
+      "staged_path": "source-candidates/14-we-have-now.txt/src/core/domain/entities.py",
+      "bytes": 3082,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "source_line": 18747,
+      "declared_path": "src/core/ports/__init__.py",
+      "staged_path": "source-candidates/14-we-have-now.txt/src/core/ports/__init__.py",
+      "bytes": 13,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "source_line": 18755,
+      "declared_path": "src/core/ports/repository.py",
+      "staged_path": "source-candidates/14-we-have-now.txt/src/core/ports/repository.py",
+      "bytes": 2491,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "source_line": 18855,
+      "declared_path": "src/core/ports/cfrp_client.py",
+      "staged_path": "source-candidates/14-we-have-now.txt/src/core/ports/cfrp_client.py",
+      "bytes": 421,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "source_line": 18876,
+      "declared_path": "src/core/eepl.py",
+      "staged_path": "source-candidates/14-we-have-now.txt/src/core/eepl.py",
+      "bytes": 18896,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "source_line": 19298,
+      "declared_path": "src/infrastructure/__init__.py",
+      "staged_path": "source-candidates/14-we-have-now.txt/src/infrastructure/__init__.py",
+      "bytes": 13,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "source_line": 19306,
+      "declared_path": "src/infrastructure/external/__init__.py",
+      "staged_path": "source-candidates/14-we-have-now.txt/src/infrastructure/external/__init__.py",
+      "bytes": 13,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "source_line": 19314,
+      "declared_path": "src/infrastructure/external/climate_service.py",
+      "staged_path": "source-candidates/14-we-have-now.txt/src/infrastructure/external/climate_service.py",
+      "bytes": 79,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "source_line": 19323,
+      "declared_path": "src/infrastructure/external/marketplace_service.py",
+      "staged_path": "source-candidates/14-we-have-now.txt/src/infrastructure/external/marketplace_service.py",
+      "bytes": 83,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "source_line": 19332,
+      "declared_path": "src/infrastructure/external/virtual_twin_service.py",
+      "staged_path": "source-candidates/14-we-have-now.txt/src/infrastructure/external/virtual_twin_service.py",
+      "bytes": 84,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "source_line": 19341,
+      "declared_path": "src/infrastructure/external/cfrp_client.py",
+      "staged_path": "source-candidates/14-we-have-now.txt/src/infrastructure/external/cfrp_client.py",
+      "bytes": 2112,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "source_line": 19403,
+      "declared_path": "src/infrastructure/external/feedback_repository.py",
+      "staged_path": "source-candidates/14-we-have-now.txt/src/infrastructure/external/feedback_repository.py",
+      "bytes": 2389,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "source_line": 19464,
+      "declared_path": "src/infrastructure/external/cultural_validator.py",
+      "staged_path": "source-candidates/14-we-have-now.txt/src/infrastructure/external/cultural_validator.py",
+      "bytes": 1355,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "source_line": 19506,
+      "declared_path": "src/infrastructure/external/trend_service.py",
+      "staged_path": "source-candidates/14-we-have-now.txt/src/infrastructure/external/trend_service.py",
+      "bytes": 1340,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "source_line": 19546,
+      "declared_path": "src/infrastructure/caching/redis_cache.py",
+      "staged_path": "source-candidates/14-we-have-now.txt/src/infrastructure/caching/redis_cache.py",
+      "bytes": 792,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "source_line": 19580,
+      "declared_path": "src/monitoring/metrics.py",
+      "staged_path": "source-candidates/14-we-have-now.txt/src/monitoring/metrics.py",
+      "bytes": 1020,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "source_line": 19609,
+      "declared_path": "src/ab_testing/ab_framework.py",
+      "staged_path": "source-candidates/14-we-have-now.txt/src/ab_testing/ab_framework.py",
+      "bytes": 942,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "source_line": 19639,
+      "declared_path": "src/explainability/explainer.py",
+      "staged_path": "source-candidates/14-we-have-now.txt/src/explainability/explainer.py",
+      "bytes": 829,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "source_line": 19664,
+      "declared_path": "src/infrastructure/database/postgres_repository.py",
+      "staged_path": "source-candidates/14-we-have-now.txt/src/infrastructure/database/postgres_repository.py",
+      "bytes": 169,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "source_line": 19695,
+      "declared_path": "docker-compose.yml",
+      "staged_path": "source-candidates/14-we-have-now.txt/docker-compose.yml",
+      "bytes": 2819,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "source_line": 19865,
+      "declared_path": "tests/unit/test_eepl.py",
+      "staged_path": "source-candidates/14-we-have-now.txt/tests/unit/test_eepl.py",
+      "bytes": 1185,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./We have now.txt",
+      "section_slug": "14-we-have-now.txt",
+      "source_line": 19912,
+      "declared_path": "README.md",
+      "staged_path": "source-candidates/14-we-have-now.txt/README.md",
+      "bytes": 980,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Xyra.txt",
+      "section_slug": "15-xyra.txt",
+      "source_line": 39906,
+      "declared_path": "xyra/__init__.py",
+      "staged_path": "source-candidates/15-xyra.txt/xyra/__init__.py",
+      "bytes": 15,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Xyra.txt",
+      "section_slug": "15-xyra.txt",
+      "source_line": 39911,
+      "declared_path": "xyra/config.py",
+      "staged_path": "source-candidates/15-xyra.txt/xyra/config.py",
+      "bytes": 3994,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Xyra.txt",
+      "section_slug": "15-xyra.txt",
+      "source_line": 40031,
+      "declared_path": "xyra/connection_pool.py",
+      "staged_path": "source-candidates/15-xyra.txt/xyra/connection_pool.py",
+      "bytes": 4118,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Xyra.txt",
+      "section_slug": "15-xyra.txt",
+      "source_line": 40151,
+      "declared_path": "xyra/cache/predictive_cache.py",
+      "staged_path": "source-candidates/15-xyra.txt/xyra/cache/predictive_cache.py",
+      "bytes": 4360,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Xyra.txt",
+      "section_slug": "15-xyra.txt",
+      "source_line": 40272,
+      "declared_path": "xyra/privacy/manager.py",
+      "staged_path": "source-candidates/15-xyra.txt/xyra/privacy/manager.py",
+      "bytes": 2075,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Xyra.txt",
+      "section_slug": "15-xyra.txt",
+      "source_line": 40336,
+      "declared_path": "xyra/processing/batch_processor.py",
+      "staged_path": "source-candidates/15-xyra.txt/xyra/processing/batch_processor.py",
+      "bytes": 3132,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Xyra.txt",
+      "section_slug": "15-xyra.txt",
+      "source_line": 40423,
+      "declared_path": "xyra/optimization/real_time_optimizer.py",
+      "staged_path": "source-candidates/15-xyra.txt/xyra/optimization/real_time_optimizer.py",
+      "bytes": 4357,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Xyra.txt",
+      "section_slug": "15-xyra.txt",
+      "source_line": 40526,
+      "declared_path": "xyra/dialogue/orchestrator.py",
+      "staged_path": "source-candidates/15-xyra.txt/xyra/dialogue/orchestrator.py",
+      "bytes": 7134,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Xyra.txt",
+      "section_slug": "15-xyra.txt",
+      "source_line": 40697,
+      "declared_path": "xyra/dialogue/memory.py",
+      "staged_path": "source-candidates/15-xyra.txt/xyra/dialogue/memory.py",
+      "bytes": 1432,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Xyra.txt",
+      "section_slug": "15-xyra.txt",
+      "source_line": 40737,
+      "declared_path": "xyra/dialogue/explanation.py",
+      "staged_path": "source-candidates/15-xyra.txt/xyra/dialogue/explanation.py",
+      "bytes": 1917,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Xyra.txt",
+      "section_slug": "15-xyra.txt",
+      "source_line": 40782,
+      "declared_path": "xyra/dialogue/emotional_modulator.py",
+      "staged_path": "source-candidates/15-xyra.txt/xyra/dialogue/emotional_modulator.py",
+      "bytes": 1299,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Xyra.txt",
+      "section_slug": "15-xyra.txt",
+      "source_line": 40820,
+      "declared_path": "xyra/dialogue/nlp_processor.py",
+      "staged_path": "source-candidates/15-xyra.txt/xyra/dialogue/nlp_processor.py",
+      "bytes": 1811,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Xyra.txt",
+      "section_slug": "15-xyra.txt",
+      "source_line": 40866,
+      "declared_path": "xyra/skin/ingredient_analyzer.py",
+      "staged_path": "source-candidates/15-xyra.txt/xyra/skin/ingredient_analyzer.py",
+      "bytes": 1830,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Xyra.txt",
+      "section_slug": "15-xyra.txt",
+      "source_line": 40919,
+      "declared_path": "xyra/skin/analyzer.py",
+      "staged_path": "source-candidates/15-xyra.txt/xyra/skin/analyzer.py",
+      "bytes": 15731,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Xyra.txt",
+      "section_slug": "15-xyra.txt",
+      "source_line": 41265,
+      "declared_path": "xyra/skin/segmentation.py",
+      "staged_path": "source-candidates/15-xyra.txt/xyra/skin/segmentation.py",
+      "bytes": 1441,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Xyra.txt",
+      "section_slug": "15-xyra.txt",
+      "source_line": 41306,
+      "declared_path": "xyra/skin/classification.py",
+      "staged_path": "source-candidates/15-xyra.txt/xyra/skin/classification.py",
+      "bytes": 8527,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Xyra.txt",
+      "section_slug": "15-xyra.txt",
+      "source_line": 41513,
+      "declared_path": "xyra/skin/texture_analysis.py",
+      "staged_path": "source-candidates/15-xyra.txt/xyra/skin/texture_analysis.py",
+      "bytes": 3598,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Xyra.txt",
+      "section_slug": "15-xyra.txt",
+      "source_line": 41605,
+      "declared_path": "xyra/skin/condition_detection.py",
+      "staged_path": "source-candidates/15-xyra.txt/xyra/skin/condition_detection.py",
+      "bytes": 1892,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Xyra.txt",
+      "section_slug": "15-xyra.txt",
+      "source_line": 41655,
+      "declared_path": "xyra/skin/ai_features.py",
+      "staged_path": "source-candidates/15-xyra.txt/xyra/skin/ai_features.py",
+      "bytes": 1253,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Xyra.txt",
+      "section_slug": "15-xyra.txt",
+      "source_line": 41691,
+      "declared_path": "xyra/similarity/engine.py",
+      "staged_path": "source-candidates/15-xyra.txt/xyra/similarity/engine.py",
+      "bytes": 2144,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Xyra.txt",
+      "section_slug": "15-xyra.txt",
+      "source_line": 41749,
+      "declared_path": "xyra/recommendation/engine.py",
+      "staged_path": "source-candidates/15-xyra.txt/xyra/recommendation/engine.py",
+      "bytes": 11414,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Xyra.txt",
+      "section_slug": "15-xyra.txt",
+      "source_line": 42005,
+      "declared_path": "xyra/middleware/security.py",
+      "staged_path": "source-candidates/15-xyra.txt/xyra/middleware/security.py",
+      "bytes": 2118,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Xyra.txt",
+      "section_slug": "15-xyra.txt",
+      "source_line": 42068,
+      "declared_path": "xyra/learning/user_embedding.py",
+      "staged_path": "source-candidates/15-xyra.txt/xyra/learning/user_embedding.py",
+      "bytes": 2418,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Xyra.txt",
+      "section_slug": "15-xyra.txt",
+      "source_line": 42128,
+      "declared_path": "xyra/body/__init__.py",
+      "staged_path": "source-candidates/15-xyra.txt/xyra/body/__init__.py",
+      "bytes": 72,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Xyra.txt",
+      "section_slug": "15-xyra.txt",
+      "source_line": 42134,
+      "declared_path": "xyra/body/domain/body.py",
+      "staged_path": "source-candidates/15-xyra.txt/xyra/body/domain/body.py",
+      "bytes": 4091,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./Xyra.txt",
+      "section_slug": "15-xyra.txt",
+      "source_line": 42235,
+      "declared_path": "xyra/body/domain/model.py",
+      "staged_path": "source-candidates/15-xyra.txt/xyra/body/domain/model.py",
+      "bytes": 6884,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./```.txt",
+      "section_slug": "17-txt",
+      "source_line": 44950,
+      "declared_path": "src/tari/__init__.py",
+      "staged_path": "source-candidates/17-txt/src/tari/__init__.py",
+      "bytes": 18,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./```.txt",
+      "section_slug": "17-txt",
+      "source_line": 44955,
+      "declared_path": "src/tari/config.py",
+      "staged_path": "source-candidates/17-txt/src/tari/config.py",
+      "bytes": 4822,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./```.txt",
+      "section_slug": "17-txt",
+      "source_line": 45090,
+      "declared_path": "src/tari/orchestrator/gateway.py",
+      "staged_path": "source-candidates/17-txt/src/tari/orchestrator/gateway.py",
+      "bytes": 5080,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./```.txt",
+      "section_slug": "17-txt",
+      "source_line": 45202,
+      "declared_path": "src/tari/orchestrator/__init__.py",
+      "staged_path": "source-candidates/17-txt/src/tari/orchestrator/__init__.py",
+      "bytes": 22,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./```.txt",
+      "section_slug": "17-txt",
+      "source_line": 45207,
+      "declared_path": "src/tari/orchestrator/agents/__init__.py",
+      "staged_path": "source-candidates/17-txt/src/tari/orchestrator/agents/__init__.py",
+      "bytes": 16,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./```.txt",
+      "section_slug": "17-txt",
+      "source_line": 45212,
+      "declared_path": "src/tari/orchestrator/agents/conversation_agent.py",
+      "staged_path": "source-candidates/17-txt/src/tari/orchestrator/agents/conversation_agent.py",
+      "bytes": 7038,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./```.txt",
+      "section_slug": "17-txt",
+      "source_line": 45375,
+      "declared_path": "src/tari/orchestrator/agents/retrieval_agent.py",
+      "staged_path": "source-candidates/17-txt/src/tari/orchestrator/agents/retrieval_agent.py",
+      "bytes": 6768,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./```.txt",
+      "section_slug": "17-txt",
+      "source_line": 45529,
+      "declared_path": "src/tari/orchestrator/agents/outfit_agent.py",
+      "staged_path": "source-candidates/17-txt/src/tari/orchestrator/agents/outfit_agent.py",
+      "bytes": 7053,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./```.txt",
+      "section_slug": "17-txt",
+      "source_line": 45689,
+      "declared_path": "src/tari/orchestrator/agents/tryon_agent.py",
+      "staged_path": "source-candidates/17-txt/src/tari/orchestrator/agents/tryon_agent.py",
+      "bytes": 3818,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./```.txt",
+      "section_slug": "17-txt",
+      "source_line": 45792,
+      "declared_path": "src/tari/orchestrator/agents/learning_agent.py",
+      "staged_path": "source-candidates/17-txt/src/tari/orchestrator/agents/learning_agent.py",
+      "bytes": 3346,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./```.txt",
+      "section_slug": "17-txt",
+      "source_line": 45876,
+      "declared_path": "src/tari/orchestrator/memory/memory_service.py",
+      "staged_path": "source-candidates/17-txt/src/tari/orchestrator/memory/memory_service.py",
+      "bytes": 5134,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./```.txt",
+      "section_slug": "17-txt",
+      "source_line": 45988,
+      "declared_path": "src/tari/orchestrator/knowledge_graph.py",
+      "staged_path": "source-candidates/17-txt/src/tari/orchestrator/knowledge_graph.py",
+      "bytes": 1443,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./```.txt",
+      "section_slug": "17-txt",
+      "source_line": 46030,
+      "declared_path": "src/tari/orchestrator/evaluation/offline_eval.py",
+      "staged_path": "source-candidates/17-txt/src/tari/orchestrator/evaluation/offline_eval.py",
+      "bytes": 1271,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./```.txt",
+      "section_slug": "17-txt",
+      "source_line": 46065,
+      "declared_path": "src/tari/orchestrator/evaluation/online_eval.py",
+      "staged_path": "source-candidates/17-txt/src/tari/orchestrator/evaluation/online_eval.py",
+      "bytes": 978,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./```.txt",
+      "section_slug": "17-txt",
+      "source_line": 46096,
+      "declared_path": "src/tari/orchestrator/observability/tracing.py",
+      "staged_path": "source-candidates/17-txt/src/tari/orchestrator/observability/tracing.py",
+      "bytes": 672,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./```.txt",
+      "section_slug": "17-txt",
+      "source_line": 46120,
+      "declared_path": "src/tari/api/endpoints.py",
+      "staged_path": "source-candidates/17-txt/src/tari/api/endpoints.py",
+      "bytes": 3641,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./```.txt",
+      "section_slug": "17-txt",
+      "source_line": 46233,
+      "declared_path": "src/tari/api/app.py",
+      "staged_path": "source-candidates/17-txt/src/tari/api/app.py",
+      "bytes": 3169,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./```.txt",
+      "section_slug": "17-txt",
+      "source_line": 46332,
+      "declared_path": "requirements.txt",
+      "staged_path": "source-candidates/17-txt/requirements.txt",
+      "bytes": 742,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./```.txt",
+      "section_slug": "17-txt",
+      "source_line": 46372,
+      "declared_path": "docker-compose.yml",
+      "staged_path": "source-candidates/17-txt/docker-compose.yml",
+      "bytes": 1198,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./```.txt",
+      "section_slug": "17-txt",
+      "source_line": 46439,
+      "declared_path": "README.md",
+      "staged_path": "source-candidates/17-txt/README.md",
+      "bytes": 647,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 24091,
+      "declared_path": "src/types/index.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/types/index.ts",
+      "bytes": 464,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 24103,
+      "declared_path": "src/types/engine.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/types/engine.ts",
+      "bytes": 436,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 24125,
+      "declared_path": "src/types/domain.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/types/domain.ts",
+      "bytes": 2665,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 24244,
+      "declared_path": "src/types/metrics.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/types/metrics.ts",
+      "bytes": 773,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 24281,
+      "declared_path": "src/utils/random.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/utils/random.ts",
+      "bytes": 402,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 24305,
+      "declared_path": "src/utils/hash.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/utils/hash.ts",
+      "bytes": 662,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 24338,
+      "declared_path": "src/utils/performance.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/utils/performance.ts",
+      "bytes": 795,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 24374,
+      "declared_path": "src/utils/time.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/utils/time.ts",
+      "bytes": 629,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 24402,
+      "declared_path": "src/utils/index.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/utils/index.ts",
+      "bytes": 171,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 24413,
+      "declared_path": "src/validation/errors.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/validation/errors.ts",
+      "bytes": 161,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 24426,
+      "declared_path": "src/validation/validator.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/validation/validator.ts",
+      "bytes": 1364,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 24470,
+      "declared_path": "src/validation/index.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/validation/index.ts",
+      "bytes": 90,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 24479,
+      "declared_path": "src/circuitbreaker/circuit-breaker.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/circuitbreaker/circuit-breaker.ts",
+      "bytes": 1409,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 24547,
+      "declared_path": "src/circuitbreaker/index.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/circuitbreaker/index.ts",
+      "bytes": 52,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 24555,
+      "declared_path": "src/dic/decision-intent-contract.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/dic/decision-intent-contract.ts",
+      "bytes": 2059,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 24639,
+      "declared_path": "src/dic/index.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/dic/index.ts",
+      "bytes": 69,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 24647,
+      "declared_path": "src/usi/user-state-interpreter.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/usi/user-state-interpreter.ts",
+      "bytes": 2349,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 24718,
+      "declared_path": "src/usi/index.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/usi/index.ts",
+      "bytes": 65,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 24726,
+      "declared_path": "src/lookgenerator/look-generator.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/lookgenerator/look-generator.ts",
+      "bytes": 4583,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 24867,
+      "declared_path": "src/lookgenerator/index.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/lookgenerator/index.ts",
+      "bytes": 50,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 24875,
+      "declared_path": "src/coveragecalculator/coverage-calculator.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/coveragecalculator/coverage-calculator.ts",
+      "bytes": 3274,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 24987,
+      "declared_path": "src/coveragecalculator/index.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/coveragecalculator/index.ts",
+      "bytes": 60,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 24995,
+      "declared_path": "src/regretmanager/regret-manager.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/regretmanager/regret-manager.ts",
+      "bytes": 5572,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 25172,
+      "declared_path": "src/regretmanager/index.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/regretmanager/index.ts",
+      "bytes": 50,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 25180,
+      "declared_path": "src/trendledger/trend-ledger.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/trendledger/trend-ledger.ts",
+      "bytes": 5321,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 25369,
+      "declared_path": "src/trendledger/index.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/trendledger/index.ts",
+      "bytes": 46,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 25377,
+      "declared_path": "src/humilityresolver/humility-resolver.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/humilityresolver/humility-resolver.ts",
+      "bytes": 4261,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 25519,
+      "declared_path": "src/humilityresolver/index.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/humilityresolver/index.ts",
+      "bytes": 56,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 25527,
+      "declared_path": "src/engine/cirvanna-engine.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/engine/cirvanna-engine.ts",
+      "bytes": 9046,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 25800,
+      "declared_path": "src/engine/index.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/engine/index.ts",
+      "bytes": 54,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 25808,
+      "declared_path": "src/tester/cirvanna-tester.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/tester/cirvanna-tester.ts",
+      "bytes": 5370,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 25980,
+      "declared_path": "src/tester/index.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/tester/index.ts",
+      "bytes": 52,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 25988,
+      "declared_path": "src/examples/quick-example.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/examples/quick-example.ts",
+      "bytes": 1803,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 26058,
+      "declared_path": "src/examples/index.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/examples/index.ts",
+      "bytes": 48,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 26066,
+      "declared_path": "src/index.ts",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/src/index.ts",
+      "bytes": 489,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 26096,
+      "declared_path": "package.json",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/package.json",
+      "bytes": 769,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 26125,
+      "declared_path": "tsconfig.json",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/tsconfig.json",
+      "bytes": 591,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "section_slug": "18-cirvanna-skeleton-.txt",
+      "source_line": 26155,
+      "declared_path": "README.md",
+      "staged_path": "source-candidates/18-cirvanna-skeleton-.txt/README.md",
+      "bytes": 603,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cultural identity module .txt",
+      "section_slug": "19-cultural-identity-module-.txt",
+      "source_line": 52480,
+      "declared_path": "src/cirvanna/cultural-identity/schema/v3.0.json",
+      "staged_path": "source-candidates/19-cultural-identity-module-.txt/src/cirvanna/cultural-identity/schema/v3.0.json",
+      "bytes": 812,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cultural identity module .txt",
+      "section_slug": "19-cultural-identity-module-.txt",
+      "source_line": 52508,
+      "declared_path": "src/cirvanna/cultural-identity/config/metadata.json",
+      "staged_path": "source-candidates/19-cultural-identity-module-.txt/src/cirvanna/cultural-identity/config/metadata.json",
+      "bytes": 475,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cultural identity module .txt",
+      "section_slug": "19-cultural-identity-module-.txt",
+      "source_line": 52528,
+      "declared_path": "src/cirvanna/cultural-identity/config/performance.json",
+      "staged_path": "source-candidates/19-cultural-identity-module-.txt/src/cirvanna/cultural-identity/config/performance.json",
+      "bytes": 712,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cultural identity module .txt",
+      "section_slug": "19-cultural-identity-module-.txt",
+      "source_line": 52566,
+      "declared_path": "src/cirvanna/cultural-identity/profiles/index.json",
+      "staged_path": "source-candidates/19-cultural-identity-module-.txt/src/cirvanna/cultural-identity/profiles/index.json",
+      "bytes": 507,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cultural identity module .txt",
+      "section_slug": "19-cultural-identity-module-.txt",
+      "source_line": 52595,
+      "declared_path": "src/cirvanna/cultural-identity/profiles/chinese-han.json",
+      "staged_path": "source-candidates/19-cultural-identity-module-.txt/src/cirvanna/cultural-identity/profiles/chinese-han.json",
+      "bytes": 3256,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cultural identity module .txt",
+      "section_slug": "19-cultural-identity-module-.txt",
+      "source_line": 52718,
+      "declared_path": "src/cirvanna/cultural-identity/profiles/russian-slavic.json",
+      "staged_path": "source-candidates/19-cultural-identity-module-.txt/src/cirvanna/cultural-identity/profiles/russian-slavic.json",
+      "bytes": 2780,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cultural identity module .txt",
+      "section_slug": "19-cultural-identity-module-.txt",
+      "source_line": 52825,
+      "declared_path": "src/cirvanna/cultural-identity/profiles/african-yoruba.json",
+      "staged_path": "source-candidates/19-cultural-identity-module-.txt/src/cirvanna/cultural-identity/profiles/african-yoruba.json",
+      "bytes": 2636,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cultural identity module .txt",
+      "section_slug": "19-cultural-identity-module-.txt",
+      "source_line": 52928,
+      "declared_path": "src/cirvanna/cultural-identity/profiles/muslim-ummah.json",
+      "staged_path": "source-candidates/19-cultural-identity-module-.txt/src/cirvanna/cultural-identity/profiles/muslim-ummah.json",
+      "bytes": 2762,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cultural identity module .txt",
+      "section_slug": "19-cultural-identity-module-.txt",
+      "source_line": 53041,
+      "declared_path": "src/cirvanna/cultural-identity/profiles/indian-subcontinent.json",
+      "staged_path": "source-candidates/19-cultural-identity-module-.txt/src/cirvanna/cultural-identity/profiles/indian-subcontinent.json",
+      "bytes": 2928,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cultural identity module .txt",
+      "section_slug": "19-cultural-identity-module-.txt",
+      "source_line": 53155,
+      "declared_path": "src/cirvanna/cultural-identity/profiles/japanese.json",
+      "staged_path": "source-candidates/19-cultural-identity-module-.txt/src/cirvanna/cultural-identity/profiles/japanese.json",
+      "bytes": 3764,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cultural identity module .txt",
+      "section_slug": "19-cultural-identity-module-.txt",
+      "source_line": 53287,
+      "declared_path": "src/cirvanna/cultural-identity/validation/pipeline.json",
+      "staged_path": "source-candidates/19-cultural-identity-module-.txt/src/cirvanna/cultural-identity/validation/pipeline.json",
+      "bytes": 1388,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cultural identity module .txt",
+      "section_slug": "19-cultural-identity-module-.txt",
+      "source_line": 53353,
+      "declared_path": "src/cirvanna/cultural-identity/validation/symbol-resolution.json",
+      "staged_path": "source-candidates/19-cultural-identity-module-.txt/src/cirvanna/cultural-identity/validation/symbol-resolution.json",
+      "bytes": 361,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cultural identity module .txt",
+      "section_slug": "19-cultural-identity-module-.txt",
+      "source_line": 53371,
+      "declared_path": "src/cirvanna/cultural-identity/compatibility/scoring.json",
+      "staged_path": "source-candidates/19-cultural-identity-module-.txt/src/cirvanna/cultural-identity/compatibility/scoring.json",
+      "bytes": 1157,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cultural identity module .txt",
+      "section_slug": "19-cultural-identity-module-.txt",
+      "source_line": 53433,
+      "declared_path": "src/cirvanna/cultural-identity/engine/inheritance.json",
+      "staged_path": "source-candidates/19-cultural-identity-module-.txt/src/cirvanna/cultural-identity/engine/inheritance.json",
+      "bytes": 351,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cultural identity module .txt",
+      "section_slug": "19-cultural-identity-module-.txt",
+      "source_line": 53451,
+      "declared_path": "src/cirvanna/cultural-identity/monitoring/drift.json",
+      "staged_path": "source-candidates/19-cultural-identity-module-.txt/src/cirvanna/cultural-identity/monitoring/drift.json",
+      "bytes": 433,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cultural identity module .txt",
+      "section_slug": "19-cultural-identity-module-.txt",
+      "source_line": 53475,
+      "declared_path": "src/cirvanna/cultural-identity/monitoring/metrics.json",
+      "staged_path": "source-candidates/19-cultural-identity-module-.txt/src/cirvanna/cultural-identity/monitoring/metrics.json",
+      "bytes": 716,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cultural identity module .txt",
+      "section_slug": "19-cultural-identity-module-.txt",
+      "source_line": 53513,
+      "declared_path": "src/cirvanna/cultural-identity/deployment/config.json",
+      "staged_path": "source-candidates/19-cultural-identity-module-.txt/src/cirvanna/cultural-identity/deployment/config.json",
+      "bytes": 576,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cultural identity module .txt",
+      "section_slug": "19-cultural-identity-module-.txt",
+      "source_line": 53540,
+      "declared_path": "src/cirvanna/cultural-identity/compatibility/index.json",
+      "staged_path": "source-candidates/19-cultural-identity-module-.txt/src/cirvanna/cultural-identity/compatibility/index.json",
+      "bytes": 183,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cultural identity module .txt",
+      "section_slug": "19-cultural-identity-module-.txt",
+      "source_line": 53553,
+      "declared_path": "tests/unit/symbol-resolution.json",
+      "staged_path": "source-candidates/19-cultural-identity-module-.txt/tests/unit/symbol-resolution.json",
+      "bytes": 167,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cultural identity module .txt",
+      "section_slug": "19-cultural-identity-module-.txt",
+      "source_line": 53564,
+      "declared_path": "tests/unit/constraint-validation.json",
+      "staged_path": "source-candidates/19-cultural-identity-module-.txt/tests/unit/constraint-validation.json",
+      "bytes": 180,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cultural identity module .txt",
+      "section_slug": "19-cultural-identity-module-.txt",
+      "source_line": 53575,
+      "declared_path": "tests/unit/japanese-profile.json",
+      "staged_path": "source-candidates/19-cultural-identity-module-.txt/tests/unit/japanese-profile.json",
+      "bytes": 168,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cultural identity module .txt",
+      "section_slug": "19-cultural-identity-module-.txt",
+      "source_line": 53586,
+      "declared_path": "tests/unit/compatibility-scoring.json",
+      "staged_path": "source-candidates/19-cultural-identity-module-.txt/tests/unit/compatibility-scoring.json",
+      "bytes": 180,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cultural identity module .txt",
+      "section_slug": "19-cultural-identity-module-.txt",
+      "source_line": 53597,
+      "declared_path": "tests/integration/full-pipeline.json",
+      "staged_path": "source-candidates/19-cultural-identity-module-.txt/tests/integration/full-pipeline.json",
+      "bytes": 161,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cultural identity module .txt",
+      "section_slug": "19-cultural-identity-module-.txt",
+      "source_line": 53608,
+      "declared_path": "tests/regression/compatibility.json",
+      "staged_path": "source-candidates/19-cultural-identity-module-.txt/tests/regression/compatibility.json",
+      "bytes": 136,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cultural identity module .txt",
+      "section_slug": "19-cultural-identity-module-.txt",
+      "source_line": 53618,
+      "declared_path": "docs/api/reference.json",
+      "staged_path": "source-candidates/19-cultural-identity-module-.txt/docs/api/reference.json",
+      "bytes": 241,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./cultural identity module .txt",
+      "section_slug": "19-cultural-identity-module-.txt",
+      "source_line": 53628,
+      "declared_path": "package.json",
+      "staged_path": "source-candidates/19-cultural-identity-module-.txt/package.json",
+      "bytes": 876,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "source_line": 27443,
+      "declared_path": "src/types/index.ts",
+      "staged_path": "source-candidates/20-identity-decision-engine-.txt/src/types/index.ts",
+      "bytes": 81,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "source_line": 27451,
+      "declared_path": "src/types/core.ts",
+      "staged_path": "source-candidates/20-identity-decision-engine-.txt/src/types/core.ts",
+      "bytes": 380,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "source_line": 27461,
+      "declared_path": "src/types/analysis.ts",
+      "staged_path": "source-candidates/20-identity-decision-engine-.txt/src/types/analysis.ts",
+      "bytes": 1413,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "source_line": 27517,
+      "declared_path": "src/types/decisions.ts",
+      "staged_path": "source-candidates/20-identity-decision-engine-.txt/src/types/decisions.ts",
+      "bytes": 930,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "source_line": 27551,
+      "declared_path": "src/constants/index.ts",
+      "staged_path": "source-candidates/20-identity-decision-engine-.txt/src/constants/index.ts",
+      "bytes": 114,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "source_line": 27560,
+      "declared_path": "src/constants/regions.ts",
+      "staged_path": "source-candidates/20-identity-decision-engine-.txt/src/constants/regions.ts",
+      "bytes": 3326,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "source_line": 27692,
+      "declared_path": "src/constants/patterns.ts",
+      "staged_path": "source-candidates/20-identity-decision-engine-.txt/src/constants/patterns.ts",
+      "bytes": 2885,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "source_line": 27773,
+      "declared_path": "src/constants/seasons.ts",
+      "staged_path": "source-candidates/20-identity-decision-engine-.txt/src/constants/seasons.ts",
+      "bytes": 401,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "source_line": 27788,
+      "declared_path": "src/structures/atomic.ts",
+      "staged_path": "source-candidates/20-identity-decision-engine-.txt/src/structures/atomic.ts",
+      "bytes": 512,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "source_line": 27808,
+      "declared_path": "src/structures/ring-buffer.ts",
+      "staged_path": "source-candidates/20-identity-decision-engine-.txt/src/structures/ring-buffer.ts",
+      "bytes": 767,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "source_line": 27839,
+      "declared_path": "src/structures/deterministic-random.ts",
+      "staged_path": "source-candidates/20-identity-decision-engine-.txt/src/structures/deterministic-random.ts",
+      "bytes": 501,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "source_line": 27859,
+      "declared_path": "src/validation/input-validator.ts",
+      "staged_path": "source-candidates/20-identity-decision-engine-.txt/src/validation/input-validator.ts",
+      "bytes": 7247,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "source_line": 28033,
+      "declared_path": "src/analysis/coverage-analyzer.ts",
+      "staged_path": "source-candidates/20-identity-decision-engine-.txt/src/analysis/coverage-analyzer.ts",
+      "bytes": 3407,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "source_line": 28138,
+      "declared_path": "src/analysis/identity-analyzer.ts",
+      "staged_path": "source-candidates/20-identity-decision-engine-.txt/src/analysis/identity-analyzer.ts",
+      "bytes": 1067,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "source_line": 28180,
+      "declared_path": "src/analysis/wardrobe-analyzer.ts",
+      "staged_path": "source-candidates/20-identity-decision-engine-.txt/src/analysis/wardrobe-analyzer.ts",
+      "bytes": 6653,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "source_line": 28360,
+      "declared_path": "src/analysis/trend-analyzer.ts",
+      "staged_path": "source-candidates/20-identity-decision-engine-.txt/src/analysis/trend-analyzer.ts",
+      "bytes": 2973,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "source_line": 28440,
+      "declared_path": "src/composition/identity-composer.ts",
+      "staged_path": "source-candidates/20-identity-decision-engine-.txt/src/composition/identity-composer.ts",
+      "bytes": 1330,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "source_line": 28485,
+      "declared_path": "src/composition/decision-composer.ts",
+      "staged_path": "source-candidates/20-identity-decision-engine-.txt/src/composition/decision-composer.ts",
+      "bytes": 4185,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "source_line": 28632,
+      "declared_path": "src/caching/optimized-cache.ts",
+      "staged_path": "source-candidates/20-identity-decision-engine-.txt/src/caching/optimized-cache.ts",
+      "bytes": 1746,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "source_line": 28698,
+      "declared_path": "src/resilience/circuit-breaker.ts",
+      "staged_path": "source-candidates/20-identity-decision-engine-.txt/src/resilience/circuit-breaker.ts",
+      "bytes": 1794,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "source_line": 28764,
+      "declared_path": "src/engine/identity-decision-engine.ts",
+      "staged_path": "source-candidates/20-identity-decision-engine-.txt/src/engine/identity-decision-engine.ts",
+      "bytes": 10590,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "source_line": 29048,
+      "declared_path": "src/integration/beauty-ai-engine.ts",
+      "staged_path": "source-candidates/20-identity-decision-engine-.txt/src/integration/beauty-ai-engine.ts",
+      "bytes": 5253,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "source_line": 29189,
+      "declared_path": "src/index.ts",
+      "staged_path": "source-candidates/20-identity-decision-engine-.txt/src/index.ts",
+      "bytes": 1776,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "source_line": 29245,
+      "declared_path": "src/health-check.ts",
+      "staged_path": "source-candidates/20-identity-decision-engine-.txt/src/health-check.ts",
+      "bytes": 63,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "source_line": 29252,
+      "declared_path": "package.json",
+      "staged_path": "source-candidates/20-identity-decision-engine-.txt/package.json",
+      "bytes": 1016,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "source_line": 29290,
+      "declared_path": "tsconfig.json",
+      "staged_path": "source-candidates/20-identity-decision-engine-.txt/tsconfig.json",
+      "bytes": 631,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./identity decision engine .txt",
+      "section_slug": "20-identity-decision-engine-.txt",
+      "source_line": 29319,
+      "declared_path": "README.md",
+      "staged_path": "source-candidates/20-identity-decision-engine-.txt/README.md",
+      "bytes": 766,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./skin analysis repo .txt",
+      "section_slug": "22-skin-analysis-repo-.txt",
+      "source_line": 30468,
+      "declared_path": "src/skin_analysis/config.py",
+      "staged_path": "source-candidates/22-skin-analysis-repo-.txt/src/skin_analysis/config.py",
+      "bytes": 998,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./skin analysis repo .txt",
+      "section_slug": "22-skin-analysis-repo-.txt",
+      "source_line": 30509,
+      "declared_path": "src/skin_analysis/sandbox.py",
+      "staged_path": "source-candidates/22-skin-analysis-repo-.txt/src/skin_analysis/sandbox.py",
+      "bytes": 1085,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./skin analysis repo .txt",
+      "section_slug": "22-skin-analysis-repo-.txt",
+      "source_line": 30550,
+      "declared_path": "src/skin_analysis/input.py",
+      "staged_path": "source-candidates/22-skin-analysis-repo-.txt/src/skin_analysis/input.py",
+      "bytes": 1586,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./skin analysis repo .txt",
+      "section_slug": "22-skin-analysis-repo-.txt",
+      "source_line": 30595,
+      "declared_path": "src/skin_analysis/gates.py",
+      "staged_path": "source-candidates/22-skin-analysis-repo-.txt/src/skin_analysis/gates.py",
+      "bytes": 3677,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./skin analysis repo .txt",
+      "section_slug": "22-skin-analysis-repo-.txt",
+      "source_line": 30687,
+      "declared_path": "src/skin_analysis/perception.py",
+      "staged_path": "source-candidates/22-skin-analysis-repo-.txt/src/skin_analysis/perception.py",
+      "bytes": 5478,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./skin analysis repo .txt",
+      "section_slug": "22-skin-analysis-repo-.txt",
+      "source_line": 30852,
+      "declared_path": "src/skin_analysis/output.py",
+      "staged_path": "source-candidates/22-skin-analysis-repo-.txt/src/skin_analysis/output.py",
+      "bytes": 1533,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./skin analysis repo .txt",
+      "section_slug": "22-skin-analysis-repo-.txt",
+      "source_line": 30901,
+      "declared_path": "src/skin_analysis/analyzer.py",
+      "staged_path": "source-candidates/22-skin-analysis-repo-.txt/src/skin_analysis/analyzer.py",
+      "bytes": 4040,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./skin analysis repo .txt",
+      "section_slug": "22-skin-analysis-repo-.txt",
+      "source_line": 31012,
+      "declared_path": "src/skin_analysis/confidence_layer.py",
+      "staged_path": "source-candidates/22-skin-analysis-repo-.txt/src/skin_analysis/confidence_layer.py",
+      "bytes": 2560,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./skin analysis repo .txt",
+      "section_slug": "22-skin-analysis-repo-.txt",
+      "source_line": 31082,
+      "declared_path": "src/skin_analysis/cfrp_integration.py",
+      "staged_path": "source-candidates/22-skin-analysis-repo-.txt/src/skin_analysis/cfrp_integration.py",
+      "bytes": 3348,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./skin analysis repo .txt",
+      "section_slug": "22-skin-analysis-repo-.txt",
+      "source_line": 31174,
+      "declared_path": "src/skin_analysis/pipeline.py",
+      "staged_path": "source-candidates/22-skin-analysis-repo-.txt/src/skin_analysis/pipeline.py",
+      "bytes": 1717,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./skin analysis repo .txt",
+      "section_slug": "22-skin-analysis-repo-.txt",
+      "source_line": 31228,
+      "declared_path": "src/skin_analysis/validation.py",
+      "staged_path": "source-candidates/22-skin-analysis-repo-.txt/src/skin_analysis/validation.py",
+      "bytes": 5786,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./skin analysis repo .txt",
+      "section_slug": "22-skin-analysis-repo-.txt",
+      "source_line": 31386,
+      "declared_path": "src/skin_analysis/__init__.py",
+      "staged_path": "source-candidates/22-skin-analysis-repo-.txt/src/skin_analysis/__init__.py",
+      "bytes": 607,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./skin analysis repo .txt",
+      "section_slug": "22-skin-analysis-repo-.txt",
+      "source_line": 31412,
+      "declared_path": "main.py",
+      "staged_path": "source-candidates/22-skin-analysis-repo-.txt/main.py",
+      "bytes": 2088,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./skin analysis repo .txt",
+      "section_slug": "22-skin-analysis-repo-.txt",
+      "source_line": 31471,
+      "declared_path": "requirements.txt",
+      "staged_path": "source-candidates/22-skin-analysis-repo-.txt/requirements.txt",
+      "bytes": 69,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "source_line": 31529,
+      "declared_path": "docker-compose.yml",
+      "staged_path": "source-candidates/23-virtual-tryon-1-.txt/docker-compose.yml",
+      "bytes": 5375,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "source_line": 31822,
+      "declared_path": "requirements.txt",
+      "staged_path": "source-candidates/23-virtual-tryon-1-.txt/requirements.txt",
+      "bytes": 991,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "source_line": 31894,
+      "declared_path": "setup.py",
+      "staged_path": "source-candidates/23-virtual-tryon-1-.txt/setup.py",
+      "bytes": 832,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "source_line": 31924,
+      "declared_path": "README.md",
+      "staged_path": "source-candidates/23-virtual-tryon-1-.txt/README.md",
+      "bytes": 689,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "source_line": 32113,
+      "declared_path": "shared/body.py",
+      "staged_path": "source-candidates/23-virtual-tryon-1-.txt/shared/body.py",
+      "bytes": 3950,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "source_line": 32229,
+      "declared_path": "shared/garment.py",
+      "staged_path": "source-candidates/23-virtual-tryon-1-.txt/shared/garment.py",
+      "bytes": 2176,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "source_line": 32300,
+      "declared_path": "shared/fit.py",
+      "staged_path": "source-candidates/23-virtual-tryon-1-.txt/shared/fit.py",
+      "bytes": 1290,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "source_line": 32340,
+      "declared_path": "shared/exceptions.py",
+      "staged_path": "source-candidates/23-virtual-tryon-1-.txt/shared/exceptions.py",
+      "bytes": 2274,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "source_line": 32418,
+      "declared_path": "shared/logging.py",
+      "staged_path": "source-candidates/23-virtual-tryon-1-.txt/shared/logging.py",
+      "bytes": 2038,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "source_line": 32490,
+      "declared_path": "shared/metrics.py",
+      "staged_path": "source-candidates/23-virtual-tryon-1-.txt/shared/metrics.py",
+      "bytes": 2743,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "source_line": 32665,
+      "declared_path": "ais/app.py",
+      "staged_path": "source-candidates/23-virtual-tryon-1-.txt/ais/app.py",
+      "bytes": 8570,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "source_line": 32952,
+      "declared_path": "ais/config.py",
+      "staged_path": "source-candidates/23-virtual-tryon-1-.txt/ais/config.py",
+      "bytes": 1969,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "source_line": 33015,
+      "declared_path": "ais/cache.py",
+      "staged_path": "source-candidates/23-virtual-tryon-1-.txt/ais/cache.py",
+      "bytes": 2362,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "source_line": 33089,
+      "declared_path": "ais/preprocessing.py",
+      "staged_path": "source-candidates/23-virtual-tryon-1-.txt/ais/preprocessing.py",
+      "bytes": 4879,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "source_line": 33256,
+      "declared_path": "ais/service.py",
+      "staged_path": "source-candidates/23-virtual-tryon-1-.txt/ais/service.py",
+      "bytes": 12490,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "source_line": 33601,
+      "declared_path": "ais/uncertainty.py",
+      "staged_path": "source-candidates/23-virtual-tryon-1-.txt/ais/uncertainty.py",
+      "bytes": 5744,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "source_line": 33774,
+      "declared_path": "ais/exceptions.py",
+      "staged_path": "source-candidates/23-virtual-tryon-1-.txt/ais/exceptions.py",
+      "bytes": 735,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "source_line": 33800,
+      "declared_path": "ais/metrics.py",
+      "staged_path": "source-candidates/23-virtual-tryon-1-.txt/ais/metrics.py",
+      "bytes": 1029,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "source_line": 33845,
+      "declared_path": "ais/models/__init__.py",
+      "staged_path": "source-candidates/23-virtual-tryon-1-.txt/ais/models/__init__.py",
+      "bytes": 156,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "source_line": 33855,
+      "declared_path": "ais/models/segmentation.py",
+      "staged_path": "source-candidates/23-virtual-tryon-1-.txt/ais/models/segmentation.py",
+      "bytes": 3717,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "source_line": 33978,
+      "declared_path": "ais/models/pose.py",
+      "staged_path": "source-candidates/23-virtual-tryon-1-.txt/ais/models/pose.py",
+      "bytes": 4535,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "source_line": 34113,
+      "declared_path": "ais/models/smpl_fitter.py",
+      "staged_path": "source-candidates/23-virtual-tryon-1-.txt/ais/models/smpl_fitter.py",
+      "bytes": 5833,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "source_line": 34299,
+      "declared_path": "gsis/app.py",
+      "staged_path": "source-candidates/23-virtual-tryon-1-.txt/gsis/app.py",
+      "bytes": 9123,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "source_line": 34625,
+      "declared_path": "gsis/database.py",
+      "staged_path": "source-candidates/23-virtual-tryon-1-.txt/gsis/database.py",
+      "bytes": 479,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "source_line": 34648,
+      "declared_path": "gsis/models.py",
+      "staged_path": "source-candidates/23-virtual-tryon-1-.txt/gsis/models.py",
+      "bytes": 1478,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "source_line": 34690,
+      "declared_path": "gsis/service.py",
+      "staged_path": "source-candidates/23-virtual-tryon-1-.txt/gsis/service.py",
+      "bytes": 3774,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (1).txt",
+      "section_slug": "23-virtual-tryon-1-.txt",
+      "source_line": 34796,
+      "declared_path": "gsis/validators.py",
+      "staged_path": "source-candidates/23-virtual-tryon-1-.txt/gsis/validators.py",
+      "bytes": 1117,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "source_line": 34883,
+      "declared_path": "docker-compose.yml",
+      "staged_path": "source-candidates/24-virtual-tryon-2-.txt/docker-compose.yml",
+      "bytes": 5375,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "source_line": 35176,
+      "declared_path": "requirements.txt",
+      "staged_path": "source-candidates/24-virtual-tryon-2-.txt/requirements.txt",
+      "bytes": 991,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "source_line": 35248,
+      "declared_path": "setup.py",
+      "staged_path": "source-candidates/24-virtual-tryon-2-.txt/setup.py",
+      "bytes": 832,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "source_line": 35278,
+      "declared_path": "README.md",
+      "staged_path": "source-candidates/24-virtual-tryon-2-.txt/README.md",
+      "bytes": 689,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "source_line": 35467,
+      "declared_path": "shared/body.py",
+      "staged_path": "source-candidates/24-virtual-tryon-2-.txt/shared/body.py",
+      "bytes": 3950,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "source_line": 35583,
+      "declared_path": "shared/garment.py",
+      "staged_path": "source-candidates/24-virtual-tryon-2-.txt/shared/garment.py",
+      "bytes": 2176,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "source_line": 35654,
+      "declared_path": "shared/fit.py",
+      "staged_path": "source-candidates/24-virtual-tryon-2-.txt/shared/fit.py",
+      "bytes": 1290,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "source_line": 35694,
+      "declared_path": "shared/exceptions.py",
+      "staged_path": "source-candidates/24-virtual-tryon-2-.txt/shared/exceptions.py",
+      "bytes": 2274,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "source_line": 35772,
+      "declared_path": "shared/logging.py",
+      "staged_path": "source-candidates/24-virtual-tryon-2-.txt/shared/logging.py",
+      "bytes": 2038,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "source_line": 35844,
+      "declared_path": "shared/metrics.py",
+      "staged_path": "source-candidates/24-virtual-tryon-2-.txt/shared/metrics.py",
+      "bytes": 2743,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "source_line": 36019,
+      "declared_path": "ais/app.py",
+      "staged_path": "source-candidates/24-virtual-tryon-2-.txt/ais/app.py",
+      "bytes": 8570,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "source_line": 36306,
+      "declared_path": "ais/config.py",
+      "staged_path": "source-candidates/24-virtual-tryon-2-.txt/ais/config.py",
+      "bytes": 1969,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "source_line": 36369,
+      "declared_path": "ais/cache.py",
+      "staged_path": "source-candidates/24-virtual-tryon-2-.txt/ais/cache.py",
+      "bytes": 2362,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "source_line": 36443,
+      "declared_path": "ais/preprocessing.py",
+      "staged_path": "source-candidates/24-virtual-tryon-2-.txt/ais/preprocessing.py",
+      "bytes": 4879,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "source_line": 36610,
+      "declared_path": "ais/service.py",
+      "staged_path": "source-candidates/24-virtual-tryon-2-.txt/ais/service.py",
+      "bytes": 12490,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "source_line": 36955,
+      "declared_path": "ais/uncertainty.py",
+      "staged_path": "source-candidates/24-virtual-tryon-2-.txt/ais/uncertainty.py",
+      "bytes": 5744,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "source_line": 37128,
+      "declared_path": "ais/exceptions.py",
+      "staged_path": "source-candidates/24-virtual-tryon-2-.txt/ais/exceptions.py",
+      "bytes": 735,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "source_line": 37154,
+      "declared_path": "ais/metrics.py",
+      "staged_path": "source-candidates/24-virtual-tryon-2-.txt/ais/metrics.py",
+      "bytes": 1029,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "source_line": 37199,
+      "declared_path": "ais/models/__init__.py",
+      "staged_path": "source-candidates/24-virtual-tryon-2-.txt/ais/models/__init__.py",
+      "bytes": 156,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "source_line": 37209,
+      "declared_path": "ais/models/segmentation.py",
+      "staged_path": "source-candidates/24-virtual-tryon-2-.txt/ais/models/segmentation.py",
+      "bytes": 3717,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "source_line": 37332,
+      "declared_path": "ais/models/pose.py",
+      "staged_path": "source-candidates/24-virtual-tryon-2-.txt/ais/models/pose.py",
+      "bytes": 4535,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "source_line": 37467,
+      "declared_path": "ais/models/smpl_fitter.py",
+      "staged_path": "source-candidates/24-virtual-tryon-2-.txt/ais/models/smpl_fitter.py",
+      "bytes": 5833,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "source_line": 37653,
+      "declared_path": "gsis/app.py",
+      "staged_path": "source-candidates/24-virtual-tryon-2-.txt/gsis/app.py",
+      "bytes": 9123,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "source_line": 37979,
+      "declared_path": "gsis/database.py",
+      "staged_path": "source-candidates/24-virtual-tryon-2-.txt/gsis/database.py",
+      "bytes": 479,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "source_line": 38002,
+      "declared_path": "gsis/models.py",
+      "staged_path": "source-candidates/24-virtual-tryon-2-.txt/gsis/models.py",
+      "bytes": 1478,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "source_line": 38044,
+      "declared_path": "gsis/service.py",
+      "staged_path": "source-candidates/24-virtual-tryon-2-.txt/gsis/service.py",
+      "bytes": 3774,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon  (2).txt",
+      "section_slug": "24-virtual-tryon-2-.txt",
+      "source_line": 38150,
+      "declared_path": "gsis/validators.py",
+      "staged_path": "source-candidates/24-virtual-tryon-2-.txt/gsis/validators.py",
+      "bytes": 1117,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "source_line": 38233,
+      "declared_path": "docker-compose.yml",
+      "staged_path": "source-candidates/25-virtual-tryon-.txt/docker-compose.yml",
+      "bytes": 5615,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "source_line": 38536,
+      "declared_path": "requirements.txt",
+      "staged_path": "source-candidates/25-virtual-tryon-.txt/requirements.txt",
+      "bytes": 1042,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "source_line": 38614,
+      "declared_path": "setup.py",
+      "staged_path": "source-candidates/25-virtual-tryon-.txt/setup.py",
+      "bytes": 832,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "source_line": 38644,
+      "declared_path": "README.md",
+      "staged_path": "source-candidates/25-virtual-tryon-.txt/README.md",
+      "bytes": 692,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "source_line": 38836,
+      "declared_path": "shared/body.py",
+      "staged_path": "source-candidates/25-virtual-tryon-.txt/shared/body.py",
+      "bytes": 3942,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "source_line": 38952,
+      "declared_path": "shared/garment.py",
+      "staged_path": "source-candidates/25-virtual-tryon-.txt/shared/garment.py",
+      "bytes": 2172,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "source_line": 39023,
+      "declared_path": "shared/fit.py",
+      "staged_path": "source-candidates/25-virtual-tryon-.txt/shared/fit.py",
+      "bytes": 1286,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "source_line": 39063,
+      "declared_path": "shared/exceptions.py",
+      "staged_path": "source-candidates/25-virtual-tryon-.txt/shared/exceptions.py",
+      "bytes": 2274,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "source_line": 39141,
+      "declared_path": "shared/logging.py",
+      "staged_path": "source-candidates/25-virtual-tryon-.txt/shared/logging.py",
+      "bytes": 1977,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "source_line": 39211,
+      "declared_path": "shared/metrics.py",
+      "staged_path": "source-candidates/25-virtual-tryon-.txt/shared/metrics.py",
+      "bytes": 2708,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "source_line": 39384,
+      "declared_path": "ais/app.py",
+      "staged_path": "source-candidates/25-virtual-tryon-.txt/ais/app.py",
+      "bytes": 8455,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "source_line": 39664,
+      "declared_path": "ais/config.py",
+      "staged_path": "source-candidates/25-virtual-tryon-.txt/ais/config.py",
+      "bytes": 1925,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "source_line": 39727,
+      "declared_path": "ais/cache.py",
+      "staged_path": "source-candidates/25-virtual-tryon-.txt/ais/cache.py",
+      "bytes": 2283,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "source_line": 39800,
+      "declared_path": "ais/preprocessing.py",
+      "staged_path": "source-candidates/25-virtual-tryon-.txt/ais/preprocessing.py",
+      "bytes": 4591,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "source_line": 39967,
+      "declared_path": "ais/service.py",
+      "staged_path": "source-candidates/25-virtual-tryon-.txt/ais/service.py",
+      "bytes": 11923,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "source_line": 40289,
+      "declared_path": "ais/uncertainty.py",
+      "staged_path": "source-candidates/25-virtual-tryon-.txt/ais/uncertainty.py",
+      "bytes": 5404,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "source_line": 40454,
+      "declared_path": "ais/exceptions.py",
+      "staged_path": "source-candidates/25-virtual-tryon-.txt/ais/exceptions.py",
+      "bytes": 735,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "source_line": 40480,
+      "declared_path": "ais/metrics.py",
+      "staged_path": "source-candidates/25-virtual-tryon-.txt/ais/metrics.py",
+      "bytes": 1029,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "source_line": 40525,
+      "declared_path": "ais/models/init.py",
+      "staged_path": "source-candidates/25-virtual-tryon-.txt/ais/models/init.py",
+      "bytes": 156,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "source_line": 40535,
+      "declared_path": "ais/models/segmentation.py",
+      "staged_path": "source-candidates/25-virtual-tryon-.txt/ais/models/segmentation.py",
+      "bytes": 3526,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "source_line": 40655,
+      "declared_path": "ais/models/pose.py",
+      "staged_path": "source-candidates/25-virtual-tryon-.txt/ais/models/pose.py",
+      "bytes": 4336,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "source_line": 40783,
+      "declared_path": "ais/models/smpl_fitter.py",
+      "staged_path": "source-candidates/25-virtual-tryon-.txt/ais/models/smpl_fitter.py",
+      "bytes": 6837,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "source_line": 40964,
+      "declared_path": "ais/measurement_extractor.py",
+      "staged_path": "source-candidates/25-virtual-tryon-.txt/ais/measurement_extractor.py",
+      "bytes": 2233,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "source_line": 41055,
+      "declared_path": "gsis/app.py",
+      "staged_path": "source-candidates/25-virtual-tryon-.txt/gsis/app.py",
+      "bytes": 9011,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "source_line": 41373,
+      "declared_path": "gsis/database.py",
+      "staged_path": "source-candidates/25-virtual-tryon-.txt/gsis/database.py",
+      "bytes": 479,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "source_line": 41396,
+      "declared_path": "gsis/models.py",
+      "staged_path": "source-candidates/25-virtual-tryon-.txt/gsis/models.py",
+      "bytes": 1467,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon .txt",
+      "section_slug": "25-virtual-tryon-.txt",
+      "source_line": 41439,
+      "declared_path": "gsis/service.py",
+      "staged_path": "source-candidates/25-virtual-tryon-.txt/gsis/service.py",
+      "bytes": 3110,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "source_line": 41581,
+      "declared_path": "docker-compose.yml",
+      "staged_path": "source-candidates/26-virtual-tryon-improved.txt/docker-compose.yml",
+      "bytes": 5375,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "source_line": 41874,
+      "declared_path": "requirements.txt",
+      "staged_path": "source-candidates/26-virtual-tryon-improved.txt/requirements.txt",
+      "bytes": 991,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "source_line": 41946,
+      "declared_path": "setup.py",
+      "staged_path": "source-candidates/26-virtual-tryon-improved.txt/setup.py",
+      "bytes": 832,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "source_line": 41976,
+      "declared_path": "README.md",
+      "staged_path": "source-candidates/26-virtual-tryon-improved.txt/README.md",
+      "bytes": 689,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "source_line": 42165,
+      "declared_path": "shared/body.py",
+      "staged_path": "source-candidates/26-virtual-tryon-improved.txt/shared/body.py",
+      "bytes": 3950,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "source_line": 42281,
+      "declared_path": "shared/garment.py",
+      "staged_path": "source-candidates/26-virtual-tryon-improved.txt/shared/garment.py",
+      "bytes": 2176,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "source_line": 42352,
+      "declared_path": "shared/fit.py",
+      "staged_path": "source-candidates/26-virtual-tryon-improved.txt/shared/fit.py",
+      "bytes": 1290,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "source_line": 42392,
+      "declared_path": "shared/exceptions.py",
+      "staged_path": "source-candidates/26-virtual-tryon-improved.txt/shared/exceptions.py",
+      "bytes": 2274,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "source_line": 42470,
+      "declared_path": "shared/logging.py",
+      "staged_path": "source-candidates/26-virtual-tryon-improved.txt/shared/logging.py",
+      "bytes": 2038,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "source_line": 42542,
+      "declared_path": "shared/metrics.py",
+      "staged_path": "source-candidates/26-virtual-tryon-improved.txt/shared/metrics.py",
+      "bytes": 2743,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "source_line": 42717,
+      "declared_path": "ais/app.py",
+      "staged_path": "source-candidates/26-virtual-tryon-improved.txt/ais/app.py",
+      "bytes": 8570,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "source_line": 43004,
+      "declared_path": "ais/config.py",
+      "staged_path": "source-candidates/26-virtual-tryon-improved.txt/ais/config.py",
+      "bytes": 1969,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "source_line": 43067,
+      "declared_path": "ais/cache.py",
+      "staged_path": "source-candidates/26-virtual-tryon-improved.txt/ais/cache.py",
+      "bytes": 2362,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "source_line": 43141,
+      "declared_path": "ais/preprocessing.py",
+      "staged_path": "source-candidates/26-virtual-tryon-improved.txt/ais/preprocessing.py",
+      "bytes": 4879,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "source_line": 43308,
+      "declared_path": "ais/service.py",
+      "staged_path": "source-candidates/26-virtual-tryon-improved.txt/ais/service.py",
+      "bytes": 12490,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "source_line": 43653,
+      "declared_path": "ais/uncertainty.py",
+      "staged_path": "source-candidates/26-virtual-tryon-improved.txt/ais/uncertainty.py",
+      "bytes": 5744,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "source_line": 43826,
+      "declared_path": "ais/exceptions.py",
+      "staged_path": "source-candidates/26-virtual-tryon-improved.txt/ais/exceptions.py",
+      "bytes": 735,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "source_line": 43852,
+      "declared_path": "ais/metrics.py",
+      "staged_path": "source-candidates/26-virtual-tryon-improved.txt/ais/metrics.py",
+      "bytes": 1029,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "source_line": 43897,
+      "declared_path": "ais/models/__init__.py",
+      "staged_path": "source-candidates/26-virtual-tryon-improved.txt/ais/models/__init__.py",
+      "bytes": 156,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "source_line": 43907,
+      "declared_path": "ais/models/segmentation.py",
+      "staged_path": "source-candidates/26-virtual-tryon-improved.txt/ais/models/segmentation.py",
+      "bytes": 3717,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "source_line": 44030,
+      "declared_path": "ais/models/pose.py",
+      "staged_path": "source-candidates/26-virtual-tryon-improved.txt/ais/models/pose.py",
+      "bytes": 4535,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "source_line": 44165,
+      "declared_path": "ais/models/smpl_fitter.py",
+      "staged_path": "source-candidates/26-virtual-tryon-improved.txt/ais/models/smpl_fitter.py",
+      "bytes": 5833,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "source_line": 44351,
+      "declared_path": "gsis/app.py",
+      "staged_path": "source-candidates/26-virtual-tryon-improved.txt/gsis/app.py",
+      "bytes": 9123,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "source_line": 44677,
+      "declared_path": "gsis/database.py",
+      "staged_path": "source-candidates/26-virtual-tryon-improved.txt/gsis/database.py",
+      "bytes": 479,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "source_line": 44700,
+      "declared_path": "gsis/models.py",
+      "staged_path": "source-candidates/26-virtual-tryon-improved.txt/gsis/models.py",
+      "bytes": 1478,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "source_line": 44742,
+      "declared_path": "gsis/service.py",
+      "staged_path": "source-candidates/26-virtual-tryon-improved.txt/gsis/service.py",
+      "bytes": 3774,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./virtual Tryon improved.txt",
+      "section_slug": "26-virtual-tryon-improved.txt",
+      "source_line": 44848,
+      "declared_path": "gsis/validators.py",
+      "staged_path": "source-candidates/26-virtual-tryon-improved.txt/gsis/validators.py",
+      "bytes": 1117,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 47236,
+      "declared_path": "services/item-service/requirements.txt",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/item-service/requirements.txt",
+      "bytes": 513,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 47260,
+      "declared_path": "services/item-service/app/__init__.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/item-service/app/__init__.py",
+      "bytes": 51,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 47267,
+      "declared_path": "services/item-service/app/config.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/item-service/app/config.py",
+      "bytes": 178,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 47279,
+      "declared_path": "services/item-service/app/db.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/item-service/app/db.py",
+      "bytes": 1759,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 47348,
+      "declared_path": "services/item-service/app/models.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/item-service/app/models.py",
+      "bytes": 8421,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 47549,
+      "declared_path": "services/item-service/app/repositories.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/item-service/app/repositories.py",
+      "bytes": 3137,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 47640,
+      "declared_path": "services/item-service/app/services.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/item-service/app/services.py",
+      "bytes": 8059,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 47846,
+      "declared_path": "services/item-service/app/main.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/item-service/app/main.py",
+      "bytes": 4792,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 48007,
+      "declared_path": "services/item-service/tests/conftest.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/item-service/tests/conftest.py",
+      "bytes": 818,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 48041,
+      "declared_path": "services/item-service/tests/test_domain.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/item-service/tests/test_domain.py",
+      "bytes": 4678,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 48183,
+      "declared_path": "services/item-service/tests/test_services.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/item-service/tests/test_services.py",
+      "bytes": 3031,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 48301,
+      "declared_path": "services/graph-service/requirements.txt",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/graph-service/requirements.txt",
+      "bytes": 343,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 48319,
+      "declared_path": "services/graph-service/app/__init__.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/graph-service/app/__init__.py",
+      "bytes": 43,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 48326,
+      "declared_path": "services/graph-service/app/config.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/graph-service/app/config.py",
+      "bytes": 211,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 48339,
+      "declared_path": "services/graph-service/app/repository.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/graph-service/app/repository.py",
+      "bytes": 3713,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 48442,
+      "declared_path": "services/graph-service/app/seeder.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/graph-service/app/seeder.py",
+      "bytes": 2636,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 48524,
+      "declared_path": "services/graph-service/app/main.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/graph-service/app/main.py",
+      "bytes": 2939,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 48628,
+      "declared_path": "services/graph-service/tests/test_seeder.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/graph-service/tests/test_seeder.py",
+      "bytes": 816,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 48686,
+      "declared_path": "services/recommendation-service/requirements.txt",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/recommendation-service/requirements.txt",
+      "bytes": 348,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 48704,
+      "declared_path": "services/recommendation-service/app/__init__.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/recommendation-service/app/__init__.py",
+      "bytes": 52,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 48711,
+      "declared_path": "services/recommendation-service/app/config.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/recommendation-service/app/config.py",
+      "bytes": 324,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 48725,
+      "declared_path": "services/recommendation-service/app/imperfection_engine.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/recommendation-service/app/imperfection_engine.py",
+      "bytes": 2669,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 48806,
+      "declared_path": "services/recommendation-service/app/vector_client.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/recommendation-service/app/vector_client.py",
+      "bytes": 1624,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 48857,
+      "declared_path": "services/recommendation-service/app/scoring.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/recommendation-service/app/scoring.py",
+      "bytes": 1735,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 48914,
+      "declared_path": "services/recommendation-service/app/main.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/recommendation-service/app/main.py",
+      "bytes": 3786,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 49037,
+      "declared_path": "services/recommendation-service/tests/test_imperfection.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/recommendation-service/tests/test_imperfection.py",
+      "bytes": 1027,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 49070,
+      "declared_path": "services/recommendation-service/tests/test_scoring.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/recommendation-service/tests/test_scoring.py",
+      "bytes": 379,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 49112,
+      "declared_path": "services/perception-service/requirements.txt",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/perception-service/requirements.txt",
+      "bytes": 362,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 49133,
+      "declared_path": "services/perception-service/app/__init__.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/perception-service/app/__init__.py",
+      "bytes": 48,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 49140,
+      "declared_path": "services/perception-service/app/config.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/perception-service/app/config.py",
+      "bytes": 140,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 49150,
+      "declared_path": "services/perception-service/app/perception.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/perception-service/app/perception.py",
+      "bytes": 3648,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 49254,
+      "declared_path": "services/perception-service/app/tasks.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/perception-service/app/tasks.py",
+      "bytes": 1703,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 49317,
+      "declared_path": "services/perception-service/app/main.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/perception-service/app/main.py",
+      "bytes": 1183,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 49364,
+      "declared_path": "services/perception-service/tests/test_perception.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/perception-service/tests/test_perception.py",
+      "bytes": 799,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 49423,
+      "declared_path": "services/sync-service/requirements.txt",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/sync-service/requirements.txt",
+      "bytes": 396,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 49443,
+      "declared_path": "services/sync-service/app/__init__.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/sync-service/app/__init__.py",
+      "bytes": 42,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 49450,
+      "declared_path": "services/sync-service/app/config.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/sync-service/app/config.py",
+      "bytes": 249,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 49462,
+      "declared_path": "services/sync-service/app/db.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/sync-service/app/db.py",
+      "bytes": 1263,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 49519,
+      "declared_path": "services/sync-service/app/models.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/sync-service/app/models.py",
+      "bytes": 1339,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 49557,
+      "declared_path": "services/sync-service/app/offline_queue.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/sync-service/app/offline_queue.py",
+      "bytes": 2958,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 49643,
+      "declared_path": "services/sync-service/app/conflict_resolver.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/sync-service/app/conflict_resolver.py",
+      "bytes": 1551,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 49694,
+      "declared_path": "services/sync-service/app/main.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/sync-service/app/main.py",
+      "bytes": 3432,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 49803,
+      "declared_path": "services/sync-service/tests/test_offline_queue.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/sync-service/tests/test_offline_queue.py",
+      "bytes": 1191,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 49845,
+      "declared_path": "services/sync-service/tests/test_conflict_resolver.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/sync-service/tests/test_conflict_resolver.py",
+      "bytes": 971,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 49891,
+      "declared_path": "services/catalog-importer/requirements.txt",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/catalog-importer/requirements.txt",
+      "bytes": 27,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 49898,
+      "declared_path": "services/catalog-importer/importer.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/catalog-importer/importer.py",
+      "bytes": 4157,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 50047,
+      "declared_path": "services/api-gateway/requirements.txt",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/api-gateway/requirements.txt",
+      "bytes": 313,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 50063,
+      "declared_path": "services/api-gateway/app/__init__.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/api-gateway/app/__init__.py",
+      "bytes": 41,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 50070,
+      "declared_path": "services/api-gateway/app/config.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/api-gateway/app/config.py",
+      "bytes": 822,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 50102,
+      "declared_path": "services/api-gateway/app/rate_limiter.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/api-gateway/app/rate_limiter.py",
+      "bytes": 1294,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 50149,
+      "declared_path": "services/api-gateway/app/circuit_breaker.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/api-gateway/app/circuit_breaker.py",
+      "bytes": 3098,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe 2,3 and 4 .txt",
+      "section_slug": "30-wardrobe-2-3-and-4-.txt",
+      "source_line": 50245,
+      "declared_path": "services/api-gateway/app/main.py",
+      "staged_path": "source-candidates/30-wardrobe-2-3-and-4-.txt/services/api-gateway/app/main.py",
+      "bytes": 2565,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe part 1.txt",
+      "section_slug": "31-wardrobe-part-1.txt",
+      "source_line": 50340,
+      "declared_path": "pyproject.toml",
+      "staged_path": "source-candidates/31-wardrobe-part-1.txt/pyproject.toml",
+      "bytes": 2940,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe part 1.txt",
+      "section_slug": "31-wardrobe-part-1.txt",
+      "source_line": 50556,
+      "declared_path": "docker-compose.yml",
+      "staged_path": "source-candidates/31-wardrobe-part-1.txt/docker-compose.yml",
+      "bytes": 4754,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe part 1.txt",
+      "section_slug": "31-wardrobe-part-1.txt",
+      "source_line": 50792,
+      "declared_path": "services/common/__init__.py",
+      "staged_path": "source-candidates/31-wardrobe-part-1.txt/services/common/__init__.py",
+      "bytes": 723,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe part 1.txt",
+      "section_slug": "31-wardrobe-part-1.txt",
+      "source_line": 50832,
+      "declared_path": "services/common/config.py",
+      "staged_path": "source-candidates/31-wardrobe-part-1.txt/services/common/config.py",
+      "bytes": 8962,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe part 1.txt",
+      "section_slug": "31-wardrobe-part-1.txt",
+      "source_line": 50989,
+      "declared_path": "services/common/errors.py",
+      "staged_path": "source-candidates/31-wardrobe-part-1.txt/services/common/errors.py",
+      "bytes": 1527,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe part 1.txt",
+      "section_slug": "31-wardrobe-part-1.txt",
+      "source_line": 51065,
+      "declared_path": "services/common/logging_config.py",
+      "staged_path": "source-candidates/31-wardrobe-part-1.txt/services/common/logging_config.py",
+      "bytes": 2433,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe part 1.txt",
+      "section_slug": "31-wardrobe-part-1.txt",
+      "source_line": 51148,
+      "declared_path": "services/common/retry.py",
+      "staged_path": "source-candidates/31-wardrobe-part-1.txt/services/common/retry.py",
+      "bytes": 1515,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe part 1.txt",
+      "section_slug": "31-wardrobe-part-1.txt",
+      "source_line": 51212,
+      "declared_path": "services/common/cache.py",
+      "staged_path": "source-candidates/31-wardrobe-part-1.txt/services/common/cache.py",
+      "bytes": 4749,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe part 1.txt",
+      "section_slug": "31-wardrobe-part-1.txt",
+      "source_line": 51360,
+      "declared_path": "services/common/telemetry.py",
+      "staged_path": "source-candidates/31-wardrobe-part-1.txt/services/common/telemetry.py",
+      "bytes": 2001,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe part 1.txt",
+      "section_slug": "31-wardrobe-part-1.txt",
+      "source_line": 51424,
+      "declared_path": "services/common/events.py",
+      "staged_path": "source-candidates/31-wardrobe-part-1.txt/services/common/events.py",
+      "bytes": 3689,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe part 1.txt",
+      "section_slug": "31-wardrobe-part-1.txt",
+      "source_line": 51535,
+      "declared_path": "services/common/security.py",
+      "staged_path": "source-candidates/31-wardrobe-part-1.txt/services/common/security.py",
+      "bytes": 2656,
+      "duplicate_in_section": false
+    },
+    {
+      "source_section": "./wardrobe part 1.txt",
+      "section_slug": "31-wardrobe-part-1.txt",
+      "source_line": 51619,
+      "declared_path": "services/common/domain.py",
+      "staged_path": "source-candidates/31-wardrobe-part-1.txt/services/common/domain.py",
+      "bytes": 33735,
+      "duplicate_in_section": false
+    }
+  ]
+}

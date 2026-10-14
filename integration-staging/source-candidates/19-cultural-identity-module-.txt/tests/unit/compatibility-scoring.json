@@ -1,0 +1,7 @@
+{
+  "id": "ut_compatibility_scoring",
+  "description": "Test cross-cultural compatibility matrix",
+  "test_cases": 50,
+  "expected_accuracy": 0.95,
+  "max_execution_time_ms": 10
+}

@@ -1,0 +1,23 @@
+{
+  "runtime_requirements": {
+    "minimum_memory_mb": 256,
+    "recommended_memory_mb": 1024,
+    "cpu_cores_min": 2,
+    "cpu_cores_recommended": 4
+  },
+  "scaling": {
+    "horizontal_scaling": true,
+    "vertical_scaling": true,
+    "auto_scaling_threshold": 70
+  },
+  "failover": {
+    "primary_endpoint": "https://api.cirvanna.ai/v3/validate",
+    "secondary_endpoint": "https://backup.cirvanna.ai/v3/validate",
+    "failover_time_ms": 100
+  },
+  "security": {
+    "encryption": "aes_256_gcm",
+    "authentication": "jwt_based",
+    "rate_limiting": "token_bucket"
+  }
+}

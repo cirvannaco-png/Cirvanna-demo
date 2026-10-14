@@ -1,0 +1,7 @@
+{
+  "id": "ut_japanese_profile",
+  "description": "Validate Japanese cultural rules",
+  "test_cases": 200,
+  "expected_accuracy": 0.98,
+  "max_execution_time_ms": 15
+}

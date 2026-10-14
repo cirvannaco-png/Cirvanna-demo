@@ -1,0 +1,13 @@
+asyncio
+numpy
+scipy
+cryptography
+prometheus_client
+jaeger_client
+opentracing
+redis
+aioboto3
+psycopg2-binary
+shap
+lime
+pandas

@@ -1,0 +1,99 @@
+{
+  "id": "cid_african_yoruba_001",
+  "civilization": "African",
+  "subculture": "Yoruba",
+  "religious_affiliation": "Traditional",
+  "observance_level": "strict",
+  "regions": ["ng", "bj", "tg", "gh"],
+  "diaspora": {
+    "us": {
+      "rules": ["preserve_core_symbols", "modern_fabrics_allowed"]
+    },
+    "uk": {
+      "rules": ["traditional_maintained"]
+    }
+  },
+  "last_reviewed": "2026-01-15T00:00:00.000Z",
+  "reviewed_by": "yoruba_cultural_advisor_003",
+  "community_consensus_level": 0.98,
+  "decay_rate": 0.005,
+  "last_validated": "2026-01-15T00:00:00.000Z",
+  "demographics": {
+    "gender_rules": {
+      "male": ["buba_and_sokoto", "fila_cap"],
+      "female": ["iro_and_buba", "gele_headwrap"]
+    }
+  },
+  "constraints": {
+    "immutable": [
+      "textile_semantics_intact",
+      "gender_specific_coverage",
+      "headwear_status_mandatory"
+    ],
+    "contextual": {
+      "daily": ["ornamentation_minimal", "headwear_optional"],
+      "ceremonial": ["headwear_required", "pattern_density_high"],
+      "festive": ["color_intensity_max", "multiple_accessories"],
+      "ritual": ["specific_colors", "sacred_symbols"]
+    }
+  },
+  "grammar": {
+    "invariants": {
+      "coverage": {
+        "gender_specific": true,
+        "minimum_index": 0.6
+      },
+      "silhouette": {
+        "geometry_authoritative": true,
+        "forbidden": ["form_fitting_western"]
+      },
+      "symbolism": {
+        "textile_is_language": true,
+        "proverb_encoding": true
+      }
+    },
+    "rules": {
+      "colors": {
+        "high_saturation_allowed": true,
+        "status_encoded": true
+      },
+      "materials": ["aso_oke", "adire", "cotton"],
+      "ornamentation": {
+        "status_signaling": true,
+        "beadwork_rules": true
+      }
+    },
+    "expression": {
+      "allowed": ["pattern_scale", "headwrap_structure", "color_rhythm"],
+      "forbidden": ["symbolic_erasure", "status_misrepresentation"],
+      "budget": 0.4
+    }
+  },
+  "symbols": {
+    "adire_pattern": {
+      "meaning": "cultural_identity",
+      "allowed": ["all"],
+      "severity": 1,
+      "sensitivity": 0.88
+    },
+    "gele_headwrap": {
+      "meaning": "marital_status",
+      "allowed": ["ceremonial", "festive", "religious"],
+      "gender": "female",
+      "severity": 1,
+      "sensitivity": 0.92
+    },
+    "ise_orun": {
+      "meaning": "connection_to_ancestors",
+      "allowed": ["ritual", "ceremonial"],
+      "forbidden": ["daily", "casual"],
+      "severity": 0,
+      "sensitivity": 0.95
+    }
+  },
+  "performance_flags": {
+    "fast_path": true,
+    "cache_symbols": true,
+    "precompute_validations": false
+  }
+}

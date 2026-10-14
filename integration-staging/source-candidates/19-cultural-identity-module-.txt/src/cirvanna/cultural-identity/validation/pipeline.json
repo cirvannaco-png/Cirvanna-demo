@@ -1,0 +1,62 @@
+{
+  "pipeline": [
+    {
+      "stage": "pre_validation",
+      "steps": [
+        "check_schema_version",
+        "validate_input_types",
+        "apply_bloom_filter",
+        "check_cache"
+      ],
+      "timeout_ms": 10,
+      "fallback": "fast_fail"
+    },
+    {
+      "stage": "core_validation",
+      "steps": [
+        "validate_immutable_constraints",
+        "check_symbol_ontology",
+        "validate_context_rules",
+        "assess_cultural_sensitivity"
+      ],
+      "timeout_ms": 25,
+      "fallback": "partial_validation"
+    },
+    {
+      "stage": "post_validation",
+      "steps": [
+        "calculate_confidence_score",
+        "generate_recommendations",
+        "update_cache",
+        "log_metrics"
+      ],
+      "timeout_ms": 15,
+      "fallback": "skip_logging"
+    }
+  ],
+  "unknown_symbol_action": "warn",
+  "thresholds": {
+    "confidence": {
+      "minimum_operational": 0.85,
+      "warning": 0.70,
+      "rejection": 0.50
+    },
+    "performance": {
+      "max_validation_time_ms": 50,
+      "max_memory_mb": 50,
+      "cache_hit_target": 0.95
+    },
+    "safety": {
+      "fatal_violations_max": 0,
+      "severe_violations_max": 0,
+      "moderate_violations_max": 2
+    }
+  },
+  "optimizations": {
+    "parallel_validation": true,
+    "lazy_evaluation": true,
+    "speculative_execution": true,
+    "memoization": true,
+    "batch_processing": true
+  }
+}

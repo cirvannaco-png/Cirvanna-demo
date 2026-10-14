@@ -1,0 +1,119 @@
+{
+  "id": "cid_chinese_han_001",
+  "civilization": "Chinese",
+  "subculture": "Han",
+  "religious_affiliation": "None",
+  "observance_level": "contextual",
+  "regions": ["cn", "tw", "sg", "my"],
+  "diaspora": {
+    "us": {
+      "rules": ["modern_adaptations_allowed", "fusion_respectful"]
+    },
+    "eu": {
+      "rules": ["conservative_preferred"]
+    }
+  },
+  "last_reviewed": "2026-01-10T00:00:00.000Z",
+  "reviewed_by": "chinese_cultural_advisor_001",
+  "community_consensus_level": 0.95,
+  "decay_rate": 0.01,
+  "last_validated": "2026-01-10T00:00:00.000Z",
+  "demographics": {
+    "age_rules": {
+      "child": ["bright_colors_allowed", "simple_patterns"],
+      "adult": ["full_rules", "status_appropriate"],
+      "elder": ["darker_colors", "conservative_cuts"]
+    },
+    "gender_rules": {
+      "male": ["right_over_left_mandatory", "minimal_ornamentation"],
+      "female": ["broader_sleeve_variations", "hair_accessories_allowed"]
+    }
+  },
+  "constraints": {
+    "immutable": [
+      "torso_covered",
+      "right_over_left_closure",
+      "symbolic_motifs_intact",
+      "hierarchical_color_respect"
+    ],
+    "contextual": {
+      "daily": ["pattern_density_low", "color_intensity_medium"],
+      "ceremonial": ["symbolic_density_high", "headwear_optional"],
+      "festive": ["color_intensity_high", "auspicious_symbols"],
+      "mourning": ["white_or_black_only", "no_ornamentation"]
+    }
+  },
+  "grammar": {
+    "invariants": {
+      "coverage": {
+        "torso": true,
+        "shoulders": true,
+        "minimum_index": 0.7
+      },
+      "silhouette": {
+        "primary": "vertical_flowing",
+        "forbidden": ["tight_contouring", "excessive_reveal"]
+      },
+      "symbolism": {
+        "closure": "right_over_left",
+        "motifs_semantic": true,
+        "colors_symbolic": true
+      }
+    },
+    "rules": {
+      "colors": {
+        "red": ["celebration", "luck"],
+        "white": ["mourning"],
+        "yellow": ["imperial"],
+        "black": ["formality"],
+        "blue": ["immortality"]
+      },
+      "materials": ["silk", "linen", "cotton"],
+      "ornamentation": {
+        "symmetry_required": true,
+        "density": "moderate",
+        "placement": ["collar", "cuffs", "hem"]
+      }
+    },
+    "expression": {
+      "allowed": ["fabric_weight", "sleeve_width", "pattern_density"],
+      "forbidden": ["symbolic_mismatch", "closure_violation"],
+      "budget": 0.25
+    }
+  },
+  "symbols": {
+    "dragon": {
+      "meaning": "imperial_power",
+      "allowed": ["ceremonial", "festive"],
+      "forbidden": ["daily", "mourning"],
+      "severity": 0,
+      "sensitivity": 0.95
+    },
+    "phoenix": {
+      "meaning": "empress",
+      "allowed": ["ceremonial"],
+      "gender": "female",
+      "severity": 1,
+      "sensitivity": 0.9
+    },
+    "white_color": {
+      "meaning": "mourning",
+      "allowed": ["mourning"],
+      "forbidden": ["festive"],
+      "severity": 0,
+      "sensitivity": 0.98
+    },
+    "red_color": {
+      "meaning": "celebration",
+      "allowed": ["festive", "wedding"],
+      "forbidden": ["mourning"],
+      "severity": 1,
+      "sensitivity": 0.85
+    }
+  },
+  "performance_flags": {
+    "fast_path": true,
+    "cache_symbols": true,
+    "precompute_validations": true
+  }
+}

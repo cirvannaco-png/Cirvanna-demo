@@ -1,0 +1,103 @@
+{
+  "id": "cid_russian_slavic_001",
+  "civilization": "Russian",
+  "subculture": "Slavic",
+  "religious_affiliation": "Orthodox_Christianity",
+  "observance_level": "moderate",
+  "regions": ["ru", "by", "ua", "kz"],
+  "diaspora": {
+    "us": {
+      "rules": ["simplified_layering", "fusion_allowed"]
+    },
+    "de": {
+      "rules": ["traditional_maintained"]
+    }
+  },
+  "last_reviewed": "2026-01-12T00:00:00.000Z",
+  "reviewed_by": "slavic_cultural_advisor_002",
+  "community_consensus_level": 0.92,
+  "decay_rate": 0.01,
+  "last_validated": "2026-01-12T00:00:00.000Z",
+  "demographics": {
+    "age_rules": {
+      "child": ["bright_colors", "simple_patterns"],
+      "adult": ["status_appropriate", "modest_ornamentation"],
+      "elder": ["traditional_patterns", "darker_colors"]
+    }
+  },
+  "constraints": {
+    "immutable": [
+      "core_body_covered",
+      "layering_required",
+      "embroidery_semantic",
+      "thermal_protection"
+    ],
+    "contextual": {
+      "daily": ["layer_count_functional", "practical_materials"],
+      "ceremonial": ["headwear_required", "embroidery_dense"],
+      "festive": ["color_contrast_high", "ornamentation_enhanced"],
+      "religious": ["modest_coverage", "cross_symbols"]
+    }
+  },
+  "grammar": {
+    "invariants": {
+      "coverage": {
+        "thermal_priority": "high",
+        "core_covered": true,
+        "minimum_index": 0.8
+      },
+      "silhouette": {
+        "primary": "layered_volume",
+        "forbidden": ["exposed_core", "single_layer_minimal"]
+      },
+      "symbolism": {
+        "embroidery_semantic": true,
+        "protective_symbols": true
+      }
+    },
+    "rules": {
+      "colors": {
+        "red": ["beauty"],
+        "white": ["purity"],
+        "black": ["earth"]
+      },
+      "materials": ["wool", "linen", "fur_trim"],
+      "ornamentation": {
+        "placement": ["collar", "cuffs", "hem", "chest"],
+        "protective": true,
+        "symmetry": "preferred"
+      }
+    },
+    "expression": {
+      "allowed": ["layer_count", "embroidery_density", "color_contrast"],
+      "forbidden": ["thermal_violation", "symbol_misuse"],
+      "budget": 0.3
+    }
+  },
+  "symbols": {
+    "cross_embroidery": {
+      "meaning": "divine_protection",
+      "allowed": ["religious", "ceremonial", "daily"],
+      "severity": 1,
+      "sensitivity": 0.9
+    },
+    "solar_symbol": {
+      "meaning": "life_force",
+      "allowed": ["all"],
+      "severity": 2,
+      "sensitivity": 0.75
+    },
+    "kokoshnik": {
+      "meaning": "marital_status",
+      "allowed": ["ceremonial", "festive", "wedding"],
+      "gender": "female",
+      "severity": 1,
+      "sensitivity": 0.85
+    }
+  },
+  "performance_flags": {
+    "fast_path": true,
+    "cache_symbols": true,
+    "precompute_validations": true
+  }
+}
