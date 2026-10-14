@@ -1,0 +1,27 @@
+name: Architecture validation
+
+on:
+  push:
+    branches: [main, "architecture/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  architecture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Validate ownership and source inventory
+        run: python scripts/validate_architecture.py
+      - name: Run architecture tests
+        run: python -m unittest discover -s tests/architecture -v
