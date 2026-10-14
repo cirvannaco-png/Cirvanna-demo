@@ -63,7 +63,11 @@ class DecisionSignal:
     source_version: str = "unspecified"
 
     def __post_init__(self) -> None:
-        if not self.signal_id.strip():
+        if not isinstance(self.kind, SignalKind):
+            raise ValueError("kind must be a SignalKind")
+        if not isinstance(self.state, SignalState):
+            raise ValueError("state must be a SignalState")
+        if not isinstance(self.signal_id, str) or not self.signal_id.strip():
             raise ValueError("signal_id must not be empty")
         if not self.reason_code.strip():
             raise ValueError("reason_code must not be empty")
@@ -151,6 +155,20 @@ def arbitrate(request: ArbitrationRequest) -> ArbitrationResult:
             for signal in hard_blocks
         ]
         return _result(request, DecisionVerdict.BLOCK, reasons, signals)
+
+    non_veto_blocks = [
+        signal for signal in signals
+        if signal.state is SignalState.BLOCK
+    ]
+    if non_veto_blocks:
+        return _result(request, DecisionVerdict.REVIEW, [
+            ArbitrationReason(
+                "NON_VETO_SIGNAL_BLOCKED",
+                signal.signal_id,
+                f"{signal.kind.value}: {signal.explanation}",
+            )
+            for signal in non_veto_blocks
+        ], signals)
 
     unknown_required = [
         signal for signal in signals
