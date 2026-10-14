@@ -28,11 +28,30 @@ def signal(signal_id, kind, state=SignalState.PASS, confidence=None, required=Tr
     )
 
 
-def request(*signals, threshold=0.70):
+DEFAULT_REQUIRED_GATE_KINDS = (
+    SignalKind.SAFETY,
+    SignalKind.LEGAL_ELIGIBILITY,
+    SignalKind.USER_HARD_CONSTRAINT,
+    SignalKind.NPL_HARD_NEGATIVE,
+    SignalKind.CULTURAL_REQUIREMENT,
+    SignalKind.CONTEXT_ELIGIBILITY,
+    SignalKind.IDENTITY_ALIGNMENT,
+)
+
+
+def request(*signals, threshold=0.70, fill_required_gates=True):
+    supplied_kinds = {item.kind for item in signals}
+    defaults = ()
+    if fill_required_gates:
+        defaults = tuple(
+            signal(f"default-{kind.value}", kind)
+            for kind in DEFAULT_REQUIRED_GATE_KINDS
+            if kind not in supplied_kinds
+        )
     return ArbitrationRequest(
         request_id="request-1",
         candidate_id="candidate-1",
-        signals=tuple(signals),
+        signals=tuple(signals) + defaults,
         minimum_fit_confidence=threshold,
     )
 
@@ -46,6 +65,24 @@ class CaTaCaCiCoreTests(unittest.TestCase):
         ))
         self.assertEqual(result.verdict, DecisionVerdict.SHOW)
         self.assertTrue(result.may_display)
+
+    def test_missing_required_gate_fails_closed(self):
+        result = arbitrate(ArbitrationRequest(
+            request_id="request-missing-gates",
+            candidate_id="candidate-1",
+            signals=(signal("fit", SignalKind.FIT_CONFIDENCE, confidence=0.99),),
+        ))
+        self.assertEqual(result.verdict, DecisionVerdict.REVIEW)
+        self.assertFalse(result.may_display)
+        self.assertIn("REQUIRED_SIGNAL_MISSING", {reason.code for reason in result.reasons})
+
+    def test_required_gate_cannot_be_made_optional_by_signal(self):
+        result = arbitrate(request(
+            signal("fit", SignalKind.FIT_CONFIDENCE, confidence=0.99),
+            signal("npl", SignalKind.NPL_HARD_NEGATIVE, SignalState.UNKNOWN, required=False),
+        ))
+        self.assertEqual(result.verdict, DecisionVerdict.REVIEW)
+        self.assertIn("REQUIRED_SIGNAL_UNKNOWN", {reason.code for reason in result.reasons})
 
     def test_hard_npl_veto_beats_high_fit_confidence(self):
         result = arbitrate(request(
