@@ -34,7 +34,7 @@ ASSIGNMENT = re.compile(
     \b\s*[:=]\s*
     (?P<quote>['"]?)
     (?P<value>[A-Za-z0-9_./+=:-]{20,})
-    (?(quote)\k<quote>)
+    (?P=quote)
     """
 )
 PLACEHOLDER_PARTS = (
