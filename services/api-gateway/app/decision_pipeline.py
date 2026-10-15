@@ -35,6 +35,16 @@ class DecisionPipelineResult:
 
 
 def _eepl_signals(result: EEPLResult) -> tuple[DecisionSignal, ...]:
+    if not result.reason_codes or len(result.reason_codes) != len(result.explanations):
+        return (DecisionSignal(
+            signal_id=f"eepl:{result.policy_id}:malformed-result",
+            kind=SignalKind.CONTEXT_ELIGIBILITY,
+            state=SignalState.UNKNOWN,
+            reason_code="EEPL_RESULT_REASON_MISMATCH",
+            explanation="EEPL returned missing or mismatched reason codes and explanations; review is required.",
+            required=True,
+            source_version=result.policy_version,
+        ),)
     signals: list[DecisionSignal] = []
     for index, (code, explanation) in enumerate(zip(result.reason_codes, result.explanations)):
         if code == "EEPL_POLICY_PASSED":
@@ -87,6 +97,16 @@ def _npl_signals(result: NPLDecision) -> tuple[DecisionSignal, ...]:
 
 def _cultural_signals(result: CulturalIdentityResult) -> tuple[DecisionSignal, ...]:
     signals: list[DecisionSignal] = []
+    if not result.reason_codes or len(result.reason_codes) != len(result.explanations):
+        return (DecisionSignal(
+            signal_id="cultural:malformed-result",
+            kind=SignalKind.CULTURAL_REQUIREMENT,
+            state=SignalState.UNKNOWN,
+            reason_code="CULTURAL_RESULT_REASON_MISMATCH",
+            explanation="Cultural policy returned missing or mismatched reason codes and explanations; review is required.",
+            required=True,
+            source_version=result.contract_version,
+        ),)
     if not result.reason_codes:
         return (DecisionSignal(
             signal_id="cultural:no-reason",
