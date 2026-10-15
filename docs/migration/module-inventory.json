@@ -48,9 +48,9 @@
     {
       "id": "usi",
       "target": "packages/identity-intelligence/usi",
-      "status": "specification-first",
-      "purpose": "User Style Index and identity/style alignment; distinct from fit confidence and demographic inference.",
-      "promotionGate": "Create a stable interface and preference provenance before importing candidate logic."
+      "status": "explicit-alignment-kernel-implemented",
+      "purpose": "Deterministic alignment score from explicit positive style preferences with provenance and fail-closed unknown handling; not a calibrated probability.",
+      "promotionGate": "Validate threshold on user outcome data, add profile persistence/versioning and lifecycle controls, and verify end-to-end CAL integration."
     },
     {
       "id": "npl",
