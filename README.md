@@ -4,7 +4,7 @@
 
 Cirvanna is an identity-first beauty, fashion, fit, and purchase-decision platform. Its purpose is to help people understand whether a product is appropriate for their preferences, context, and fit needs before they buy—and to help commerce partners improve purchase confidence and reduce avoidable returns.
 
-> **Critical implementation notice — 14 October 2026:** The code and source material supplied for this project have **not yet been implemented into a verified, working Cirvanna system**. Material may exist in the repository as source files, drafts, prototypes, partial implementations, reference snippets, or migration inputs, but that does not mean the requested functionality is integrated or executable. This README documents the intended product and architecture; it is not proof that those capabilities exist in running software. Do not describe Cirvanna as production-ready until implementation, testing, security review, and deployment evidence support that claim.
+> **Critical implementation notice — 15 October 2026:** Cirvanna has made repository-governance progress: the original merged source archive and 31 extracted snapshots are preserved; architecture, source-candidate syntax, and guarded Virtual Twin API contract workflows have passed. These results validate preservation, Python syntax compilation, architecture inventory, and fail-closed API behavior only. The product is **not yet implemented end to end**; the source candidates are not certified runtime code. Do not describe Cirvanna as production-ready until implementation, integration testing, security review, and deployment evidence support that claim.
 
 ## Contents
 
@@ -333,13 +333,13 @@ Every validation report should identify the commit, environment, command, result
 | Area | Status represented by this README | Evidence needed to advance |
 |---|---|---|
 | Product vision and target architecture | Documented intent | Reviewed architecture decisions |
-| Source bundle and migration | Intake and reconciliation required | Complete inventory and source-to-target map |
+| Source bundle and migration | Original archive and 31 extracted snapshots preserved; candidate syntax repairs tracked; canonicalization and runtime integration remain incomplete | Reviewed source-to-target map, duplicate/dependency analysis, canonical implementation decisions, and integration tests |
 | USI, NPL, EEPL, fit intelligence | Target responsibilities documented; implementation unverified | Canonical code, unit tests, integration tests |
 | CaTaCaCi / CAL and supporting layers | Target responsibilities documented; implementation unverified | Executable arbitration, conflict tests, auditable outputs |
 | Marketplace and search | Target capability; implementation unverified | Working catalog path and integration tests |
-| Virtual Twin, Try-On, wardrobe, DermalSight, Xari | Target capabilities; implementation unverified | Feature-specific integrations and acceptance tests |
+| Virtual Twin, Try-On, wardrobe, DermalSight, Xari | Virtual Twin has a guarded API scaffold; twin generation stays disabled because a validated model adapter is absent. Other capability implementations remain unverified. | Real model/renderer adapters, feature-specific integration tests, accuracy/privacy acceptance tests, and production readiness checks |
 | Security and privacy | Requirements documented; compliance unverified | Threat model, secret scan, access-control and privacy tests |
-| CI and deployment | Not certified by this README | Actual workflow results and deployment verification |
+| CI and deployment | Architecture validation and source-candidate syntax checks have passed on the latest reviewed main commit; Virtual Twin API contract tests passed on the latest relevant API/test commit. Deployment is not certified. | Repeatable app integration tests, infrastructure/deployment checks, operations runbooks, and evidence from a real deployment environment |
 | Production readiness | **Not established** | All required release gates with recorded evidence |
 
 This table deliberately avoids inventing completion percentages. Update it only when the underlying code, tests, and operational evidence support a status change.
