@@ -3,7 +3,7 @@
 
 ```env
 # Database
-DATABASE_URL=postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna
+DATABASE_URL=postgresql://cirvanna:REDACTED@postgres:5432/cirvanna
 POSTGRES_USER=cirvanna
 POSTGRES_PASSWORD=cirvanna123
 POSTGRES_DB=cirvanna
@@ -90,7 +90,7 @@ services:
   ais:
     build: ./ais
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - GPU_ENABLED=${GPU_ENABLED:-false}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
@@ -121,7 +121,7 @@ services:
   gsis:
     build: ./gsis
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
     volumes:
       - ./gsis/migrations:/app/migrations
     ports:
@@ -134,7 +134,7 @@ services:
   dtae_fce:
     build: ./dtae_fce
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
@@ -175,7 +175,7 @@ services:
     ports:
       - "8082:8000"
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     depends_on:
       - postgres
@@ -290,7 +290,7 @@ up:
 	@echo "✅ Services started"
 	@echo "📡 API Gateway: http://localhost:8080"
 	@echo "📊 Admin Dashboard: http://localhost:8081"
-	@echo "📈 Grafana: http://localhost:3000 (admin/admin)"
+	@echo "📈 Grafana: http://localhost:3000 (admin/REDACTED)"
 	@echo "🔍 Jaeger: http://localhost:16686"
 	@echo "📈 MLflow: http://localhost:5000"
 
@@ -554,7 +554,7 @@ POST /feedback
 
 📊 Monitoring
 
-· Grafana: http://localhost:3000 (admin/admin)
+· Grafana: http://localhost:3000 (admin/REDACTED)
 · Prometheus: http://localhost:9090
 · Jaeger Tracing: http://localhost:16686
 
@@ -3192,7 +3192,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import os
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://cirvanna:REDACTED@postgres:5432/cirvanna")
 
 engine = create_engine(
     DATABASE_URL,
@@ -3340,4 +3340,3 @@ class GarmentService:
 
             total = query.count()
             garments = query.offset(skip).limit(limit).all(
-
