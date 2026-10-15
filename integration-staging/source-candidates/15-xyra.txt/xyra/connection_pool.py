@@ -47,7 +47,7 @@ class SecureConnectionPool:
                     health_check_interval=30,
                 )
                 self.db_pool = Database(
-                    "postgresql://user:pass@localhost/xyra",
+                    "postgresql://user:REDACTED@localhost/xyra",
                     min_size=5,
                     max_size=self.config.DB_POOL_SIZE,
                     ssl=False,
