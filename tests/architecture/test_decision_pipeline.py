@@ -16,6 +16,7 @@ from catacaci import ArbitrationRequest, DecisionSignal, SignalKind, SignalState
 from eepl import EEPLContext, EEPLPolicy, evaluate as evaluate_eepl  # noqa: E402
 from npl import NegativePreference, PreferenceSource, TargetType, evaluate as evaluate_npl  # noqa: E402
 from cultural_identity import CulturalRequirement, RequirementKind, evaluate as evaluate_cultural  # noqa: E402
+from usi import StylePreference, USIProfile, evaluate as evaluate_usi  # noqa: E402
 from app import arbitrate_candidate  # noqa: E402
 
 
@@ -106,6 +107,15 @@ class DecisionPipelineTests(unittest.TestCase):
         result = arbitrate_candidate(request(), eepl, npl, cultural_result=cultural)
         self.assertEqual(result.cal_result.verdict.value, "review")
         self.assertFalse(result.may_display)
+
+    def test_usi_low_alignment_routes_to_review_not_hard_block(self):
+        eepl, npl = results()
+        profile = USIProfile("profile-1", "user-1", "usi-v1", (StylePreference("p1", "user-1", "minimal"),))
+        usi = evaluate_usi(profile, "item-1", ("maximalist",), candidate_attributes_complete=True)
+        result = arbitrate_candidate(request(), eepl, npl, usi_result=usi)
+        self.assertEqual(result.cal_result.verdict.value, "review")
+        self.assertFalse(result.may_display)
+        self.assertIn("USI_ALIGNMENT_BELOW_THRESHOLD", {reason.code for reason in result.cal_result.reasons})
 
     def test_candidate_mismatch_is_rejected(self):
         eepl, npl = results(candidate_id="other-item")
