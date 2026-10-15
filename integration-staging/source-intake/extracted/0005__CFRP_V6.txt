@@ -1,0 +1,1811 @@
+
+```
+src/infrastructure/redis_client.py
+"""
+Simulated Redis client for snapshot storage and caching.
+"""
+import asyncio
+import time
+from typing import Any, Dict, Optional
+
+class RedisClient:
+    _instance = None
+    _data: Dict[str, Any] = {}
+    _locks: Dict[str, asyncio.Lock] = {}
+
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    async def set(self, key: str, value: Any, ttl: Optional[int] = None):
+        self._data[key] = {
+            'value': value,
+            'expiry': time.time() + ttl if ttl else None
+        }
+
+    async def get(self, key: str) -> Optional[Any]:
+        if key not in self._data:
+            return None
+        entry = self._data[key]
+        if entry['expiry'] and time.time() > entry['expiry']:
+            del self._data[key]
+            return None
+        return entry['value']
+
+    async def delete(self, key: str):
+        if key in self._data:
+            del self._data[key]
+
+    async def acquire_lock(self, lock_name: str, timeout: int = 10) -> bool:
+        if lock_name not in self._locks:
+            self._locks[lock_name] = asyncio.Lock()
+        try:
+            await asyncio.wait_for(self._locks[lock_name].acquire(), timeout=timeout)
+            return True
+        except asyncio.TimeoutError:
+            return False
+
+    async def release_lock(self, lock_name: str):
+        if lock_name in self._locks and self._locks[lock_name].locked():
+            self._locks[lock_name].release()
+```
+
+```
+src/infrastructure/s3_client.py
+"""
+Simulated S3 client for event log storage.
+"""
+import uuid
+from typing import Dict, List
+
+class S3Client:
+    _bucket: Dict[str, List[Dict]] = {}
+
+    async def put_event(self, user_id: str, event: Dict) -> str:
+        key = f"events/{user_id}/{uuid.uuid4()}.json"
+        if user_id not in self._bucket:
+            self._bucket[user_id] = []
+        self._bucket[user_id].append(event)
+        return key
+
+    async def get_events_since(self, user_id: str, timestamp: float) -> List[Dict]:
+        if user_id not in self._bucket:
+            return []
+        return [e for e in self._bucket[user_id] if e.get('timestamp', 0) > timestamp]
+```
+
+```
+src/actor/cfrp_actor.py
+"""
+CFRPActor – Single-threaded message processing lane.
+"""
+import asyncio
+import logging
+from typing import Callable, Optional, Dict
+
+class CFRPActor:
+    def __init__(self, user_id: str):
+        self.user_id = user_id
+        self.queue = asyncio.Queue(maxsize=1000)
+        self.running = False
+        self.task: Optional[asyncio.Task] = None
+        self.signal_states: Dict = {}
+        self.reinforcement_log: list = []
+        logging.info(f"Actor created for {user_id}")
+
+    async def start(self):
+        if self.running:
+            return
+        self.running = True
+        self.task = asyncio.create_task(self._run())
+
+    async def stop(self):
+        if not self.running:
+            return
+        self.running = False
+        await self.queue.put(None)
+        if self.task:
+            await self.task
+
+    async def _run(self):
+        while self.running:
+            try:
+                msg = await self.queue.get()
+                if msg is None:
+                    break
+                await msg()
+                self.queue.task_done()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logging.error(f"Actor {self.user_id} error: {e}")
+
+    async def send(self, func: Callable):
+        future = asyncio.Future()
+        async def wrapper():
+            try:
+                result = await func()
+                future.set_result(result)
+            except Exception as e:
+                future.set_exception(e)
+        await self.queue.put(wrapper)
+        return await future
+```
+
+```
+src/core/epistemic_invariants.py
+"""
+EpistemicInvariants – Mathematical guarantees for CFRP's reasoning.
+"""
+from decimal import Decimal
+from typing import List
+
+class EpistemicInvariantViolation(Exception):
+    """Raised when an epistemic invariant is violated"""
+    pass
+
+class EpistemicInvariants:
+    MAX_CONFIDENCE_JUMP = Decimal('0.3')
+    MAX_DAILY_DECAY = Decimal('0.05')
+    MIN_CONFIDENCE = Decimal('0.1')
+    MAX_CFRP_INFLUENCE = Decimal('0.3')
+    MIN_USI_AUTONOMY = Decimal('0.7')
+    MAX_DOMINANCE_RATIO = Decimal('10.0')
+
+    @classmethod
+    def validate_confidence_change(cls, old: Decimal, new: Decimal, success: bool):
+        delta = new - old
+        if success:
+            max_increase = cls.MAX_CONFIDENCE_JUMP * (Decimal('1') - old)
+            if delta > max_increase:
+                raise EpistemicInvariantViolation(
+                    f"Confidence increase {delta} > allowed {max_increase}"
+                )
+        else:
+            max_decrease = cls.MAX_CONFIDENCE_JUMP * old
+            if delta < -max_decrease:
+                raise EpistemicInvariantViolation(
+                    f"Confidence decrease {-delta} > allowed {max_decrease}"
+                )
+
+    @classmethod
+    def validate_decay(cls, old: Decimal, new: Decimal, days_elapsed: Decimal):
+        if new < cls.MIN_CONFIDENCE:
+            raise EpistemicInvariantViolation(
+                f"Confidence {new} < minimum {cls.MIN_CONFIDENCE}"
+            )
+        if days_elapsed > Decimal('0'):
+            max_decay = cls.MAX_DAILY_DECAY * days_elapsed * old
+            actual_decay = old - new
+            if actual_decay > max_decay:
+                raise EpistemicInvariantViolation(
+                    f"Decay {actual_decay} > allowed {max_decay}"
+                )
+
+    @classmethod
+    def validate_cfrp_influence(cls, usi_weight: Decimal, cfrp_adjustment: Decimal) -> Decimal:
+        bounded = max(-cls.MAX_CFRP_INFLUENCE, min(cls.MAX_CFRP_INFLUENCE, cfrp_adjustment))
+        final = usi_weight * (Decimal('1') + bounded)
+        min_weight = usi_weight * cls.MIN_USI_AUTONOMY
+        if final < min_weight:
+            return min_weight
+        return final
+
+    @classmethod
+    def validate_no_dominance(cls, weights: List[Decimal]):
+        if len(weights) < 2:
+            return
+        non_zero = [w for w in weights if w > Decimal('0')]
+        if len(non_zero) < 2:
+            return
+        max_w = max(non_zero)
+        min_w = min(non_zero)
+        if min_w == Decimal('0'):
+            return
+        ratio = max_w / min_w
+        if ratio > cls.MAX_DOMINANCE_RATIO:
+            raise EpistemicInvariantViolation(
+                f"Signal dominance ratio {ratio} > allowed {cls.MAX_DOMINANCE_RATIO}"
+            )
+```
+
+```
+src/core/epistemic_context.py
+"""
+EpistemicContext – Adaptive context for CFRP.
+"""
+import time
+from dataclasses import dataclass, field
+from typing import Dict, Optional
+
+@dataclass
+class EpistemicContext:
+    cultural_sensitivity: float = 0.0
+    wardrobe_stability: float = 0.5
+    exploration_budget: float = 0.2
+    signal_volatility: float = 0.0
+    last_context_update: float = field(default_factory=time.time)
+
+    @classmethod
+    async def from_user_id(cls, user_id: str, redis) -> 'EpistemicContext':
+        key = f"context:{user_id}"
+        cached = await redis.get(key)
+        if cached:
+            return EpistemicContext(**cached)
+        return EpistemicContext()
+
+    async def save(self, user_id: str, redis):
+        key = f"context:{user_id}"
+        await redis.set(key, {
+            'cultural_sensitivity': self.cultural_sensitivity,
+            'wardrobe_stability': self.wardrobe_stability,
+            'exploration_budget': self.exploration_budget,
+            'signal_volatility': self.signal_volatility,
+            'last_context_update': self.last_context_update
+        }, ttl=86400)
+
+    def compute_adaptive_rates(self) -> Dict[str, float]:
+        base_lr = 0.1
+        learning_rate = base_lr * (1 - self.cultural_sensitivity * 0.5)
+        base_decay = 0.05
+        confidence_decay = base_decay * (1 - self.wardrobe_stability * 0.3)
+        exploration_boost = self.exploration_budget * 0.2
+        return {
+            'learning_rate': max(0.01, min(0.3, learning_rate)),
+            'confidence_decay': max(0.01, min(0.1, confidence_decay)),
+            'exploration_boost': exploration_boost,
+            'volatility_multiplier': 1 + self.signal_volatility * 0.5
+        }
+```
+
+```
+src/core/learning_prior.py
+"""
+LearningPrior – Hierarchical learning priors.
+"""
+import numpy as np
+from dataclasses import dataclass, field
+from typing import Tuple, Dict, Optional
+
+@dataclass
+class LearningPrior:
+    global_prior: np.ndarray = field(default_factory=lambda: np.array([0.5]))
+    segment_prior: np.ndarray = field(default_factory=lambda: np.array([0.5]))
+    user_posterior: np.ndarray = field(default_factory=lambda: np.array([0.5]))
+
+    ALPHA_RANGE = (0.4, 0.8)
+    BETA_RANGE = (0.1, 0.4)
+    GAMMA_RANGE = (0.05, 0.2)
+
+    @classmethod
+    def compute_posterior(cls, user_posterior: np.ndarray,
+                          segment_prior: Optional[np.ndarray] = None,
+                          global_prior: Optional[np.ndarray] = None,
+                          conflict_threshold: float = 0.3) -> Tuple[np.ndarray, Dict[str, float]]:
+        if segment_prior is None:
+            segment_prior = np.array([0.5])
+        if global_prior is None:
+            global_prior = np.array([0.5])
+
+        has_conflict = False
+        if np.abs(user_posterior[0] - segment_prior[0]) > conflict_threshold:
+            has_conflict = True
+
+        if has_conflict or segment_prior is None:
+            alpha = 0.7
+            beta = 0.2
+            gamma = 0.1
+        else:
+            alpha = 0.6
+            beta = 0.3
+            gamma = 0.1
+
+        total = alpha + beta + gamma
+        alpha, beta, gamma = alpha/total, beta/total, gamma/total
+
+        posterior = (alpha * user_posterior + beta * segment_prior + gamma * global_prior)
+        posterior = np.clip(posterior, 0, 1)
+
+        metadata = {
+            'alpha': alpha,
+            'beta': beta,
+            'gamma': gamma,
+            'has_conflict': has_conflict,
+            'learning_rate_multiplier': 0.5 if has_conflict else 1.0
+        }
+        return posterior, metadata
+```
+
+```
+src/core/epistemic_state.py
+"""
+EpistemicState – Confidence state with reinforcement and decay.
+"""
+import time
+import math
+from decimal import Decimal
+from dataclasses import dataclass, field
+from typing import Dict, Optional, Any
+
+from src.core.epistemic_invariants import EpistemicInvariants
+from src.core.learning_prior import LearningPrior
+from src.core.epistemic_context import EpistemicContext
+
+@dataclass
+class EpistemicState:
+    signal_id: str
+    confidence: Decimal = Decimal('0.5')
+    rolling_baseline: Decimal = Decimal('0.5')
+    last_reinforced: float = field(default_factory=time.time)
+    reinforcement_count: int = 0
+    baseline_window: int = 100
+    learning_metadata: Dict[str, Any] = field(default_factory=dict)
+    context_features: Dict[str, float] = field(default_factory=dict)
+
+    def reinforce(self, success: bool, value: Decimal,
+                  prior: Optional[LearningPrior] = None,
+                  context: Optional[EpistemicContext] = None) -> 'EpistemicState':
+        success_value = Decimal('1') if success else Decimal('0')
+
+        if self.reinforcement_count < self.baseline_window:
+            weight = Decimal('1') / Decimal(str(self.reinforcement_count + 1))
+            new_baseline = self.rolling_baseline * (Decimal('1') - weight) + success_value * weight
+        else:
+            new_baseline = self.rolling_baseline * Decimal('0.99') + success_value * Decimal('0.01')
+
+        if context:
+            rates = context.compute_adaptive_rates()
+            learning_rate = Decimal(str(rates['learning_rate']))
+        else:
+            learning_rate = Decimal('0.1')
+
+        if prior:
+            user_posterior = np.array([float(self.confidence)])
+            posterior, metadata = LearningPrior.compute_posterior(
+                user_posterior=user_posterior,
+                segment_prior=prior.segment_prior,
+                global_prior=prior.global_prior
+            )
+            if metadata.get('has_conflict', False):
+                learning_rate *= Decimal('0.5')
+            base_confidence = Decimal(str(posterior[0]))
+            self.learning_metadata = metadata
+        else:
+            base_confidence = self.confidence
+
+        if success:
+            if success_value > new_baseline:
+                increase = learning_rate * (Decimal('1') - base_confidence)
+                new_confidence = base_confidence + increase * value
+            else:
+                new_confidence = base_confidence
+        else:
+            decrease = learning_rate * base_confidence
+            new_confidence = base_confidence - decrease * value
+
+        new_confidence = max(Decimal('0'), min(Decimal('1'), new_confidence))
+
+        EpistemicInvariants.validate_confidence_change(
+            old=self.confidence,
+            new=new_confidence,
+            success=success
+        )
+
+        return EpistemicState(
+            signal_id=self.signal_id,
+            confidence=new_confidence,
+            rolling_baseline=new_baseline,
+            last_reinforced=time.time(),
+            reinforcement_count=self.reinforcement_count + 1,
+            learning_metadata=self.learning_metadata,
+            context_features=self.context_features
+        )
+
+    def decay(self, current_time: float, context: Optional[EpistemicContext] = None) -> 'EpistemicState':
+        days_elapsed = Decimal(str((current_time - self.last_reinforced) / 86400))
+
+        if days_elapsed <= Decimal('0'):
+            return self
+
+        if context:
+            rates = context.compute_adaptive_rates()
+            decay_rate = Decimal(str(rates['confidence_decay']))
+        else:
+            decay_rate = Decimal('0.05')
+
+        halflife_days = 30 / (1 + float(decay_rate) * 10)
+        decay_factor = Decimal(str(math.exp(-float(days_elapsed / Decimal(str(halflife_days))))))
+
+        new_confidence = self.confidence * decay_factor
+
+        EpistemicInvariants.validate_decay(
+            old=self.confidence,
+            new=new_confidence,
+            days_elapsed=days_elapsed
+        )
+
+        return EpistemicState(
+            signal_id=self.signal_id,
+            confidence=new_confidence,
+            rolling_baseline=self.rolling_baseline,
+            last_reinforced=self.last_reinforced,
+            reinforcement_count=self.reinforcement_count,
+            learning_metadata=self.learning_metadata,
+            context_features=self.context_features
+        )
+```
+
+```
+src/core/reinforcement_log.py
+"""
+CFRPReinforcementLog – Event-sourced log (non-enterprise).
+"""
+import time
+import uuid
+from typing import Dict, List, Optional
+
+class CFRPReinforcementLog:
+    def __init__(self, user_id: str):
+        self.user_id = user_id
+        self.events: List[Dict] = []
+        self.last_snapshot_time = time.time()
+        self.snapshot_interval = 300
+
+    def append(self, signal_id: str, success: bool, value: float):
+        event = {
+            'timestamp': time.time(),
+            'signal_id': signal_id,
+            'success': success,
+            'value': value,
+            'event_id': str(uuid.uuid4())
+        }
+        self.events.append(event)
+
+    def get_since(self, since_timestamp: float) -> List[Dict]:
+        return [e for e in self.events if e['timestamp'] > since_timestamp]
+
+    def needs_snapshot(self) -> bool:
+        return time.time() - self.last_snapshot_time > self.snapshot_interval
+
+    def create_snapshot(self, signal_states: Dict) -> Dict:
+        self.last_snapshot_time = time.time()
+        return {
+            'timestamp': self.last_snapshot_time,
+            'user_id': self.user_id,
+            'signal_states': {
+                sid: {
+                    'confidence': float(s.confidence),
+                    'rolling_baseline': float(s.rolling_baseline),
+                    'last_reinforced': s.last_reinforced,
+                    'reinforcement_count': s.reinforcement_count
+                } for sid, s in signal_states.items()
+            },
+            'last_event_id': self.events[-1]['event_id'] if self.events else None
+        }
+```
+
+```
+src/core/cfrp_instance.py
+"""
+CFRPInstance – Single authoritative CFRP instance per user.
+"""
+import asyncio
+import time
+import logging
+from decimal import Decimal
+from typing import Dict, List, Optional
+
+from src.actor.cfrp_actor import CFRPActor
+from src.core.epistemic_state import EpistemicState
+from src.core.reinforcement_log import CFRPReinforcementLog
+from src.infrastructure.redis_client import RedisClient
+
+class CFRPInstance:
+    def __init__(self, user_id: str):
+        self.user_id = user_id
+        self.actor = CFRPActor(user_id)
+        self.signal_states: Dict[str, EpistemicState] = {}
+        self.reinforcement_log = CFRPReinforcementLog(user_id)
+        self.running = False
+        self.maintenance_task: Optional[asyncio.Task] = None
+        self.shutdown_event = asyncio.Event()
+        self.redis = RedisClient.get_instance()
+
+    async def start(self):
+        if self.running:
+            return
+        await self.actor.start()
+        await self._load_state()
+        self.running = True
+        self.maintenance_task = asyncio.create_task(self._maintenance_loop())
+
+    async def stop(self):
+        if not self.running:
+            return
+        self.running = False
+        self.shutdown_event.set()
+        if self.maintenance_task:
+            self.maintenance_task.cancel()
+            try:
+                await self.maintenance_task
+            except asyncio.CancelledError:
+                pass
+        await self.actor.stop()
+        await self._flush_state()
+
+    async def _load_state(self):
+        # In production: load from Redis snapshot + replay events
+        snapshot = await self.redis.get(f"snapshot:{self.user_id}")
+        if snapshot:
+            # Reconstruct signal_states from snapshot
+            pass
+
+    async def _flush_state(self):
+        if self.reinforcement_log.needs_snapshot():
+            snapshot = self.reinforcement_log.create_snapshot(self.signal_states)
+            await self.redis.set(f"snapshot:{self.user_id}", snapshot)
+
+    async def _maintenance_loop(self):
+        while not self.shutdown_event.is_set():
+            try:
+                await asyncio.wait(
+                    [asyncio.create_task(asyncio.sleep(60)),
+                     asyncio.create_task(self.shutdown_event.wait())],
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+                if self.shutdown_event.is_set():
+                    break
+                await self._perform_maintenance()
+            except asyncio.CancelledError:
+                break
+
+    async def _perform_maintenance(self):
+        for signal_id in list(self.signal_states.keys()):
+            await self.actor.send(lambda: self._apply_decay(signal_id))
+        if self.reinforcement_log.needs_snapshot():
+            snapshot = self.reinforcement_log.create_snapshot(self.signal_states)
+            await self.redis.set(f"snapshot:{self.user_id}", snapshot)
+
+    async def _apply_decay(self, signal_id: str):
+        if signal_id in self.signal_states:
+            state = self.signal_states[signal_id]
+            self.signal_states[signal_id] = state.decay(time.time())
+
+    async def reinforce(self, signal_id: str, success: bool, value: float = 1.0) -> Dict:
+        return await self.actor.send(lambda: self._reinforce_internal(signal_id, success, value))
+
+    async def _reinforce_internal(self, signal_id: str, success: bool, value: float) -> Dict:
+        if signal_id not in self.signal_states:
+            self.signal_states[signal_id] = EpistemicState(signal_id=signal_id)
+        old_state = self.signal_states[signal_id]
+        new_state = old_state.reinforce(success, Decimal(str(value)))
+        self.signal_states[signal_id] = new_state
+        self.reinforcement_log.append(signal_id, success, value)
+        return {
+            'success': True,
+            'old_confidence': float(old_state.confidence),
+            'new_confidence': float(new_state.confidence),
+            'reinforcement_count': new_state.reinforcement_count
+        }
+
+    async def get_advice(self, signal_ids: List[str]) -> Dict:
+        return await self.actor.send(lambda: self._get_advice_internal(signal_ids))
+
+    async def _get_advice_internal(self, signal_ids: List[str]) -> Dict:
+        advisories = {}
+        for signal_id in signal_ids:
+            if signal_id not in self.signal_states:
+                self.signal_states[signal_id] = EpistemicState(signal_id=signal_id)
+            state = self.signal_states[signal_id]
+            state = state.decay(time.time())
+            self.signal_states[signal_id] = state
+            advisory = self._generate_advisory(state)
+            advisories[signal_id] = advisory
+        return {'advisories': advisories}
+
+    def _generate_advisory(self, state: EpistemicState) -> Dict:
+        confidence_weight = float(state.confidence) - 0.5
+        days_since = (time.time() - state.last_reinforced) / 86400
+        recency_bonus = max(0, 0.1 * (1 - days_since / 7))
+        data_bonus = min(0.1, state.reinforcement_count / 100)
+        total_adjustment = confidence_weight + recency_bonus + data_bonus
+        return {
+            'confidence_weight': confidence_weight,
+            'recency_bonus': recency_bonus,
+            'data_bonus': data_bonus,
+            'total_cfrp_adjustment': total_adjustment,
+            'epistemic_notes': self._get_epistemic_notes(state)
+        }
+
+    def _get_epistemic_notes(self, state: EpistemicState) -> List[str]:
+        notes = []
+        if state.reinforcement_count < 10:
+            notes.append("Limited data – high uncertainty")
+        elif state.reinforcement_count > 100:
+            notes.append("Well‑established signal")
+        if state.confidence < Decimal('0.3'):
+            notes.append("Low confidence – experimental")
+        elif state.confidence > Decimal('0.8'):
+            notes.append("High confidence – reliable")
+        return notes
+```
+
+```
+src/core/cfrp_manager.py
+"""
+CFRPManager – Manages CFRP instances with sticky sessions.
+"""
+import asyncio
+import logging
+from typing import Dict
+
+from src.core.cfrp_instance import CFRPInstance
+
+class CFRPManager:
+    def __init__(self):
+        self.instances: Dict[str, CFRPInstance] = {}
+        self.lock = asyncio.Lock()
+        self.running = False
+        self.shutdown_event = asyncio.Event()
+
+    async def get_instance(self, user_id: str) -> CFRPInstance:
+        async with self.lock:
+            if user_id not in self.instances:
+                instance = CFRPInstance(user_id)
+                await instance.start()
+                self.instances[user_id] = instance
+            return self.instances[user_id]
+
+    async def start(self):
+        self.running = True
+        logging.info("CFRP Manager started")
+
+    async def shutdown(self):
+        if not self.running:
+            return
+        self.running = False
+        self.shutdown_event.set()
+        async with self.lock:
+            shutdown_tasks = [inst.stop() for inst in self.instances.values()]
+            if shutdown_tasks:
+                await asyncio.gather(*shutdown_tasks, return_exceptions=True)
+            self.instances.clear()
+        logging.info("CFRP Manager shutdown complete")
+```
+
+```
+src/usi/usi_integration.py
+"""
+USIIntegration – Applies CFRP's epistemic gravity to USI suggestions.
+"""
+from decimal import Decimal
+from typing import List, Dict
+
+from src.core.cfrp_manager import CFRPManager
+from src.core.epistemic_invariants import EpistemicInvariants
+
+class USIIntegration:
+    def __init__(self, cfrp_manager: CFRPManager):
+        self.cfrp_manager = cfrp_manager
+
+    async def get_weighted_suggestions(self, user_id: str, raw_suggestions: List[Dict]) -> List[Dict]:
+        instance = await self.cfrp_manager.get_instance(user_id)
+        signal_ids = [s['signal'] for s in raw_suggestions]
+        advice_result = await instance.get_advice(signal_ids)
+        advisories = advice_result.get('advisories', {})
+
+        enhanced = []
+        weights = []
+        for suggestion in raw_suggestions:
+            signal_id = suggestion['signal']
+            usi_weight = Decimal(str(suggestion['usi_weight']))
+            advisory = advisories.get(signal_id, {})
+            cfrp_adjustment = Decimal(str(advisory.get('total_cfrp_adjustment', 0.0)))
+
+            final_weight = EpistemicInvariants.validate_cfrp_influence(
+                usi_weight=usi_weight,
+                cfrp_adjustment=cfrp_adjustment
+            )
+
+            enhanced_suggestion = {
+                **suggestion,
+                'final_weight': float(final_weight),
+                'cfrp_adjustment': float(cfrp_adjustment),
+                'epistemic_notes': advisory.get('epistemic_notes', [])
+            }
+            enhanced.append(enhanced_suggestion)
+            weights.append(final_weight)
+
+        EpistemicInvariants.validate_no_dominance(weights)
+        enhanced.sort(key=lambda x: x['final_weight'], reverse=True)
+        return enhanced
+
+    async def process_feedback(self, user_id: str, signal_id: str, success: bool, value: float = 1.0):
+        instance = await self.cfrp_manager.get_instance(user_id)
+        return await instance.reinforce(signal_id, success, value)
+```
+
+```
+src/skin/skin_biology.py
+"""
+Skin biology: layers, melanin types.
+"""
+from enum import Enum
+
+class SkinLayer(Enum):
+    EPIDERMIS = "epidermis"
+    DERMIS = "dermis"
+    HYPODERMIS = "hypodermis"
+
+class MelaninType(Enum):
+    EUMELANIN = "eumelanin"
+    PHEOMELANIN = "pheomelanin"
+
+class SkinBiology:
+    @staticmethod
+    def get_layer_description(layer: SkinLayer) -> str:
+        descriptions = {
+            SkinLayer.EPIDERMIS: "Outer layer containing melanocytes, keratinocytes.",
+            SkinLayer.DERMIS: "Middle layer with collagen, elastin, blood vessels.",
+            SkinLayer.HYPODERMIS: "Subcutaneous fat layer."
+        }
+        return descriptions.get(layer, "")
+```
+
+```
+src/skin/skin_tone.py
+"""
+Skin tone classification using Fitzpatrick, Monk, CIELAB.
+"""
+from enum import IntEnum
+import numpy as np
+
+class FitzpatrickType(IntEnum):
+    I = 1
+    II = 2
+    III = 3
+    IV = 4
+    V = 5
+    VI = 6
+
+class MonkSkinTone(IntEnum):
+    TONE_1 = 1
+    TONE_2 = 2
+    TONE_3 = 3
+    TONE_4 = 4
+    TONE_5 = 5
+    TONE_6 = 6
+    TONE_7 = 7
+    TONE_8 = 8
+    TONE_9 = 9
+    TONE_10 = 10
+
+class SkinToneAnalyzer:
+    @staticmethod
+    def estimate_fitzpatrick_from_lab(lab_image: np.ndarray) -> FitzpatrickType:
+        L_mean = np.mean(lab_image[..., 0])
+        if L_mean > 80:
+            return FitzpatrickType.I
+        elif L_mean > 70:
+            return FitzpatrickType.II
+        elif L_mean > 60:
+            return FitzpatrickType.III
+        elif L_mean > 50:
+            return FitzpatrickType.IV
+        elif L_mean > 40:
+            return FitzpatrickType.V
+        else:
+            return FitzpatrickType.VI
+
+    @staticmethod
+    def estimate_monk_from_rgb(rgb_image: np.ndarray) -> MonkSkinTone:
+        gray = np.dot(rgb_image[...,:3], [0.299, 0.587, 0.114])
+        mean_lum = np.mean(gray)
+        idx = int(np.clip(mean_lum / 255 * 10, 0, 9))
+        return MonkSkinTone(idx + 1)
+```
+
+```
+src/skin/undertone.py
+"""
+Undertone classification: warm, cool, neutral, olive.
+"""
+from enum import Enum
+import numpy as np
+
+class Undertone(Enum):
+    WARM = "warm"
+    COOL = "cool"
+    NEUTRAL = "neutral"
+    OLIVE = "olive"
+    GOLDEN = "golden"
+    RED = "red"
+
+class UndertoneAnalyzer:
+    @staticmethod
+    def classify_from_rgb(rgb_patch: np.ndarray) -> Undertone:
+        r_mean = np.mean(rgb_patch[..., 0])
+        g_mean = np.mean(rgb_patch[..., 1])
+        b_mean = np.mean(rgb_patch[..., 2])
+
+        if r_mean > g_mean * 1.1 and r_mean > b_mean * 1.2:
+            return Undertone.WARM
+        elif b_mean > r_mean * 1.1:
+            return Undertone.COOL
+        elif abs(r_mean - g_mean) < 5 and abs(r_mean - b_mean) < 5:
+            return Undertone.NEUTRAL
+        else:
+            return Undertone.OLIVE
+```
+
+```
+src/skin/texture.py
+"""
+Skin texture: pore density, wrinkle depth, roughness.
+"""
+import numpy as np
+from scipy import ndimage
+
+class TextureAnalyzer:
+    @staticmethod
+    def pore_density(gray_image: np.ndarray, threshold: float = 0.7) -> float:
+        edges = ndimage.sobel(gray_image)
+        pores = (edges > threshold * edges.max()).sum()
+        return pores / (gray_image.shape[0] * gray_image.shape[1])
+
+    @staticmethod
+    def wrinkle_depth(gray_image: np.ndarray) -> float:
+        local_std = ndimage.generic_filter(gray_image, np.std, size=5)
+        return float(np.mean(local_std))
+
+    @staticmethod
+    def surface_roughness(gray_image: np.ndarray) -> float:
+        return float(np.mean(np.abs(gray_image - np.mean(gray_image))))
+```
+
+```
+src/skin/conditions.py
+"""
+Dynamic skin conditions.
+"""
+from enum import Enum
+from typing import Dict
+
+class SkinCondition(Enum):
+    ACNE = "acne"
+    DEHYDRATION = "dehydration"
+    HYPERPIGMENTATION = "hyperpigmentation"
+    ROSACEA = "rosacea"
+    PHOTOAGING = "photoaging"
+
+class ConditionAnalyzer:
+    @staticmethod
+    def detect_conditions(rgb_image: np.ndarray) -> Dict[SkinCondition, float]:
+        # Placeholder – would use CNN
+        return {cond: 0.0 for cond in SkinCondition}
+```
+
+```
+src/skin/albinism.py
+"""
+Albinism genetic phenotype classification.
+"""
+from enum import Enum
+
+class AlbinismType(Enum):
+    OCA1 = "OCA1"
+    OCA2 = "OCA2"
+    OCA3 = "OCA3"
+    OCA4 = "OCA4"
+
+class AlbinismDetector:
+    @staticmethod
+    def is_albinism(skin_tone_features: Dict) -> bool:
+        melanin_density = skin_tone_features.get('melanin_density', 1.0)
+        return melanin_density < 0.1
+
+    @staticmethod
+    def classify_type(genetic_data: Dict) -> AlbinismType:
+        if genetic_data.get('TYR_mutation'):
+            return AlbinismType.OCA1
+        elif genetic_data.get('OCA2_mutation'):
+            return AlbinismType.OCA2
+        elif genetic_data.get('TYRP1_mutation'):
+            return AlbinismType.OCA3
+        elif genetic_data.get('SLC45A2_mutation'):
+            return AlbinismType.OCA4
+        return AlbinismType.OCA1
+```
+
+```
+src/skin/datasets.py
+"""
+References to open research datasets.
+"""
+class SkinDatasets:
+    SCIN = "SCIN Dataset – dermatology images with diverse skin tones"
+    FITZPATRICK17K = "Fitzpatrick17k – dermatology images labeled by Fitzpatrick type"
+    HAM10000 = "HAM10000 – dermatoscopic images with lesion labels"
+    SKINCON = "SkinCon – clinical skin features (plaques, scaling etc.)"
+```
+
+```
+src/skin/skin_analysis.py
+"""
+Main skin analysis class integrating all modules.
+"""
+import numpy as np
+from typing import Dict, Any
+
+from src.skin.skin_tone import SkinToneAnalyzer, FitzpatrickType, MonkSkinTone
+from src.skin.undertone import UndertoneAnalyzer, Undertone
+from src.skin.texture import TextureAnalyzer
+from src.skin.conditions import ConditionAnalyzer, SkinCondition
+from src.skin.albinism import AlbinismDetector, AlbinismType
+
+class SkinAnalysisResult:
+    def __init__(self):
+        self.fitzpatrick: FitzpatrickType = None
+        self.monk: MonkSkinTone = None
+        self.undertone: Undertone = None
+        self.pore_density: float = 0.0
+        self.wrinkle_depth: float = 0.0
+        self.roughness: float = 0.0
+        self.conditions: Dict[SkinCondition, float] = {}
+        self.is_albinism: bool = False
+        self.albinism_type: AlbinismType = None
+
+class SkinAnalyzer:
+    def __init__(self):
+        self.tone_analyzer = SkinToneAnalyzer()
+        self.undertone_analyzer = UndertoneAnalyzer()
+        self.texture_analyzer = TextureAnalyzer()
+        self.condition_analyzer = ConditionAnalyzer()
+        self.albinism_detector = AlbinismDetector()
+
+    async def analyze(self, image: np.ndarray) -> SkinAnalysisResult:
+        result = SkinAnalysisResult()
+
+        # Convert RGB to LAB for tone analysis
+        # (simplified; real conversion would use cv2.cvtColor)
+        lab = image  # placeholder
+
+        result.fitzpatrick = self.tone_analyzer.estimate_fitzpatrick_from_lab(lab)
+        result.monk = self.tone_analyzer.estimate_monk_from_rgb(image)
+        result.undertone = self.undertone_analyzer.classify_from_rgb(image)
+
+        gray = np.dot(image[...,:3], [0.299, 0.587, 0.114])
+        result.pore_density = self.texture_analyzer.pore_density(gray)
+        result.wrinkle_depth = self.texture_analyzer.wrinkle_depth(gray)
+        result.roughness = self.texture_analyzer.surface_roughness(gray)
+
+        result.conditions = self.condition_analyzer.detect_conditions(image)
+
+        melanin_density = 1.0 - (result.fitzpatrick.value / 6.0)  # rough estimate
+        result.is_albinism = self.albinism_detector.is_albinism({'melanin_density': melanin_density})
+        if result.is_albinism:
+            result.albinism_type = AlbinismType.OCA1  # placeholder
+
+        return result
+```
+
+```
+src/body/anthropometry.py
+"""
+Core body measurements.
+"""
+from dataclasses import dataclass
+
+@dataclass
+class BodyMeasurements:
+    height: float          # cm
+    weight: float          # kg
+    chest_circ: float      # cm
+    waist_circ: float
+    hip_circ: float
+    shoulder_width: float
+    arm_length: float
+    leg_length: float
+    thigh_circ: float
+    calf_circ: float
+    neck_circ: float
+
+class Anthropometry:
+    @staticmethod
+    def bmi(weight: float, height: float) -> float:
+        return weight / ((height/100) ** 2)
+
+    @staticmethod
+    def waist_to_hip(waist: float, hip: float) -> float:
+        return waist / hip
+
+    @staticmethod
+    def shoulder_to_waist(shoulder: float, waist: float) -> float:
+        return shoulder / waist
+```
+
+```
+src/body/body_shape.py
+"""
+Body shape classification and ratios.
+"""
+from enum import Enum
+from src.body.anthropometry import BodyMeasurements
+
+class BodyShape(Enum):
+    HOURGLASS = "hourglass"
+    PEAR = "pear"
+    RECTANGLE = "rectangle"
+    INVERTED_TRIANGLE = "inverted_triangle"
+
+class BodyShapeClassifier:
+    @staticmethod
+    def classify(measurements: BodyMeasurements) -> BodyShape:
+        whr = measurements.waist_circ / measurements.hip_circ
+        shoulder_hip_ratio = measurements.shoulder_width / measurements.hip_circ
+
+        if whr < 0.75 and shoulder_hip_ratio < 0.9:
+            return BodyShape.HOURGLASS
+        elif whr < 0.75 and shoulder_hip_ratio > 1.1:
+            return BodyShape.INVERTED_TRIANGLE
+        elif whr > 0.85:
+            return BodyShape.PEAR
+        else:
+            return BodyShape.RECTANGLE
+```
+
+```
+src/body/avatar.py
+"""
+Digital avatar construction.
+"""
+class AvatarGenerator:
+    @staticmethod
+    def generate_3d_mesh(measurements) -> bytes:
+        # Placeholder: return binary mesh data (e.g., OBJ)
+        return b""
+```
+
+```
+src/crypto/quantum_safe.py
+"""
+QuantumSafeCrypto – Post-quantum cryptography (requires implementation).
+"""
+class QuantumSafeCrypto:
+    def __init__(self, vault):
+        self.vault = vault
+
+    async def encrypt(self, data: bytes, context: str) -> Dict:
+        # Placeholder – real implementation would use liboqs
+        return {'ciphertext': data, 'nonce': b'', 'context': context}
+
+    async def decrypt(self, encrypted_data: Dict) -> bytes:
+        return encrypted_data['ciphertext']
+```
+
+```
+src/secrets/vault_manager.py
+"""
+VaultSecretsManager – Enterprise secrets management.
+"""
+import asyncio
+import time
+import secrets
+import uuid
+from typing import Dict
+
+class VaultSecretsManager:
+    _instance = None
+    _secrets: Dict[str, Dict] = {}
+    _rotation_lock = asyncio.Lock()
+
+    @classmethod
+    async def get_instance(cls):
+        if cls._instance is None:
+            cls._instance = cls()
+            await cls._instance._initialize()
+        return cls._instance
+
+    async def _initialize(self):
+        self.master_key = secrets.token_bytes(32)
+
+    async def get_secret(self, path: str) -> Dict:
+        async with self._rotation_lock:
+            if path not in self._secrets or self._secrets[path].get('expires', 0) < time.time():
+                new_secret = self._rotate_secret(path)
+                self._secrets[path] = new_secret
+            return self._secrets[path]
+
+    def _rotate_secret(self, path: str) -> Dict:
+        return {
+            'encryption_key': secrets.token_bytes(32),
+            'hmac_key': secrets.token_bytes(32),
+            'expires': time.time() + 86400,
+            'rotation_id': str(uuid.uuid4()),
+            'version': int(time.time())
+        }
+```
+
+```
+src/observability/metrics.py
+"""
+CFRPMetrics – Prometheus metrics.
+"""
+from prometheus_client import Counter, Histogram, Gauge
+
+class CFRPMetrics:
+    def __init__(self):
+        self.requests_total = Counter('cfrp_requests_total', 'Total requests',
+                                       ['method', 'endpoint', 'status', 'region', 'shard'])
+        self.request_duration = Histogram('cfrp_request_duration_seconds', 'Request duration',
+                                          ['method', 'endpoint'],
+                                          buckets=[0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10])
+        self.reinforcements_total = Counter('cfrp_reinforcements_total', 'Total reinforcements',
+                                            ['signal_type', 'success', 'user_segment'])
+        self.confidence_changes = Histogram('cfrp_confidence_changes', 'Confidence change',
+                                            buckets=[0.01, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5])
+        self.queue_size = Gauge('cfrp_queue_size', 'Queue size', ['actor_id', 'shard'])
+        self.active_connections = Gauge('cfrp_active_connections', 'Active connections', ['database', 'region'])
+        self.error_budget = Gauge('cfrp_error_budget', 'Error budget', ['slo_name', 'time_window'])
+        self.latency_sli = Histogram('cfrp_latency_sli', 'Latency SLI', buckets=[0.001, 0.005, 0.01, 0.025, 0.05, 0.1])
+        self.chaos_injections = Counter('cfrp_chaos_injections_total', 'Chaos injections',
+                                        ['injection_type', 'component', 'severity'])
+        self.bias_alerts = Counter('cfrp_bias_alerts_total', 'Bias alerts',
+                                   ['bias_type', 'severity', 'signal_category'])
+```
+
+```
+src/observability/tracing.py
+"""
+DistributedTracer – Jaeger tracing.
+"""
+import opentracing
+from jaeger_client import Config
+
+class DistributedTracer:
+    def __init__(self, service_name: str):
+        config = Config(
+            config={
+                'sampler': {'type': 'probabilistic', 'param': 0.1},
+                'logging': True,
+                'local_agent': {'reporting_host': 'jaeger-agent', 'reporting_port': 6831}
+            },
+            service_name=service_name,
+            validate=True
+        )
+        self.tracer = config.initialize_tracer()
+
+    def start_span(self, operation_name: str, context=None, business_context=None):
+        if context:
+            span_ctx = self.tracer.extract(opentracing.Format.TEXT_MAP, context)
+            span = self.tracer.start_span(operation_name, child_of=span_ctx)
+        else:
+            span = self.tracer.start_span(operation_name)
+        if business_context:
+            for k, v in business_context.items():
+                span.set_tag(f"business.{k}", v)
+        span.set_tag("component", "cfrp")
+        span.set_tag("version", "10.0")
+        return span
+```
+
+```
+src/observability/logger.py
+"""
+StructuredLogger – JSON logging.
+"""
+import logging
+import json
+import datetime
+
+class StructuredLogger:
+    def __init__(self, name: str):
+        self.logger = logging.getLogger(name)
+        handler = logging.StreamHandler()
+        handler.setFormatter(self.JSONFormatter())
+        self.logger.addHandler(handler)
+        self.logger.setLevel(logging.INFO)
+
+    class JSONFormatter(logging.Formatter):
+        def format(self, record):
+            log_record = {
+                'timestamp': datetime.datetime.utcnow().isoformat() + 'Z',
+                'level': record.levelname,
+                'logger': record.name,
+                'message': record.getMessage(),
+                'module': record.module,
+                'function': record.funcName,
+                'line': record.lineno,
+                'trace_id': getattr(record, 'trace_id', None),
+                'span_id': getattr(record, 'span_id', None),
+                'user_id': getattr(record, 'user_id', None),
+                'shard_id': getattr(record, 'shard_id', None),
+                'region': getattr(record, 'region', 'default')
+            }
+            if record.exc_info:
+                log_record['exception'] = self.formatException(record.exc_info)
+            return json.dumps(log_record)
+
+    def info(self, message: str, **context):
+        self.logger.info(message, extra={'extra': context})
+
+    def warning(self, message: str, **context):
+        self.logger.warning(message, extra={'extra': context})
+
+    def error(self, message: str, exc_info=None, **context):
+        self.logger.error(message, exc_info=exc_info, extra={'extra': context})
+```
+
+```
+src/lineage/tracker.py
+"""
+LineageTracker – Data lineage tracking.
+"""
+import asyncio
+import time
+import uuid
+from dataclasses import dataclass, field, asdict
+from typing import Dict, List, Optional
+
+@dataclass
+class DataLineage:
+    lineage_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    created_at: float = field(default_factory=time.time)
+    source_systems: List[str] = field(default_factory=list)
+    transformations: List[Dict] = field(default_factory=list)
+    dependencies: List[str] = field(default_factory=list)
+    quality_metrics: Dict[str, float] = field(default_factory=dict)
+    governance_tags: List[str] = field(default_factory=list)
+
+    def add_transformation(self, transformation_type: str, input_hashes: List[str],
+                           output_hash: str, metadata: Dict = None):
+        self.transformations.append({
+            'type': transformation_type,
+            'timestamp': time.time(),
+            'input_hashes': input_hashes,
+            'output_hash': output_hash,
+            'metadata': metadata or {},
+            'transformation_id': str(uuid.uuid4())
+        })
+
+class LineageTracker:
+    def __init__(self, postgres_pool):
+        self.pool = postgres_pool
+        self.cache: Dict[str, DataLineage] = {}
+        self.batch_queue = asyncio.Queue(maxsize=10000)
+        self.batch_task = None
+
+    async def start(self):
+        self.batch_task = asyncio.create_task(self._batch_processor())
+
+    async def stop(self):
+        if self.batch_task:
+            self.batch_task.cancel()
+            await self._flush_queue()
+
+    async def track_creation(self, entity_type: str, entity_id: str,
+                             source_systems: List[str], metadata: Dict = None) -> str:
+        lineage = DataLineage(source_systems=source_systems, governance_tags=['created', entity_type])
+        lineage_id = lineage.lineage_id
+        self.cache[lineage_id] = lineage
+        await self.batch_queue.put(('create', lineage_id, lineage))
+        return lineage_id
+
+    async def _batch_processor(self):
+        batch = []
+        while True:
+            try:
+                item = await asyncio.wait_for(self.batch_queue.get(), timeout=5.0)
+                batch.append(item)
+                if len(batch) >= 100:
+                    await self._persist_batch(batch)
+                    batch = []
+            except asyncio.TimeoutError:
+                if batch:
+                    await self._persist_batch(batch)
+                    batch = []
+            except asyncio.CancelledError:
+                if batch:
+                    await self._persist_batch(batch)
+                break
+
+    async def _persist_batch(self, batch: List[tuple]):
+        # In production: write to PostgreSQL
+        pass
+
+    async def _flush_queue(self):
+        batch = []
+        while not self.batch_queue.empty():
+            batch.append(await self.batch_queue.get())
+        if batch:
+            await self._persist_batch(batch)
+```
+
+```
+src/ai/explainable.py
+"""
+ExplainableAI – SHAP and LIME integration.
+"""
+import numpy as np
+import shap
+import lime
+import lime.lime_tabular
+from typing import Dict, List, Any
+
+class ExplainableAI:
+    def __init__(self):
+        self.shap_explainer = None
+        self.lime_explainer = None
+        self.feature_names = [
+            'confidence', 'rolling_baseline', 'reinforcement_count',
+            'days_since_reinforcement', 'success_rate', 'volatility',
+            'cultural_sensitivity', 'wardrobe_stability'
+        ]
+        self.training_data = []
+        self.predictions = []
+
+    def fit_explainer(self, X: np.ndarray, y: np.ndarray):
+        self.shap_explainer = shap.KernelExplainer(self._prediction_function, X[:100])
+        self.lime_explainer = lime.lime_tabular.LimeTabularExplainer(
+            X, feature_names=self.feature_names, class_names=['low', 'high'], mode='regression')
+        self.training_data = X.tolist()
+        self.predictions = y.tolist()
+
+    def _prediction_function(self, X: np.ndarray) -> np.ndarray:
+        return np.random.random(len(X))
+
+    def explain_prediction(self, features: Dict[str, float]) -> Dict[str, Any]:
+        X = np.array([[features.get(f, 0) for f in self.feature_names]])
+        shap_values = self.shap_explainer.shap_values(X)
+        shap_explanation = {
+            'feature_importance': dict(zip(self.feature_names, shap_values[0])),
+            'base_value': float(self.shap_explainer.expected_value),
+            'prediction': float(self._prediction_function(X)[0])
+        }
+        return {
+            'shap': shap_explanation,
+            'natural_language': self._generate_nl_explanation(shap_explanation, features)
+        }
+
+    def _generate_nl_explanation(self, shap: Dict, features: Dict) -> str:
+        top = sorted(shap['feature_importance'].items(), key=lambda x: abs(x[1]), reverse=True)[:3]
+        explanation = "This prediction is influenced by: "
+        for f, imp in top:
+            direction = "increases" if imp > 0 else "decreases"
+            explanation += f"{f} ({direction} confidence), "
+        explanation += f"resulting in {shap['prediction']:.2f}."
+        return explanation
+```
+
+```
+src/ai/anomaly_detector.py
+"""
+AnomalyDetector – Statistical anomaly detection.
+"""
+import numpy as np
+from collections import deque
+from typing import Dict
+
+class AnomalyDetector:
+    def __init__(self, window_size: int = 100, sigma_threshold: float = 3.0):
+        self.window_size = window_size
+        self.sigma_threshold = sigma_threshold
+        self.history: Dict[str, deque] = {}
+
+    async def check_anomaly(self, user_id: str, old_conf: float, new_conf: float, metadata=None) -> Dict:
+        delta = new_conf - old_conf
+        if user_id not in self.history:
+            self.history[user_id] = deque(maxlen=self.window_size)
+        self.history[user_id].append(delta)
+        if len(self.history[user_id]) < 10:
+            return {"anomaly": False, "reason": "insufficient_data"}
+        mean = np.mean(self.history[user_id])
+        std = np.std(self.history[user_id])
+        if std == 0:
+            return {"anomaly": False, "reason": "zero_std"}
+        z_score = (delta - mean) / std
+        is_anomaly = abs(z_score) > self.sigma_threshold
+        return {"anomaly": is_anomaly, "z_score": float(z_score)}
+```
+
+```
+src/ai/bias_detector.py
+"""
+BiasDetector – Demographic bias detection.
+"""
+from datetime import datetime
+from typing import Dict, List
+
+class BiasDetector:
+    def __init__(self, metrics):
+        self.metrics = metrics
+        self.demographic_fields = ['age_group', 'gender', 'region', 'income_segment']
+
+    async def check_reinforcement_bias(self, user_features: Dict, signal_features: Dict,
+                                       reinforcement: Dict) -> Dict:
+        results = {'bias_detected': False, 'details': {}, 'recommendations': []}
+        for field in self.demographic_fields:
+            if field in user_features:
+                bias = self._check_demographic_parity(field, user_features[field], reinforcement)
+                if bias > 0.3:
+                    results['bias_detected'] = True
+                    results['details'][f'{field}_bias'] = bias
+        return results
+
+    def _check_demographic_parity(self, field: str, value: str, reinforcement: Dict) -> float:
+        # Placeholder: compare to baseline
+        return 0.0
+```
+
+```
+src/chaos/injector.py
+"""
+ChaosInjector – Chaos engineering experiments.
+"""
+import asyncio
+import secrets
+import numpy as np
+from typing import Dict
+
+class ChaosInjector:
+    def __init__(self, metrics):
+        self.metrics = metrics
+        self.active_injections = set()
+        self.safety_limits = {'max_concurrent_injections': 3, 'max_duration_seconds': 300}
+
+    async def run_experiment(self, experiment_name: str, severity: str = 'medium', duration: int = 60) -> Dict:
+        injection_id = f"{experiment_name}_{secrets.token_hex(4)}"
+        self.active_injections.add(injection_id)
+        try:
+            self.metrics.chaos_injections.labels(
+                injection_type=experiment_name, component='cfrp_core', severity=severity).inc()
+            # Simulate experiment
+            await asyncio.sleep(duration)
+            return {'status': 'completed', 'injection_id': injection_id}
+        finally:
+            self.active_injections.remove(injection_id)
+```
+
+```
+src/disaster/recovery_manager.py
+"""
+DisasterRecoveryManager – Multi-region failover.
+"""
+import asyncio
+import time
+import uuid
+import numpy as np
+from typing import Dict, List
+
+class DisasterRecoveryManager:
+    def __init__(self, regions: List[str], primary_region: str):
+        self.regions = regions
+        self.primary_region = primary_region
+        self.current_region = primary_region
+        self.failover_lock = asyncio.Lock()
+        self.witness_quorum = 3
+
+    async def check_region_health(self, region: str) -> Dict:
+        return {'region': region, 'status': 'healthy', 'health_score': 1.0, 'latency_ms': 50}
+
+    async def initiate_failover(self, from_region: str, to_region: str) -> Dict:
+        async with self.failover_lock:
+            target_health = await self.check_region_health(to_region)
+            if target_health['status'] != 'healthy':
+                return {"error": f"Target region {to_region} not healthy"}
+            self.current_region = to_region
+            return {'failover_id': str(uuid.uuid4()), 'from_region': from_region, 'to_region': to_region}
+```
+
+```
+src/performance/lru_cache.py
+"""
+LRUCache – Simple LRU cache.
+"""
+from collections import OrderedDict
+from typing import Any, Optional
+
+class LRUCache:
+    def __init__(self, maxsize: int = 10000):
+        self.maxsize = maxsize
+        self.cache = OrderedDict()
+
+    def get(self, key: str) -> Optional[Any]:
+        if key in self.cache:
+            self.cache.move_to_end(key)
+            return self.cache[key]
+        return None
+
+    def set(self, key: str, value: Any, ttl: int = 300):
+        if len(self.cache) >= self.maxsize:
+            self.cache.popitem(last=False)
+        self.cache[key] = value
+        self.cache.move_to_end(key)
+```
+
+```
+src/performance/connection_pool.py
+"""
+ConnectionPool – Simple connection pool.
+"""
+import asyncio
+from typing import Any
+
+class ConnectionPool:
+    def __init__(self, max_connections: int = 100):
+        self.max_connections = max_connections
+        self.connections = asyncio.Queue(maxsize=max_connections)
+        self.in_use = set()
+
+    async def acquire(self) -> Any:
+        if not self.connections.empty():
+            conn = await self.connections.get()
+        elif len(self.in_use) < self.max_connections:
+            conn = await self._create_connection()
+        else:
+            conn = await self.connections.get()
+        self.in_use.add(id(conn))
+        return conn
+
+    async def release(self, conn: Any):
+        if id(conn) in self.in_use:
+            self.in_use.remove(id(conn))
+            await self.connections.put(conn)
+
+    async def _create_connection(self) -> Any:
+        return object()
+```
+
+```
+src/performance/query_optimizer.py
+"""
+QueryOptimizer – Simple query cache.
+"""
+import hashlib
+from src.performance.lru_cache import LRUCache
+
+class QueryOptimizer:
+    def __init__(self, cache_size: int = 10000):
+        self.cache = LRUCache(maxsize=cache_size)
+
+    async def execute_query(self, query: str, params: tuple, ttl: int = 300):
+        key = hashlib.md5((query + str(params)).encode()).hexdigest()
+        cached = self.cache.get(key)
+        if cached:
+            return cached
+        result = await self._execute_raw_query(query, params)
+        self.cache.set(key, result, ttl)
+        return result
+
+    async def _execute_raw_query(self, query: str, params: tuple):
+        # Placeholder
+        return None
+```
+
+```
+src/performance/compression_manager.py
+"""
+CompressionManager – Simple gzip compression.
+"""
+import gzip
+from typing import Tuple
+
+class CompressionManager:
+    async def compress(self, data: bytes, data_type: str = 'generic') -> Tuple[bytes, str]:
+        if len(data) > 1024:
+            return gzip.compress(data), 'gzip'
+        return data, 'none'
+
+    async def decompress(self, data: bytes, algorithm: str) -> bytes:
+        if algorithm == 'gzip':
+            return gzip.decompress(data)
+        return data
+```
+
+```
+src/security/security_scanner.py
+"""
+SecurityScanner – Vulnerability scanning.
+"""
+from typing import Dict, List
+
+class SecurityScanner:
+    async def scan(self) -> List[Dict]:
+        return []  # placeholder
+```
+
+```
+src/security/rate_limiter.py
+"""
+RateLimiter – Token bucket rate limiter.
+"""
+import time
+from typing import Dict, Tuple
+
+class RateLimiter:
+    def __init__(self, limits: Dict[str, Dict]):
+        self.limits = limits
+        self.counters: Dict[str, Dict[str, int]] = {}
+        self.windows: Dict[str, Dict[str, list]] = {}
+
+    async def check_limit(self, key: str, endpoint: str, cost: int = 1) -> Tuple[bool, Dict]:
+        limit_key = f"{key}:{endpoint}"
+        now = time.time()
+        # Simplified: always allow
+        return True, {}
+```
+
+```
+src/loadbalancer/adaptive_load_balancer.py
+"""
+AdaptiveLoadBalancer – Simple load balancer.
+"""
+class AdaptiveLoadBalancer:
+    async def get_region_load(self, region: str) -> Dict:
+        return {'cpu': 0.5, 'memory': 0.5, 'queue_depth': 100}
+```
+
+```
+src/loadbalancer/auto_scaler.py
+"""
+AutoScaler – Placeholder for auto-scaling.
+"""
+class AutoScaler:
+    async def scale_up(self, region: str):
+        pass
+    async def scale_down(self, region: str):
+        pass
+```
+
+```
+src/loadbalancer/global_router.py
+"""
+GlobalRouter – Routes users to region based on hash.
+"""
+import hashlib
+
+class GlobalRouter:
+    async def get_optimal_region(self, user_id: str, client_region: str = None) -> str:
+        if client_region:
+            return client_region
+        regions = ['us-east-1', 'us-west-2', 'eu-west-1']
+        idx = int(hashlib.md5(user_id.encode()).hexdigest(), 16) % len(regions)
+        return regions[idx]
+```
+
+```
+src/operations/slo_manager.py
+"""
+SLOManager – SLO tracking and error budgets.
+"""
+import time
+import logging
+from typing import Dict
+
+class SLOManager:
+    def __init__(self, slo_definitions: Dict):
+        self.slo_definitions = slo_definitions
+        self.error_budgets = {}
+
+    async def record_success(self, slo_name: str, duration: float = None):
+        pass
+
+    async def record_error(self, slo_name: str, error_type: str = 'generic'):
+        pass
+```
+
+```
+src/operations/runbook_executor.py
+"""
+RunbookExecutor – Automated runbook execution.
+"""
+from typing import Dict
+
+class RunbookExecutor:
+    async def execute_runbook(self, incident_type: str, severity: str = 'medium') -> Dict:
+        return {'status': 'completed'}
+```
+
+```
+main.py
+"""
+Main entry point for CFRP with skin and body intelligence.
+"""
+import asyncio
+import numpy as np
+from src.core.cfrp_manager import CFRPManager
+from src.usi.usi_integration import USIIntegration
+from src.skin.skin_analysis import SkinAnalyzer
+from src.body.anthropometry import BodyMeasurements, Anthropometry
+from src.body.body_shape import BodyShapeClassifier
+from src.observability.logger import StructuredLogger
+
+async def main():
+    logger = StructuredLogger("cfrp_main")
+    logger.info("Starting CFRP with Skin & Body Intelligence")
+
+    # Initialize CFRP
+    manager = CFRPManager()
+    await manager.start()
+    usi = USIIntegration(manager)
+
+    # Simulate a user
+    user_id = "user_123"
+
+    # Simulate skin image (random RGB)
+    fake_image = np.random.randint(0, 255, (224, 224, 3), dtype=np.uint8)
+
+    # Skin analysis
+    skin_analyzer = SkinAnalyzer()
+    skin_result = await skin_analyzer.analyze(fake_image)
+    logger.info("Skin analysis complete",
+                fitzpatrick=skin_result.fitzpatrick.name,
+                undertone=skin_result.undertone.value if skin_result.undertone else None)
+
+    # Body measurements (simulated)
+    measurements = BodyMeasurements(
+        height=170, weight=65,
+        chest_circ=90, waist_circ=75, hip_circ=95,
+        shoulder_width=40, arm_length=60, leg_length=80,
+        thigh_circ=55, calf_circ=35, neck_circ=35
+    )
+    bmi = Anthropometry.bmi(measurements.weight, measurements.height)
+    whr = Anthropometry.waist_to_hip(measurements.waist_circ, measurements.hip_circ)
+    body_shape = BodyShapeClassifier.classify(measurements)
+    logger.info("Body analysis complete", bmi=bmi, whr=whr, body_shape=body_shape.value)
+
+    # Define signals based on skin/body features
+    signals = [
+        {"signal": "fitzpatrick", "usi_weight": 0.8},
+        {"signal": "undertone", "usi_weight": 0.6},
+        {"signal": "pore_density", "usi_weight": 0.4},
+        {"signal": "body_shape", "usi_weight": 0.7},
+        {"signal": "bmi", "usi_weight": 0.5}
+    ]
+
+    # Get CFRP advice
+    enhanced = await usi.get_weighted_suggestions(user_id, signals)
+    logger.info("Weighted suggestions", suggestions=enhanced)
+
+    # Simulate feedback (user liked a product based on Fitzpatrick)
+    result = await usi.process_feedback(user_id, "fitzpatrick", success=True, value=0.9)
+    logger.info("Reinforcement result", result=result)
+
+    # Shutdown
+    await manager.shutdown()
+    logger.info("Shutdown complete")
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+```
+requirements.txt
+asyncio
+numpy
+scipy
+cryptography
+prometheus_client
+jaeger_client
+opentracing
+redis
+aioboto3
+psycopg2-binary
+shap
+lime
+pandas
+```
+
+```
+Dockerfile
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+EXPOSE 9090 6831
+CMD ["python", "main.py"]
+```
+

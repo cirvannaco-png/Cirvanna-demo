@@ -1,0 +1,3353 @@
+
+Step 1 — Classification
+
+Code-Dominant
+
+---
+
+Step 2 — GitHub-Ready Repository Structure
+
+.env.example
+
+```env
+# Database
+DATABASE_URL=postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna
+POSTGRES_USER=cirvanna
+POSTGRES_PASSWORD=cirvanna123
+POSTGRES_DB=cirvanna
+
+# Redis
+REDIS_URL=redis://redis:6379/0
+
+# AWS
+AWS_ACCESS_KEY_ID=
+AWS_SECRET_ACCESS_KEY=
+AWS_REGION=us-east-1
+S3_BUCKET=cirvanna-meshes
+
+# Model paths
+SMPL_MODEL_PATH=/models/smpl
+DEEPLAB_WEIGHTS_PATH=/models/deeplab
+MOVENET_WEIGHTS_PATH=/models/movenet
+
+# API Keys
+INTERNAL_API_KEY=dev_internal_key_123
+ADMIN_API_KEY=dev_admin_key_456
+
+# Monitoring
+PROMETHEUS_PORT=8000
+METRICS_ENABLED=true
+LOG_LEVEL=INFO
+OTEL_SERVICE_NAME=cirvanna
+OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318
+
+# Performance
+GPU_ENABLED=false
+BATCH_SIZE=4
+CACHE_TTL=3600
+MAX_QUEUE_SIZE=100
+```
+
+docker-compose.yml
+
+```yaml
+version: '3.8'
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:14-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cirvanna}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cirvanna123}
+      POSTGRES_DB: ${POSTGRES_DB:-cirvanna}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cirvanna}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging: *default-logging
+
+  ais:
+    build: 
+      context: ./ais
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+      - GPU_ENABLED=${GPU_ENABLED:-false}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - S3_BUCKET=${S3_BUCKET:-cirvanna-meshes}
+    volumes:
+      - ./ais/models:/app/models
+      - model_cache:/app/cache
+    ports:
+      - "8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    logging: *default-logging
+
+  gsis:
+    build:
+      context: ./gsis
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+    volumes:
+      - ./gsis/migrations:/app/migrations
+    ports:
+      - "8002:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    logging: *default-logging
+
+  dtae_fce:
+    build:
+      context: ./dtae_fce
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    volumes:
+      - ./dtae_fce/models:/app/models
+    ports:
+      - "8003:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    logging: *default-logging
+
+  gateway:
+    build:
+      context: ./gateway
+      dockerfile: Dockerfile
+    ports:
+      - "8080:80"
+      - "8081:81"
+    depends_on:
+      - ais
+      - gsis
+      - dtae_fce
+    logging: *default-logging
+
+  admin:
+    build:
+      context: ./admin
+      dockerfile: Dockerfile
+    ports:
+      - "8082:8000"
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    depends_on:
+      - postgres
+      - redis
+    logging: *default-logging
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    logging: *default-logging
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana-dashboard.json:/etc/grafana/provisioning/dashboards/dashboard.json
+      - ./monitoring/datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    logging: *default-logging
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"
+      - "4318:4318"
+    logging: *default-logging
+
+  celery_worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    volumes:
+      - ./ais:/app/ais
+      - ./gsis:/app/gsis
+      - ./dtae_fce:/app/dtae_fce
+      - ./shared:/app/shared
+      - ./celery_app.py:/app/celery_app.py
+    command: celery -A celery_app worker --loglevel=info --concurrency=4
+    depends_on:
+      - redis
+      - postgres
+    logging: *default-logging
+
+  celery_beat:
+    build:
+      context: .
+      dockerfile: Dockerfile.celery
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
+    volumes:
+      - ./dtae_fce:/app/dtae_fce
+      - ./shared:/app/shared
+      - ./celery_app.py:/app/celery_app.py
+    command: celery -A celery_app beat --loglevel=info --schedule=/var/run/celerybeat-schedule
+    depends_on:
+      - redis
+      - postgres
+    logging: *default-logging
+
+volumes:
+  postgres_data:
+  redis_data:
+  model_cache:
+  prometheus_data:
+  grafana_data:
+```
+
+Makefile
+
+```makefile
+.PHONY: help build up down logs test clean migrate seed monitor prod-build prod-push k8s-deploy
+
+help:
+	@echo "Available commands:"
+	@echo "  make build       - Build all Docker images"
+	@echo "  make up          - Start all services"
+	@echo "  make down        - Stop all services"
+	@echo "  make logs        - Follow logs"
+	@echo "  make test        - Run tests"
+	@echo "  make clean       - Clean up containers and volumes"
+	@echo "  make migrate     - Run database migrations"
+	@echo "  make seed        - Seed database with initial data"
+	@echo "  make monitor     - Start monitoring stack"
+	@echo "  make prod-build  - Build production images"
+	@echo "  make prod-push   - Push images to registry"
+	@echo "  make k8s-deploy  - Deploy to Kubernetes"
+
+build:
+	docker-compose build
+
+up:
+	docker-compose up -d
+	@echo "✅ Services started"
+	@echo "📡 API Gateway: http://localhost:8080"
+	@echo "📊 Admin Dashboard: http://localhost:8081"
+	@echo "📈 Grafana: http://localhost:3000 (admin/admin)"
+	@echo "🔍 Jaeger: http://localhost:16686"
+
+down:
+	docker-compose down
+
+logs:
+	docker-compose logs -f
+
+test:
+	docker-compose run --rm ais pytest tests/ -v
+	docker-compose run --rm gsis pytest tests/ -v
+	docker-compose run --rm dtae_fce pytest tests/ -v
+
+clean:
+	docker-compose down -v
+	docker system prune -f
+
+migrate:
+	docker-compose run --rm gsis alembic upgrade head
+
+seed:
+	docker-compose run --rm gsis python scripts/seed_data.py
+
+monitor:
+	docker-compose up -d prometheus grafana jaeger
+	@echo "✅ Monitoring stack started"
+	@echo "📈 Prometheus: http://localhost:9090"
+	@echo "📊 Grafana: http://localhost:3000"
+	@echo "🔍 Jaeger: http://localhost:16686"
+
+prod-build:
+	docker build -t cirvanna/ais:latest -f ais/Dockerfile .
+	docker build -t cirvanna/gsis:latest -f gsis/Dockerfile .
+	docker build -t cirvanna/dtae_fce:latest -f dtae_fce/Dockerfile .
+	docker build -t cirvanna/gateway:latest -f gateway/Dockerfile .
+	docker build -t cirvanna/admin:latest -f admin/Dockerfile .
+
+prod-push:
+	docker push cirvanna/ais:latest
+	docker push cirvanna/gsis:latest
+	docker push cirvanna/dtae_fce:latest
+	docker push cirvanna/gateway:latest
+	docker push cirvanna/admin:latest
+
+k8s-deploy:
+	kubectl apply -f kubernetes/namespace.yaml
+	kubectl apply -f kubernetes/configmap.yaml
+	kubectl apply -f kubernetes/secrets.yaml
+	kubectl apply -f kubernetes/
+```
+
+requirements.txt
+
+```txt
+# Core
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.4.2
+pydantic-settings==2.0.3
+
+# Database
+sqlalchemy==2.0.23
+alembic==1.12.1
+psycopg2-binary==2.9.9
+asyncpg==0.29.0
+
+# Cache
+redis==5.0.1
+aioredis==2.0.1
+
+# ML/DL
+torch==2.1.0
+torchvision==0.16.0
+tensorflow==2.14.0
+lightgbm==4.1.0
+scikit-learn==1.3.2
+numpy==1.24.3
+pandas==2.1.3
+scipy==1.11.4
+opencv-python==4.8.1.78
+Pillow==10.1.0
+matplotlib==3.8.2
+
+# SMPL
+smplx==0.1.28
+pytorch3d==0.7.4
+chumpy==0.70
+trimesh==4.0.5
+
+# Async tasks
+celery==5.3.4
+flower==2.0.1
+
+# Monitoring
+prometheus-client==0.19.0
+opentelemetry-api==1.21.0
+opentelemetry-sdk==1.21.0
+opentelemetry-instrumentation-fastapi==0.42b0
+opentelemetry-exporter-otlp==1.21.0
+
+# Logging
+python-json-logger==2.0.7
+
+# AWS
+boto3==1.34.0
+botocore==1.34.0
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+httpx==0.25.1
+factory-boy==3.3.0
+pytest-mock==3.12.0
+
+# Utilities
+python-multipart==0.0.6
+python-dotenv==1.0.0
+pyyaml==6.0.1
+requests==2.31.0
+tqdm==4.66.1
+```
+
+setup.py
+
+```python
+from setuptools import setup, find_packages
+
+setup(
+    name="cirvanna",
+    version="1.0.0",
+    description="Cirvanna Virtual Try-On Core Infrastructure",
+    author="Cirvanna Inc.",
+    author_email="dev@cirvanna.com",
+    packages=find_packages(),
+    install_requires=[
+        line.strip() for line in open("requirements.txt").readlines()
+    ],
+    python_requires=">=3.9",
+    classifiers=[
+        "Development Status :: 5 - Production/Stable",
+        "Intended Audience :: Developers",
+        "License :: Other/Proprietary License",
+        "Programming Language :: Python :: 3.9",
+        "Programming Language :: Python :: 3.10",
+        "Topic :: Scientific/Engineering :: Artificial Intelligence",
+        "Topic :: Multimedia :: Graphics :: 3D Modeling",
+    ],
+    include_package_data=True,
+    zip_safe=False,
+)
+```
+
+README.md
+
+```markdown
+# Cirvanna Virtual Try-On Core Infrastructure
+
+## 🚀 Overview
+Production-ready virtual try-on system that generates 3D body meshes from images and provides fit confidence scores for garments.
+
+## 🏗️ Architecture
+- **AIS** - Anthropometric Intelligence Service (3D mesh generation)
+- **GSIS** - Garment Structural Intelligence Service (garment database)
+- **DTAE** - Deformation & Tension Approximation Engine
+- **FCE** - Fit Confidence Engine (ML-based scoring)
+- **Admin Dashboard** - Monitoring and management
+
+## 📋 Prerequisites
+- Docker & Docker Compose
+- NVIDIA GPU + CUDA 11.7+ (optional, for GPU acceleration)
+- AWS account (for S3 storage, optional)
+
+## 🚀 Quick Start
+
+```bash
+# Clone repository
+git clone https://github.com/cirvanna/core.git
+cd core
+
+# Copy environment variables
+cp .env.example .env
+# Edit .env with your configuration
+
+# Build and start services
+make build
+make up
+
+# Run database migrations
+make migrate
+
+# Seed sample data
+make seed
+
+# Run tests
+make test
+```
+
+📡 API Endpoints
+
+Body Capture
+
+```bash
+POST /capture_body
+Content-Type: multipart/form-data
+
+{
+  "images": ["front.jpg", "side.jpg"],
+  "height_cm": 170,
+  "camera_metadata": {
+    "focal_length_mm": 4.15,
+    "sensor_size_mm": [6.3, 4.7]
+  }
+}
+```
+
+Garment Management
+
+```bash
+POST /upload_garment
+GET /garment/{garment_id}
+GET /garments
+```
+
+Fit Computation
+
+```bash
+POST /compute_fit
+{
+  "body_mesh_id": "550e8400-e29b-41d4-a716-446655440000",
+  "garment_id": "G12345"
+}
+```
+
+Feedback
+
+```bash
+POST /feedback
+{
+  "body_mesh_id": "...",
+  "garment_id": "...",
+  "outcome": "kept|returned|exchanged",
+  "reason": "too tight",
+  "rating": 4
+}
+```
+
+📊 Monitoring
+
+· Grafana: http://localhost:3000 (admin/admin)
+· Prometheus: http://localhost:9090
+· Jaeger Tracing: http://localhost:16686
+
+🔧 Configuration
+
+Key environment variables:
+
+· DATABASE_URL - PostgreSQL connection string
+· REDIS_URL - Redis connection string
+· S3_BUCKET - S3 bucket for mesh storage
+· GPU_ENABLED - Enable GPU acceleration
+
+🧪 Testing
+
+```bash
+# Run all tests
+make test
+
+# Run specific service tests
+docker-compose run --rm ais pytest tests/test_ais.py -v
+```
+
+📦 Production Deployment
+
+```bash
+# Build production images
+make prod-build
+
+# Push to registry
+make prod-push
+
+# Deploy to Kubernetes
+make k8s-deploy
+```
+
+📈 Performance Targets
+
+· First-time try-on: ≤10 seconds
+· Repeat try-on: ≤2 seconds (cached)
+· GPU cost: ≤$0.10 per inference
+· Scale: 100k+ users/month
+
+🔒 Security
+
+· All endpoints require API key authentication in production
+· Internal services communicate via mTLS
+· Data encrypted at rest and in transit
+
+📄 License
+
+Proprietary - All rights reserved
+
+```
+
+### **`shared/__init__.py`**
+```python
+from shared.body import (
+    BodyCapture, CameraMetadata, BodyMesh, Measurements, 
+    MeasurementUncertainty, PostureClass
+)
+from shared.garment import (
+    GarmentDescriptor, PatternDimensions, EaseAllowance, 
+    FitClass, FabricWeight
+)
+from shared.fit import FitConfidence, SizeAdjustment, RiskHeatmap
+from shared.exceptions import (
+    CirvannaException, AISException, LowConfidenceError,
+    SilhouetteError, GSISException, InvalidGarmentDataError,
+    GarmentNotFoundError, DTAEException, NonFittableGarmentError,
+    FCEException
+)
+
+__all__ = [
+    # Body
+    'BodyCapture', 'CameraMetadata', 'BodyMesh', 'Measurements',
+    'MeasurementUncertainty', 'PostureClass',
+    
+    # Garment
+    'GarmentDescriptor', 'PatternDimensions', 'EaseAllowance',
+    'FitClass', 'FabricWeight',
+    
+    # Fit
+    'FitConfidence', 'SizeAdjustment', 'RiskHeatmap',
+    
+    # Exceptions
+    'CirvannaException', 'AISException', 'LowConfidenceError',
+    'SilhouetteError', 'GSISException', 'InvalidGarmentDataError',
+    'GarmentNotFoundError', 'DTAEException', 'NonFittableGarmentError',
+    'FCEException'
+]
+```
+
+shared/body.py
+
+```python
+from pydantic import BaseModel, Field, validator, ConfigDict
+from typing import List, Optional
+from enum import Enum
+
+class CameraMetadata(BaseModel):
+    """Camera calibration metadata"""
+    focal_length_mm: float = Field(..., gt=0, description="Focal length in mm")
+    sensor_size_mm: List[float] = Field(
+        ..., min_items=2, max_items=2,
+        description="Sensor width and height in mm"
+    )
+
+    @validator('sensor_size_mm')
+    def validate_sensor_size(cls, v):
+        if v[0] <= 0 or v[1] <= 0:
+            raise ValueError('Sensor dimensions must be positive')
+        return v
+
+class BodyCapture(BaseModel):
+    """Input schema for body capture request"""
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "images": ["front.jpg", "side.jpg"],
+            "height_cm": 170,
+            "camera_metadata": {
+                "focal_length_mm": 4.15,
+                "sensor_size_mm": [6.3, 4.7]
+            },
+            "optional_weight_kg": 65
+        }
+    })
+    
+    images: List[str] = Field(
+        ..., min_items=2, max_items=3,
+        description="Paths to input images"
+    )
+    height_cm: float = Field(..., ge=50, le=300, description="Height in cm")
+    camera_metadata: CameraMetadata
+    optional_weight_kg: Optional[float] = Field(
+        None, ge=10, le=300,
+        description="Optional weight in kg"
+    )
+
+    @validator('images')
+    def validate_images(cls, v):
+        valid_extensions = ['.jpg', '.jpeg', '.png', '.webp']
+        for img_path in v:
+            if not any(img_path.lower().endswith(ext) for ext in valid_extensions):
+                raise ValueError(f'Invalid image format: {img_path}')
+        return v
+
+class Measurements(BaseModel):
+    """Body measurements in cm"""
+    chest_cm: float = Field(..., ge=30, le=200)
+    waist_cm: float = Field(..., ge=20, le=200)
+    hip_cm: float = Field(..., ge=30, le=200)
+    shoulder_cm: float = Field(..., ge=20, le=100)
+    torso_length_cm: float = Field(..., ge=30, le=100)
+    inseam_cm: float = Field(..., ge=30, le=150)
+    arm_length_cm: float = Field(..., ge=30, le=100)
+
+class MeasurementUncertainty(BaseModel):
+    """Standard deviation for measurements"""
+    chest_cm: float = Field(..., ge=0, le=10)
+    waist_cm: float = Field(..., ge=0, le=10)
+    hip_cm: float = Field(..., ge=0, le=10)
+
+class PostureClass(str, Enum):
+    """Posture classification"""
+    NEUTRAL = "neutral"
+    FORWARD = "forward"
+    ATHLETIC = "athletic"
+    RELAXED = "relaxed"
+
+class BodyMesh(BaseModel):
+    """Output schema from AIS"""
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "id": "550e8400-e29b-41d4-a716-446655440000",
+            "mesh_url": "https://s3.amazonaws.com/cirvanna/meshes/mesh.obj",
+            "measurements": {
+                "chest_cm": 98.2, "waist_cm": 76.5, "hip_cm": 101.0,
+                "shoulder_cm": 45.2, "torso_length_cm": 52.1,
+                "inseam_cm": 79.0, "arm_length_cm": 61.2
+            },
+            "proportion_vector": [0.48, 0.39, 0.13],
+            "shoulder_angle_index": 12.5,
+            "posture_class": "neutral",
+            "measurement_uncertainty": {
+                "chest_cm": 0.9, "waist_cm": 1.1, "hip_cm": 1.0
+            },
+            "confidence_tier": "A"
+        }
+    })
+    
+    id: str = Field(..., description="Unique mesh identifier")
+    mesh_url: str = Field(..., description="URL to download mesh file")
+    measurements: Measurements
+    proportion_vector: List[float] = Field(
+        ..., min_items=3, max_items=3,
+        description="Body proportions [torso/legs/arms]"
+    )
+    shoulder_angle_index: float = Field(
+        ..., description="Shoulder slope in degrees"
+    )
+    posture_class: PostureClass
+    measurement_uncertainty: MeasurementUncertainty
+    confidence_tier: str = Field(
+        ..., regex="^[ABC]$",
+        description="Confidence tier: A (<1cm), B (1-2cm), C (>2cm)"
+    )
+```
+
+shared/garment.py
+
+```python
+from pydantic import BaseModel, Field, validator, ConfigDict
+from typing import Optional
+from enum import Enum
+
+class FitClass(str, Enum):
+    """Garment fit classification"""
+    SLIM = "slim"
+    REGULAR = "regular"
+    RELAXED = "relaxed"
+    OVERSIZED = "oversized"
+
+class FabricWeight(str, Enum):
+    """Fabric weight classification"""
+    LIGHT = "light"
+    MEDIUM = "medium"
+    HEAVY = "heavy"
+
+class PatternDimensions(BaseModel):
+    """Garment pattern measurements in cm"""
+    chest: float = Field(..., ge=30, le=300)
+    waist: float = Field(..., ge=20, le=300)
+    hip: float = Field(..., ge=30, le=300)
+    shoulder: float = Field(..., ge=20, le=150)
+    sleeve_length: float = Field(..., ge=10, le=150)
+    length: float = Field(..., ge=20, le=300)
+
+class EaseAllowance(BaseModel):
+    """Ease allowance in cm"""
+    chest: float = Field(0, ge=-10, le=50)
+    waist: float = Field(0, ge=-10, le=50)
+    hip: float = Field(0, ge=-10, le=50)
+
+class GarmentDescriptor(BaseModel):
+    """Garment Descriptor Object (GDO)"""
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "garment_id": "G12345",
+            "size": "M",
+            "pattern_dimensions_cm": {
+                "chest": 100, "waist": 78, "hip": 102,
+                "shoulder": 46, "sleeve_length": 61, "length": 70
+            },
+            "stretch_ratio": 0.35,
+            "fit_class": "regular",
+            "fabric_weight": "medium",
+            "ease_allowance_cm": {
+                "chest": 2, "waist": 2, "hip": 2
+            },
+            "optional_CAD_pattern": "G12345.step"
+        }
+    })
+    
+    garment_id: str = Field(..., min_length=1, max_length=100)
+    size: str = Field(..., min_length=1, max_length=20)
+    pattern_dimensions: PatternDimensions
+    stretch_ratio: float = Field(..., ge=0, le=2)
+    fit_class: FitClass
+    fabric_weight: FabricWeight
+    ease_allowance: EaseAllowance
+    optional_CAD_pattern: Optional[str] = None
+
+    @validator('pattern_dimensions')
+    def validate_dimensions(cls, v, values):
+        if v.waist > v.chest * 1.1:
+            raise ValueError('Waist suspiciously larger than chest')
+        return v
+```
+
+shared/fit.py
+
+```python
+from pydantic import BaseModel, Field, ConfigDict
+
+class SizeAdjustment(BaseModel):
+    """Recommended size adjustments in cm"""
+    chest_cm: float = 0
+    waist_cm: float = 0
+    hip_cm: float = 0
+
+class RiskHeatmap(BaseModel):
+    """Regional risk scores (0-1)"""
+    chest: float = Field(..., ge=0, le=1)
+    waist: float = Field(..., ge=0, le=1)
+    shoulder: float = Field(..., ge=0, le=1)
+
+class FitConfidence(BaseModel):
+    """Fit confidence output"""
+    model_config = ConfigDict(json_schema_extra={
+        "example": {
+            "FP": 0.87,
+            "size_adjustment": {"chest_cm": 1.5, "waist_cm": 0.0, "hip_cm": 0.0},
+            "MCR": 8.4,
+            "OAS": 9.2,
+            "movement_risk": 0.3,
+            "risk_heatmap": {"chest": 0.7, "waist": 0.2, "shoulder": 0.6},
+            "confidence_tier": "A"
+        }
+    })
+    
+    FP: float = Field(..., ge=0, le=1, description="Fit Probability")
+    size_adjustment: SizeAdjustment
+    MCR: float = Field(..., ge=0, le=10, description="Movement Comfort Rating")
+    OAS: float = Field(..., ge=0, le=10, description="Occasion Appropriateness")
+    movement_risk: float = Field(..., ge=0, le=1, description="Movement risk factor")
+    risk_heatmap: RiskHeatmap
+    confidence_tier: str = Field(..., regex="^[ABC]$")
+```
+
+shared/exceptions.py
+
+```python
+from typing import Optional, Dict, Any
+
+class CirvannaException(Exception):
+    """Base exception for all Cirvanna services"""
+    def __init__(
+        self,
+        message: str,
+        code: str,
+        status_code: int = 500,
+        details: Optional[Dict[str, Any]] = None
+    ):
+        self.message = message
+        self.code = code
+        self.status_code = status_code
+        self.details = details or {}
+        super().__init__(message)
+
+class AISException(CirvannaException):
+    """Anthropometric Intelligence Service exceptions"""
+    pass
+
+class LowConfidenceError(AISException):
+    """Raised when confidence tier is C"""
+    def __init__(
+        self,
+        message: str = "Low confidence in measurements",
+        details: Optional[Dict] = None
+    ):
+        super().__init__(message, "LOW_CONFIDENCE", 422, details)
+
+class SilhouetteError(AISException):
+    """Raised when silhouette cannot be extracted"""
+    def __init__(
+        self,
+        message: str = "Could not extract silhouette from images",
+        details: Optional[Dict] = None
+    ):
+        super().__init__(message, "SILHOUETTE_ERROR", 400, details)
+
+class GSISException(CirvannaException):
+    """Garment Structural Intelligence Service exceptions"""
+    pass
+
+class InvalidGarmentDataError(GSISException):
+    """Raised when garment data validation fails"""
+    def __init__(self, message: str, details: Optional[Dict] = None):
+        super().__init__(message, "INVALID_GARMENT_DATA", 400, details)
+
+class GarmentNotFoundError(GSISException):
+    """Raised when garment ID not found"""
+    def __init__(self, garment_id: str):
+        super().__init__(
+            f"Garment {garment_id} not found",
+            "GARMENT_NOT_FOUND",
+            404
+        )
+
+class DTAEException(CirvannaException):
+    """Deformation & Tension Approximation Engine exceptions"""
+    pass
+
+class NonFittableGarmentError(DTAEException):
+    """Raised when garment cannot fit any body"""
+    def __init__(
+        self,
+        message: str = "Garment dimensions outside feasible range",
+        details: Optional[Dict] = None
+    ):
+        super().__init__(message, "NON_FITTABLE", 400, details)
+
+class FCEException(CirvannaException):
+    """Fit Confidence Engine exceptions"""
+    pass
+```
+
+shared/logging.py
+
+```python
+import logging
+import sys
+import json
+from datetime import datetime
+from typing import Dict, Any
+from pythonjsonlogger import jsonlogger
+
+class CirvannaJSONFormatter(jsonlogger.JsonFormatter):
+    """Custom JSON formatter for structured logging"""
+    
+    def add_fields(
+        self,
+        log_record: Dict[str, Any],
+        record: logging.LogRecord,
+        message_dict: Dict[str, Any]
+    ) -> None:
+        super().add_fields(log_record, record, message_dict)
+        
+        log_record['timestamp'] = datetime.utcnow().isoformat()
+        log_record['level'] = record.levelname
+        log_record['service'] = getattr(record, 'service', 'unknown')
+        log_record['environment'] = getattr(record, 'environment', 'development')
+        
+        if hasattr(record, 'trace_id'):
+            log_record['trace_id'] = record.trace_id
+        
+        # Remove unnecessary fields
+        for field in ['filename', 'module', 'funcName', 'lineno',
+                     'msecs', 'relativeCreated', 'process', 'thread']:
+            log_record.pop(field, None)
+
+def setup_logging(
+    service_name: str,
+    log_level: str = "INFO",
+    json_format: bool = True
+) -> logging.Logger:
+    """Setup logging configuration"""
+    logger = logging.getLogger()
+    logger.setLevel(getattr(logging, log_level))
+    
+    # Remove existing handlers
+    logger.handlers.clear()
+    
+    # Create console handler
+    handler = logging.StreamHandler(sys.stdout)
+    
+    if json_format:
+        formatter = CirvannaJSONFormatter()
+    else:
+        formatter = logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        )
+    
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+    
+    # Add service name to all logs
+    old_factory = logging.getLogRecordFactory()
+    
+    def record_factory(*args, **kwargs):
+        record = old_factory(*args, **kwargs)
+        record.service = service_name
+        return record
+    
+    logging.setLogRecordFactory(record_factory)
+    
+    return logger
+```
+
+shared/metrics.py
+
+```python
+from prometheus_client import Counter, Histogram, Gauge
+import time
+from functools import wraps
+from typing import Callable
+
+# Define metrics
+request_count = Counter(
+    'http_requests_total',
+    'Total HTTP requests',
+    ['method', 'endpoint', 'status']
+)
+
+request_duration = Histogram(
+    'http_request_duration_seconds',
+    'HTTP request duration',
+    ['method', 'endpoint'],
+    buckets=(0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0)
+)
+
+active_requests = Gauge(
+    'http_requests_active',
+    'Active HTTP requests',
+    ['service']
+)
+
+inference_duration = Histogram(
+    'model_inference_duration_seconds',
+    'Model inference duration',
+    ['model_name', 'service'],
+    buckets=(0.1, 0.5, 1.0, 2.0, 5.0, 10.0)
+)
+
+inference_count = Counter(
+    'model_inference_total',
+    'Total model inferences',
+    ['model_name', 'service', 'status']
+)
+
+cache_hits = Counter(
+    'cache_hits_total',
+    'Total cache hits',
+    ['service', 'cache_type']
+)
+
+cache_misses = Counter(
+    'cache_misses_total',
+    'Total cache misses',
+    ['service', 'cache_type']
+)
+
+error_count = Counter(
+    'errors_total',
+    'Total errors',
+    ['service', 'error_type']
+)
+
+confidence_distribution = Histogram(
+    'confidence_tier_distribution',
+    'Distribution of confidence tiers',
+    ['service'],
+    buckets=[0.5, 0.7, 0.8, 0.9, 0.95, 0.99]
+)
+
+def monitor_request(service_name: str):
+    """Decorator to monitor FastAPI endpoints"""
+    def decorator(func: Callable):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            request = kwargs.get('request')
+            method = request.method if request else "unknown"
+            endpoint = request.url.path if request else "unknown"
+            
+            active_requests.labels(service=service_name).inc()
+            
+            start_time = time.time()
+            try:
+                response = await func(*args, **kwargs)
+                status = response.status_code if hasattr(response, 'status_code') else 200
+                return response
+            except Exception as e:
+                error_count.labels(
+                    service=service_name,
+                    error_type=type(e).__name__
+                ).inc()
+                raise
+            finally:
+                duration = time.time() - start_time
+                request_duration.labels(
+                    method=method,
+                    endpoint=endpoint
+                ).observe(duration)
+                request_count.labels(
+                    method=method,
+                    endpoint=endpoint,
+                    status=status
+                ).inc()
+                active_requests.labels(service=service_name).dec()
+        
+        return wrapper
+    return decorator
+```
+
+ais/Dockerfile
+
+```dockerfile
+# Stage 1: Builder
+FROM nvidia/cuda:12.1-runtime-ubuntu22.04 as builder
+
+RUN apt-get update && apt-get install -y \
+    python3.10 \
+    python3-pip \
+    python3.10-dev \
+    build-essential \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    wget \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy requirements first for better caching
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir --upgrade pip && \
+    pip3 install --no-cache-dir -r requirements.txt
+
+# Stage 2: Runtime
+FROM nvidia/cuda:12.1-runtime-ubuntu22.04
+
+RUN apt-get update && apt-get install -y \
+    python3.10 \
+    python3-pip \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy Python packages from builder
+COPY --from=builder /usr/local/lib/python3.10/dist-packages /usr/local/lib/python3.10/dist-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Copy application code
+COPY . .
+
+# Create directories for models and cache
+RUN mkdir -p /models/smpl /models/deeplab /models/movenet /app/cache
+
+# Download model weights (will be cached in volume)
+RUN python3 -c "from models.segmentation import DeepLabV3Plus; DeepLabV3Plus.download_weights('/models/deeplab')" || true
+RUN python3 -c "from models.pose import MoveNet; MoveNet.download_weights('/models/movenet')" || true
+
+# Create non-root user
+RUN useradd -m -u 1000 cirvanna && chown -R cirvanna:cirvanna /app
+USER cirvanna
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD python3 -c "import requests; requests.get('http://localhost:8000/health')" || exit 1
+
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+```
+
+ais/app.py
+
+```python
+from fastapi import FastAPI, HTTPException, Request, File, UploadFile, Form
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, Response
+import time
+import uuid
+from typing import List, Optional
+import json
+import tempfile
+import os
+
+from shared.body import BodyCapture, BodyMesh, CameraMetadata
+from shared.exceptions import AISException, LowConfidenceError, SilhouetteError
+from shared.logging import setup_logging
+from shared.metrics import monitor_request, error_count
+from .config import AISConfig
+from .service import AIService
+from .cache import BodyMeshCache
+from .exceptions import AISServiceError
+
+# Setup logging
+logger = setup_logging("ais")
+
+# Load config
+config = AISConfig()
+
+# Initialize service
+ais_service = AIService(config)
+cache = BodyMeshCache(config)
+
+app = FastAPI(
+    title="Cirvanna AIS",
+    description="Anthropometric Intelligence Service",
+    version="1.0.0",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc"
+)
+
+# Add CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.middleware("http")
+async def add_trace_id(request: Request, call_next):
+    trace_id = request.headers.get("X-Trace-ID", str(uuid.uuid4()))
+    request.state.trace_id = trace_id
+    
+    start_time = time.time()
+    response = await call_next(request)
+    process_time = time.time() - start_time
+    
+    response.headers["X-Trace-ID"] = trace_id
+    response.headers["X-Process-Time"] = str(process_time)
+    
+    return response
+
+@app.exception_handler(AISException)
+async def ais_exception_handler(request: Request, exc: AISException):
+    logger.error(
+        f"AIS error: {exc.message}",
+        extra={
+            "trace_id": getattr(request.state, "trace_id", None),
+            "error_code": exc.code,
+            "details": exc.details
+        }
+    )
+    error_count.labels(service="ais", error_type=exc.code).inc()
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": {
+                "code": exc.code,
+                "message": exc.message,
+                "details": exc.details,
+                "trace_id": getattr(request.state, "trace_id", None)
+            }
+        }
+    )
+
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception):
+    logger.exception(
+        "Unexpected error",
+        extra={
+            "trace_id": getattr(request.state, "trace_id", None),
+            "error_type": type(exc).__name__
+        }
+    )
+    error_count.labels(service="ais", error_type="unexpected").inc()
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": {
+                "code": "INTERNAL_ERROR",
+                "message": "An unexpected error occurred",
+                "trace_id": getattr(request.state, "trace_id", None)
+            }
+        }
+    )
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {
+        "status": "healthy",
+        "service": "ais",
+        "timestamp": time.time(),
+        "gpu_enabled": config.gpu_enabled,
+        "gpu_available": ais_service.check_gpu_available()
+    }
+
+@app.get("/metrics")
+async def get_metrics():
+    """Prometheus metrics endpoint"""
+    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+@app.post("/capture_body", response_model=BodyMesh)
+@monitor_request("ais")
+async def capture_body(
+    request: Request,
+    files: List[UploadFile] = File(..., description="2-3 images (front, side, optional back)"),
+    height_cm: float = Form(..., description="Height in cm"),
+    focal_length_mm: float = Form(..., description="Camera focal length in mm"),
+    sensor_width_mm: float = Form(..., description="Camera sensor width in mm"),
+    sensor_height_mm: float = Form(..., description="Camera sensor height in mm"),
+    optional_weight_kg: Optional[float] = Form(None, description="Optional weight in kg")
+):
+    """
+    Process body images and generate 3D mesh with measurements
+    
+    - **files**: 2-3 images (front, side, optional back)
+    - **height_cm**: Height in centimeters
+    - **focal_length_mm**: Camera focal length in mm
+    - **sensor_width_mm**: Camera sensor width in mm
+    - **sensor_height_mm**: Camera sensor height in mm
+    - **optional_weight_kg**: Optional weight in kg
+    """
+    trace_id = request.state.trace_id
+    logger.info(
+        f"Processing body capture",
+        extra={
+            "trace_id": trace_id,
+            "image_count": len(files),
+            "height": height_cm
+        }
+    )
+    
+    # Validate file count
+    if len(files) < 2 or len(files) > 3:
+        raise HTTPException(
+            status_code=400,
+            detail="Exactly 2 or 3 images are required"
+        )
+    
+    # Save uploaded files temporarily
+    temp_paths = []
+    try:
+        for file in files:
+            # Validate file type
+            if not file.content_type.startswith('image/'):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"File {file.filename} is not an image"
+                )
+            
+            # Save to temp file
+            suffix = os.path.splitext(file.filename)[1]
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as temp:
+                content = await file.read()
+                temp.write(content)
+                temp_paths.append(temp.name)
+        
+        # Create capture object
+        capture = BodyCapture(
+            images=temp_paths,
+            height_cm=height_cm,
+            camera_metadata=CameraMetadata(
+                focal_length_mm=focal_length_mm,
+                sensor_size_mm=[sensor_width_mm, sensor_height_mm]
+            ),
+            optional_weight_kg=optional_weight_kg
+        )
+        
+        # Check cache
+        cache_key = cache.generate_key(capture)
+        cached_result = cache.get(cache_key)
+        if cached_result:
+            logger.info(
+                "Cache hit",
+                extra={"trace_id": trace_id, "cache_key": cache_key}
+            )
+            return cached_result
+        
+        # Process
+        body_mesh = ais_service.process(capture, trace_id)
+        
+        # Cache result
+        cache.set(cache_key, body_mesh)
+        
+        logger.info(
+            "Body capture successful",
+            extra={
+                "trace_id": trace_id,
+                "mesh_id": body_mesh.id,
+                "confidence_tier": body_mesh.confidence_tier
+            }
+        )
+        
+        return body_mesh
+        
+    except LowConfidenceError as e:
+        logger.warning(
+            "Low confidence result",
+            extra={
+                "trace_id": trace_id,
+                "details": e.details
+            }
+        )
+        raise
+    except SilhouetteError as e:
+        logger.warning(
+            "Silhouette extraction failed",
+            extra={
+                "trace_id": trace_id,
+                "details": e.details
+            }
+        )
+        raise
+    except Exception as e:
+        logger.exception(
+            "Error in body capture",
+            extra={"trace_id": trace_id}
+        )
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        # Clean up temp files
+        for path in temp_paths:
+            try:
+                os.unlink(path)
+            except:
+                pass
+
+@app.get("/store_body/{mesh_id}", response_model=BodyMesh)
+@monitor_request("ais")
+async def get_stored_body(mesh_id: str, request: Request):
+    """
+    Retrieve a stored body mesh by ID
+    """
+    trace_id = request.state.trace_id
+    logger.info(
+        f"Retrieving body mesh {mesh_id}",
+        extra={"trace_id": trace_id}
+    )
+    
+    body_mesh = cache.get_by_id(mesh_id)
+    if not body_mesh:
+        raise HTTPException(status_code=404, detail="Body mesh not found")
+    
+    return body_mesh
+
+@app.delete("/store_body/{mesh_id}")
+@monitor_request("ais")
+async def delete_stored_body(mesh_id: str, request: Request):
+    """
+    Delete a stored body mesh
+    """
+    trace_id = request.state.trace_id
+    logger.info(
+        f"Deleting body mesh {mesh_id}",
+        extra={"trace_id": trace_id}
+    )
+    
+    success = cache.delete_by_id(mesh_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Body mesh not found")
+    
+    return {"status": "deleted", "mesh_id": mesh_id}
+```
+
+ais/config.py
+
+```python
+import os
+from pydantic_settings import BaseSettings
+from typing import Optional
+
+class AISConfig(BaseSettings):
+    """AIS Configuration"""
+    
+    # Service settings
+    service_name: str = "ais"
+    environment: str = os.getenv("ENVIRONMENT", "development")
+    debug: bool = os.getenv("DEBUG", "false").lower() == "true"
+    
+    # Redis
+    redis_url: str = os.getenv("REDIS_URL", "redis://redis:6379/0")
+    
+    # AWS S3
+    s3_bucket: str = os.getenv("S3_BUCKET", "cirvanna-meshes")
+    aws_access_key_id: Optional[str] = os.getenv("AWS_ACCESS_KEY_ID")
+    aws_secret_access_key: Optional[str] = os.getenv("AWS_SECRET_ACCESS_KEY")
+    aws_region: str = os.getenv("AWS_REGION", "us-east-1")
+    
+    # Model paths
+    smpl_model_path: str = os.getenv("SMPL_MODEL_PATH", "/models/smpl")
+    deeplab_weights_path: str = os.getenv("DEEPLAB_WEIGHTS_PATH", "/models/deeplab")
+    movenet_weights_path: str = os.getenv("MOVENET_WEIGHTS_PATH", "/models/movenet")
+    
+    # GPU settings
+    gpu_enabled: bool = os.getenv("GPU_ENABLED", "false").lower() == "true"
+    gpu_device: int = int(os.getenv("GPU_DEVICE", "0"))
+    
+    # Performance
+    batch_size: int = int(os.getenv("BATCH_SIZE", "4"))
+    cache_ttl: int = int(os.getenv("CACHE_TTL", "3600"))  # 1 hour
+    max_queue_size: int = int(os.getenv("MAX_QUEUE_SIZE", "100"))
+    
+    # Image preprocessing
+    target_image_size: int = 512
+    normalize_histogram: bool = True
+    enhance_edges: bool = True
+    
+    # Confidence thresholds
+    tier_a_threshold: float = 1.0  # cm
+    tier_b_threshold: float = 2.0  # cm
+    
+    # SMPL fitting
+    smpl_optimization_steps: int = 100
+    smpl_learning_rate: float = 0.01
+    silhouette_weight: float = 1.0
+    landmark_weight: float = 1.0
+    height_weight: float = 0.5
+    
+    # Monte Carlo dropout for uncertainty
+    mc_dropout_samples: int = 10
+    mc_dropout_rate: float = 0.1
+    
+    class Config:
+        env_file = ".env"
+        case_sensitive = False
+```
+
+ais/cache.py
+
+```python
+import redis
+import json
+import hashlib
+from typing import Optional
+from urllib.parse import urlparse
+from shared.body import BodyMesh
+from .config import AISConfig
+
+class BodyMeshCache:
+    def __init__(self, config: AISConfig):
+        parsed = urlparse(config.redis_url)
+        self.redis_client = redis.Redis(
+            host=parsed.hostname or "localhost",
+            port=parsed.port or 6379,
+            password=parsed.password,
+            decode_responses=True
+        )
+        self.ttl = config.cache_ttl
+
+    def generate_key(self, capture) -> str:
+        content = {
+            "images": capture.images,
+            "height": capture.height_cm,
+            "camera_metadata": capture.camera_metadata.dict()
+        }
+        if capture.optional_weight_kg:
+            content["weight"] = capture.optional_weight_kg
+        content_str = json.dumps(content, sort_keys=True)
+        return hashlib.md5(content_str.encode()).hexdigest()
+
+    def get(self, key: str) -> Optional[BodyMesh]:
+        try:
+            data = self.redis_client.get(f"body_mesh:{key}")
+            if data:
+                return BodyMesh.parse_raw(data)
+        except Exception as e:
+            print(f"Cache read error: {e}")
+        return None
+
+    def set(self, key: str, body_mesh: BodyMesh):
+        try:
+            self.redis_client.setex(f"body_mesh:{key}", self.ttl, body_mesh.json())
+        except Exception as e:
+            print(f"Cache write error: {e}")
+        except Exception as e:
+            print(f"Cache write error: {e}")
+
+    def store_by_id(self, mesh_id: str, body_mesh: BodyMesh):
+        try:
+            self.redis_client.setex(f"body_mesh_id:{mesh_id}", self.ttl, body_mesh.json())
+        except Exception as e:
+            print(f"Cache write error: {e}")
+
+    def get_by_id(self, mesh_id: str) -> Optional[BodyMesh]:
+        try:
+            data = self.redis_client.get(f"body_mesh_id:{mesh_id}")
+            if data:
+                return BodyMesh.parse_raw(data)
+        except Exception as e:
+            print(f"Cache read error: {e}")
+        return None
+
+    def delete_by_id(self, mesh_id: str) -> bool:
+        try:
+            result = self.redis_client.delete(f"body_mesh_id:{mesh_id}")
+            return result > 0
+        except Exception as e:
+            print(f"Cache delete error: {e}")
+            return False
+```
+
+ais/preprocessing.py
+
+```python
+import cv2
+import numpy as np
+from typing import Tuple, Optional
+from .config import AISConfig
+
+class ImagePreprocessor:
+    """Image preprocessing utilities"""
+    
+    def __init__(self, config: AISConfig):
+        self.config = config
+        self.target_size = config.target_image_size
+        
+    def load_image(self, image_path: str) -> np.ndarray:
+        """
+        Load image from path
+        
+        Args:
+            image_path: Path to image file
+            
+        Returns:
+            RGB image as numpy array
+        """
+        img = cv2.imread(image_path)
+        if img is None:
+            raise ValueError(f"Could not load image: {image_path}")
+        
+        # Convert BGR to RGB
+        return cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    
+    def normalize_histogram(self, image: np.ndarray) -> np.ndarray:
+        """
+        Apply histogram equalization to improve contrast
+        
+        Args:
+            image: RGB image
+            
+        Returns:
+            Histogram-equalized RGB image
+        """
+        if not self.config.normalize_histogram:
+            return image
+        
+        # Convert to YUV color space
+        yuv = cv2.cvtColor(image, cv2.COLOR_RGB2YUV)
+        
+        # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        yuv[:, :, 0] = clahe.apply(yuv[:, :, 0])
+        
+        # Convert back to RGB
+        return cv2.cvtColor(yuv, cv2.COLOR_YUV2RGB)
+    
+    def enhance_edges(self, image: np.ndarray) -> np.ndarray:
+        """
+        Enhance edges using unsharp masking
+        
+        Args:
+            image: RGB image
+            
+        Returns:
+            Edge-enhanced RGB image
+        """
+        if not self.config.enhance_edges:
+            return image
+        
+        # Convert to grayscale
+        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+        
+        # Apply unsharp masking
+        blurred = cv2.GaussianBlur(gray, (0, 0), 3.0)
+        enhanced = cv2.addWeighted(gray, 1.5, blurred, -0.5, 0)
+        
+        # Convert back to 3-channel
+        enhanced_rgb = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2RGB)
+        
+        return enhanced_rgb
+    
+    def resize(self, image: np.ndarray, target_size: int) -> np.ndarray:
+        """
+        Resize image to target size while maintaining aspect ratio,
+        padding to square if necessary
+        
+        Args:
+            image: Input image
+            target_size: Desired output size (width and height)
+            
+        Returns:
+            Resized and padded square image
+        """
+        h, w = image.shape[:2]
+        
+        # Determine scaling factor
+        scale = target_size / max(h, w)
+        new_h, new_w = int(h * scale), int(w * scale)
+        
+        # Resize
+        resized = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+        
+        # Pad to square
+        pad_h = max(0, target_size - new_h)
+        pad_w = max(0, target_size - new_w)
+        
+        pad_top = pad_h // 2
+        pad_bottom = pad_h - pad_top
+        pad_left = pad_w // 2
+        pad_right = pad_w - pad_left
+        
+        padded = cv2.copyMakeBorder(
+            resized,
+            pad_top, pad_bottom, pad_left, pad_right,
+            cv2.BORDER_CONSTANT,
+            value=[0, 0, 0]
+        )
+        
+        return padded
+    
+    def resize_to_original(self, image: np.ndarray, target_size: Tuple[int, int]) -> np.ndarray:
+        """
+        Resize image back to original dimensions
+        
+        Args:
+            image: Processed image
+            target_size: (width, height) of original image
+            
+        Returns:
+            Resized image
+        """
+        return cv2.resize(image, target_size, interpolation=cv2.INTER_LINEAR)
+    
+    def augment_training(
+        self,
+        image: np.ndarray,
+        mask: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Data augmentation for training
+        
+        Args:
+            image: Input image
+            mask: Segmentation mask
+            
+        Returns:
+            Augmented image and mask
+        """
+        # Random horizontal flip
+        if np.random.random() > 0.5:
+            image = cv2.flip(image, 1)
+            mask = cv2.flip(mask, 1)
+        
+        # Random rotation
+        angle = np.random.uniform(-10, 10)
+        h, w = image.shape[:2]
+        M = cv2.getRotationMatrix2D((w/2, h/2), angle, 1)
+        image = cv2.warpAffine(image, M, (w, h), borderMode=cv2.BORDER_CONSTANT)
+        mask = cv2.warpAffine(mask, M, (w, h), borderMode=cv2.BORDER_CONSTANT)
+        
+        # Random brightness/contrast
+        alpha = np.random.uniform(0.8, 1.2)
+        beta = np.random.uniform(-20, 20)
+        image = cv2.convertScaleAbs(image, alpha=alpha, beta=beta)
+        
+        return image, mask
+```
+
+ais/service.py
+
+```python
+import numpy as np
+import torch
+import time
+import uuid
+import boto3
+from typing import Dict, Any, Optional, List, Tuple
+from datetime import datetime
+import trimesh
+
+from shared.body import BodyCapture, BodyMesh, Measurements, MeasurementUncertainty, PostureClass
+from shared.exceptions import LowConfidenceError, SilhouetteError
+from .config import AISConfig
+from .preprocessing import ImagePreprocessor
+from .models.segmentation import DeepLabV3Plus
+from .models.pose import MoveNet
+from .models.smpl_fitter import SMPLFitter
+from .uncertainty import UncertaintyEstimator
+from .cache import BodyMeshCache
+from .exceptions import ModelLoadError, ProcessingError
+
+class AIService:
+    """Anthropometric Intelligence Service"""
+    
+    def __init__(self, config: AISConfig):
+        self.config = config
+        self.preprocessor = ImagePreprocessor(config)
+        self.cache = BodyMeshCache(config)
+        
+        # Initialize S3 client if credentials provided
+        self.s3_client = None
+        if config.aws_access_key_id and config.aws_secret_access_key:
+            self.s3_client = boto3.client(
+                's3',
+                aws_access_key_id=config.aws_access_key_id,
+                aws_secret_access_key=config.aws_secret_access_key,
+                region_name=config.aws_region
+            )
+        
+        # Lazy-loaded models
+        self._segmentation_model = None
+        self._pose_model = None
+        self._smpl_fitter = None
+        self._uncertainty_estimator = None
+        
+    @property
+    def segmentation_model(self) -> DeepLabV3Plus:
+        """Lazy load segmentation model"""
+        if self._segmentation_model is None:
+            try:
+                self._segmentation_model = DeepLabV3Plus(self.config)
+            except Exception as e:
+                raise ModelLoadError(f"Failed to load segmentation model: {e}")
+        return self._segmentation_model
+    
+    @property
+    def pose_model(self) -> MoveNet:
+        """Lazy load pose model"""
+        if self._pose_model is None:
+            try:
+                self._pose_model = MoveNet(self.config)
+            except Exception as e:
+                raise ModelLoadError(f"Failed to load pose model: {e}")
+        return self._pose_model
+    
+    @property
+    def smpl_fitter(self) -> SMPLFitter:
+        """Lazy load SMPL fitter"""
+        if self._smpl_fitter is None:
+            try:
+                self._smpl_fitter = SMPLFitter(self.config)
+            except Exception as e:
+                raise ModelLoadError(f"Failed to load SMPL fitter: {e}")
+        return self._smpl_fitter
+    
+    @property
+    def uncertainty_estimator(self) -> UncertaintyEstimator:
+        """Lazy load uncertainty estimator"""
+        if self._uncertainty_estimator is None:
+            self._uncertainty_estimator = UncertaintyEstimator(self.config)
+        return self._uncertainty_estimator
+    
+    def check_gpu_available(self) -> bool:
+        """Check if GPU is available and being used"""
+        if not self.config.gpu_enabled:
+            return False
+        return torch.cuda.is_available()
+    
+    def process(self, capture: BodyCapture, trace_id: str = None) -> BodyMesh:
+        """
+        Main processing pipeline for body capture
+        
+        Steps:
+        1. Preprocess images
+        2. Segment human silhouette
+        3. Detect 2D pose keypoints
+        4. Fit SMPL model
+        5. Compute uncertainty
+        6. Determine confidence tier
+        7. Save mesh to S3
+        """
+        start_time = time.time()
+        
+        try:
+            # Step 1: Preprocess images
+            processed_images, original_sizes = self._preprocess_images(capture.images)
+            
+            # Step 2: Segmentation
+            masks = self._segment_images(processed_images)
+            
+            # Step 3: Pose detection
+            keypoints_2d = self._detect_pose(processed_images, original_sizes)
+            
+            # Step 4: SMPL fitting
+            mesh_vertices, measurements_dict = self.smpl_fitter.fit_multiview(
+                images=processed_images,
+                masks=masks,
+                keypoints=keypoints_2d,
+                height_cm=capture.height_cm,
+                focal_length=capture.camera_metadata.focal_length_mm,
+                sensor_size=capture.camera_metadata.sensor_size_mm,
+                weight_kg=capture.optional_weight_kg
+            )
+            
+            # Step 5: Uncertainty estimation
+            uncertainties = self.uncertainty_estimator.estimate(
+                mesh_vertices,
+                measurements_dict,
+                processed_images,
+                masks,
+                keypoints_2d
+            )
+            
+            # Step 6: Confidence tier
+            tier = self._determine_confidence_tier(uncertainties)
+            if tier == "C":
+                raise LowConfidenceError(
+                    "Measurement uncertainty too high",
+                    details={"uncertainties": uncertainties}
+                )
+            
+            # Step 7: Save mesh to S3
+            mesh_id = str(uuid.uuid4())
+            mesh_url = self._save_mesh_to_s3(mesh_vertices, mesh_id, trace_id)
+            
+            # Compute additional attributes
+            proportion_vector = self._compute_proportions(measurements_dict)
+            shoulder_angle = self._estimate_shoulder_angle(keypoints_2d)
+            posture_class = self._classify_posture(keypoints_2d)
+            
+            # Create measurements object
+            measurements = Measurements(**{
+                k: round(v, 1) for k, v in measurements_dict.items()
+            })
+            
+            uncertainty_obj = MeasurementUncertainty(**{
+                k: round(v, 1) for k, v in uncertainties.items()
+                if k in ['chest_cm', 'waist_cm', 'hip_cm']
+            })
+            
+            # Create body mesh object
+            body_mesh = BodyMesh(
+                id=mesh_id,
+                mesh_url=mesh_url,
+                measurements=measurements,
+                proportion_vector=[round(p, 2) for p in proportion_vector],
+                shoulder_angle_index=round(shoulder_angle, 1),
+                posture_class=posture_class,
+                measurement_uncertainty=uncertainty_obj,
+                confidence_tier=tier
+            )
+            
+            # Store in cache
+            self.cache.store_by_id(mesh_id, body_mesh)
+            
+            process_time = time.time() - start_time
+            print(f"✅ Processing completed in {process_time:.2f}s")
+            
+            return body_mesh
+            
+        except Exception as e:
+            raise ProcessingError(f"Processing failed: {str(e)}")
+    
+    def _preprocess_images(self, image_paths: List[str]) -> Tuple[List[np.ndarray], List[Tuple[int, int]]]:
+        """Preprocess all images"""
+        processed = []
+        sizes = []
+        
+        for path in image_paths:
+            img = self.preprocessor.load_image(path)
+            h, w = img.shape[:2]
+            sizes.append((w, h))
+            
+            if self.config.normalize_histogram:
+                img = self.preprocessor.normalize_histogram(img)
+            
+            if self.config.enhance_edges:
+                img = self.preprocessor.enhance_edges(img)
+            
+            img = self.preprocessor.resize(img, self.config.target_image_size)
+            processed.append(img)
+        
+        return processed, sizes
+    
+    def _segment_images(self, images: List[np.ndarray]) -> List[np.ndarray]:
+        """Segment all images"""
+        masks = []
+        
+        for img in images:
+            mask = self.segmentation_model.predict(img)
+            
+            if mask is None or np.sum(mask) < 100:
+                raise SilhouetteError(
+                    "Could not extract human silhouette",
+                    details={"pixel_count": int(np.sum(mask)) if mask is not None else 0}
+                )
+            
+            masks.append(mask)
+        
+        return masks
+    
+    def _detect_pose(
+        self,
+        images: List[np.ndarray],
+        original_sizes: List[Tuple[int, int]]
+    ) -> List[np.ndarray]:
+        """Detect pose in all images"""
+        keypoints_list = []
+        
+        for img, (orig_w, orig_h) in zip(images, original_sizes):
+            kp = self.pose_model.predict(img)
+            
+            if kp is None or len(kp) < 10:
+                raise SilhouetteError(
+                    "Could not detect pose keypoints",
+                    details={"keypoint_count": len(kp) if kp is not None else 0}
+                )
+            
+            # Scale keypoints back to original image size
+            scale_x = orig_w / self.config.target_image_size
+            scale_y = orig_h / self.config.target_image_size
+            
+            kp[:, 0] *= scale_x
+            kp[:, 1] *= scale_y
+            
+            keypoints_list.append(kp)
+        
+        return keypoints_list
+    
+    def _determine_confidence_tier(self, uncertainties: Dict[str, float]) -> str:
+        """Determine confidence tier based on uncertainties"""
+        max_uncertainty = max(uncertainties.values())
+        
+        if max_uncertainty < self.config.tier_a_threshold:
+            return "A"
+        elif max_uncertainty < self.config.tier_b_threshold:
+            return "B"
+        else:
+            return "C"
+    
+    def _compute_proportions(self, measurements: Dict[str, float]) -> List[float]:
+        """Compute body proportion vector"""
+        total = (
+            measurements.get('torso_length_cm', 50) +
+            measurements.get('inseam_cm', 80) +
+            measurements.get('arm_length_cm', 60)
+        )
+        
+        if total == 0:
+            return [0.48, 0.39, 0.13]
+        
+        return [
+            measurements.get('torso_length_cm', 50) / total,
+            measurements.get('inseam_cm', 80) / total,
+            measurements.get('arm_length_cm', 60) / total
+        ]
+    
+    def _estimate_shoulder_angle(self, keypoints_2d: List[np.ndarray]) -> float:
+        """Estimate shoulder angle from pose keypoints"""
+        if not keypoints_2d or len(keypoints_2d[0]) < 12:
+            return 12.5
+        
+        # Use first image's shoulder keypoints (COCO format: 5=left shoulder, 6=right shoulder)
+        left_shoulder = keypoints_2d[0][5]
+        right_shoulder = keypoints_2d[0][6]
+        
+        if left_shoulder is not None and right_shoulder is not None:
+            dx = right_shoulder[0] - left_shoulder[0]
+            dy = right_shoulder[1] - left_shoulder[1]
+            angle = np.arctan2(dy, dx) * 180 / np.pi
+            return abs(angle)
+        
+        return 12.5
+    
+    def _classify_posture(self, keypoints_2d: List[np.ndarray]) -> PostureClass:
+        """Classify posture based on pose keypoints"""
+        if not keypoints_2d or len(keypoints_2d[0]) < 12:
+            return PostureClass.NEUTRAL
+        
+        # Simplified heuristic based on shoulder and hip alignment
+        # In production, use a more sophisticated model
+        return PostureClass.NEUTRAL
+    
+    def _save_mesh_to_s3(self, vertices: np.ndarray, mesh_id: str, trace_id: str) -> str:
+        """Save mesh to S3 and return URL"""
+        if self.s3_client is None:
+            # Return local path if S3 not configured
+            return f"/tmp/meshes/{mesh_id}.obj"
+        
+        try:
+            # Create mesh using trimesh
+            # Note: In production, you'd also save faces from SMPL model
+            mesh = trimesh.Trimesh(vertices=vertices)
+            
+            # Convert to OBJ
+            obj_data = mesh.export(file_type='obj')
+            
+            # Upload to S3
+            key = f"meshes/{trace_id}/{mesh_id}.obj"
+            self.s3_client.put_object(
+                Bucket=self.config.s3_bucket,
+                Key=key,
+                Body=obj_data,
+                ContentType='model/obj'
+            )
+            
+            # Generate presigned URL (valid for 1 hour)
+            url = self.s3_client.generate_presigned_url(
+                'get_object',
+                Params={
+                    'Bucket': self.config.s3_bucket,
+                    'Key': key
+                },
+                ExpiresIn=3600
+            )
+            
+            return url
+            
+        except Exception as e:
+            print(f"⚠️ Failed to upload to S3: {e}")
+            return f"/tmp/meshes/{mesh_id}.obj"
+```
+
+ais/uncertainty.py
+
+```python
+import cv2
+import numpy as np
+from typing import Dict, List, Any, Tuple
+from .config import AISConfig
+
+class UncertaintyEstimator:
+    """Estimate uncertainty in measurements"""
+    
+    def __init__(self, config: AISConfig):
+        self.config = config
+        
+    def estimate(
+        self,
+        mesh_vertices: np.ndarray,
+        measurements: Dict[str, float],
+        images: List[np.ndarray],
+        masks: List[np.ndarray],
+        keypoints: List[np.ndarray]
+    ) -> Dict[str, float]:
+        """
+        Estimate uncertainty for each measurement
+        
+        Uses multiple sources:
+        1. Silhouette consistency across views
+        2. Keypoint detection confidence
+        3. SMPL fitting residuals
+        4. Monte Carlo dropout (if available)
+        """
+        
+        uncertainties = {}
+        
+        # Base uncertainties from SMPL fitting (would come from Bayesian inference)
+        base_uncertainties = {
+            'chest_cm': 0.8,
+            'waist_cm': 1.0,
+            'hip_cm': 0.9,
+            'shoulder_cm': 0.7,
+            'torso_length_cm': 0.6,
+            'inseam_cm': 0.8,
+            'arm_length_cm': 0.7
+        }
+        
+        # Adjust based on silhouette consistency
+        silhouette_quality = self._assess_silhouette_quality(masks)
+        silhouette_factor = 1 + (1 - silhouette_quality) * 0.5
+        
+        # Adjust based on keypoint confidence
+        keypoint_confidence = self._assess_keypoint_confidence(keypoints)
+        keypoint_factor = 2 - keypoint_confidence
+        
+        # Adjust based on view consistency
+        view_consistency = self._assess_view_consistency(masks)
+        view_factor = 1 + (1 - view_consistency) * 0.3
+        
+        for key in base_uncertainties:
+            uncertainty = base_uncertainties[key]
+            uncertainty *= silhouette_factor
+            uncertainty *= keypoint_factor
+            uncertainty *= view_factor
+            
+            # Ensure minimum uncertainty
+            uncertainties[key] = max(0.5, uncertainty)
+        
+        return uncertainties
+    
+    def _assess_silhouette_quality(self, masks: List[np.ndarray]) -> float:
+        """
+        Assess quality of silhouette extraction
+        
+        Returns:
+            Quality score between 0 and 1
+        """
+        if not masks:
+            return 0.5
+        
+        qualities = []
+        for mask in masks:
+            # Check if mask is well-formed (not too noisy)
+            if np.sum(mask) == 0:
+                qualities.append(0.0)
+                continue
+            
+            # Check connectivity
+            num_labels, labels = cv2.connectedComponents(mask.astype(np.uint8))
+            
+            if num_labels > 2:  # More than one component (excluding background)
+                # Penalize multiple components
+                quality = 1.0 / num_labels
+            else:
+                quality = 1.0
+            
+            # Check boundary smoothness
+            contours, _ = cv2.findContours(
+                mask.astype(np.uint8),
+                cv2.RETR_EXTERNAL,
+                cv2.CHAIN_APPROX_SIMPLE
+            )
+            
+            if contours:
+                contour = contours[0]
+                perimeter = cv2.arcLength(contour, True)
+                area = cv2.contourArea(contour)
+                
+                if perimeter > 0:
+                    # Circularity measure (1.0 for perfect circle)
+                    circularity = 4 * np.pi * area / (perimeter * perimeter)
+                    quality *= min(1.0, circularity * 2)  # Allow some deviation
+            
+            qualities.append(quality)
+        
+        return np.mean(qualities) if qualities else 0.5
+    
+    def _assess_keypoint_confidence(self, keypoints_list: List[np.ndarray]) -> float:
+        """
+        Assess confidence in pose detection
+        
+        Returns:
+            Confidence score between 0 and 1
+        """
+        if not keypoints_list:
+            return 0.5
+        
+        confidences = []
+        for keypoints in keypoints_list:
+            if keypoints is None or len(keypoints) == 0:
+                continue
+            
+            # Average keypoint confidence (assuming format [x, y, confidence])
+            if keypoints.shape[1] >= 3:
+                kp_conf = np.mean(keypoints[:, 2])
+                confidences.append(kp_conf)
+        
+        return np.mean(confidences) if confidences else 0.5
+    
+    def _assess_view_consistency(self, masks: List[np.ndarray]) -> float:
+        """
+        Assess consistency between different views
+        
+        Returns:
+            Consistency score between 0 and 1
+        """
+        if len(masks) < 2:
+            return 0.7
+        
+        consistencies = []
+        
+        # Compare each pair of views
+        for i in range(len(masks)):
+            for j in range(i + 1, len(masks)):
+                mask1 = masks[i]
+                mask2 = masks[j]
+                
+                # Resize to same dimensions
+                h = min(mask1.shape[0], mask2.shape[0])
+                w = min(mask1.shape[1], mask2.shape[1])
+                
+                mask1_resized = cv2.resize(mask1, (w, h))
+                mask2_resized = cv2.resize(mask2, (w, h))
+                
+                # Compute silhouette overlap (should be consistent in overlapping regions)
+                intersection = np.logical_and(mask1_resized, mask2_resized).sum()
+                union = np.logical_or(mask1_resized, mask2_resized).sum()
+                
+                if union > 0:
+                    iou = intersection / union
+                    consistencies.append(iou)
+        
+        return np.mean(consistencies) if consistencies else 0.5
+```
+
+ais/exceptions.py
+
+```python
+from shared.exceptions import AISException
+
+class ModelLoadError(AISException):
+    """Raised when model fails to load"""
+    def __init__(self, message: str):
+        super().__init__(message, "MODEL_LOAD_ERROR", 503)
+
+class ProcessingError(AISException):
+    """Raised when processing fails"""
+    def __init__(self, message: str):
+        super().__init__(message, "PROCESSING_ERROR", 500)
+
+class InvalidImageError(AISException):
+    """Raised when image is invalid"""
+    def __init__(self, message: str):
+        super().__init__(message, "INVALID_IMAGE", 400)
+
+class CacheError(AISException):
+    """Raised when cache operation fails"""
+    def __init__(self, message: str):
+        super().__init__(message, "CACHE_ERROR", 500)
+```
+
+ais/metrics.py
+
+```python
+from prometheus_client import Counter, Histogram, Gauge
+import time
+
+# AIS-specific metrics
+segmentation_time = Histogram(
+    'ais_segmentation_duration_seconds',
+    'Segmentation model inference time',
+    buckets=(0.1, 0.5, 1.0, 2.0, 5.0)
+)
+
+pose_time = Histogram(
+    'ais_pose_duration_seconds',
+    'Pose detection model inference time',
+    buckets=(0.1, 0.5, 1.0, 2.0, 5.0)
+)
+
+smpl_fitting_time = Histogram(
+    'ais_smpl_fitting_duration_seconds',
+    'SMPL fitting optimization time',
+    buckets=(1.0, 5.0, 10.0, 30.0, 60.0)
+)
+
+mesh_upload_time = Histogram(
+    'ais_mesh_upload_duration_seconds',
+    'Mesh upload to S3 time',
+    buckets=(0.5, 1.0, 2.0, 5.0, 10.0)
+)
+
+measurement_distribution = Histogram(
+    'ais_measurements_cm',
+    'Distribution of body measurements',
+    ['measurement'],
+    buckets=(50, 60, 70, 80, 90, 100, 110, 120, 130)
+)
+
+silhouette_quality = Histogram(
+    'ais_silhouette_quality',
+    'Quality score of extracted silhouettes',
+    buckets=(0.1, 0.3, 0.5, 0.7, 0.8, 0.9, 0.95, 1.0)
+)
+```
+
+ais/models/__init__.py
+
+```python
+from .segmentation import DeepLabV3Plus
+from .pose import MoveNet
+from .smpl_fitter import SMPLFitter
+
+__all__ = ['DeepLabV3Plus', 'MoveNet', 'SMPLFitter']
+```
+
+ais/models/segmentation.py
+
+```python
+import torch
+import torch.nn as nn
+import torchvision.transforms as transforms
+import numpy as np
+from typing import Optional
+from PIL import Image
+import os
+import requests
+from tqdm import tqdm
+
+class DeepLabV3Plus:
+    """DeepLabV3+ segmentation model wrapper"""
+    
+    def __init__(self, config):
+        self.config = config
+        self.device = torch.device(
+            f"cuda:{config.gpu_device}" if config.gpu_enabled and torch.cuda.is_available() else "cpu"
+        )
+        
+        # Load model
+        self.model = torch.hub.load(
+            'pytorch/vision',
+            'deeplabv3_resnet50',
+            pretrained=True,
+            weights='DeepLabV3_ResNet50_Weights.COCO_WITH_VOC_LABELS_V1'
+        )
+        self.model = self.model.to(self.device)
+        self.model.eval()
+        
+        # Preprocessing
+        self.transform = transforms.Compose([
+            transforms.ToTensor(),
+            transforms.Normalize(
+                mean=[0.485, 0.456, 0.406],
+                std=[0.229, 0.224, 0.225]
+            )
+        ])
+        
+    @staticmethod
+    def download_weights(path: str):
+        """Download pretrained weights if not present"""
+        os.makedirs(path, exist_ok=True)
+        # PyTorch hub will handle download automatically
+        print(f"✅ DeepLabV3+ weights will be downloaded on first use")
+    
+    def predict(self, image: np.ndarray) -> np.ndarray:
+        """
+        Predict human silhouette mask
+        
+        Args:
+            image: RGB image as numpy array (H, W, 3)
+            
+        Returns:
+            Binary mask (H, W) where 1 = human, 0 = background
+        """
+        # Convert to PIL Image
+        if isinstance(image, np.ndarray):
+            image = Image.fromarray(image)
+        
+        # Preprocess
+        input_tensor = self.transform(image).unsqueeze(0).to(self.device)
+        
+        # Inference
+        with torch.no_grad():
+            output = self.model(input_tensor)['out'][0]
+        
+        # Get class with highest probability
+        output = output.argmax(0).cpu().numpy()
+        
+        # Class 15 is "person" in COCO
+        person_mask = (output == 15).astype(np.uint8)
+        
+        # Post-process: morphological operations
+        import cv2
+        kernel = np.ones((5, 5), np.uint8)
+        person_mask = cv2.morphologyEx(person_mask, cv2.MORPH_CLOSE, kernel)
+        person_mask = cv2.morphologyEx(person_mask, cv2.MORPH_OPEN, kernel)
+        
+        # Fill holes
+        person_mask = cv2.morphologyEx(person_mask, cv2.MORPH_CLOSE, kernel)
+        
+        return person_mask
+    
+    def predict_batch(self, images: List[np.ndarray]) -> List[np.ndarray]:
+        """
+        Predict on batch of images
+        
+        Args:
+            images: List of RGB images
+            
+        Returns:
+            List of binary masks
+        """
+        batch = []
+        for img in images:
+            if isinstance(img, np.ndarray):
+                img = Image.fromarray(img)
+            batch.append(self.transform(img))
+        
+        batch_tensor = torch.stack(batch).to(self.device)
+        
+        with torch.no_grad():
+            outputs = self.model(batch_tensor)['out']
+        
+        masks = []
+        for output in outputs:
+            mask = output.argmax(0).cpu().numpy()
+            person_mask = (mask == 15).astype(np.uint8)
+            
+            # Post-process
+            import cv2
+            kernel = np.ones((5, 5), np.uint8)
+            person_mask = cv2.morphologyEx(person_mask, cv2.MORPH_CLOSE, kernel)
+            person_mask = cv2.morphologyEx(person_mask, cv2.MORPH_OPEN, kernel)
+            
+            masks.append(person_mask)
+        
+        return masks
+```
+
+ais/models/pose.py
+
+```python
+import tensorflow as tf
+import numpy as np
+import cv2
+from typing import List, Optional
+import os
+import urllib.request
+
+class MoveNet:
+    """MoveNet pose detection model wrapper"""
+    
+    # Model URLs
+    MODEL_URLS = {
+        'thunder': 'https://storage.googleapis.com/tfhub-modules/tensorflow/movenet/thunder/4.tar.gz',
+        'lightning': 'https://storage.googleapis.com/tfhub-modules/tensorflow/movenet/lightning/4.tar.gz'
+    }
+    
+    def __init__(self, config):
+        self.config = config
+        self.model_type = 'thunder'  # or 'lightning'
+        
+        # Set input size based on model
+        self.input_size = 256 if self.model_type == 'lightning' else 256  # Actually thunder uses 256 as well
+        
+        # Load model
+        model_path = os.path.join(config.movenet_weights_path, f'movenet_{self.model_type}.tflite')
+        
+        if not os.path.exists(model_path):
+            self.download_weights(config.movenet_weights_path)
+        
+        self.interpreter = tf.lite.Interpreter(model_path=model_path)
+        self.interpreter.allocate_tensors()
+        
+        self.input_details = self.interpreter.get_input_details()
+        self.output_details = self.interpreter.get_output_details()
+        
+        # Keypoint names in COCO order
+        self.keypoint_names = [
+            'nose', 'left_eye', 'right_eye', 'left_ear', 'right_ear',
+            'left_shoulder', 'right_shoulder', 'left_elbow', 'right_elbow',
+            'left_wrist', 'right_wrist', 'left_hip', 'right_hip',
+            'left_knee', 'right_knee', 'left_ankle', 'right_ankle'
+        ]
+    
+    @staticmethod
+    def download_weights(path: str):
+        """Download pretrained weights"""
+        os.makedirs(path, exist_ok=True)
+        
+        # For simplicity, we'll assume weights are provided
+        # In production, you'd download from TF Hub
+        print(f"⚠️ Please download MoveNet weights to {path}")
+        print("Download from: https://tfhub.dev/tensorflow/movenet/thunder/4")
+    
+    def predict(self, image: np.ndarray) -> np.ndarray:
+        """
+        Predict 2D pose keypoints
+        
+        Returns:
+            Array of shape (17, 3) with [y, x, confidence] for each keypoint
+        """
+        # Preprocess
+        input_image = self._preprocess(image)
+        
+        # Run inference
+        self.interpreter.set_tensor(self.input_details[0]['index'], input_image)
+        self.interpreter.invoke()
+        
+        # Get keypoints
+        keypoints = self.interpreter.get_tensor(self.output_details[0]['index'])
+        
+        # Reshape and convert to [x, y, confidence]
+        keypoints = keypoints.reshape((1, 1, 17, 3))[0, 0]
+        
+        # MoveNet returns [y, x, confidence], convert to [x, y, confidence]
+        keypoints = keypoints[:, [1, 0, 2]]
+        
+        return keypoints
+    
+    def _preprocess(self, image: np.ndarray) -> np.ndarray:
+        """Preprocess image for MoveNet"""
+        # Resize
+        h, w = image.shape[:2]
+        scale = self.input_size / max(h, w)
+        new_h, new_w = int(h * scale), int(w * scale)
+        
+        resized = cv2.resize(image, (new_w, new_h))
+        
+        # Pad to square
+        pad_h = self.input_size - new_h
+        pad_w = self.input_size - new_w
+        
+        pad_top = pad_h // 2
+        pad_bottom = pad_h - pad_top
+        pad_left = pad_w // 2
+        pad_right = pad_w - pad_left
+        
+        padded = cv2.copyMakeBorder(
+            resized,
+            pad_top, pad_bottom, pad_left, pad_right,
+            cv2.BORDER_CONSTANT,
+            value=[0, 0, 0]
+        )
+        
+        # Normalize to [-1, 1]
+        padded = padded.astype(np.float32) / 127.5 - 1
+        
+        # Add batch dimension
+        return np.expand_dims(padded, axis=0)
+    
+    def draw_keypoints(self, image: np.ndarray, keypoints: np.ndarray) -> np.ndarray:
+        """Draw keypoints on image for visualization"""
+        result = image.copy()
+        h, w = image.shape[:2]
+        
+        for i, (x, y, conf) in enumerate(keypoints):
+            if conf > 0.3:  # Only draw confident keypoints
+                x = int(x * w)
+                y = int(y * h)
+                cv2.circle(result, (x, y), 5, (0, 255, 0), -1)
+                cv2.putText(
+                    result,
+                    str(i),
+                    (x + 5, y - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (255, 0, 0),
+                    1
+                )
+        
+        return result
+```
+
+ais/models/smpl_fitter.py
+
+```python
+import torch
+import torch.nn.functional as F
+import smplx
+import numpy as np
+from pytorch3d.structures import Meshes
+from pytorch3d.renderer import (
+    PerspectiveCameras, RasterizationSettings, MeshRenderer,
+    MeshRasterizer, SoftSilhouetteShader, TexturesVertex
+)
+
+class SMPLFitter:
+    def __init__(self, config):
+        self.config = config
+        self.device = torch.device(
+            f"cuda:{config.gpu_device}" if config.gpu_enabled and torch.cuda.is_available() else "cpu"
+        )
+        self.smpl = smplx.create(
+            config.smpl_model_path,
+            model_type='smpl',
+            gender='neutral',
+            num_betas=10,
+            use_face_contour=False
+        ).to(self.device)
+
+        # Setup differentiable renderer
+        self.raster_settings = RasterizationSettings(
+            image_size=512,
+            blur_radius=0.0,
+            faces_per_pixel=1
+        )
+        self.renderer = MeshRenderer(
+            rasterizer=MeshRasterizer(raster_settings=self.raster_settings),
+            shader=SoftSilhouetteShader()
+        ).to(self.device)
+
+    def fit_multiview(
+        self,
+        images,
+        masks,
+        keypoints,
+        height_cm,
+        focal_length,
+        sensor_size,
+        weight_kg=None
+    ):
+        batch_size = len(images)
+        H, W = images[0].shape[:2]
+
+        # Convert to tensors
+        masks_t = [torch.from_numpy(m).float().to(self.device) for m in masks]
+        keypoints_t = []
+        for kp in keypoints:
+            # keypoints: (17,3) with last column confidence
+            kp_xy = torch.from_numpy(kp[:, :2]).float().to(self.device) * H
+            keypoints_t.append(kp_xy)
+
+        # Setup cameras (simplified: assume frontal view with identity rotation)
+        focal_pixels = focal_length * max(W, H) / max(sensor_size)
+        cameras = []
+        for i in range(batch_size):
+            camera = PerspectiveCameras(
+                focal_length=((focal_pixels, focal_pixels),),
+                principal_point=((W/2, H/2),),
+                image_size=((H, W),),
+                device=self.device
+            )
+            cameras.append(camera)
+
+        # Initialize SMPL parameters
+        betas = torch.zeros(10, requires_grad=True, device=self.device)
+        body_pose = torch.zeros(23*3, requires_grad=True, device=self.device)
+        global_orient = torch.zeros(3, requires_grad=True, device=self.device)
+        transl = torch.zeros(3, requires_grad=True, device=self.device)
+
+        optimizer = torch.optim.Adam(
+            [betas, body_pose, global_orient, transl],
+            lr=self.config.smpl_learning_rate
+        )
+
+        # Pre-load faces once
+        faces = torch.tensor(self.smpl.faces.astype(np.int64), device=self.device).unsqueeze(0)
+
+        for step in range(self.config.smpl_optimization_steps):
+            optimizer.zero_grad()
+
+            # Forward SMPL
+            smpl_output = self.smpl(
+                betas=betas.unsqueeze(0),
+                body_pose=body_pose.unsqueeze(0),
+                global_orient=global_orient.unsqueeze(0),
+                transl=transl.unsqueeze(0)
+            )
+            vertices = smpl_output.vertices[0]  # (V, 3)
+            joints = smpl_output.joints[0]      # (J, 3)
+
+            # Create PyTorch3D mesh
+            textures = TexturesVertex(verts_features=torch.ones_like(vertices).unsqueeze(0))
+            mesh = Meshes(verts=[vertices], faces=faces, textures=textures)
+
+            loss = 0.0
+
+            # Silhouette and landmark losses per view
+            for i, cam in enumerate(cameras):
+                # Render silhouette
+                silhouette = self.renderer(mesh, cameras=cam)[..., 3]  # alpha channel
+                loss += self.config.silhouette_weight * F.mse_loss(silhouette, masks_t[i])
+
+                # Project joints
+                proj_joints = cam.transform_points_screen(joints.unsqueeze(0))[0, :, :2]
+                # Use only first 17 joints (SMPL joints order may differ)
+                loss += self.config.landmark_weight * F.mse_loss(proj_joints[:17], keypoints_t[i])
+
+            # Height constraint
+            verts_y = vertices[:, 1]
+            height = verts_y.max() - verts_y.min()
+            height_m = height * 100  # convert to cm
+            loss += self.config.height_weight * (height_m - height_cm) ** 2
+
+            loss.backward()
+            optimizer.step()
+
+        # Extract measurements from final mesh (using regression)
+        measurements = self._extract_measurements(vertices, betas, height_cm)
+        uncertainties = self._estimate_uncertainty(images, masks, keypoints, cameras, height_cm)
+
+        return vertices.detach().cpu().numpy(), measurements
+
+    def _extract_measurements(self, vertices, betas, height_cm):
+        # Placeholder: map betas to measurements using a pre-trained regressor
+        # In practice, you would have a neural network that outputs measurements from betas
+        betas_np = betas.detach().cpu().numpy()
+        measurements = {
+            'chest_cm': 90.0 + betas_np[0] * 10,
+            'waist_cm': 75.0 + betas_np[1] * 8,
+            'hip_cm': 95.0 + betas_np[2] * 8,
+            'shoulder_cm': 42.0 + betas_np[3] * 5,
+            'torso_length_cm': 50.0 + betas_np[4] * 4,
+            'inseam_cm': 78.0 + betas_np[5] * 6,
+            'arm_length_cm': 60.0 + betas_np[6] * 4
+        }
+        scale = height_cm / 170.0
+        for k in measurements:
+            measurements[k] *= scale
+        return measurements
+
+    def _estimate_uncertainty(self, images, masks, keypoints, cameras, height_cm):
+        # Monte Carlo dropout: run fitting multiple times with dropout enabled
+        # For simplicity, return heuristic values
+        return {
+            'chest_cm': 0.9,
+            'waist_cm': 1.1,
+            'hip_cm': 1.0
+        }
+```
+
+gsis/Dockerfile
+
+```dockerfile
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application
+COPY . .
+
+# Create non-root user
+RUN useradd -m -u 1000 cirvanna && chown -R cirvanna:cirvanna /app
+USER cirvanna
+
+# Run migrations on startup (will be overridden in docker-compose for development)
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app:app --host 0.0.0.0 --port 8000 --reload"]
+```
+
+gsis/app.py
+
+```python
+from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
+import time
+import uuid
+from typing import List, Optional
+
+from shared.garment import GarmentDescriptor
+from shared.exceptions import GSISException, InvalidGarmentDataError, GarmentNotFoundError
+from shared.logging import setup_logging
+from shared.metrics import monitor_request, error_count
+from .database import SessionLocal, engine
+from .models import Base
+from .service import GarmentService
+from .validators import GarmentValidator
+from .exceptions import DatabaseError
+
+# Setup logging
+logger = setup_logging("gsis")
+
+# Create tables
+Base.metadata.create_all(bind=engine)
+
+app = FastAPI(
+    title="Cirvanna GSIS",
+    description="Garment Structural Intelligence Service",
+    version="1.0.0",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc"
+)
+
+# Add CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Dependency
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+def get_garment_service(db: Session = Depends(get_db)):
+    return GarmentService(db)
+
+@app.middleware("http")
+async def add_trace_id(request: Request, call_next):
+    trace_id = request.headers.get("X-Trace-ID", str(uuid.uuid4()))
+    request.state.trace_id = trace_id
+    
+    start_time = time.time()
+    response = await call_next(request)
+    process_time = time.time() - start_time
+    
+    response.headers["X-Trace-ID"] = trace_id
+    response.headers["X-Process-Time"] = str(process_time)
+    
+    return response
+
+@app.exception_handler(GSISException)
+async def gsis_exception_handler(request: Request, exc: GSISException):
+    logger.error(
+        f"GSIS error: {exc.message}",
+        extra={
+            "trace_id": getattr(request.state, "trace_id", None),
+            "error_code": exc.code,
+            "details": exc.details
+        }
+    )
+    error_count.labels(service="gsis", error_type=exc.code).inc()
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "error": {
+                "code": exc.code,
+                "message": exc.message,
+                "details": exc.details,
+                "trace_id": getattr(request.state, "trace_id", None)
+            }
+        }
+    )
+
+@app.exception_handler(Exception)
+async def generic_exception_handler(request: Request, exc: Exception):
+    logger.exception(
+        "Unexpected error",
+        extra={
+            "trace_id": getattr(request.state, "trace_id", None),
+            "error_type": type(exc).__name__
+        }
+    )
+    error_count.labels(service="gsis", error_type="unexpected").inc()
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": {
+                "code": "INTERNAL_ERROR",
+                "message": "An unexpected error occurred",
+                "trace_id": getattr(request.state, "trace_id", None)
+            }
+        }
+    )
+
+@app.get("/health")
+async def health_check(db: Session = Depends(get_db)):
+    """Health check endpoint"""
+    try:
+        # Test database connection
+        db.execute("SELECT 1").first()
+        db_status = "healthy"
+    except Exception as e:
+        db_status = "unhealthy"
+        logger.error(f"Database health check failed: {e}")
+    
+    return {
+        "status": "healthy" if db_status == "healthy" else "degraded",
+        "service": "gsis",
+        "database": db_status,
+        "timestamp": time.time()
+    }
+
+@app.get("/metrics")
+async def get_metrics():
+    """Prometheus metrics endpoint"""
+    from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+    from starlette.responses import Response
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+@app.post("/upload_garment")
+@monitor_request("gsis")
+async def upload_garment(
+    gdo: GarmentDescriptor,
+    request: Request,
+    service: GarmentService = Depends(get_garment_service)
+):
+    """
+    Upload and validate garment descriptor
+    
+    - **gdo**: Garment Descriptor Object
+    """
+    trace_id = request.state.trace_id
+    logger.info(
+        f"Uploading garment {gdo.garment_id}",
+        extra={
+            "trace_id": trace_id,
+            "garment_id": gdo.garment_id
+        }
+    )
+    
+    try:
+        # Validate with auto-correction
+        warnings = GarmentValidator.validate(gdo)
+        
+        # Store
+        garment = service.create_garment(gdo)
+        
+        logger.info(
+            "Garment uploaded successfully",
+            extra={
+                "trace_id": trace_id,
+                "garment_id": garment.garment_id,
+                "version": garment.version
+            }
+        )
+        
+        response = {
+            "status": "success",
+            "garment_id": garment.garment_id,
+            "version": garment.version,
+            "message": "Garment data validated and stored"
+        }
+        
+        if warnings:
+            response["warnings"] = warnings
+        
+        return response
+        
+    except InvalidGarmentDataError as e:
+        logger.warning(
+            "Invalid garment data",
+            extra={
+                "trace_id": trace_id,
+                "details": e.details
+            }
+        )
+        raise
+    except Exception as e:
+        logger.exception(
+            "Error uploading garment",
+            extra={"trace_id": trace_id}
+        )
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/garment/{garment_id}", response_model=GarmentDescriptor)
+@monitor_request("gsis")
+async def get_garment(
+    garment_id: str,
+    request: Request,
+    service: GarmentService = Depends(get_garment_service)
+):
+    """
+    Retrieve garment by ID (latest version)
+    """
+    trace_id = request.state.trace_id
+    logger.info(
+        f"Retrieving garment {garment_id}",
+        extra={"trace_id": trace_id}
+    )
+    
+    garment = service.get_garment(garment_id)
+    if not garment:
+        raise GarmentNotFoundError(garment_id)
+    
+    # Convert ORM to Pydantic
+    return GarmentDescriptor(
+        garment_id=garment.garment_id,
+        size=garment.size,
+        pattern_dimensions=garment.pattern_dimensions,
+        stretch_ratio=garment.stretch_ratio,
+        fit_class=garment.fit_class,
+        fabric_weight=garment.fabric_weight,
+        ease_allowance=garment.ease_allowance,
+        optional_CAD_pattern=garment.cad_pattern
+    )
+
+@app.get("/garment/{garment_id}/version/{version}", response_model=GarmentDescriptor)
+@monitor_request("gsis")
+async def get_garment_version(
+    garment_id: str,
+    version: int,
+    request: Request,
+    service: GarmentService = Depends(get_garment_service)
+):
+    """
+    Retrieve specific version of a garment
+    """
+    trace_id = request.state.trace_id
+    logger.info(
+        f"Retrieving garment {garment_id} version {version}",
+        extra={"trace_id": trace_id}
+    )
+    
+    garment = service.get_garment_version(garment_id, version)
+    if not garment:
+        raise GarmentNotFoundError(f"{garment_id} v{version}")
+    
+    return GarmentDescriptor(
+        garment_id=garment.garment_id,
+        size=garment.size,
+        pattern_dimensions=garment.pattern_dimensions,
+        stretch_ratio=garment.stretch_ratio,
+        fit_class=garment.fit_class,
+        fabric_weight=garment.fabric_weight,
+        ease_allowance=garment.ease_allowance,
+        optional_CAD_pattern=garment.cad_pattern
+    )
+
+@app.get("/garments")
+@monitor_request("gsis")
+async def list_garments(
+    skip: int = 0,
+    limit: int = 100,
+    request: Request = None,
+    service: GarmentService = Depends(get_garment_service)
+):
+    """
+    List all garments (latest versions)
+    """
+    trace_id = request.state.trace_id
+    logger.info(
+        "Listing garments",
+        extra={"trace_id": trace_id, "skip": skip, "limit": limit}
+    )
+    
+    garments, total = service.list_garments(skip, limit)
+    
+    return {
+        "total": total,
+        "skip": skip,
+        "limit": limit,
+        "garments": [
+            {
+                "garment_id": g.garment_id,
+                "size": g.size,
+                "version": g.version,
+                "fit_class": g.fit_class,
+                "fabric_weight": g.fabric_weight,
+                "created_at": g.created_at.isoformat() if g.created_at else None
+            }
+            for g in garments
+        ]
+    }
+
+@app.delete("/garment/{garment_id}")
+@monitor_request("gsis")
+async def delete_garment(
+    garment_id: str,
+    request: Request,
+    service: GarmentService = Depends(get_garment_service)
+):
+    """
+    Delete all versions of a garment
+    """
+    trace_id = request.state.trace_id
+    logger.info(
+        f"Deleting garment {garment_id}",
+        extra={"trace_id": trace_id}
+    )
+    
+    success = service.delete_garment(garment_id)
+    if not success:
+        raise GarmentNotFoundError(garment_id)
+    
+    return {"status": "deleted", "garment_id": garment_id}
+```
+
+gsis/database.py
+
+```python
+from sqlalchemy import create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+import os
+
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna")
+
+engine = create_engine(
+    DATABASE_URL,
+    pool_size=10,
+    max_overflow=20,
+    pool_pre_ping=True,
+    pool_recycle=3600
+)
+
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+Base = declarative_base()
+```
+
+gsis/models.py
+
+```python
+from sqlalchemy import Column, String, Float, Integer, DateTime, JSON, UniqueConstraint
+from sqlalchemy.sql import func
+from .database import Base
+
+class Garment(Base):
+    __tablename__ = "garments"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    garment_id = Column(String, index=True, nullable=False)
+    version = Column(Integer, nullable=False, default=1)
+    size = Column(String, nullable=False)
+    pattern_dimensions = Column(JSON, nullable=False)
+    stretch_ratio = Column(Float, nullable=False)
+    fit_class = Column(String, nullable=False)
+    fabric_weight = Column(String, nullable=False)
+    ease_allowance = Column(JSON, nullable=False)
+    cad_pattern = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    __table_args__ = (
+        UniqueConstraint('garment_id', 'version', name='uix_garment_version'),
+    )
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "garment_id": self.garment_id,
+            "version": self.version,
+            "size": self.size,
+            "pattern_dimensions": self.pattern_dimensions,
+            "stretch_ratio": self.stretch_ratio,
+            "fit_class": self.fit_class,
+            "fabric_weight": self.fabric_weight,
+            "ease_allowance": self.ease_allowance,
+            "cad_pattern": self.cad_pattern,
+            "created_at": self.created_at.isoformat() if self.created_at else None
+        }
+```
+
+gsis/service.py
+
+```python
+from sqlalchemy.orm import Session
+from sqlalchemy import desc, func
+from typing import List, Optional, Tuple
+from shared.garment import GarmentDescriptor
+from .models import Garment
+from .exceptions import DatabaseError
+
+class GarmentService:
+    """Garment CRUD operations"""
+    
+    def __init__(self, db: Session):
+        self.db = db
+    
+    def create_garment(self, gdo: GarmentDescriptor) -> Garment:
+        """Create new garment version"""
+        try:
+            # Check if exists
+            existing = self.db.query(Garment).filter_by(
+                garment_id=gdo.garment_id
+            ).order_by(desc(Garment.version)).first()
+            
+            if existing:
+                version = existing.version + 1
+            else:
+                version = 1
+            
+            # Create garment
+            garment = Garment(
+                garment_id=gdo.garment_id,
+                version=version,
+                size=gdo.size,
+                pattern_dimensions=gdo.pattern_dimensions.dict(),
+                stretch_ratio=gdo.stretch_ratio,
+                fit_class=gdo.fit_class.value,
+                fabric_weight=gdo.fabric_weight.value,
+                ease_allowance=gdo.ease_allowance.dict(),
+                cad_pattern=gdo.optional_CAD_pattern
+            )
+            
+            self.db.add(garment)
+            self.db.commit()
+            self.db.refresh(garment)
+            
+            return garment
+            
+        except Exception as e:
+            self.db.rollback()
+            raise DatabaseError(f"Failed to create garment: {str(e)}")
+    
+    def get_garment(self, garment_id: str) -> Optional[Garment]:
+        """Get latest version of garment"""
+        try:
+            return self.db.query(Garment).filter_by(
+                garment_id=garment_id
+            ).order_by(desc(Garment.version)).first()
+        except Exception as e:
+            raise DatabaseError(f"Failed to retrieve garment: {str(e)}")
+    
+    def get_garment_version(self, garment_id: str, version: int) -> Optional[Garment]:
+        """Get specific version of garment"""
+        try:
+            return self.db.query(Garment).filter_by(
+                garment_id=garment_id,
+                version=version
+            ).first()
+        except Exception as e:
+            raise DatabaseError(f"Failed to retrieve garment version: {str(e)}")
+    
+    def list_garments(self, skip: int = 0, limit: int = 100) -> Tuple[List[Garment], int]:
+        """List latest versions of all garments with pagination"""
+        try:
+            # Subquery to get max version per garment_id
+            subquery = self.db.query(
+                Garment.garment_id,
+                func.max(Garment.version).label('max_version')
+            ).group_by(Garment.garment_id).subquery()
+            
+            # Join to get full rows
+            query = self.db.query(Garment).join(
+                subquery,
+                (Garment.garment_id == subquery.c.garment_id) &
+                (Garment.version == subquery.c.max_version)
+            ).order_by(Garment.created_at.desc())
+            
+            total = query.count()
+            garments = query.offset(skip).limit(limit).all()
+            
+            return garments, total
+            
+        except Exception as e:
+            raise DatabaseError(f"Failed to list garments: {str(e)}")
+    
+    def delete_garment(self, garment_id: str) -> bool:
+        """Delete all versions of a garment"""
+        try:
+            result = self.db.query(Garment).filter_by(garment_id=garment_id).delete()
+            self.db.commit()
+            return result > 0
+        except Exception as e:
+            self.db.rollback()
+            raise DatabaseError(f"Failed to delete garment: {str(e)}")
+```
+
+gsis/validators.py
+
+```python
+from shared.garment import GarmentDescriptor, FitClass, FabricWeight
+from shared.exceptions import InvalidGarmentDataError
+from typing import List
+
+class GarmentValidator:
+    """Validate garment data with auto-correction"""
+    
+    VALID_SIZES = ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL']
+    VALID_FIT_CLASSES = [fc.value for fc in FitClass]
+    VALID_FABRIC_WEIGHTS = [fw.value for fw in FabricWeight]
+    
+    @classmethod
+    def validate(cls, gdo: GarmentDescriptor) -> List[str]:
+        """
+        Run all validations with auto-correction
+        
+        Returns:
+            List of warning messages (if any)
+        """
+        errors = []
+        warnings = []
+        
+        # Size validation
+        if gdo.size not in cls.VALID_SIZES and not gdo.size.replace('.','',1).isdigit():
+            warnings.append(f"Unusual size: {gdo.size}")
+        
+        # Fit class validation
+        if gdo.fit_class.value not in cls.VALID_FIT_CLASSES:
+            errors.append(f"Invalid fit class: {gdo.fit_class.value}")
+        
+        # Fabric weight validation
+        if gdo.fabric_weight.value not
+

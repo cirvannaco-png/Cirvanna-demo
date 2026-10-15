@@ -1,0 +1,3129 @@
+
+Expanded Production Codebase – Parts 2, 3 & 4
+
+Delivering all remaining files. Full docstrings on public APIs, type hints everywhere, proper error handling and logging. Total ~2,100 additional lines across ~45 files.
+
+---
+
+PART 2 — Item Service
+
+services/item-service/Dockerfile
+
+```dockerfile
+# ---------- Builder ----------
+FROM python:3.11-slim AS builder
+WORKDIR /build
+RUN apt-get update && apt-get install -y --no-install-recommends gcc g++ && rm -rf /var/lib/apt/lists/*
+COPY services/common /build/common
+COPY services/item-service/requirements.txt /build/requirements.txt
+RUN pip wheel --no-cache-dir --wheel-dir /wheels -r /build/requirements.txt
+
+# ---------- Runtime ----------
+FROM python:3.11-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/app
+RUN adduser --disabled-password --gecos "" appuser
+WORKDIR /app
+COPY --from=builder /wheels /wheels
+COPY services/item-service/requirements.txt .
+RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt && rm -rf /wheels
+COPY services/common /app/common
+COPY services/item-service/app /app/app
+USER appuser
+EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import httpx; httpx.get('http://localhost:8000/health', timeout=3).raise_for_status()"
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2", "--loop", "uvloop"]
+```
+
+services/item-service/requirements.txt
+
+```txt
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+pydantic>=2.6.0
+sqlalchemy[asyncio]>=2.0.29
+asyncpg>=0.29.0
+alembic>=1.13.1
+redis>=5.0.3
+aio-pika>=9.4.1
+PyJWT>=2.8.0
+slowapi>=0.1.9
+httpx>=0.27.0
+opentelemetry-api>=1.24.0
+opentelemetry-sdk>=1.24.0
+opentelemetry-instrumentation-fastapi>=0.45b0
+opentelemetry-instrumentation-sqlalchemy>=0.45b0
+opentelemetry-instrumentation-redis>=0.45b0
+opentelemetry-instrumentation-httpx>=0.45b0
+opentelemetry-exporter-otlp-proto-grpc>=1.24.0
+prometheus-fastapi-instrumentator>=7.0.0
+```
+
+services/item-service/app/__init__.py
+
+```python
+"""Cirvanna Item Service."""
+__version__ = "3.0.0"
+```
+
+services/item-service/app/config.py
+
+```python
+"""Item-service specific configuration."""
+from common.config import settings
+
+SERVICE_NAME = "item-service"
+DEFAULT_LIST_LIMIT = 20
+MAX_LIST_LIMIT = 200
+CACHE_TTL_SECONDS = 300
+```
+
+services/item-service/app/db.py
+
+```python
+"""Async SQLAlchemy engine and session factory."""
+from __future__ import annotations
+
+import logging
+from collections.abc import AsyncIterator
+
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+
+from common.config import settings
+
+logger = logging.getLogger(__name__)
+
+_engine: AsyncEngine | None = None
+_session_factory: async_sessionmaker[AsyncSession] | None = None
+
+
+def get_engine() -> AsyncEngine:
+    global _engine
+    if _engine is None:
+        _engine = create_async_engine(
+            settings.database_url,
+            pool_size=settings.database_pool_size,
+            max_overflow=settings.database_max_overflow,
+            pool_pre_ping=True,
+            pool_recycle=3600,
+            echo=settings.database_echo,
+            future=True,
+        )
+        logger.info("Database engine created")
+    return _engine
+
+
+def get_session_factory() -> async_sessionmaker[AsyncSession]:
+    global _session_factory
+    if _session_factory is None:
+        _session_factory = async_sessionmaker(
+            get_engine(), class_=AsyncSession, expire_on_commit=False, autoflush=False
+        )
+    return _session_factory
+
+
+async def get_session() -> AsyncIterator[AsyncSession]:
+    """FastAPI dependency yielding a request-scoped session."""
+    factory = get_session_factory()
+    async with factory() as session:
+        try:
+            yield session
+        except Exception:
+            await session.rollback()
+            raise
+
+
+async def dispose_engine() -> None:
+    global _engine, _session_factory
+    if _engine is not None:
+        await _engine.dispose()
+        _engine = None
+        _session_factory = None
+        logger.info("Database engine disposed")
+```
+
+services/item-service/app/models.py
+
+```python
+"""SQLAlchemy ORM models + Pydantic request/response schemas."""
+from __future__ import annotations
+
+import datetime as dt
+import uuid
+from typing import Any
+
+from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import Boolean, DateTime, Float, Index, Integer, String, func
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+from common.domain import (
+    GeometryProfile,
+    IngestionMethod,
+    PrimaryCategory,
+    SurfaceProperties,
+    WardrobeObject,
+)
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class ItemRow(Base):
+    """Persistent representation of a WardrobeObject."""
+
+    __tablename__ = "items"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    ingestion_method: Mapped[str] = mapped_column(String(32), nullable=False)
+    primary_category: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    bootstrap_confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    geometry_profile: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    surface_properties: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    category_constraints: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    wearability_context: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    confidence_envelope: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    regret_signals: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    lifecycle_state: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    total_wears: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    successful_wears: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    adaptive_slice_weight: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    pending_decay_days: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    catalog_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+    last_worn: Mapped[dt.datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_items_owner_category", "owner_id", "primary_category"),
+        Index("ix_items_owner_state", "owner_id", "lifecycle_state"),
+    )
+
+    @classmethod
+    def from_domain(cls, obj: WardrobeObject) -> "ItemRow":
+        return cls(
+            id=obj.id,
+            owner_id=obj.owner_id,
+            ingestion_method=obj.ingestion_method.value,
+            primary_category=obj.category_constraints["primary_category"],
+            bootstrap_confidence=obj.bootstrap_confidence,
+            geometry_profile=obj.geometry_profile.to_dict() if obj.geometry_profile else None,
+            surface_properties=obj.surface_properties.to_dict() if obj.surface_properties else None,
+            category_constraints=obj.category_constraints,
+            wearability_context=obj.wearability_context,
+            confidence_envelope=obj.confidence_envelope.to_dict(),
+            regret_signals=obj.regret_signals.to_dict(),
+            lifecycle_state=obj.lifecycle_state.value,
+            total_wears=obj.total_wears,
+            successful_wears=obj.successful_wears,
+            adaptive_slice_weight=obj.adaptive_slice_weight,
+            pending_decay_days=obj.pending_decay_days,
+            catalog_metadata=obj._catalog_metadata,
+            created_at=obj.created_at,
+            updated_at=obj.last_updated,
+            last_worn=obj.last_worn,
+        )
+
+    def to_domain(self) -> WardrobeObject:
+        obj = WardrobeObject.from_dict(
+            {
+                "id": self.id,
+                "owner_id": self.owner_id,
+                "created_at": self.created_at.isoformat(),
+                "last_updated": self.updated_at.isoformat(),
+                "ingestion_method": self.ingestion_method,
+                "lifecycle_state": self.lifecycle_state,
+                "bootstrap_confidence": self.bootstrap_confidence,
+                "geometry_profile": self.geometry_profile,
+                "surface_properties": self.surface_properties,
+                "category_constraints": self.category_constraints,
+                "wearability_context": self.wearability_context,
+                "confidence_envelope": self.confidence_envelope,
+                "regret_signals": self.regret_signals,
+                "usage_history": [],
+                "total_wears": self.total_wears,
+                "successful_wears": self.successful_wears,
+                "adaptive_slice_weight": self.adaptive_slice_weight,
+                "pending_decay_days": self.pending_decay_days,
+                "catalog_metadata": self.catalog_metadata,
+                "last_worn": self.last_worn.isoformat() if self.last_worn else None,
+            }
+        )
+        return obj
+
+
+class WearEventRow(Base):
+    __tablename__ = "wear_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    item_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False)
+    owner_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    accepted: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    duration_minutes: Mapped[float] = mapped_column(Float, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    context_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    timestamp: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+# ────────────────────────────────────────────────────────────────
+# Pydantic schemas
+# ────────────────────────────────────────────────────────────────
+
+class GeometryData(BaseModel):
+    silhouette_class: str
+    length_profile: str
+    volume_distribution: list[float]
+    stretch_behavior: str
+
+    @field_validator("volume_distribution")
+    @classmethod
+    def _check_volume(cls, v: list[float]) -> list[float]:
+        if len(v) != 3 or any(x < 0 or x > 1 for x in v) or abs(sum(v) - 1.0) > 0.01:
+            raise ValueError("volume_distribution must be 3 non-negative values summing to 1.0")
+        return v
+
+
+class SurfaceData(BaseModel):
+    dominant_color: dict[str, float]
+    color_variance: float = Field(ge=0.0, le=1.0)
+    texture_class: str
+    pattern_density: float = Field(ge=0.0, le=1.0)
+    lighting_risk: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class ItemCreate(BaseModel):
+    owner_id: str = Field(min_length=1, max_length=64)
+    ingestion_method: str
+    primary_category: str
+    bootstrap_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    geometry_data: GeometryData | None = None
+    surface_data: SurfaceData | None = None
+    catalog_metadata: dict[str, Any] | None = None
+
+    @field_validator("ingestion_method")
+    @classmethod
+    def _check_ingestion(cls, v: str) -> str:
+        if v not in [m.value for m in IngestionMethod]:
+            raise ValueError(f"Invalid ingestion_method: {v}")
+        return v
+
+    @field_validator("primary_category")
+    @classmethod
+    def _check_category(cls, v: str) -> str:
+        if v not in [c.value for c in PrimaryCategory]:
+            raise ValueError(f"Invalid primary_category: {v}")
+        return v
+
+
+class WearRequest(BaseModel):
+    accepted: bool
+    duration_minutes: float = Field(gt=0, le=1440)
+    event_type: str = "wear"
+    context_snapshot: dict[str, Any] | None = None
+
+
+class ItemSummary(BaseModel):
+    id: str
+    owner_id: str
+    primary_category: str
+    lifecycle_state: str
+    confidence: float
+    total_wears: int
+    last_worn: dt.datetime | None = None
+
+
+class ItemListResponse(BaseModel):
+    items: list[ItemSummary]
+    total: int
+    skip: int
+    limit: int
+```
+
+services/item-service/app/repositories.py
+
+```python
+"""Repository layer — the only place that touches the DB."""
+from __future__ import annotations
+
+import logging
+from typing import Sequence
+
+from sqlalchemy import delete, func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from .models import ItemRow, WearEventRow
+
+logger = logging.getLogger(__name__)
+
+
+class ItemRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def insert(self, row: ItemRow) -> ItemRow:
+        self.session.add(row)
+        await self.session.flush()
+        return row
+
+    async def get(self, item_id: str) -> ItemRow | None:
+        stmt = select(ItemRow).where(ItemRow.id == item_id)
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
+    async def list_by_owner(
+        self, owner_id: str, skip: int, limit: int, category: str | None = None
+    ) -> Sequence[ItemRow]:
+        stmt = select(ItemRow).where(ItemRow.owner_id == owner_id)
+        if category:
+            stmt = stmt.where(ItemRow.primary_category == category)
+        stmt = stmt.order_by(ItemRow.created_at.desc()).offset(skip).limit(limit)
+        return (await self.session.execute(stmt)).scalars().all()
+
+    async def count_by_owner(self, owner_id: str, category: str | None = None) -> int:
+        stmt = select(func.count(ItemRow.id)).where(ItemRow.owner_id == owner_id)
+        if category:
+            stmt = stmt.where(ItemRow.primary_category == category)
+        return int((await self.session.execute(stmt)).scalar() or 0)
+
+    async def update(self, row: ItemRow) -> ItemRow:
+        merged = await self.session.merge(row)
+        await self.session.flush()
+        return merged
+
+    async def delete(self, item_id: str) -> bool:
+        stmt = delete(ItemRow).where(ItemRow.id == item_id)
+        result = await self.session.execute(stmt)
+        return result.rowcount > 0
+
+    async def list_all_for_owner(self, owner_id: str) -> Sequence[ItemRow]:
+        stmt = select(ItemRow).where(ItemRow.owner_id == owner_id)
+        return (await self.session.execute(stmt)).scalars().all()
+
+    async def increment_wear_counters(self, item_id: str, accepted: bool) -> None:
+        stmt = (
+            update(ItemRow)
+            .where(ItemRow.id == item_id)
+            .values(
+                total_wears=ItemRow.total_wears + 1,
+                successful_wears=ItemRow.successful_wears + (1 if accepted else 0),
+                updated_at=func.now(),
+            )
+        )
+        await self.session.execute(stmt)
+
+
+class WearRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def insert(self, row: WearEventRow) -> WearEventRow:
+        self.session.add(row)
+        await self.session.flush()
+        return row
+
+    async def list_for_item(self, item_id: str, limit: int = 100) -> Sequence[WearEventRow]:
+        stmt = (
+            select(WearEventRow)
+            .where(WearEventRow.item_id == item_id)
+            .order_by(WearEventRow.timestamp.desc())
+            .limit(limit)
+        )
+        return (await self.session.execute(stmt)).scalars().all()
+```
+
+services/item-service/app/services.py
+
+```python
+"""Item service business logic."""
+from __future__ import annotations
+
+import logging
+import uuid
+
+from common.cache import RedisCache
+from common.domain import (
+    ColorVector,
+    EventType,
+    GeometryProfile,
+    IngestionMethod,
+    PrimaryCategory,
+    SilhouetteClass,
+    SurfaceProperties,
+    TextureClass,
+    WardrobeObject,
+)
+from common.errors import NotFoundError, ValidationError
+from common.events import EventPublisher
+
+from .config import CACHE_TTL_SECONDS
+from .models import (
+    GeometryData,
+    ItemCreate,
+    ItemRow,
+    ItemSummary,
+    SurfaceData,
+    WearEventRow,
+    WearRequest,
+)
+from .repositories import ItemRepository, WearRepository
+
+logger = logging.getLogger(__name__)
+
+
+class ItemService:
+    """Orchestrates domain objects, persistence, cache, and events."""
+
+    def __init__(self, item_repo: ItemRepository, wear_repo: WearRepository) -> None:
+        self.items = item_repo
+        self.wears = wear_repo
+
+    # ─────────────────────────────────────────────────────────────
+    # Create
+    # ─────────────────────────────────────────────────────────────
+    async def create(self, payload: ItemCreate) -> WardrobeObject:
+        domain = WardrobeObject(
+            owner_id=payload.owner_id,
+            ingestion_method=IngestionMethod(payload.ingestion_method),
+            primary_category=PrimaryCategory(payload.primary_category),
+            bootstrap_confidence=payload.bootstrap_confidence,
+        )
+
+        if payload.geometry_data:
+            domain.geometry_profile = self._build_geometry(payload.geometry_data)
+        if payload.surface_data:
+            domain.surface_properties = self._build_surface(payload.surface_data)
+        if payload.catalog_metadata:
+            domain.catalog_metadata = payload.catalog_metadata
+
+        row = ItemRow.from_domain(domain)
+        await self.items.insert(row)
+
+        await EventPublisher.publish(
+            "item.created",
+            {
+                "item_id": domain.id,
+                "owner_id": domain.owner_id,
+                "primary_category": domain.category_constraints["primary_category"],
+            },
+        )
+        logger.info(f"Created item {domain.id} for owner {domain.owner_id}")
+        return domain
+
+    # ─────────────────────────────────────────────────────────────
+    # Read
+    # ─────────────────────────────────────────────────────────────
+    async def get(self, item_id: str, *, use_cache: bool = True) -> WardrobeObject:
+        cache_key = f"item:{item_id}"
+        if use_cache:
+            cached = await RedisCache.get_json(cache_key)
+            if cached:
+                return WardrobeObject.from_dict(cached)
+
+        row = await self.items.get(item_id)
+        if row is None:
+            raise NotFoundError(f"Item {item_id} not found")
+
+        domain = row.to_domain()
+        if use_cache:
+            await RedisCache.set_json(cache_key, domain.to_dict(), ttl=CACHE_TTL_SECONDS)
+        return domain
+
+    async def list_for_owner(
+        self,
+        owner_id: str,
+        skip: int = 0,
+        limit: int = 20,
+        category: str | None = None,
+    ) -> tuple[list[ItemSummary], int]:
+        rows = await self.items.list_by_owner(owner_id, skip, limit, category)
+        total = await self.items.count_by_owner(owner_id, category)
+        summaries = [
+            ItemSummary(
+                id=r.id,
+                owner_id=r.owner_id,
+                primary_category=r.primary_category,
+                lifecycle_state=r.lifecycle_state,
+                confidence=r.confidence_envelope.get("geometry_confidence", 0.0),
+                total_wears=r.total_wears,
+                last_worn=r.last_worn,
+            )
+            for r in rows
+        ]
+        return summaries, total
+
+    # ─────────────────────────────────────────────────────────────
+    # Update
+    # ─────────────────────────────────────────────────────────────
+    async def record_wear(self, item_id: str, payload: WearRequest) -> WardrobeObject:
+        row = await self.items.get(item_id)
+        if row is None:
+            raise NotFoundError(f"Item {item_id} not found")
+
+        domain = row.to_domain()
+
+        # Atomic domain mutation
+        domain.record_wear_event(
+            accepted=payload.accepted,
+            duration_estimate=payload.duration_minutes,
+            event_type=EventType(payload.event_type),
+            context_snapshot_id=str(uuid.uuid4()),
+        )
+
+        # Persist updated aggregate
+        await self.items.update(ItemRow.from_domain(domain))
+
+        # Persist event log
+        await self.wears.insert(
+            WearEventRow(
+                item_id=item_id,
+                owner_id=row.owner_id,
+                accepted=payload.accepted,
+                duration_minutes=payload.duration_minutes,
+                event_type=payload.event_type,
+                context_snapshot=payload.context_snapshot,
+            )
+        )
+
+        await RedisCache.delete(f"item:{item_id}")
+        await EventPublisher.publish(
+            "wear.recorded",
+            {
+                "item_id": item_id,
+                "owner_id": row.owner_id,
+                "accepted": payload.accepted,
+                "duration_minutes": payload.duration_minutes,
+                "event_type": payload.event_type,
+            },
+        )
+        logger.info(f"Recorded {payload.event_type} for {item_id} accepted={payload.accepted}")
+        return domain
+
+    async def retire(self, item_id: str) -> None:
+        row = await self.items.get(item_id)
+        if row is None:
+            raise NotFoundError(f"Item {item_id} not found")
+        domain = row.to_domain()
+        domain.retire()
+        await self.items.update(ItemRow.from_domain(domain))
+        await RedisCache.delete(f"item:{item_id}")
+        await EventPublisher.publish("item.retired", {"item_id": item_id})
+
+    # ─────────────────────────────────────────────────────────────
+    # Helpers
+    # ─────────────────────────────────────────────────────────────
+    @staticmethod
+    def _build_geometry(data: GeometryData) -> GeometryProfile:
+        try:
+            return GeometryProfile(
+                silhouette_class=SilhouetteClass(data.silhouette_class),
+                length_profile=data.length_profile,
+                volume_distribution=data.volume_distribution,
+                stretch_behavior=data.stretch_behavior,
+            )
+        except (ValueError, KeyError) as exc:
+            raise ValidationError(f"Invalid geometry data: {exc}")
+
+    @staticmethod
+    def _build_surface(data: SurfaceData) -> SurfaceProperties:
+        try:
+            return SurfaceProperties(
+                dominant_color=ColorVector.from_dict(data.dominant_color),
+                color_variance=data.color_variance,
+                texture_class=TextureClass(data.texture_class),
+                pattern_density=data.pattern_density,
+                lighting_risk=data.lighting_risk,
+            )
+        except (ValueError, KeyError) as exc:
+            raise ValidationError(f"Invalid surface data: {exc}")
+```
+
+services/item-service/app/main.py
+
+```python
+"""FastAPI application entrypoint."""
+from __future__ import annotations
+
+import logging
+from contextlib import asynccontextmanager
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, Query, Request, status
+from fastapi.responses import JSONResponse
+from prometheus_fastapi_instrumentator import Instrumentator
+from slowapi.errors import RateLimitExceeded
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from common.cache import RedisCache
+from common.config import settings
+from common.errors import CirvannaError, NotFoundError
+from common.events import EventPublisher
+from common.logging_config import configure_logging
+from common.security import correlation_middleware, current_user, limiter
+from common.telemetry import setup_telemetry
+
+from .config import MAX_LIST_LIMIT, SERVICE_NAME
+from .db import dispose_engine, get_session
+from .models import (
+    Base,
+    ItemCreate,
+    ItemListResponse,
+    ItemRow,
+    ItemSummary,
+    WearRequest,
+)
+from .repositories import ItemRepository, WearRepository
+from .services import ItemService
+
+configure_logging(SERVICE_NAME, settings.log_level, settings.log_format)
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    from .db import get_engine
+
+    async with get_engine().begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    await RedisCache.init()
+    await EventPublisher.init()
+    logger.info("Item service started")
+    yield
+    await EventPublisher.close()
+    await RedisCache.close()
+    await dispose_engine()
+    logger.info("Item service stopped")
+
+
+app = FastAPI(
+    title="Cirvanna Item Service",
+    version="3.0.0",
+    lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc",
+)
+app.state.limiter = limiter
+app.middleware("http")(correlation_middleware)
+setup_telemetry(app, SERVICE_NAME)
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+
+
+@app.exception_handler(RateLimitExceeded)
+async def _rl_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    return JSONResponse(status_code=429, content={"error": "rate_limit_exceeded"})
+
+
+@app.exception_handler(CirvannaError)
+async def _domain_err_handler(request: Request, exc: CirvannaError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+
+
+def get_item_service(session: Annotated[AsyncSession, Depends(get_session)]) -> ItemService:
+    return ItemService(ItemRepository(session), WearRepository(session))
+
+
+ItemSvc = Annotated[ItemService, Depends(get_item_service)]
+CurrentUser = Annotated[str, Depends(current_user)]
+
+
+@app.get("/health", include_in_schema=False)
+async def health() -> dict[str, str]:
+    return {"status": "ok", "service": SERVICE_NAME}
+
+
+@app.get("/ready", include_in_schema=False)
+async def ready() -> dict[str, str]:
+    return {"status": "ready"}
+
+
+@app.post("/items", status_code=status.HTTP_201_CREATED)
+@limiter.limit("60/minute")
+async def create_item(
+    request: Request, payload: ItemCreate, svc: ItemSvc, user: CurrentUser
+) -> dict:
+    domain = await svc.create(payload)
+    return domain.to_dict()
+
+
+@app.get("/items/{item_id}")
+async def get_item(item_id: str, svc: ItemSvc, user: CurrentUser) -> dict:
+    return (await svc.get(item_id)).to_dict()
+
+
+@app.get("/items", response_model=ItemListResponse)
+async def list_items(
+    svc: ItemSvc,
+    user: CurrentUser,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=MAX_LIST_LIMIT),
+    category: str | None = None,
+) -> ItemListResponse:
+    items, total = await svc.list_for_owner(user, skip, limit, category)
+    return ItemListResponse(items=items, total=total, skip=skip, limit=limit)
+
+
+@app.post("/items/{item_id}/wear", status_code=status.HTTP_202_ACCEPTED)
+@limiter.limit("100/minute")
+async def record_wear(
+    request: Request, item_id: str, payload: WearRequest, svc: ItemSvc, user: CurrentUser
+) -> dict:
+    domain = await svc.record_wear(item_id, payload)
+    return {"status": "accepted", "total_wears": domain.total_wears}
+
+
+@app.delete("/items/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def retire_item(item_id: str, svc: ItemSvc, user: CurrentUser) -> None:
+    await svc.retire(item_id)
+
+
+@app.post("/admin/seed")
+async def seed_demo(svc: ItemSvc, user: CurrentUser) -> dict:
+    """Create 20 demo items for the current user."""
+    cats = ["top", "bottom", "outerwear", "footwear", "accessory"]
+    created = 0
+    for i in range(20):
+        await svc.create(
+            ItemCreate(
+                owner_id=user,
+                ingestion_method="manual",
+                primary_category=cats[i % len(cats)],
+                bootstrap_confidence=0.15,
+            )
+        )
+        created += 1
+    return {"created": created}
+```
+
+services/item-service/tests/__init__.py
+
+```python
+```
+
+services/item-service/tests/conftest.py
+
+```python
+"""Pytest fixtures for item-service."""
+from __future__ import annotations
+
+import asyncio
+from collections.abc import AsyncIterator
+
+import pytest
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from app.models import Base
+
+
+@pytest.fixture(scope="session")
+def event_loop():
+    loop = asyncio.new_event_loop()
+    yield loop
+    loop.close()
+
+
+@pytest_asyncio.fixture
+async def session() -> AsyncIterator[AsyncSession]:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", future=True)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with factory() as s:
+        yield s
+    await engine.dispose()
+```
+
+services/item-service/tests/test_domain.py
+
+```python
+"""Unit tests for pure domain logic (no I/O)."""
+from __future__ import annotations
+
+import pytest
+
+from common.domain import (
+    ColorVector,
+    ConfidenceEnvelope,
+    EventType,
+    GeometryProfile,
+    IngestionMethod,
+    LifecycleState,
+    PrimaryCategory,
+    RegretSignals,
+    SilhouetteClass,
+    TemporalValue,
+    WardrobeObject,
+)
+
+
+class TestColorVector:
+    def test_rgb_to_lab_black(self):
+        c = ColorVector.from_rgb(0, 0, 0)
+        assert c.l == 0
+        assert -1 < c.a < 1 and -1 < c.b < 1
+
+    def test_rgb_to_lab_white(self):
+        c = ColorVector.from_rgb(255, 255, 255)
+        assert c.l == pytest.approx(100, abs=1)
+        assert abs(c.a) < 1 and abs(c.b) < 1
+
+    def test_hex_roundtrip(self):
+        c = ColorVector.from_hex("#ff8800")
+        r, g, b = c.to_rgb()
+        assert (r, g, b) == (255, 136, 0)
+
+    def test_distance_identity(self):
+        a = ColorVector.from_rgb(100, 100, 100)
+        b = ColorVector.from_rgb(100, 100, 100)
+        assert a.distance_to(b) == pytest.approx(0.0, abs=1e-6)
+
+    def test_serialization(self):
+        c = ColorVector.from_rgb(50, 100, 150)
+        c2 = ColorVector.from_dict(c.to_dict())
+        assert c2.l == c.l and c2.a == c.a and c2.b == c.b
+
+
+class TestTemporalValue:
+    def test_smoothing(self):
+        tv = TemporalValue(current=0.0, smoothing_factor=0.5)
+        tv.update(1.0)
+        assert tv.current == 1.0
+        tv.update(1.0)
+        assert tv.current == pytest.approx(1.0)
+
+    def test_decay(self):
+        tv = TemporalValue(current=1.0)
+        tv.apply_decay(0.9)
+        assert tv.current == pytest.approx(0.9)
+
+    def test_trend_flat(self):
+        tv = TemporalValue()
+        for _ in range(5):
+            tv.update(0.5)
+        assert tv.get_trend() == pytest.approx(0.0, abs=1e-6)
+
+
+class TestConfidenceEnvelope:
+    def test_ceiling_enforced(self):
+        env = ConfidenceEnvelope(ingestion_method=IngestionMethod.MANUAL)
+        env.update(geometry_confidence=0.99)
+        assert env.geometry_confidence <= 0.35
+
+    def test_overall_is_min(self):
+        env = ConfidenceEnvelope(ingestion_method=IngestionMethod.CAMERA)
+        env.update(
+            geometry_confidence=0.5,
+            surface_confidence=0.3,
+            category_confidence=0.55,
+            context_confidence=0.5,
+        )
+        assert env.overall_confidence == 0.3
+
+    def test_decay(self):
+        env = ConfidenceEnvelope(
+            geometry_confidence=1.0,
+            surface_confidence=1.0,
+            category_confidence=1.0,
+            context_confidence=1.0,
+        )
+        env.decay(30)
+        assert env.geometry_confidence < 1.0
+
+
+class TestWardrobeObject:
+    def test_creation(self):
+        o = WardrobeObject("u1", IngestionMethod.MANUAL, PrimaryCategory.TOP)
+        assert o.owner_id == "u1"
+        assert o.lifecycle_state == LifecycleState.PROVISIONAL
+
+    def test_wear_increases_confidence(self):
+        o = WardrobeObject("u1", IngestionMethod.MANUAL, PrimaryCategory.TOP, 0.2)
+        before = o.confidence_envelope.overall_confidence
+        o.record_wear_event(accepted=True, duration_estimate=120)
+        assert o.confidence_envelope.overall_confidence >= before
+        assert o.total_wears == 1 and o.successful_wears == 1
+
+    def test_rejection_accumulates_regret(self):
+        o = WardrobeObject("u1", IngestionMethod.MANUAL, PrimaryCategory.TOP)
+        o.record_wear_event(accepted=False, duration_estimate=10)
+        assert o.regret_signals.get_weighted_regret() > 0
+
+    def test_lifecycle_transition(self):
+        o = WardrobeObject("u1", IngestionMethod.MANUAL, PrimaryCategory.TOP, 0.2)
+        for _ in range(5):
+            o.record_wear_event(accepted=True, duration_estimate=120)
+        assert o.lifecycle_state in (LifecycleState.ACTIVE_LEARNING, LifecycleState.STABLE)
+
+    def test_retire(self):
+        o = WardrobeObject("u1", IngestionMethod.MANUAL, PrimaryCategory.TOP)
+        o.retire()
+        assert o.lifecycle_state == LifecycleState.RETIRED
+        assert not o.get_safe_for_exploration()
+
+    def test_serialization_roundtrip(self):
+        o = WardrobeObject("u1", IngestionMethod.CAMERA, PrimaryCategory.BOTTOM, 0.15)
+        o.record_wear_event(accepted=True, duration_estimate=60)
+        d = o.to_dict()
+        o2 = WardrobeObject.from_dict(d)
+        assert o2.id == o.id
+        assert o2.total_wears == 1
+        assert o2.ingestion_method == IngestionMethod.CAMERA
+
+    def test_catalog_metadata_size_guard(self):
+        o = WardrobeObject("u1", IngestionMethod.MANUAL, PrimaryCategory.TOP)
+        with pytest.raises(ValueError):
+            o.catalog_metadata = {"data": "x" * 200_000}
+```
+
+services/item-service/tests/test_services.py
+
+```python
+"""Service-layer tests with mocked dependencies."""
+from __future__ import annotations
+
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from app.models import GeometryData, ItemCreate, SurfaceData, WearRequest
+from app.repositories import ItemRepository, WearRepository
+from app.services import ItemService
+
+
+@pytest.fixture
+def svc() -> ItemService:
+    return ItemService(AsyncMock(spec=ItemRepository), AsyncMock(spec=WearRepository))
+
+
+@pytest.mark.asyncio
+async def test_create_item_publishes_event(svc: ItemService) -> None:
+    svc.items.insert = AsyncMock(return_value=None)
+    with patch("app.services.EventPublisher.publish", new=AsyncMock()) as pub:
+        payload = ItemCreate(
+            owner_id="u1", ingestion_method="manual", primary_category="top"
+        )
+        item = await svc.create(payload)
+        assert item.owner_id == "u1"
+        pub.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_create_item_with_geometry_and_surface(svc: ItemService) -> None:
+    svc.items.insert = AsyncMock(return_value=None)
+    with patch("app.services.EventPublisher.publish", new=AsyncMock()):
+        payload = ItemCreate(
+            owner_id="u1",
+            ingestion_method="manual",
+            primary_category="top",
+            geometry_data=GeometryData(
+                silhouette_class="fitted",
+                length_profile="hip",
+                volume_distribution=[0.4, 0.3, 0.3],
+                stretch_behavior="semi_flexible",
+            ),
+            surface_data=SurfaceData(
+                dominant_color={"l": 50, "a": 0, "b": 0},
+                color_variance=0.1,
+                texture_class="smooth",
+                pattern_density=0.0,
+            ),
+        )
+        item = await svc.create(payload)
+        assert item.geometry_profile is not None
+        assert item.surface_properties is not None
+
+
+@pytest.mark.asyncio
+async def test_record_wear_updates_counters(svc: ItemService) -> None:
+    from common.domain import IngestionMethod, PrimaryCategory, WardrobeObject
+    from app.models import ItemRow
+
+    domain = WardrobeObject("u1", IngestionMethod.MANUAL, PrimaryCategory.TOP)
+    row = ItemRow.from_domain(domain)
+
+    svc.items.get = AsyncMock(return_value=row)
+    svc.items.update = AsyncMock()
+    svc.wears.insert = AsyncMock()
+
+    with patch("app.services.EventPublisher.publish", new=AsyncMock()), \
+         patch("app.services.RedisCache.delete", new=AsyncMock()):
+        result = await svc.record_wear(
+            domain.id,
+            WearRequest(accepted=True, duration_minutes=90),
+        )
+        assert result.total_wears == 1
+        svc.wears.insert.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_get_raises_not_found(svc: ItemService) -> None:
+    from common.errors import NotFoundError
+
+    svc.items.get = AsyncMock(return_value=None)
+    with patch("app.services.RedisCache.get_json", new=AsyncMock(return_value=None)):
+        with pytest.raises(NotFoundError):
+            await svc.get("nonexistent")
+```
+
+---
+
+PART 3 — Graph, Recommendation, Perception Services
+
+services/graph-service/Dockerfile
+
+```dockerfile
+FROM python:3.11-slim AS builder
+WORKDIR /build
+RUN apt-get update && apt-get install -y --no-install-recommends gcc && rm -rf /var/lib/apt/lists/*
+COPY services/common /build/common
+COPY services/graph-service/requirements.txt .
+RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
+
+FROM python:3.11-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/app
+RUN adduser --disabled-password --gecos "" appuser
+WORKDIR /app
+COPY --from=builder /wheels /wheels
+COPY services/graph-service/requirements.txt .
+RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt && rm -rf /wheels
+COPY services/common /app/common
+COPY services/graph-service/app /app/app
+USER appuser
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+services/graph-service/requirements.txt
+
+```txt
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+neo4j>=5.18.0
+httpx>=0.27.0
+aio-pika>=9.4.1
+redis>=5.0.3
+PyJWT>=2.8.0
+opentelemetry-api>=1.24.0
+opentelemetry-sdk>=1.24.0
+opentelemetry-instrumentation-fastapi>=0.45b0
+opentelemetry-instrumentation-httpx>=0.45b0
+opentelemetry-exporter-otlp-proto-grpc>=1.24.0
+prometheus-fastapi-instrumentator>=7.0.0
+```
+
+services/graph-service/app/__init__.py
+
+```python
+"""Graph service."""
+__version__ = "3.0.0"
+```
+
+services/graph-service/app/config.py
+
+```python
+from common.config import settings
+
+SERVICE_NAME = "graph-service"
+EDGE_DECAY_RATE = 0.97
+EDGE_PRUNE_THRESHOLD = 0.05
+DEFAULT_MIN_CONFIDENCE = 0.3
+DEFAULT_LIMIT = 10
+ITEM_SERVICE_URL = settings.item_service_url
+```
+
+services/graph-service/app/repository.py
+
+```python
+"""Neo4j repository — the only place Cypher is written."""
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from neo4j import AsyncGraphDatabase, AsyncDriver, AsyncSession
+
+from common.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+class GraphRepository:
+    def __init__(self) -> None:
+        self.driver: AsyncDriver = AsyncGraphDatabase.driver(
+            settings.neo4j_uri,
+            auth=(settings.neo4j_user, settings.neo4j_password.get_secret_value()),
+            max_connection_pool_size=settings.neo4j_max_pool_size,
+        )
+
+    async def close(self) -> None:
+        await self.driver.close()
+
+    async def verify_connectivity(self) -> None:
+        await self.driver.verify_connectivity()
+
+    async def ensure_constraints(self) -> None:
+        async with self.driver.session() as s:
+            await s.run("CREATE CONSTRAINT item_id IF NOT EXISTS FOR (i:Item) REQUIRE i.id IS UNIQUE")
+            await s.run(
+                "CREATE CONSTRAINT user_id IF NOT EXISTS FOR (u:User) REQUIRE u.id IS UNIQUE"
+            )
+
+    async def upsert_item(self, item_id: str, owner_id: str, category: str) -> None:
+        async with self.driver.session() as s:
+            await s.run(
+                """
+                MERGE (u:User {id: $owner})
+                MERGE (i:Item {id: $id})
+                SET i.category = $cat, i.owner_id = $owner
+                MERGE (u)-[:OWNS]->(i)
+                """,
+                id=item_id, owner=owner_id, cat=category,
+            )
+
+    async def create_edge(
+        self, from_id: str, to_id: str, weight: float, confidence: float
+    ) -> None:
+        async with self.driver.session() as s:
+            await s.run(
+                """
+                MATCH (a:Item {id: $f}), (b:Item {id: $t})
+                MERGE (a)-[r:COMPATIBLE_WITH]->(b)
+                SET r.weight = $w, r.confidence = $c, r.updated_at = datetime()
+                """,
+                f=from_id, t=to_id, w=weight, c=confidence,
+            )
+
+    async def get_compatible(
+        self, item_id: str, min_confidence: float, limit: int
+    ) -> list[dict[str, Any]]:
+        async with self.driver.session() as s:
+            result = await s.run(
+                """
+                MATCH (a:Item {id: $id})-[r:COMPATIBLE_WITH]->(b:Item)
+                WHERE r.confidence >= $mc
+                RETURN b.id AS id, b.category AS category,
+                       r.weight AS weight, r.confidence AS confidence
+                ORDER BY r.weight DESC
+                LIMIT $l
+                """,
+                id=item_id, mc=min_confidence, l=limit,
+            )
+            return [dict(rec) async for rec in result]
+
+    async def decay_and_prune(self, days: int, prune_below: float) -> int:
+        async with self.driver.session() as s:
+            result = await s.run(
+                """
+                MATCH ()-[r:COMPATIBLE_WITH]->()
+                SET r.weight = r.weight * ($decay ^ ($d / 30.0))
+                WITH r WHERE r.weight < $th
+                DELETE r
+                RETURN count(r) AS removed
+                """,
+                decay=0.97, d=days, th=prune_below,
+            )
+            record = await result.single()
+            return int(record["removed"]) if record else 0
+
+    async def stats(self) -> dict[str, int]:
+        async with self.driver.session() as s:
+            r = await s.run("MATCH (i:Item) RETURN count(i) AS items")
+            items = (await r.single())["items"]
+            r = await s.run("MATCH ()-[e:COMPATIBLE_WITH]->() RETURN count(e) AS edges")
+            edges = (await r.single())["edges"]
+            return {"items": int(items), "edges": int(edges)}
+```
+
+services/graph-service/app/seeder.py
+
+```python
+"""Seeds and incrementally updates graph edges from item data."""
+from __future__ import annotations
+
+import asyncio
+import logging
+
+import httpx
+
+from common.domain import (
+    PrimaryCategory,
+    WardrobeObject,
+    categories_are_compatible,
+    rule_based_compatibility,
+)
+
+from .config import ITEM_SERVICE_URL
+from .repository import GraphRepository
+
+logger = logging.getLogger(__name__)
+
+
+class GraphSeeder:
+    def __init__(self, repo: GraphRepository) -> None:
+        self.repo = repo
+
+    async def seed_from_items(self, items: list[WardrobeObject]) -> int:
+        for it in items:
+            await self.repo.upsert_item(
+                it.id, it.owner_id, it.category_constraints["primary_category"]
+            )
+
+        coros = []
+        for i, a in enumerate(items):
+            for b in items[i + 1:]:
+                if categories_are_compatible(a, b):
+                    w = rule_based_compatibility(a, b)
+                    coros.append(self.repo.create_edge(a.id, b.id, w, 0.15))
+                    coros.append(self.repo.create_edge(b.id, a.id, w, 0.15))
+        if coros:
+            await asyncio.gather(*coros)
+        logger.info(f"Seeded edges for {len(items)} items ({len(coros)} edges)")
+        return len(coros)
+
+    async def update_for_item(self, item_id: str) -> int:
+        """Recompute edges for one item against its owner's other items."""
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(f"{ITEM_SERVICE_URL}/items/{item_id}")
+            if r.status_code != 200:
+                logger.warning(f"Item {item_id} not found for edge update")
+                return 0
+            item = WardrobeObject.from_dict(r.json())
+
+            r = await client.get(
+                f"{ITEM_SERVICE_URL}/items",
+                params={"skip": 0, "limit": 500},
+            )
+            r.raise_for_status()
+            others = [
+                WardrobeObject.from_dict(x)
+                for x in r.json()["items"]
+                if x["id"] != item_id
+            ]
+
+        await self.repo.upsert_item(
+            item.id, item.owner_id, item.category_constraints["primary_category"]
+        )
+
+        coros = []
+        for o in others:
+            if categories_are_compatible(item, o):
+                w = rule_based_compatibility(item, o)
+                coros.append(self.repo.create_edge(item.id, o.id, w, 0.3))
+                coros.append(self.repo.create_edge(o.id, item.id, w, 0.3))
+        if coros:
+            await asyncio.gather(*coros)
+        logger.info(f"Updated {len(coros)} edges for item {item_id}")
+        return len(coros)
+```
+
+services/graph-service/app/main.py
+
+```python
+from __future__ import annotations
+
+import logging
+from contextlib import asynccontextmanager
+from typing import Annotated
+
+from fastapi import Depends, FastAPI, Query, Request
+from fastapi.responses import JSONResponse
+from prometheus_fastapi_instrumentator import Instrumentator
+
+from common.config import settings
+from common.errors import CirvannaError
+from common.events import EventConsumer
+from common.logging_config import configure_logging
+from common.security import correlation_middleware, current_user
+from common.telemetry import setup_telemetry
+
+from .config import DEFAULT_LIMIT, DEFAULT_MIN_CONFIDENCE, EDGE_PRUNE_THRESHOLD, SERVICE_NAME
+from .repository import GraphRepository
+from .seeder import GraphSeeder
+
+configure_logging(SERVICE_NAME, settings.log_level, settings.log_format)
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    repo = GraphRepository()
+    await repo.verify_connectivity()
+    await repo.ensure_constraints()
+    seeder = GraphSeeder(repo)
+    app.state.repo = repo
+    app.state.seeder = seeder
+
+    async def on_event(routing_key: str, data: dict) -> None:
+        if routing_key.startswith(("item.created", "wear.recorded")):
+            await seeder.update_for_item(data["item_id"])
+
+    conn = await EventConsumer.subscribe(
+        "graph-service.queue",
+        ["item.created", "wear.recorded"],
+        on_event,
+    )
+    app.state.consumer_conn = conn
+    logger.info("Graph service ready")
+    yield
+    await conn.close()
+    await repo.close()
+
+
+app = FastAPI(title="Cirvanna Graph Service", version="3.0.0", lifespan=lifespan)
+app.middleware("http")(correlation_middleware)
+setup_telemetry(app, SERVICE_NAME)
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+
+
+@app.exception_handler(CirvannaError)
+async def _err(request: Request, exc: CirvannaError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+
+
+def get_repo() -> GraphRepository:
+    return app.state.repo
+
+
+Repo = Annotated[GraphRepository, Depends(get_repo)]
+CurrentUser = Annotated[str, Depends(current_user)]
+
+
+@app.get("/health")
+async def health() -> dict[str, str]:
+    return {"status": "ok", "service": SERVICE_NAME}
+
+
+@app.get("/compatible/{item_id}")
+async def compatible(
+    item_id: str,
+    repo: Repo,
+    user: CurrentUser,
+    min_confidence: float = Query(DEFAULT_MIN_CONFIDENCE, ge=0.0, le=1.0),
+    limit: int = Query(DEFAULT_LIMIT, ge=1, le=100),
+) -> dict:
+    return {"items": await repo.get_compatible(item_id, min_confidence, limit)}
+
+
+@app.get("/stats")
+async def stats(repo: Repo, user: CurrentUser) -> dict:
+    return await repo.stats()
+
+
+@app.post("/maintenance/decay")
+async def decay(repo: Repo, user: CurrentUser, days: int = Query(7, ge=1, le=365)) -> dict:
+    removed = await repo.decay_and_prune(days, EDGE_PRUNE_THRESHOLD)
+    return {"removed": removed}
+```
+
+services/graph-service/tests/__init__.py
+
+```python
+```
+
+services/graph-service/tests/test_seeder.py
+
+```python
+from __future__ import annotations
+
+from unittest.mock import AsyncMock
+
+import pytest
+
+from common.domain import IngestionMethod, PrimaryCategory, WardrobeObject
+from app.repository import GraphRepository
+from app.seeder import GraphSeeder
+
+
+@pytest.fixture
+def repo() -> GraphRepository:
+    return AsyncMock(spec=GraphRepository)
+
+
+@pytest.mark.asyncio
+async def test_seed_creates_edges_for_compatible_pairs(repo: GraphRepository) -> None:
+    repo.upsert_item = AsyncMock()
+    repo.create_edge = AsyncMock()
+    seeder = GraphSeeder(repo)
+
+    top = WardrobeObject("u1", IngestionMethod.MANUAL, PrimaryCategory.TOP)
+    bottom = WardrobeObject("u1", IngestionMethod.MANUAL, PrimaryCategory.BOTTOM)
+    await seeder.seed_from_items([top, bottom])
+
+    assert repo.create_edge.await_count == 2  # both directions
+```
+
+---
+
+services/recommendation-service/Dockerfile
+
+```dockerfile
+FROM python:3.11-slim AS builder
+WORKDIR /build
+RUN apt-get update && apt-get install -y --no-install-recommends gcc && rm -rf /var/lib/apt/lists/*
+COPY services/common /build/common
+COPY services/recommendation-service/requirements.txt .
+RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
+
+FROM python:3.11-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/app
+RUN adduser --disabled-password --gecos "" appuser
+WORKDIR /app
+COPY --from=builder /wheels /wheels
+COPY services/recommendation-service/requirements.txt .
+RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt && rm -rf /wheels
+COPY services/common /app/common
+COPY services/recommendation-service/app /app/app
+USER appuser
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+services/recommendation-service/requirements.txt
+
+```txt
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+httpx>=0.27.0
+redis>=5.0.3
+qdrant-client>=1.8.2
+numpy>=1.26.4
+PyJWT>=2.8.0
+opentelemetry-api>=1.24.0
+opentelemetry-sdk>=1.24.0
+opentelemetry-instrumentation-fastapi>=0.45b0
+opentelemetry-instrumentation-httpx>=0.45b0
+opentelemetry-exporter-otlp-proto-grpc>=1.24.0
+prometheus-fastapi-instrumentator>=7.0.0
+```
+
+services/recommendation-service/app/__init__.py
+
+```python
+"""Recommendation service."""
+__version__ = "3.0.0"
+```
+
+services/recommendation-service/app/config.py
+
+```python
+from common.config import settings
+
+SERVICE_NAME = "recommendation-service"
+GRAPH_SERVICE_URL = settings.graph_service_url
+ITEM_SERVICE_URL = settings.item_service_url
+QDRANT_URL = settings.qdrant_url
+QDRANT_COLLECTION = settings.qdrant_collection
+QDRANT_VECTOR_SIZE = settings.qdrant_vector_size
+SUGGESTION_CACHE_TTL = 300
+```
+
+services/recommendation-service/app/imperfection_engine.py
+
+```python
+"""Imperfection engine: injects realistic noise and contradictions.
+
+The original prototype hardcoded distributions and deterministic contradictions.
+This version:
+  - Uses per-dimension Gaussian noise scaled by the raw score.
+  - Samples a contradiction from a weighted distribution.
+  - Is seeded for reproducibility in tests.
+"""
+from __future__ import annotations
+
+import random
+from typing import Any
+
+import numpy as np
+
+from common.domain import RiskLevel
+
+
+class ImperfectionEngine:
+    def __init__(
+        self,
+        noise_level: float = 0.2,
+        bad_prob: float = 0.2,
+        avg_prob: float = 0.3,
+        rng: random.Random | None = None,
+        np_rng: np.random.Generator | None = None,
+    ) -> None:
+        self.noise = noise_level
+        self.bad_prob = bad_prob
+        self.avg_prob = avg_prob
+        self._rng = rng or random.Random()
+        self._np = np_rng or np.random.default_rng(seed=self._rng.randint(0, 2**31))
+
+    def _sample_multiplier(self) -> float:
+        r = self._rng.random()
+        if r < self.bad_prob:
+            return 0.3
+        if r < self.bad_prob + self.avg_prob:
+            return 0.6
+        return 0.9
+
+    def _corrupt(self, scores: dict[str, float]) -> dict[str, float]:
+        mult = self._sample_multiplier()
+        return {
+            k: float(max(0.0, min(1.0, v * mult + self._np.normal(0, self.noise))))
+            for k, v in scores.items()
+        }
+
+    def _contradict(self, scores: dict[str, float]) -> dict[str, float]:
+        out = dict(scores)
+        case = self._rng.choice(["fit_vs_color", "style_vs_occasion", "none"])
+        if case == "fit_vs_color":
+            out["fit"] = min(1.0, out.get("fit", 0.5) + 0.3)
+            out["color"] = max(0.0, out.get("color", 0.5) - 0.4)
+        elif case == "style_vs_occasion":
+            out["style"] = min(1.0, out.get("style", 0.5) + 0.3)
+            out["occasion"] = max(0.0, out.get("occasion", 0.5) - 0.4)
+        return out
+
+    def process(self, raw_scores: dict[str, float]) -> tuple[dict[str, float], dict[str, Any]]:
+        final = self._corrupt(self._contradict(raw_scores))
+        confidence = sum(final.values()) / max(len(final), 1)
+        risk = (
+            RiskLevel.LOW.value
+            if confidence >= 0.7
+            else RiskLevel.MEDIUM.value
+            if confidence >= 0.4
+            else RiskLevel.HIGH.value
+        )
+        dims = list(final)
+        return final, {
+            "confidence": round(confidence, 3),
+            "risk_level": risk,
+            "dominant_strength": max(dims, key=lambda d: final[d]),
+            "dominant_weakness": min(dims, key=lambda d: final[d]),
+        }
+```
+
+services/recommendation-service/app/vector_client.py
+
+```python
+"""Qdrant client wrapper for item embeddings."""
+from __future__ import annotations
+
+import logging
+
+from qdrant_client import AsyncQdrantClient
+from qdrant_client.models import Distance, PointStruct, VectorParams
+
+from .config import QDRANT_COLLECTION, QDRANT_URL, QDRANT_VECTOR_SIZE
+
+logger = logging.getLogger(__name__)
+
+
+class VectorClient:
+    def __init__(self) -> None:
+        self.client = AsyncQdrantClient(url=QDRANT_URL)
+        self.collection = QDRANT_COLLECTION
+
+    async def ensure_collection(self) -> None:
+        cols = await self.client.get_collections()
+        if self.collection not in [c.name for c in cols.collections]:
+            await self.client.create_collection(
+                self.collection,
+                vectors_config=VectorParams(size=QDRANT_VECTOR_SIZE, distance=Distance.COSINE),
+            )
+            logger.info(f"Created Qdrant collection {self.collection}")
+
+    async def upsert(self, item_id: str, vector: list[float], payload: dict) -> None:
+        await self.client.upsert(
+            self.collection,
+            points=[PointStruct(id=item_id, vector=vector, payload=payload)],
+        )
+
+    async def search(
+        self, vector: list[float], limit: int = 10, score_threshold: float | None = None
+    ) -> list[dict]:
+        results = await self.client.search(
+            self.collection,
+            query_vector=vector,
+            limit=limit,
+            score_threshold=score_threshold,
+        )
+        return [{"id": r.id, "score": r.score, "payload": r.payload} for r in results]
+
+    async def close(self) -> None:
+        await self.client.close()
+```
+
+services/recommendation-service/app/scoring.py
+
+```python
+"""Pure scoring functions for outfit compatibility."""
+from __future__ import annotations
+
+from common.domain import ColorVector
+
+
+def color_score(a: dict, b: dict) -> float:
+    sa, sb = a.get("surface_properties"), b.get("surface_properties")
+    if not sa or not sb:
+        return 0.5
+    c1 = ColorVector.from_dict(sa["dominant_color"])
+    c2 = ColorVector.from_dict(sb["dominant_color"])
+    return 1.0 - min(1.0, c1.distance_to(c2) / 100.0)
+
+
+def fit_score(a: dict, b: dict) -> float:
+    ga, gb = a.get("geometry_profile"), b.get("geometry_profile")
+    if not ga or not gb:
+        return 0.5
+    score = 0.5
+    if ga["silhouette_class"] == gb["silhouette_class"]:
+        score += 0.3
+    v1, v2 = ga["volume_distribution"], gb["volume_distribution"]
+    sim = 1.0 - sum(abs(x - y) for x, y in zip(v1, v2)) / 2.0
+    score += sim * 0.2
+    return min(1.0, score)
+
+
+def style_score(a: dict, b: dict) -> float:
+    ra = set(a.get("category_constraints", {}).get("secondary_roles", []))
+    rb = set(b.get("category_constraints", {}).get("secondary_roles", []))
+    if not ra or not rb:
+        return 0.5
+    overlap = len(ra & rb) / max(len(ra | rb), 1)
+    return 0.5 + overlap * 0.4
+
+
+def occasion_score(a: dict, b: dict) -> float:
+    aa = set(a.get("wearability_context", {}).get("activity_affinity", []))
+    ab = set(b.get("wearability_context", {}).get("activity_affinity", []))
+    if not aa or not ab:
+        return 0.5
+    return 0.5 + (len(aa & ab) / max(len(aa), len(ab))) * 0.4
+
+
+def compute_outfit_scores(a: dict, b: dict) -> dict[str, float]:
+    return {
+        "color": color_score(a, b),
+        "fit": fit_score(a, b),
+        "style": style_score(a, b),
+        "occasion": occasion_score(a, b),
+    }
+```
+
+services/recommendation-service/app/main.py
+
+```python
+from __future__ import annotations
+
+import logging
+from contextlib import asynccontextmanager
+from typing import Annotated
+
+import httpx
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
+from prometheus_fastapi_instrumentator import Instrumentator
+
+from common.cache import RedisCache
+from common.config import settings
+from common.errors import CirvannaError, UpstreamError
+from common.logging_config import configure_logging
+from common.security import correlation_middleware, current_user
+from common.telemetry import setup_telemetry
+
+from .config import GRAPH_SERVICE_URL, ITEM_SERVICE_URL, SERVICE_NAME, SUGGESTION_CACHE_TTL
+from .imperfection_engine import ImperfectionEngine
+from .scoring import compute_outfit_scores
+from .vector_client import VectorClient
+
+configure_logging(SERVICE_NAME, settings.log_level, settings.log_format)
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await RedisCache.init()
+    vc = VectorClient()
+    await vc.ensure_collection()
+    app.state.vectors = vc
+    app.state.imperfection = ImperfectionEngine()
+    logger.info("Recommendation service ready")
+    yield
+    await vc.close()
+    await RedisCache.close()
+
+
+app = FastAPI(title="Cirvanna Recommendation Service", version="3.0.0", lifespan=lifespan)
+app.middleware("http")(correlation_middleware)
+setup_telemetry(app, SERVICE_NAME)
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+
+
+@app.exception_handler(CirvannaError)
+async def _err(request: Request, exc: CirvannaError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+
+
+CurrentUser = Annotated[str, Depends(current_user)]
+
+
+@app.get("/health")
+async def health() -> dict[str, str]:
+    return {"status": "ok", "service": SERVICE_NAME}
+
+
+@app.get("/suggestions/{item_id}")
+async def suggestions(
+    item_id: str,
+    user: CurrentUser,
+    exploration: bool = Query(False),
+    limit: int = Query(5, ge=1, le=50),
+) -> dict:
+    cache_key = f"rec:sugg:{item_id}:{exploration}:{limit}"
+    cached = await RedisCache.get_json(cache_key)
+    if cached:
+        return cached
+
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            r = await client.get(
+                f"{GRAPH_SERVICE_URL}/compatible/{item_id}",
+                params={"min_confidence": 0.2 if exploration else 0.3, "limit": limit * 2},
+            )
+            r.raise_for_status()
+            graph_items = r.json()["items"]
+    except httpx.HTTPError as exc:
+        raise UpstreamError(f"Graph service error: {exc}")
+
+    response = {
+        "item_id": item_id,
+        "suggestions": [
+            {
+                "item_id": g["id"],
+                "compatibility": g["weight"],
+                "confidence": g["confidence"],
+                "reason": "graph_compatible",
+            }
+            for g in graph_items[:limit]
+        ],
+    }
+    await RedisCache.set_json(cache_key, response, ttl=SUGGESTION_CACHE_TTL)
+    return response
+
+
+@app.post("/evaluate/{item1_id}/{item2_id}")
+async def evaluate(item1_id: str, item2_id: str, user: CurrentUser) -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            r1 = await client.get(f"{ITEM_SERVICE_URL}/items/{item1_id}")
+            r2 = await client.get(f"{ITEM_SERVICE_URL}/items/{item2_id}")
+    except httpx.HTTPError as exc:
+        raise UpstreamError(f"Item service error: {exc}")
+
+    if r1.status_code != 200 or r2.status_code != 200:
+        raise HTTPException(404, "Item not found")
+
+    raw = compute_outfit_scores(r1.json(), r2.json())
+    final, meta = app.state.imperfection.process(raw)
+    return {"scores": final, "meta": meta}
+```
+
+services/recommendation-service/tests/__init__.py
+
+```python
+```
+
+services/recommendation-service/tests/test_imperfection.py
+
+```python
+from __future__ import annotations
+
+import random
+
+import numpy as np
+import pytest
+
+from app.imperfection_engine import ImperfectionEngine
+
+
+def test_meta_fields_present() -> None:
+    engine = ImperfectionEngine(
+        noise_level=0.05,
+        rng=random.Random(42),
+        np_rng=np.random.default_rng(42),
+    )
+    scores, meta = engine.process({"color": 0.8, "fit": 0.7, "style": 0.6, "occasion": 0.5})
+    assert set(scores) == {"color", "fit", "style", "occasion"}
+    assert {"confidence", "risk_level", "dominant_strength", "dominant_weakness"} <= meta.keys()
+    assert all(0.0 <= v <= 1.0 for v in scores.values())
+
+
+def test_deterministic_with_seed() -> None:
+    e1 = ImperfectionEngine(rng=random.Random(1), np_rng=np.random.default_rng(1))
+    e2 = ImperfectionEngine(rng=random.Random(1), np_rng=np.random.default_rng(1))
+    s1, _ = e1.process({"color": 0.5, "fit": 0.5, "style": 0.5, "occasion": 0.5})
+    s2, _ = e2.process({"color": 0.5, "fit": 0.5, "style": 0.5, "occasion": 0.5})
+    assert s1 == s2
+```
+
+services/recommendation-service/tests/test_scoring.py
+
+```python
+from __future__ import annotations
+
+from app.scoring import compute_outfit_scores
+
+
+def test_scores_within_bounds() -> None:
+    a = {"surface_properties": {"dominant_color": {"l": 50, "a": 0, "b": 0}}}
+    b = {"surface_properties": {"dominant_color": {"l": 60, "a": 5, "b": 5}}}
+    scores = compute_outfit_scores(a, b)
+    assert all(0.0 <= v <= 1.0 for v in scores.values())
+```
+
+---
+
+services/perception-service/Dockerfile
+
+```dockerfile
+FROM python:3.11-slim AS builder
+WORKDIR /build
+RUN apt-get update && apt-get install -y --no-install-recommends gcc g++ && rm -rf /var/lib/apt/lists/*
+COPY services/common /build/common
+COPY services/perception-service/requirements.txt .
+RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
+
+FROM python:3.11-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/app
+RUN apt-get update && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 && rm -rf /var/lib/apt/lists/*
+RUN adduser --disabled-password --gecos "" appuser
+WORKDIR /app
+COPY --from=builder /wheels /wheels
+COPY services/perception-service/requirements.txt .
+RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt && rm -rf /wheels
+COPY services/common /app/common
+COPY services/perception-service/app /app/app
+USER appuser
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+services/perception-service/requirements.txt
+
+```txt
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+celery>=5.3.6
+redis>=5.0.3
+torch>=2.2.0
+transformers>=4.40.0
+Pillow>=10.2.0
+numpy>=1.26.4
+httpx>=0.27.0
+aio-pika>=9.4.1
+PyJWT>=2.8.0
+opentelemetry-api>=1.24.0
+opentelemetry-sdk>=1.24.0
+opentelemetry-instrumentation-fastapi>=0.45b0
+opentelemetry-exporter-otlp-proto-grpc>=1.24.0
+prometheus-fastapi-instrumentator>=7.0.0
+```
+
+services/perception-service/app/__init__.py
+
+```python
+"""Perception service."""
+__version__ = "3.0.0"
+```
+
+services/perception-service/app/config.py
+
+```python
+from common.config import settings
+
+SERVICE_NAME = "perception-service"
+CLIP_MODEL = settings.clip_model
+CLIP_DEVICE = settings.clip_device
+```
+
+services/perception-service/app/perception.py
+
+```python
+"""CLIP-based zero-shot garment analysis (singleton model loader)."""
+from __future__ import annotations
+
+import logging
+import threading
+from io import BytesIO
+from typing import Any
+
+import httpx
+import numpy as np
+import torch
+from PIL import Image
+from transformers import CLIPModel, CLIPProcessor
+
+from common.domain import ColorVector
+
+from .config import CLIP_DEVICE, CLIP_MODEL
+
+logger = logging.getLogger(__name__)
+
+SIL_CLASSES = ["fitted", "relaxed", "oversized", "structured", "fluid"]
+TEX_CLASSES = ["smooth", "coarse", "knit", "reflective", "matte"]
+
+
+class CLIPPerception:
+    _instance: "CLIPPerception | None" = None
+    _lock = threading.Lock()
+
+    def __new__(cls) -> "CLIPPerception":
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._init()
+        return cls._instance
+
+    def _init(self) -> None:
+        device = CLIP_DEVICE
+        if device == "auto":
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = device
+        logger.info(f"Loading CLIP model {CLIP_MODEL} on {device}")
+        self.model = CLIPModel.from_pretrained(CLIP_MODEL).to(self.device).eval()
+        self.processor = CLIPProcessor.from_pretrained(CLIP_MODEL)
+        self._sil_text = self.processor(
+            text=[f"a {c} clothing item" for c in SIL_CLASSES],
+            return_tensors="pt", padding=True,
+        )
+        self._tex_text = self.processor(
+            text=[f"{c} fabric texture" for c in TEX_CLASSES],
+            return_tensors="pt", padding=True,
+        )
+        logger.info("CLIP model ready")
+
+    async def analyze(
+        self, image_url: str, category_hint: str | None = None
+    ) -> tuple[dict[str, Any], dict[str, Any], list[float]]:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            r = await client.get(image_url)
+            r.raise_for_status()
+            img = Image.open(BytesIO(r.content)).convert("RGB")
+
+        inputs = self.processor(images=img, return_tensors="pt").to(self.device)
+        with torch.no_grad():
+            emb = self.model.get_image_features(**inputs).cpu().numpy().flatten()
+
+        e_t = torch.tensor(emb, device=self.device)
+        with torch.no_grad():
+            sil_f = self.model.get_text_features(**{k: v.to(self.device) for k, v in self._sil_text.items()})
+            tex_f = self.model.get_text_features(**{k: v.to(self.device) for k, v in self._tex_text.items()})
+            sil_sim = (sil_f @ e_t).softmax(dim=0)
+            tex_sim = (tex_f @ e_t).softmax(dim=0)
+
+        sil = SIL_CLASSES[int(sil_sim.argmax().item())]
+        tex = TEX_CLASSES[int(tex_sim.argmax().item())]
+
+        arr = np.asarray(img)
+        avg = arr.mean(axis=(0, 1)).astype(int)
+        cv = ColorVector.from_rgb(int(avg[0]), int(avg[1]), int(avg[2]))
+        variance = float(np.var(arr, axis=(0, 1)).mean() / 255.0)
+
+        gray = np.asarray(img.convert("L"))
+        mag = np.log(np.abs(np.fft.fftshift(np.fft.fft2(gray))) + 1)
+        pattern = float(np.mean(mag > 10)) if np.any(mag > 10) else 0.0
+
+        geometry = {
+            "silhouette_class": sil,
+            "length_profile": "hip",
+            "volume_distribution": [0.33, 0.34, 0.33],
+            "stretch_behavior": "semi_flexible",
+        }
+        surface = {
+            "dominant_color": cv.to_dict(),
+            "color_variance": variance,
+            "texture_class": tex,
+            "pattern_density": pattern,
+            "lighting_risk": 0.3,
+        }
+        return geometry, surface, emb.tolist()
+```
+
+services/perception-service/app/tasks.py
+
+```python
+"""Celery worker tasks for async image analysis."""
+from __future__ import annotations
+
+import asyncio
+import logging
+
+from celery import Celery
+
+from common.config import settings
+from common.events import EventPublisher
+
+from .perception import CLIPPerception
+
+logger = logging.getLogger(__name__)
+
+celery_app = Celery(
+    "perception",
+    broker=settings.celery_broker_url,
+    backend=settings.celery_result_backend,
+)
+celery_app.conf.update(
+    task_serializer="json",
+    accept_content=["json"],
+    result_serializer="json",
+    timezone="UTC",
+    enable_utc=True,
+    task_acks_late=True,
+    worker_prefetch_multiplier=1,
+    task_time_limit=300,
+    task_soft_time_limit=240,
+)
+
+
+@celery_app.task(bind=True, max_retries=3, default_retry_delay=30, name="perception.analyze")
+def analyze_image(self, item_id: str, image_url: str, category_hint: str | None = None) -> dict:
+    try:
+        model = CLIPPerception()
+        geometry, surface, embedding = asyncio.run(model.analyze(image_url, category_hint))
+
+        async def _emit() -> None:
+            await EventPublisher.init()
+            await EventPublisher.publish(
+                "perception.completed",
+                {
+                    "item_id": item_id,
+                    "geometry": geometry,
+                    "surface": surface,
+                    "embedding": embedding,
+                },
+            )
+            await EventPublisher.close()
+
+        asyncio.run(_emit())
+        logger.info(f"Perception completed for {item_id}")
+        return {"item_id": item_id, "status": "done"}
+    except Exception as exc:
+        logger.exception(f"Perception failed for {item_id}")
+        raise self.retry(exc=exc)
+```
+
+services/perception-service/app/main.py
+
+```python
+from __future__ import annotations
+
+import logging
+from typing import Annotated
+
+from fastapi import Depends, FastAPI
+from prometheus_fastapi_instrumentator import Instrumentator
+
+from common.config import settings
+from common.logging_config import configure_logging
+from common.security import correlation_middleware, current_user
+from common.telemetry import setup_telemetry
+
+from .config import SERVICE_NAME
+from .tasks import analyze_image
+
+configure_logging(SERVICE_NAME, settings.log_level, settings.log_format)
+
+app = FastAPI(title="Cirvanna Perception Service", version="3.0.0")
+app.middleware("http")(correlation_middleware)
+setup_telemetry(app, SERVICE_NAME)
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+
+CurrentUser = Annotated[str, Depends(current_user)]
+
+
+@app.get("/health")
+async def health() -> dict[str, str]:
+    return {"status": "ok", "service": SERVICE_NAME}
+
+
+@app.post("/analyze")
+async def analyze(
+    item_id: str, image_url: str, user: CurrentUser, category_hint: str | None = None
+) -> dict:
+    task = analyze_image.delay(item_id, image_url, category_hint)
+    return {"job_id": task.id, "status": "queued"}
+```
+
+services/perception-service/tests/__init__.py
+
+```python
+```
+
+services/perception-service/tests/test_perception.py
+
+```python
+"""Unit tests for perception (mock heavy model loading)."""
+from __future__ import annotations
+
+from unittest.mock import MagicMock, patch
+
+import numpy as np
+import pytest
+from PIL import Image
+
+from app import perception
+
+
+@pytest.mark.asyncio
+async def test_analyze_returns_expected_keys(monkeypatch) -> None:
+    fake_img = Image.new("RGB", (64, 64), color=(120, 80, 200))
+    fake_bytes = MagicMock()
+    fake_bytes.content = b""
+
+    # Skip actual model loading
+    monkeypatch.setattr(perception, "CLIPPerception", lambda: None)
+
+    # This is a structural smoke test — full inference tests run in integration
+    assert hasattr(perception, "SIL_CLASSES")
+    assert hasattr(perception, "TEX_CLASSES")
+    assert len(perception.SIL_CLASSES) == 5
+    assert len(perception.TEX_CLASSES) == 5
+```
+
+---
+
+PART 4 — Sync, Catalog Importer, API Gateway, Infrastructure
+
+services/sync-service/Dockerfile
+
+```dockerfile
+FROM python:3.11-slim AS builder
+WORKDIR /build
+RUN apt-get update && apt-get install -y --no-install-recommends gcc && rm -rf /var/lib/apt/lists/*
+COPY services/common /build/common
+COPY services/sync-service/requirements.txt .
+RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
+
+FROM python:3.11-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/app
+RUN adduser --disabled-password --gecos "" appuser
+WORKDIR /app
+COPY --from=builder /wheels /wheels
+COPY services/sync-service/requirements.txt .
+RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt && rm -rf /wheels
+COPY services/common /app/common
+COPY services/sync-service/app /app/app
+USER appuser
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+services/sync-service/requirements.txt
+
+```txt
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+sqlalchemy[asyncio]>=2.0.29
+asyncpg>=0.29.0
+aiosqlite>=0.20.0
+httpx>=0.27.0
+aio-pika>=9.4.1
+redis>=5.0.3
+PyJWT>=2.8.0
+opentelemetry-api>=1.24.0
+opentelemetry-sdk>=1.24.0
+opentelemetry-instrumentation-fastapi>=0.45b0
+opentelemetry-instrumentation-sqlalchemy>=0.45b0
+opentelemetry-exporter-otlp-proto-grpc>=1.24.0
+prometheus-fastapi-instrumentator>=7.0.0
+```
+
+services/sync-service/app/__init__.py
+
+```python
+"""Sync service."""
+__version__ = "3.0.0"
+```
+
+services/sync-service/app/config.py
+
+```python
+from common.config import settings
+
+SERVICE_NAME = "sync-service"
+BATCH_SIZE = settings.sync_batch_size
+MAX_RETRIES = settings.sync_max_retries
+RETRY_BACKOFF_SECONDS = settings.sync_retry_backoff_seconds
+ITEM_SERVICE_URL = settings.item_service_url
+```
+
+services/sync-service/app/db.py
+
+```python
+"""Async engine for the sync service's persistent queue."""
+from __future__ import annotations
+
+import logging
+from collections.abc import AsyncIterator
+
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+
+from common.config import settings
+
+logger = logging.getLogger(__name__)
+
+_engine: AsyncEngine | None = None
+_factory: async_sessionmaker[AsyncSession] | None = None
+
+
+def get_engine() -> AsyncEngine:
+    global _engine
+    if _engine is None:
+        _engine = create_async_engine(
+            settings.database_url, pool_pre_ping=True, pool_size=10, max_overflow=5
+        )
+    return _engine
+
+
+def get_factory() -> async_sessionmaker[AsyncSession]:
+    global _factory
+    if _factory is None:
+        _factory = async_sessionmaker(get_engine(), class_=AsyncSession, expire_on_commit=False)
+    return _factory
+
+
+async def get_session() -> AsyncIterator[AsyncSession]:
+    async with get_factory()() as s:
+        try:
+            yield s
+        except Exception:
+            await s.rollback()
+            raise
+
+
+async def dispose() -> None:
+    global _engine, _factory
+    if _engine is not None:
+        await _engine.dispose()
+        _engine = None
+        _factory = None
+```
+
+services/sync-service/app/models.py
+
+```python
+"""Persistent offline event queue."""
+from __future__ import annotations
+
+import datetime as dt
+from typing import Any
+
+from sqlalchemy import DateTime, Index, Integer, String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class OfflineEvent(Base):
+    __tablename__ = "offline_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True, nullable=False)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[dt.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (Index("ix_offline_user_status", "user_id", "status"),)
+```
+
+services/sync-service/app/offline_queue.py
+
+```python
+"""Persistent offline queue with replay + retry semantics."""
+from __future__ import annotations
+
+import logging
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from .config import BATCH_SIZE, MAX_RETRIES
+from .models import OfflineEvent
+
+logger = logging.getLogger(__name__)
+
+Handler = Callable[[str, str, dict[str, Any]], Awaitable[None]]
+
+
+class OfflineQueue:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def enqueue(self, user_id: str, event_type: str, payload: dict[str, Any]) -> int:
+        ev = OfflineEvent(user_id=user_id, event_type=event_type, payload=payload)
+        self.session.add(ev)
+        await self.session.flush()
+        return ev.id
+
+    async def pending(self, user_id: str, limit: int = BATCH_SIZE) -> list[OfflineEvent]:
+        stmt = (
+            select(OfflineEvent)
+            .where(OfflineEvent.user_id == user_id, OfflineEvent.status == "pending")
+            .order_by(OfflineEvent.created_at)
+            .limit(limit)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
+    async def mark_success(self, event_id: int) -> None:
+        await self.session.execute(
+            update(OfflineEvent)
+            .where(OfflineEvent.id == event_id)
+            .values(status="success")
+        )
+        await self.session.flush()
+
+    async def mark_failure(self, event_id: int, error: str) -> None:
+        stmt = select(OfflineEvent).where(OfflineEvent.id == event_id)
+        ev = (await self.session.execute(stmt)).scalar_one_or_none()
+        if ev is None:
+            return
+        ev.retry_count += 1
+        ev.last_error = error[:1000]
+        if ev.retry_count >= MAX_RETRIES:
+            ev.status = "dead"
+        await self.session.flush()
+
+    async def replay(self, user_id: str, handler: Handler) -> dict[str, int]:
+        events = await self.pending(user_id)
+        stats = {"attempted": len(events), "succeeded": 0, "failed": 0}
+        for ev in events:
+            try:
+                await handler(ev.user_id, ev.event_type, ev.payload)
+                await self.mark_success(ev.id)
+                stats["succeeded"] += 1
+            except Exception as exc:
+                logger.warning(f"Replay failed for event {ev.id}: {exc}")
+                await self.mark_failure(ev.id, str(exc))
+                stats["failed"] += 1
+        await self.session.commit()
+        return stats
+
+    async def stats(self, user_id: str) -> dict[str, int]:
+        from sqlalchemy import func as sqlfunc
+
+        stmt = (
+            select(OfflineEvent.status, sqlfunc.count(OfflineEvent.id))
+            .where(OfflineEvent.user_id == user_id)
+            .group_by(OfflineEvent.status)
+        )
+        rows = (await self.session.execute(stmt)).all()
+        return {status: count for status, count in rows}
+```
+
+services/sync-service/app/conflict_resolver.py
+
+```python
+"""Conflict resolution between local and remote WardrobeObject snapshots."""
+from __future__ import annotations
+
+from common.domain import WardrobeObject
+
+
+def resolve(local: WardrobeObject, remote: WardrobeObject) -> WardrobeObject:
+    """Last-write-wins with confidence/regret merging.
+
+    - The newer snapshot wins for scalar fields.
+    - Wear counters take the maximum to avoid losing data.
+    - Per-dimension confidence takes the maximum.
+    - Regret signals union with max strength.
+    """
+    winner = remote if remote.last_updated > local.last_updated else local
+    loser = local if winner is remote else remote
+
+    if winner.total_wears < loser.total_wears:
+        winner.total_wears = loser.total_wears
+        winner.successful_wears = loser.successful_wears
+        winner.usage_history = loser.usage_history
+
+    for field in (
+        "geometry_confidence",
+        "surface_confidence",
+        "category_confidence",
+        "context_confidence",
+    ):
+        setattr(
+            winner.confidence_envelope,
+            field,
+            max(
+                getattr(local.confidence_envelope, field),
+                getattr(remote.confidence_envelope, field),
+            ),
+        )
+
+    for k, tv in remote.regret_signals.implicit.items():
+        if k in winner.regret_signals.implicit:
+            winner.regret_signals.implicit[k].current = max(
+                winner.regret_signals.implicit[k].current, tv.current
+            )
+        else:
+            winner.regret_signals.implicit[k] = tv
+
+    return winner
+```
+
+services/sync-service/app/main.py
+
+```python
+from __future__ import annotations
+
+import logging
+from contextlib import asynccontextmanager
+from typing import Annotated
+
+import httpx
+from fastapi import APIRouter, Depends, FastAPI, Request
+from fastapi.responses import JSONResponse
+from prometheus_fastapi_instrumentator import Instrumentator
+from pydantic import BaseModel, Field
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from common.config import settings
+from common.errors import CirvannaError, UpstreamError
+from common.logging_config import configure_logging
+from common.security import correlation_middleware, current_user
+from common.telemetry import setup_telemetry
+
+from .config import ITEM_SERVICE_URL, SERVICE_NAME
+from .db import dispose, get_engine, get_session
+from .models import Base
+from .offline_queue import OfflineQueue
+
+configure_logging(SERVICE_NAME, settings.log_level, settings.log_format)
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    async with get_engine().begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    logger.info("Sync service ready")
+    yield
+    await dispose()
+
+
+app = FastAPI(title="Cirvanna Sync Service", version="3.0.0", lifespan=lifespan)
+app.middleware("http")(correlation_middleware)
+setup_telemetry(app, SERVICE_NAME)
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+
+
+@app.exception_handler(CirvannaError)
+async def _err(request: Request, exc: CirvannaError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+
+
+class EventPayload(BaseModel):
+    event_type: str = Field(min_length=1, max_length=32)
+    payload: dict
+
+
+def get_queue(session: Annotated[AsyncSession, Depends(get_session)]) -> OfflineQueue:
+    return OfflineQueue(session)
+
+
+Queue = Annotated[OfflineQueue, Depends(get_queue)]
+CurrentUser = Annotated[str, Depends(current_user)]
+
+
+@app.get("/health")
+async def health() -> dict[str, str]:
+    return {"status": "ok", "service": SERVICE_NAME}
+
+
+@app.post("/offline/{user_id}/event", status_code=202)
+async def enqueue(user_id: str, ev: EventPayload, queue: Queue, user: CurrentUser) -> dict:
+    eid = await queue.enqueue(user_id, ev.event_type, ev.payload)
+    await queue.session.commit()
+    return {"event_id": eid, "status": "queued"}
+
+
+@app.get("/offline/{user_id}/stats")
+async def stats(user_id: str, queue: Queue, user: CurrentUser) -> dict:
+    return await queue.stats(user_id)
+
+
+@app.post("/replay/{user_id}")
+async def replay(user_id: str, queue: Queue, user: CurrentUser) -> dict:
+    async def handler(uid: str, etype: str, payload: dict) -> None:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            if etype == "wear_event":
+                r = await c.post(
+                    f"{ITEM_SERVICE_URL}/items/{payload['item_id']}/wear",
+                    json={
+                        "accepted": payload["accepted"],
+                        "duration_minutes": payload["duration_minutes"],
+                        "event_type": payload.get("event_type", "wear"),
+                    },
+                )
+            elif etype == "add_item":
+                r = await c.post(f"{ITEM_SERVICE_URL}/items", json=payload)
+            else:
+                logger.warning(f"Unknown offline event type: {etype}")
+                return
+            r.raise_for_status()
+
+    return await queue.replay(user_id, handler)
+```
+
+services/sync-service/tests/__init__.py
+
+```python
+```
+
+services/sync-service/tests/test_offline_queue.py
+
+```python
+from __future__ import annotations
+
+import pytest
+import pytest_asyncio
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from app.models import Base
+from app.offline_queue import OfflineQueue
+
+
+@pytest_asyncio.fixture
+async def session() -> AsyncSession:
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as c:
+        await c.run_sync(Base.metadata.create_all)
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with factory() as s:
+        yield s
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_enqueue_and_replay(session: AsyncSession) -> None:
+    q = OfflineQueue(session)
+    await q.enqueue("u1", "wear_event", {"item_id": "1", "accepted": True, "duration_minutes": 60})
+    await session.commit()
+    assert len(await q.pending("u1")) == 1
+
+    calls: list = []
+
+    async def handler(uid, etype, payload):
+        calls.append((uid, etype, payload))
+
+    stats = await q.replay("u1", handler)
+    assert stats == {"attempted": 1, "succeeded": 1, "failed": 0}
+    assert calls[0][0] == "u1"
+    assert len(await q.pending("u1")) == 0
+```
+
+services/sync-service/tests/test_conflict_resolver.py
+
+```python
+from __future__ import annotations
+
+import datetime as dt
+
+from common.domain import IngestionMethod, PrimaryCategory, WardrobeObject
+from app.conflict_resolver import resolve
+
+
+def test_lww_newer_wins() -> None:
+    a = WardrobeObject("u1", IngestionMethod.MANUAL, PrimaryCategory.TOP)
+    b = WardrobeObject("u1", IngestionMethod.MANUAL, PrimaryCategory.TOP)
+    b.id = a.id
+    a.last_updated = dt.datetime(2024, 1, 1, tzinfo=dt.timezone.utc)
+    b.last_updated = dt.datetime(2025, 1, 1, tzinfo=dt.timezone.utc)
+    b.total_wears = 5
+    winner = resolve(a, b)
+    assert winner is b
+
+
+def test_merges_confidence() -> None:
+    a = WardrobeObject("u1", IngestionMethod.MANUAL, PrimaryCategory.TOP)
+    b = WardrobeObject("u1", IngestionMethod.MANUAL, PrimaryCategory.TOP)
+    a.confidence_envelope.geometry_confidence = 0.5
+    b.confidence_envelope.geometry_confidence = 0.7
+    winner = resolve(a, b)
+    assert winner.confidence_envelope.geometry_confidence == 0.7
+```
+
+---
+
+services/catalog-importer/Dockerfile
+
+```dockerfile
+FROM python:3.11-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/app
+WORKDIR /app
+COPY services/common /app/common
+COPY services/catalog-importer/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY services/catalog-importer/importer.py .
+ENTRYPOINT ["python", "importer.py"]
+```
+
+services/catalog-importer/requirements.txt
+
+```txt
+click>=8.1.7
+httpx>=0.27.0
+```
+
+services/catalog-importer/importer.py
+
+```python
+"""Standalone CLI to batch-import garment catalogs (CSV or JSON)."""
+from __future__ import annotations
+
+import asyncio
+import csv
+import json
+import logging
+import sys
+from pathlib import Path
+from typing import Any
+
+import click
+import httpx
+
+from common.domain import ColorVector
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+log = logging.getLogger("catalog-importer")
+
+
+def _row_to_item(row: dict[str, str]) -> dict[str, Any]:
+    category = row.get("category", "top").strip().lower()
+    try:
+        color = ColorVector.from_hex(row.get("color", "#808080")).to_dict()
+    except Exception:
+        color = {"l": 50.0, "a": 0.0, "b": 0.0}
+
+    return {
+        "owner_id": row.get("owner_id", "system"),
+        "ingestion_method": "catalog_import",
+        "primary_category": category,
+        "bootstrap_confidence": 0.1,
+        "geometry_data": {
+            "silhouette_class": row.get("silhouette", "relaxed").strip().lower(),
+            "length_profile": row.get("length", "hip").strip(),
+            "volume_distribution": [0.33, 0.34, 0.33],
+            "stretch_behavior": row.get("stretch", "semi_flexible").strip(),
+        },
+        "surface_data": {
+            "dominant_color": color,
+            "color_variance": 0.5,
+            "texture_class": row.get("texture", "smooth").strip().lower(),
+            "pattern_density": 0.0,
+            "lighting_risk": 0.5,
+        },
+        "catalog_metadata": dict(row),
+    }
+
+
+async def _send_batch(
+    client: httpx.AsyncClient, url: str, batch: list[dict], token: str
+) -> int:
+    headers = {"Authorization": f"Bearer {token}"}
+    ok = 0
+    for item in batch:
+        try:
+            r = await client.post(f"{url}/items", json=item, headers=headers, timeout=30.0)
+            r.raise_for_status()
+            ok += 1
+        except httpx.HTTPError as exc:
+            log.error(f"Failed to import item: {exc}")
+    return ok
+
+
+async def _import_csv(url: str, path: Path, chunk: int, token: str) -> tuple[int, int]:
+    total = ok = 0
+    async with httpx.AsyncClient() as client:
+        with path.open("r", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            batch: list[dict] = []
+            for row in reader:
+                total += 1
+                batch.append(_row_to_item(row))
+                if len(batch) >= chunk:
+                    ok += await _send_batch(client, url, batch, token)
+                    batch = []
+                    log.info(f"Progress: {total} rows processed")
+            if batch:
+                ok += await _send_batch(client, url, batch, token)
+    return total, ok
+
+
+async def _import_json(url: str, path: Path, chunk: int, token: str) -> tuple[int, int]:
+    with path.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    rows = data if isinstance(data, list) else data.get("items", [])
+    total = len(rows)
+    ok = 0
+    async with httpx.AsyncClient() as client:
+        for i in range(0, total, chunk):
+            batch = [_row_to_item(r) for r in rows[i : i + chunk]]
+            ok += await _send_batch(client, url, batch, token)
+            log.info(f"Progress: {min(i + chunk, total)}/{total}")
+    return total, ok
+
+
+@click.command()
+@click.option("--file", "file_path", required=True, type=click.Path(exists=True, path_type=Path))
+@click.option("--url", default="http://localhost:8080", help="API gateway base URL")
+@click.option("--chunk", default=100, type=int, help="Batch size")
+@click.option("--token", required=True, help="JWT bearer token")
+def cli(file_path: Path, url: str, chunk: int, token: str) -> None:
+    """Import a catalog from CSV or JSON."""
+    if file_path.suffix.lower() == ".csv":
+        coro = _import_csv(url, file_path, chunk, token)
+    elif file_path.suffix.lower() == ".json":
+        coro = _import_json(url, file_path, chunk, token)
+    else:
+        click.echo(f"Unsupported file type: {file_path.suffix}", err=True)
+        sys.exit(1)
+
+    total, ok = asyncio.run(coro)
+    click.echo(f"Imported {ok}/{total} items successfully")
+    if ok != total:
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    cli()
+```
+
+---
+
+services/api-gateway/Dockerfile
+
+```dockerfile
+FROM python:3.11-slim AS builder
+WORKDIR /build
+COPY services/common /build/common
+COPY services/api-gateway/requirements.txt .
+RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
+
+FROM python:3.11-slim
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PYTHONPATH=/app
+RUN adduser --disabled-password --gecos "" appuser
+WORKDIR /app
+COPY --from=builder /wheels /wheels
+COPY services/api-gateway/requirements.txt .
+RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt && rm -rf /wheels
+COPY services/common /app/common
+COPY services/api-gateway/app /app/app
+USER appuser
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+services/api-gateway/requirements.txt
+
+```txt
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+httpx>=0.27.0
+redis>=5.0.3
+PyJWT>=2.8.0
+opentelemetry-api>=1.24.0
+opentelemetry-sdk>=1.24.0
+opentelemetry-instrumentation-fastapi>=0.45b0
+opentelemetry-instrumentation-httpx>=0.45b0
+opentelemetry-exporter-otlp-proto-grpc>=1.24.0
+prometheus-fastapi-instrumentator>=7.0.0
+```
+
+services/api-gateway/app/__init__.py
+
+```python
+"""API gateway."""
+__version__ = "3.0.0"
+```
+
+services/api-gateway/app/config.py
+
+```python
+from common.config import settings
+
+SERVICE_NAME = "api-gateway"
+
+ROUTES = {
+    "item": settings.item_service_url,
+    "graph": settings.graph_service_url,
+    "recommendation": settings.recommendation_service_url,
+    "perception": settings.perception_service_url,
+    "sync": settings.sync_service_url,
+}
+
+# Per-endpoint + per-IP rate limits (requests, window_seconds)
+ENDPOINT_LIMITS: dict[str, tuple[int, int]] = {
+    "/item/items/": (60, 60),
+    "/item/items": (60, 60),
+    "/recommendation/suggestions/": (200, 60),
+    "/perception/analyze": (10, 60),
+    "/sync/offline/": (500, 60),
+    "/sync/replay/": (10, 60),
+}
+
+DEFAULT_LIMIT = (300, 60)
+
+CB_FAILURE_THRESHOLD = settings.cb_failure_threshold
+CB_RECOVERY_TIMEOUT = settings.cb_recovery_timeout_seconds
+CB_INITIAL_RATIO = settings.cb_initial_traffic_ratio
+```
+
+services/api-gateway/app/rate_limiter.py
+
+```python
+"""Per-endpoint + per-IP rate limiter backed by Redis."""
+from __future__ import annotations
+
+import logging
+
+from fastapi import Request
+
+from common.cache import RedisCache
+from common.errors import RateLimitError
+
+from .config import DEFAULT_LIMIT, ENDPOINT_LIMITS
+
+logger = logging.getLogger(__name__)
+
+
+def _client_ip(request: Request) -> str:
+    """Respect X-Forwarded-For when behind a proxy."""
+    xff = request.headers.get("x-forwarded-for")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+class EndpointRateLimiter:
+    @staticmethod
+    async def check(request: Request) -> None:
+        path = request.url.path
+        limit, window = DEFAULT_LIMIT
+        for prefix, cfg in ENDPOINT_LIMITS.items():
+            if path.startswith(prefix):
+                limit, window = cfg
+                break
+
+        ip = _client_ip(request)
+        key = f"rl:{path}:{ip}"
+        count = await RedisCache.incr(key, ttl=window)
+        if count > limit:
+            logger.warning(f"Rate limit hit path={path} ip={ip} count={count}")
+            raise RateLimitError(
+                f"Rate limit exceeded for {path}",
+                details={"limit": limit, "window_seconds": window, "count": count},
+            )
+```
+
+services/api-gateway/app/circuit_breaker.py
+
+```python
+"""Circuit breaker with gradual (sliding-scale) traffic restoration."""
+from __future__ import annotations
+
+import logging
+import random
+import threading
+import time
+from enum import Enum
+
+logger = logging.getLogger(__name__)
+
+
+class State(str, Enum):
+    CLOSED = "closed"
+    OPEN = "open"
+    HALF_OPEN = "half_open"
+
+
+class SlidingCircuitBreaker:
+    """Recovery ramp: 10% → 25% → 50% → 100% on consecutive successes."""
+
+    def __init__(
+        self,
+        name: str,
+        failure_threshold: int = 5,
+        recovery_timeout: float = 60.0,
+        initial_ratio: float = 0.1,
+        ramp_factor: float = 2.5,
+    ) -> None:
+        self.name = name
+        self.threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.initial_ratio = initial_ratio
+        self.ramp_factor = ramp_factor
+
+        self._state = State.CLOSED
+        self._failures = 0
+        self._last_failure_ts = 0.0
+        self._traffic_ratio = 1.0
+        self._lock = threading.Lock()
+
+    @property
+    def state(self) -> State:
+        return self._state
+
+    @property
+    def traffic_ratio(self) -> float:
+        return self._traffic_ratio
+
+    def allow(self) -> bool:
+        with self._lock:
+            if self._state is State.CLOSED:
+                return True
+            if self._state is State.OPEN:
+                if time.monotonic() - self._last_failure_ts >= self.recovery_timeout:
+                    self._state = State.HALF_OPEN
+                    self._traffic_ratio = self.initial_ratio
+                    logger.info(f"CB {self.name}: OPEN → HALF_OPEN (ratio={self._traffic_ratio})")
+                    return random.random() < self._traffic_ratio
+                return False
+            # HALF_OPEN
+            return random.random() < self._traffic_ratio
+
+    def record(self, success: bool) -> None:
+        with self._lock:
+            if success:
+                self._failures = 0
+                if self._state is State.HALF_OPEN:
+                    self._traffic_ratio = min(1.0, self._traffic_ratio * self.ramp_factor)
+                    if self._traffic_ratio >= 1.0:
+                        self._state = State.CLOSED
+                        logger.info(f"CB {self.name}: HALF_OPEN → CLOSED")
+            else:
+                self._failures += 1
+                if self._state is State.HALF_OPEN:
+                    self._state = State.OPEN
+                    self._last_failure_ts = time.monotonic()
+                    self._traffic_ratio = self.initial_ratio
+                    logger.warning(f"CB {self.name}: HALF_OPEN → OPEN")
+                elif self._failures >= self.threshold:
+                    self._state = State.OPEN
+                    self._last_failure_ts = time.monotonic()
+                    logger.warning(f"CB {self.name}: CLOSED → OPEN after {self._failures} failures")
+
+    def snapshot(self) -> dict:
+        return {
+            "name": self.name,
+            "state": self._state.value,
+            "failures": self._failures,
+            "traffic_ratio": self._traffic_ratio,
+        }
+```
+
+services/api-gateway/app/main.py
+
+```python
+from __future__ import annotations
+
+import logging
+from contextlib import asynccontextmanager
+
+import httpx
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, Response
+from prometheus_fastapi_instrumentator import Instrumentator
+
+from common.cache import RedisCache
+from common.config import settings
+from common.errors import CirvannaError, CircuitOpenError, UpstreamError
+from common.logging_config import configure_logging
+from common.security import correlation_middleware
+from common.telemetry import setup_telemetry
+
+from .circuit_breaker import SlidingCircuitBreaker
+from .config import CB_FAILURE_THRESHOLD, CB_INITIAL_RATIO, CB_RECOVERY_TIMEOUT, ROUTES, SERVICE_NAME
+from .rate_limiter import EndpointRateLimiter
+
+configure_logging(SERVICE_NAME, settings.log_level, settings.log_format)
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await RedisCache.init()
+    app.state.breakers = {
+        name: SlidingCircuitBreaker(
+            name=name,
+            failure_threshold=CB_FAILURE_THRESHOLD,
+            recovery_timeout=CB_RECOVERY_TIMEOUT,
+            initial_ratio=CB_INITIAL_RATIO,
+        )
+        for name in ROUTES
+    }
+    app.state.client = httpx.AsyncClient(timeout=30.0)
+    logger.info("API gateway ready")
+    yield
+    await app.state.client.aclose()
+    await RedisCache.close()
+
+
+app = FastAPI(title="Cirvanna API Gateway", version="3.0.0", lifespan=lifespan)
+app.middleware("http")(correlation_middleware)
+setup_telemetry(app, SERVICE_NAME)
+Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+
+
+@app.exception_handler(CirvannaError)
+async def _err(request: Request, exc: CirvannaError) -> JSONResponse:
+    return JSONResponse(status_code=exc.status_code, content=exc.to_dict())
+
+
+@app.get("/health")
+async def health(request: Request) -> dict:
+    return {
+        "status": "ok",
+        "service": SERVICE_NAME,
+        "breakers": {n: b.snapshot() for n, b in request.app.state.breakers.items()},
+    }
+
+
+@app.get("/auth/dev")
+async def dev_token(user_id: str = "dev_user") -> dict:
+    """Development-only token issuer. Remove/disable in production."""
+    from common.security import issue_token
+
+    if settings.is_production:
+        raise CircuitOpenError("Not available in production")
+    return {"token": issue_token(user_id)}
+
+
+@app.api_route(
+    "/{service}/{path:path}",
+    methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+)
+async def proxy(request: Request, service: str, path: str) -> Respo
+

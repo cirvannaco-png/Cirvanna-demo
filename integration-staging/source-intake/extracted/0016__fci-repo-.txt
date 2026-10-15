@@ -1,0 +1,22 @@
+
+
+```
+fci-repo/
+├── src/
+│   └── fci/
+│       ├── __init__.py          (optional, can be empty)
+│       ├── models.py
+│       ├── bayesian.py
+│       ├── neural.py
+│       ├── calibration.py
+│       ├── friction.py
+│       ├── metrics.py
+│       └── pipeline.py
+├── tests/
+│   └── test_fci.py
+├── examples/
+│   └── usage.py
+├── requirements.txt
+└── README.md
+```
+

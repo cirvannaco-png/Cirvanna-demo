@@ -1,0 +1,1716 @@
+
+Step 1 — Classification
+
+Code-Dominant
+
+Step 2 — Restructured as GitHub Repository
+
+src/cdic/config.py
+
+```python
+"""
+Configuration management for CDIC v4.0
+"""
+
+import os
+from typing import List, Optional
+from pydantic import BaseModel, Field, validator
+
+
+class CDICConfig(BaseModel):
+    """Validated configuration for CDIC Engine"""
+    
+    secret_key: str = Field(..., min_length=32)
+    redis_url: str = "redis://localhost:6379/0"
+    postgres_url: Optional[str] = None
+    max_audit_log_size: int = 100_000
+    max_session_age_hours: int = 24
+    max_wdls_signals: int = 10_000
+    circuit_breaker_threshold: int = 5
+    circuit_breaker_timeout: int = 60
+    rate_limit_requests: int = 100
+    rate_limit_window: int = 60
+    enable_background_workers: bool = True
+    log_level: str = "INFO"
+    cache_ttl: int = 300
+    max_concurrent_decisions: int = 100
+    enable_prometheus: bool = True
+    enable_compression: bool = True
+    cors_origins: List[str] = ["*"]
+    trusted_hosts: List[str] = ["*"]
+    
+    # New: Clarification fatigue control
+    clarification_budget_per_session: int = 2
+    
+    # New: Decision timeout
+    decision_timeout_seconds: float = 30.0
+    
+    @validator('secret_key')
+    def validate_secret_key(cls, v):
+        if len(v) < 32:
+            raise ValueError("Secret key must be at least 32 characters")
+        return v.encode() if isinstance(v, str) else v
+
+
+class Config:
+    env_file = ".env"
+    env_prefix = "CDIC_"
+
+
+VERSION = "4.0.0"
+MAX_WORKERS = min(32, (os.cpu_count() or 1) + 4)
+DEFAULT_CACHE_TTL = 300
+AUDIT_CHUNK_SIZE = 1000
+```
+
+src/cdic/enums.py
+
+```python
+"""
+Enumerations for CDIC v4.0
+"""
+
+from enum import Enum, auto
+
+
+class QuestionType(Enum):
+    COVERAGE = auto()
+    CULTURAL = auto()
+    EXPLORATION = auto()
+    TEMPORAL = auto()
+    CONFIDENCE = auto()
+    RESOURCE = auto()
+    STAKEHOLDER = auto()
+    REVERSIBILITY = auto()
+    RISK_TOLERANCE = auto()
+    ETHICAL = auto()
+
+
+class ResponseType(Enum):
+    YES = auto()
+    NO = auto()
+    FLEXIBLE = auto()
+    EXPLORE = auto()
+    CONSERVATIVE = auto()
+    SAFE = auto()
+    VARIETY = auto()
+    DEFAULT = auto()
+    TODAY = auto()
+    REMEMBER = auto()
+    DONT_SAVE = auto()
+    PROCEED = auto()
+    ABORT = auto()
+    AFFECTED = auto()
+    UNAFFECTED = auto()
+    REVERSIBLE = auto()
+    IRREVERSIBLE = auto()
+    ASK_LATER = auto()
+    DEPENDS = auto()
+    DECIDE = auto()
+
+
+class DecisionStatus(Enum):
+    PENDING = auto()
+    PROCESSING = auto()
+    COMPLETED = auto()
+    FAILED = auto()
+    CANCELLED = auto()
+
+
+class RiskLevel(Enum):
+    LOW = auto()
+    MEDIUM = auto()
+    HIGH = auto()
+    CRITICAL = auto()
+```
+
+src/cdic/models.py
+
+```python
+"""
+Data models for CDIC v4.0
+"""
+
+import uuid
+from datetime import datetime
+from typing import Dict, List, Any, Optional
+from dataclasses import dataclass, field
+from pydantic import BaseModel, Field, validator
+from .enums import ResponseType, RiskLevel
+
+
+@dataclass(frozen=True)
+class AuditEntry:
+    """Immutable audit entry"""
+    entry_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    timestamp: datetime = field(default_factory=datetime.utcnow)
+    operation: str = ""
+    data_hash: str = ""
+    request_id: str = ""
+    user_id: str = ""
+    session_id: str = ""
+    duration_ms: float = 0.0
+    success: bool = True
+    error_message: str = ""
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class WDLSignal:
+    """Weighted Decision Learning Signal"""
+    signal_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    intent: str = ""
+    input_pattern: str = ""
+    user_response: ResponseType = ResponseType.DEFAULT
+    weight: float = 1.0
+    timestamp: datetime = field(default_factory=datetime.utcnow)
+    decay_rate: float = 0.1
+    trend_impact: float = 0.0
+    confidence: float = 1.0
+    source: str = "user"
+
+
+@dataclass
+class DecisionOption:
+    """Decision option with scoring"""
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    action: str = ""
+    confidence: float = 0.0
+    rationale: str = ""
+    risk_score: float = 0.0
+    diversity_score: float = 0.0
+    generation_cost: float = 0.0
+    doctrine_compliant: bool = True
+    doctrine_violations: List[str] = field(default_factory=list)
+    timestamp: datetime = field(default_factory=datetime.utcnow)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+class DecisionContext(BaseModel):
+    """Validated decision context"""
+    intent: str = Field(..., min_length=1, max_length=200)
+    input_snapshot: Dict[str, Any] = Field(default_factory=dict)
+    user_id: str = Field(..., min_length=1)
+    session_id: str = Field(..., min_length=1)
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    request_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    cultural_context: Optional[str] = None
+    coverage_required: bool = False
+    exploration_allowed: bool = True
+    temporal_scope: str = "session"
+    risk_tolerance: RiskLevel = RiskLevel.MEDIUM
+    ethical_constraints: List[str] = Field(default_factory=list)
+    priority: int = 1
+    
+    @validator('input_snapshot')
+    def sanitize_snapshot(cls, v):
+        """Remove potentially dangerous keys"""
+        dangerous_patterns = ['__', 'eval', 'exec', 'import', 'open']
+        safe_dict = {}
+        for key, value in v.items():
+            if not any(pattern in str(key).lower() for pattern in dangerous_patterns):
+                if isinstance(value, (str, int, float, bool, list, dict, type(None))):
+                    safe_dict[key] = value
+        return safe_dict
+    
+    @validator('intent')
+    def sanitize_intent(cls, v):
+        """Sanitize intent string"""
+        import re
+        return re.sub(r'[^\w\s\-]', '', v)[:100]
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat(),
+            Enum: lambda v: v.value
+        }
+        use_enum_values = True
+
+
+class CDICResponse(BaseModel):
+    """Response from CDIC Engine according to spec 2.1"""
+    options: List[DecisionOption]
+    confidence: float
+    clarification_needed: bool
+    
+    class Config:
+        json_encoders = {
+            datetime: lambda v: v.isoformat(),
+            Enum: lambda v: v.value
+        }
+        use_enum_values = True
+```
+
+src/cdic/utils/monitor.py
+
+```python
+"""
+Performance monitoring utilities
+"""
+
+import time
+import threading
+from typing import Dict, Any
+from collections import deque, defaultdict
+import numpy as np
+import psutil
+
+
+class PerformanceMonitor:
+    """Real-time performance monitoring"""
+    
+    def __init__(self, engine: 'CDICEngine'):
+        self.engine = engine
+        self.metrics: Dict[str, deque] = defaultdict(lambda: deque(maxlen=1000))
+        self.lock = threading.RLock()
+        self.start_time = time.time()
+    
+    def record_metric(self, name: str, value: float):
+        """Record a metric"""
+        with self.lock:
+            self.metrics[name].append((time.time(), value))
+    
+    def get_percentile(self, name: str, percentile: float) -> float:
+        """Get percentile value for a metric"""
+        with self.lock:
+            values = [v for _, v in self.metrics[name]]
+            if not values:
+                return 0.0
+            return float(np.percentile(values, percentile))
+    
+    def check_sla_violations(self) -> Dict[str, Any]:
+        """Check for SLA violations"""
+        sla_checks = {
+            "decision_latency_95th": (self.get_percentile("decision_latency", 95) > 1.0),
+            "error_rate": (self.engine._get_error_rate() > 0.01),
+            "memory_usage": (psutil.Process().memory_percent() > 80.0)
+        }
+        
+        violations = [name for name, violated in sla_checks.items() if violated]
+        
+        return {
+            "violations": violations,
+            "requires_intervention": len(violations) > 0,
+            "metrics": {
+                "uptime": time.time() - self.start_time,
+                "active_sessions": len(self.engine.session_data),
+                "queue_depth": self.engine._get_queue_depth(),
+                "memory_mb": psutil.Process().memory_info().rss / 1024 / 1024
+            }
+        }
+```
+
+src/cdic/utils/hasher.py
+
+```python
+"""
+Secure hashing utilities
+"""
+
+import hashlib
+from typing import Any
+import orjson
+from cryptography.hazmat.backends import default_backend
+
+
+class SecureHasher:
+    """Fast, secure hashing"""
+    
+    def __init__(self, secret_key: bytes):
+        self.secret_key = secret_key
+        self.backend = default_backend()
+    
+    def compute_hash(self, data: Any) -> str:
+        """Compute secure hash of data"""
+        if isinstance(data, (dict, list)):
+            data = orjson.dumps(data)
+        elif not isinstance(data, bytes):
+            data = str(data).encode()
+        
+        h = hashlib.blake2b(
+            data,
+            key=self.secret_key[:64],
+            digest_size=32
+        )
+        return h.hexdigest()
+    
+    def verify_hash(self, data: Any, expected_hash: str) -> bool:
+        """Verify data integrity"""
+        return self.compute_hash(data) == expected_hash
+```
+
+src/cdic/utils/doctrine.py
+
+```python
+"""
+Doctrine compliance checking
+"""
+
+from typing import Dict, Any, Tuple, List
+
+
+class ImmutableDoctrine:
+    """Immutable decision doctrine"""
+    
+    def __init__(self):
+        self.rules = {
+            "min_confidence": 0.3,
+            "max_risk": 0.8,
+            "required_fields": ["action", "rationale"],
+            "banned_actions": ["harm", "exploit", "deceive"],
+            "ethical_constraints": [
+                "respect_autonomy",
+                "do_no_harm",
+                "fairness",
+                "transparency"
+            ]
+        }
+    
+    def check_compliance(self, option: Dict[str, Any]) -> Tuple[bool, List[str]]:
+        """Check option compliance with doctrine"""
+        violations = []
+        
+        # Check confidence
+        if option.get("confidence", 0) < self.rules["min_confidence"]:
+            violations.append("confidence_too_low")
+        
+        # Check risk
+        if option.get("risk_score", 1.0) > self.rules["max_risk"]:
+            violations.append("risk_too_high")
+        
+        # Check required fields
+        for field in self.rules["required_fields"]:
+            if field not in option:
+                violations.append(f"missing_field_{field}")
+        
+        # Check banned actions
+        action = str(option.get("action", "")).lower()
+        for banned in self.rules["banned_actions"]:
+            if banned in action:
+                violations.append(f"banned_action_{banned}")
+        
+        return len(violations) == 0, violations
+```
+
+src/cdic/utils/circuit_breaker.py
+
+```python
+"""
+Circuit breaker pattern implementation
+"""
+
+import time
+import threading
+from typing import Callable, Any
+
+
+class CircuitBreaker:
+    """Smart circuit breaker pattern"""
+    
+    def __init__(self, failure_threshold: int, recovery_timeout: int):
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.failures = 0
+        self.state = "CLOSED"
+        self.last_failure_time = 0
+        self.lock = threading.RLock()
+    
+    def call(self, func: Callable, *args, **kwargs) -> Any:
+        """Execute function with circuit breaker protection"""
+        with self.lock:
+            current_state = self._get_state()
+            if current_state == "OPEN":
+                raise Exception("Circuit breaker is OPEN")
+            
+            try:
+                result = func(*args, **kwargs)
+                self._record_success()
+                return result
+            except Exception as e:
+                self._record_failure()
+                raise e
+    
+    def _get_state(self) -> str:
+        """Get current circuit breaker state"""
+        with self.lock:
+            if self.state == "OPEN":
+                if time.time() - self.last_failure_time > self.recovery_timeout:
+                    self.state = "HALF_OPEN"
+                    self.failures = self.failure_threshold // 2
+            return self.state
+    
+    def _record_success(self):
+        """Record successful call"""
+        with self.lock:
+            if self.state == "HALF_OPEN":
+                self.state = "CLOSED"
+                self.failures = 0
+    
+    def _record_failure(self):
+        """Record failed call"""
+        with self.lock:
+            self.failures += 1
+            self.last_failure_time = time.time()
+            if self.failures >= self.failure_threshold:
+                self.state = "OPEN"
+```
+
+src/cdic/utils/locking.py
+
+```python
+"""
+Distributed locking utilities
+"""
+
+import uuid
+import time
+import threading
+from contextlib import contextmanager
+from collections import defaultdict
+import redis
+
+
+class DistributedLock:
+    """Redis-based distributed lock with auto-renewal"""
+    
+    def __init__(self, redis_url: str):
+        self.redis = redis.from_url(redis_url, decode_responses=True)
+        self.local_locks = defaultdict(threading.RLock)
+        self.renewal_threads = {}
+        self.renewal_lock = threading.RLock()
+    
+    @contextmanager
+    def acquire(self, lock_name: str, timeout: int = 10, block: bool = True):
+        """Acquire distributed lock with context manager"""
+        lock_key = f"cdic:lock:{lock_name}"
+        identifier = str(uuid.uuid4())
+        acquired = False
+        
+        try:
+            # Try to acquire lock
+            if block:
+                deadline = time.time() + timeout
+                while time.time() < deadline:
+                    if self.redis.set(lock_key, identifier, nx=True, ex=timeout):
+                        acquired = True
+                        self._start_renewal(lock_key, identifier, timeout)
+                        break
+                    time.sleep(0.01)
+            else:
+                if self.redis.set(lock_key, identifier, nx=True, ex=timeout):
+                    acquired = True
+                    self._start_renewal(lock_key, identifier, timeout)
+            
+            if not acquired:
+                raise TimeoutError(f"Could not acquire lock: {lock_name}")
+            
+            # Acquire local lock for thread safety
+            with self.local_locks[lock_name]:
+                yield identifier
+        
+        finally:
+            if acquired:
+                self._release_lock(lock_key, identifier)
+    
+    def _start_renewal(self, lock_key: str, identifier: str, timeout: int):
+        """Start lock renewal in background thread"""
+        with self.renewal_lock:
+            if lock_key in self.renewal_threads:
+                return
+            
+            def renew():
+                while True:
+                    time.sleep(timeout / 2)
+                    current_id = self.redis.get(lock_key)
+                    if current_id != identifier:
+                        break
+                    self.redis.expire(lock_key, timeout)
+            
+            thread = threading.Thread(target=renew, daemon=True)
+            self.renewal_threads[lock_key] = thread
+            thread.start()
+    
+    def _release_lock(self, lock_key: str, identifier: str):
+        """Release lock"""
+        # Use Lua script for atomic release
+        lua = """
+        if redis.call("get", KEYS[1]) == ARGV[1] then
+            return redis.call("del", KEYS[1])
+        else
+            return 0
+        end
+        """
+        self.redis.eval(lua, 1, lock_key, identifier)
+        
+        with self.renewal_lock:
+            if lock_key in self.renewal_threads:
+                del self.renewal_threads[lock_key]
+```
+
+src/cdic/utils/cache.py
+
+```python
+"""
+Caching utilities
+"""
+
+import threading
+from typing import Optional, Any
+from cachetools import TTLCache, LRUCache
+
+
+class MultiLevelCache:
+    """Multi-level cache with TTL and LRU policies"""
+    
+    def __init__(self, maxsize: int = 10000, ttl: int = 300):
+        self.l1_cache = LRUCache(maxsize=maxsize)
+        self.l2_cache = TTLCache(maxsize=maxsize, ttl=ttl)
+        self.l1_lock = threading.RLock()
+        self.l2_lock = threading.RLock()
+        self.stats = {"hits": 0, "misses": 0}
+    
+    def get(self, key: str) -> Optional[Any]:
+        """Get value from cache"""
+        # Try L1 cache
+        with self.l1_lock:
+            if key in self.l1_cache:
+                self.stats["hits"] += 1
+                return self.l1_cache[key]
+        
+        # Try L2 cache
+        with self.l2_lock:
+            if key in self.l2_cache:
+                self.stats["hits"] += 1
+                value = self.l2_cache[key]
+                # Promote to L1
+                with self.l1_lock:
+                    self.l1_cache[key] = value
+                return value
+        
+        self.stats["misses"] += 1
+        return None
+    
+    def set(self, key: str, value: Any):
+        """Set value in both cache levels"""
+        with self.l1_lock:
+            self.l1_cache[key] = value
+        with self.l2_lock:
+            self.l2_cache[key] = value
+    
+    def invalidate(self, key: str):
+        """Invalidate cache entry"""
+        with self.l1_lock:
+            self.l1_cache.pop(key, None)
+        with self.l2_lock:
+            self.l2_cache.pop(key, None)
+```
+
+src/cdic/utils/random.py
+
+```python
+"""
+Random number generation utilities
+"""
+
+import time
+import threading
+from typing import Optional
+import numpy as np
+from numpy.random import Generator, PCG64
+
+
+class FastRandom:
+    """Thread-safe fast random number generator"""
+    
+    def __init__(self, seed: Optional[int] = None):
+        self.seed = seed or int(time.time() * 1000)
+        self.generators = {}
+        self.lock = threading.RLock()
+    
+    def get_generator(self, thread_id: Optional[int] = None) -> Generator:
+        """Get thread-local random generator"""
+        if thread_id is None:
+            thread_id = threading.get_ident()
+        
+        with self.lock:
+            if thread_id not in self.generators:
+                # Create new generator with unique seed
+                unique_seed = self.seed + thread_id
+                self.generators[thread_id] = Generator(PCG64(unique_seed))
+            return self.generators[thread_id]
+```
+
+src/cdic/engine.py
+
+```python
+"""
+Main CDIC Engine v4.0
+"""
+
+import time
+import threading
+import logging
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any, Deque, Callable, Tuple
+from dataclasses import asdict
+from collections import defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FutureTimeoutError
+from logging.handlers import RotatingFileHandler
+
+import structlog
+import orjson
+import numpy as np
+from prometheus_client import Counter, Histogram
+
+from .config import CDICConfig, VERSION, MAX_WORKERS
+from .models import AuditEntry, WDLSignal, DecisionOption, DecisionContext, CDICResponse
+from .enums import QuestionType, ResponseType, RiskLevel
+from .utils.monitor import PerformanceMonitor
+from .utils.hasher import SecureHasher
+from .utils.doctrine import ImmutableDoctrine
+from .utils.circuit_breaker import CircuitBreaker
+from .utils.locking import DistributedLock
+from .utils.cache import MultiLevelCache
+from .utils.random import FastRandom
+
+# Prometheus metrics
+DECISION_REQUESTS = Counter('cdic_decisions_total', 'Total decision requests')
+DECISION_ERRORS = Counter('cdic_decision_errors', 'Decision processing errors')
+DECISION_LATENCY = Histogram('cdic_decision_latency_seconds', 'Decision latency')
+CACHE_HITS = Counter('cdic_cache_hits', 'Cache hits')
+CACHE_MISSES = Counter('cdic_cache_misses', 'Cache misses')
+CLARIFICATION_BUDGET_EXCEEDED = Counter('cdic_clarification_budget_exceeded', 'Clarification budget exceeded')
+
+
+class CDICEngine:
+    """Optimized CDIC Engine v4.0"""
+    
+    def __init__(self, config: CDICConfig):
+        self.config = config
+        self.logger = self._setup_logging()
+        self.doctrine = ImmutableDoctrine()
+        self.hasher = SecureHasher(config.secret_key)
+        self.distributed_lock = DistributedLock(config.redis_url)
+        self.cache = MultiLevelCache(maxsize=10000, ttl=config.cache_ttl)
+        self.random = FastRandom()
+        
+        # Thread-safe state
+        self.pending_clarifications: Dict[str, Any] = {}
+        self.audit_log: List[AuditEntry] = []
+        self.wdl_signals: Dict[str, WDLSignal] = {}
+        self.session_data: Dict[str, Any] = {}
+        self.session_expiry: Dict[str, datetime] = {}
+        self.decision_queue: Deque = deque(maxlen=config.max_concurrent_decisions)
+        
+        # New: Clarification budget tracking
+        self.clarification_budget: Dict[str, int] = {}
+        
+        # Thread locks
+        self._state_locks = {
+            "audit": threading.RLock(),
+            "signals": threading.RLock(),
+            "sessions": threading.RLock(),
+            "pending": threading.RLock(),
+            "queue": threading.RLock(),
+            "clarification_budget": threading.RLock()
+        }
+        
+        # Circuit breakers
+        self.circuit_breakers = {
+            "decision": CircuitBreaker(
+                config.circuit_breaker_threshold,
+                config.circuit_breaker_timeout
+            ),
+            "clarification": CircuitBreaker(
+                config.circuit_breaker_threshold,
+                config.circuit_breaker_timeout
+            ),
+            "wdls": CircuitBreaker(
+                config.circuit_breaker_threshold,
+                config.circuit_breaker_timeout
+            )
+        }
+        
+        # Precomputed tables (optimized for speed)
+        self.precomputed_tables = self._precompute_tables()
+        
+        # Performance monitor
+        self.monitor = PerformanceMonitor(self)
+        
+        # Background workers
+        if config.enable_background_workers:
+            self._start_background_workers()
+        
+        self.logger.info(
+            "cdic_engine_initialized",
+            version=VERSION,
+            workers=MAX_WORKERS,
+            config=config.dict(exclude={'secret_key'})
+        )
+    
+    def _setup_logging(self):
+        """Setup structured logging"""
+        structlog.configure(
+            processors=[
+                structlog.stdlib.filter_by_level,
+                structlog.stdlib.add_logger_name,
+                structlog.stdlib.add_log_level,
+                structlog.processors.TimeStamper(fmt="iso"),
+                structlog.processors.JSONRenderer()
+            ],
+            logger_factory=structlog.stdlib.LoggerFactory(),
+        )
+        
+        logger = logging.getLogger("cdic")
+        logger.setLevel(getattr(logging, self.config.log_level))
+        
+        # Console handler
+        console = logging.StreamHandler()
+        console.setFormatter(logging.Formatter(
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        ))
+        logger.addHandler(console)
+        
+        # File handler with rotation
+        file_handler = RotatingFileHandler(
+            'cdic.log',
+            maxBytes=10_000_000,
+            backupCount=5
+        )
+        logger.addHandler(file_handler)
+        
+        return structlog.wrap_logger(logger)
+    
+    def _check_clarification_budget(self, session_id: str) -> Tuple[bool, int]:
+        """
+        Check if clarification budget is exceeded for session.
+        Returns: (budget_exceeded, remaining_budget)
+        """
+        with self._state_locks["clarification_budget"]:
+            budget = self.clarification_budget.get(session_id, self.config.clarification_budget_per_session)
+            
+            if budget <= 0:
+                CLARIFICATION_BUDGET_EXCEEDED.inc()
+                return True, 0
+            
+            return False, budget
+    
+    def _decrement_clarification_budget(self, session_id: str) -> int:
+        """Decrement clarification budget and return remaining"""
+        with self._state_locks["clarification_budget"]:
+            current = self.clarification_budget.get(session_id, self.config.clarification_budget_per_session)
+            new_budget = max(0, current - 1)
+            self.clarification_budget[session_id] = new_budget
+            return new_budget
+    
+    def _should_ask_clarification(self, context: DecisionContext, options: List[DecisionOption]) -> bool:
+        """
+        Determine if clarification is needed based on:
+        1. Clarification budget
+        2. Option confidence spread
+        3. Risk level
+        """
+        # Check budget first
+        budget_exceeded, remaining = self._check_clarification_budget(context.session_id)
+        if budget_exceeded:
+            self.logger.info(
+                "clarification_budget_exceeded",
+                session_id=context.session_id,
+                remaining=remaining
+            )
+            return False
+        
+        # Calculate confidence spread
+        if len(options) < 2:
+            return False
+        
+        confidences = [opt.confidence for opt in options]
+        confidence_spread = max(confidences) - min(confidences)
+        
+        # Determine if clarification is beneficial
+        needs_clarification = (
+            confidence_spread > 0.3 or  # High spread indicates uncertainty
+            context.risk_tolerance == RiskLevel.LOW or  # Low risk tolerance requires more certainty
+            any(not opt.doctrine_compliant for opt in options)  # Doctrine violations need clarification
+        )
+        
+        if needs_clarification:
+            self._decrement_clarification_budget(context.session_id)
+        
+        return needs_clarification
+    
+    def _precompute_tables(self) -> Dict[str, Any]:
+        """Precompute optimized lookup tables"""
+        return {
+            "response_mappings": {
+                QuestionType.COVERAGE: {
+                    ResponseType.YES: {"coverage_required": True},
+                    ResponseType.FLEXIBLE: {"coverage_required": False},
+                    ResponseType.ASK_LATER: {"defer": True}
+                },
+                QuestionType.CULTURAL: {
+                    ResponseType.YES: {"cultural_required": True},
+                    ResponseType.NO: {"cultural_required": False},
+                    ResponseType.DEPENDS: {"cultural_conditional": True}
+                },
+                QuestionType.EXPLORATION: {
+                    ResponseType.EXPLORE: {"exploration_mode": "aggressive"},
+                    ResponseType.CONSERVATIVE: {"exploration_mode": "conservative"},
+                    ResponseType.DECIDE: {"exploration_mode": "manual"}
+                },
+                QuestionType.TEMPORAL: {
+                    ResponseType.TODAY: {"temporal_scope": "session"},
+                    ResponseType.REMEMBER: {"temporal_scope": "persistent"},
+                    ResponseType.DONT_SAVE: {"temporal_scope": "ephemeral"}
+                },
+                QuestionType.CONFIDENCE: {
+                    ResponseType.SAFE: {"confidence_mode": "conservative"},
+                    ResponseType.VARIETY: {"confidence_mode": "exploratory"},
+                    ResponseType.DEFAULT: {"confidence_mode": "balanced"}
+                }
+            },
+            "risk_profiles": {
+                RiskLevel.LOW: {"max_risk": 0.2, "confidence_boost": 0.1},
+                RiskLevel.MEDIUM: {"max_risk": 0.5, "confidence_boost": 0.0},
+                RiskLevel.HIGH: {"max_risk": 0.7, "confidence_boost": -0.1},
+                RiskLevel.CRITICAL: {"max_risk": 0.9, "confidence_boost": -0.2}
+            },
+            "generation_templates": {
+                "conservative": {
+                    "risk_tolerance": 0.1,
+                    "exploration": 0.0,
+                    "diversity": 0.3
+                },
+                "balanced": {
+                    "risk_tolerance": 0.4,
+                    "exploration": 0.5,
+                    "diversity": 0.5
+                },
+                "exploratory": {
+                    "risk_tolerance": 0.7,
+                    "exploration": 0.8,
+                    "diversity": 0.8
+                }
+            }
+        }
+    
+    @DECISION_LATENCY.time()
+    def process_decision(self, context: DecisionContext,
+                        pipeline_state: Dict[str, Any]) -> CDICResponse:
+        """Optimized decision processing with caching and timeout"""
+        DECISION_REQUESTS.inc()
+        
+        # Check cache first
+        cache_key = f"decision:{context.request_id}"
+        cached = self.cache.get(cache_key)
+        if cached:
+            CACHE_HITS.inc()
+            return cached
+        
+        CACHE_MISSES.inc()
+        
+        try:
+            # Validate context
+            if not self._validate_context(context):
+                raise ValueError("Invalid context")
+            
+            # Process with circuit breaker and timeout
+            start_time = time.time()
+            try:
+                result = self.circuit_breakers["decision"].call(
+                    self._process_decision_internal,
+                    context,
+                    pipeline_state
+                )
+            except Exception as e:
+                # If circuit breaker is open or other error, we fallback
+                self.logger.warning("circuit_breaker_open_or_error", error=str(e))
+                result = self._create_fallback_response(context)
+            
+            # Check for timeout
+            duration = (time.time() - start_time) * 1000
+            if duration > self.config.decision_timeout_seconds * 1000:
+                self.logger.warning("decision_timeout", 
+                                   request_id=context.request_id,
+                                   duration_ms=duration)
+                result = self._create_fallback_response(context)
+            
+            # Log audit
+            self._log_audit("decision_completed", {
+                "request_id": context.request_id,
+                "duration_ms": duration,
+                "success": True,
+                "intent": context.intent,
+                "clarification_needed": result.clarification_needed
+            })
+            
+            # Cache result
+            self.cache.set(cache_key, result)
+            return result
+        
+        except Exception as e:
+            DECISION_ERRORS.inc()
+            self.logger.error("decision_failed",
+                            request_id=context.request_id,
+                            error=str(e))
+            # Fallback response on any error
+            return self._create_fallback_response(context)
+    
+    def _process_decision_internal(self, context: DecisionContext,
+                                  pipeline_state: Dict[str, Any]) -> CDICResponse:
+        """Internal decision processing - only generates options"""
+        # Generate options in parallel
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = []
+            for i in range(5):  # Generate 5 options in parallel
+                futures.append(
+                    executor.submit(
+                        self._generate_option,
+                        context, pipeline_state, i
+                    )
+                )
+            
+            options = []
+            for future in as_completed(futures):
+                try:
+                    options.append(future.result(timeout=1.0))
+                except FutureTimeoutError:
+                    continue
+        
+        # Determine if clarification is needed (ROLE SEPARATION: CDIC only suggests)
+        clarification_needed = self._should_ask_clarification(context, options)
+        
+        # Calculate overall confidence (average of top 3 options)
+        if options:
+            sorted_options = sorted(options, key=lambda x: x.confidence, reverse=True)
+            top_confidence = sorted_options[0].confidence
+            avg_confidence = sum(opt.confidence for opt in sorted_options[:3]) / min(3, len(sorted_options))
+            overall_confidence = (top_confidence + avg_confidence) / 2
+        else:
+            overall_confidence = 0.0
+        
+        # Return CDICResponse (NOT final decision)
+        return CDICResponse(
+            options=options,
+            confidence=overall_confidence,
+            clarification_needed=clarification_needed
+        )
+    
+    def _generate_option(self, context: DecisionContext,
+                        pipeline_state: Dict[str, Any],
+                        iteration: int) -> DecisionOption:
+        """Generate decision option with optimized parameters"""
+        # Get appropriate template
+        if context.exploration_allowed:
+            template = self.precomputed_tables["generation_templates"]["exploratory"]
+        elif context.risk_tolerance == RiskLevel.LOW:
+            template = self.precomputed_tables["generation_templates"]["conservative"]
+        else:
+            template = self.precomputed_tables["generation_templates"]["balanced"]
+        
+        # Get thread-safe random generator
+        rng = self.random.get_generator()
+        
+        # Create option
+        option = DecisionOption(
+            action=self._generate_action(context, iteration),
+            confidence=self._calculate_confidence(context, pipeline_state, iteration),
+            rationale=self._generate_rationale(context),
+            risk_score=rng.beta(2, 5) * template["risk_tolerance"],
+            diversity_score=1.0 - (iteration * 0.15),
+            generation_cost=iteration * 0.05
+        )
+        
+        # Check doctrine compliance
+        compliant, violations = self.doctrine.check_compliance(asdict(option))
+        option.doctrine_compliant = compliant
+        if violations:
+            option.doctrine_violations = violations
+            option.confidence *= 0.8
+        
+        return option
+    
+    def _calculate_confidence(self, context: DecisionContext,
+                             pipeline_state: Dict[str, Any],
+                             iteration: int) -> float:
+        """Fast confidence calculation"""
+        base_confidence = pipeline_state.get("base_confidence", 0.5)
+        
+        # Apply iteration penalty
+        iteration_penalty = 1.0 - (iteration * 0.05)
+        
+        # Apply risk profile boost
+        risk_profile = self.precomputed_tables["risk_profiles"][context.risk_tolerance]
+        risk_boost = risk_profile["confidence_boost"]
+        
+        confidence = base_confidence * iteration_penalty + risk_boost
+        
+        return min(0.99, max(0.1, confidence))
+    
+    def _generate_action(self, context: DecisionContext, iteration: int) -> str:
+        """Generate action based on intent"""
+        action_sets = {
+            "medical": ["diagnose", "refer", "monitor", "treat", "advise"],
+            "financial": ["invest", "hold", "divest", "analyze", "report"],
+            "technical": ["implement", "test", "debug", "optimize", "document"],
+            "general": ["proceed", "delay", "consult", "abort", "research"]
+        }
+        
+        # Find matching category
+        category = "general"
+        intent_lower = context.intent.lower()
+        for cat in action_sets:
+            if cat in intent_lower:
+                category = cat
+                break
+        
+        actions = action_sets[category]
+        rng = self.random.get_generator()
+        return rng.choice(actions)
+    
+    def _generate_rationale(self, context: DecisionContext) -> str:
+        """Generate concise rationale"""
+        templates = [
+            f"Based on {context.intent} analysis with risk tolerance {context.risk_tolerance.value}.",
+            f"Considering historical patterns and current context for {context.intent}.",
+            f"Optimizing for {context.intent} with balanced risk-reward assessment.",
+            f"Decision framework applied to {context.intent} scenario."
+        ]
+        
+        rng = self.random.get_generator()
+        return rng.choice(templates)
+    
+    def _select_best_option(self, options: List[DecisionOption],
+                           context: DecisionContext) -> DecisionOption:
+        """Select best option using weighted scoring"""
+        if not options:
+            return self._create_fallback_option(context)
+        
+        best_score = -1.0
+        best_option = None
+        
+        for option in options:
+            score = self._score_option(option, context)
+            if score > best_score:
+                best_score = score
+                best_option = option
+        
+        # Add selection metadata
+        best_option.metadata["selection_score"] = best_score
+        best_option.metadata["selection_method"] = "weighted_scoring"
+        
+        return best_option
+    
+    def _score_option(self, option: DecisionOption,
+                     context: DecisionContext) -> float:
+        """Calculate weighted score for option"""
+        weights = {
+            "confidence": 0.35,
+            "risk_adjustment": 0.25,
+            "doctrine_compliance": 0.20,
+            "diversity": 0.15,
+            "cost_efficiency": 0.05
+        }
+        
+        scores = {
+            "confidence": option.confidence,
+            "risk_adjustment": 1.0 - min(1.0, option.risk_score),
+            "doctrine_compliance": 1.0 if option.doctrine_compliant else 0.3,
+            "diversity": option.diversity_score,
+            "cost_efficiency": 1.0 - min(1.0, option.generation_cost)
+        }
+        
+        # Apply penalties for violations
+        if option.doctrine_violations:
+            scores["doctrine_compliance"] *= 0.5
+        
+        # Calculate weighted score
+        total_score = sum(scores[factor] * weight
+                         for factor, weight in weights.items())
+        
+        return total_score
+    
+    def _create_fallback_option(self, context: DecisionContext) -> DecisionOption:
+        """Create safe fallback option"""
+        return DecisionOption(
+            action="defer_decision",
+            confidence=0.3,
+            rationale="No viable options generated, deferring to user",
+            risk_score=0.1,
+            doctrine_compliant=True,
+            metadata={"fallback": True}
+        )
+    
+    def _create_fallback_response(self, context: DecisionContext) -> CDICResponse:
+        """Create fallback response when CDIC fails"""
+        fallback_option = self._create_fallback_option(context)
+        
+        return CDICResponse(
+            options=[fallback_option],
+            confidence=0.3,
+            clarification_needed=False
+        )
+    
+    def _get_wdls_influence(self, context: DecisionContext) -> float:
+        """Calculate WDLS influence with caching"""
+        cache_key = f"wdls_influence:{context.intent}"
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+        
+        with self._state_locks["signals"]:
+            relevant_signals = [
+                s for s in self.wdl_signals.values()
+                if s.intent == context.intent and 
+                s.timestamp > datetime.utcnow() - timedelta(hours=24)
+            ]
+        
+        if not relevant_signals:
+            influence = 0.0
+        else:
+            # Weighted average with decay
+            total_weight = 0.0
+            weighted_sum = 0.0
+            
+            for signal in relevant_signals:
+                age_hours = (datetime.utcnow() - signal.timestamp).total_seconds() / 3600
+                decay = np.exp(-signal.decay_rate * age_hours)
+                weight = signal.weight * decay * signal.confidence
+                total_weight += weight
+                weighted_sum += signal.trend_impact * weight
+            
+            influence = weighted_sum / total_weight if total_weight > 0 else 0.0
+        
+        # Apply cap
+        influence = max(-0.15, min(0.15, influence))
+        
+        # Cache for 5 minutes
+        self.cache.set(cache_key, influence, ttl=300)
+        return influence
+    
+    def _validate_context(self, context: DecisionContext) -> bool:
+        """Fast context validation"""
+        try:
+            # Check required fields
+            if not all([context.intent, context.user_id, context.session_id]):
+                return False
+            
+            # Check session expiry
+            with self._state_locks["sessions"]:
+                expiry = self.session_expiry.get(context.session_id)
+                if expiry and expiry < datetime.utcnow():
+                    return False
+            
+            return True
+        except Exception:
+            return False
+    
+    def _log_audit(self, operation: str, data: Dict[str, Any]):
+        """Thread-safe audit logging"""
+        entry = AuditEntry(
+            operation=operation,
+            request_id=data.get("request_id", "system"),
+            user_id=data.get("user_id", "system"),
+            session_id=data.get("session_id", "system"),
+            duration_ms=data.get("duration_ms", 0.0),
+            success=data.get("success", True),
+            error_message=data.get("error_message", ""),
+            metadata=data
+        )
+        
+        with self._state_locks["audit"]:
+            self.audit_log.append(entry)
+            
+            # Auto-clean if too large
+            if len(self.audit_log) > self.config.max_audit_log_size:
+                self.audit_log = self.audit_log[-self.config.max_audit_log_size:]
+    
+    def _start_background_workers(self):
+        """Start optimized background workers"""
+        workers = [
+            ("cleanup", self._background_cleanup, 3600),
+            ("metrics", self._background_metrics, 300),
+            ("audit_flush", self._background_audit_flush, 60)
+        ]
+        
+        for name, func, interval in workers:
+            thread = threading.Thread(
+                target=self._worker_wrapper,
+                args=(name, func, interval),
+                daemon=True,
+                name=f"cdic_{name}"
+            )
+            thread.start()
+            self.logger.info("worker_started", worker=name)
+    
+    def _worker_wrapper(self, name: str, func: Callable, interval: int):
+        """Worker wrapper with error handling"""
+        while True:
+            try:
+                func()
+            except Exception as e:
+                self.logger.error("worker_failed", worker=name, error=str(e))
+            time.sleep(interval)
+    
+    def _background_cleanup(self):
+        """Cleanup stale data"""
+        # Clean expired sessions
+        cutoff = datetime.utcnow() - timedelta(hours=self.config.max_session_age_hours)
+        
+        with self._state_locks["sessions"]:
+            expired = [
+                sid for sid, expiry in self.session_expiry.items()
+                if expiry < cutoff
+            ]
+            for sid in expired:
+                self.session_data.pop(sid, None)
+                self.session_expiry.pop(sid, None)
+            
+            if expired:
+                self.logger.info("sessions_cleaned", count=len(expired))
+        
+        # Clean old WDLS signals
+        with self._state_locks["signals"]:
+            if len(self.wdl_signals) > self.config.max_wdls_signals:
+                # Keep only recent signals
+                sorted_signals = sorted(
+                    self.wdl_signals.items(),
+                    key=lambda x: x[1].timestamp,
+                    reverse=True
+                )[:self.config.max_wdls_signals]
+                self.wdl_signals = dict(sorted_signals)
+        
+        # Clean old clarification budgets
+        with self._state_locks["clarification_budget"]:
+            old_sessions = [
+                sid for sid in self.clarification_budget.keys()
+                if sid not in self.session_expiry or 
+                self.session_expiry[sid] < datetime.utcnow() - timedelta(hours=1)
+            ]
+            for sid in old_sessions:
+                self.clarification_budget.pop(sid, None)
+    
+    def _background_metrics(self):
+        """Collect and report metrics"""
+        metrics = {
+            "active_sessions": len(self.session_data),
+            "wdls_signals": len(self.wdl_signals),
+            "audit_entries": len(self.audit_log),
+            "cache_hits": self.cache.stats["hits"],
+            "cache_misses": self.cache.stats["misses"],
+            "clarification_budgets": len(self.clarification_budget)
+        }
+        
+        # Check SLA
+        sla_check = self.monitor.check_sla_violations()
+        self.logger.info("system_metrics", **metrics)
+        
+        if sla_check["requires_intervention"]:
+            self.logger.warning("sla_violations",
+                               violations=sla_check["violations"])
+    
+    def _background_audit_flush(self):
+        """Flush audit logs to persistent storage"""
+        if not self.audit_log:
+            return
+        
+        # In production, this would write to database/object storage
+        # For now, write to compressed JSON file
+        try:
+            import gzip
+            import json
+            
+            filename = f"audit/audit_{datetime.utcnow().strftime('%Y%m%d_%H')}.json.gz"
+            
+            with gzip.open(filename, 'wt', encoding='utf-8') as f:
+                json.dump([asdict(entry) for entry in self.audit_log[-1000:]], f)
+            
+            # Remove flushed entries
+            with self._state_locks["audit"]:
+                self.audit_log = self.audit_log[:-1000]
+                
+        except Exception as e:
+            self.logger.error("audit_flush_failed", error=str(e))
+    
+    def _get_error_rate(self) -> float:
+        """Calculate current error rate"""
+        # Look at recent audit entries
+        with self._state_locks["audit"]:
+            recent = self.audit_log[-100:] if len(self.audit_log) > 100 else self.audit_log
+            
+            if not recent:
+                return 0.0
+            
+            errors = sum(1 for entry in recent if not entry.success)
+            return errors / len(recent)
+    
+    def _get_queue_depth(self) -> int:
+        """Get current queue depth"""
+        with self._state_locks["queue"]:
+            return len(self.decision_queue)
+    
+    def get_metrics(self) -> Dict[str, Any]:
+        """Get comprehensive metrics"""
+        return {
+            "version": VERSION,
+            "uptime_seconds": time.time() - self.monitor.start_time,
+            "active_sessions": len(self.session_data),
+            "pending_clarifications": len(self.pending_clarifications),
+            "wdls_signals": len(self.wdl_signals),
+            "audit_log_size": len(self.audit_log),
+            "cache_stats": self.cache.stats.copy(),
+            "circuit_breakers": {
+                name: cb.state for name, cb in self.circuit_breakers.items()
+            },
+            "clarification_budgets": len(self.clarification_budget),
+            "performance": self.monitor.check_sla_violations()["metrics"]
+        }
+```
+
+src/cdic/app.py
+
+```python
+"""
+FastAPI application for CDIC v4.0
+"""
+
+import os
+from typing import Optional
+from datetime import datetime
+from fastapi import FastAPI, HTTPException, Depends, Request, BackgroundTasks
+from fastapi.responses import JSONResponse, Response
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+
+from .config import CDICConfig
+from .models import DecisionContext, CDICResponse
+from .engine import CDICEngine
+
+
+def create_app(config: Optional[CDICConfig] = None) -> FastAPI:
+    """Create FastAPI application with CDIC engine"""
+    if config is None:
+        config = CDICConfig(
+            secret_key=os.environ["CDIC_SECRET_KEY"],
+            redis_url=os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+        )
+    
+    app = FastAPI(
+        title="CDIC Decision Engine",
+        version="4.0.0",
+        docs_url="/docs" if config.log_level == "DEBUG" else None,
+        redoc_url="/redoc" if config.log_level == "DEBUG" else None
+    )
+    
+    # Add middleware
+    if config.enable_compression:
+        app.add_middleware(GZipMiddleware, minimum_size=1000)
+    
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=config.cors_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=config.trusted_hosts
+    )
+    
+    # Create engine instance
+    engine = CDICEngine(config)
+    
+    # Dependency
+    def get_engine() -> CDICEngine:
+        return engine
+    
+    # Rate limiting middleware
+    @app.middleware("http")
+    async def rate_limit_middleware(request: Request, call_next):
+        client_ip = request.client.host
+        path = request.url.path
+        
+        # Simple rate limiting
+        try:
+            rate_key = f"rate:{client_ip}:{path}"
+            current = int(engine.distributed_lock.redis.incr(rate_key))
+            engine.distributed_lock.redis.expire(rate_key, 60)
+            
+            if current > config.rate_limit_requests:
+                return JSONResponse(
+                    status_code=429,
+                    content={"error": "Rate limit exceeded"}
+                )
+        except Exception:
+            # If Redis fails, continue without rate limiting
+            pass
+        
+        response = await call_next(request)
+        return response
+    
+    # Routes
+    @app.post("/v1/decide", response_model=CDICResponse)
+    async def decide(
+        context: DecisionContext,
+        background_tasks: BackgroundTasks,
+        engine: CDICEngine = Depends(get_engine)
+    ):
+        """Make a decision - CDIC only provides options, not final decisions"""
+        try:
+            result = engine.process_decision(context, {})
+            
+            # Background logging
+            background_tasks.add_task(
+                engine._log_audit,
+                "api_decision",
+                {
+                    "request_id": context.request_id,
+                    "user_id": context.user_id,
+                    "intent": context.intent,
+                    "success": True,
+                    "clarification_needed": result.clarification_needed
+                }
+            )
+            
+            return result
+        
+        except Exception as e:
+            engine.logger.error("api_decision_failed", error=str(e))
+            raise HTTPException(status_code=500, detail=str(e))
+    
+    @app.get("/v1/metrics")
+    async def metrics(engine: CDICEngine = Depends(get_engine)):
+        """Get metrics"""
+        if config.enable_prometheus:
+            return Response(
+                content=generate_latest(),
+                media_type=CONTENT_TYPE_LATEST
+            )
+        else:
+            return engine.get_metrics()
+    
+    @app.get("/health")
+    async def health():
+        """Health check"""
+        return {
+            "status": "healthy",
+            "version": "4.0.0",
+            "timestamp": datetime.utcnow().isoformat()
+        }
+    
+    @app.get("/ready")
+    async def ready(engine: CDICEngine = Depends(get_engine)):
+        """Readiness check"""
+        try:
+            # Check Redis connection
+            engine.distributed_lock.redis.ping()
+            return {
+                "status": "ready",
+                "services": ["redis", "engine"],
+                "clarification_budget_config": config.clarification_budget_per_session
+            }
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=str(e))
+    
+    @app.get("/v1/clarification/budget/{session_id}")
+    async def get_clarification_budget(
+        session_id: str,
+        engine: CDICEngine = Depends(get_engine)
+    ):
+        """Get remaining clarification budget for session"""
+        budget_exceeded, remaining = engine._check_clarification_budget(session_id)
+        return {
+            "session_id": session_id,
+            "remaining_budget": remaining,
+            "budget_exceeded": budget_exceeded,
+            "max_budget": config.clarification_budget_per_session
+        }
+    
+    return app
+```
+
+requirements.txt
+
+```txt
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+redis==5.0.1
+numpy==1.24.3
+cryptography==41.0.7
+structlog==23.2.0
+psutil==5.9.6
+prometheus-client==0.19.0
+orjson==3.9.10
+cachetools==5.3.2
+python-multipart==0.0.6
+aiofiles==23.2.1
+```
+
+Dockerfile
+
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY src/ ./src/
+
+ENV PYTHONPATH=/app/src
+ENV CDIC_SECRET_KEY=${CDIC_SECRET_KEY:-"your-default-secret-key-must-be-at-least-32-characters"}
+ENV REDIS_URL=redis://redis:6379/0
+ENV CLARIFICATION_BUDGET_PER_SESSION=2
+ENV DECISION_TIMEOUT_SECONDS=30.0
+
+EXPOSE 8000
+
+CMD ["uvicorn", "src.cdic.app:create_app", "--host", "0.0.0.0", "--port", "8000", "--factory"]
+```
+
+docker-compose.yml
+
+```yaml
+version: '3.8'
+
+services:
+  cdic:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - CDIC_SECRET_KEY=${CDIC_SECRET_KEY:-"your-default-secret-key-must-be-at-least-32-characters"}
+      - REDIS_URL=redis://redis:6379/0
+      - LOG_LEVEL=INFO
+      - CLARIFICATION_BUDGET_PER_SESSION=2
+      - DECISION_TIMEOUT_SECONDS=30.0
+    volumes:
+      - ./audit:/app/audit
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - cdic-network
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - cdic-network
+
+volumes:
+  redis_data:
+
+networks:
+  cdic-network:
+    driver: bridge
+```
+
+README.md
+
+```md
+# CDIC v4.0 - Cognitive Decision Intelligence Core
+
+Production-ready decision intelligence engine with FastAPI.
+
+## Features
+
+- **High Performance**: Multi-threaded option generation, caching, and optimized algorithms
+- **Thread Safety**: Distributed locking, RLock patterns, and thread-local random generators
+- **Production Ready**: Circuit breakers, rate limiting, monitoring, and health checks
+- **Security**: Input validation, secure hashing, and environment-based configuration
+- **Observability**: Prometheus metrics, structured logging, and performance monitoring
+- **Role Separation**: CDIC only provides options, Tari controls flow (Spec 2.1)
+- **Clarification Fatigue Control**: Budget-based clarification limiting (Spec 2.2)
+
+## Quick Start
+
+1. **Clone and install:**
+
+```bash
+git clone <repository>
+cd cdic
+pip install -r requirements.txt
+```
+
+1. Set environment variables:
+
+```bash
+export CDIC_SECRET_KEY="your-32-character-secret-key-here"
+export REDIS_URL="redis://localhost:6379/0"
+export CLARIFICATION_BUDGET_PER_SESSION=2
+```
+
+1. Run with Docker:
+
+```bash
+docker-compose up -d
+```
+
+1. Test the API:
+
+```bash
+curl -X POST http://localhost:8000/v1/decide \
+-H "Content-Type: application/json" \
+-d '{
+  "intent": "medical_diagnosis",
+  "user_id": "user123",
+  "session_id": "session456",
+  "input_snapshot": {"symptoms": ["fever", "cough"]}
+}'
+```
+
+API Endpoints
+
+· POST /v1/decide - Make a decision (returns options only)
+· GET /v1/metrics - Prometheus metrics
+· GET /health - Health check
+· GET /ready - Readiness check
+· GET /v1/clarification/budget/{session_id} - Check clarification budget
+
+Configuration
+
+See src/cdic/config.py for all configuration options.
+
+Architecture
+
+```
+src/cdic/
+├── __init__.py
+├── config.py      # Configuration models
+├── enums.py       # Enumerations
+├── models.py      # Data models
+├── engine.py      # Main CDIC engine
+├── app.py         # FastAPI application
+└── utils/
+    ├── __init__.py
+    ├── monitor.py       # Performance monitoring
+    ├── hasher.py        # Secure hashing
+    ├── doctrine.py      # Doctrine compliance
+    ├── circuit_breaker.py
+    ├── locking.py       # Distributed locking
+    ├── cache.py         # Multi-level caching
+    └── random.py        # Thread-safe random generation
+```
+
