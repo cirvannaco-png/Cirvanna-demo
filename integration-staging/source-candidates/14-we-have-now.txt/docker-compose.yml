@@ -28,7 +28,7 @@ services:
       - "8003:8000"
     environment:
       - REDIS_URL=redis://redis:6379/3
-      - DATABASE_URL=postgresql://eepl:eeplpassword@postgres:5432/eepl
+      - DATABASE_URL=postgresql://eepl:REDACTED@postgres:5432/eepl
     depends_on:
       - postgres
       - redis
@@ -60,7 +60,7 @@ services:
     build: ./services/marketplace
     environment:
       - REDIS_URL=redis://redis:6379/2
-      - DATABASE_URL=postgresql://eepl:eeplpassword@postgres:5432/eepl
+      - DATABASE_URL=postgresql://eepl:REDACTED@postgres:5432/eepl
     depends_on:
       - postgres
       - redis
@@ -72,7 +72,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql://eepl:eeplpassword@postgres:5432/eepl
+      - DATABASE_URL=postgresql://eepl:REDACTED@postgres:5432/eepl
       - REDIS_URL=redis://redis:6379/0
       - CFRP_URL=http://cfrp:8003
       - FCI_URL=http://fci:8004
@@ -113,7 +113,7 @@ services:
     image: mlflow:latest
     ports:
       - "5000:5000"
-    command: mlflow server --host 0.0.0.0 --backend-store-uri postgresql://eepl:eeplpassword@postgres:5432/eepl --default-artifact-root /mlflow
+    command: mlflow server --host 0.0.0.0 --backend-store-uri postgresql://eepl:REDACTED@postgres:5432/eepl --default-artifact-root /mlflow
     volumes:
       - mlflow-data:/mlflow
     depends_on:
