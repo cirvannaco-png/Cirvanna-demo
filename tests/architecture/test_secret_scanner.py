@@ -16,7 +16,7 @@ class SecretScannerRegressionTests(unittest.TestCase):
 
     def test_detects_credentialed_database_uri(self) -> None:
         findings = self.scan_text(
-            'DATABASE_URL = "postgresql://app:liveCredentialValue123@db.internal/app"\n'
+            'DATABASE_URL = "postgresql://app:nonPlaceholderSecret@db.internal/app"\n'
         )
         self.assertIn((1, "database-uri-credentials"), findings)
 
