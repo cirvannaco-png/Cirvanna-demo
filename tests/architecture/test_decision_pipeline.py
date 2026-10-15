@@ -113,9 +113,10 @@ class DecisionPipelineTests(unittest.TestCase):
         profile = USIProfile("profile-1", "user-1", "usi-v1", (StylePreference("p1", "user-1", "minimal"),))
         usi = evaluate_usi(profile, "item-1", ("maximalist",), candidate_attributes_complete=True)
         result = arbitrate_candidate(request(), eepl, npl, usi_result=usi)
+        self.assertEqual(usi.reason_code, "USI_ALIGNMENT_BELOW_THRESHOLD")
         self.assertEqual(result.cal_result.verdict.value, "review")
         self.assertFalse(result.may_display)
-        self.assertIn("USI_ALIGNMENT_BELOW_THRESHOLD", {reason.code for reason in result.cal_result.reasons})
+        self.assertIn("NON_VETO_SIGNAL_BLOCKED", {reason.code for reason in result.cal_result.reasons})
 
     def test_candidate_mismatch_is_rejected(self):
         eepl, npl = results(candidate_id="other-item")
