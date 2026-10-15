@@ -36,6 +36,15 @@ class TALTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             append_event(TemporalState(), self.event("e1", "minimal", consent=False))
 
+    def test_expired_latest_value_does_not_resurrect_stale_value(self):
+        state = append_event(TemporalState(), self.event("e1", "minimal", "2026-10-14T09:00:00Z"))
+        expiring = TemporalEvent(
+            "e2", "u1", "style", "classic", "2026-10-15T09:00:00Z",
+            "source-v1", True, "2026-10-16T09:00:00Z",
+        )
+        state = append_event(state, expiring)
+        self.assertEqual(latest_values(state, "u1", "2026-10-17T09:00:00Z"), {})
+
     def test_latest_value_is_temporal_and_user_scoped(self):
         state = append_event(TemporalState(), self.event("e1", "minimal", "2026-10-14T09:00:00Z"))
         state = append_event(state, self.event("e2", "classic", "2026-10-15T09:00:00Z"))
