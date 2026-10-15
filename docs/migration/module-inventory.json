@@ -55,9 +55,9 @@
     {
       "id": "npl",
       "target": "packages/preferences/npl",
-      "status": "legacy-candidate",
-      "purpose": "Explicit and learned negative preferences, hard vetoes, durable exclusions, audit history, and user correction.",
-      "promotionGate": "Prove precedence and explainability; ensure exclusions do not silently learn from noisy events."
+      "status": "policy-kernel-implemented",
+      "purpose": "Deterministic NPL domain kernel for explicit hard exclusions, idempotent rejection evidence, durable threshold-based vetoes, and explicit user correction.",
+      "promotionGate": "Add versioned persistence and audit delivery; test concurrent event idempotency, retention/deletion, API contracts, and end-to-end CAL integration."
     },
     {
       "id": "fci",
