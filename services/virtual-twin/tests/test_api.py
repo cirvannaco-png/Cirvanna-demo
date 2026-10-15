@@ -69,6 +69,48 @@ def test_twin_endpoint_rejects_invalid_token(monkeypatch):
     assert response.status_code == 401
 
 
+def test_twin_endpoint_rejects_too_many_images(monkeypatch):
+    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "test-only-token")
+    files = [
+        ("images", (f"image-{index}.jpg", b"x", "image/jpeg"))
+        for index in range(7)
+    ]
+    response = client.post(
+        "/twin",
+        headers={"Authorization": "Bearer test-only-token"},
+        data={"height_cm": "180"},
+        files=files,
+    )
+    assert response.status_code == 413
+    assert response.json()["detail"]["code"] == "TOO_MANY_IMAGES"
+
+
+def test_twin_endpoint_rejects_oversized_image(monkeypatch):
+    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "test-only-token")
+    monkeypatch.setattr("app.main.MAX_IMAGE_BYTES", 3)
+    response = client.post(
+        "/twin",
+        headers={"Authorization": "Bearer test-only-token"},
+        data={"height_cm": "180"},
+        files={"images": ("large.jpg", b"four", "image/jpeg")},
+    )
+    assert response.status_code == 413
+    assert response.json()["detail"]["code"] == "IMAGE_SIZE_LIMIT_EXCEEDED"
+
+
+def test_twin_endpoint_rejects_oversized_video(monkeypatch):
+    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "test-only-token")
+    monkeypatch.setattr("app.main.MAX_VIDEO_BYTES", 3)
+    response = client.post(
+        "/twin",
+        headers={"Authorization": "Bearer test-only-token"},
+        data={"height_cm": "180"},
+        files={"video": ("large.mp4", b"four", "video/mp4")},
+    )
+    assert response.status_code == 413
+    assert response.json()["detail"]["code"] == "VIDEO_SIZE_LIMIT_EXCEEDED"
+
+
 def test_twin_endpoint_rejects_height_outside_contract(monkeypatch):
     monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "test-only-token")
     response = client.post(
