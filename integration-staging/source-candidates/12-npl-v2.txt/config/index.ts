@@ -3,7 +3,7 @@ dotenv.config();
 
 export const config = {
   database: {
-    url: process.env.DATABASE_URL || 'postgres://user:pass@localhost:5432/npl',
+    url: process.env.DATABASE_URL || 'postgres://user:REDACTED@localhost:5432/npl',
   },
   redis: {
     url: process.env.REDIS_URL || 'redis://localhost:6379',
