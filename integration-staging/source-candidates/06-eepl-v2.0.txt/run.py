@@ -36,7 +36,7 @@ class StubCFRPClient(CFRPClient):
 
 
 async def main():
-    dsn = os.getenv("DATABASE_URL", "postgresql://postgres:password@localhost:5432/eepl")
+    dsn = os.getenv("DATABASE_URL", "postgresql://postgres:REDACTED@localhost:5432/eepl")
     pool = await asyncpg.create_pool(dsn, min_size=5, max_size=20)
 
     try:
