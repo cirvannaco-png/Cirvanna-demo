@@ -861,7 +861,7 @@ if __name__ == "__main__":
     if PSYCOPG2_AVAILABLE:
         # Create a connection pool (adjust credentials)
         try:
-            pool = psycopg2.pool.SimpleConnectionPool(1, 10, user="user", password="pass", host="localhost", port=5432, database="fci")
+            pool = psycopg2.pool.SimpleConnectionPool(1, 10, user="user", password="REDACTED", host="localhost", port=5432, database="fci")
             metrics = PostgresMetricsCollector(pool)
         except Exception as e:
             logger.warning(f"Could not connect to Postgres: {e}. Using in‑memory.")
