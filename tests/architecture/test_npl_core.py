@@ -88,6 +88,6 @@ class NPLHardVetoTests(unittest.TestCase):
 
     def test_npl_pass_is_not_full_display_authorization(self):
         decision = evaluate("user-1", "item-7", (), ())
-        self.assertTrue(decision.may_display)
+        self.assertFalse(decision.blocked)
         self.assertEqual(decision.reason_code, "NPL_NO_HARD_VETO")
-        # Consumer must still require the CaTaCaCi CAL verdict before displaying.
+        # NPL's non-veto is not display authorization; the consumer must require CAL SHOW.
