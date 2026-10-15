@@ -325,7 +325,7 @@ services:
       context: .
       dockerfile: mlflow/Dockerfile
     environment:
-      MLFLOW_BACKEND_STORE_URI: postgresql://cirvanna:cirvanna@postgres:5432/mlflow
+      MLFLOW_BACKEND_STORE_URI: postgresql://cirvanna:REDACTED@postgres:5432/mlflow
       MLFLOW_DEFAULT_ARTIFACT_ROOT: /mlartifacts
     ports: ["5000:5000"]
     depends_on:
