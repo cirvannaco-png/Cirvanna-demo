@@ -80,7 +80,7 @@ if __name__ == "__main__":
     try:
         import psycopg2
         from psycopg2 import pool
-        pool = psycopg2.pool.SimpleConnectionPool(1, 10, user="user", password="pass", host="localhost", port=5432, database="fci")
+        pool = psycopg2.pool.SimpleConnectionPool(1, 10, user="user", password="REDACTED", host="localhost", port=5432, database="fci")
         metrics = PostgresMetricsCollector(pool)
     except:
         metrics = InMemoryMetricsCollector()
