@@ -75,6 +75,21 @@ def looks_like_placeholder(value: str) -> bool:
     return False
 
 
+def looks_like_reference(value: str) -> bool:
+    """Recognize common variable/environment references, not literal credentials."""
+    normalized = value.strip()
+    lowered = normalized.lower()
+    if normalized.startswith(("$", "${")):
+        return True
+    if any(token in lowered for token in ("process.env", "os.getenv", "getenv(")):
+        return True
+    return bool(re.fullmatch(
+        r"(?:self|cls|settings|config|env|process|os)(?:\.[A-Za-z_]\w*)+",
+        normalized,
+        flags=re.IGNORECASE,
+    ))
+
+
 def entropy(value: str) -> float:
     if not value:
         return 0.0
@@ -142,10 +157,7 @@ def scan_file(path: Path):
         if (
             looks_like_placeholder(value)
             or lowered in NON_SECRET_PASSWORD_VALUES
-            or lowered.startswith(("$", "${"))
-            or "process.env" in lowered
-            or "os.getenv" in lowered
-            or "getenv(" in lowered
+            or looks_like_reference(value)
         ):
             continue
         item = (line_number(content, match.start("value")), "bare-password-assignment")
@@ -155,7 +167,7 @@ def scan_file(path: Path):
 
     for match in ASSIGNMENT.finditer(content):
         value = match.group("value")
-        if looks_like_placeholder(value) or entropy(value) < 3.7:
+        if looks_like_placeholder(value) or looks_like_reference(value) or entropy(value) < 3.7:
             continue
         item = (line_number(content, match.start("value")), "high-entropy-credential-assignment")
         if item not in occupied:
