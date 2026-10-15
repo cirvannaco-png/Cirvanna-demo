@@ -34,9 +34,9 @@
     {
       "id": "eepl",
       "target": "packages/identity-intelligence/eepl",
-      "status": "legacy-candidate",
-      "purpose": "Eligibility and contextual policy: age, location, occasion, climate and explicit operational constraints.",
-      "promotionGate": "Select V2 candidate only after import, behavior, and policy tests."
+      "status": "policy-kernel-implemented",
+      "purpose": "Deterministic age, location, occasion, and climate eligibility policy using explicit context and versioned rules.",
+      "promotionGate": "Add policy-owner review, versioned rule distribution, service/API integration, consent review, and end-to-end CAL gate tests."
     },
     {
       "id": "cultural-identity",
