@@ -15,6 +15,8 @@ CONTRACT_VERSION = "1.0.0"
 @dataclass(frozen=True)
 class FitConfidenceEstimate:
     estimate_id: str
+    user_id: str
+    candidate_id: str
     model_version: str
     calibrated: bool
     confidence: float | None = None
@@ -25,7 +27,7 @@ class FitConfidenceEstimate:
     interval_level: float = 0.95
 
     def __post_init__(self) -> None:
-        for name in ("estimate_id", "model_version"):
+        for name in ("estimate_id", "user_id", "candidate_id", "model_version"):
             value = getattr(self, name)
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"{name} must not be empty")
@@ -65,7 +67,7 @@ class FitConfidenceEstimate:
 
         if not self.calibrated:
             return DecisionSignal(
-                signal_id=f"fci:{self.estimate_id}",
+                signal_id=f"fci:{self.estimate_id}:{self.candidate_id}",
                 kind=SignalKind.FIT_CONFIDENCE,
                 state=SignalState.UNKNOWN,
                 reason_code="FCI_UNCALIBRATED_ESTIMATE",
