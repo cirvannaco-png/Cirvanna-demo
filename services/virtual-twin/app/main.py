@@ -125,7 +125,31 @@ async def create_twin(
     Upload processing is intentionally not started while the model adapter is
     absent. This prevents unnecessary handling of sensitive body imagery.
     """
-    del height_cm, weight_kg, images, video
+    del height_cm, weight_kg
+    try:
+        if len(images) > MAX_IMAGES:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail={"code": "TOO_MANY_IMAGES", "maximum": MAX_IMAGES},
+            )
+        if any(image.size is None or image.size > MAX_IMAGE_BYTES for image in images):
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail={"code": "IMAGE_SIZE_LIMIT_EXCEEDED", "maximum_bytes": MAX_IMAGE_BYTES},
+            )
+        if video is not None and (video.size is None or video.size > MAX_VIDEO_BYTES):
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail={"code": "VIDEO_SIZE_LIMIT_EXCEEDED", "maximum_bytes": MAX_VIDEO_BYTES},
+            )
+    finally:
+        # Starlette may spool multipart uploads to temporary files before this
+        # endpoint runs. Close every upload promptly; no image is processed.
+        for image in images:
+            await image.close()
+        if video is not None:
+            await video.close()
+
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail={
