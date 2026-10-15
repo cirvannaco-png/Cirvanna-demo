@@ -25,6 +25,7 @@ PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("slack-token", re.compile(r"\bxox[baprs]-[0-9A-Za-z-]{20,}\b")),
     ("stripe-live-secret", re.compile(r"\b(?:sk|rk)_live_[0-9A-Za-z]{20,}\b")),
     ("embedded-url-credentials", re.compile(r"\bhttps?://[^\s/:@]+:[^\s/@]+@[^\s]+")),
+    ("database-uri-credentials", re.compile(r"\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis)://(?P<user>[^/\s:@]+):(?P<password>[^@\s/]+)@[^\s]+", re.IGNORECASE)),
 )
 
 ASSIGNMENT = re.compile(
@@ -37,6 +38,10 @@ ASSIGNMENT = re.compile(
     (?P=quote)
     """
 )
+SHORT_PASSWORD_ASSIGNMENT = re.compile(
+    r"""(?ix)\b(?:password|passwd|pwd)\b\s*[:=]\s*(?P<quote>[\'"])(?P<value>[^\'"\r\n]{4,})(?P=quote)"""
+)
+
 PLACEHOLDER_PARTS = (
     "placeholder", "your_", "your-", "change_me", "changeme", "replace_me",
     "example", "sample", "dummy", "redacted", "not_a_secret", "insert_", "todo",
@@ -94,8 +99,10 @@ def scan_file(path: Path):
     for category, pattern in PATTERNS:
         for match in pattern.finditer(content):
             token = match.group(0)
-            if category == "embedded-url-credentials":
-                # The category itself is high confidence; never include the URL in output.
+            if category == "database-uri-credentials" and looks_like_placeholder(match.group("password")):
+                continue
+            if category in {"embedded-url-credentials", "database-uri-credentials"}:
+                # Never include the matched URL or credential value in output.
                 pass
             elif looks_like_placeholder(token):
                 continue
@@ -103,6 +110,15 @@ def scan_file(path: Path):
             if item not in occupied:
                 occupied.add(item)
                 findings.append(item)
+
+    for match in SHORT_PASSWORD_ASSIGNMENT.finditer(content):
+        value = match.group("value").strip()
+        if looks_like_placeholder(value):
+            continue
+        item = (line_number(content, match.start("value")), "hardcoded-password-assignment")
+        if item not in occupied:
+            occupied.add(item)
+            findings.append(item)
 
     for match in ASSIGNMENT.finditer(content):
         value = match.group("value")
