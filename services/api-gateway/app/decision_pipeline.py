@@ -17,7 +17,8 @@ from catacaci import (
 )
 from eepl import EEPLResult
 from npl import NPLDecision
-from cultural_identity import CulturalIdentityResult, RequirementVerdict
+from cultural_identity import CulturalIdentityResult
+from usi import USIResult
 
 
 @dataclass(frozen=True)
@@ -119,6 +120,7 @@ def arbitrate_candidate(
     eepl_result: EEPLResult,
     npl_decision: NPLDecision,
     cultural_result: CulturalIdentityResult | None = None,
+    usi_result: USIResult | None = None,
 ) -> DecisionPipelineResult:
     """Compose EEPL and NPL outputs, then require a final CAL verdict."""
     if eepl_result.candidate_id != request.candidate_id:
@@ -132,10 +134,17 @@ def arbitrate_candidate(
             raise ValueError("cultural result candidate_id does not match arbitration request")
         if cultural_result.user_id != eepl_result.user_id:
             raise ValueError("cultural result must belong to the same user")
+    if usi_result is not None:
+        if usi_result.candidate_id != request.candidate_id:
+            raise ValueError("USI result candidate_id does not match arbitration request")
+        if usi_result.user_id != eepl_result.user_id:
+            raise ValueError("USI result must belong to the same user")
 
     signals = request.signals + _eepl_signals(eepl_result) + _npl_signals(npl_decision)
     if cultural_result is not None:
         signals += _cultural_signals(cultural_result)
+    if usi_result is not None:
+        signals += (usi_result.to_cal_signal(),)
     combined_request = replace(request, signals=signals)
     cal_result = arbitrate(combined_request)
     return DecisionPipelineResult(
