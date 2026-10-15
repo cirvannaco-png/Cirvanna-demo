@@ -16,7 +16,13 @@ for package_root in (
 from catacaci import ArbitrationRequest, DecisionSignal, SignalKind, SignalState  # noqa: E402
 from eepl import EEPLContext, EEPLPolicy, evaluate as evaluate_eepl  # noqa: E402
 from npl import NegativePreference, PreferenceSource, TargetType, evaluate as evaluate_npl  # noqa: E402
-from cultural_identity import CulturalRequirement, RequirementKind, evaluate as evaluate_cultural  # noqa: E402
+from cultural_identity import (  # noqa: E402
+    CulturalIdentityResult,
+    CulturalRequirement,
+    RequirementKind,
+    RequirementVerdict,
+    evaluate as evaluate_cultural,
+)
 from usi import StylePreference, USIProfile, evaluate as evaluate_usi  # noqa: E402
 from fci import FitConfidenceEstimate  # noqa: E402
 from app import arbitrate_candidate  # noqa: E402
@@ -109,6 +115,27 @@ class DecisionPipelineTests(unittest.TestCase):
         result = arbitrate_candidate(request(), eepl, npl, cultural_result=cultural)
         self.assertEqual(result.cal_result.verdict.value, "review")
         self.assertFalse(result.may_display)
+
+    def test_unknown_cultural_policy_code_fails_closed_to_review(self):
+        eepl, npl = results()
+        cultural = CulturalIdentityResult(
+            contract_version="1.0.0",
+            user_id="user-1",
+            candidate_id="item-1",
+            verdict=RequirementVerdict.PASS,
+            reason_codes=("CULTURAL_FUTURE_UNKNOWN_CODE",),
+            explanations=("Unrecognized policy result.",),
+            hard_conflict_ids=(),
+            soft_conflict_ids=(),
+        )
+        result = arbitrate_candidate(request(), eepl, npl, cultural_result=cultural)
+        self.assertEqual(result.cal_result.verdict.value, "review")
+        self.assertFalse(result.may_display)
+        # CAL normalizes unknown required-signal states to its stable review code.
+        self.assertIn(
+            "REQUIRED_SIGNAL_UNKNOWN",
+            {reason.code for reason in result.cal_result.reasons},
+        )
 
     def test_usi_low_alignment_routes_to_review_not_hard_block(self):
         eepl, npl = results()

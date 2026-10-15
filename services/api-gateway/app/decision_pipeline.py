@@ -102,8 +102,15 @@ def _cultural_signals(result: CulturalIdentityResult) -> tuple[DecisionSignal, .
             state = SignalState.BLOCK
         elif code == "CULTURAL_CANDIDATE_METADATA_INCOMPLETE":
             state = SignalState.UNKNOWN
-        else:
+        elif code in {
+            "CULTURAL_DECLARED_REQUIREMENTS_PASSED",
+            "CULTURAL_SOFT_REQUIREMENT_UNMET",
+            "CULTURAL_SOFT_CONFLICT",
+        }:
             state = SignalState.PASS
+        else:
+            # A future or malformed policy code must never be interpreted as approval.
+            state = SignalState.UNKNOWN
         signals.append(DecisionSignal(
             signal_id=f"cultural:{index}:{code}",
             kind=SignalKind.CULTURAL_REQUIREMENT,
