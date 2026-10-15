@@ -4327,7 +4327,7 @@ from cdic.config import CDICConfig
 
 @pytest.fixture
 def config():
-    return CDICConfig(secret_key="test-secret-key-32-chars-12345678")
+    return CDICConfig(secret_key="REDACTED")
 
 @pytest.fixture
 def engine(config):
@@ -9833,7 +9833,7 @@ class StubCFRPClient(CFRPClient):
 
 
 async def main():
-    dsn = os.getenv("DATABASE_URL", "postgresql://postgres:password@localhost:5432/eepl")
+    dsn = os.getenv("DATABASE_URL", "postgresql://postgres:REDACTED@localhost:5432/eepl")
     pool = await asyncpg.create_pool(dsn, min_size=5, max_size=20)
 
     try:
@@ -12615,7 +12615,7 @@ if __name__ == "__main__":
     if PSYCOPG2_AVAILABLE:
         # Create a connection pool (adjust credentials)
         try:
-            pool = psycopg2.pool.SimpleConnectionPool(1, 10, user="user", password="pass", host="localhost", port=5432, database="fci")
+            pool = psycopg2.pool.SimpleConnectionPool(1, 10, user="user", password="REDACTED", host="localhost", port=5432, database="fci")
             metrics = PostgresMetricsCollector(pool)
         except Exception as e:
             logger.warning(f"Could not connect to Postgres: {e}. Using in‑memory.")
@@ -13568,7 +13568,7 @@ if __name__ == "__main__":
     try:
         import psycopg2
         from psycopg2 import pool
-        pool = psycopg2.pool.SimpleConnectionPool(1, 10, user="user", password="pass", host="localhost", port=5432, database="fci")
+        pool = psycopg2.pool.SimpleConnectionPool(1, 10, user="user", password="REDACTED", host="localhost", port=5432, database="fci")
         metrics = PostgresMetricsCollector(pool)
     except:
         metrics = InMemoryMetricsCollector()
@@ -14858,7 +14858,7 @@ if __name__ == "__main__":
     try:
         import psycopg2
         from psycopg2 import pool
-        pool = psycopg2.pool.SimpleConnectionPool(1, 10, user="user", password="pass", host="localhost", port=5432, database="fci")
+        pool = psycopg2.pool.SimpleConnectionPool(1, 10, user="user", password="REDACTED", host="localhost", port=5432, database="fci")
         metrics = PostgresMetricsCollector(pool)
     except:
         metrics = InMemoryMetricsCollector()
@@ -15870,7 +15870,7 @@ if __name__ == "__main__":
     try:
         import psycopg2
         from psycopg2 import pool
-        pool = psycopg2.pool.SimpleConnectionPool(1, 10, user="user", password="pass", host="localhost", port=5432, database="fci")
+        pool = psycopg2.pool.SimpleConnectionPool(1, 10, user="user", password="REDACTED", host="localhost", port=5432, database="fci")
         metrics = PostgresMetricsCollector(pool)
     except:
         metrics = InMemoryMetricsCollector()
@@ -16030,7 +16030,7 @@ dotenv.config();
 
 export const config = {
   database: {
-    url: process.env.DATABASE_URL || 'postgres://user:pass@localhost:5432/npl',
+    url: process.env.DATABASE_URL || 'postgres://user:REDACTED@localhost:5432/npl',
   },
   redis: {
     url: process.env.REDIS_URL || 'redis://localhost:6379',
@@ -18380,7 +18380,7 @@ services:
     environment:
       - ENVIRONMENT=production
       - REDIS_URL=redis://redis:6379
-      - DATABASE_URL=postgresql://user:pass@postgres/xyra
+      - DATABASE_URL=postgresql://user:REDACTED@postgres/xyra
       - ALLOWED_ORIGINS=["*"]
       - QDRANT_URL=http://qdrant:6333
       - NEO4J_URI=bolt://neo4j:7687
@@ -19723,7 +19723,7 @@ services:
       - "8003:8000"
     environment:
       - REDIS_URL=redis://redis:6379/3
-      - DATABASE_URL=postgresql://eepl:eeplpassword@postgres:5432/eepl
+      - DATABASE_URL=postgresql://eepl:REDACTED@postgres:5432/eepl
     depends_on:
       - postgres
       - redis
@@ -19755,7 +19755,7 @@ services:
     build: ./services/marketplace
     environment:
       - REDIS_URL=redis://redis:6379/2
-      - DATABASE_URL=postgresql://eepl:eeplpassword@postgres:5432/eepl
+      - DATABASE_URL=postgresql://eepl:REDACTED@postgres:5432/eepl
     depends_on:
       - postgres
       - redis
@@ -19767,7 +19767,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql://eepl:eeplpassword@postgres:5432/eepl
+      - DATABASE_URL=postgresql://eepl:REDACTED@postgres:5432/eepl
       - REDIS_URL=redis://redis:6379/0
       - CFRP_URL=http://cfrp:8003
       - FCI_URL=http://fci:8004
@@ -19808,7 +19808,7 @@ services:
     image: mlflow:latest
     ports:
       - "5000:5000"
-    command: mlflow server --host 0.0.0.0 --backend-store-uri postgresql://eepl:eeplpassword@postgres:5432/eepl --default-artifact-root /mlflow
+    command: mlflow server --host 0.0.0.0 --backend-store-uri postgresql://eepl:REDACTED@postgres:5432/eepl --default-artifact-root /mlflow
     volumes:
       - mlflow-data:/mlflow
     depends_on:
@@ -19941,7 +19941,7 @@ See the integrated pipeline in `src/core/eepl.py`.
 ## Monitoring
 
 - Prometheus: http://localhost:9090
-- Grafana: http://localhost:3000 (admin/admin)
+- Grafana: http://localhost:3000 (admin/REDACTED)
 - MLflow: http://localhost:5000
 ```
 
@@ -20127,7 +20127,7 @@ class SecureConnectionPool:
                     health_check_interval=30,
                 )
                 self.db_pool = Database(
-                    "postgresql://user:pass@localhost/xyra",
+                    "postgresql://user:REDACTED@localhost/xyra",
                     min_size=5,
                     max_size=self.config.DB_POOL_SIZE,
                     ssl=False,
@@ -23907,7 +23907,7 @@ services:
     environment:
       - ENVIRONMENT=production
       - REDIS_URL=redis://redis:6379
-      - DATABASE_URL=postgresql://user:pass@postgres/xyra
+      - DATABASE_URL=postgresql://user:REDACTED@postgres/xyra
       - ALLOWED_ORIGINS=["*"]
       - QDRANT_URL=http://qdrant:6333
       - NEO4J_URI=bolt://neo4j:7687
@@ -31489,7 +31489,7 @@ Step 2 — GitHub-Ready Repository Structure
 
 ```env
 # Database
-DATABASE_URL=postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna
+DATABASE_URL=postgresql://cirvanna:REDACTED@postgres:5432/cirvanna
 POSTGRES_USER=cirvanna
 POSTGRES_PASSWORD=cirvanna123
 POSTGRES_DB=cirvanna
@@ -31574,7 +31574,7 @@ services:
       context: ./ais
       dockerfile: Dockerfile
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - GPU_ENABLED=${GPU_ENABLED:-false}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
@@ -31604,7 +31604,7 @@ services:
       context: ./gsis
       dockerfile: Dockerfile
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
     volumes:
       - ./gsis/migrations:/app/migrations
     ports:
@@ -31619,7 +31619,7 @@ services:
       context: ./dtae_fce
       dockerfile: Dockerfile
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     volumes:
       - ./dtae_fce/models:/app/models
@@ -31652,7 +31652,7 @@ services:
     ports:
       - "8082:8000"
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     depends_on:
       - postgres
@@ -31700,7 +31700,7 @@ services:
       context: .
       dockerfile: Dockerfile.celery
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     volumes:
       - ./ais:/app/ais
@@ -31719,7 +31719,7 @@ services:
       context: .
       dockerfile: Dockerfile.celery
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     volumes:
       - ./dtae_fce:/app/dtae_fce
@@ -31767,7 +31767,7 @@ up:
 	@echo "✅ Services started"
 	@echo "📡 API Gateway: http://localhost:8080"
 	@echo "📊 Admin Dashboard: http://localhost:8081"
-	@echo "📈 Grafana: http://localhost:3000 (admin/admin)"
+	@echo "📈 Grafana: http://localhost:3000 (admin/REDACTED)"
 	@echo "🔍 Jaeger: http://localhost:16686"
 
 down:
@@ -32017,7 +32017,7 @@ POST /feedback
 
 📊 Monitoring
 
-· Grafana: http://localhost:3000 (admin/admin)
+· Grafana: http://localhost:3000 (admin/REDACTED)
 · Prometheus: http://localhost:9090
 · Jaeger Tracing: http://localhost:16686
 
@@ -34630,7 +34630,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import os
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://cirvanna:REDACTED@postgres:5432/cirvanna")
 
 engine = create_engine(
     DATABASE_URL,
@@ -34843,7 +34843,7 @@ Step 2 — GitHub-Ready Repository Structure
 
 ```env
 # Database
-DATABASE_URL=postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna
+DATABASE_URL=postgresql://cirvanna:REDACTED@postgres:5432/cirvanna
 POSTGRES_USER=cirvanna
 POSTGRES_PASSWORD=cirvanna123
 POSTGRES_DB=cirvanna
@@ -34928,7 +34928,7 @@ services:
       context: ./ais
       dockerfile: Dockerfile
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - GPU_ENABLED=${GPU_ENABLED:-false}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
@@ -34958,7 +34958,7 @@ services:
       context: ./gsis
       dockerfile: Dockerfile
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
     volumes:
       - ./gsis/migrations:/app/migrations
     ports:
@@ -34973,7 +34973,7 @@ services:
       context: ./dtae_fce
       dockerfile: Dockerfile
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     volumes:
       - ./dtae_fce/models:/app/models
@@ -35006,7 +35006,7 @@ services:
     ports:
       - "8082:8000"
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     depends_on:
       - postgres
@@ -35054,7 +35054,7 @@ services:
       context: .
       dockerfile: Dockerfile.celery
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     volumes:
       - ./ais:/app/ais
@@ -35073,7 +35073,7 @@ services:
       context: .
       dockerfile: Dockerfile.celery
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     volumes:
       - ./dtae_fce:/app/dtae_fce
@@ -35121,7 +35121,7 @@ up:
 	@echo "✅ Services started"
 	@echo "📡 API Gateway: http://localhost:8080"
 	@echo "📊 Admin Dashboard: http://localhost:8081"
-	@echo "📈 Grafana: http://localhost:3000 (admin/admin)"
+	@echo "📈 Grafana: http://localhost:3000 (admin/REDACTED)"
 	@echo "🔍 Jaeger: http://localhost:16686"
 
 down:
@@ -35371,7 +35371,7 @@ POST /feedback
 
 📊 Monitoring
 
-· Grafana: http://localhost:3000 (admin/admin)
+· Grafana: http://localhost:3000 (admin/REDACTED)
 · Prometheus: http://localhost:9090
 · Jaeger Tracing: http://localhost:16686
 
@@ -37984,7 +37984,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import os
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://cirvanna:REDACTED@postgres:5432/cirvanna")
 
 engine = create_engine(
     DATABASE_URL,
@@ -38189,7 +38189,7 @@ class GarmentValidator:
 
 ```env
 # Database
-DATABASE_URL=postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna
+DATABASE_URL=postgresql://cirvanna:REDACTED@postgres:5432/cirvanna
 POSTGRES_USER=cirvanna
 POSTGRES_PASSWORD=cirvanna123
 POSTGRES_DB=cirvanna
@@ -38276,7 +38276,7 @@ services:
   ais:
     build: ./ais
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - GPU_ENABLED=${GPU_ENABLED:-false}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
@@ -38307,7 +38307,7 @@ services:
   gsis:
     build: ./gsis
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
     volumes:
       - ./gsis/migrations:/app/migrations
     ports:
@@ -38320,7 +38320,7 @@ services:
   dtae_fce:
     build: ./dtae_fce
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
@@ -38361,7 +38361,7 @@ services:
     ports:
       - "8082:8000"
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     depends_on:
       - postgres
@@ -38476,7 +38476,7 @@ up:
 	@echo "✅ Services started"
 	@echo "📡 API Gateway: http://localhost:8080"
 	@echo "📊 Admin Dashboard: http://localhost:8081"
-	@echo "📈 Grafana: http://localhost:3000 (admin/admin)"
+	@echo "📈 Grafana: http://localhost:3000 (admin/REDACTED)"
 	@echo "🔍 Jaeger: http://localhost:16686"
 	@echo "📈 MLflow: http://localhost:5000"
 
@@ -38740,7 +38740,7 @@ POST /feedback
 
 📊 Monitoring
 
-· Grafana: http://localhost:3000 (admin/admin)
+· Grafana: http://localhost:3000 (admin/REDACTED)
 · Prometheus: http://localhost:9090
 · Jaeger Tracing: http://localhost:16686
 
@@ -41378,7 +41378,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import os
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://cirvanna:REDACTED@postgres:5432/cirvanna")
 
 engine = create_engine(
     DATABASE_URL,
@@ -41541,7 +41541,7 @@ Step 2 — GitHub-Ready Repository Structure
 
 ```env
 # Database
-DATABASE_URL=postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna
+DATABASE_URL=postgresql://cirvanna:REDACTED@postgres:5432/cirvanna
 POSTGRES_USER=cirvanna
 POSTGRES_PASSWORD=cirvanna123
 POSTGRES_DB=cirvanna
@@ -41626,7 +41626,7 @@ services:
       context: ./ais
       dockerfile: Dockerfile
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - GPU_ENABLED=${GPU_ENABLED:-false}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
@@ -41656,7 +41656,7 @@ services:
       context: ./gsis
       dockerfile: Dockerfile
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
     volumes:
       - ./gsis/migrations:/app/migrations
     ports:
@@ -41671,7 +41671,7 @@ services:
       context: ./dtae_fce
       dockerfile: Dockerfile
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     volumes:
       - ./dtae_fce/models:/app/models
@@ -41704,7 +41704,7 @@ services:
     ports:
       - "8082:8000"
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     depends_on:
       - postgres
@@ -41752,7 +41752,7 @@ services:
       context: .
       dockerfile: Dockerfile.celery
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     volumes:
       - ./ais:/app/ais
@@ -41771,7 +41771,7 @@ services:
       context: .
       dockerfile: Dockerfile.celery
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     volumes:
       - ./dtae_fce:/app/dtae_fce
@@ -41819,7 +41819,7 @@ up:
 	@echo "✅ Services started"
 	@echo "📡 API Gateway: http://localhost:8080"
 	@echo "📊 Admin Dashboard: http://localhost:8081"
-	@echo "📈 Grafana: http://localhost:3000 (admin/admin)"
+	@echo "📈 Grafana: http://localhost:3000 (admin/REDACTED)"
 	@echo "🔍 Jaeger: http://localhost:16686"
 
 down:
@@ -42069,7 +42069,7 @@ POST /feedback
 
 📊 Monitoring
 
-· Grafana: http://localhost:3000 (admin/admin)
+· Grafana: http://localhost:3000 (admin/REDACTED)
 · Prometheus: http://localhost:9090
 · Jaeger Tracing: http://localhost:16686
 
@@ -44682,7 +44682,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import os
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://cirvanna:REDACTED@postgres:5432/cirvanna")
 
 engine = create_engine(
     DATABASE_URL,
@@ -50653,7 +50653,7 @@ services:
       context: .
       dockerfile: mlflow/Dockerfile
     environment:
-      MLFLOW_BACKEND_STORE_URI: postgresql://cirvanna:cirvanna@postgres:5432/mlflow
+      MLFLOW_BACKEND_STORE_URI: postgresql://cirvanna:REDACTED@postgres:5432/mlflow
       MLFLOW_DEFAULT_ARTIFACT_ROOT: /mlartifacts
     ports: ["5000:5000"]
     depends_on:
