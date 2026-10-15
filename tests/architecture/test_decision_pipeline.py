@@ -131,8 +131,9 @@ class DecisionPipelineTests(unittest.TestCase):
         result = arbitrate_candidate(request(), eepl, npl, cultural_result=cultural)
         self.assertEqual(result.cal_result.verdict.value, "review")
         self.assertFalse(result.may_display)
+        # CAL normalizes unknown required-signal states to its stable review code.
         self.assertIn(
-            "CULTURAL_FUTURE_UNKNOWN_CODE",
+            "REQUIRED_SIGNAL_UNKNOWN",
             {reason.code for reason in result.cal_result.reasons},
         )
 
