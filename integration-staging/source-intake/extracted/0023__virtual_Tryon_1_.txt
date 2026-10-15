@@ -997,7 +997,8 @@ def setup_logging(
     logger.addHandler(handler)
     
     # Add service name to all logs
-    old_factory = logging.getLogRecordFactory()    
+    old_factory = logging.getLogRecordFactory()
+    
     def record_factory(*args, **kwargs):
         record = old_factory(*args, **kwargs)
         record.service = service_name
@@ -1996,7 +1997,8 @@ class AIService:
             masks.append(mask)
         
         return masks
-        def _detect_pose(
+    
+    def _detect_pose(
         self,
         images: List[np.ndarray],
         original_sizes: List[Tuple[int, int]]
@@ -2995,7 +2997,8 @@ async def upload_garment(
             "status": "success",
             "garment_id": garment.garment_id,
             "version": garment.version,
-            "message": "Garment data validated and stored"        }
+            "message": "Garment data validated and stored"
+        }
         
         if warnings:
             response["warnings"] = warnings
