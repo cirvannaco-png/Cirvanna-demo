@@ -41,9 +41,9 @@
     {
       "id": "cultural-identity",
       "target": "packages/identity-intelligence/cultural-identity",
-      "status": "schema-candidate",
-      "purpose": "Versioned cultural identity requirements, rules, schema, and metadata.",
-      "promotionGate": "Validate schemas and provenance; remove unsupported inference and establish consent/versioning."
+      "status": "explicit-policy-kernel-implemented",
+      "purpose": "Explicit-declaration-only cultural requirements with hard conflicts, soft preferences, and fail-closed handling of incomplete candidate metadata.",
+      "promotionGate": "Review and version the rule catalog; establish declaration lifecycle, audit delivery, candidate metadata quality, consent controls, and end-to-end CAL integration."
     },
     {
       "id": "usi",
