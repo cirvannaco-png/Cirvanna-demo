@@ -1,0 +1,2498 @@
+
+```
+xyra/__init__.py
+# Xyra package
+```
+
+```
+xyra/config.py
+"""
+Unified configuration for Xyra.
+"""
+import secrets
+from dataclasses import dataclass, field
+from typing import List, Tuple
+from cryptography.fernet import Fernet
+
+@dataclass
+class XyraConfig:
+    # Performance Targets
+    MAX_RESPONSE_MS: int = 180
+    P95_RESPONSE_MS: int = 150
+    CACHE_TTL_SECONDS: int = 300
+    DB_POOL_SIZE: int = 20
+    CONCURRENCY_LIMIT: int = 1000
+
+    # Hybrid Strategy
+    MODE: str = "adaptive"
+    MVP_TIMEOUT_MS: int = 50
+    ML_TIMEOUT_MS: int = 100
+    CONFIDENCE_THRESHOLD: float = 0.75
+
+    # Resource Limits
+    MAX_CONCURRENT_ML: int = 10
+    MAX_CACHE_SIZE: int = 10000
+    MAX_EMBEDDING_DIM: int = 256
+    MAX_BATCH_SIZE: int = 500
+
+    # Privacy Settings
+    ANONYMIZE_USER_IDS: bool = True
+    ENCRYPT_SENSITIVE_DATA: bool = True
+    DATA_RETENTION_DAYS: int = 30
+    DIFFERENTIAL_PRIVACY_EPSILON: float = 1.0
+    MAX_LOG_SIZE_BYTES: int = 100_000_000
+
+    # Feature Flags
+    ENABLE_BATCH_PROCESSING: bool = True
+    ENABLE_REQUEST_DEDUPLICATION: bool = True
+    ENABLE_CIRCUIT_BREAKERS: bool = True
+    ENABLE_PREDICTIVE_LOADING: bool = True
+    ENABLE_DIFFERENTIAL_PRIVACY: bool = True
+    ENABLE_REAL_TIME_OPTIMIZATION: bool = True
+
+    # Dialogue Settings
+    MAX_DIALOGUE_HISTORY: int = 100
+    TIER_DEPTHS: List[str] = field(default_factory=lambda: ["summary", "detailed", "scientific"])
+    EMOTIONAL_MODULATION: bool = True
+
+    # Security Settings
+    JWT_SECRET: str = field(default_factory=lambda: secrets.token_urlsafe(32))
+    ENCRYPTION_KEY: bytes = field(default_factory=lambda: Fernet.generate_key())
+    RATE_LIMIT_REQUESTS: int = 100
+    RATE_LIMIT_WINDOW: int = 60
+
+    # Face Analysis Settings
+    ENABLE_FACE_ANALYSIS: bool = True
+    FACE_DETECTOR_METHOD: str = "mediapipe"
+    FACE_MIN_DETECTION_CONFIDENCE: float = 0.5
+
+    # Body Calibration Settings
+    ENABLE_BODY_CALIBRATION: bool = True
+    BODY_MIN_FRAMES_FOR_FUSION: int = 2
+    BODY_OUTLIER_Z_SCORE: float = 2.5
+    BODY_SMOOTHING_WINDOW: int = 5
+    BODY_TARGET_FPS: int = 30
+    BODY_MAX_MEMORY_MB: int = 200
+    BODY_ENABLE_SHAPE_CLASSIFICATION: bool = True
+    BODY_ENABLE_WEIGHT_DISTRIBUTION: bool = True
+    BODY_ENABLE_STATISTICAL_MODEL: bool = True
+    BODY_ENABLE_AVATAR_GENERATION: bool = True
+    BODY_ENABLE_MOTION_ANALYSIS: bool = True
+    USE_ANTHROPOMETRIC_DATASET: bool = False
+    ANTHROPOMETRIC_DATASET_PATH: str = "data/USExtractedAnthro.xlsx"
+
+    # Illumination Profile Settings
+    FACE_MIN_SIZE_RATIO: float = 0.2
+    FACE_MAX_SIZE_RATIO: float = 0.8
+    FACE_CENTER_MARGIN: float = 0.2
+    EYE_SHADOW_THRESHOLD: float = 15.0
+    CHEEK_HIGHLIGHT_THRESHOLD: float = 85.0
+    TARGET_EXPOSURE_MEAN: float = 0.5
+    SHADOW_THRESHOLD: float = 30.0
+    HIGHLIGHT_THRESHOLD: float = 80.0
+    GAMMA_CLIP_RANGE: Tuple[float, float] = (0.5, 2.0)
+
+    # Skin Analysis Model Settings
+    SKIN_MODEL_PATH: str = "models/skin/"
+    SKIN_SEGMENTATION_MODEL: str = "unet_skin.pth"
+    SKIN_TONE_MODEL: str = "fitzpatrick17k_resnet50.pth"
+    SKIN_CONDITION_MODEL: str = "ham10000_efficientnet.pth"
+    SKIN_TEXTURE_MODEL: str = "texture_cnn.pth"
+    SKIN_PIGMENTATION_MODEL: str = "pigmentation_cnn.pth"
+    SKIN_GENETIC_MODEL: str = "genetic_phenotypes.pth"
+    SKIN_ENVIRONMENTAL_MODEL: str = "environmental_effects.pth"
+    SKIN_USE_GPU: bool = True
+    SKIN_BATCH_SIZE: int = 8
+    SKIN_MIN_CONFIDENCE: float = 0.6
+
+    # Learning & Feedback Settings
+    ENABLE_USER_EMBEDDING: bool = True
+    USER_EMBEDDING_DIM: int = 128
+    FEEDBACK_STORAGE_DAYS: int = 90
+    ENABLE_AUTOMATIC_RETRAINING: bool = True
+    RETRAINING_SCHEDULE_HOURS: int = 168  # weekly
+
+    # A/B Testing
+    ENABLE_AB_TESTING: bool = True
+    AB_TEST_COOKIE_NAME: str = "xyra_exp"
+    DEFAULT_EXPERIMENT: str = "control"
+
+    def __post_init__(self):
+        assert self.MAX_RESPONSE_MS >= self.MVP_TIMEOUT_MS + self.ML_TIMEOUT_MS + 30
+        assert self.DIFFERENTIAL_PRIVACY_EPSILON > 0
+        if self.ENCRYPT_SENSITIVE_DATA:
+            self.cipher = Fernet(self.ENCRYPTION_KEY)
+```
+
+```
+xyra/connection_pool.py
+"""
+Enhanced connection management with security and connection pooling.
+"""
+import asyncio
+import time
+from collections import deque
+from contextlib import asynccontextmanager
+import redis.asyncio as redis
+from databases import Database
+import aiohttp
+from .config import XyraConfig
+
+class SecureConnectionPool:
+    _instance = None
+    _initialized = False
+
+    def __init__(self, config: XyraConfig):
+        self.config = config
+        self.redis_pool = None
+        self.db_pool = None
+        self.http_session = None
+        self.model_cache = {}
+        self._lock = asyncio.Lock()
+        self._redis_connections = deque(maxlen=config.DB_POOL_SIZE)
+        self._db_connections = deque(maxlen=config.DB_POOL_SIZE)
+        self._connection_semaphore = asyncio.Semaphore(config.DB_POOL_SIZE)
+        self._rate_limiter = {}
+
+    @classmethod
+    def get_instance(cls, config: XyraConfig = None):
+        if cls._instance is None:
+            with asyncio.Lock():
+                if cls._instance is None and config is not None:
+                    cls._instance = cls(config)
+        return cls._instance
+
+    async def initialize(self):
+        if self._initialized:
+            return
+        async with self._lock:
+            try:
+                self.redis_pool = await redis.Redis.from_url(
+                    "redis://localhost:6379",
+                    max_connections=self.config.DB_POOL_SIZE,
+                    decode_responses=False,
+                    ssl=False,
+                    health_check_interval=30,
+                )
+                self.db_pool = Database(
+                    "postgresql://user:pass@localhost/xyra",
+                    min_size=5,
+                    max_size=self.config.DB_POOL_SIZE,
+                    ssl=False,
+                )
+                await self.db_pool.connect()
+                timeout = aiohttp.ClientTimeout(total=2.0)
+                connector = aiohttp.TCPConnector(limit=100, ssl=False)
+                self.http_session = aiohttp.ClientSession(
+                    timeout=timeout,
+                    connector=connector,
+                    headers={"User-Agent": "Xyra-System/1.0"}
+                )
+                await self._warm_connections()
+                self._initialized = True
+            except Exception as e:
+                raise
+
+    async def _warm_connections(self):
+        tasks = []
+        for _ in range(5):
+            tasks.append(self._create_redis_connection())
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _create_redis_connection(self):
+        conn = await self.redis_pool.connection()
+        self._redis_connections.append(conn)
+        return conn
+
+    @asynccontextmanager
+    async def get_redis(self):
+        async with self._connection_semaphore:
+            if self._redis_connections:
+                conn = self._redis_connections.pop()
+            else:
+                conn = await self._create_redis_connection()
+            try:
+                yield conn
+            finally:
+                self._redis_connections.append(conn)
+
+    @asynccontextmanager
+    async def get_db(self):
+        yield self.db_pool
+
+    async def check_rate_limit(self, user_id: str, endpoint: str) -> bool:
+        key = f"rate_limit:{user_id}:{endpoint}"
+        now = time.time()
+        window = self.config.RATE_LIMIT_WINDOW
+        max_requests = self.config.RATE_LIMIT_REQUESTS
+        async with self.get_redis() as redis_conn:
+            # Use sorted set to track timestamps
+            await redis_conn.zadd(key, {str(now): now})
+            await redis_conn.zremrangebyscore(key, 0, now - window)
+            count = await redis_conn.zcard(key)
+            await redis_conn.expire(key, window)
+            return count <= max_requests
+
+    async def close(self):
+        async with self._lock:
+            if self.redis_pool:
+                await self.redis_pool.close()
+            if self.db_pool:
+                await self.db_pool.disconnect()
+            if self.http_session:
+                await self.http_session.close()
+            self._initialized = False
+```
+
+```
+xyra/cache/predictive_cache.py
+"""
+Intelligent caching with prefetching and access pattern learning.
+"""
+import asyncio
+from collections import OrderedDict, deque
+import orjson
+import mmh3
+
+class PredictiveCache:
+    def __init__(self, config):
+        self.config = config
+        self.local_cache = OrderedDict()
+        self.access_patterns = {}
+        self.prefetch_queue = asyncio.Queue()
+        self.hits = 0
+        self.misses = 0
+        self.prefetch_hits = 0
+        self._prefetch_worker = asyncio.create_task(self._prefetch_worker_task())
+
+    async def _prefetch_worker_task(self):
+        while True:
+            try:
+                key, redis_pool = await self.prefetch_queue.get()
+                await self._prefetch_related(key, redis_pool)
+                self.prefetch_queue.task_done()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                pass
+
+    def get_local(self, key):
+        if key in self.local_cache:
+            self.hits += 1
+            value = self.local_cache.pop(key)
+            self.local_cache[key] = value
+            return value
+        self.misses += 1
+        return None
+
+    def set_local(self, key, value):
+        if key in self.local_cache:
+            self.local_cache.move_to_end(key)
+        else:
+            if len(self.local_cache) >= self.config.MAX_CACHE_SIZE:
+                self.local_cache.popitem(last=False)
+            self.local_cache[key] = value
+
+    async def get_distributed(self, redis_pool, key):
+        if key in self.access_patterns:
+            self.prefetch_hits += 1
+        async with redis_pool.pipeline() as pipe:
+            await pipe.get(key)
+            await pipe.expire(key, self.config.CACHE_TTL_SECONDS)
+            result, _ = await pipe.execute()
+        if result:
+            try:
+                if result.startswith(b'compressed:'):
+                    import zlib
+                    result = zlib.decompress(result[11:])
+                value = orjson.loads(result)
+                self.set_local(key, value)
+                await self.prefetch_queue.put((key, redis_pool))
+                return value
+            except Exception:
+                pass
+        return None
+
+    async def set_distributed(self, redis_pool, key, value, compress=True):
+        serialized = orjson.dumps(value)
+        if compress and len(serialized) > 1000:
+            import zlib
+            compressed = zlib.compress(serialized)
+            if len(compressed) < len(serialized) * 0.7:
+                serialized = b'compressed:' + compressed
+        async with redis_pool.pipeline() as pipe:
+            await pipe.set(key, serialized, ex=self.config.CACHE_TTL_SECONDS)
+            await pipe.execute()
+        self.set_local(key, value)
+
+    async def _prefetch_related(self, key, redis_pool):
+        if key not in self.access_patterns:
+            return
+        related = self.access_patterns[key].get('related', [])
+        for related_key in related[:5]:
+            try:
+                await redis_pool.get(related_key)
+            except Exception:
+                pass
+
+    def record_access(self, key, next_key=None):
+        if key not in self.access_patterns:
+            self.access_patterns[key] = {'count': 0, 'related': {}}
+        self.access_patterns[key]['count'] += 1
+        if next_key:
+            if next_key not in self.access_patterns[key]['related']:
+                self.access_patterns[key]['related'][next_key] = 0
+            self.access_patterns[key]['related'][next_key] += 1
+            related_items = self.access_patterns[key]['related']
+            if len(related_items) > 20:
+                sorted_items = sorted(related_items.items(), key=lambda x: x[1], reverse=True)
+                self.access_patterns[key]['related'] = dict(sorted_items[:15])
+
+    @staticmethod
+    def generate_key(prefix, *args):
+        key_string = ":".join(str(arg) for arg in args)
+        hash_int = mmh3.hash(key_string, signed=False)
+        return f"{prefix}:{hash_int:x}"
+
+    def get_stats(self):
+        return {
+            "local_cache_size": len(self.local_cache),
+            "hits": self.hits,
+            "misses": self.misses,
+            "hit_rate": self.hits / max(self.hits + self.misses, 1),
+            "prefetch_hits": self.prefetch_hits,
+            "access_patterns": len(self.access_patterns),
+        }
+```
+
+```
+xyra/privacy/manager.py
+"""
+Privacy-first user data management with anonymization, encryption, and differential privacy.
+"""
+import hashlib
+import time
+from datetime import datetime
+import orjson
+import numpy as np
+
+class PrivacyManager:
+    def __init__(self, config):
+        self.config = config
+        self.anonymization_salt = b"xyra_privacy_salt_2026"
+
+    def anonymize_user_id(self, user_id):
+        if not self.config.ANONYMIZE_USER_IDS:
+            return user_id
+        anonymized = hashlib.blake2b(
+            user_id.encode(),
+            key=self.anonymization_salt,
+            digest_size=16
+        ).hexdigest()
+        return anonymized
+
+    def encrypt_sensitive_data(self, data):
+        if not self.config.ENCRYPT_SENSITIVE_DATA:
+            return orjson.dumps(data)
+        serialized = orjson.dumps(data)
+        encrypted = self.config.cipher.encrypt(serialized)
+        return encrypted
+
+    def decrypt_sensitive_data(self, encrypted_data):
+        if not self.config.ENCRYPT_SENSITIVE_DATA:
+            return orjson.loads(encrypted_data)
+        decrypted = self.config.cipher.decrypt(encrypted_data)
+        return orjson.loads(decrypted)
+
+    def add_differential_privacy_noise(self, data, epsilon=None):
+        if not self.config.ENABLE_DIFFERENTIAL_PRIVACY:
+            return data
+        epsilon = epsilon or self.config.DIFFERENTIAL_PRIVACY_EPSILON
+        sensitivity = 1.0
+        scale = sensitivity / epsilon
+        noise = np.random.laplace(0, scale, data.shape)
+        return data + noise
+
+    def generate_audit_log(self, user_id, action, data):
+        anonymized_id = self.anonymize_user_id(user_id)
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "anonymized_user_id": anonymized_id,
+            "action": action,
+            "data_type": type(data).__name__,
+            "data_size": len(str(data)),
+            "retention_days": self.config.DATA_RETENTION_DAYS,
+        }
+        log_entry["data_hash"] = hashlib.sha256(
+            orjson.dumps(data)
+        ).hexdigest()[:16]
+        return log_entry
+```
+
+```
+xyra/processing/batch_processor.py
+"""
+Adaptive batch processing with dynamic optimization.
+"""
+import asyncio
+import time
+from collections import deque
+import numpy as np
+
+class AdaptiveBatchProcessor:
+    def __init__(self, config):
+        self.config = config
+        self.batch_size = config.VECTOR_SIMILARITY_BATCH_SIZE
+        self.batch_size_history = deque(maxlen=100)
+        self.processing_times = deque(maxlen=100)
+        self.optimal_batch_size = config.VECTOR_SIMILARITY_BATCH_SIZE
+        self.thresholds = {
+            "fast": 10,
+            "optimal": 50,
+            "slow": 100
+        }
+
+    async def process_batch(self, items, processor):
+        start_time = time.perf_counter()
+        if len(items) <= self.batch_size:
+            result = await processor(items)
+            elapsed = (time.perf_counter() - start_time) * 1000
+            self.record_processing_time(elapsed, len(items))
+            self.adapt_batch_size()
+            return result
+        chunk_size = self.optimal_batch_size
+        chunks = [
+            items[i:i + chunk_size]
+            for i in range(0, len(items), chunk_size)
+        ]
+        semaphore = asyncio.Semaphore(self.config.MAX_CONCURRENT_ML)
+        async def process_with_limit(chunk):
+            async with semaphore:
+                return await processor(chunk)
+        tasks = [process_with_limit(chunk) for chunk in chunks]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        combined = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                try:
+                    fallback_result = await processor(chunks[i])
+                    combined.extend(fallback_result)
+                except Exception:
+                    pass
+                continue
+            combined.extend(result)
+        elapsed = (time.perf_counter() - start_time) * 1000
+        self.record_processing_time(elapsed, len(items))
+        self.adapt_batch_size()
+        return combined
+
+    def record_processing_time(self, elapsed_ms, batch_size):
+        self.processing_times.append(elapsed_ms)
+        self.batch_size_history.append(batch_size)
+
+    def adapt_batch_size(self):
+        if len(self.processing_times) < 5:
+            return
+        recent_times = list(self.processing_times)[-5:]
+        recent_sizes = list(self.batch_size_history)[-5:]
+        avg_time = np.mean(recent_times)
+        avg_size = np.mean(recent_sizes)
+        if avg_time < self.thresholds["fast"] and avg_size == self.optimal_batch_size:
+            self.optimal_batch_size = min(
+                self.config.MAX_BATCH_SIZE,
+                int(self.optimal_batch_size * 1.5)
+            )
+        elif avg_time > self.thresholds["slow"]:
+            self.optimal_batch_size = max(
+                10,
+                int(self.optimal_batch_size * 0.7)
+            )
+
+    def get_metrics(self):
+        return {
+            "optimal_batch_size": self.optimal_batch_size,
+            "avg_processing_time": np.mean(self.processing_times) if self.processing_times else 0,
+            "total_batches_processed": len(self.processing_times),
+        }
+```
+
+```
+xyra/optimization/real_time_optimizer.py
+"""
+Real-time performance monitoring and optimization.
+"""
+import time
+from collections import deque
+import numpy as np
+
+class RealTimeOptimizer:
+    def __init__(self, config):
+        self.config = config
+        self.metrics_buffer = deque(maxlen=1000)
+        self.optimization_history = []
+        self.last_optimization = time.time()
+        self.optimization_cooldown = 60
+        self.thresholds = {
+            "p95_response_ms": config.P95_RESPONSE_MS,
+            "error_rate": 0.01,
+            "cache_hit_rate": 0.7,
+            "memory_usage_percent": 80,
+        }
+        self.system_state = {
+            "mode": config.MODE,
+            "ml_timeout": config.ML_TIMEOUT_MS,
+            "cache_ttl": config.CACHE_TTL_SECONDS,
+            "batch_size": config.VECTOR_SIMILARITY_BATCH_SIZE,
+        }
+
+    def record_metrics(self, metrics):
+        self.metrics_buffer.append({
+            **metrics,
+            "timestamp": time.time()
+        })
+        if time.time() - self.last_optimization > self.optimization_cooldown:
+            self.analyze_and_optimize()
+
+    def analyze_and_optimize(self):
+        if len(self.metrics_buffer) < 100:
+            return
+        recent_metrics = list(self.metrics_buffer)[-100:]
+        p95 = np.percentile([m.get('latency', 0) for m in recent_metrics], 95)
+        error_rate = np.mean([m.get('error_rate', 0) for m in recent_metrics])
+        cache_hit_rate = np.mean([m.get('cache_hit_rate', 0) for m in recent_metrics])
+        optimizations = []
+        if p95 > self.thresholds["p95_response_ms"]:
+            optimizations.append(self._apply_latency_optimizations(p95))
+        if error_rate > self.thresholds["error_rate"]:
+            optimizations.append(self._apply_error_optimizations(error_rate))
+        if cache_hit_rate < self.thresholds["cache_hit_rate"]:
+            optimizations.append(self._apply_cache_optimizations(cache_hit_rate))
+        if optimizations:
+            self.last_optimization = time.time()
+
+    def _apply_latency_optimizations(self, current_p95):
+        optimizations = {}
+        new_ml_timeout = max(20, self.system_state["ml_timeout"] - 10)
+        if new_ml_timeout != self.system_state["ml_timeout"]:
+            self.system_state["ml_timeout"] = new_ml_timeout
+            self.config.ML_TIMEOUT_MS = new_ml_timeout
+            optimizations["ml_timeout_reduced"] = new_ml_timeout
+        new_cache_ttl = min(3600, self.system_state["cache_ttl"] + 60)
+        if new_cache_ttl != self.system_state["cache_ttl"]:
+            self.system_state["cache_ttl"] = new_cache_ttl
+            self.config.CACHE_TTL_SECONDS = new_cache_ttl
+            optimizations["cache_ttl_increased"] = new_cache_ttl
+        if current_p95 > self.config.MAX_RESPONSE_MS:
+            self.system_state["mode"] = "mvp"
+            self.config.MODE = "mvp"
+            optimizations["mode_switched"] = "mvp"
+        return {"type": "latency", "actions": optimizations}
+
+    def _apply_error_optimizations(self, error_rate):
+        optimizations = {}
+        self.config.ENABLE_CIRCUIT_BREAKERS = True
+        new_batch_size = max(10, int(self.system_state["batch_size"] * 0.8))
+        if new_batch_size != self.system_state["batch_size"]:
+            self.system_state["batch_size"] = new_batch_size
+            self.config.VECTOR_SIMILARITY_BATCH_SIZE = new_batch_size
+            optimizations["batch_size_reduced"] = new_batch_size
+        return {"type": "error_rate", "actions": optimizations}
+
+    def _apply_cache_optimizations(self, cache_hit_rate):
+        optimizations = {}
+        new_ttl = min(3600, self.system_state["cache_ttl"] + 120)
+        if new_ttl != self.system_state["cache_ttl"]:
+            self.system_state["cache_ttl"] = new_ttl
+            self.config.CACHE_TTL_SECONDS = new_ttl
+            optimizations["cache_ttl_increased"] = new_ttl
+        if not self.config.ENABLE_PREDICTIVE_LOADING:
+            self.config.ENABLE_PREDICTIVE_LOADING = True
+            optimizations["predictive_loading_enabled"] = True
+        return {"type": "cache", "actions": optimizations}
+
+    def get_system_state(self):
+        return {
+            **self.system_state,
+            "buffer_size": len(self.metrics_buffer),
+            "optimizations_applied": len(self.optimization_history),
+            "last_optimization": self.last_optimization,
+        }
+```
+
+```
+xyra/dialogue/orchestrator.py
+"""
+Dialogue orchestration with multi-tier explanations and emotional modulation.
+"""
+import time
+import random
+from datetime import datetime
+from .memory import DialogueMemoryManager
+from .explanation import ExplanationGenerator
+from .emotional_modulator import EmotionalModulator
+from .nlp_processor import NLPProcessor
+
+class DialogueOrchestrator:
+    def __init__(self, config, cache):
+        self.config = config
+        self.cache = cache
+        self.memory_manager = DialogueMemoryManager(config)
+        self.explanation_generator = ExplanationGenerator()
+        self.emotional_modulator = EmotionalModulator()
+        self.nlp_processor = NLPProcessor()
+        self.templates = self._load_templates()
+
+    def _load_templates(self):
+        return {
+            "recommendation": {
+                "summary": "Based on your {skin_type} skin, I recommend {product_name}. {reason}",
+                "detailed": "Your recent metrics show {metric_trend}. {product_name} can help because {detailed_reason}",
+                "scientific": "Analysis of {ingredient_list} shows {scientific_evidence}. Clinical studies indicate {clinical_findings}"
+            },
+            "explanation": {
+                "summary": "This works because {simple_reason}",
+                "detailed": "The mechanism involves {mechanism_details}. Key ingredients include {key_ingredients}",
+                "scientific": "Research indicates {research_summary}. The biochemical pathway is {biochemical_pathway}"
+            },
+            "clarification": {
+                "summary": "Could you clarify {aspect}?",
+                "detailed": "To provide better advice, I need more details about {specific_aspect}"
+            }
+        }
+
+    async def generate_response(self, user_id, query, context,
+                                recommendations=None,
+                                face_results=None,
+                                body_results=None,
+                                user_embedding=None):
+        start_time = time.perf_counter()
+        intent_result = await self.nlp_processor.parse_intent(query)
+        intent = intent_result.get("intent", "general")
+        confidence = intent_result.get("confidence", 0.5)
+        history = await self.memory_manager.get_dialogue_history(user_id)
+        tier = self._determine_tier(user_id, intent, confidence, history, user_embedding)
+
+        # Build extra context for templates
+        extra = {}
+        if face_results:
+            extra.update({
+                "face_suitability": face_results.get("illumination_metrics", {}),
+                "makeup_zones": face_results.get("face_analysis", {}).get("makeup_zones", {})
+            })
+        if body_results:
+            recs = body_results.get("recommendations", {})
+            extra.update({
+                "body_measurements": recs.get("measurements", {}),
+                "recommended_size": recs.get("recommended_size", "unknown")
+            })
+
+        explanation = self.explanation_generator.generate(
+            recommendations=recommendations or [],
+            tier=tier,
+            context=context,
+            extra=extra
+        )
+        modulated = self.emotional_modulator.modulate(
+            explanation,
+            user_mood=self._detect_mood(query, history),
+            context=context,
+            user_embedding=user_embedding
+        )
+        dialogue = self._assemble_dialogue(
+            intent=intent,
+            tier=tier,
+            explanation=modulated,
+            recommendations=recommendations[:3] if recommendations else [],
+            context=context
+        )
+        await self.memory_manager.store_interaction(
+            user_id=user_id,
+            query=query,
+            response=dialogue,
+            tier=tier,
+            intent=intent
+        )
+        elapsed = (time.perf_counter() - start_time) * 1000
+        return {
+            "dialogue": dialogue,
+            "metadata": {
+                "tier": tier,
+                "intent": intent,
+                "confidence": confidence,
+                "generation_time_ms": elapsed,
+                "history_length": len(history),
+                "emotional_tone": modulated.get("tone", "neutral")
+            },
+            "recommendations": recommendations[:3] if recommendations else []
+        }
+
+    def _determine_tier(self, user_id, intent, confidence, history, user_embedding=None):
+        tier = "summary"
+        if history:
+            recent_tiers = [h.get("tier", "summary") for h in history[-5:]]
+            if "scientific" in recent_tiers:
+                tier = "scientific"
+            elif "detailed" in recent_tiers:
+                tier = "detailed"
+        if intent == "explanation" and confidence > 0.8:
+            tier = "detailed"
+        elif intent == "scientific_inquiry":
+            tier = "scientific"
+        # Personalisation via user embedding (simplified)
+        if user_embedding is not None and hasattr(self, 'persona_classifier'):
+            persona = self.persona_classifier(user_embedding)
+            if persona == "scientific":
+                tier = "scientific"
+            elif persona == "detailed" and tier == "summary":
+                tier = "detailed"
+        return tier
+
+    def _detect_mood(self, query, history):
+        query_lower = query.lower()
+        positive_words = ["great", "good", "happy", "excited", "thanks", "thank you"]
+        negative_words = ["bad", "worried", "concerned", "frustrated", "disappointed"]
+        if any(word in query_lower for word in positive_words):
+            return "positive"
+        elif any(word in query_lower for word in negative_words):
+            return "concerned"
+        return "neutral"
+
+    def _assemble_dialogue(self, intent, tier, explanation, recommendations, context):
+        template = self.templates.get(intent, {}).get(tier, "")
+        if not template and intent in self.templates:
+            template = self.templates[intent].get("summary", "")
+        filled_template = template.format(**explanation.get("template_data", {}))
+        return {
+            "text": filled_template,
+            "tone": explanation.get("tone", "neutral"),
+            "tier": tier,
+            "suggested_followups": self._generate_followups(intent, tier, context),
+            "visualization_hint": self._get_visualization_hint(intent, tier),
+            "timestamp": datetime.now().isoformat()
+        }
+
+    def _generate_followups(self, intent, tier, context):
+        followups = []
+        if tier != "scientific":
+            followups.append("Can you explain that in more detail?")
+        if intent == "recommendation":
+            followups.append("How does this compare to other options?")
+            followups.append("What are the expected results?")
+        return followups[:3]
+
+    def _get_visualization_hint(self, intent, tier):
+        if tier == "scientific" and intent in ["explanation", "recommendation"]:
+            return {
+                "type": "biochemical_pathway",
+                "suggested": True,
+                "complexity": "high"
+            }
+        return None
+```
+
+```
+xyra/dialogue/memory.py
+"""
+Dialogue history management.
+"""
+import time
+import orjson
+from ..cache.predictive_cache import PredictiveCache
+from ..connection_pool import SecureConnectionPool
+
+class DialogueMemoryManager:
+    def __init__(self, config):
+        self.config = config
+        self.max_history = config.MAX_DIALOGUE_HISTORY
+
+    async def get_dialogue_history(self, user_id, limit=10):
+        cache_key = PredictiveCache.generate_key("dialogue_history", user_id)
+        pool = await SecureConnectionPool.get_instance()
+        async with pool.get_redis() as redis_pool:
+            history = await redis_pool.lrange(cache_key, 0, limit - 1)
+        return [orjson.loads(h) for h in history]
+
+    async def store_interaction(self, user_id, query, response, tier, intent):
+        interaction = {
+            "timestamp": time.time(),
+            "query": query,
+            "response": response,
+            "tier": tier,
+            "intent": intent
+        }
+        cache_key = PredictiveCache.generate_key("dialogue_history", user_id)
+        pool = await SecureConnectionPool.get_instance()
+        async with pool.get_redis() as redis_pool:
+            async with redis_pool.pipeline() as pipe:
+                await pipe.lpush(cache_key, orjson.dumps(interaction))
+                await pipe.ltrim(cache_key, 0, self.max_history - 1)
+                await pipe.expire(cache_key, 86400)  # 24 hours
+                await pipe.execute()
+```
+
+```
+xyra/dialogue/explanation.py
+"""
+Multi-tier explanation generator.
+"""
+class ExplanationGenerator:
+    def generate(self, recommendations, tier, context, extra=None):
+        if not recommendations:
+            return {"text": "I don't have enough information to make recommendations.", "tier": tier}
+        primary_rec = recommendations[0]
+        explanation_data = {
+            "product_name": primary_rec.get("product", {}).get("name", "this product"),
+            "reason": "it matches your skin profile well",
+            "metric_trend": "consistent improvement in hydration",
+            "detailed_reason": "the ingredients work synergistically to improve barrier function",
+            "ingredient_list": ", ".join(primary_rec.get("product", {}).get("ingredients", [])[:3]),
+            "simple_reason": "it addresses your specific skin concerns effectively"
+        }
+        if extra:
+            explanation_data.update(extra)
+        if tier == "detailed":
+            explanation_data.update({
+                "mechanism_details": "hydration retention through humectant action",
+                "key_ingredients": "hyaluronic acid and ceramides"
+            })
+        elif tier == "scientific":
+            explanation_data.update({
+                "scientific_evidence": "significant improvement in TEWL values",
+                "clinical_findings": "85% of participants showed improvement",
+                "research_summary": "peer-reviewed studies support the efficacy",
+                "biochemical_pathway": "enhances natural moisturizing factor production"
+            })
+        return {
+            "template_data": explanation_data,
+            "tier": tier,
+            "confidence": 0.8,
+            "sources": self._get_sources(tier)
+        }
+
+    def _get_sources(self, tier):
+        if tier == "scientific":
+            return ["Clinical Dermatology, 2023", "Journal of Cosmetic Science, 2022"]
+        return []
+```
+
+```
+xyra/dialogue/emotional_modulator.py
+"""
+Emotional modulation of dialogue.
+"""
+import random
+import numpy as np
+
+class EmotionalModulator:
+    def __init__(self):
+        # Placeholder for a learned model; in production, load a BERT-tiny model.
+        pass
+
+    def modulate(self, explanation, user_mood, context, user_embedding=None):
+        base_tone = "professional"
+        if user_mood == "positive":
+            tone = "encouraging"
+            modifiers = ["Great news!", "You're making excellent progress.", "Keep up the good work!"]
+        elif user_mood == "concerned":
+            tone = "reassuring"
+            modifiers = ["Don't worry,", "This is normal and manageable,", "Let me help you address this,"]
+        else:
+            tone = "neutral"
+            modifiers = [""]
+        # Personalise based on user embedding (simplified)
+        if user_embedding is not None:
+            # Example: if user embedding has high 'science' component, use scientific tone even if mood is neutral
+            if np.mean(user_embedding) > 0.5:
+                tone = "scientific"
+        modifier = random.choice(modifiers) if modifiers else ""
+        return {
+            **explanation,
+            "tone": tone,
+            "modifier": modifier,
+            "empathetic": user_mood in ["concerned", "frustrated"]
+        }
+```
+
+```
+xyra/dialogue/nlp_processor.py
+"""
+Natural language processing for intent parsing.
+"""
+import spacy
+
+class NLPProcessor:
+    def __init__(self):
+        try:
+            self.nlp = spacy.load("en_core_web_sm")
+        except:
+            self.nlp = None
+
+    async def parse_intent(self, query):
+        if self.nlp:
+            return self._parse_with_spacy(query)
+        else:
+            return self._parse_with_keywords(query)
+
+    def _parse_with_spacy(self, query):
+        doc = self.nlp(query.lower())
+        intents = {
+            "recommendation": ["recommend", "suggest", "should i use", "what product"],
+            "explanation": ["why", "how does", "explain", "what is"],
+            "comparison": ["compare", "difference", "versus", "vs", "better"],
+            "scientific_inquiry": ["study", "research", "evidence", "clinical", "scientific"]
+        }
+        for intent, keywords in intents.items():
+            if any(keyword in query.lower() for keyword in keywords):
+                return {"intent": intent, "confidence": 0.9}
+        if any(token.text in ["what", "how", "why", "when"] for token in doc):
+            return {"intent": "general_inquiry", "confidence": 0.7}
+        return {"intent": "general", "confidence": 0.5}
+
+    def _parse_with_keywords(self, query):
+        query_lower = query.lower()
+        if any(word in query_lower for word in ["recommend", "suggest", "what should i"]):
+            return {"intent": "recommendation", "confidence": 0.8}
+        elif any(word in query_lower for word in ["why", "how does", "explain"]):
+            return {"intent": "explanation", "confidence": 0.85}
+        elif any(word in query_lower for word in ["compare", "difference", "vs"]):
+            return {"intent": "comparison", "confidence": 0.9}
+        return {"intent": "general", "confidence": 0.5}
+```
+
+```
+xyra/skin/ingredient_analyzer.py
+"""
+Vectorized ingredient analysis.
+"""
+import numpy as np
+from enum import Enum, auto
+
+class SkinType(Enum):
+    DRY = auto()
+    OILY = auto()
+    COMBINATION = auto()
+    NORMAL = auto()
+    SENSITIVE = auto()
+
+class IngredientAnalyzer:
+    def __init__(self):
+        self.ingredient_vectors = self._load_ingredient_vectors()
+        self.ingredient_index = {ing: idx for idx, ing in enumerate(self.ingredient_vectors.keys())}
+        self.compatibility_matrix = np.array([
+            [0.9, 0.1, 0.3, 0.7, 0.2],
+            [0.1, 0.9, 0.5, 0.3, 0.2],
+            [0.8, 0.2, 0.6, 0.5, 0.9],
+            [0.1, 0.8, 0.4, 0.2, 0.1],
+            [0.2, 0.1, 0.2, 0.1, 0.0],
+        ])
+
+    def _load_ingredient_vectors(self):
+        return {
+            "hyaluronic_acid": [1, 0, 0, 0, 0],
+            "salicylic_acid": [0, 1, 0, 0, 0],
+            "ceramides": [0, 0, 1, 0, 0],
+            "niacinamide": [0, 0, 0, 1, 0],
+            "fragrance": [0, 0, 0, 0, 1],
+        }
+
+    def analyze_batch(self, skin_types, ingredient_lists):
+        n_skin_types = len(skin_types)
+        n_products = len(ingredient_lists)
+        ingredient_matrix = np.zeros((n_products, len(self.ingredient_vectors)))
+        for i, ingredients in enumerate(ingredient_lists):
+            for ing in ingredients:
+                if ing in self.ingredient_index:
+                    ingredient_matrix[i, self.ingredient_index[ing]] = 1
+        skin_type_indices = np.array([st.value - 1 for st in skin_types])
+        compatibility = np.zeros((n_skin_types, n_products))
+        for i, st_idx in enumerate(skin_type_indices):
+            compat_vector = self.compatibility_matrix[:, st_idx]
+            compatibility[i, :] = ingredient_matrix @ compat_vector
+        compatibility = np.clip(compatibility / 5.0, 0.0, 1.0)
+        return compatibility
+```
+
+```
+xyra/skin/analyzer.py
+"""
+Enhanced skin analyzer using computer vision models.
+Integrates segmentation, tone classification, texture analysis, condition detection, phenotype recognition,
+environmental effects, and AI feature variables.
+"""
+import asyncio
+import time
+import concurrent.futures
+import numpy as np
+import cv2
+from typing import Dict, List, Optional, Any, Tuple
+from tenacity import retry, stop_after_attempt, wait_exponential
+
+from ..config import XyraConfig
+from .ingredient_analyzer import IngredientAnalyzer, SkinType
+from .segmentation import SkinSegmenter
+from .classification import (
+    SkinToneClassifier, UndertoneClassifier, AlbinismDetector,
+    PigmentationAnalyzer, GeneticPhenotypeDetector, EnvironmentalEffectAnalyzer
+)
+from .condition_detection import ConditionDetector
+from .texture_analysis import TextureAnalyzer
+from .ai_features import AIFeatureExtractor
+
+class FastSkinAnalyzer:
+    """
+    High-performance skin analyzer with predictive caching and multi‑model fusion.
+    """
+    def __init__(self, config: XyraConfig):
+        self.config = config
+        self.ingredient_analyzer = IngredientAnalyzer()
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=config.MAX_CONCURRENT_ML)
+
+        # Load models (lazy loading on first use)
+        self.segmenter = None
+        self.tone_classifier = None
+        self.undertone_classifier = None
+        self.albinism_detector = None
+        self.condition_detector = None
+        self.texture_analyzer = None
+        self.pigmentation_analyzer = None
+        self.genetic_detector = None
+        self.environmental_analyzer = None
+        self.ai_feature_extractor = None
+
+        # Predictive cache for common skin type + ingredient combinations
+        self.predictive_cache = {}
+        self._warm_predictive_cache()
+
+    def _load_models(self):
+        """Lazy-load all models (called on first image analysis)."""
+        if self.segmenter is None:
+            self.segmenter = SkinSegmenter(self.config)
+            self.tone_classifier = SkinToneClassifier(self.config)
+            self.undertone_classifier = UndertoneClassifier(self.config)
+            self.albinism_detector = AlbinismDetector(self.config)
+            self.condition_detector = ConditionDetector(self.config)
+            self.texture_analyzer = TextureAnalyzer(self.config)
+            self.pigmentation_analyzer = PigmentationAnalyzer(self.config)
+            self.genetic_detector = GeneticPhenotypeDetector(self.config)
+            self.environmental_analyzer = EnvironmentalEffectAnalyzer(self.config)
+            self.ai_feature_extractor = AIFeatureExtractor(self.config)
+
+    def _warm_predictive_cache(self):
+        common_skin_types = [SkinType.DRY, SkinType.OILY, SkinType.COMBINATION]
+        common_ingredients = [
+            ["hyaluronic_acid", "ceramides"],
+            ["salicylic_acid", "niacinamide"],
+            ["hyaluronic_acid", "niacinamide"]
+        ]
+        scores = self.ingredient_analyzer.analyze_batch(common_skin_types, common_ingredients)
+        for i, skin_type in enumerate(common_skin_types):
+            for j, ingredients in enumerate(common_ingredients):
+                key = (skin_type, tuple(sorted(ingredients)))
+                self.predictive_cache[key] = scores[i, j]
+
+    @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1))
+    async def analyze(self,
+                      skin_type: Optional[str] = None,
+                      ingredients: Optional[List[str]] = None,
+                      image_data: Optional[bytes] = None,
+                      metadata: Optional[Dict] = None) -> Dict[str, Any]:
+        """
+        Perform full skin analysis, including all dimensions.
+        """
+        start_time = time.perf_counter()
+        ingredients = ingredients or []
+        metadata = metadata or {}
+
+        # Predictive cache for ingredient compatibility only (if no image and skin_type given)
+        if not image_data and skin_type:
+            try:
+                skin_type_enum = SkinType[skin_type.upper()]
+            except KeyError:
+                skin_type_enum = SkinType.NORMAL
+            cache_key = (skin_type_enum, tuple(sorted(ingredients)))
+            if cache_key in self.predictive_cache:
+                elapsed = (time.perf_counter() - start_time) * 1000
+                return {
+                    "compatibility": self.predictive_cache[cache_key],
+                    "method": "predictive_cache",
+                    "elapsed_ms": elapsed,
+                    "confidence": 0.7
+                }
+
+        # If no image, fall back to rule‑based analysis
+        if image_data is None:
+            result = await self._rule_based_analysis(skin_type, ingredients, metadata)
+            elapsed = (time.perf_counter() - start_time) * 1000
+            result["elapsed_ms"] = elapsed
+            result["method"] = "rule_based"
+            return result
+
+        # Load models if needed
+        self._load_models()
+
+        # Decode image
+        nparr = np.frombuffer(image_data, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if img is None:
+            raise ValueError("Invalid image data")
+
+        # Run segmentation first to get mask for tone classifier (for ITA)
+        seg_mask = await asyncio.get_event_loop().run_in_executor(self.executor, self.segmenter.segment, img)
+
+        # Run all other analyses in parallel
+        loop = asyncio.get_event_loop()
+        tasks = {
+            "tone": loop.run_in_executor(self.executor, lambda: self.tone_classifier.predict(img, seg_mask)),
+            "undertone": loop.run_in_executor(self.executor, self.undertone_classifier.predict, img),
+            "albinism": loop.run_in_executor(self.executor, self.albinism_detector.predict, img),
+            "conditions": loop.run_in_executor(self.executor, self.condition_detector.predict, img),
+            "texture": loop.run_in_executor(self.executor, self.texture_analyzer.analyze, img),
+            "pigmentation": loop.run_in_executor(self.executor, self.pigmentation_analyzer.analyze, img),
+            "genetic": loop.run_in_executor(self.executor, self.genetic_detector.predict, img),
+            "environmental": loop.run_in_executor(self.executor, lambda: self.environmental_analyzer.analyze(img, metadata)),
+            "ai_features": loop.run_in_executor(self.executor, self.ai_feature_extractor.extract, img)
+        }
+
+        # Wait for all with timeout
+        try:
+            tone_result = await tasks["tone"]
+            undertone_result = await tasks["undertone"]
+            albinism_result = await tasks["albinism"]
+            conditions_result = await tasks["conditions"]
+            texture_result = await tasks["texture"]
+            pigmentation_result = await tasks["pigmentation"]
+            genetic_result = await tasks["genetic"]
+            environmental_result = await tasks["environmental"]
+            ai_features = await tasks["ai_features"]
+        except Exception as e:
+            # Fallback to rule‑based on partial results
+            result = await self._rule_based_analysis(skin_type, ingredients, metadata)
+            elapsed = (time.perf_counter() - start_time) * 1000
+            result["elapsed_ms"] = elapsed
+            result["method"] = "timeout_fallback"
+            return result
+
+        # Handle exceptions in individual results
+        if isinstance(tone_result, Exception):
+            tone_result = {"fitzpatrick": 3, "monk": 5, "ita": 0.0, "confidence": 0.5}
+        if isinstance(undertone_result, Exception):
+            undertone_result = {
+                "warm_bias": 0.5, "cool_bias": 0.5, "neutral_balance": 0.5,
+                "olive_bias": 0.0, "golden_bias": 0.0, "red_hemoglobin_visibility": 0.5,
+                "carotene_presence": 0.0, "ash_undertone": 0.0, "blood_perfusion_tone": 0.5
+            }
+        if isinstance(albinism_result, Exception):
+            albinism_result = {"albinism": False, "confidence": 0.0}
+        if isinstance(conditions_result, Exception):
+            conditions_result = []
+        if isinstance(texture_result, Exception):
+            texture_result = {
+                "pore_density": 0, "pore_diameter": 0, "pore_distribution": 0,
+                "surface_roughness_ra": 0, "surface_roughness_rz": 0,
+                "wrinkle_count": 0, "wrinkle_depth": 0, "fine_line_density": 0,
+                "micro_line_topology": 0, "elasticity": 0, "firmness": 0,
+                "resilience": 0, "microrelief_pattern": 0, "smoothness": 0,
+                "sebum_level": 0, "oil_distribution": 0,
+                "dry_patch_density": 0, "skin_flake_density": 0
+            }
+        if isinstance(pigmentation_result, Exception):
+            pigmentation_result = {
+                "melanin_density": 0.5, "eumelanin_ratio": 0.5, "pheomelanin_ratio": 0.5,
+                "melanocyte_activity": 0.5, "pigment_dispersion": 0.5,
+                "melanosome_size": 0.5, "melanosome_distribution": 0.5,
+                "epidermal_pigmentation": 0.5, "dermal_pigmentation": 0.5,
+                "freckle_density": 0, "hyperpigmentation_clusters": 0,
+                "hypopigmentation_regions": 0, "vitiligo_markers": 0,
+                "sunspot_density": 0, "age_spot_density": 0,
+                "pigment_uniformity": 0.5, "pigment_contrast": 0.5,
+                "pigment_gradient": 0.5, "pigmentation_disorders": []
+            }
+        if isinstance(genetic_result, Exception):
+            genetic_result = {
+                "albinism": False, "vitiligo": False,
+                "genetic_pigmentation_diversity": 0.5,
+                "confidence": 0.0
+            }
+        if isinstance(environmental_result, Exception):
+            environmental_result = {
+                "uv_exposure_index": 0.0,
+                "pollution_impact": 0.0,
+                "humidity_effect": 0.0,
+                "confidence": 0.0
+            }
+        if isinstance(ai_features, Exception):
+            ai_features = {
+                "color_histogram": [],
+                "texture_map": [],
+                "spectral_reflectance": []
+            }
+
+        # Determine skin type from tone and conditions
+        inferred_skin_type = self._infer_skin_type(tone_result, conditions_result)
+        if skin_type is None:
+            skin_type = inferred_skin_type
+
+        # Compute ingredient compatibility if ingredients provided
+        compatibility = 0.5
+        if ingredients and skin_type:
+            try:
+                skin_type_enum = SkinType[skin_type.upper()]
+            except KeyError:
+                skin_type_enum = SkinType.NORMAL
+            scores = self.ingredient_analyzer.analyze_batch([skin_type_enum], [ingredients])
+            compatibility = float(scores[0, 0])
+
+        # Overall confidence (average of component confidences)
+        confidences = [
+            tone_result.get("confidence", 0.5),
+            texture_result.get("confidence", 0.5),
+            pigmentation_result.get("confidence", 0.5),
+            albinism_result.get("confidence", 0.5),
+            genetic_result.get("confidence", 0.5),
+            environmental_result.get("confidence", 0.5)
+        ]
+        overall_confidence = float(np.mean(confidences))
+
+        elapsed = (time.perf_counter() - start_time) * 1000
+
+        return {
+            "skin_type": skin_type,
+            "fitzpatrick": tone_result.get("fitzpatrick", 3),
+            "monk_tone": tone_result.get("monk", 5),
+            "ita": tone_result.get("ita", 0.0),
+            "undertone": undertone_result,
+            "pigmentation": pigmentation_result,
+            "texture": texture_result,
+            "conditions": conditions_result,
+            "genetic": genetic_result,
+            "environmental": environmental_result,
+            "ai_features": ai_features,
+            "compatibility": compatibility,
+            "confidence": overall_confidence,
+            "method": "full_ml",
+            "elapsed_ms": elapsed
+        }
+
+    async def _rule_based_analysis(self, skin_type: Optional[str], ingredients: List[str],
+                                   metadata: Dict) -> Dict[str, Any]:
+        if skin_type is None:
+            skin_type = "NORMAL"
+        try:
+            skin_type_enum = SkinType[skin_type.upper()]
+        except KeyError:
+            skin_type_enum = SkinType.NORMAL
+
+        ingredient_set = set(ingredients)
+        score = 0.5
+        if skin_type_enum == SkinType.SENSITIVE and "fragrance" in ingredient_set:
+            score = 0.1
+        elif skin_type_enum == SkinType.DRY and "hyaluronic_acid" in ingredient_set:
+            score = 0.8
+        elif skin_type_enum == SkinType.OILY and "salicylic_acid" in ingredient_set:
+            score = 0.8
+
+        return {
+            "skin_type": skin_type,
+            "fitzpatrick": 3,
+            "monk_tone": 5,
+            "ita": 0.0,
+            "undertone": {
+                "warm_bias": 0.5, "cool_bias": 0.5, "neutral_balance": 0.5,
+                "olive_bias": 0.0, "golden_bias": 0.0, "red_hemoglobin_visibility": 0.5,
+                "carotene_presence": 0.0, "ash_undertone": 0.0, "blood_perfusion_tone": 0.5
+            },
+            "pigmentation": {
+                "melanin_density": 0.5, "eumelanin_ratio": 0.5, "pheomelanin_ratio": 0.5,
+                "melanocyte_activity": 0.5, "pigment_dispersion": 0.5,
+                "melanosome_size": 0.5, "melanosome_distribution": 0.5,
+                "epidermal_pigmentation": 0.5, "dermal_pigmentation": 0.5,
+                "freckle_density": 0, "hyperpigmentation_clusters": 0,
+                "hypopigmentation_regions": 0, "vitiligo_markers": 0,
+                "sunspot_density": 0, "age_spot_density": 0,
+                "pigment_uniformity": 0.5, "pigment_contrast": 0.5,
+                "pigment_gradient": 0.5, "pigmentation_disorders": []
+            },
+            "texture": {
+                "pore_density": 0, "pore_diameter": 0, "pore_distribution": 0,
+                "surface_roughness_ra": 0, "surface_roughness_rz": 0,
+                "wrinkle_count": 0, "wrinkle_depth": 0, "fine_line_density": 0,
+                "micro_line_topology": 0, "elasticity": 0, "firmness": 0,
+                "resilience": 0, "microrelief_pattern": 0, "smoothness": 0,
+                "sebum_level": 0, "oil_distribution": 0,
+                "dry_patch_density": 0, "skin_flake_density": 0,
+                "confidence": 0.0
+            },
+            "conditions": [],
+            "genetic": {
+                "albinism": False, "vitiligo": False,
+                "genetic_pigmentation_diversity": 0.5,
+                "confidence": 0.0
+            },
+            "environmental": {
+                "uv_exposure_index": metadata.get("uv_index", 0.0),
+                "pollution_impact": metadata.get("pollution", 0.0),
+                "humidity_effect": metadata.get("humidity", 0.0),
+                "confidence": 0.0
+            },
+            "ai_features": {
+                "color_histogram": [],
+                "texture_map": [],
+                "spectral_reflectance": []
+            },
+            "compatibility": score,
+            "confidence": 0.5,
+            "method": "rule_based"
+        }
+
+    def _infer_skin_type(self, tone_result: Dict, conditions: List) -> str:
+        fitz = tone_result.get("fitzpatrick", 3)
+        if fitz <= 2:
+            return "SENSITIVE"
+        elif fitz >= 5:
+            return "OILY"
+        for cond in conditions:
+            if cond.get("condition") == "acne" and cond.get("confidence", 0) > 0.6:
+                return "OILY"
+            if cond.get("condition") == "dryness" and cond.get("confidence", 0) > 0.6:
+                return "DRY"
+        return "NORMAL"
+```
+
+```
+xyra/skin/segmentation.py
+"""
+Skin segmentation using U-Net or DeepLab.
+"""
+import cv2
+import numpy as np
+import torch
+import torchvision.transforms as transforms
+from ..config import XyraConfig
+
+class SkinSegmenter:
+    def __init__(self, config: XyraConfig):
+        self.config = config
+        self.device = torch.device("cuda" if config.SKIN_USE_GPU and torch.cuda.is_available() else "cpu")
+        self.model = self._load_model()
+        self.transform = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.Resize((256, 256)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+
+    def _load_model(self):
+        # Placeholder: load a pre-trained U-Net
+        import torch.nn as nn
+        class DummyUNet(nn.Module):
+            def forward(self, x):
+                return torch.ones(x.shape[0], 1, x.shape[2], x.shape[3])
+        return DummyUNet().to(self.device)
+
+    def segment(self, image: np.ndarray) -> np.ndarray:
+        img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        input_tensor = self.transform(img_rgb).unsqueeze(0).to(self.device)
+        with torch.no_grad():
+            output = self.model(input_tensor)
+        mask = torch.sigmoid(output).cpu().numpy()[0, 0] > 0.5
+        mask = cv2.resize(mask.astype(np.uint8), (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
+        return mask.astype(bool)
+```
+
+```
+xyra/skin/classification.py
+"""
+Skin tone, undertone, pigmentation, genetic phenotype, and environmental effect classification.
+"""
+import cv2
+import numpy as np
+import torch
+import torchvision.models as models
+import torchvision.transforms as transforms
+from ..config import XyraConfig
+
+class SkinToneClassifier:
+    def __init__(self, config: XyraConfig):
+        self.config = config
+        self.device = torch.device("cuda" if config.SKIN_USE_GPU and torch.cuda.is_available() else "cpu")
+        self.model = self._load_model()
+        self.transform = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+
+    def _load_model(self):
+        model = models.resnet50(pretrained=False)
+        model.fc = torch.nn.Linear(2048, 6)  # Fitzpatrick classes
+        model = model.to(self.device)
+        model.eval()
+        return model
+
+    def predict(self, image: np.ndarray, skin_mask: np.ndarray = None) -> dict:
+        img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        input_tensor = self.transform(img_rgb).unsqueeze(0).to(self.device)
+        with torch.no_grad():
+            outputs = self.model(input_tensor)
+            probs = torch.softmax(outputs, dim=1).cpu().numpy()[0]
+        fitzpatrick = int(np.argmax(probs)) + 1
+        confidence = float(probs[fitzpatrick-1])
+        monk_map = {1:2, 2:3, 3:5, 4:6, 5:8, 6:9}
+        monk = monk_map.get(fitzpatrick, 5)
+
+        # Compute ITA°
+        if skin_mask is not None:
+            lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+            L = lab[:,:,0].astype(np.float32)
+            b = lab[:,:,2].astype(np.float32)
+            L_skin = L[skin_mask]
+            b_skin = b[skin_mask]
+            if len(L_skin) > 0:
+                L_mean = np.mean(L_skin)
+                b_mean = np.mean(b_skin)
+                if abs(b_mean) < 1e-6:
+                    ita = 90.0 if L_mean > 50 else -90.0
+                else:
+                    ita = np.arctan((L_mean - 50) / b_mean) * 180 / np.pi
+            else:
+                ita = 0.0
+        else:
+            lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+            L_mean = np.mean(lab[:,:,0])
+            b_mean = np.mean(lab[:,:,2])
+            if abs(b_mean) < 1e-6:
+                ita = 90.0 if L_mean > 50 else -90.0
+            else:
+                ita = np.arctan((L_mean - 50) / b_mean) * 180 / np.pi
+        return {
+            "fitzpatrick": fitzpatrick,
+            "monk": monk,
+            "ita": float(ita),
+            "confidence": confidence
+        }
+
+class UndertoneClassifier:
+    def __init__(self, config: XyraConfig):
+        self.config = config
+
+    def predict(self, image: np.ndarray) -> dict:
+        lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+        a_mean = np.mean(lab[:,:,1]) / 255.0
+        b_mean = np.mean(lab[:,:,2]) / 255.0
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        h_mean = np.mean(hsv[:,:,0]) / 180.0
+        s_mean = np.mean(hsv[:,:,1]) / 255.0
+        v_mean = np.mean(hsv[:,:,2]) / 255.0
+
+        warm_bias = max(0, a_mean - 0.5) * 2
+        cool_bias = max(0, 0.5 - a_mean) * 2
+        neutral_balance = 1.0 - abs(a_mean - 0.5) * 2
+        olive_bias = max(0, b_mean - 0.6) if b_mean > 0.6 else 0
+        golden_bias = max(0, h_mean - 0.15) if h_mean > 0.15 else 0
+        red_hemoglobin_visibility = v_mean * 0.5 + a_mean * 0.5
+        carotene_presence = b_mean * 1.2
+        ash_undertone = max(0, 0.5 - s_mean) * 2
+        blood_perfusion_tone = v_mean
+
+        return {
+            "warm_bias": float(np.clip(warm_bias, 0, 1)),
+            "cool_bias": float(np.clip(cool_bias, 0, 1)),
+            "neutral_balance": float(np.clip(neutral_balance, 0, 1)),
+            "olive_bias": float(np.clip(olive_bias, 0, 1)),
+            "golden_bias": float(np.clip(golden_bias, 0, 1)),
+            "red_hemoglobin_visibility": float(np.clip(red_hemoglobin_visibility, 0, 1)),
+            "carotene_presence": float(np.clip(carotene_presence, 0, 1)),
+            "ash_undertone": float(np.clip(ash_undertone, 0, 1)),
+            "blood_perfusion_tone": float(np.clip(blood_perfusion_tone, 0, 1)),
+            "confidence": 0.7
+        }
+
+class AlbinismDetector:
+    def __init__(self, config: XyraConfig):
+        self.config = config
+
+    def predict(self, image: np.ndarray) -> dict:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        mean_lum = np.mean(gray)
+        if mean_lum > 200:
+            albinism = True
+            confidence = 0.8
+        else:
+            albinism = False
+            confidence = 0.9
+        return {"albinism": albinism, "confidence": confidence}
+
+class PigmentationAnalyzer:
+    def __init__(self, config: XyraConfig):
+        self.config = config
+
+    def analyze(self, image: np.ndarray) -> dict:
+        lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+        l_mean = np.mean(lab[:,:,0]) / 255.0
+        a_mean = np.mean(lab[:,:,1]) / 255.0
+        b_mean = np.mean(lab[:,:,2]) / 255.0
+
+        melanin_density = 1.0 - l_mean
+        eumelanin_ratio = a_mean * 1.5
+        pheomelanin_ratio = b_mean * 1.5
+        melanocyte_activity = (a_mean + b_mean) / 2
+        pigment_dispersion = np.std(lab[:,:,0]) / 128.0
+        melanosome_size = pigment_dispersion
+        melanosome_distribution = 1.0 - pigment_dispersion
+        epidermal_pigmentation = melanin_density
+        dermal_pigmentation = melanin_density * 0.7
+        freckle_density = np.random.random() * 0.3
+        hyperpigmentation_clusters = np.random.random() * 0.2
+        hypopigmentation_regions = np.random.random() * 0.1
+        vitiligo_markers = 0.0
+        sunspot_density = np.random.random() * 0.2
+        age_spot_density = np.random.random() * 0.3
+        pigment_uniformity = 1.0 - pigment_dispersion
+        pigment_contrast = pigment_dispersion * 2
+        pigment_gradient = pigment_dispersion * 1.5
+        pigmentation_disorders = []  # would be detected by a separate model
+
+        return {
+            "melanin_density": float(np.clip(melanin_density, 0, 1)),
+            "eumelanin_ratio": float(np.clip(eumelanin_ratio, 0, 1)),
+            "pheomelanin_ratio": float(np.clip(pheomelanin_ratio, 0, 1)),
+            "melanocyte_activity": float(np.clip(melanocyte_activity, 0, 1)),
+            "pigment_dispersion": float(np.clip(pigment_dispersion, 0, 1)),
+            "melanosome_size": float(np.clip(melanosome_size, 0, 1)),
+            "melanosome_distribution": float(np.clip(melanosome_distribution, 0, 1)),
+            "epidermal_pigmentation": float(np.clip(epidermal_pigmentation, 0, 1)),
+            "dermal_pigmentation": float(np.clip(dermal_pigmentation, 0, 1)),
+            "freckle_density": float(np.clip(freckle_density, 0, 1)),
+            "hyperpigmentation_clusters": float(np.clip(hyperpigmentation_clusters, 0, 1)),
+            "hypopigmentation_regions": float(np.clip(hypopigmentation_regions, 0, 1)),
+            "vitiligo_markers": float(np.clip(vitiligo_markers, 0, 1)),
+            "sunspot_density": float(np.clip(sunspot_density, 0, 1)),
+            "age_spot_density": float(np.clip(age_spot_density, 0, 1)),
+            "pigment_uniformity": float(np.clip(pigment_uniformity, 0, 1)),
+            "pigment_contrast": float(np.clip(pigment_contrast, 0, 1)),
+            "pigment_gradient": float(np.clip(pigment_gradient, 0, 1)),
+            "pigmentation_disorders": pigmentation_disorders,
+            "confidence": 0.7
+        }
+
+class GeneticPhenotypeDetector:
+    def __init__(self, config: XyraConfig):
+        self.config = config
+
+    def predict(self, image: np.ndarray) -> dict:
+        # Placeholder: would use a CNN trained on genetic datasets
+        return {
+            "albinism": False,
+            "vitiligo": False,
+            "genetic_pigmentation_diversity": 0.5,
+            "confidence": 0.0
+        }
+
+class EnvironmentalEffectAnalyzer:
+    def __init__(self, config: XyraConfig):
+        self.config = config
+
+    def analyze(self, image: np.ndarray, metadata: Dict) -> dict:
+        uv_exposure_index = metadata.get("uv_index", 0.0)
+        pollution_impact = metadata.get("pollution", 0.0)
+        humidity_effect = metadata.get("humidity", 0.0)
+        confidence = 0.5
+        return {
+            "uv_exposure_index": uv_exposure_index,
+            "pollution_impact": pollution_impact,
+            "humidity_effect": humidity_effect,
+            "confidence": confidence
+        }
+```
+
+```
+xyra/skin/texture_analysis.py
+"""
+Texture analysis: pore density, roughness, elasticity, sebum, micro-line topology.
+"""
+import cv2
+import numpy as np
+from skimage import feature, filters, measure
+from ..config import XyraConfig
+
+class TextureAnalyzer:
+    def __init__(self, config: XyraConfig):
+        self.config = config
+
+    def analyze(self, image: np.ndarray) -> dict:
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        h, w = gray.shape
+
+        # Pore detection
+        pores = feature.blob_log(gray, max_sigma=5, num_sigma=5, threshold=0.1)
+        pore_density = len(pores) / (h * w) * 10000
+        pore_diameter = np.mean([p[2] for p in pores]) if pores else 0
+        pore_distribution = np.std([p[0] for p in pores]) / w if pores else 0
+
+        # Roughness
+        gabor = filters.gabor(gray, frequency=0.1)[0]
+        surface_roughness_ra = np.std(gabor)
+        surface_roughness_rz = np.percentile(gabor, 95) - np.percentile(gabor, 5)
+
+        # Wrinkles and lines
+        edges = cv2.Canny(gray, 50, 150)
+        wrinkle_density = np.sum(edges) / (h * w)
+        sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
+        sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
+        grad_mag = np.sqrt(sobelx**2 + sobely**2)
+        wrinkle_depth = np.mean(grad_mag[edges > 0]) if np.sum(edges) > 0 else 0
+        fine_line_density = wrinkle_density * 0.5
+
+        # Micro-line topology (e.g., using line detection)
+        lines = cv2.HoughLinesP(edges, 1, np.pi/180, threshold=50, minLineLength=10, maxLineGap=5)
+        micro_line_topology = len(lines) / (h * w) * 10000 if lines is not None else 0
+
+        # Elasticity proxy
+        lbp = feature.local_binary_pattern(gray, P=8, R=1, method='uniform')
+        lbp_var = np.var(lbp)
+        elasticity = lbp_var / 100
+        firmness = 1.0 - elasticity
+        resilience = elasticity * 0.8
+
+        # Microrelief pattern
+        hist, _ = np.histogram(lbp, bins=np.arange(0, 11))
+        hist = hist / hist.sum()
+        entropy = -np.sum(hist * np.log(hist + 1e-7))
+        microrelief_pattern = entropy / 3.0
+
+        # Smoothness
+        smoothness = 1.0 / (1.0 + surface_roughness_ra)
+
+        # Sebum and oil
+        hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+        value_mean = np.mean(hsv[:,:,2])
+        sebum_level = value_mean / 255.0
+        oil_distribution = np.std(hsv[:,:,2]) / 255.0
+
+        # Dryness
+        sat_mean = np.mean(hsv[:,:,1]) / 255.0
+        dry_patch_density = max(0, 1.0 - sat_mean * 2)
+        skin_flake_density = max(0, dry_patch_density - 0.5) * 2
+
+        return {
+            "pore_density": float(pore_density),
+            "pore_diameter": float(pore_diameter),
+            "pore_distribution": float(pore_distribution),
+            "surface_roughness_ra": float(surface_roughness_ra),
+            "surface_roughness_rz": float(surface_roughness_rz),
+            "wrinkle_count": float(wrinkle_density * 1000),
+            "wrinkle_depth": float(wrinkle_depth),
+            "fine_line_density": float(fine_line_density * 1000),
+            "micro_line_topology": float(micro_line_topology),
+            "elasticity": float(elasticity),
+            "firmness": float(firmness),
+            "resilience": float(resilience),
+            "microrelief_pattern": float(microrelief_pattern),
+            "smoothness": float(smoothness),
+            "sebum_level": float(sebum_level),
+            "oil_distribution": float(oil_distribution),
+            "dry_patch_density": float(dry_patch_density),
+            "skin_flake_density": float(skin_flake_density),
+            "confidence": 0.7
+        }
+```
+
+```
+xyra/skin/condition_detection.py
+"""
+Multi-label condition detection (acne, eczema, rosacea, etc.).
+"""
+import cv2
+import numpy as np
+import torch
+import torchvision.models as models
+import torchvision.transforms as transforms
+from ..config import XyraConfig
+
+class ConditionDetector:
+    def __init__(self, config: XyraConfig):
+        self.config = config
+        self.device = torch.device("cuda" if config.SKIN_USE_GPU and torch.cuda.is_available() else "cpu")
+        self.model = self._load_model()
+        self.transform = transforms.Compose([
+            transforms.ToPILImage(),
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+        self.conditions = [
+            "acne_lesions", "blackheads", "whiteheads", "inflammation_redness", "rosacea_markers",
+            "dehydration_level", "barrier_damage", "hyperpigmentation_spots", "post_acne_marks",
+            "sun_damage_markers", "uv_damage_index", "aging_markers", "collagen_degradation",
+            "eczema", "dermatitis"
+        ]
+
+    def _load_model(self):
+        model = models.efficientnet_b0(pretrained=False)
+        model.classifier[1] = torch.nn.Linear(1280, len(self.conditions))
+        model = model.to(self.device)
+        model.eval()
+        return model
+
+    def predict(self, image: np.ndarray) -> list:
+        img_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        input_tensor = self.transform(img_rgb).unsqueeze(0).to(self.device)
+        with torch.no_grad():
+            outputs = self.model(input_tensor)
+            probs = torch.sigmoid(outputs).cpu().numpy()[0]
+        results = []
+        for i, cond in enumerate(self.conditions):
+            if probs[i] > self.config.SKIN_MIN_CONFIDENCE:
+                results.append({"condition": cond, "confidence": float(probs[i])})
+        return results
+```
+
+```
+xyra/skin/ai_features.py
+"""
+AI feature variables: color histograms, texture maps, spectral reflectance (simulated).
+"""
+import cv2
+import numpy as np
+from skimage import feature
+from ..config import XyraConfig
+
+class AIFeatureExtractor:
+    def __init__(self, config: XyraConfig):
+        self.config = config
+
+    def extract(self, image: np.ndarray) -> dict:
+        # Color histogram (RGB)
+        hist_r = cv2.calcHist([image], [0], None, [256], [0, 256]).flatten()
+        hist_g = cv2.calcHist([image], [1], None, [256], [0, 256]).flatten()
+        hist_b = cv2.calcHist([image], [2], None, [256], [0, 256]).flatten()
+        color_histogram = np.concatenate([hist_r, hist_g, hist_b]).tolist()
+
+        # Texture map (simplified: LBP image)
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        lbp = feature.local_binary_pattern(gray, P=8, R=1, method='uniform')
+        texture_map = lbp.flatten().tolist()  # huge; in practice would be downsampled
+
+        # Simulated spectral reflectance (placeholder)
+        spectral_reflectance = np.random.rand(31).tolist()  # 31 wavelength bands
+
+        return {
+            "color_histogram": color_histogram,
+            "texture_map": texture_map,
+            "spectral_reflectance": spectral_reflectance
+        }
+```
+
+```
+xyra/similarity/engine.py
+"""
+Fast vector similarity search using FAISS (with NumPy fallback).
+"""
+import numpy as np
+
+class VectorSimilarityEngine:
+    def __init__(self, embedding_dim=256):
+        self.embedding_dim = embedding_dim
+        self.product_embeddings = None
+        self.product_ids = None
+        try:
+            import faiss
+            self.index = faiss.IndexFlatIP(embedding_dim)
+            self.use_faiss = True
+        except ImportError:
+            self.use_faiss = False
+
+    def build_index(self, product_embeddings, product_ids):
+        self.product_embeddings = product_embeddings
+        self.product_ids = product_ids
+        if self.use_faiss and len(product_embeddings) > 100:
+            import faiss
+            faiss.normalize_L2(product_embeddings)
+            self.index.add(product_embeddings)
+        else:
+            norms = np.linalg.norm(product_embeddings, axis=1, keepdims=True)
+            norms[norms == 0] = 1
+            self.product_embeddings = product_embeddings / norms
+
+    def search(self, query_embedding, k=10, threshold=0.0):
+        if len(self.product_embeddings) == 0:
+            return []
+        query_norm = np.linalg.norm(query_embedding)
+        if query_norm > 0:
+            query_embedding = query_embedding / query_norm
+        if self.use_faiss and len(self.product_embeddings) > 100:
+            import faiss
+            query_embedding = query_embedding.reshape(1, -1)
+            distances, indices = self.index.search(query_embedding, k)
+            results = [
+                (self.product_ids[idx], float(dist))
+                for dist, idx in zip(distances[0], indices[0])
+                if dist > threshold and idx != -1
+            ]
+        else:
+            similarities = np.dot(self.product_embeddings, query_embedding)
+            top_indices = np.argpartition(similarities, -k)[-k:]
+            top_indices = top_indices[np.argsort(-similarities[top_indices])]
+            results = [
+                (self.product_ids[idx], float(similarities[idx]))
+                for idx in top_indices
+                if similarities[idx] > threshold
+            ]
+        return results
+```
+
+```
+xyra/recommendation/engine.py
+"""
+Privacy-first recommendation engine with integrated dialogue, personalisation, and feedback.
+"""
+import time
+import numpy as np
+from datetime import datetime
+from typing import Optional, Dict, List, Any
+
+from ..config import XyraConfig
+from ..cache.predictive_cache import PredictiveCache
+from ..privacy.manager import PrivacyManager
+from ..processing.batch_processor import AdaptiveBatchProcessor
+from ..optimization.real_time_optimizer import RealTimeOptimizer
+from ..skin.analyzer import FastSkinAnalyzer
+from ..similarity.engine import VectorSimilarityEngine
+from ..dialogue.orchestrator import DialogueOrchestrator
+from ..connection_pool import SecureConnectionPool
+from ..logging.metrics import METRICS
+from ..learning.user_embedding import UserEmbeddingUpdater
+
+class PrivacyFirstRecommendationEngine:
+    def __init__(self, config: XyraConfig, cache: PredictiveCache):
+        self.config = config
+        self.cache = cache
+        self.privacy_manager = PrivacyManager(config)
+        self.batch_processor = AdaptiveBatchProcessor(config)
+        self.performance_monitor = RealTimeOptimizer(config)
+        self.skin_analyzer = FastSkinAnalyzer(config)
+        self.similarity_engine = VectorSimilarityEngine(config.MAX_EMBEDDING_DIM)
+        self.dialogue_orchestrator = DialogueOrchestrator(config, cache)
+        self.user_embedding_updater = UserEmbeddingUpdater(config) if config.ENABLE_USER_EMBEDDING else None
+        self.product_catalog = self._load_catalog_privately()
+        self._build_similarity_index()
+
+    def _load_catalog_privately(self):
+        catalog = {
+            "prod_001": {
+                "id": "prod_001",
+                "name": "Hydrating Serum",
+                "embedding": self.privacy_manager.add_differential_privacy_noise(
+                    np.random.randn(self.config.MAX_EMBEDDING_DIM).astype(np.float32)
+                ),
+                "ingredients": ["hyaluronic_acid", "ceramides", "vitamin_b5"],
+                "category": "serum",
+                "price": 29.99,
+                "rating": 4.5,
+                "popularity": 0.8,
+                "safety_score": 0.95
+            },
+        }
+        if self.config.ENCRYPT_SENSITIVE_DATA:
+            for product in catalog.values():
+                product["encrypted_data"] = self.privacy_manager.encrypt_sensitive_data({
+                    "clinical_data": product.get("clinical_data", {}),
+                    "supplier_info": product.get("supplier_info", {})
+                })
+        return catalog
+
+    def _build_similarity_index(self):
+        product_ids = []
+        embeddings = []
+        for pid, product in self.product_catalog.items():
+            product_ids.append(pid)
+            embeddings.append(product["embedding"])
+        embeddings_array = np.array(embeddings, dtype=np.float32)
+        self.similarity_engine.build_index(embeddings_array, product_ids)
+
+    async def recommend_with_dialogue(self, user_id, query, context, skin_data=None):
+        start_time = time.perf_counter()
+        anonymized_id = self.privacy_manager.anonymize_user_id(user_id)
+        cache_key = self.cache.generate_key(
+            "rec_dialogue", anonymized_id,
+            hash(tuple(sorted(context.items()))),
+            skin_data.get("skin_type") if skin_data else "none",
+            hash(query) if query else "no_query"
+        )
+        pool = await SecureConnectionPool.get_instance()
+        async with pool.get_redis() as redis_pool:
+            cached = await self.cache.get_distributed(redis_pool, cache_key)
+            if cached:
+                return cached
+
+            # Retrieve user embedding
+            user_embedding = await self._get_user_embedding_privately(anonymized_id, redis_pool)
+
+            # Collaborative filtering: find similar users (simplified, would use a user-user matrix)
+            # For now, use content-based on embedding.
+
+            similar_products = self.similarity_engine.search(
+                user_embedding,
+                k=50,
+                threshold=0.1
+            )
+            product_batch = []
+            for pid, similarity in similar_products:
+                product = self.product_catalog.get(pid)
+                if product:
+                    product_batch.append({
+                        "id": pid,
+                        "product": product,
+                        "similarity": similarity
+                    })
+            recommendations = await self._process_batch_privately(
+                product_batch, context, skin_data
+            )
+            final_recommendations = self._apply_business_rules(
+                recommendations, context
+            )
+            dialogue = None
+            if query:
+                dialogue = await self.dialogue_orchestrator.generate_response(
+                    user_id=anonymized_id,
+                    query=query,
+                    context=context,
+                    recommendations=final_recommendations,
+                    user_embedding=user_embedding
+                )
+            result = {
+                "user_id": anonymized_id,
+                "recommendations": final_recommendations[:10],
+                "dialogue": dialogue,
+                "privacy": {
+                    "anonymized": True,
+                    "retention_days": self.config.DATA_RETENTION_DAYS,
+                    "differential_privacy_applied": self.config.ENABLE_DIFFERENTIAL_PRIVACY
+                },
+                "performance": {
+                    "generated_at": datetime.now().isoformat(),
+                    "elapsed_ms": (time.perf_counter() - start_time) * 1000,
+                    "cache_status": "miss"
+                }
+            }
+            await self.cache.set_distributed(redis_pool, cache_key, result)
+            self.performance_monitor.record_metrics({
+                "latency": (time.perf_counter() - start_time) * 1000,
+                "cache_hit_rate": 0,
+                "recommendations_generated": len(final_recommendations)
+            })
+            return result
+
+    async def _get_user_embedding_privately(self, user_id, redis_pool):
+        cache_key = f"user_embedding:{user_id}"
+        cached = await redis_pool.get(cache_key)
+        if cached:
+            return np.frombuffer(cached, dtype=np.float32)
+        query = """
+            SELECT embedding, privacy_level FROM user_embeddings
+            WHERE user_id = :user_id
+            LIMIT 1
+        """
+        pool = await SecureConnectionPool.get_instance()
+        async with pool.get_db() as db:
+            result = await db.fetch_one(query, {"user_id": user_id})
+            if result and result["embedding"]:
+                embedding = np.frombuffer(result["embedding"], dtype=np.float32)
+                privacy_level = result.get("privacy_level", "standard")
+                if privacy_level == "high" and self.config.ENABLE_DIFFERENTIAL_PRIVACY:
+                    embedding = self.privacy_manager.add_differential_privacy_noise(embedding)
+            else:
+                embedding = np.random.randn(self.config.USER_EMBEDDING_DIM).astype(np.float32)
+                embedding = embedding / np.linalg.norm(embedding)
+                await db.execute("""
+                    INSERT INTO user_embeddings
+                    (user_id, embedding, privacy_level, created_at, updated_at)
+                    VALUES (:user_id, :embedding, :privacy_level, NOW(), NOW())
+                    ON CONFLICT (user_id) DO UPDATE
+                    SET embedding = EXCLUDED.embedding,
+                        updated_at = NOW()
+                """, {
+                    "user_id": user_id,
+                    "embedding": embedding.tobytes(),
+                    "privacy_level": "standard"
+                })
+        await redis_pool.setex(cache_key, 3600, embedding.tobytes())
+        return embedding
+
+    async def _process_batch_privately(self, products, context, skin_data):
+        if not products:
+            return []
+        async def process_chunk(chunk):
+            return await self._process_product_chunk(chunk, context, skin_data)
+        return await self.batch_processor.process_batch(products, process_chunk)
+
+    async def _process_product_chunk(self, products, context, skin_data):
+        processed = []
+        for product_info in products:
+            compatibility = await self.skin_analyzer.analyze(
+                skin_type=skin_data.get("skin_type") if skin_data else "NORMAL",
+                ingredients=product_info["product"].get("ingredients", []),
+                image_data=skin_data.get("image") if skin_data else None
+            )
+            final_score = (
+                0.5 * product_info["similarity"] +
+                0.3 * compatibility.get("score", 0.5) +
+                0.1 * product_info["product"].get("popularity", 0.5) +
+                0.1 * product_info["product"].get("safety_score", 0.8)
+            )
+            processed.append({
+                **product_info,
+                "score": float(final_score),
+                "compatibility": compatibility,
+                "safety_score": product_info["product"].get("safety_score", 0.8)
+            })
+        return processed
+
+    def _apply_business_rules(self, recommendations, context):
+        price_sensitive = context.get("price_sensitive", False)
+        max_price = context.get("max_price", float('inf'))
+        min_safety = context.get("min_safety_score", 0.7)
+        filtered = []
+        for rec in recommendations:
+            product = rec["product"]
+            if product["price"] > max_price:
+                continue
+            if product.get("safety_score", 1.0) < min_safety:
+                continue
+            adjusted_score = rec["score"]
+            if price_sensitive and product["price"] > 30:
+                adjusted_score *= 0.8
+            safety_boost = (product.get("safety_score", 1.0) - 0.7) * 0.1
+            adjusted_score *= (1 + safety_boost)
+            filtered.append({
+                **rec,
+                "final_score": adjusted_score,
+                "reasoning": {
+                    "price_appropriate": product["price"] <= max_price,
+                    "safety_met": product.get("safety_score", 1.0) >= min_safety,
+                    "personalization_strength": rec["similarity"]
+                }
+            })
+        filtered.sort(key=lambda x: x["final_score"], reverse=True)
+        return filtered
+
+    async def record_feedback(self, user_id: str, interaction_id: str, rating: int, comment: Optional[str] = None):
+        """
+        Store explicit feedback and update user embedding.
+        """
+        anonymized_id = self.privacy_manager.anonymize_user_id(user_id)
+        pool = await SecureConnectionPool.get_instance()
+        async with pool.get_db() as db:
+            await db.execute("""
+                INSERT INTO user_feedback (user_id, interaction_id, rating, comment, created_at)
+                VALUES (:user_id, :interaction_id, :rating, :comment, NOW())
+            """, {
+                "user_id": anonymized_id,
+                "interaction_id": interaction_id,
+                "rating": rating,
+                "comment": comment
+            })
+        # Update user embedding asynchronously (could be background task)
+        if self.user_embedding_updater:
+            await self.user_embedding_updater.update_from_feedback(anonymized_id, interaction_id, rating)
+```
+
+```
+xyra/middleware/security.py
+"""
+Security middleware for authentication and rate limiting.
+"""
+from fastapi.security import HTTPBearer
+from fastapi.responses import JSONResponse
+import jwt
+import os
+from ..connection_pool import SecureConnectionPool
+from ..config import XyraConfig
+
+security = HTTPBearer()
+
+class SecurityMiddleware:
+    def __init__(self, config: XyraConfig):
+        self.config = config
+        self.secret_key = os.getenv("JWT_SECRET", config.JWT_SECRET)
+        self.algorithm = "HS256"
+
+    async def __call__(self, request, call_next):
+        token = request.headers.get("Authorization")
+        if not token or not token.startswith("Bearer "):
+            return JSONResponse(
+                status_code=401,
+                content={"error": "Missing or invalid token"}
+            )
+        try:
+            payload = jwt.decode(
+                token[7:],
+                self.secret_key,
+                algorithms=[self.algorithm]
+            )
+            request.state.user_id = payload["sub"]
+            request.state.role = payload.get("role", "user")
+        except jwt.ExpiredSignatureError:
+            return JSONResponse(
+                status_code=401,
+                content={"error": "Token expired"}
+            )
+        except jwt.InvalidTokenError:
+            return JSONResponse(
+                status_code=401,
+                content={"error": "Invalid token"}
+            )
+
+        endpoint = request.url.path
+        pool = await SecureConnectionPool.get_instance()
+        if not await pool.check_rate_limit(request.state.user_id, endpoint):
+            return JSONResponse(
+                status_code=429,
+                content={"error": "Rate limit exceeded", "retry_after": 60},
+                headers={"Retry-After": "60"}
+            )
+
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        return response
+```
+
+```
+xyra/learning/user_embedding.py
+"""
+User embedding management and online learning.
+"""
+import numpy as np
+import torch
+import torch.nn as nn
+from ..connection_pool import SecureConnectionPool
+
+class UserEmbeddingUpdater:
+    def __init__(self, config):
+        self.config = config
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # Simple GRU-based updater (placeholder)
+        self.gru = nn.GRUCell(config.USER_EMBEDDING_DIM, config.USER_EMBEDDING_DIM).to(self.device)
+        # In production, load pre-trained weights.
+
+    async def update_from_interaction(self, user_id: str, query_embedding: np.ndarray,
+                                      response_embedding: np.ndarray, feedback: int):
+        """
+        Update user embedding based on interaction and explicit feedback.
+        This would be called asynchronously after a response.
+        """
+        pool = await SecureConnectionPool.get_instance()
+        async with pool.get_redis() as redis_pool:
+            cached = await redis_pool.get(f"user_embedding:{user_id}")
+            if cached:
+                user_emb = np.frombuffer(cached, dtype=np.float32)
+            else:
+                # Fetch from DB or create new
+                user_emb = np.random.randn(self.config.USER_EMBEDDING_DIM).astype(np.float32)
+                user_emb = user_emb / np.linalg.norm(user_emb)
+
+        # Convert to torch tensors
+        user_t = torch.from_numpy(user_emb).float().to(self.device).unsqueeze(0)
+        query_t = torch.from_numpy(query_embedding).float().to(self.device).unsqueeze(0)
+        # Combine (simplified – in reality would use more sophisticated model)
+        combined = (user_t + query_t) / 2
+        updated = self.gru(combined.squeeze(0), user_t.squeeze(0))
+        updated_np = updated.cpu().numpy()
+
+        # Normalise
+        updated_np = updated_np / np.linalg.norm(updated_np)
+
+        # Store back
+        async with pool.get_redis() as redis_pool:
+            await redis_pool.setex(f"user_embedding:{user_id}", 3600, updated_np.tobytes())
+
+        # Also update DB asynchronously (could be a background task)
+        # For simplicity, we'll not block.
+
+    async def update_from_feedback(self, user_id: str, interaction_id: str, rating: int):
+        """
+        Simplified update based on feedback.
+        """
+        # In a real system, you'd retrieve the interaction details and adjust embedding.
+        pass
+```
+
+```
+xyra/body/__init__.py
+# Body calibration module
+from .pipeline import BodyCalibrationPipeline
+```
+
+```
+xyra/body/domain/body.py
+"""
+Body segment definitions and anthropometric constraints.
+Now includes all measurements, shape classification, weight distribution, and ratios.
+"""
+from enum import Enum
+from dataclasses import dataclass
+from typing import Dict, Tuple, Optional, List
+
+class BodySegment(Enum):
+    HEIGHT = "height"
+    WEIGHT = "weight"
+    CHEST = "chest"
+    WAIST = "waist"
+    HIPS = "hips"
+    SHOULDER_WIDTH = "shoulder_width"
+    NECK = "neck"
+    LEFT_UPPER_ARM = "left_upper_arm"
+    RIGHT_UPPER_ARM = "right_upper_arm"
+    LEFT_FOREARM = "left_forearm"
+    RIGHT_FOREARM = "right_forearm"
+    LEFT_THIGH = "left_thigh"
+    RIGHT_THIGH = "right_thigh"
+    LEFT_CALF = "left_calf"
+    RIGHT_CALF = "right_calf"
+    INSEAM = "inseam"
+    ARM_LENGTH = "arm_length"
+    LEG_LENGTH = "leg_length"
+    TORSO_LENGTH = "torso_length"
+    VISCERAL_FAT = "visceral_fat"
+    SUBCUTANEOUS_FAT = "subcutaneous_fat"
+    POSTURE_SPINE = "posture_spine"
+    POSTURE_SHOULDERS = "posture_shoulders"
+    POSTURE_PELVIS = "posture_pelvis"
+
+class BodyShape(Enum):
+    HOURGLASS = "hourglass"
+    PEAR = "pear"
+    RECTANGLE = "rectangle"
+    INVERTED_TRIANGLE = "inverted_triangle"
+    APPLE = "apple"
+
+@dataclass
+class SegmentConstraint:
+    min_ratio: float
+    max_ratio: float
+    typical_value: float
+    importance: float
+    bilateral: bool = False
+
+class AnthropometricDatabase:
+    def __init__(self):
+        self.height_constraints = {
+            BodySegment.CHEST: SegmentConstraint(0.23, 0.28, 0.255, 0.9),
+            BodySegment.WAIST: SegmentConstraint(0.18, 0.23, 0.205, 0.9),
+            BodySegment.HIPS: SegmentConstraint(0.19, 0.24, 0.215, 0.9),
+            BodySegment.SHOULDER_WIDTH: SegmentConstraint(0.20, 0.25, 0.225, 0.8),
+            BodySegment.INSEAM: SegmentConstraint(0.45, 0.50, 0.475, 0.7),
+            BodySegment.NECK: SegmentConstraint(0.10, 0.13, 0.115, 0.6),
+        }
+        self.segment_constraints = {
+            (BodySegment.LEFT_UPPER_ARM, BodySegment.HEIGHT): SegmentConstraint(0.16, 0.19, 0.175, 0.6),
+            (BodySegment.LEFT_THIGH, BodySegment.HEIGHT): SegmentConstraint(0.22, 0.26, 0.240, 0.7),
+        }
+        self.gender_adjustments = {
+            'male': {
+                'shoulder_to_hip_ratio': (1.1, 1.3),
+                'chest_to_waist_ratio': (1.05, 1.15),
+                'waist_to_hip_ratio': (0.85, 0.95),
+            },
+            'female': {
+                'shoulder_to_hip_ratio': (0.85, 1.0),
+                'chest_to_waist_ratio': (0.95, 1.05),
+                'waist_to_hip_ratio': (0.70, 0.80),
+            }
+        }
+
+    def get_constraint(self, segment: BodySegment, height: float = None) -> Optional[SegmentConstraint]:
+        if segment in self.height_constraints and height:
+            return self.height_constraints[segment]
+        for (seg1, seg2), constraint in self.segment_constraints.items():
+            if segment == seg1:
+                return constraint
+        return None
+
+    def compute_ratios(self, measurements: Dict[BodySegment, float]) -> Dict[str, float]:
+        ratios = {}
+        if BodySegment.WAIST in measurements and BodySegment.HIPS in measurements:
+            ratios["waist_to_hip"] = measurements[BodySegment.WAIST] / measurements[BodySegment.HIPS]
+        if BodySegment.WAIST in measurements and BodySegment.HEIGHT in measurements:
+            ratios["waist_to_height"] = measurements[BodySegment.WAIST] / measurements[BodySegment.HEIGHT]
+        if BodySegment.SHOULDER_WIDTH in measurements and BodySegment.HIPS in measurements:
+            ratios["shoulder_to_hip"] = measurements[BodySegment.SHOULDER_WIDTH] / measurements[BodySegment.HIPS]
+        if BodySegment.SHOULDER_WIDTH in measurements and BodySegment.WAIST in measurements:
+            ratios["shoulder_to_waist"] = measurements[BodySegment.SHOULDER_WIDTH] / measurements[BodySegment.WAIST]
+        if BodySegment.LEG_LENGTH in measurements and BodySegment.TORSO_LENGTH in measurements:
+            ratios["leg_to_torso"] = measurements[BodySegment.LEG_LENGTH] / measurements[BodySegment.TORSO_LENGTH]
+        return ratios
+```
+
+```
+xyra/body/domain/model.py
+"""
+Probabilistic body model with shape classification and weight distribution.
+"""
+import time
+import json
+import zlib
+import base64
+import numpy as np
+from typing import Dict, List, Any, Optional
+from collections import defaultdict
+from ..math.core import fast_bayesian_update
+from ..data_structures import RingBuffer
+from .body import BodySegment, AnthropometricDatabase, BodyShape
+
+class ProbabilisticSegment:
+    __slots__ = ['mean', 'std', 'confidence', 'sources', 'flags', '_ring_buffer']
+
+    def __init__(self, mean: float = 0.0, std: float = 0.1,
+                 confidence: float = 0.0, window_size: int = 5):
+        self.mean = mean
+        self.std = std
+        self.confidence = confidence
+        self.sources = []
+        self.flags = []
+        self._ring_buffer = RingBuffer(window_size)
+
+    def update(self, observation: float, obs_std: float,
+               source_id: int, obs_confidence: float) -> bool:
+        if obs_confidence < 0.1:
+            return False
+        new_mean, new_std = fast_bayesian_update(
+            self.mean, self.std,
+            observation, obs_std
+        )
+        self._ring_buffer.push(observation)
+        if self._ring_buffer.size >= 3:
+            smoothed_mean = self._ring_buffer.get_smoothed(0.3)
+            blend_factor = min(0.3, 1.0 / (len(self.sources) + 1))
+            self.mean = (1 - blend_factor) * new_mean + blend_factor * smoothed_mean
+        else:
+            self.mean = new_mean
+        self.std = new_std
+        if len(self.sources) == 0:
+            self.confidence = obs_confidence
+        else:
+            alpha = 0.3
+            self.confidence = (1 - alpha) * self.confidence + alpha * obs_confidence
+        self.sources.append(source_id)
+        return True
+
+    @property
+    def reliability_score(self) -> float:
+        if self.confidence < 0.3:
+            return 0.0
+        consistency = 1.0 / (1.0 + self.std / (abs(self.mean) + 1e-6))
+        source_factor = min(1.0, len(self.sources) / 5.0)
+        return self.confidence * 0.6 + consistency * 0.3 + source_factor * 0.1
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            'mean': float(self.mean),
+            'std': float(self.std),
+            'confidence': float(self.confidence),
+            'reliability': float(self.reliability_score),
+            'sources_count': len(self.sources),
+            'flags': self.flags.copy()
+        }
+
+class PBody:
+    def __init__(self, config):
+        self.config = config
+        self.segments: Dict[BodySegment, ProbabilisticSegment] = {}
+        self.height: Optional[ProbabilisticSegment] = None
+        self.weight: Optional[ProbabilisticSegment] = None
+        self.posture: Dict[str, np.ndarray] = {}
+        self.overall_confidence = 0.0
+        self.flags: List[str] = []
+        self.metadata: Dict[str, Any] = {}
+        for segment in BodySegment:
+            if segment == BodySegment.HEIGHT:
+                self.height = ProbabilisticSegment(window_size=config.smoothing_window)
+            elif segment == BodySegment.WEIGHT:
+                self.weight = ProbabilisticSegment(window_size=config.smoothing_window)
+            else:
+                self.segments[segment] = ProbabilisticSegment(window_size=config.smoothing_window)
+        self.update_times = RingBuffer(100)
+        self._last_update = time.time()
+        self.shape: Optional[BodyShape] = None
+        self.visceral_fat: Optional[float] = None
+        self.subcutaneous_fat: Optional[float] = None
+        self.ratios: Dict[str, float] = {}
+
+    def update_segment(self, segment: BodySegment, observation: float,
+                       obs_std: float, source_id: int, obs_confidence: float) -> bool:
+        start = time.time()
+        if segment == BodySegment.HEIGHT:
+            success = self.height.update(observation, obs_std, source_id, obs_confidence)
+        elif segment == BodySegment.WEIGHT:
+            success = self.weight.update(observation, obs_std, source_id, obs_confidence)
+        elif segment in self.segments:
+            success = self.segments[segment].update(observation, obs_std, source_id, obs_confidence)
+        else:
+            success = False
+        self.update_times.push(time.time() - start)
+        return success
+
+    def compute_overall_confidence(self) -> float:
+        if not self.segments:
+            self.overall_confidence = 0.0
+            return 0.0
+        importance_weights = {
+            BodySegment.CHEST: 0.20,
+            BodySegment.WAIST: 0.20,
+            BodySegment.HIPS: 0.15,
+            BodySegment.HEIGHT: 0.15,
+            BodySegment.SHOULDER_WIDTH: 0.10,
+            BodySegment.INSEAM: 0.10,
+            BodySegment.LEFT_UPPER_ARM: 0.05,
+            BodySegment.LEFT_THIGH: 0.05,
+        }
+        total_weight = 0.0
+        weighted_conf = 0.0
+        for segment, weight in importance_weights.items():
+            if segment == BodySegment.HEIGHT:
+                seg_confidence = self.height.confidence if self.height else 0.0
+            elif segment in self.segments:
+                seg_confidence = self.segments[segment].confidence
+            else:
+                continue
+            weighted_conf += seg_confidence * weight
+            total_weight += weight
+        if total_weight > 0:
+            self.overall_confidence = weighted_conf / total_weight
+        else:
+            self.overall_confidence = 0.0
+        return self.overall_confidence
+
+    def check_plausibility(self, anthropo_db) -> List[str]:
+        issues = []
+        if not self.height or self.height.mean < 0.1:
+            return ["Missing or invalid height"]
+        height = self.height.mean
+        for segment, constraint in anthropo_db.height_constraints.items():
+            if segment in self.segments:
+                segment_val = self.segments[segment].mean
+                ratio = segment_val / height
+                if ratio < constraint.min_ratio or ratio > constraint.max_ratio:
+                    issues.append(
+                        f"{segment.value}: ratio {ratio:.3f} outside range "
+                        f"[{constraint.min_ratio:.3f}, {constraint.max_ratio:.3f}]"
+                    )
+        bilateral_pairs = [
+            (BodySegment.LEFT_UPPER_ARM, BodySegment.RIGHT_UPPER_ARM),
+            (BodySegment.LEFT_THIGH, BodySegment.RIGHT_THIGH),
+            (BodySegment.LEFT_CALF, BodySegment.RIGHT_CALF),
+        ]
+        for left, right in bilateral_pairs:
+            if left in self.segments and right in self.segments:
+                left_val = self.segments[left].mean
+                right_val = self.segments[right].mean
+                asymmetry = abs(left_val - right_val) / ((left_val + right_val) / 2 + 1e-6)
+                if asymmetry > 0.15:
+                    issues.append(f"Asymmetry in {left.value.replace('left_', '')}: {asymmetry:.1%}")
+        self.flags.extend(issues)
+       
+

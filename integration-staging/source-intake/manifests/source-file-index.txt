@@ -1,0 +1,31 @@
+3:===== FILE: ./CDIC .txt =====
+1963:===== FILE: ./CDIC V4.txt =====
+2475:===== FILE: ./CDIC v5.txt =====
+4471:===== FILE: ./CDIC.txt =====
+6188:===== FILE: ./CFRP V6.txt =====
+8000:===== FILE: ./EEPL V2.0.txt =====
+10056:===== FILE: ./EEPL.txt =====
+11754:===== FILE: ./FCI  (1).txt =====
+12659:===== FILE: ./FCI .txt =====
+13671:===== FILE: ./FCI V2.0.txt =====
+14961:===== FILE: ./Fit Confidence Index repository .txt =====
+15973:===== FILE: ./NPL V2.txt =====
+16947:===== FILE: ./Tari improved .txt =====
+18500:===== FILE: ./We have now.txt =====
+19952:===== FILE: ./Xyra.txt =====
+22451:===== FILE: ./``` fci-repo-.txt =====
+22474:===== FILE: ./```.txt =====
+24027:===== FILE: ./cirvanna skeleton 🩻🩻.txt =====
+26239:===== FILE: ./cultural identity module .txt =====
+27436:===== FILE: ./identity decision engine .txt =====
+29390:===== FILE: ./skin analysis .txt =====
+30456:===== FILE: ./skin analysis repo .txt =====
+31478:===== FILE: ./virtual Tryon  (1).txt =====
+34832:===== FILE: ./virtual Tryon  (2).txt =====
+38186:===== FILE: ./virtual Tryon .txt =====
+41530:===== FILE: ./virtual Tryon improved.txt =====
+44884:===== FILE: ./virtual Twin .txt =====
+45558:===== FILE: ./virtual twin  (1).txt =====
+46235:===== FILE: ./virtual twin mixed format .txt =====
+47198:===== FILE: ./wardrobe 2,3 and 4 .txt =====
+50328:===== FILE: ./wardrobe part 1.txt =====

@@ -1,0 +1,2223 @@
+
+Expanded Production Codebase – Part 1 of 4
+
+Reality check: A genuinely expanded, production-quality codebase at this scale is ~3,400–3,800 lines across ~60 files. That cannot fit in a single response. I'll deliver it in 4 sequential parts, each fully expanded with docstrings, type hints, error handling, and logging. Say "continue" after each part and I'll deliver the next.
+
+This response: Part 1 — Root config + Complete common module (foundation for all services).
+
+---
+
+Part 1 – Root Configuration & Common Module
+
+pyproject.toml
+
+```toml
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cirvanna"
+version = "3.0.0"
+description = "Enterprise wardrobe intelligence platform with CLIP perception, graph-based compatibility, and offline sync"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Cirvanna Engineering", email = "eng@cirvanna.io" }]
+keywords = ["wardrobe", "fashion", "recommendation", "computer-vision", "graph"]
+
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.29.0",
+    "pydantic>=2.6.0",
+    "pydantic-settings>=2.2.0",
+    "sqlalchemy[asyncio]>=2.0.29",
+    "asyncpg>=0.29.0",
+    "aiosqlite>=0.20.0",
+    "alembic>=1.13.1",
+    "redis>=5.0.3",
+    "aio-pika>=9.4.1",
+    "neo4j>=5.18.0",
+    "qdrant-client>=1.8.2",
+    "numpy>=1.26.4",
+    "Pillow>=10.2.0",
+    "httpx>=0.27.0",
+    "PyJWT>=2.8.0",
+    "slowapi>=0.1.9",
+    "opentelemetry-api>=1.24.0",
+    "opentelemetry-sdk>=1.24.0",
+    "opentelemetry-instrumentation-fastapi>=0.45b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.45b0",
+    "opentelemetry-instrumentation-redis>=0.45b0",
+    "opentelemetry-instrumentation-httpx>=0.45b0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.24.0",
+    "prometheus-fastapi-instrumentator>=7.0.0",
+    "celery>=5.3.6",
+    "transformers>=4.40.0",
+    "torch>=2.2.0",
+    "aiohttp>=3.9.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.1.1",
+    "pytest-asyncio>=0.23.5",
+    "pytest-cov>=5.0.0",
+    "pytest-mock>=3.14.0",
+    "testcontainers[postgres,neo4j,redis,rabbitmq]>=4.4.0",
+    "locust>=2.24.1",
+    "ruff>=0.4.1",
+    "mypy>=1.10.0",
+    "pre-commit>=3.7.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["services"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["services"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --strict-markers --tb=short"
+markers = [
+    "integration: marks tests as integration tests (deselect with '-m \"not integration\"')",
+    "chaos: marks chaos engineering tests",
+    "slow: marks tests as slow (>5s)",
+]
+
+[tool.coverage.run]
+source = ["services"]
+branch = true
+omit = ["*/tests/*", "*/migrations/*"]
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+skip_covered = false
+fail_under = 80
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "RUF"]
+ignore = ["E501", "B008"]
+
+[tool.ruff.per-file-ignores]
+"*/migrations/*" = ["E501"]
+"*/tests/*" = ["S101", "S105"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+plugins = ["pydantic.mypy"]
+```
+
+---
+
+.env.example
+
+```env
+# ─────────────────────────────────────────────────────────────
+# Cirvanna Environment Configuration
+# Copy to .env and adjust for your environment.
+# ─────────────────────────────────────────────────────────────
+
+# --- Core Service URLs ---
+ITEM_SERVICE_URL=http://item-service:8000
+GRAPH_SERVICE_URL=http://graph-service:8000
+RECOMMENDATION_SERVICE_URL=http://recommendation-service:8000
+PERCEPTION_SERVICE_URL=http://perception-service:8000
+SYNC_SERVICE_URL=http://sync-service:8000
+
+# --- Database (PostgreSQL) ---
+POSTGRES_HOST=postgres
+POSTGRES_PORT=5432
+POSTGRES_USER=cirvanna
+POSTGRES_PASSWORD=cirvanna
+POSTGRES_DB=cirvanna
+DATABASE_URL=postgresql+asyncpg://cirvanna:cirvanna@postgres:5432/cirvanna
+DATABASE_POOL_SIZE=20
+DATABASE_MAX_OVERFLOW=10
+DATABASE_ECHO=false
+
+# --- Cache (Redis) ---
+REDIS_HOST=redis
+REDIS_PORT=6379
+REDIS_DB=0
+REDIS_URL=redis://redis:6379/0
+CELERY_BROKER_URL=redis://redis:6379/1
+CELERY_RESULT_BACKEND=redis://redis:6379/2
+
+# --- Message Broker (RabbitMQ) ---
+RABBITMQ_HOST=rabbitmq
+RABBITMQ_PORT=5672
+RABBITMQ_USER=guest
+RABBITMQ_PASSWORD=guest
+RABBITMQ_URL=amqp://guest:guest@rabbitmq:5672/
+RABBITMQ_EXCHANGE=cirvanna.events
+RABBITMQ_PREFETCH_COUNT=10
+
+# --- Graph Database (Neo4j) ---
+NEO4J_HOST=neo4j
+NEO4J_PORT=7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=password
+NEO4J_URI=bolt://neo4j:7687
+NEO4J_MAX_POOL_SIZE=50
+
+# --- Vector Database (Qdrant) ---
+QDRANT_HOST=qdrant
+QDRANT_PORT=6333
+QDRANT_URL=http://qdrant:6333
+QDRANT_COLLECTION=item_embeddings
+
+# --- Observability ---
+OTLP_ENDPOINT=http://jaeger:4317
+LOG_LEVEL=INFO
+LOG_FORMAT=json
+SERVICE_NAMESPACE=cirvanna
+ENVIRONMENT=development
+
+# --- Security ---
+JWT_SECRET=change-me-in-production-use-vault-or-kms
+JWT_ALGORITHM=HS256
+JWT_EXPIRY_HOURS=24
+RATE_LIMIT_ENABLED=true
+CIRCUIT_BREAKER_ENABLED=true
+
+# --- Perception / ML ---
+CLIP_MODEL=openai/clip-vit-base-patch32
+CLIP_DEVICE=auto
+MLFLOW_TRACKING_URI=http://mlflow:5000
+MODEL_ARTIFACT_PATH=/models
+
+# --- Business Logic ---
+CONFIDENCE_BASE_CAMERA=0.55
+CONFIDENCE_BASE_SKU_ASSISTED=0.65
+CONFIDENCE_BASE_MANUAL=0.35
+CONFIDENCE_BASE_CATALOG_IMPORT=0.45
+MAX_ACTIVE_SLICE=30
+BOOTSTRAP_CONFIDENCE_MIN=0.0
+BOOTSTRAP_CONFIDENCE_MAX=0.2
+
+# --- Resilience ---
+CB_FAILURE_THRESHOLD=5
+CB_RECOVERY_TIMEOUT_SECONDS=60
+CB_INITIAL_TRAFFIC_RATIO=0.1
+SYNC_BATCH_SIZE=100
+SYNC_MAX_RETRIES=5
+SYNC_RETRY_BACKOFF_SECONDS=30
+```
+
+---
+
+docker-compose.yml
+
+```yaml
+version: "3.9"
+
+x-common-env: &common-env
+  DATABASE_URL: postgresql+asyncpg://cirvanna:cirvanna@postgres:5432/cirvanna
+  REDIS_URL: redis://redis:6379/0
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+  NEO4J_URI: bolt://neo4j:7687
+  NEO4J_USER: neo4j
+  NEO4J_PASSWORD: password
+  QDRANT_URL: http://qdrant:6333
+  OTLP_ENDPOINT: http://jaeger:4317
+  JWT_SECRET: dev-secret-do-not-use-in-prod
+  ITEM_SERVICE_URL: http://item-service:8000
+  GRAPH_SERVICE_URL: http://graph-service:8000
+  RECOMMENDATION_SERVICE_URL: http://recommendation-service:8000
+  PERCEPTION_SERVICE_URL: http://perception-service:8000
+  SYNC_SERVICE_URL: http://sync-service:8000
+  CELERY_BROKER_URL: redis://redis:6379/1
+  MLFLOW_TRACKING_URI: http://mlflow:5000
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  postgres:
+    <<: *restart
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: cirvanna
+      POSTGRES_PASSWORD: cirvanna
+      POSTGRES_DB: cirvanna
+    ports: ["5432:5432"]
+    volumes: ["pg_data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cirvanna"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  neo4j:
+    <<: *restart
+    image: neo4j:5-community
+    environment:
+      NEO4J_AUTH: neo4j/password
+      NEO4J_PLUGINS: '["apoc"]'
+    ports: ["7474:7474", "7687:7687"]
+    volumes: ["neo4j_data:/data"]
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "password", "RETURN 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    <<: *restart
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    volumes: ["redis_data:/data"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  rabbitmq:
+    <<: *restart
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports: ["5672:5672", "15672:15672"]
+    volumes: ["rabbit_data:/var/lib/rabbitmq"]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  qdrant:
+    <<: *restart
+    image: qdrant/qdrant:v1.8.2
+    ports: ["6333:6333", "6334:6334"]
+    volumes: ["qdrant_data:/qdrant/storage"]
+
+  jaeger:
+    <<: *restart
+    image: jaegertracing/all-in-one:1.56
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports: ["16686:16686", "4317:4317", "4318:4318"]
+
+  mlflow:
+    <<: *restart
+    build:
+      context: .
+      dockerfile: mlflow/Dockerfile
+    environment:
+      MLFLOW_BACKEND_STORE_URI: postgresql://cirvanna:cirvanna@postgres:5432/mlflow
+      MLFLOW_DEFAULT_ARTIFACT_ROOT: /mlartifacts
+    ports: ["5000:5000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+    volumes: ["mlflow_artifacts:/mlartifacts"]
+
+  item-service:
+    <<: *restart
+    build: { context: ., dockerfile: services/item-service/Dockerfile }
+    environment: *common-env
+    ports: ["8001:8000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+
+  graph-service:
+    <<: *restart
+    build: { context: ., dockerfile: services/graph-service/Dockerfile }
+    environment: *common-env
+    ports: ["8002:8000"]
+    depends_on:
+      neo4j: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+
+  recommendation-service:
+    <<: *restart
+    build: { context: ., dockerfile: services/recommendation-service/Dockerfile }
+    environment: *common-env
+    ports: ["8003:8000"]
+    depends_on: [qdrant, redis, graph-service]
+
+  perception-service:
+    <<: *restart
+    build: { context: ., dockerfile: services/perception-service/Dockerfile }
+    environment: *common-env
+    ports: ["8004:8000"]
+    depends_on: [rabbitmq, redis]
+
+  perception-worker:
+    <<: *restart
+    build: { context: ., dockerfile: services/perception-service/Dockerfile }
+    command: celery -A app.tasks.celery_app worker --loglevel=info --concurrency=2
+    environment: *common-env
+    depends_on: [rabbitmq, redis]
+
+  sync-service:
+    <<: *restart
+    build: { context: ., dockerfile: services/sync-service/Dockerfile }
+    environment: *common-env
+    ports: ["8005:8000"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+
+  api-gateway:
+    <<: *restart
+    build: { context: ., dockerfile: services/api-gateway/Dockerfile }
+    environment: *common-env
+    ports: ["8080:8000"]
+    depends_on: [item-service, graph-service, recommendation-service, perception-service, sync-service]
+
+volumes:
+  pg_data: {}
+  neo4j_data: {}
+  redis_data: {}
+  rabbit_data: {}
+  qdrant_data: {}
+  mlflow_artifacts: {}
+```
+
+---
+
+Makefile
+
+```makefile
+.PHONY: help install up down logs test lint format type-check cov clean seed load chaos
+
+help:
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+install:  ## Install dev dependencies
+	pip install -e ".[dev]"
+	pre-commit install
+
+up:  ## Start all services
+	docker compose up --build -d
+	@echo "Gateway: http://localhost:8080/docs"
+
+down:  ## Stop all services
+	docker compose down
+
+logs:  ## Tail logs from all services
+	docker compose logs -f --tail=100
+
+test:  ## Run unit tests with coverage
+	pytest -m "not integration and not chaos" --cov=services --cov-report=term-missing --cov-fail-under=80
+
+test-all:  ## Run all tests including integration
+	pytest --cov=services --cov-report=term-missing --cov-report=html
+
+integration:  ## Run only integration tests
+	pytest -m integration
+
+chaos:  ## Run chaos engineering tests
+	pytest -m chaos
+
+lint:  ## Run ruff
+	ruff check services
+
+format:  ## Auto-format code
+	ruff check --fix services
+	ruff format services
+
+type-check:  ## Run mypy
+	mypy services
+
+cov:  ## Generate HTML coverage report
+	pytest --cov=services --cov-report=html
+	@echo "Open htmlcov/index.html"
+
+seed:  ## Seed the catalog with sample data
+	docker compose exec api-gateway python -c "import asyncio, httpx; asyncio.run(httpx.post('http://item-service:8000/admin/seed', timeout=60))"
+
+load:  ## Run Locust load test
+	locust -f scripts/load_test.py --host=http://localhost:8080 --users=100 --spawn-rate=10 --run-time=2m --headless
+
+clean:  ## Clean build artifacts
+	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+	find . -type f -name "*.pyc" -delete
+	rm -rf .pytest_cache .mypy_cache .ruff_cache htmlcov .coverage
+```
+
+---
+
+services/common/__init__.py
+
+```python
+"""Cirvanna common library.
+
+Shared modules used by all microservices:
+- config: environment-driven settings
+- domain: core domain models and business logic
+- cache: async Redis wrapper
+- events: RabbitMQ pub/sub
+- telemetry: OpenTelemetry instrumentation
+- security: JWT auth, rate limiting primitives
+- logging: structured JSON logging
+- errors: exception hierarchy
+- retry: exponential backoff utilities
+"""
+
+__version__ = "3.0.0"
+
+from .config import settings
+from .errors import (
+    CirvannaError,
+    NotFoundError,
+    ValidationError,
+    ConflictError,
+    UpstreamError,
+)
+
+__all__ = [
+    "settings",
+    "CirvannaError",
+    "NotFoundError",
+    "ValidationError",
+    "ConflictError",
+    "UpstreamError",
+]
+```
+
+---
+
+services/common/config.py
+
+```python
+"""Configuration management for all Cirvanna services.
+
+Settings are loaded from environment variables (with `.env` fallback)
+via pydantic-settings. Every service imports the same singleton `settings`.
+"""
+
+from __future__ import annotations
+
+from functools import lru_cache
+from typing import Literal
+
+from pydantic import Field, SecretStr, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """Central configuration object. Immutable at runtime."""
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    # ── Service identity ────────────────────────────────────────
+    service_name: str = Field(default="cirvanna", alias="SERVICE_NAME")
+    service_namespace: str = Field(default="cirvanna", alias="SERVICE_NAMESPACE")
+    environment: Literal["development", "staging", "production"] = Field(
+        default="development", alias="ENVIRONMENT"
+    )
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(
+        default="INFO", alias="LOG_LEVEL"
+    )
+    log_format: Literal["json", "text"] = Field(default="json", alias="LOG_FORMAT")
+
+    # ── Service URLs ────────────────────────────────────────────
+    item_service_url: str = Field(default="http://localhost:8001", alias="ITEM_SERVICE_URL")
+    graph_service_url: str = Field(default="http://localhost:8002", alias="GRAPH_SERVICE_URL")
+    recommendation_service_url: str = Field(
+        default="http://localhost:8003", alias="RECOMMENDATION_SERVICE_URL"
+    )
+    perception_service_url: str = Field(
+        default="http://localhost:8004", alias="PERCEPTION_SERVICE_URL"
+    )
+    sync_service_url: str = Field(default="http://localhost:8005", alias="SYNC_SERVICE_URL")
+
+    # ── PostgreSQL ──────────────────────────────────────────────
+    database_url: str = Field(
+        default="postgresql+asyncpg://cirvanna:cirvanna@localhost:5432/cirvanna",
+        alias="DATABASE_URL",
+    )
+    database_pool_size: int = Field(default=20, alias="DATABASE_POOL_SIZE", ge=1, le=200)
+    database_max_overflow: int = Field(default=10, alias="DATABASE_MAX_OVERFLOW", ge=0, le=100)
+    database_echo: bool = Field(default=False, alias="DATABASE_ECHO")
+
+    # ── Redis ───────────────────────────────────────────────────
+    redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
+    redis_max_connections: int = Field(default=50, alias="REDIS_MAX_CONNECTIONS")
+    celery_broker_url: str = Field(default="redis://localhost:6379/1", alias="CELERY_BROKER_URL")
+    celery_result_backend: str = Field(
+        default="redis://localhost:6379/2", alias="CELERY_RESULT_BACKEND"
+    )
+
+    # ── RabbitMQ ────────────────────────────────────────────────
+    rabbitmq_url: str = Field(default="amqp://guest:guest@localhost/", alias="RABBITMQ_URL")
+    rabbitmq_exchange: str = Field(default="cirvanna.events", alias="RABBITMQ_EXCHANGE")
+    rabbitmq_prefetch_count: int = Field(default=10, alias="RABBITMQ_PREFETCH_COUNT", ge=1, le=500)
+
+    # ── Neo4j ───────────────────────────────────────────────────
+    neo4j_uri: str = Field(default="bolt://localhost:7687", alias="NEO4J_URI")
+    neo4j_user: str = Field(default="neo4j", alias="NEO4J_USER")
+    neo4j_password: SecretStr = Field(default=SecretStr("password"), alias="NEO4J_PASSWORD")
+    neo4j_max_pool_size: int = Field(default=50, alias="NEO4J_MAX_POOL_SIZE", ge=1, le=500)
+
+    # ── Qdrant ──────────────────────────────────────────────────
+    qdrant_url: str = Field(default="http://localhost:6333", alias="QDRANT_URL")
+    qdrant_collection: str = Field(default="item_embeddings", alias="QDRANT_COLLECTION")
+    qdrant_vector_size: int = Field(default=512, alias="QDRANT_VECTOR_SIZE")
+
+    # ── Observability ───────────────────────────────────────────
+    otlp_endpoint: str = Field(default="http://localhost:4317", alias="OTLP_ENDPOINT")
+    otlp_insecure: bool = Field(default=True, alias="OTLP_INSECURE")
+
+    # ── Security ────────────────────────────────────────────────
+    jwt_secret: SecretStr = Field(default=SecretStr("dev-secret"), alias="JWT_SECRET")
+    jwt_algorithm: str = Field(default="HS256", alias="JWT_ALGORITHM")
+    jwt_expiry_hours: int = Field(default=24, alias="JWT_EXPIRY_HOURS", ge=1, le=720)
+    rate_limit_enabled: bool = Field(default=True, alias="RATE_LIMIT_ENABLED")
+    circuit_breaker_enabled: bool = Field(default=True, alias="CIRCUIT_BREAKER_ENABLED")
+
+    # ── ML / Perception ─────────────────────────────────────────
+    clip_model: str = Field(default="openai/clip-vit-base-patch32", alias="CLIP_MODEL")
+    clip_device: Literal["auto", "cpu", "cuda", "mps"] = Field(default="auto", alias="CLIP_DEVICE")
+    mlflow_tracking_uri: str = Field(default="http://mlflow:5000", alias="MLFLOW_TRACKING_URI")
+    model_artifact_path: str = Field(default="/models", alias="MODEL_ARTIFACT_PATH")
+
+    # ── Business Logic ──────────────────────────────────────────
+    max_active_slice: int = Field(default=30, alias="MAX_ACTIVE_SLICE", ge=1, le=1000)
+    bootstrap_confidence_min: float = Field(default=0.0, alias="BOOTSTRAP_CONFIDENCE_MIN", ge=0.0, le=1.0)
+    bootstrap_confidence_max: float = Field(default=0.2, alias="BOOTSTRAP_CONFIDENCE_MAX", ge=0.0, le=1.0)
+    confidence_base_camera: float = Field(default=0.55, alias="CONFIDENCE_BASE_CAMERA", ge=0.0, le=1.0)
+    confidence_base_sku_assisted: float = Field(default=0.65, alias="CONFIDENCE_BASE_SKU_ASSISTED", ge=0.0, le=1.0)
+    confidence_base_manual: float = Field(default=0.35, alias="CONFIDENCE_BASE_MANUAL", ge=0.0, le=1.0)
+    confidence_base_catalog_import: float = Field(default=0.45, alias="CONFIDENCE_BASE_CATALOG_IMPORT", ge=0.0, le=1.0)
+
+    # ── Resilience ──────────────────────────────────────────────
+    cb_failure_threshold: int = Field(default=5, alias="CB_FAILURE_THRESHOLD", ge=1, le=100)
+    cb_recovery_timeout_seconds: int = Field(default=60, alias="CB_RECOVERY_TIMEOUT_SECONDS", ge=1, le=3600)
+    cb_initial_traffic_ratio: float = Field(default=0.1, alias="CB_INITIAL_TRAFFIC_RATIO", gt=0.0, le=1.0)
+    sync_batch_size: int = Field(default=100, alias="SYNC_BATCH_SIZE", ge=1, le=1000)
+    sync_max_retries: int = Field(default=5, alias="SYNC_MAX_RETRIES", ge=0, le=20)
+    sync_retry_backoff_seconds: int = Field(default=30, alias="SYNC_RETRY_BACKOFF_SECONDS", ge=1, le=3600)
+
+    # ────────────────────────────────────────────────────────────
+    @field_validator("bootstrap_confidence_max")
+    @classmethod
+    def _validate_bootstrap_range(cls, v: float, info) -> float:
+        min_v = info.data.get("bootstrap_confidence_min", 0.0)
+        if v < min_v:
+            raise ValueError("BOOTSTRAP_CONFIDENCE_MAX must be >= BOOTSTRAP_CONFIDENCE_MIN")
+        return v
+
+    @property
+    def is_production(self) -> bool:
+        return self.environment == "production"
+
+    @property
+    def database_url_sync(self) -> str:
+        """Synchronous variant for Alembic migrations."""
+        return self.database_url.replace("+asyncpg", "")
+
+    def confidence_base_map(self) -> dict[str, float]:
+        """Return confidence base keyed by IngestionMethod value."""
+        return {
+            "camera": self.confidence_base_camera,
+            "sku_assisted": self.confidence_base_sku_assisted,
+            "manual": self.confidence_base_manual,
+            "catalog_import": self.confidence_base_catalog_import,
+        }
+
+
+@lru_cache(maxsize=1)
+def get_settings() -> Settings:
+    """Cached settings factory. Use this for dependency injection."""
+    return Settings()
+
+
+# Module-level singleton for convenience
+settings = get_settings()
+```
+
+---
+
+services/common/errors.py
+
+```python
+"""Exception hierarchy shared across all Cirvanna services."""
+
+from __future__ import annotations
+
+from typing import Any
+
+
+class CirvannaError(Exception):
+    """Base exception for all domain errors."""
+
+    status_code: int = 500
+    error_code: str = "internal_error"
+
+    def __init__(self, message: str, *, details: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.message = message
+        self.details = details or {}
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "error": self.error_code,
+            "message": self.message,
+            "details": self.details,
+        }
+
+
+class NotFoundError(CirvannaError):
+    status_code = 404
+    error_code = "not_found"
+
+
+class ValidationError(CirvannaError):
+    status_code = 422
+    error_code = "validation_error"
+
+
+class ConflictError(CirvannaError):
+    status_code = 409
+    error_code = "conflict"
+
+
+class UpstreamError(CirvannaError):
+    status_code = 502
+    error_code = "upstream_error"
+
+
+class ServiceUnavailableError(CirvannaError):
+    status_code = 503
+    error_code = "service_unavailable"
+
+
+class RateLimitError(CirvannaError):
+    status_code = 429
+    error_code = "rate_limit_exceeded"
+
+
+class CircuitOpenError(CirvannaError):
+    status_code = 503
+    error_code = "circuit_open"
+
+
+class AuthenticationError(CirvannaError):
+    status_code = 401
+    error_code = "authentication_error"
+
+
+class AuthorizationError(CirvannaError):
+    status_code = 403
+    error_code = "authorization_error"
+```
+
+---
+
+services/common/logging_config.py
+
+```python
+"""Structured JSON logging with correlation IDs."""
+
+from __future__ import annotations
+
+import json
+import logging
+import sys
+import time
+import uuid
+from contextvars import ContextVar
+from typing import Any
+
+# Request-scoped correlation ID
+correlation_id_var: ContextVar[str] = ContextVar("correlation_id", default="")
+user_id_var: ContextVar[str] = ContextVar("user_id", default="")
+
+
+def set_correlation_id(cid: str | None = None) -> str:
+    cid = cid or str(uuid.uuid4())
+    correlation_id_var.set(cid)
+    return cid
+
+
+def get_correlation_id() -> str:
+    return correlation_id_var.get()
+
+
+class JSONFormatter(logging.Formatter):
+    """Emit each log record as a single JSON line."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload: dict[str, Any] = {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(record.created))
+            + f".{int(record.msecs):03d}Z",
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+            "service": getattr(record, "service", "unknown"),
+            "correlation_id": get_correlation_id(),
+            "user_id": user_id_var.get(),
+        }
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        if hasattr(record, "extra_fields"):
+            payload.update(record.extra_fields)
+        return json.dumps(payload, default=str)
+
+
+def configure_logging(service_name: str, level: str = "INFO", fmt: str = "json") -> None:
+    """Configure root logger for a service."""
+    root = logging.getLogger()
+    root.handlers.clear()
+    handler = logging.StreamHandler(sys.stdout)
+    if fmt == "json":
+        handler.setFormatter(JSONFormatter())
+    else:
+        handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s [%(levelname)s] %(name)s [%(correlation_id)s]: %(message)s"
+            )
+        )
+    root.addHandler(handler)
+    root.setLevel(level)
+
+    # Silence noisy libraries
+    for noisy in ("uvicorn.access", "httpx", "neo4j", "asyncio"):
+        logging.getLogger(noisy).setLevel("WARNING")
+
+    # Attach service name to every record via a filter
+    class ServiceFilter(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            record.service = service_name
+            return True
+
+    for h in root.handlers:
+        h.addFilter(ServiceFilter())
+```
+
+---
+
+services/common/retry.py
+
+```python
+"""Exponential backoff retry utilities."""
+
+from __future__ import annotations
+
+import asyncio
+import functools
+import logging
+import random
+from typing import Awaitable, Callable, TypeVar
+
+logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
+
+
+async def retry_async(
+    fn: Callable[[], Awaitable[T]],
+    *,
+    max_attempts: int = 5,
+    base_delay: float = 0.5,
+    max_delay: float = 30.0,
+    jitter: bool = True,
+    retry_on: tuple[type[Exception], ...] = (Exception,),
+    on_retry: Callable[[int, Exception], None] | None = None,
+) -> T:
+    """Retry an async function with exponential backoff + jitter."""
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            return await fn()
+        except retry_on as exc:
+            if attempt >= max_attempts:
+                raise
+            delay = min(max_delay, base_delay * (2 ** (attempt - 1)))
+            if jitter:
+                delay *= 0.5 + random.random()
+            if on_retry:
+                on_retry(attempt, exc)
+            logger.warning(
+                "Retrying after error",
+                extra={"extra_fields": {"attempt": attempt, "delay": delay, "error": str(exc)}},
+            )
+            await asyncio.sleep(delay)
+
+
+def with_retry(**kwargs):
+    """Decorator variant of retry_async."""
+
+    def decorator(fn):
+        @functools.wraps(fn)
+        async def wrapper(*args, **kw):
+            return await retry_async(lambda: fn(*args, **kw), **kwargs)
+
+        return wrapper
+
+    return decorator
+```
+
+---
+
+services/common/cache.py
+
+```python
+"""Async Redis cache client with typed helpers."""
+
+from __future__ import annotations
+
+import json
+import logging
+from typing import Any
+
+import redis.asyncio as redis
+from redis.exceptions import RedisError
+
+from .config import settings
+
+logger = logging.getLogger(__name__)
+
+
+class RedisCache:
+    """Thin async wrapper around Redis with JSON serialization.
+
+    Usage:
+        await RedisCache.init()
+        await RedisCache.set("key", {"a": 1}, ttl=300)
+        value = await RedisCache.get_json("key")
+        await RedisCache.close()
+    """
+
+    _client: redis.Redis | None = None
+
+    @classmethod
+    async def init(cls) -> None:
+        if cls._client is None:
+            cls._client = redis.from_url(
+                settings.redis_url,
+                encoding="utf-8",
+                decode_responses=True,
+                max_connections=settings.redis_max_connections,
+                socket_timeout=5,
+                socket_connect_timeout=5,
+                retry_on_timeout=True,
+            )
+            # Ping to verify
+            try:
+                await cls._client.ping()
+                logger.info("Redis connection established")
+            except RedisError as exc:
+                logger.error(f"Redis ping failed: {exc}")
+                cls._client = None
+                raise
+
+    @classmethod
+    async def close(cls) -> None:
+        if cls._client is not None:
+            await cls._client.aclose()
+            cls._client = None
+            logger.info("Redis connection closed")
+
+    @classmethod
+    def _require_client(cls) -> redis.Redis:
+        if cls._client is None:
+            raise RuntimeError("RedisCache not initialized. Call RedisCache.init() first.")
+        return cls._client
+
+    # ── Basic operations ────────────────────────────────────────
+    @classmethod
+    async def get(cls, key: str) -> str | None:
+        try:
+            return await cls._require_client().get(key)
+        except RedisError as exc:
+            logger.warning(f"Redis GET failed for key={key}: {exc}")
+            return None
+
+    @classmethod
+    async def get_json(cls, key: str) -> Any | None:
+        raw = await cls.get(key)
+        if raw is None:
+            return None
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning(f"Malformed JSON in cache key={key}")
+            return None
+
+    @classmethod
+    async def set(cls, key: str, value: str, ttl: int = 300) -> None:
+        try:
+            await cls._require_client().set(key, value, ex=ttl)
+        except RedisError as exc:
+            logger.warning(f"Redis SET failed for key={key}: {exc}")
+
+    @classmethod
+    async def set_json(cls, key: str, value: Any, ttl: int = 300) -> None:
+        await cls.set(key, json.dumps(value, default=str), ttl)
+
+    @classmethod
+    async def delete(cls, *keys: str) -> int:
+        try:
+            if not keys:
+                return 0
+            return await cls._require_client().delete(*keys)
+        except RedisError as exc:
+            logger.warning(f"Redis DEL failed: {exc}")
+            return 0
+
+    @classmethod
+    async def delete_pattern(cls, pattern: str) -> int:
+        """Delete all keys matching a pattern (SCAN-based, non-blocking)."""
+        client = cls._require_client()
+        count = 0
+        try:
+            async for key in client.scan_iter(match=pattern, count=100):
+                count += await client.delete(key)
+        except RedisError as exc:
+            logger.warning(f"Redis SCAN/DEL failed for pattern={pattern}: {exc}")
+        return count
+
+    # ── Atomic counters (rate limiting) ─────────────────────────
+    @classmethod
+    async def incr(cls, key: str, ttl: int = 60) -> int:
+        """Atomic increment; sets expiry on first increment."""
+        client = cls._require_client()
+        pipe = client.pipeline()
+        pipe.incr(key)
+        pipe.expire(key, ttl, nx=True)
+        results = await pipe.execute()
+        return int(results[0])
+
+    @classmethod
+    async def get_int(cls, key: str) -> int:
+        raw = await cls.get(key)
+        return int(raw) if raw else 0
+
+    # ── Distributed lock (Redlock-lite) ─────────────────────────
+    @classmethod
+    async def acquire_lock(cls, key: str, ttl: int = 10) -> bool:
+        """Best-effort distributed lock using SET NX EX."""
+        client = cls._require_client()
+        return bool(await client.set(key, "1", nx=True, ex=ttl))
+
+    @classmethod
+    async def release_lock(cls, key: str) -> None:
+        await cls.delete(key)
+```
+
+---
+
+services/common/telemetry.py
+
+```python
+"""OpenTelemetry instrumentation setup for all services."""
+
+from __future__ import annotations
+
+import logging
+
+from opentelemetry import trace
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+from opentelemetry.instrumentation.redis import RedisInstrumentor
+from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+from .config import settings
+
+logger = logging.getLogger(__name__)
+
+
+def setup_telemetry(app=None, service_name: str = "cirvanna") -> None:
+    """Configure OTLP tracing and auto-instrument FastAPI, SQLAlchemy, Redis, HTTPX."""
+    resource = Resource.create(
+        {
+            "service.name": service_name,
+            "service.namespace": settings.service_namespace,
+            "deployment.environment": settings.environment,
+            "service.version": "3.0.0",
+        }
+    )
+
+    provider = TracerProvider(resource=resource)
+    exporter = OTLPSpanExporter(
+        endpoint=settings.otlp_endpoint,
+        insecure=settings.otlp_insecure,
+    )
+    provider.add_span_processor(BatchSpanProcessor(exporter))
+    trace.set_tracer_provider(provider)
+
+    # Auto-instrumentation
+    try:
+        SQLAlchemyInstrumentor().instrument()
+        RedisInstrumentor().instrument()
+        HTTPXClientInstrumentor().instrument()
+        if app is not None:
+            FastAPIInstrumentor.instrument_app(
+                app,
+                excluded_urls="health,metrics,ready",
+            )
+        logger.info(f"OpenTelemetry configured for {service_name}")
+    except Exception as exc:
+        logger.warning(f"Telemetry instrumentation partial: {exc}")
+
+
+def get_tracer(name: str):
+    return trace.get_tracer(name)
+```
+
+---
+
+services/common/events.py
+
+```python
+"""Async RabbitMQ event bus – publisher and consumer."""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+from typing import Any, Awaitable, Callable
+
+import aio_pika
+from aio_pika import DeliveryMode, ExchangeType, Message
+from aio_pika.abc import AbstractIncomingMessage
+
+from .config import settings
+
+logger = logging.getLogger(__name__)
+
+Handler = Callable[[str, dict[str, Any]], Awaitable[None]]
+
+
+class EventPublisher:
+    """Publish JSON messages to the Cirvanna topic exchange."""
+
+    _connection: aio_pika.abc.AbstractRobustConnection | None = None
+    _channel: aio_pika.abc.AbstractRobustChannel | None = None
+    _exchange: aio_pika.abc.AbstractRobustExchange | None = None
+
+    @classmethod
+    async def init(cls) -> None:
+        if cls._connection is None:
+            cls._connection = await aio_pika.connect_robust(
+                settings.rabbitmq_url,
+                heartbeat=30,
+                client_properties={"service": "cirvanna"},
+            )
+            cls._channel = await cls._connection.channel()
+            await cls._channel.set_qos(prefetch_count=settings.rabbitmq_prefetch_count)
+            cls._exchange = await cls._channel.declare_exchange(
+                settings.rabbitmq_exchange,
+                ExchangeType.TOPIC,
+                durable=True,
+            )
+            logger.info("Event publisher connected")
+
+    @classmethod
+    async def close(cls) -> None:
+        if cls._connection is not None:
+            await cls._connection.close()
+            cls._connection = None
+            cls._channel = None
+            cls._exchange = None
+            logger.info("Event publisher closed")
+
+    @classmethod
+    async def publish(cls, routing_key: str, data: dict[str, Any]) -> None:
+        await cls.init()
+        assert cls._exchange is not None
+        message = Message(
+            body=json.dumps(data, default=str).encode(),
+            content_type="application/json",
+            delivery_mode=DeliveryMode.PERSISTENT,
+            headers={"routing_key": routing_key},
+        )
+        await cls._exchange.publish(message, routing_key=routing_key)
+
+
+class EventConsumer:
+    """Subscribe to queues bound to the topic exchange."""
+
+    @staticmethod
+    async def subscribe(
+        queue_name: str,
+        routing_keys: list[str],
+        handler: Handler,
+        *,
+        durable: bool = True,
+    ) -> aio_pika.abc.AbstractRobustConnection:
+        connection = await aio_pika.connect_robust(settings.rabbitmq_url, heartbeat=30)
+        channel = await connection.channel()
+        await channel.set_qos(prefetch_count=settings.rabbitmq_prefetch_count)
+
+        exchange = await channel.declare_exchange(
+            settings.rabbitmq_exchange,
+            ExchangeType.TOPIC,
+            durable=True,
+        )
+        queue = await channel.declare_queue(queue_name, durable=durable)
+        for rk in routing_keys:
+            await queue.bind(exchange, rk)
+
+        async def _on_message(message: AbstractIncomingMessage) -> None:
+            async with message.process(requeue=True, ignore_processed=True):
+                try:
+                    payload = json.loads(message.body)
+                    await handler(message.routing_key or "", payload)
+                except json.JSONDecodeError as exc:
+                    logger.error(f"Invalid JSON on {message.routing_key}: {exc}")
+                except Exception:
+                    logger.exception(f"Handler failed for {message.routing_key}")
+                    raise  # requeue
+
+        await queue.consume(_on_message)
+        logger.info(f"Subscribed {queue_name} to {routing_keys}")
+        return connection
+```
+
+---
+
+services/common/security.py
+
+```python
+"""JWT authentication, rate limiting primitives, correlation middleware."""
+
+from __future__ import annotations
+
+import datetime as dt
+import logging
+from typing import Annotated
+
+import jwt
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.security import OAuth2PasswordBearer
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
+from .config import settings
+from .logging_config import set_correlation_id, user_id_var
+
+logger = logging.getLogger(__name__)
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token", auto_error=False)
+
+
+def issue_token(user_id: str, *, expires_hours: int | None = None) -> str:
+    """Create a signed JWT for a user."""
+    hours = expires_hours or settings.jwt_expiry_hours
+    payload = {
+        "sub": user_id,
+        "iat": dt.datetime.now(dt.timezone.utc),
+        "exp": dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=hours),
+        "iss": "cirvanna",
+    }
+    return jwt.encode(payload, settings.jwt_secret.get_secret_value(), algorithm=settings.jwt_algorithm)
+
+
+def decode_token(token: str) -> dict:
+    """Decode and verify a JWT. Raises HTTPException on failure."""
+    try:
+        return jwt.decode(
+            token,
+            settings.jwt_secret.get_secret_value(),
+            algorithms=[settings.jwt_algorithm],
+            issuer="cirvanna",
+        )
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token expired")
+    except jwt.PyJWTError as exc:
+        logger.warning(f"JWT decode failed: {exc}")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token")
+
+
+async def current_user(token: Annotated[str | None, Depends(oauth2_scheme)]) -> str:
+    """FastAPI dependency returning the authenticated user_id."""
+    if not token:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Missing bearer token")
+    payload = decode_token(token)
+    user_id = payload.get("sub")
+    if not user_id:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token missing subject")
+    user_id_var.set(user_id)
+    return user_id
+
+
+# Rate limiter (per-IP default; per-endpoint logic lives in the gateway)
+limiter = Limiter(
+    key_func=get_remote_address,
+    enabled=settings.rate_limit_enabled,
+    default_limits=["1000/hour"],
+)
+
+
+async def correlation_middleware(request: Request, call_next):
+    """Attach a correlation ID to every request and echo it back."""
+    cid = request.headers.get("X-Correlation-ID") or set_correlation_id()
+    set_correlation_id(cid)
+    response = await call_next(request)
+    response.headers["X-Correlation-ID"] = cid
+    return response
+```
+
+---
+
+services/common/domain.py
+
+```python
+"""Core domain models and business logic for Cirvanna.
+
+This module is the single source of truth for:
+  - Enumerations (ingestion methods, lifecycle states, categories, etc.)
+  - Value objects (ColorVector, TemporalValue, ConfidenceEnvelope, RegretSignals)
+  - Profile objects (GeometryProfile, SurfaceProperties)
+  - Event objects (WearEvent)
+  - The central aggregate: WardrobeObject
+
+It has **no external service dependencies** (no DB, no HTTP, no messaging)
+so it can be imported anywhere. All persistence is handled by adapters.
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import math
+import uuid
+from collections import deque
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Deque, Iterable
+
+import numpy as np
+
+from .config import settings
+
+# ────────────────────────────────────────────────────────────────
+# Enumerations
+# ────────────────────────────────────────────────────────────────
+
+
+class IngestionMethod(str, Enum):
+    CAMERA = "camera"
+    SKU_ASSISTED = "sku_assisted"
+    MANUAL = "manual"
+    CATALOG_IMPORT = "catalog_import"
+
+
+class LifecycleState(str, Enum):
+    PROVISIONAL = "provisional"
+    ACTIVE_LEARNING = "active_learning"
+    STABLE = "stable"
+    DORMANT = "dormant"
+    REVIVAL_CANDIDATE = "revival_candidate"
+    RETIRED = "retired"
+
+
+class SilhouetteClass(str, Enum):
+    FITTED = "fitted"
+    RELAXED = "relaxed"
+    OVERSIZED = "oversized"
+    STRUCTURED = "structured"
+    FLUID = "fluid"
+
+
+class TextureClass(str, Enum):
+    SMOOTH = "smooth"
+    COARSE = "coarse"
+    KNIT = "knit"
+    REFLECTIVE = "reflective"
+    MATTE = "matte"
+
+
+class MobilityTolerance(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+class EventType(str, Enum):
+    WEAR = "wear"
+    TRYON = "tryon"
+    PAIRING_TEST = "pairing_test"
+
+
+class PrimaryCategory(str, Enum):
+    TOP = "top"
+    BOTTOM = "bottom"
+    OUTERWEAR = "outerwear"
+    FOOTWEAR = "footwear"
+    ACCESSORY = "accessory"
+
+
+class LayeringRole(str, Enum):
+    BASE = "base"
+    MID = "mid"
+    SHELL = "shell"
+
+
+class SecondaryRole(str, Enum):
+    SLEEPWEAR = "sleepwear"
+    ATHLETIC = "athletic"
+    SWIMWEAR = "swimwear"
+    FORMAL = "formal"
+    RAIN_PROTECTION = "rain_protection"
+    WARMTH = "warmth"
+    SUN_PROTECTION = "sun_protection"
+    WORKWEAR = "workwear"
+    UNSPECIFIED = "unspecified"
+
+
+class ActivityType(str, Enum):
+    SEDENTARY = "sedentary"
+    LIGHT_EXERCISE = "light_exercise"
+    INTENSE_EXERCISE = "intense_exercise"
+    WALKING = "walking"
+    RUNNING = "running"
+    CYCLING = "cycling"
+    SWIMMING = "swimming"
+    TRAVEL = "travel"
+    OFFICE_WORK = "office_work"
+    MANUAL_LABOR = "manual_labor"
+    SOCIAL = "social"
+    UNSPECIFIED = "unspecified"
+
+
+class RiskLevel(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+# ────────────────────────────────────────────────────────────────
+# Business constants (derived from settings so they're configurable)
+# ────────────────────────────────────────────────────────────────
+
+CONFIDENCE_BASE: dict[IngestionMethod, float] = {
+    IngestionMethod.CAMERA: settings.confidence_base_camera,
+    IngestionMethod.SKU_ASSISTED: settings.confidence_base_sku_assisted,
+    IngestionMethod.MANUAL: settings.confidence_base_manual,
+    IngestionMethod.CATALOG_IMPORT: settings.confidence_base_catalog_import,
+}
+
+BOOTSTRAP_CONFIDENCE_RANGE: tuple[float, float] = (
+    settings.bootstrap_confidence_min,
+    settings.bootstrap_confidence_max,
+)
+
+MAX_ACTIVE_SLICE: int = settings.max_active_slice
+
+# Category compatibility matrix (used by graph and recommendation)
+CATEGORY_COMPATIBILITY: dict[str, set[str]] = {
+    "top": {"bottom", "outerwear", "footwear", "accessory"},
+    "bottom": {"top", "outerwear", "footwear", "accessory"},
+    "outerwear": {"top", "bottom", "footwear", "accessory"},
+    "footwear": {"top", "bottom", "outerwear", "accessory"},
+    "accessory": {"top", "bottom", "outerwear", "footwear"},
+}
+
+
+# ────────────────────────────────────────────────────────────────
+# Value objects
+# ────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class ColorVector:
+    """CIELAB colour representation with bidirectional conversion.
+
+    All conversions are cached; the object is immutable in practice.
+    """
+
+    l: float
+    a: float
+    b: float
+    _rgb_cache: tuple[int, int, int] | None = field(default=None, repr=False)
+    _hex_cache: str | None = field(default=None, repr=False)
+
+    # ---------- Constructors ----------
+    @classmethod
+    def from_rgb(cls, r: int, g: int, b: int) -> "ColorVector":
+        """Convert sRGB (0-255) to CIELAB using D65 illuminant."""
+        if not all(0 <= v <= 255 for v in (r, g, b)):
+            raise ValueError(f"RGB values must be in [0,255], got ({r},{g},{b})")
+
+        def _linearize(c: float) -> float:
+            c /= 255.0
+            return c ** 2.2 if c > 0.04045 else c / 12.92
+
+        rl, gl, bl = _linearize(r), _linearize(g), _linearize(b)
+
+        x = rl * 0.4124 + gl * 0.3576 + bl * 0.1805
+        y = rl * 0.2126 + gl * 0.7152 + bl * 0.0722
+        z = rl * 0.0193 + gl * 0.1192 + bl * 0.9505
+
+        xn, zn = x / 0.95047, z / 1.08883
+
+        def _f(t: float) -> float:
+            return t ** (1 / 3) if t > 0.008856 else (7.787 * t) + (16 / 116)
+
+        fx, fy, fz = _f(xn), _f(y), _f(zn)
+
+        return cls(
+            l=max(0.0, min(100.0, 116 * fy - 16)),
+            a=max(-128.0, min(127.0, 500 * (fx - fy))),
+            b=max(-128.0, min(127.0, 200 * (fy - fz))),
+        )
+
+    @classmethod
+    def from_hex(cls, hex_color: str) -> "ColorVector":
+        """Parse '#RRGGBB' or '#RGB' into a ColorVector."""
+        h = hex_color.lstrip("#")
+        if len(h) == 3:
+            h = "".join(c * 2 for c in h)
+        if len(h) != 6:
+            raise ValueError(f"Invalid hex color: {hex_color}")
+        r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+        cv = cls.from_rgb(r, g, b)
+        cv._hex_cache = f"#{h.lower()}"
+        cv._rgb_cache = (r, g, b)
+        return cv
+
+    # ---------- Conversions ----------
+    def to_rgb(self) -> tuple[int, int, int]:
+        if self._rgb_cache is not None:
+            return self._rgb_cache
+
+        fy = (self.l + 16) / 116
+        fx = fy + (self.a / 500)
+        fz = fy - (self.b / 200)
+
+        def _inv(t: float) -> float:
+            return t ** 3 if t ** 3 > 0.008856 else (t - 16 / 116) / 7.787
+
+        x = _inv(fx) * 0.95047
+        y = ((self.l + 16) / 116) ** 3 if self.l > 7.9996 else self.l / 903.3
+        z = _inv(fz) * 1.08883
+
+        rl = x * 3.2406 + y * -1.5372 + z * -0.4986
+        gl = x * -0.9689 + y * 1.8758 + z * 0.0415
+        bl = x * 0.0557 + y * -0.2040 + z * 1.0570
+
+        def _gamma(c: float) -> int:
+            v = c ** (1 / 2.2) if c > 0.0031308 else 12.92 * c
+            return int(max(0, min(255, 255 * v)))
+
+        self._rgb_cache = (_gamma(rl), _gamma(gl), _gamma(bl))
+        return self._rgb_cache
+
+    def to_hex(self) -> str:
+        if self._hex_cache is not None:
+            return self._hex_cache
+        r, g, b = self.to_rgb()
+        self._hex_cache = f"#{r:02x}{g:02x}{b:02x}"
+        return self._hex_cache
+
+    # ---------- Operations ----------
+    def distance_to(self, other: "ColorVector") -> float:
+        """Euclidean distance in CIELAB (delta-E 1976)."""
+        return math.sqrt(
+            (self.l - other.l) ** 2 + (self.a - other.a) ** 2 + (self.b - other.b) ** 2
+        )
+
+    def to_dict(self) -> dict[str, float]:
+        return {"l": self.l, "a": self.a, "b": self.b}
+
+    @classmethod
+    def from_dict(cls, data: dict[str, float]) -> "ColorVector":
+        return cls(l=float(data["l"]), a=float(data["a"]), b=float(data["b"]))
+
+
+@dataclass
+class TemporalValue:
+    """Exponentially-smoothed scalar with a bounded history buffer.
+
+    Used for confidence, regret, and edge weights. `get_trend` performs
+    a linear regression over the last N days and returns the slope/day.
+    """
+
+    current: float = 0.0
+    history: Deque[tuple[dt.datetime, float]] = field(
+        default_factory=lambda: deque(maxlen=100)
+    )
+    smoothing_factor: float = 0.7
+
+    def update(self, new_value: float, timestamp: dt.datetime | None = None) -> None:
+        ts = timestamp or dt.datetime.now(dt.timezone.utc)
+        self.history.append((ts, float(new_value)))
+        if len(self.history) == 1:
+            self.current = float(new_value)
+        else:
+            self.current = (
+                self.smoothing_factor * new_value
+                + (1 - self.smoothing_factor) * self.current
+            )
+
+    def apply_decay(self, decay_factor: float) -> None:
+        """Multiply current and history by a decay factor."""
+        if not 0 < decay_factor <= 1:
+            raise ValueError(f"decay_factor must be in (0,1], got {decay_factor}")
+        self.current *= decay_factor
+        self.history = deque(
+            [(ts, v * decay_factor) for ts, v in self.history], maxlen=self.history.maxlen
+        )
+
+    def get_trend(self, days: int = 30) -> float:
+        """Slope per day over the last `days`. Returns 0 if insufficient data."""
+        if len(self.history) < 2:
+            return 0.0
+        cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days)
+        relevant = [(ts, v) for ts, v in self.history if ts > cutoff]
+        if len(relevant) < 2:
+            return 0.0
+        times = [(ts - relevant[0][0]).total_seconds() for ts, _ in relevant]
+        values = [v for _, v in relevant]
+        if len(set(times)) < 2:
+            return 0.0
+        slope = float(np.polyfit(times, values, 1)[0])
+        return slope / 86400.0  # per day
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "current": self.current,
+            "history": [(ts.isoformat(), v) for ts, v in self.history],
+            "smoothing_factor": self.smoothing_factor,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "TemporalValue":
+        obj = cls(
+            current=float(data["current"]),
+            smoothing_factor=float(data.get("smoothing_factor", 0.7)),
+        )
+        obj.history = deque(
+            [(dt.datetime.fromisoformat(ts), float(v)) for ts, v in data.get("history", [])],
+            maxlen=100,
+        )
+        return obj
+
+
+@dataclass
+class GeometryProfile:
+    """Physical shape of a garment."""
+
+    silhouette_class: SilhouetteClass
+    length_profile: str
+    volume_distribution: list[float]
+    stretch_behavior: str
+    confidence: TemporalValue = field(default_factory=TemporalValue)
+
+    def validate(self) -> bool:
+        if not math.isclose(sum(self.volume_distribution), 1.0, abs_tol=0.01):
+            return False
+        return all(0.0 <= v <= 1.0 for v in self.volume_distribution)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "silhouette_class": self.silhouette_class.value,
+            "length_profile": self.length_profile,
+            "volume_distribution": list(self.volume_distribution),
+            "stretch_behavior": self.stretch_behavior,
+            "confidence": self.confidence.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "GeometryProfile":
+        obj = cls(
+            silhouette_class=SilhouetteClass(data["silhouette_class"]),
+            length_profile=data["length_profile"],
+            volume_distribution=list(data["volume_distribution"]),
+            stretch_behavior=data["stretch_behavior"],
+        )
+        obj.confidence = TemporalValue.from_dict(data["confidence"])
+        return obj
+
+
+@dataclass
+class SurfaceProperties:
+    """Visual surface properties of a garment."""
+
+    dominant_color: ColorVector
+    color_variance: float
+    texture_class: TextureClass
+    pattern_density: float
+    lighting_risk: float = 0.0
+
+    def is_update_allowed(self) -> bool:
+        return self.lighting_risk < 0.8
+
+    def get_visual_complexity(self) -> float:
+        texture_penalty = 0.0 if self.texture_class == TextureClass.SMOOTH else 1.0
+        return (
+            self.color_variance * 0.4
+            + self.pattern_density * 0.4
+            + texture_penalty * 0.2
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "dominant_color": self.dominant_color.to_dict(),
+            "color_variance": self.color_variance,
+            "texture_class": self.texture_class.value,
+            "pattern_density": self.pattern_density,
+            "lighting_risk": self.lighting_risk,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "SurfaceProperties":
+        return cls(
+            dominant_color=ColorVector.from_dict(data["dominant_color"]),
+            color_variance=float(data["color_variance"]),
+            texture_class=TextureClass(data["texture_class"]),
+            pattern_density=float(data["pattern_density"]),
+            lighting_risk=float(data.get("lighting_risk", 0.0)),
+        )
+
+
+@dataclass
+class WearEvent:
+    """An individual interaction with a garment."""
+
+    timestamp: dt.datetime
+    context_snapshot_id: str
+    accepted: bool
+    duration_estimate: float
+    event_type: EventType
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "timestamp": self.timestamp.isoformat(),
+            "context_snapshot_id": self.context_snapshot_id,
+            "accepted": self.accepted,
+            "duration_estimate": self.duration_estimate,
+            "event_type": self.event_type.value,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "WearEvent":
+        return cls(
+            timestamp=dt.datetime.fromisoformat(data["timestamp"]),
+            context_snapshot_id=data["context_snapshot_id"],
+            accepted=bool(data["accepted"]),
+            duration_estimate=float(data["duration_estimate"]),
+            event_type=EventType(data["event_type"]),
+        )
+
+
+@dataclass
+class RegretSignals:
+    """Explicit + implicit signals of purchase/usage regret."""
+
+    explicit: str = "none"
+    implicit: dict[str, TemporalValue] = field(default_factory=dict)
+
+    def update_implicit(self, signal_type: str, strength: float) -> None:
+        if signal_type not in self.implicit:
+            self.implicit[signal_type] = TemporalValue()
+        self.implicit[signal_type].update(strength)
+
+    def get_weighted_regret(self) -> float:
+        base = {"none": 0.0, "mild": 0.3, "strong": 0.7}.get(self.explicit, 0.0)
+        implicit_total = sum(tv.current * 0.5 for tv in self.implicit.values())
+        return min(1.0, base + implicit_total)
+
+    def get_strongest_signal(self) -> tuple[str | None, float]:
+        if not self.implicit:
+            return None, 0.0
+        strongest = max(self.implicit.items(), key=lambda kv: kv[1].current)
+        return strongest[0], strongest[1].current
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "explicit": self.explicit,
+            "implicit": {k: v.to_dict() for k, v in self.implicit.items()},
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "RegretSignals":
+        obj = cls(explicit=data["explicit"])
+        obj.implicit = {k: TemporalValue.from_dict(v) for k, v in data.get("implicit", {}).items()}
+        return obj
+
+
+@dataclass
+class ConfidenceEnvelope:
+    """Per-dimension confidence capped by the ingestion method ceiling."""
+
+    geometry_confidence: float = 0.0
+    surface_confidence: float = 0.0
+    category_confidence: float = 0.0
+    context_confidence: float = 0.0
+    ingestion_method: IngestionMethod | None = None
+
+    @property
+    def _ceiling(self) -> float:
+        if self.ingestion_method is not None:
+            return CONFIDENCE_BASE[self.ingestion_method]
+        return 1.0
+
+    @property
+    def overall_confidence(self) -> float:
+        """Bottleneck: lowest dimension after applying the ceiling."""
+        return min(
+            min(self.geometry_confidence, self._ceiling),
+            min(self.surface_confidence, self._ceiling),
+            min(self.category_confidence, self._ceiling),
+            min(self.context_confidence, self._ceiling),
+        )
+
+    def update(self, **kwargs: float) -> None:
+        ceiling = self._ceiling
+        for key, value in kwargs.items():
+            if hasattr(self, key):
+                setattr(self, key, max(0.0, min(ceiling, float(value))))
+
+    def decay(self, days_inactive: int) -> None:
+        factor = 0.95 ** (days_inactive / 30.0)
+        self.geometry_confidence *= factor
+        self.surface_confidence *= factor
+        self.category_confidence = min(self.category_confidence, 0.9)
+        self.context_confidence *= factor * 0.8
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "geometry_confidence": self.geometry_confidence,
+            "surface_confidence": self.surface_confidence,
+            "category_confidence": self.category_confidence,
+            "context_confidence": self.context_confidence,
+            "ingestion_method": self.ingestion_method.value if self.ingestion_method else None,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "ConfidenceEnvelope":
+        obj = cls(
+            geometry_confidence=float(data["geometry_confidence"]),
+            surface_confidence=float(data["surface_confidence"]),
+            category_confidence=float(data["category_confidence"]),
+            context_confidence=float(data["context_confidence"]),
+        )
+        if data.get("ingestion_method"):
+            obj.ingestion_method = IngestionMethod(data["ingestion_method"])
+        return obj
+
+
+# ────────────────────────────────────────────────────────────────
+# The aggregate: WardrobeObject
+# ────────────────────────────────────────────────────────────────
+
+
+class WardrobeObject:
+    """Aggregate root for a single garment.
+
+    Encapsulates every piece of per-item state and every rule that mutates it:
+      * Confidence envelope updates on wear/tryon/rejection
+      * Regret signal accumulation
+      * Lifecycle state transitions (provisional → stable → dormant → revived)
+      * Wearability context expansion based on long-duration wears
+
+    This class performs no I/O. Persistence is handled by adapter layers.
+    """
+
+    __slots__ = (
+        "id",
+        "owner_id",
+        "created_at",
+        "last_updated",
+        "ingestion_method",
+        "lifecycle_state",
+        "bootstrap_confidence",
+        "geometry_profile",
+        "surface_properties",
+        "category_constraints",
+        "wearability_context",
+        "confidence_envelope",
+        "usage_history",
+        "regret_signals",
+        "graph_hooks",
+        "last_worn",
+        "total_wears",
+        "successful_wears",
+        "adaptive_slice_weight",
+        "pending_decay_days",
+        "_catalog_metadata",
+    )
+
+    def __init__(
+        self,
+        owner_id: str,
+        ingestion_method: IngestionMethod,
+        primary_category: PrimaryCategory,
+        bootstrap_confidence: float | None = None,
+    ) -> None:
+        if not owner_id:
+            raise ValueError("owner_id is required")
+
+        self.id: str = str(uuid.uuid4())
+        self.owner_id: str = owner_id
+        self.created_at: dt.datetime = dt.datetime.now(dt.timezone.utc)
+        self.last_updated: dt.datetime = self.created_at
+        self.ingestion_method: IngestionMethod = ingestion_method
+        self.lifecycle_state: LifecycleState = LifecycleState.PROVISIONAL
+
+        if bootstrap_confidence is not None:
+            lo, hi = BOOTSTRAP_CONFIDENCE_RANGE
+            self.bootstrap_confidence: float = max(lo, min(hi, bootstrap_confidence))
+        else:
+            self.bootstrap_confidence = CONFIDENCE_BASE[ingestion_method] * 0.3
+
+        self.geometry_profile: GeometryProfile | None = None
+        self.surface_properties: SurfaceProperties | None = None
+
+        self.category_constraints: dict[str, Any] = {
+            "primary_category": primary_category.value,
+            "secondary_roles": [],
+            "layering_role": LayeringRole.BASE.value,
+        }
+        self.wearability_context: dict[str, Any] = {
+            "climate_range": [10.0, 25.0],
+            "activity_affinity": [],
+            "mobility_tolerance": MobilityTolerance.MEDIUM.value,
+        }
+
+        self.confidence_envelope = ConfidenceEnvelope(ingestion_method=ingestion_method)
+        self._init_confidence()
+
+        self.usage_history: list[WearEvent] = []
+        self.regret_signals = RegretSignals()
+
+        self.graph_hooks: dict[str, Any] = {
+            "node_id": str(uuid.uuid4()),
+            "last_graph_update": self.created_at,
+        }
+
+        self.last_worn: dt.datetime | None = None
+        self.total_wears: int = 0
+        self.successful_wears: int = 0
+        self.adaptive_slice_weight: float = 0.0
+        self.pending_decay_days: int = 0
+        self._catalog_metadata: dict[str, Any] = {}
+
+    # ── Catalog metadata with size guard ────────────────────────
+    @property
+    def catalog_metadata(self) -> dict[str, Any]:
+        return self._catalog_metadata
+
+    @catalog_metadata.setter
+    def catalog_metadata(self, value: dict[str, Any]) -> None:
+        import json
+
+        serialized = json.dumps(value, default=str)
+        if len(serialized) > 100_000:
+            raise ValueError("catalog_metadata exceeds 100 KB")
+        self._catalog_metadata = value
+
+    # ── Confidence initialization ───────────────────────────────
+    def _init_confidence(self) -> None:
+        base = CONFIDENCE_BASE[self.ingestion_method]
+        self.confidence_envelope.update(
+            geometry_confidence=base * 0.6,
+            surface_confidence=base * 0.7,
+            category_confidence=base * 0.8,
+            context_confidence=self.bootstrap_confidence,
+        )
+
+    # ── Wear event handling ─────────────────────────────────────
+    def record_wear_event(
+        self,
+        accepted: bool,
+        duration_estimate: float,
+        event_type: EventType = EventType.WEAR,
+        context_snapshot_id: str | None = None,
+    ) -> WearEvent:
+        """Atomically record a wear event and update all derived state."""
+        now = dt.datetime.now(dt.timezone.utc)
+        cid = context_snapshot_id or f"ctx_{int(now.timestamp())}"
+
+        event = WearEvent(
+            timestamp=now,
+            context_snapshot_id=cid,
+            accepted=accepted,
+            duration_estimate=duration_estimate,
+            event_type=event_type,
+        )
+
+        # Prepare derived counters BEFORE mutating anything
+        new_total = self.total_wears + 1
+        new_successful = self.successful_wears + (1 if accepted else 0)
+        new_last_worn = now if accepted else self.last_worn
+
+        # Commit
+        self.usage_history.append(event)
+        self.total_wears = new_total
+        self.successful_wears = new_successful
+        self.last_worn = new_last_worn
+        self.last_updated = now
+
+        if accepted:
+            self._apply_acceptance(event)
+        else:
+            self._apply_rejection(event)
+
+        self._transition_lifecycle()
+        return event
+
+    def _apply_acceptance(self, event: WearEvent) -> None:
+        if event.event_type == EventType.WEAR:
+            self.confidence_envelope.update(
+                geometry_confidence=self.confidence_envelope.geometry_confidence + 0.05,
+                surface_confidence=self.confidence_envelope.surface_confidence + 0.04,
+                context_confidence=self.confidence_envelope.context_confidence + 0.05,
+            )
+            self.adaptive_slice_weight = min(1.0, self.adaptive_slice_weight + 0.1)
+        elif event.event_type == EventType.TRYON:
+            self.confidence_envelope.update(
+                geometry_confidence=self.confidence_envelope.geometry_confidence + 0.02,
+                context_confidence=self.confidence_envelope.context_confidence + 0.01,
+            )
+
+        if event.duration_estimate > 120:
+            self._expand_climate_range()
+
+    def _apply_rejection(self, event: WearEvent) -> None:
+        if event.duration_estimate < 30:
+            self.regret_signals.update_implicit("early_change", 0.7)
+        self.confidence_envelope.geometry_confidence *= 0.9
+        self.confidence_envelope.context_confidence *= 0.9
+        self.adaptive_slice_weight = max(0.0, self.adaptive_slice_weight - 0.15)
+
+    def _expand_climate_range(self) -> None:
+        lo, hi = self.wearability_context["climate_range"]
+        size = hi - lo
+        expansion = size * 0.1
+        self.wearability_context["climate_range"] = [lo - expansion, hi + expansion]
+
+    # ── Lifecycle transitions ───────────────────────────────────
+    def _transition_lifecycle(self) -> None:
+        conf = self.confidence_envelope.overall_confidence
+        days_inactive = (
+            (dt.datetime.now(dt.timezone.utc) - self.last_worn).days
+            if self.last_worn
+            else 10**9
+        )
+
+        if conf < 0.2:
+            self.lifecycle_state = LifecycleState.PROVISIONAL
+        elif self.lifecycle_state == LifecycleState.PROVISIONAL and conf >= 0.3:
+            self.lifecycle_state = LifecycleState.ACTIVE_LEARNING
+        elif (
+            self.lifecycle_state == LifecycleState.ACTIVE_LEARNING
+            and conf >= 0.7
+            and self.total_wears >= 3
+        ):
+            self.lifecycle_state = LifecycleState.STABLE
+        elif self.lifecycle_state == LifecycleState.STABLE and days_inactive > 90:
+            self.lifecycle_state = LifecycleState.DORMANT
+        elif self.lifecycle_state == LifecycleState.DORMANT:
+            regret = self.regret_signals.get_weighted_regret()
+            if regret < 0.3 and conf > 0.5:
+                self.lifecycle_state = LifecycleState.REVIVAL_CANDIDATE
+        elif (
+            self.lifecycle_state == LifecycleState.REVIVAL_CANDIDATE and self.total_wears > 0
+        ):
+            self.lifecycle_state = LifecycleState.ACTIVE_LEARNING
+
+    # ── Query helpers ───────────────────────────────────────────
+    def get_safe_for_exploration(self) -> bool:
+        if self.lifecycle_state in (LifecycleState.DORMANT, LifecycleState.RETIRED):
+            return False
+        return (
+            self.regret_signals.get_weighted_regret() < 0.4
+            and self.confidence_envelope.overall_confidence > 0.4
+            and self.total_wears < 10
+        )
+
+    def queue_decay(self, days: int) -> None:
+        self.pending_decay_days += days
+
+    def apply_queue_decay(self) -> None:
+        if self.pending_decay_days > 0:
+            self.confidence_envelope.decay(self.pending_decay_days)
+            self.pending_decay_days = 0
+            self._transition_lifecycle()
+
+    def retire(self) -> None:
+        self.lifecycle_state = LifecycleState.RETIRED
+        self.last_updated = dt.datetime.now(dt.timezone.utc)
+
+    # ── Serialization ───────────────────────────────────────────
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "owner_id": self.owner_id,
+            "created_at": self.created_at.isoformat(),
+            "last_updated": self.last_updated.isoformat(),
+            "ingestion_method": self.ingestion_method.value,
+            "lifecycle_state": self.lifecycle_state.value,
+            "bootstrap_confidence": self.bootstrap_confidence,
+            "geometry_profile": self.geometry_profile.to_dict()
+            if self.geometry_profile
+            else None,
+            "surface_properties": self.surface_properties.to_dict()
+            if self.surface_properties
+            else None,
+            "category_constraints": self.category_constraints,
+            "wearability_context": self.wearability_context,
+            "confidence_envelope": self.confidence_envelope.to_dict(),
+            "regret_signals": self.regret_signals.to_dict(),
+            "usage_history": [e.to_dict() for e in self.usage_history],
+            "total_wears": self.total_wears,
+            "successful_wears": self.successful_wears,
+            "adaptive_slice_weight": self.adaptive_slice_weight,
+            "pending_decay_days": self.pending_decay_days,
+            "catalog_metadata": self._catalog_metadata,
+            "last_worn": self.last_worn.isoformat() if self.last_worn else None,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "WardrobeObject":
+        obj = cls(
+            owner_id=data["owner_id"],
+            ingestion_method=IngestionMethod(data["ingestion_method"]),
+            primary_category=PrimaryCategory(data["category_constraints"]["primary_category"]),
+            bootstrap_confidence=data.get("bootstrap_confidence"),
+        )
+        obj.id = data["id"]
+        obj.created_at = dt.datetime.fromisoformat(data["created_at"])
+        obj.last_updated = dt.datetime.fromisoformat(data["last_updated"])
+        obj.lifecycle_state = LifecycleState(data["lifecycle_state"])
+
+        if data.get("geometry_profile"):
+            obj.geometry_profile = GeometryProfile.from_dict(data["geometry_profile"])
+        if data.get("surface_properties"):
+            obj.surface_properties = SurfaceProperties.from_dict(data["surface_properties"])
+
+        obj.category_constraints = data["category_constraints"]
+        obj.wearability_context = data["wearability_context"]
+
+        obj.confidence_envelope = ConfidenceEnvelope.from_dict(data["confidence_envelope"])
+        obj.regret_signals = RegretSignals.from_dict(data["regret_signals"])
+        obj.usage_history = [WearEvent.from_dict(e) for e in data.get("usage_history", [])]
+
+        obj.total_wears = int(data.get("total_wears", 0))
+        obj.successful_wears = int(data.get("successful_wears", 0))
+        obj.adaptive_slice_weight = float(data.get("adaptive_slice_weight", 0.0))
+        obj.pending_decay_days = int(data.get("pending_decay_days", 0))
+        obj._catalog_metadata = data.get("catalog_metadata", {})
+        if data.get("last_worn"):
+            obj.last_worn = dt.datetime.fromisoformat(data["last_worn"])
+        return obj
+
+    def __repr__(self) -> str:
+        return (
+            f"<WardrobeObject id={self.id[:8]} owner={self.owner_id} "
+            f"cat={self.category_constraints['primary_category']} "
+            f"state={self.lifecycle_state.value} conf={self.confidence_envelope.overall_confidence:.2f}>"
+        )
+
+
+# ────────────────────────────────────────────────────────────────
+# Pure helper functions (used by graph/recommendation services)
+# ────────────────────────────────────────────────────────────────
+
+
+def categories_are_compatible(item1: WardrobeObject, item2: WardrobeObject) -> bool:
+    """True if the two items' primary categories can be worn together."""
+    c1 = item1.category_constraints["primary_category"]
+    c2 = item2.category_constraints["primary_category"]
+    return c2 in CATEGORY_COMPATIBILITY.get(c1, set())
+
+
+def rule_based_compatibility(item1: WardrobeObject, item2: WardrobeObject) -> float:
+    """Baseline compatibility score in [0, 0.6] used to seed graph edges."""
+    weight = 0.1
+    c1 = item1.confidence_envelope.overall_confidence
+    c2 = item2.confidence_envelope.overall_confidence
+    weight += (1.0 - abs(c1 - c2)) * 0.2
+
+    cat1 = item1.category_constraints["primary_category"]
+    cat2 = item2.category_constraints["primary_category"]
+    if {cat1, cat2} == {"top", "bottom"}:
+        weight += 0.15
+    elif "outerwear" in (cat1, cat2):
+        weight += 0.10
+
+    if item1.surface_properties and item2.surface_properties:
+        dist = item1.surface_properties.dominant_color.distance_to(
+            item2.surface_properties.dominant_color
+        )
+        weight += (1.0 - min(dist / 100.0, 1.0)) * 0.10
+
+    return min(weight, 0.6)
+
+
+def top_k_by_confidence(
+    items: Iterable[WardrobeObject], k: int
+) -> list[WardrobeObject]:
+    """Return the top-k items by overall confidence (stable)."""
+    return sorted(
+        items,
+        key=lambda it: it.confidence_envelope.overall_confidence,
+        reverse=True,
+    )[:k]
+```
+
+---
+
+End of Part 1. Files delivered in this part:
+
+1. pyproject.toml
+2. .env.example
+3. docker-compose.yml
+4. Makefile
+5. services/common/__init__.py
+6. services/common/config.py
+7. services/common/errors.py
+8. services/common/logging_config.py
+9. services/common/retry.py
+10. services/common/cache.py
+11. services/common/telemetry.py
+12. services/common/events.py
+13. services/common/security.py
+14. services/common/domain.py (fully expanded – ~900 lines)
+
+Part 1 line count: ~1,750 lines.
+
+---
+
+What's next
+
+Say "continue" and I'll deliver Part 2:
+
+· services/item-service/ – Dockerfile, requirements, full models.py, repositories.py, services.py, main.py (with seed endpoint, batch API, admin)
+· services/item-service/tests/ – conftest.py, test_domain.py, test_services.py, test_repositories.py
+
+Part 3 will cover graph-service, recommendation-service, perception-service (CLIP + Celery), and their tests.
+
+Part 4 will cover sync-service (persistent queue + replay + conflict resolution), catalog-importer, api-gateway (per-endpoint rate limiting + sliding circuit breaker), infrastructure (Helm, chaos, Prometheus), CI/CD, and scripts.
+
+Each part is fully expanded — no compression, full docstrings, type hints, error handling, and tests.

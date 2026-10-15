@@ -1,0 +1,32 @@
+section_number,original_filename,extracted_filename,byte_count,sha256
+1,./CDIC .txt,0001__CDIC_.txt,54440,6632c725e6988226e902177c5881a4804fd7250bdcb7ec0f4eab53e7ab148409
+2,./CDIC V4.txt,0002__CDIC_V4.txt,11969,332fcf460447186c43a7827eea1da3c7c63fe964cc6301f683b64adb3699a8b4
+3,./CDIC v5.txt,0003__CDIC_v5.txt,78506,7e9b0111cbde013872b8242e23e8ec8147ce2cd7ab06690aa31c829edc6c5fea
+4,./CDIC.txt,0004__CDIC.txt,56384,d391c547b520e2027250a2d231a7aeba470e193591f61c48c81b0cd01c56952e
+5,./CFRP V6.txt,0005__CFRP_V6.txt,58936,f364dcf9aad0342239a647d8f82bf4ecb05f04f4699da74a47d83e06e2b80745
+6,./EEPL V2.0.txt,0006__EEPL_V2.0.txt,76315,2d3003e9c64fa5621ee5119f16d776d5d624713531a4fe7d2ab6e527c6b0a2cd
+7,./EEPL.txt,0007__EEPL.txt,67415,addf74b5fcfae1b94fa1f55d603ce89c1434c86608792498d28cb7d0f8301a04
+8,./FCI  (1).txt,0008__FCI_1_.txt,37832,71b00fd30d25e8703f66e66c32f6368cbc03ef9b26121d2a931509c2b7391f31
+9,./FCI .txt,0009__FCI_.txt,38055,544a1ce57473f5e8dacafea3247da19d45757a98ac8b1e984f2191542f745edf
+10,./FCI V2.0.txt,0010__FCI_V2.0.txt,50409,829e12f942e58bd4f2644e1d01fe21118b5f9a1be3bce754d2cdaebdd60a71c5
+11,./Fit Confidence Index repository .txt,0011__Fit_Confidence_Index_repository_.txt,38055,544a1ce57473f5e8dacafea3247da19d45757a98ac8b1e984f2191542f745edf
+12,./NPL V2.txt,0012__NPL_V2.txt,36454,3d8df17a9e8c677a3ed29d6207aa80e20a0330c56360060529ffc057fb5be2c1
+13,./Tari improved .txt,0013__Tari_improved_.txt,59014,94c9495bdf436c9f211e26cea9971c23f938bb6cbcc6e461d05de7d87cb07354
+14,./We have now.txt,0014__We_have_now.txt,47275,d78a2031590ebbd91e3ce911404f601ff605e6ded392f601563707d6f30916d5
+15,./Xyra.txt,0015__Xyra.txt,100012,120d7b329428d0236c2a24da9b2c50d29f5d15e5a2eebe09a478fc4f9d8ba1b8
+16,./``` fci-repo-.txt,0016__fci-repo-.txt,482,92ed66fc2245872f075e83c8df560ea3355c2f45307527b20d5eea2a0631268e
+17,./```.txt,0017__txt,59014,94c9495bdf436c9f211e26cea9971c23f938bb6cbcc6e461d05de7d87cb07354
+18,./cirvanna skeleton 🩻🩻.txt,0018__cirvanna_skeleton_.txt,61686,72d2862b2cb7ec4775752243bad616bd2546871d635797979bc4c867fca4b9d8
+19,./cultural identity module .txt,0019__cultural_identity_module_.txt,29635,548e9b263555288812e12615f97052a9bceb55f9184cc21c06d557c7ce62ff48
+20,./identity decision engine .txt,0020__identity_decision_engine_.txt,64233,bc46f79a84f3f7fbb35780fa3a083c20f719219a5ff4a812bbedd4722dc6c650
+21,./skin analysis .txt,0021__skin_analysis_.txt,42497,e343631314f39d57be5f7f0d070e26a007b99a7a24a27c874f3d2750b767e25f
+22,./skin analysis repo .txt,0022__skin_analysis_repo_.txt,35398,2315298669e991bf46839451a4a34ad399900561712c4ddfee8a73dcceeea15f
+23,./virtual Tryon  (1).txt,0023__virtual_Tryon_1_.txt,100083,2a23c9bd66f31244e7147ec893f5cb311349b5df8173ead245097b5087d4026f
+24,./virtual Tryon  (2).txt,0024__virtual_Tryon_2_.txt,100083,2a23c9bd66f31244e7147ec893f5cb311349b5df8173ead245097b5087d4026f
+25,./virtual Tryon .txt,0025__virtual_Tryon_.txt,100081,9ade21dd864441983f017a541fc1f4097ca3e8f1db32d039bc684f217b3b6d85
+26,./virtual Tryon improved.txt,0026__virtual_Tryon_improved.txt,100083,2a23c9bd66f31244e7147ec893f5cb311349b5df8173ead245097b5087d4026f
+27,./virtual Twin .txt,0027__virtual_Twin_.txt,28881,80d8ca7203994e963cb37b723e502d05247613a6a53a54c3a220e16dce95c30d
+28,./virtual twin  (1).txt,0028__virtual_twin_1_.txt,29221,42ea2f1d2d1fde93dd34cdadbdb8132c5756feee68bf0f0d8c124ec03e922fdf
+29,./virtual twin mixed format .txt,0029__virtual_twin_mixed_format_.txt,39659,b92f6735415a380b819f9545a0f59ab722097fed39d712e437bd93a3b6fde84a
+30,"./wardrobe 2,3 and 4 .txt",0030__wardrobe_2_3_and_4_.txt,101263,e13687f66e52fc3d0197fa2f37134b532a1d022b0040ff3389aa10e45ad8ef38
+31,./wardrobe part 1.txt,0031__wardrobe_part_1.txt,76406,68ba06959ceec907b2b24dff4b1e35497cae65a399e17cb56945bf77163032fa
