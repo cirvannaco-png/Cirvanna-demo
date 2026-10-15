@@ -34,6 +34,14 @@ class SecretScannerRegressionTests(unittest.TestCase):
         findings = self.scan_text('password = "REDACTED"\n')
         self.assertNotIn((1, "hardcoded-password-assignment"), findings)
 
+    def test_detects_unquoted_password_default(self) -> None:
+        findings = self.scan_text("password: admin\n")
+        self.assertIn((1, "bare-password-assignment"), findings)
+
+    def test_ignores_environment_password_reference(self) -> None:
+        findings = self.scan_text("password: process.env.DB_PASSWORD\n")
+        self.assertNotIn((1, "bare-password-assignment"), findings)
+
 
 if __name__ == "__main__":
     unittest.main()

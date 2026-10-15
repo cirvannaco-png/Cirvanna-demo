@@ -41,6 +41,12 @@ ASSIGNMENT = re.compile(
 SHORT_PASSWORD_ASSIGNMENT = re.compile(
     r"""(?ix)\b(?:password|passwd|pwd)\b\s*[:=]\s*(?P<quote>[\'"])(?P<value>[^\'"\r\n]{4,})(?P=quote)"""
 )
+BARE_PASSWORD_ASSIGNMENT = re.compile(
+    r"""(?im)^\s*(?:export\s+)?[\'"]?(?:password|passwd|pwd)[\'"]?\s*[:=]\s*(?P<value>[A-Za-z0-9_./+=:-]{4,})(?=\s*(?:[,;#}]|$))"""
+)
+NON_SECRET_PASSWORD_VALUES = {
+    "string", "str", "none", "null", "undefined", "true", "false",
+}
 
 PLACEHOLDER_PARTS = (
     "placeholder", "your_", "your-", "change_me", "changeme", "replace_me",
@@ -67,6 +73,21 @@ def looks_like_placeholder(value: str) -> bool:
     if len(compact) >= 8 and len(set(compact)) <= 2:
         return True
     return False
+
+
+def looks_like_reference(value: str) -> bool:
+    """Recognize common variable/environment references, not literal credentials."""
+    normalized = value.strip()
+    lowered = normalized.lower()
+    if normalized.startswith(("$", "${")):
+        return True
+    if any(token in lowered for token in ("process.env", "os.getenv", "getenv(")):
+        return True
+    # Dotted identifier paths such as object.password are references, not literal values.
+    return bool(re.fullmatch(
+        r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+",
+        normalized,
+    ))
 
 
 def entropy(value: str) -> float:
@@ -130,9 +151,23 @@ def scan_file(path: Path):
             occupied.add(item)
             findings.append(item)
 
+    for match in BARE_PASSWORD_ASSIGNMENT.finditer(content):
+        value = match.group("value").strip()
+        lowered = value.lower()
+        if (
+            looks_like_placeholder(value)
+            or lowered in NON_SECRET_PASSWORD_VALUES
+            or looks_like_reference(value)
+        ):
+            continue
+        item = (line_number(content, match.start("value")), "bare-password-assignment")
+        if item not in occupied:
+            occupied.add(item)
+            findings.append(item)
+
     for match in ASSIGNMENT.finditer(content):
         value = match.group("value")
-        if looks_like_placeholder(value) or entropy(value) < 3.7:
+        if looks_like_placeholder(value) or looks_like_reference(value) or entropy(value) < 3.7:
             continue
         item = (line_number(content, match.start("value")), "high-entropy-credential-assignment")
         if item not in occupied:
