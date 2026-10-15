@@ -83,10 +83,10 @@ def looks_like_reference(value: str) -> bool:
         return True
     if any(token in lowered for token in ("process.env", "os.getenv", "getenv(")):
         return True
+    # Dotted identifier paths such as object.password are references, not literal values.
     return bool(re.fullmatch(
-        r"(?:self|cls|settings|config|env|process|os)(?:\.[A-Za-z_]\w*)+",
+        r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+",
         normalized,
-        flags=re.IGNORECASE,
     ))
 
 
