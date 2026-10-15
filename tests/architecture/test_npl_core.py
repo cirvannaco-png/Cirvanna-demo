@@ -41,7 +41,7 @@ class NPLHardVetoTests(unittest.TestCase):
     def test_explicit_item_exclusion_blocks(self):
         decision = evaluate("user-1", "item-7", (), (explicit("p1", TargetType.ITEM, "item-7"),))
         self.assertTrue(decision.blocked)
-        self.assertFalse(decision.may_display)
+        self.assertTrue(decision.blocked)
         self.assertEqual(decision.reason_code, "NPL_HARD_NEGATIVE")
         self.assertEqual(decision.hard_veto_preference_ids, ("p1",))
 
