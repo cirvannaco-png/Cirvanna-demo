@@ -11,7 +11,7 @@ Step 2 — GitHub-Ready Repository Structure
 
 ```env
 # Database
-DATABASE_URL=postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna
+DATABASE_URL=postgresql://cirvanna:REDACTED@postgres:5432/cirvanna
 POSTGRES_USER=cirvanna
 POSTGRES_PASSWORD=cirvanna123
 POSTGRES_DB=cirvanna
@@ -96,7 +96,7 @@ services:
       context: ./ais
       dockerfile: Dockerfile
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
       - GPU_ENABLED=${GPU_ENABLED:-false}
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
@@ -126,7 +126,7 @@ services:
       context: ./gsis
       dockerfile: Dockerfile
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
     volumes:
       - ./gsis/migrations:/app/migrations
     ports:
@@ -141,7 +141,7 @@ services:
       context: ./dtae_fce
       dockerfile: Dockerfile
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     volumes:
       - ./dtae_fce/models:/app/models
@@ -174,7 +174,7 @@ services:
     ports:
       - "8082:8000"
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     depends_on:
       - postgres
@@ -222,7 +222,7 @@ services:
       context: .
       dockerfile: Dockerfile.celery
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     volumes:
       - ./ais:/app/ais
@@ -241,7 +241,7 @@ services:
       context: .
       dockerfile: Dockerfile.celery
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://cirvanna:REDACTED@postgres:5432/cirvanna}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
     volumes:
       - ./dtae_fce:/app/dtae_fce
@@ -289,7 +289,7 @@ up:
 	@echo "✅ Services started"
 	@echo "📡 API Gateway: http://localhost:8080"
 	@echo "📊 Admin Dashboard: http://localhost:8081"
-	@echo "📈 Grafana: http://localhost:3000 (admin/admin)"
+	@echo "📈 Grafana: http://localhost:3000 (admin/REDACTED)"
 	@echo "🔍 Jaeger: http://localhost:16686"
 
 down:
@@ -539,7 +539,7 @@ POST /feedback
 
 📊 Monitoring
 
-· Grafana: http://localhost:3000 (admin/admin)
+· Grafana: http://localhost:3000 (admin/REDACTED)
 · Prometheus: http://localhost:9090
 · Jaeger Tracing: http://localhost:16686
 
@@ -3152,7 +3152,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import os
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://cirvanna:REDACTED@postgres:5432/cirvanna")
 
 engine = create_engine(
     DATABASE_URL,
@@ -3350,4 +3350,3 @@ class GarmentValidator:
         
         # Fabric weight validation
         if gdo.fabric_weight.value not
-

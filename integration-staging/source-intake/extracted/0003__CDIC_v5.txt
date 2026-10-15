@@ -1852,7 +1852,7 @@ from cdic.config import CDICConfig
 
 @pytest.fixture
 def config():
-    return CDICConfig(secret_key="test-secret-key-32-chars-12345678")
+    return CDICConfig(secret_key="REDACTED")
 
 @pytest.fixture
 def engine(config):
