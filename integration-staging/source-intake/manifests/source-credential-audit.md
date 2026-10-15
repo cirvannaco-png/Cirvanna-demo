@@ -23,6 +23,10 @@ An expanded, read-only pattern check found **46 URI occurrences containing user-
 
 A separate heuristic flagged hard-coded credential-like assignments (including API-key, password, and token labels). Some matches are code parameters or type annotations rather than assigned secret values, so these require contextual review and must not be treated as confirmed active credentials solely from the pattern match.
 
+## Repository-level source-candidate spot-check
+
+A separate code-search spot-check of the assembled `integration-staging/source-candidates/` mirrors found repeated development-style defaults in database and message-broker connection configuration, including user-info in local/container service URIs and password-valued environment examples. The observed examples referenced local or internal container hostnames; this is not evidence that every value is harmless or unused. The spot-check was not an exhaustive secret scan of all candidate files. Treat these values as unsafe for shared, staging, or production environments, and replace defaults with required environment configuration before promoting any candidate. The existing scanner explicitly does not cover database/cache/broker URI user-info, which is why a green run is not equivalent to a full secret clearance.
+
 ## Required handling
 
 1. Keep the archive and extracted snapshots as provenance-only source material; do not promote their embedded connection strings or credential-like values into runtime code.
