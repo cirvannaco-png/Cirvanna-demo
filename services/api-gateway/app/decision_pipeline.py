@@ -107,16 +107,6 @@ def _cultural_signals(result: CulturalIdentityResult) -> tuple[DecisionSignal, .
             required=True,
             source_version=result.contract_version,
         ),)
-    if not result.reason_codes:
-        return (DecisionSignal(
-            signal_id="cultural:no-reason",
-            kind=SignalKind.CULTURAL_REQUIREMENT,
-            state=SignalState.UNKNOWN,
-            reason_code="CULTURAL_RESULT_MISSING_REASON",
-            explanation="Cultural policy returned no reason codes; review is required.",
-            required=True,
-            source_version=result.contract_version,
-        ),)
     for index, (code, explanation) in enumerate(zip(result.reason_codes, result.explanations)):
         if code in {"CULTURAL_REQUIRED_ATTRIBUTE_MISSING", "CULTURAL_FORBIDDEN_ATTRIBUTE_PRESENT"}:
             state = SignalState.BLOCK
