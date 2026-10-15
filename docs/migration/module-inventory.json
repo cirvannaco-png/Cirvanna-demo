@@ -62,9 +62,9 @@
     {
       "id": "fci",
       "target": "packages/fit-intelligence/fci",
-      "status": "legacy-candidate",
-      "purpose": "Fit Confidence Index: calibrated fit confidence, residual model, uncertainty, and friction policies.",
-      "promotionGate": "Reconcile duplicate model versions; validate calibration on held-out evidence."
+      "status": "confidence-contract-implemented",
+      "purpose": "Typed calibrated fit-estimate contract with uncertainty bounds, evidence provenance, and a fail-closed CAL signal adapter; no trained predictor is certified.",
+      "promotionGate": "Add a reviewed model adapter, held-out calibration and interval-coverage evidence, bias evaluation, and end-to-end fit/return outcome validation."
     },
     {
       "id": "cfrp",
