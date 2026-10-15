@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import sys
 import unittest
 from pathlib import Path
@@ -115,6 +116,40 @@ class DecisionPipelineTests(unittest.TestCase):
         result = arbitrate_candidate(request(), eepl, npl, cultural_result=cultural)
         self.assertEqual(result.cal_result.verdict.value, "review")
         self.assertFalse(result.may_display)
+
+    def test_malformed_eepl_result_fails_closed_to_review(self):
+        eepl, npl = results()
+        malformed = replace(
+            eepl,
+            reason_codes=("EEPL_MINIMUM_AGE_NOT_MET",),
+            explanations=(),
+        )
+        result = arbitrate_candidate(request(), malformed, npl)
+        self.assertEqual(result.cal_result.verdict.value, "review")
+        self.assertFalse(result.may_display)
+        self.assertIn(
+            "eepl:open:malformed-result",
+            {reason.signal_id for reason in result.cal_result.reasons},
+        )
+
+    def test_malformed_cultural_result_fails_closed_to_review(self):
+        eepl, npl = results()
+        cultural = evaluate_cultural(
+            "user-1", "item-1", ("cotton",), (),
+            candidate_attributes_complete=True,
+        )
+        malformed = replace(
+            cultural,
+            reason_codes=("CULTURAL_REQUIRED_ATTRIBUTE_MISSING",),
+            explanations=(),
+        )
+        result = arbitrate_candidate(request(), eepl, npl, cultural_result=malformed)
+        self.assertEqual(result.cal_result.verdict.value, "review")
+        self.assertFalse(result.may_display)
+        self.assertIn(
+            "cultural:malformed-result",
+            {reason.signal_id for reason in result.cal_result.reasons},
+        )
 
     def test_unknown_cultural_policy_code_fails_closed_to_review(self):
         eepl, npl = results()
