@@ -19,6 +19,7 @@ from eepl import EEPLResult
 from npl import NPLDecision
 from cultural_identity import CulturalIdentityResult
 from usi import USIResult
+from fci import FitConfidenceEstimate
 
 
 @dataclass(frozen=True)
@@ -121,6 +122,7 @@ def arbitrate_candidate(
     npl_decision: NPLDecision,
     cultural_result: CulturalIdentityResult | None = None,
     usi_result: USIResult | None = None,
+    fci_estimate: FitConfidenceEstimate | None = None,
 ) -> DecisionPipelineResult:
     """Compose EEPL and NPL outputs, then require a final CAL verdict."""
     if eepl_result.candidate_id != request.candidate_id:
@@ -139,12 +141,19 @@ def arbitrate_candidate(
             raise ValueError("USI result candidate_id does not match arbitration request")
         if usi_result.user_id != eepl_result.user_id:
             raise ValueError("USI result must belong to the same user")
+    if fci_estimate is not None:
+        if fci_estimate.candidate_id != request.candidate_id:
+            raise ValueError("FCI estimate candidate_id does not match arbitration request")
+        if fci_estimate.user_id != eepl_result.user_id:
+            raise ValueError("FCI estimate must belong to the same user")
 
     signals = request.signals + _eepl_signals(eepl_result) + _npl_signals(npl_decision)
     if cultural_result is not None:
         signals += _cultural_signals(cultural_result)
     if usi_result is not None:
         signals += (usi_result.to_cal_signal(),)
+    if fci_estimate is not None:
+        signals += (fci_estimate.to_cal_signal(),)
     combined_request = replace(request, signals=signals)
     cal_result = arbitrate(combined_request)
     return DecisionPipelineResult(

@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[2]
 for package_root in (
     ROOT / "packages" / "identity-intelligence",
     ROOT / "packages" / "preferences",
+    ROOT / "packages" / "fit-intelligence",
     ROOT / "services" / "api-gateway",
 ):
     sys.path.insert(0, str(package_root))
@@ -17,6 +18,7 @@ from eepl import EEPLContext, EEPLPolicy, evaluate as evaluate_eepl  # noqa: E40
 from npl import NegativePreference, PreferenceSource, TargetType, evaluate as evaluate_npl  # noqa: E402
 from cultural_identity import CulturalRequirement, RequirementKind, evaluate as evaluate_cultural  # noqa: E402
 from usi import StylePreference, USIProfile, evaluate as evaluate_usi  # noqa: E402
+from fci import FitConfidenceEstimate  # noqa: E402
 from app import arbitrate_candidate  # noqa: E402
 
 
@@ -33,7 +35,7 @@ def signal(signal_id, kind, state=SignalState.PASS, confidence=None):
     )
 
 
-def request(candidate_id="item-1"):
+def request(candidate_id="item-1", include_fit=True):
     required = (
         SignalKind.SAFETY,
         SignalKind.LEGAL_ELIGIBILITY,
@@ -41,9 +43,9 @@ def request(candidate_id="item-1"):
         SignalKind.CULTURAL_REQUIREMENT,
         SignalKind.IDENTITY_ALIGNMENT,
     )
-    signals = tuple(signal(f"gate-{kind.value}", kind) for kind in required) + (
-        signal("fit", SignalKind.FIT_CONFIDENCE, confidence=0.95),
-    )
+    signals = tuple(signal(f"gate-{kind.value}", kind) for kind in required)
+    if include_fit:
+        signals += (signal("fit", SignalKind.FIT_CONFIDENCE, confidence=0.95),)
     return ArbitrationRequest("req-1", candidate_id, signals)
 
 
@@ -117,6 +119,37 @@ class DecisionPipelineTests(unittest.TestCase):
         self.assertEqual(result.cal_result.verdict.value, "review")
         self.assertFalse(result.may_display)
         self.assertIn("NON_VETO_SIGNAL_BLOCKED", {reason.code for reason in result.cal_result.reasons})
+
+    def test_calibrated_fci_signal_can_satisfy_fit_gate_but_not_other_gates(self):
+        eepl, npl = results()
+        estimate = FitConfidenceEstimate(
+            estimate_id="fci-1", user_id="user-1", candidate_id="item-1",
+            model_version="fci-model-1", calibrated=True, confidence=0.95,
+            lower_bound=0.90, upper_bound=0.98, calibration_version="cal-1",
+            evidence_ids=("body-1", "brand-chart-1"),
+        )
+        result = arbitrate_candidate(request(include_fit=False), eepl, npl, fci_estimate=estimate)
+        self.assertEqual(result.cal_result.verdict.value, "show")
+
+    def test_uncalibrated_fci_estimate_routes_to_review(self):
+        eepl, npl = results()
+        estimate = FitConfidenceEstimate(
+            estimate_id="fci-uncalibrated", user_id="user-1", candidate_id="item-1",
+            model_version="experimental", calibrated=False, confidence=0.99,
+        )
+        result = arbitrate_candidate(request(include_fit=False), eepl, npl, fci_estimate=estimate)
+        self.assertEqual(estimate.to_cal_signal().reason_code, "FCI_UNCALIBRATED_ESTIMATE")
+        self.assertEqual(result.cal_result.verdict.value, "review")
+        self.assertFalse(result.may_display)
+
+    def test_fci_candidate_mismatch_is_rejected(self):
+        eepl, npl = results()
+        estimate = FitConfidenceEstimate(
+            estimate_id="fci-1", user_id="user-1", candidate_id="other-item",
+            model_version="fci-model-1", calibrated=False,
+        )
+        with self.assertRaises(ValueError):
+            arbitrate_candidate(request(), eepl, npl, fci_estimate=estimate)
 
     def test_candidate_mismatch_is_rejected(self):
         eepl, npl = results(candidate_id="other-item")
