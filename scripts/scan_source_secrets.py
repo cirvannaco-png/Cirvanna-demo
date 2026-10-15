@@ -50,8 +50,18 @@ PLACEHOLDER_PARTS = (
 
 
 def looks_like_placeholder(value: str) -> bool:
-    normalized = value.lower()
-    if any(part in normalized for part in PLACEHOLDER_PARTS):
+    normalized = value.strip().lower()
+    if normalized in PLACEHOLDER_PARTS:
+        return True
+    if normalized.startswith(("your_", "your-", "insert_")):
+        return True
+    # Match placeholder markers as tokens, not arbitrary substrings inside a real secret.
+    marker = re.compile(
+        r"(?:^|[^a-z0-9])(?:placeholder|change[_-]?me|replace[_-]?me|example|sample|dummy|"
+        r"redacted|not_a_secret|todo|test_token|test-secret|token_here|secret_here|api_key_here)"
+        r"(?:$|[^a-z0-9])"
+    )
+    if marker.search(normalized):
         return True
     compact = re.sub(r"[^a-z0-9]", "", normalized)
     if len(compact) >= 8 and len(set(compact)) <= 2:
