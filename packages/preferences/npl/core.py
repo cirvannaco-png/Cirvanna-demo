@@ -79,11 +79,6 @@ class NPLDecision:
     hard_veto_preference_ids: tuple[str, ...]
     soft_negative_preference_ids: tuple[str, ...]
 
-    @property
-    def may_display(self) -> bool:
-        """NPL only denies display; passing NPL does not authorize display."""
-        return not self.blocked
-
 
 def _normalize(value: str) -> str:
     return value.strip().casefold()
