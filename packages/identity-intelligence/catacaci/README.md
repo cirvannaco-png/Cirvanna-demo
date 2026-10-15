@@ -28,3 +28,15 @@ python scripts/validate_architecture.py
 ```
 
 Before promotion, add property-based and adversarial tests, validate policy ownership and versioning, connect only trusted typed signals, and verify the end-to-end display gate in the consuming service.
+
+
+## Governance extension contracts — initial kernels
+
+The following pure contracts now accompany the CAL arbitration core:
+
+- **TAL** (`tal.py`): consented, idempotent temporal events; latest-value reads are user-scoped and respect expiry without resurrecting stale values.
+- **CAM** (`cam.py`): records observed-versus-simulated CAL verdicts and changed signal IDs. Counterfactual scenarios are explicitly not causal claims.
+- **CIL** (`cil.py`): contributor-deduplicated cohort aggregation with a minimum-contributor suppression threshold. This is **not differential privacy**.
+- **VSL** (`vsl.py`): versioned priority proposals require a distinct approver; safety and legal eligibility remain invariant top priorities.
+
+These are domain contracts and in-memory/pure-function implementations, not production services. Durable event storage, replay infrastructure, privacy-preserving aggregation, access controls, approval workflow, observability, and end-to-end tests remain open.
