@@ -78,11 +78,14 @@ def latest_values(state: TemporalState, user_id: str, as_of: str) -> dict[str, s
     for event in state.events:
         if event.user_id != user_id or _parse_time(event.observed_at) > cutoff:
             continue
-        if event.expires_at is not None and cutoff >= _parse_time(event.expires_at):
-            continue
         current = latest.get(event.feature_key)
         if current is None or (_parse_time(event.observed_at), event.event_id) > (
             _parse_time(current.observed_at), current.event_id
         ):
             latest[event.feature_key] = event
-    return {key: event.value for key, event in sorted(latest.items())}
+    # Do not resurrect an older preference when the latest value has expired.
+    return {
+        key: event.value
+        for key, event in sorted(latest.items())
+        if event.expires_at is None or cutoff < _parse_time(event.expires_at)
+    }
