@@ -1,0 +1,31 @@
+name: Source candidate syntax
+
+on:
+  push:
+    branches: [main, "repair/**"]
+    paths:
+      - "integration-staging/source-candidates/**"
+      - ".github/workflows/source-candidate-syntax.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "integration-staging/source-candidates/**"
+      - ".github/workflows/source-candidate-syntax.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile-candidates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile staged Python candidate files
+        run: python -m compileall -q integration-staging/source-candidates

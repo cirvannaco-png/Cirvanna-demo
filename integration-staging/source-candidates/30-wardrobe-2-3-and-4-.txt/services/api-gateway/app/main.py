@@ -16,7 +16,13 @@ from common.security import correlation_middleware
 from common.telemetry import setup_telemetry
 
 from .circuit_breaker import SlidingCircuitBreaker
-from .config import CB_FAILURE_THRESHOLD, CB_INITIAL_RATIO, CB_RECOVERY_TIMEOUT, ROUTES, SERVICE_NAME
+from .config import (
+    CB_FAILURE_THRESHOLD,
+    CB_INITIAL_RATIO,
+    CB_RECOVERY_TIMEOUT,
+    ROUTES,
+    SERVICE_NAME,
+)
 from .rate_limiter import EndpointRateLimiter
 
 configure_logging(SERVICE_NAME, settings.log_level, settings.log_format)
@@ -58,13 +64,13 @@ async def health(request: Request) -> dict:
     return {
         "status": "ok",
         "service": SERVICE_NAME,
-        "breakers": {n: b.snapshot() for n, b in request.app.state.breakers.items()},
+        "breakers": {name: breaker.snapshot() for name, breaker in request.app.state.breakers.items()},
     }
 
 
 @app.get("/auth/dev")
 async def dev_token(user_id: str = "dev_user") -> dict:
-    """Development-only token issuer. Remove/disable in production."""
+    """Development-only token issuer. Remove or disable in production."""
     from common.security import issue_token
 
     if settings.is_production:
@@ -76,4 +82,14 @@ async def dev_token(user_id: str = "dev_user") -> dict:
     "/{service}/{path:path}",
     methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
 )
-async def proxy(request: Request, service: str, path: str) -> Respo
+async def proxy(request: Request, service: str, path: str) -> Response:
+    """Fail closed: the source fragment omitted the original proxy implementation.
+
+    The original merged source archive remains preserved under source-intake.
+    Do not forward traffic until routing, authentication, breaker behavior,
+    header filtering, and upstream response handling have been restored and tested.
+    """
+    del request, service, path
+    raise UpstreamError(
+        "The API gateway proxy implementation is incomplete in this source candidate."
+    )
