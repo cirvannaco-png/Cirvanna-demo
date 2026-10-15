@@ -56,7 +56,11 @@ class TALTests(unittest.TestCase):
 class CAMTests(unittest.TestCase):
     def result(self, request_id, candidate_id, state):
         signal = DecisionSignal("s1", SignalKind.SAFETY, state, "R1", "test", source_version="v1")
-        signals = (signal,)
+        fit = DecisionSignal(
+            "fit", SignalKind.FIT_CONFIDENCE, SignalState.PASS, "FCI_TEST", "fit test",
+            confidence=0.9, source_version="fci-test-v1",
+        )
+        signals = (signal, fit)
         req = ArbitrationRequest(request_id, candidate_id, signals, required_kinds=(SignalKind.SAFETY,))
         return arbitrate(req)
 
