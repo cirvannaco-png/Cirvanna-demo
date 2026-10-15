@@ -15,8 +15,9 @@ from catacaci import (
     SignalState,
     arbitrate,
 )
-from eepl import EEPLResult, GateVerdict
+from eepl import EEPLResult
 from npl import NPLDecision
+from cultural_identity import CulturalIdentityResult, RequirementVerdict
 
 
 @dataclass(frozen=True)
@@ -82,10 +83,42 @@ def _npl_signals(result: NPLDecision) -> tuple[DecisionSignal, ...]:
     ),)
 
 
+def _cultural_signals(result: CulturalIdentityResult) -> tuple[DecisionSignal, ...]:
+    signals: list[DecisionSignal] = []
+    if not result.reason_codes:
+        return (DecisionSignal(
+            signal_id="cultural:no-reason",
+            kind=SignalKind.CULTURAL_REQUIREMENT,
+            state=SignalState.UNKNOWN,
+            reason_code="CULTURAL_RESULT_MISSING_REASON",
+            explanation="Cultural policy returned no reason codes; review is required.",
+            required=True,
+            source_version=result.contract_version,
+        ),)
+    for index, (code, explanation) in enumerate(zip(result.reason_codes, result.explanations)):
+        if code in {"CULTURAL_REQUIRED_ATTRIBUTE_MISSING", "CULTURAL_FORBIDDEN_ATTRIBUTE_PRESENT"}:
+            state = SignalState.BLOCK
+        elif code == "CULTURAL_CANDIDATE_METADATA_INCOMPLETE":
+            state = SignalState.UNKNOWN
+        else:
+            state = SignalState.PASS
+        signals.append(DecisionSignal(
+            signal_id=f"cultural:{index}:{code}",
+            kind=SignalKind.CULTURAL_REQUIREMENT,
+            state=state,
+            reason_code=code,
+            explanation=explanation,
+            required=True,
+            source_version=result.contract_version,
+        ))
+    return tuple(signals)
+
+
 def arbitrate_candidate(
     request: ArbitrationRequest,
     eepl_result: EEPLResult,
     npl_decision: NPLDecision,
+    cultural_result: CulturalIdentityResult | None = None,
 ) -> DecisionPipelineResult:
     """Compose EEPL and NPL outputs, then require a final CAL verdict."""
     if eepl_result.candidate_id != request.candidate_id:
@@ -94,8 +127,15 @@ def arbitrate_candidate(
         raise ValueError("NPL decision candidate_id does not match arbitration request")
     if eepl_result.user_id != npl_decision.user_id:
         raise ValueError("EEPL and NPL results must belong to the same user")
+    if cultural_result is not None:
+        if cultural_result.candidate_id != request.candidate_id:
+            raise ValueError("cultural result candidate_id does not match arbitration request")
+        if cultural_result.user_id != eepl_result.user_id:
+            raise ValueError("cultural result must belong to the same user")
 
     signals = request.signals + _eepl_signals(eepl_result) + _npl_signals(npl_decision)
+    if cultural_result is not None:
+        signals += _cultural_signals(cultural_result)
     combined_request = replace(request, signals=signals)
     cal_result = arbitrate(combined_request)
     return DecisionPipelineResult(

@@ -15,6 +15,7 @@ for package_root in (
 from catacaci import ArbitrationRequest, DecisionSignal, SignalKind, SignalState  # noqa: E402
 from eepl import EEPLContext, EEPLPolicy, evaluate as evaluate_eepl  # noqa: E402
 from npl import NegativePreference, PreferenceSource, TargetType, evaluate as evaluate_npl  # noqa: E402
+from cultural_identity import CulturalRequirement, RequirementKind, evaluate as evaluate_cultural  # noqa: E402
 from app import arbitrate_candidate  # noqa: E402
 
 
@@ -81,6 +82,28 @@ class DecisionPipelineTests(unittest.TestCase):
     def test_missing_required_eepl_context_routes_to_review(self):
         eepl, npl = results(policy=EEPLPolicy("location", allowed_locations=("Nairobi",)))
         result = arbitrate_candidate(request(), eepl, npl)
+        self.assertEqual(result.cal_result.verdict.value, "review")
+        self.assertFalse(result.may_display)
+
+    def test_explicit_cultural_conflict_blocks(self):
+        eepl, npl = results()
+        cultural = evaluate_cultural(
+            "user-1", "item-1", ("sleeveless",),
+            (CulturalRequirement("r1", "decl-r1", "user-1", "sleeveless", RequirementKind.FORBIDDEN_ATTRIBUTE),),
+            candidate_attributes_complete=True,
+        )
+        result = arbitrate_candidate(request(), eepl, npl, cultural_result=cultural)
+        self.assertEqual(result.cal_result.verdict.value, "block")
+        self.assertIn("CULTURAL_FORBIDDEN_ATTRIBUTE_PRESENT", {reason.code for reason in result.cal_result.reasons})
+
+    def test_incomplete_cultural_metadata_routes_to_review(self):
+        eepl, npl = results()
+        cultural = evaluate_cultural(
+            "user-1", "item-1", ("cotton",),
+            (CulturalRequirement("r1", "decl-r1", "user-1", "long-sleeve", RequirementKind.REQUIRED_ATTRIBUTE),),
+            candidate_attributes_complete=False,
+        )
+        result = arbitrate_candidate(request(), eepl, npl, cultural_result=cultural)
         self.assertEqual(result.cal_result.verdict.value, "review")
         self.assertFalse(result.may_display)
 

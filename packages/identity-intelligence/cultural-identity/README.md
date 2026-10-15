@@ -1,5 +1,5 @@
-# Cultural identity package
+# Cultural identity source-intake pointer
 
-**Owner:** Versioned cultural requirements and policy schemas. **Status:** schema candidates only.
+The importable Python policy package lives at `packages/identity-intelligence/cultural_identity/`. This hyphenated directory remains as the architecture inventory's source-target scaffold for the original source candidate; do not duplicate executable policy code here.
 
-Use explicit user-declared requirements and reviewable rules. Version schema and policy independently; include provenance, consent, severity, region mappings and auditability. Do not treat wardrobe or skin appearance as definitive cultural identity.
+The canonical policy evaluates explicit user-declared requirements only. It does not infer cultural or religious requirements from appearance or demographic proxies. See the importable package README for contract details.
