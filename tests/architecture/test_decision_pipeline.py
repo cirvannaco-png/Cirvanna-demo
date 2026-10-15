@@ -128,8 +128,8 @@ class DecisionPipelineTests(unittest.TestCase):
         self.assertEqual(result.cal_result.verdict.value, "review")
         self.assertFalse(result.may_display)
         self.assertIn(
-            "EEPL_RESULT_REASON_MISMATCH",
-            {reason.code for reason in result.cal_result.reasons},
+            "eepl:open:malformed-result",
+            {reason.signal_id for reason in result.cal_result.reasons},
         )
 
     def test_malformed_cultural_result_fails_closed_to_review(self):
@@ -147,8 +147,8 @@ class DecisionPipelineTests(unittest.TestCase):
         self.assertEqual(result.cal_result.verdict.value, "review")
         self.assertFalse(result.may_display)
         self.assertIn(
-            "CULTURAL_RESULT_REASON_MISMATCH",
-            {reason.code for reason in result.cal_result.reasons},
+            "cultural:malformed-result",
+            {reason.signal_id for reason in result.cal_result.reasons},
         )
 
     def test_unknown_cultural_policy_code_fails_closed_to_review(self):
