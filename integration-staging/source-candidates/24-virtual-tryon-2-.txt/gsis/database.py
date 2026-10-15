@@ -3,7 +3,7 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import os
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://cirvanna:cirvanna123@postgres:5432/cirvanna")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://cirvanna:REDACTED@postgres:5432/cirvanna")
 
 engine = create_engine(
     DATABASE_URL,
