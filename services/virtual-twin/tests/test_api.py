@@ -23,6 +23,8 @@ def test_capabilities_do_not_claim_unimplemented_features():
     assert data["skin_analysis"] is False
     assert data["fit_prediction"] is False
     assert data["ar_rendering"] is False
+    assert data["click_it_product_reconstruction"] is False
+    assert data["decision_governance_connected_to_rendering"] is False
 
 
 def test_readiness_fails_closed_without_model_adapter():
@@ -123,3 +125,51 @@ def test_twin_endpoint_rejects_height_outside_contract(monkeypatch):
         error.get("loc", [None])[-1] == "height_cm"
         for error in response.json()["detail"]
     )
+
+
+
+def test_click_it_requires_authentication():
+    response = client.post(
+        "/click-it",
+        data={"twin_id": "twin-1"},
+        files={"product_image": ("product.jpg", b"image", "image/jpeg")},
+    )
+    assert response.status_code == 401
+
+
+def test_click_it_rejects_unsupported_media_type(monkeypatch):
+    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "test-only-token")
+    response = client.post(
+        "/click-it",
+        headers={"Authorization": "Bearer test-only-token"},
+        data={"twin_id": "twin-1"},
+        files={"product_image": ("product.bin", b"not-image", "application/octet-stream")},
+    )
+    assert response.status_code == 415
+    assert response.json()["detail"]["code"] == "UNSUPPORTED_PRODUCT_IMAGE_TYPE"
+
+
+def test_click_it_rejects_oversized_product_image(monkeypatch):
+    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "test-only-token")
+    monkeypatch.setattr("app.main.MAX_IMAGE_BYTES", 3)
+    response = client.post(
+        "/click-it",
+        headers={"Authorization": "Bearer test-only-token"},
+        data={"twin_id": "twin-1"},
+        files={"product_image": ("product.jpg", b"four", "image/jpeg")},
+    )
+    assert response.status_code == 413
+    assert response.json()["detail"]["code"] == "PRODUCT_IMAGE_SIZE_LIMIT_EXCEEDED"
+
+
+def test_click_it_does_not_claim_product_reconstruction_when_pipeline_is_missing(monkeypatch):
+    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "test-only-token")
+    response = client.post(
+        "/click-it",
+        headers={"Authorization": "Bearer test-only-token"},
+        data={"twin_id": "twin-1"},
+        files={"product_image": ("product.jpg", b"photo", "image/jpeg")},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "CLICK_IT_PIPELINE_NOT_CONFIGURED"
+    assert "image was not processed" in response.json()["detail"]["detail"]
