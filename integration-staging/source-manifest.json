@@ -1,7 +1,7 @@
 {
   "source_file": "cirvanna-source.txt",
-  "source_bytes": 1780970,
-  "warning": "Staged candidates only. Duplicate and competing versions are preserved separately; no files promoted to application paths.",
+  "source_bytes": 1780898,
+  "warning": "The committed source archive is the credential-redacted version; its current size and Git blob SHA are pinned. Initial intake size and pre-redaction snapshot hashes are retained as provenance metadata. Extracted candidates remain staged, duplicates and competing versions are preserved, and no historical candidate is certified production-ready.",
   "sections": [
     {
       "source_section": "./CDIC .txt",
@@ -89,7 +89,7 @@
       "extracted_files": 20
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "extracted_files": 38
     },
@@ -2564,7 +2564,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 24091,
       "declared_path": "src/types/index.ts",
@@ -2573,7 +2573,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 24103,
       "declared_path": "src/types/engine.ts",
@@ -2582,7 +2582,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 24125,
       "declared_path": "src/types/domain.ts",
@@ -2591,7 +2591,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 24244,
       "declared_path": "src/types/metrics.ts",
@@ -2600,7 +2600,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 24281,
       "declared_path": "src/utils/random.ts",
@@ -2609,7 +2609,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 24305,
       "declared_path": "src/utils/hash.ts",
@@ -2618,7 +2618,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 24338,
       "declared_path": "src/utils/performance.ts",
@@ -2627,7 +2627,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 24374,
       "declared_path": "src/utils/time.ts",
@@ -2636,7 +2636,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 24402,
       "declared_path": "src/utils/index.ts",
@@ -2645,7 +2645,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 24413,
       "declared_path": "src/validation/errors.ts",
@@ -2654,7 +2654,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 24426,
       "declared_path": "src/validation/validator.ts",
@@ -2663,7 +2663,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 24470,
       "declared_path": "src/validation/index.ts",
@@ -2672,7 +2672,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 24479,
       "declared_path": "src/circuitbreaker/circuit-breaker.ts",
@@ -2681,7 +2681,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 24547,
       "declared_path": "src/circuitbreaker/index.ts",
@@ -2690,7 +2690,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 24555,
       "declared_path": "src/dic/decision-intent-contract.ts",
@@ -2699,7 +2699,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 24639,
       "declared_path": "src/dic/index.ts",
@@ -2708,7 +2708,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 24647,
       "declared_path": "src/usi/user-state-interpreter.ts",
@@ -2717,7 +2717,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 24718,
       "declared_path": "src/usi/index.ts",
@@ -2726,7 +2726,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 24726,
       "declared_path": "src/lookgenerator/look-generator.ts",
@@ -2735,7 +2735,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 24867,
       "declared_path": "src/lookgenerator/index.ts",
@@ -2744,7 +2744,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 24875,
       "declared_path": "src/coveragecalculator/coverage-calculator.ts",
@@ -2753,7 +2753,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 24987,
       "declared_path": "src/coveragecalculator/index.ts",
@@ -2762,7 +2762,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 24995,
       "declared_path": "src/regretmanager/regret-manager.ts",
@@ -2771,7 +2771,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 25172,
       "declared_path": "src/regretmanager/index.ts",
@@ -2780,7 +2780,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 25180,
       "declared_path": "src/trendledger/trend-ledger.ts",
@@ -2789,7 +2789,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 25369,
       "declared_path": "src/trendledger/index.ts",
@@ -2798,7 +2798,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 25377,
       "declared_path": "src/humilityresolver/humility-resolver.ts",
@@ -2807,7 +2807,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 25519,
       "declared_path": "src/humilityresolver/index.ts",
@@ -2816,7 +2816,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 25527,
       "declared_path": "src/engine/cirvanna-engine.ts",
@@ -2825,7 +2825,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 25800,
       "declared_path": "src/engine/index.ts",
@@ -2834,7 +2834,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 25808,
       "declared_path": "src/tester/cirvanna-tester.ts",
@@ -2843,7 +2843,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 25980,
       "declared_path": "src/tester/index.ts",
@@ -2852,7 +2852,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 25988,
       "declared_path": "src/examples/quick-example.ts",
@@ -2861,7 +2861,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 26058,
       "declared_path": "src/examples/index.ts",
@@ -2870,7 +2870,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 26066,
       "declared_path": "src/index.ts",
@@ -2879,7 +2879,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 26096,
       "declared_path": "package.json",
@@ -2888,7 +2888,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 26125,
       "declared_path": "tsconfig.json",
@@ -2897,7 +2897,7 @@
       "duplicate_in_section": false
     },
     {
-      "source_section": "./cirvanna skeleton \ud83e\ude7b\ud83e\ude7b.txt",
+      "source_section": "./cirvanna skeleton 🩻🩻.txt",
       "section_slug": "18-cirvanna-skeleton-.txt",
       "source_line": 26155,
       "declared_path": "README.md",
@@ -5056,5 +5056,8 @@
       "bytes": 33735,
       "duplicate_in_section": false
     }
-  ]
+  ],
+  "source_bytes_at_initial_intake": 1780970,
+  "source_archive_redacted": true,
+  "source_archive_blob_sha1": "eef9faf82e6bc18d338181d8739efda06c5d0874"
 }

@@ -48,3 +48,10 @@ This directory contains extracted candidates from the merged source file. It is 
 | `./wardrobe part 1.txt` | 12 |
 
 **Total extracted candidate files:** 544
+
+
+## 17 October 2026 completeness reconciliation
+
+The source manifest declares 544 extracted candidate files. A comparison against the repository tree found 17 declared paths absent from the assembled candidate directories. They are restored from the corresponding preserved source-intake/extracted snapshots, with the original source sections preserved as-is. The source-candidate syntax workflow and the new manifest integrity test verify presence separately from syntax and behavior.
+
+The FCI, Tari, and three Virtual Try-On source snapshots include exact duplicate source documents. Identical files remain separated by source-section directory for traceability; do not count copies as independent implementations. Candidate code stays isolated here until a canonical owner, dependency boundary, security review and tests approve promotion.

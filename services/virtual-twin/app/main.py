@@ -103,6 +103,8 @@ def capabilities() -> dict[str, object]:
         "skin_analysis": False,
         "fit_prediction": False,
         "ar_rendering": False,
+        "click_it_product_reconstruction": False,
+        "decision_governance_connected_to_rendering": False,
         "reason": "validated_model_and_rendering_adapters_not_integrated",
     }
 
@@ -158,6 +160,56 @@ async def create_twin(
             "detail": (
                 "Twin generation is disabled until a real reconstruction "
                 "adapter, validated assets, and integration tests are supplied."
+            ),
+        },
+    )
+
+
+
+@app.post(
+    "/click-it",
+    response_model=TwinResponse,
+    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+    tags=["click-it"],
+)
+async def click_it(
+    _: Annotated[None, Depends(require_api_token)],
+    twin_id: Annotated[str, Form(min_length=1, max_length=128)],
+    product_image: Annotated[UploadFile, File()],
+) -> TwinResponse:
+    """Guarded Click It contract: photo-to-twin rendering is not yet available.
+
+    Until reconstruction and decision-governance adapters are integrated, the
+    service validates only request metadata and closes the upload; it neither
+    decodes, stores nor forwards the product image.
+    """
+    try:
+        if not twin_id.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail={"code": "TWIN_ID_REQUIRED"},
+            )
+        if product_image.content_type not in {"image/jpeg", "image/png", "image/webp"}:
+            raise HTTPException(
+                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                detail={"code": "UNSUPPORTED_PRODUCT_IMAGE_TYPE"},
+            )
+        if product_image.size is None or product_image.size > MAX_IMAGE_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail={"code": "PRODUCT_IMAGE_SIZE_LIMIT_EXCEEDED", "maximum_bytes": MAX_IMAGE_BYTES},
+            )
+    finally:
+        await product_image.close()
+
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail={
+            "status": "unavailable",
+            "code": "CLICK_IT_PIPELINE_NOT_CONFIGURED",
+            "detail": (
+                "Click It is not connected to a validated product reconstruction adapter "
+                "and CAL decision-governance service; the uploaded image was not processed."
             ),
         },
     )

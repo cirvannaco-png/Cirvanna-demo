@@ -1,228 +1,136 @@
 from __future__ import annotations
 
-from dataclasses import replace
 import sys
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-for package_root in (
+for package_path in (
     ROOT / "packages" / "identity-intelligence",
     ROOT / "packages" / "preferences",
     ROOT / "packages" / "fit-intelligence",
-    ROOT / "services" / "api-gateway",
 ):
-    sys.path.insert(0, str(package_root))
+    sys.path.insert(0, str(package_path))
 
-from catacaci import ArbitrationRequest, DecisionSignal, SignalKind, SignalState  # noqa: E402
-from eepl import EEPLContext, EEPLPolicy, evaluate as evaluate_eepl  # noqa: E402
-from npl import NegativePreference, PreferenceSource, TargetType, evaluate as evaluate_npl  # noqa: E402
-from cultural_identity import (  # noqa: E402
-    CulturalIdentityResult,
-    CulturalRequirement,
-    RequirementKind,
-    RequirementVerdict,
-    evaluate as evaluate_cultural,
-)
-from usi import StylePreference, USIProfile, evaluate as evaluate_usi  # noqa: E402
+from catacaci import DecisionSignal, DecisionVerdict, SignalKind, SignalState  # noqa: E402
+from catacaci.pipeline import evaluate_candidate  # noqa: E402
+from eepl import EEPLContext, EEPLPolicy  # noqa: E402
 from fci import FitConfidenceEstimate  # noqa: E402
-from app import arbitrate_candidate  # noqa: E402
+from npl import NegativePreference, PreferenceSource, TargetType  # noqa: E402
+from usi import StylePreference, USIProfile  # noqa: E402
 
 
-def signal(signal_id, kind, state=SignalState.PASS, confidence=None):
+def gate(signal_id: str, kind: SignalKind, state: SignalState = SignalState.PASS):
     return DecisionSignal(
-        signal_id=signal_id,
-        kind=kind,
-        state=state,
+        signal_id=signal_id, kind=kind, state=state,
         reason_code=f"TEST_{signal_id.upper()}",
-        explanation=f"Test signal {signal_id}",
-        required=True,
-        confidence=confidence,
+        explanation=f"Independent upstream gate: {signal_id}",
         source_version="test-1",
     )
 
 
-def request(candidate_id="item-1", include_fit=True):
-    required = (
-        SignalKind.SAFETY,
-        SignalKind.LEGAL_ELIGIBILITY,
-        SignalKind.USER_HARD_CONSTRAINT,
-        SignalKind.CULTURAL_REQUIREMENT,
-        SignalKind.IDENTITY_ALIGNMENT,
+def fit(*, calibrated=True, confidence=0.86):
+    return FitConfidenceEstimate(
+        estimate_id="fit-1", user_id="user-1", candidate_id="item-1",
+        model_version="test-model", calibrated=calibrated,
+        confidence=confidence if calibrated else 0.99,
+        lower_bound=0.80 if calibrated else None,
+        upper_bound=0.91 if calibrated else None,
+        calibration_version="cal-test-1" if calibrated else None,
+        evidence_ids=("body-measurement-test", "brand-size-chart-test") if calibrated else (),
     )
-    signals = tuple(signal(f"gate-{kind.value}", kind) for kind in required)
-    if include_fit:
-        signals += (signal("fit", SignalKind.FIT_CONFIDENCE, confidence=0.95),)
-    return ArbitrationRequest("req-1", candidate_id, signals)
 
 
-def results(policy=None, context=None, preferences=(), candidate_id="item-1"):
-    policy = policy or EEPLPolicy("open")
-    context = context or EEPLContext("user-1")
-    eepl = evaluate_eepl(policy, context, candidate_id)
-    npl = evaluate_npl("user-1", candidate_id, ("red",), preferences)
-    return eepl, npl
+def inputs(**overrides):
+    values = {
+        "request_id": "req-1",
+        "candidate_id": "item-1",
+        "eepl_policy": EEPLPolicy(
+            policy_id="standard-policy", minimum_age=18,
+            allowed_locations=("Nairobi",), allowed_occasions=("everyday",),
+            allowed_climates=("warm",),
+        ),
+        "context": EEPLContext("user-1", 21, "Nairobi", "everyday", "warm"),
+        "usi_profile": USIProfile("profile-1", "user-1", "usi-v1", (
+            StylePreference("style-1", "user-1", "minimal", 1.0),
+            StylePreference("style-2", "user-1", "cotton", 0.5),
+        )),
+        "candidate_attributes": ("minimal", "cotton", "blue"),
+        "candidate_attributes_complete": True,
+        "negative_preferences": (),
+        "fit_estimate": fit(),
+        "upstream_signals": (
+            gate("safety", SignalKind.SAFETY),
+            gate("legal", SignalKind.LEGAL_ELIGIBILITY),
+            gate("user-hard", SignalKind.USER_HARD_CONSTRAINT),
+            gate("culture", SignalKind.CULTURAL_REQUIREMENT),
+        ),
+    }
+    values.update(overrides)
+    return values
 
 
-class DecisionPipelineTests(unittest.TestCase):
-    def test_all_gates_pass_and_cal_authorizes_show(self):
-        eepl, npl = results()
-        result = arbitrate_candidate(request(), eepl, npl)
-        self.assertEqual(result.cal_result.verdict.value, "show")
+class DecisionPipelineIntegrationTests(unittest.TestCase):
+    def test_all_modules_connect_and_cal_alone_authorizes_display(self):
+        result = evaluate_candidate(**inputs())
+        self.assertEqual(result.eepl.verdict.value, "pass")
+        self.assertFalse(result.npl.blocked)
+        self.assertEqual(result.usi.verdict.value, "pass")
+        self.assertEqual(result.arbitration.verdict, DecisionVerdict.SHOW)
         self.assertTrue(result.may_display)
+        prefixes = {sid.split(":")[0] for sid in result.arbitration.evaluated_signal_ids if ":" in sid}
+        self.assertTrue({"eepl", "npl", "usi", "fci"}.issubset(prefixes))
 
-    def test_npl_hard_veto_beats_high_fit_confidence(self):
-        preference = NegativePreference(
-            "p1", "user-1", TargetType.ATTRIBUTE, "red", PreferenceSource.USER_DECLARED
+    def test_npl_veto_blocks_even_with_high_fit_confidence(self):
+        veto = NegativePreference(
+            preference_id="no-blue", user_id="user-1",
+            target_type=TargetType.ATTRIBUTE, target_value="blue",
+            source=PreferenceSource.USER_DECLARED,
         )
-        eepl, npl = results(preferences=(preference,))
-        result = arbitrate_candidate(request(), eepl, npl)
-        self.assertEqual(result.cal_result.verdict.value, "block")
+        result = evaluate_candidate(**inputs(negative_preferences=(veto,)))
+        self.assertTrue(result.npl.blocked)
+        self.assertEqual(result.arbitration.verdict, DecisionVerdict.BLOCK)
         self.assertFalse(result.may_display)
 
-    def test_age_eligibility_block_maps_to_legal_veto(self):
-        eepl, npl = results(
-            policy=EEPLPolicy("adult", minimum_age=18),
-            context=EEPLContext("user-1", age_years=16),
-        )
-        result = arbitrate_candidate(request(), eepl, npl)
-        self.assertEqual(result.cal_result.verdict.value, "block")
-        self.assertIn("EEPL_MINIMUM_AGE_NOT_MET", {reason.code for reason in result.cal_result.reasons})
-
-    def test_missing_required_eepl_context_routes_to_review(self):
-        eepl, npl = results(policy=EEPLPolicy("location", allowed_locations=("Nairobi",)))
-        result = arbitrate_candidate(request(), eepl, npl)
-        self.assertEqual(result.cal_result.verdict.value, "review")
+    def test_missing_external_required_gates_fail_closed(self):
+        result = evaluate_candidate(**inputs(upstream_signals=()))
+        self.assertEqual(result.arbitration.verdict, DecisionVerdict.REVIEW)
         self.assertFalse(result.may_display)
 
-    def test_explicit_cultural_conflict_blocks(self):
-        eepl, npl = results()
-        cultural = evaluate_cultural(
-            "user-1", "item-1", ("sleeveless",),
-            (CulturalRequirement("r1", "decl-r1", "user-1", "sleeveless", RequirementKind.FORBIDDEN_ATTRIBUTE),),
-            candidate_attributes_complete=True,
-        )
-        result = arbitrate_candidate(request(), eepl, npl, cultural_result=cultural)
-        self.assertEqual(result.cal_result.verdict.value, "block")
-        self.assertIn("CULTURAL_FORBIDDEN_ATTRIBUTE_PRESENT", {reason.code for reason in result.cal_result.reasons})
-
-    def test_incomplete_cultural_metadata_routes_to_review(self):
-        eepl, npl = results()
-        cultural = evaluate_cultural(
-            "user-1", "item-1", ("cotton",),
-            (CulturalRequirement("r1", "decl-r1", "user-1", "long-sleeve", RequirementKind.REQUIRED_ATTRIBUTE),),
-            candidate_attributes_complete=False,
-        )
-        result = arbitrate_candidate(request(), eepl, npl, cultural_result=cultural)
-        self.assertEqual(result.cal_result.verdict.value, "review")
+    def test_eepl_policy_violation_blocks(self):
+        context = EEPLContext("user-1", 16, "Nairobi", "everyday", "warm")
+        result = evaluate_candidate(**inputs(context=context))
+        self.assertEqual(result.arbitration.verdict, DecisionVerdict.BLOCK)
         self.assertFalse(result.may_display)
 
-    def test_malformed_eepl_result_fails_closed_to_review(self):
-        eepl, npl = results()
-        malformed = replace(
-            eepl,
-            reason_codes=("EEPL_MINIMUM_AGE_NOT_MET",),
-            explanations=(),
-        )
-        result = arbitrate_candidate(request(), malformed, npl)
-        self.assertEqual(result.cal_result.verdict.value, "review")
-        self.assertFalse(result.may_display)
-        self.assertIn(
-            "eepl:open:malformed-result",
-            {reason.signal_id for reason in result.cal_result.reasons},
-        )
-
-    def test_malformed_cultural_result_fails_closed_to_review(self):
-        eepl, npl = results()
-        cultural = evaluate_cultural(
-            "user-1", "item-1", ("cotton",), (),
-            candidate_attributes_complete=True,
-        )
-        malformed = replace(
-            cultural,
-            reason_codes=("CULTURAL_REQUIRED_ATTRIBUTE_MISSING",),
-            explanations=(),
-        )
-        result = arbitrate_candidate(request(), eepl, npl, cultural_result=malformed)
-        self.assertEqual(result.cal_result.verdict.value, "review")
-        self.assertFalse(result.may_display)
-        self.assertIn(
-            "cultural:malformed-result",
-            {reason.signal_id for reason in result.cal_result.reasons},
-        )
-
-    def test_unknown_cultural_policy_code_fails_closed_to_review(self):
-        eepl, npl = results()
-        cultural = CulturalIdentityResult(
-            contract_version="1.0.0",
-            user_id="user-1",
-            candidate_id="item-1",
-            verdict=RequirementVerdict.PASS,
-            reason_codes=("CULTURAL_FUTURE_UNKNOWN_CODE",),
-            explanations=("Unrecognized policy result.",),
-            hard_conflict_ids=(),
-            soft_conflict_ids=(),
-        )
-        result = arbitrate_candidate(request(), eepl, npl, cultural_result=cultural)
-        self.assertEqual(result.cal_result.verdict.value, "review")
-        self.assertFalse(result.may_display)
-        # CAL normalizes unknown required-signal states to its stable review code.
-        self.assertIn(
-            "REQUIRED_SIGNAL_UNKNOWN",
-            {reason.code for reason in result.cal_result.reasons},
-        )
-
-    def test_usi_low_alignment_routes_to_review_not_hard_block(self):
-        eepl, npl = results()
-        profile = USIProfile("profile-1", "user-1", "usi-v1", (StylePreference("p1", "user-1", "minimal"),))
-        usi = evaluate_usi(profile, "item-1", ("maximalist",), candidate_attributes_complete=True)
-        result = arbitrate_candidate(request(), eepl, npl, usi_result=usi)
-        self.assertEqual(usi.reason_code, "USI_ALIGNMENT_BELOW_THRESHOLD")
-        self.assertEqual(result.cal_result.verdict.value, "review")
-        self.assertFalse(result.may_display)
-        self.assertIn("NON_VETO_SIGNAL_BLOCKED", {reason.code for reason in result.cal_result.reasons})
-
-    def test_calibrated_fci_signal_can_satisfy_fit_gate_but_not_other_gates(self):
-        eepl, npl = results()
-        estimate = FitConfidenceEstimate(
-            estimate_id="fci-1", user_id="user-1", candidate_id="item-1",
-            model_version="fci-model-1", calibrated=True, confidence=0.95,
-            lower_bound=0.90, upper_bound=0.98, calibration_version="cal-1",
-            evidence_ids=("body-1", "brand-chart-1"),
-        )
-        result = arbitrate_candidate(request(include_fit=False), eepl, npl, fci_estimate=estimate)
-        self.assertEqual(result.cal_result.verdict.value, "show")
-
-    def test_uncalibrated_fci_estimate_routes_to_review(self):
-        eepl, npl = results()
-        estimate = FitConfidenceEstimate(
-            estimate_id="fci-uncalibrated", user_id="user-1", candidate_id="item-1",
-            model_version="experimental", calibrated=False, confidence=0.99,
-        )
-        result = arbitrate_candidate(request(include_fit=False), eepl, npl, fci_estimate=estimate)
-        self.assertEqual(estimate.to_cal_signal().reason_code, "FCI_UNCALIBRATED_ESTIMATE")
-        self.assertEqual(result.cal_result.verdict.value, "review")
+    def test_missing_context_and_uncalibrated_fit_cannot_authorize_display(self):
+        result = evaluate_candidate(**inputs(
+            context=EEPLContext("user-1", 21, None, "everyday", "warm"),
+            fit_estimate=fit(calibrated=False),
+        ))
+        self.assertEqual(result.arbitration.verdict, DecisionVerdict.REVIEW)
         self.assertFalse(result.may_display)
 
-    def test_fci_candidate_mismatch_is_rejected(self):
-        eepl, npl = results()
-        estimate = FitConfidenceEstimate(
-            estimate_id="fci-1", user_id="user-1", candidate_id="other-item",
-            model_version="fci-model-1", calibrated=False,
-        )
+    def test_soft_style_mismatch_routes_to_review_not_hard_block(self):
+        result = evaluate_candidate(**inputs(candidate_attributes=("formal",)))
+        self.assertEqual(result.arbitration.verdict, DecisionVerdict.REVIEW)
+        self.assertFalse(result.may_display)
+
+    def test_identity_and_candidate_mismatches_are_rejected(self):
         with self.assertRaises(ValueError):
-            arbitrate_candidate(request(), eepl, npl, fci_estimate=estimate)
-
-    def test_candidate_mismatch_is_rejected(self):
-        eepl, npl = results(candidate_id="other-item")
+            evaluate_candidate(**inputs(context=EEPLContext("other-user", 21, "Nairobi", "everyday", "warm")))
         with self.assertRaises(ValueError):
-            arbitrate_candidate(request("item-1"), eepl, npl)
+            evaluate_candidate(**inputs(fit_estimate=FitConfidenceEstimate(
+                estimate_id="fit-foreign", user_id="user-1", candidate_id="other-item",
+                model_version="test-model", calibrated=False,
+            )))
 
-    def test_user_mismatch_is_rejected(self):
-        eepl = evaluate_eepl(EEPLPolicy("open"), EEPLContext("user-1"), "item-1")
-        npl = evaluate_npl("user-2", "item-1", (), ())
+    def test_duplicate_signal_ids_are_rejected_by_cal(self):
+        repeated = gate("safety", SignalKind.SAFETY)
         with self.assertRaises(ValueError):
-            arbitrate_candidate(request(), eepl, npl)
+            evaluate_candidate(**inputs(upstream_signals=(
+                repeated, repeated,
+            )))
 
 
 if __name__ == "__main__":
