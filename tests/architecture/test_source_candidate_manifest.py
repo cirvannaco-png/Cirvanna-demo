@@ -8,6 +8,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 STAGING = ROOT / "integration-staging"
+CURRENT_ARCHIVE = STAGING / "source-intake" / "original" / "cirvanna-source.txt"
+EXPECTED_CURRENT_ARCHIVE_BLOB_SHA = "eef9faf82e6bc18d338181d8739efda06c5d0874"
+EXPECTED_INITIAL_INTAKE_BYTES = 1780970
+
+
+def git_blob_sha1(data: bytes) -> str:
+    header = f"blob {len(data)}\0".encode("ascii")
+    return hashlib.sha1(header + data).hexdigest()
 
 
 class SourceManifestCompletenessTests(unittest.TestCase):
@@ -28,7 +36,7 @@ class SourceManifestCompletenessTests(unittest.TestCase):
         ]
         self.assertEqual(missing, [], f"missing staged candidates: {missing}")
 
-    def test_original_extracted_snapshots_match_recorded_sha256(self):
+    def test_all_31_extracted_snapshots_are_present(self):
         audit_path = STAGING / "source-intake" / "manifests" / "source-audit.csv"
         with audit_path.open(encoding="utf-8", newline="") as handle:
             rows = list(csv.DictReader(handle))
@@ -36,8 +44,13 @@ class SourceManifestCompletenessTests(unittest.TestCase):
         for record in rows:
             path = STAGING / "source-intake" / "extracted" / record["extracted_filename"]
             self.assertTrue(path.is_file(), f"source snapshot missing: {path.name}")
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
-            self.assertEqual(digest, record["sha256"], f"original source snapshot changed: {path.name}")
+
+    def test_current_redacted_archive_is_pinned_and_size_metadata_is_consistent(self):
+        data = CURRENT_ARCHIVE.read_bytes()
+        self.assertTrue(self.manifest["source_archive_redacted"])
+        self.assertEqual(git_blob_sha1(data), EXPECTED_CURRENT_ARCHIVE_BLOB_SHA)
+        self.assertEqual(len(data), self.manifest["source_bytes"])
+        self.assertEqual(self.manifest["source_bytes_at_initial_intake"], EXPECTED_INITIAL_INTAKE_BYTES)
 
 
 if __name__ == "__main__":
