@@ -115,12 +115,15 @@ class EpistemicState:
             decrease = learning_rate * base_confidence
             new_confidence = base_confidence - decrease * value
 
-        # Confidence has an explicit lower bound in EpistemicInvariants; keep
-        # the state within that contract rather than allowing a later decay to fail.
-        new_confidence = max(
+        # Apply the same per-update movement bounds used by the invariant checker.
+        max_increase = EpistemicInvariants.MAX_CONFIDENCE_JUMP * (Decimal("1") - self.confidence)
+        max_decrease = EpistemicInvariants.MAX_CONFIDENCE_JUMP * self.confidence
+        lower_bound = max(
             EpistemicInvariants.MIN_CONFIDENCE,
-            min(Decimal("1"), new_confidence),
+            self.confidence - max_decrease,
         )
+        upper_bound = min(Decimal("1"), self.confidence + max_increase)
+        new_confidence = max(lower_bound, min(upper_bound, new_confidence))
 
         EpistemicInvariants.validate_confidence_change(
             old=self.confidence,
@@ -163,9 +166,7 @@ class EpistemicState:
         decay_factor = Decimal(str(math.exp(-float(days_elapsed / Decimal(str(halflife_days))))))
         exponential_confidence = self.confidence * decay_factor
 
-        # The invariant limits decay to at most MAX_DAILY_DECAY per elapsed day.
-        # Bound the exponential target to the same rule, then enforce the
-        # configured confidence floor before validation.
+        # Bound the exponential target to the invariant's per-day limit.
         allowed_fraction = min(
             Decimal("1"),
             EpistemicInvariants.MAX_DAILY_DECAY * days_elapsed,
