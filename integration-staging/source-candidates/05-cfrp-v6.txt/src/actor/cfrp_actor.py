@@ -65,12 +65,14 @@ class CFRPActor:
             dequeued = False
             future: asyncio.Future[Any] | None = None
             try:
+                logging.warning("Actor %s waiting for a message", self.user_id)
                 message = await self.queue.get()
                 dequeued = True
                 if message is None:
                     return
 
                 func, future = message
+                logging.warning("Actor %s received %r; future_done=%s", self.user_id, func, future.done())
                 if future.cancelled():
                     continue
 
@@ -87,6 +89,7 @@ class CFRPActor:
                 else:
                     if not future.done():
                         future.set_result(result)
+                logging.warning("Actor %s completed message handler", self.user_id)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -98,6 +101,7 @@ class CFRPActor:
             finally:
                 if dequeued:
                     self.queue.task_done()
+                    logging.warning("Actor %s accounted for queue item", self.user_id)
 
     async def send(self, func: MessageFunction) -> Any:
         if not callable(func):
