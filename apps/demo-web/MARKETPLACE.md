@@ -30,7 +30,7 @@ Configure `CATALOG_CORS_ORIGINS` on the API as a comma-separated list of exact t
 
 ## Validation still required
 
-A GitHub Actions contract workflow runs static marketplace contract checks and Python syntax compilation. Before merge/release, also run browser smoke tests and the catalog service test suite from `services/catalog-service`:
+A GitHub Actions workflow runs static contract checks, headless Chromium browser smoke tests, JavaScript syntax validation, and Python syntax compilation. The browser suite covers demo search, saving, bag interactions, disabled checkout/try-on boundaries, and rejection of insecure remote API URLs. Before merge/release, still run a live authenticated catalog/CORS smoke test against a non-production deployment, plus the catalog service test suite from `services/catalog-service`:
 
 ```bash
 python -m pip install -r requirements.txt
