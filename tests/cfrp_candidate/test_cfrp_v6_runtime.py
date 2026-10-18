@@ -72,11 +72,16 @@ class CFRPActorTests(unittest.IsolatedAsyncioTestCase):
         async def succeed():
             return "ok"
 
+        print("stage 1: sending expected failure", flush=True)
         with self.assertRaisesRegex(ValueError, "expected test failure"):
-            await actor.send(fail)
-        self.assertEqual(await actor.send(succeed), "ok")
-        await asyncio.wait_for(actor.queue.join(), timeout=1)
-        await actor.stop()
+            await asyncio.wait_for(actor.send(fail), timeout=2)
+        print("stage 2: failure propagated", flush=True)
+        self.assertEqual(await asyncio.wait_for(actor.send(succeed), timeout=2), "ok")
+        print("stage 3: success propagated", flush=True)
+        await asyncio.wait_for(actor.queue.join(), timeout=2)
+        print("stage 4: queue joined", flush=True)
+        await asyncio.wait_for(actor.stop(timeout_seconds=2), timeout=3)
+        print("stage 5: actor stopped", flush=True)
         self.assertFalse(actor.running)
 
     async def test_stopped_actor_rejects_new_messages(self):
