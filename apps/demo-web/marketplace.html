@@ -109,9 +109,25 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     }catch(e){items=[];total=0;setStatus((e&&e.message?e.message:"Catalog request failed")+" Check the API URL, CORS policy, service health and token. Demo data is not substituted after a live API error.",true);render()}
   }
   function findProduct(id){return items.find(p=>getId(p)===id)||demoProducts.find(p=>getId(p)===id)}
-  function act(action,id){
+  async function act(action,id){
     const p=findProduct(id);if(!p)return;
-    if(action==="save"){saved=saved.some(x=>x.product_id===id)?saved.filter(x=>x.product_id!==id):[...saved,{product_id:id,name:p.name,price_minor:p.price_minor,currency:p.currency}];writeStore();render()}
+    if(mode==="commerce"){
+      try{
+        if(action==="save"){
+          const pid=productSaveId(p),already=saved.some(x=>x.product_id===pid),url=config.commerceBase+"/saved-products/"+encodeURIComponent(pid);
+          const response=await fetch(url,{method:already?"DELETE":"PUT",headers:{Authorization:"Bearer "+config.userToken,Accept:"application/json"}});
+          if(!response.ok)throw new Error("Saved-products API returned HTTP "+response.status+".");
+          await load();setStatus(already?"Removed saved product from your account.":"Saved product to your account.");return;
+        }
+        if(action==="bag"){
+          if(!p.variant_id)throw new Error("This product has no merchant variant; only actual offers can enter a persistent cart.");
+          const response=await fetch(config.commerceBase+"/cart/items",{method:"POST",headers:{Authorization:"Bearer "+config.userToken,"Content-Type":"application/json",Accept:"application/json"},body:JSON.stringify({variant_id:p.variant_id,quantity:1})});
+          if(!response.ok){let detail="Cart API returned HTTP "+response.status+".";try{const data=await response.json();detail=(data.detail&&data.detail.code)||detail}catch{}throw new Error(detail)}
+          await load();setStatus("Added to your account-backed cart.");return;
+        }
+      }catch(e){setStatus((e&&e.message?e.message:"Commerce action failed")+" No local/demo change was made.",true);return}
+    }
+    if(action==="save"){const pid=productSaveId(p);saved=saved.some(x=>x.product_id===pid)?saved.filter(x=>x.product_id!==pid):[...saved,{product_id:pid,name:p.name,price_minor:p.price_minor,currency:p.currency}];writeStore();render()}
     if(action==="bag"){const old=cart.find(x=>x.product_id===id);cart=old?cart.map(x=>x.product_id===id?{...x,quantity:x.quantity+1}:x):[...cart,{product_id:id,name:p.name,price_minor:p.price_minor,currency:p.currency,quantity:1}];writeStore();render()}
     if(action==="tryon")alert("Virtual try-on is not connected. Cirvanna will not fabricate a preview or claim that a real try-on was completed.");
   }
