@@ -28,18 +28,16 @@ class EpistemicInvariants:
         if not isinstance(success, bool):
             raise EpistemicInvariantViolation("success must be a boolean")
         delta = new - old
-        if success:
-            max_increase = cls.MAX_CONFIDENCE_JUMP * (Decimal("1") - old)
-            if delta > max_increase:
-                raise EpistemicInvariantViolation(
-                    f"Confidence increase {delta} > allowed {max_increase}"
-                )
-        else:
-            max_decrease = cls.MAX_CONFIDENCE_JUMP * old
-            if delta < -max_decrease:
-                raise EpistemicInvariantViolation(
-                    f"Confidence decrease {-delta} > allowed {max_decrease}"
-                )
+        max_increase = cls.MAX_CONFIDENCE_JUMP * (Decimal("1") - old)
+        max_decrease = cls.MAX_CONFIDENCE_JUMP * old
+        if delta > max_increase:
+            raise EpistemicInvariantViolation(
+                f"Confidence increase {delta} > allowed {max_increase}"
+            )
+        if delta < -max_decrease:
+            raise EpistemicInvariantViolation(
+                f"Confidence decrease {-delta} > allowed {max_decrease}"
+            )
 
     @classmethod
     def validate_decay(cls, old: Decimal, new: Decimal, days_elapsed: Decimal) -> None:
