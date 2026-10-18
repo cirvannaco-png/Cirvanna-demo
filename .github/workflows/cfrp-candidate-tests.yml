@@ -36,4 +36,4 @@ jobs:
       - name: Run CFRP runtime contract tests
         env:
           PYTHONPATH: integration-staging/source-candidates/05-cfrp-v6.txt
-        run: python -m unittest discover -s tests/cfrp_candidate -v
+        run: timeout 60s python -u -m unittest discover -s tests/cfrp_candidate -v
