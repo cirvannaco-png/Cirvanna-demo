@@ -60,6 +60,7 @@ class MarketplaceBrowserTests(unittest.TestCase):
     def test_try_on_and_checkout_are_not_misrepresented_as_live(self):
         try_on = self.page.locator('.card button[data-action="tryon"]').first
         self.assertTrue(try_on.is_disabled())
+        self.page.locator('.card button[data-action="bag"]').first.click()
         self.page.locator("#cartBtn").click()
         self.assertTrue(self.page.get_by_role("dialog").get_by_role("button", name="Checkout unavailable").is_disabled())
 
