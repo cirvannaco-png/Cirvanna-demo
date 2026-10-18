@@ -382,6 +382,7 @@ def capabilities() -> dict[str, Any]:
         "validated_product_metadata": True,
         "catalog_persistence": True,
         "product_version_history": True,
+        "versioned_migrations_available": True,
         "product_search_and_listing": True,
         "merchant_bulk_import": False,
         "checkout": False,
