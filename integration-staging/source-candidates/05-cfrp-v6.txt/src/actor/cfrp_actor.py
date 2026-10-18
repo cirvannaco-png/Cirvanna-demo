@@ -1,27 +1,29 @@
 """
-CFRPActor – Single-writer message processing lane.
+CFRPActor – single-writer message processing lane.
 
-The actor serializes one user's state transitions. This is a process-local
-guarantee only; it is not distributed ownership or a durable job queue.
+This actor serializes state transitions within one process. It is not a
+distributed single-writer mechanism or a durable job queue.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Awaitable, Callable, Optional, Any
+from typing import Any, Awaitable, Callable, Optional
 
 MessageFunction = Callable[[], Awaitable[Any]]
-Message = tuple[MessageFunction, asyncio.Future[Any]]
+WorkItem = Callable[[], Awaitable[None]]
+QueueItem = tuple[WorkItem, asyncio.Future[Any]] | None
 
 
 class CFRPActor:
     def __init__(self, user_id: str):
-        self.user_id = user_id
-        self.queue: asyncio.Queue[Message | None] = asyncio.Queue(maxsize=1000)
+        if not isinstance(user_id, str) or not user_id.strip() or len(user_id) > 128:
+            raise ValueError("user_id must contain 1-128 non-whitespace characters")
+        self.user_id = user_id.strip()
+        self.queue: asyncio.Queue[QueueItem] = asyncio.Queue(maxsize=1000)
         self.running = False
         self._closing = False
-        self.task: Optional[asyncio.Task] = None
-        logging.info("Actor created for user %s", user_id)
+        self.task: Optional[asyncio.Task[None]] = None
 
     async def start(self) -> None:
         if self.running and self.task and not self.task.done():
@@ -36,10 +38,9 @@ class CFRPActor:
                 await asyncio.gather(self.task, return_exceptions=True)
             self._fail_pending(RuntimeError("CFRP actor is stopped"))
             return
+
         self._closing = True
         try:
-            # Do not cancel the consumer merely because the queue is full. The
-            # consumer keeps draining until it sees the sentinel.
             await asyncio.wait_for(self.queue.put(None), timeout=timeout_seconds)
             if self.task:
                 await asyncio.wait_for(asyncio.shield(self.task), timeout=timeout_seconds)
@@ -61,76 +62,85 @@ class CFRPActor:
 
     async def _run(self) -> None:
         while True:
-            message: Message | None = None
+            item: QueueItem = None
             dequeued = False
-            future: asyncio.Future[Any] | None = None
             try:
-                logging.warning("Actor %s waiting for a message", self.user_id)
-                message = await self.queue.get()
+                item = await self.queue.get()
                 dequeued = True
-                if message is None:
+                if item is None:
                     return
 
-                func, future = message
-                logging.warning("Actor %s received %r; future_done=%s", self.user_id, func, future.done())
-                if future.cancelled():
+                work, response = item
+                if response.cancelled():
                     continue
 
+                # A work item handles its own business exception and resolves
+                # the response future; the worker loop never receives that
+                # business exception as its own failure state.
                 try:
-                    result = await func()
+                    await work()
                 except asyncio.CancelledError:
-                    if not future.done():
-                        future.set_exception(RuntimeError("CFRP actor cancelled during message processing"))
+                    if not response.done():
+                        response.set_exception(RuntimeError("CFRP actor cancelled during message processing"))
                     raise
                 except Exception as exc:
-                    if not future.done():
-                        future.set_exception(exc)
-                    logging.exception("Actor %s message failed", self.user_id)
-                else:
-                    if not future.done():
-                        future.set_result(result)
-                logging.warning("Actor %s completed message handler", self.user_id)
+                    if not response.done():
+                        response.set_exception(exc)
+                    logging.exception("Actor %s work item wrapper failed", self.user_id)
             except asyncio.CancelledError:
                 raise
-            except Exception as exc:
-                # A malformed task/message must fail only that message, not
-                # permanently kill this user's single-writer lane.
-                if future is not None and not future.done():
-                    future.set_exception(exc)
-                logging.exception("Actor %s loop recovered from a message error", self.user_id)
+            except Exception:
+                # Broken queue items or task infrastructure are logged without
+                # skipping queue accounting. A broken worker still fails the
+                # run; silently continuing after an infrastructure fault is unsafe.
+                logging.exception("Actor %s infrastructure failure", self.user_id)
+                raise
             finally:
                 if dequeued:
                     self.queue.task_done()
-                    logging.warning("Actor %s accounted for queue item", self.user_id)
 
     async def send(self, func: MessageFunction) -> Any:
         if not callable(func):
             raise TypeError("actor message must be an async callable")
         if not self.running or self._closing or not self.task or self.task.done():
             raise RuntimeError("CFRP actor is not accepting messages")
+
         loop = asyncio.get_running_loop()
-        future: asyncio.Future[Any] = loop.create_future()
+        response: asyncio.Future[Any] = loop.create_future()
+
+        async def work_item() -> None:
+            try:
+                result = await func()
+            except asyncio.CancelledError:
+                if not response.done():
+                    response.set_exception(RuntimeError("CFRP message was cancelled"))
+                raise
+            except Exception as exc:
+                if not response.done():
+                    response.set_exception(exc)
+            else:
+                if not response.done():
+                    response.set_result(result)
+
         try:
-            await self.queue.put((func, future))
+            await self.queue.put((work_item, response))
         except asyncio.CancelledError:
-            future.cancel()
+            response.cancel()
             raise
-        try:
-            return await future
-        except asyncio.CancelledError:
-            future.cancel()
-            raise
+        # Caller cancellation must not cancel the queued operation's completion
+        # future or interfere with the single-writer worker.
+        return await asyncio.shield(response)
 
     def _fail_pending(self, error: Exception) -> None:
         while True:
             try:
-                message = self.queue.get_nowait()
+                item = self.queue.get_nowait()
             except asyncio.QueueEmpty:
                 break
             try:
-                if message is not None:
-                    _, future = message
-                    if not future.done():
-                        future.set_exception(error)
+                if item is not None:
+                    _, response = item
+                    if not response.done():
+                        response.set_exception(error)
             finally:
                 self.queue.task_done()
