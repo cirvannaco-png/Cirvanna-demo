@@ -1,0 +1,32 @@
+name: Marketplace contract checks
+
+on:
+  pull_request:
+    paths:
+      - "apps/demo-web/marketplace.html"
+      - "apps/demo-web/test_marketplace_contract.py"
+      - "services/catalog-service/app/main.py"
+      - ".github/workflows/marketplace-contract.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/demo-web/marketplace.html"
+      - "apps/demo-web/test_marketplace_contract.py"
+      - "services/catalog-service/app/main.py"
+      - ".github/workflows/marketplace-contract.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run marketplace integration contract checks
+        run: python apps/demo-web/test_marketplace_contract.py
+      - name: Compile catalog service Python syntax
+        run: python -m compileall -q services/catalog-service/app
