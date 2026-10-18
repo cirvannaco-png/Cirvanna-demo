@@ -1,5 +1,39 @@
 # Catalog service
 
-**Owner:** Canonical garment/product catalog and item metadata. **Status:** scaffold only.
+**Owner:** canonical product/garment identity and item metadata.  
+**Status:** implemented API foundation; not yet a complete marketplace or production release.
 
-Own product and garment identity, attribute validation, versioning, catalog import and catalog persistence. Wardrobe ownership, personalized constraints, fit prediction and recommendation ranking remain separate domains.
+## Implemented in this service
+
+- Create, read, search/list, update, and soft-archive catalog products.
+- Validate normalized SKU, currency code, price minor units, metadata JSON, and HTTP(S) image URLs.
+- Persist product records through SQLAlchemy (SQLite for local development; PostgreSQL through `CATALOG_DATABASE_URL`).
+- Record a version snapshot for creation, updates, and archival.
+- Support an optional `expected_version` query parameter for optimistic conflict detection.
+- Require a configured bearer token for product and version-history routes; expose liveness, readiness, and factual capability endpoints separately.
+
+## Local run
+
+From this directory:
+
+```bash
+python -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+export CATALOG_API_TOKEN='replace-with-a-long-random-secret'
+uvicorn app.main:app --host 127.0.0.1 --port 8080
+```
+
+The default database is `sqlite:///./catalog.db`. Use a managed PostgreSQL database and set `CATALOG_DATABASE_URL` for shared environments. Product routes require `Authorization: Bearer $CATALOG_API_TOKEN`.
+
+## Product contract
+
+Prices use integer minor units and a three-letter currency code, e.g. `price_minor: 1299, currency: "KES"`. The SKU is normalized to uppercase and must be unique. Product deletion is a soft archive, preserving history. List results are active-only by default; pass `status=archived` or `status=all` when needed.
+
+The API does **not** handle payment credentials, checkout, inventory reservation, merchant bulk import, recommendations, user wardrobes, fit predictions, Click It reconstruction, or Virtual Try-On. Those remain separate domains and must not be inferred from catalog CRUD working.
+
+## Release constraints
+
+- This initial schema bootstrap uses SQLAlchemy `create_all` for local/demo convenience. Before production, add reviewed, versioned migrations (for example, Alembic), set `CATALOG_AUTO_CREATE_SCHEMA=false`, and validate the migration/rollback process.
+- Production deployment still requires secret management, PostgreSQL provisioning/backup/restore drills, auth integration and authorization policy, rate limiting, observability, dependency/security scans, and deployment-level smoke tests.
+- Image URLs are metadata only; the API does not fetch or proxy remote URLs.
