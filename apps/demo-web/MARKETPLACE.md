@@ -17,7 +17,7 @@ Use **Connect catalog** and provide:
 
 The page calls `GET /products?q=&category=&status=active&limit=20&offset=0` using the catalog API's existing response shape (`items`, `total`, `offset`, `limit`). The current service does not support `status=active` as a necessary parameter because active is its default. The token remains in page memory only; it is not written to browser storage. Do not use production credentials on a public/shared device.
 
-The deployed API must configure CORS to allow the page's origin. Never put a privileged catalog token into a public static deployment. For a public release, add a same-origin backend-for-frontend that authenticates users and keeps service credentials server-side.
+Configure `CATALOG_CORS_ORIGINS` on the API as a comma-separated list of exact trusted frontend origins (for example `https://shop.example.com`). The service does not enable cross-origin access unless this is configured; do not use `*`. The page blocks bearer-token transmission to non-HTTPS URLs, except localhost HTTP for development. Never put a privileged catalog token into a public static deployment. For a public release, add a same-origin backend-for-frontend that authenticates users and keeps service credentials server-side.
 
 ## Current behavior and boundaries
 
@@ -30,13 +30,13 @@ The deployed API must configure CORS to allow the page's origin. Never put a pri
 
 ## Validation still required
 
-Before merge/release, run browser smoke tests and the catalog service test suite from `services/catalog-service`:
+A GitHub Actions contract workflow runs static marketplace contract checks and Python syntax compilation. Before merge/release, also run browser smoke tests and the catalog service test suite from `services/catalog-service`:
 
 ```bash
 python -m pip install -r requirements.txt
 pytest -q
 ```
 
-Also verify the API's `/ready` endpoint, CORS behavior, authentication failures, product pagination, image failures, mobile layout, keyboard navigation, and the configured currency/price-unit convention. This UI uses `price_minor / 100` for display; this is suitable for two-decimal currencies such as KES but should be replaced with currency metadata before supporting currencies with zero or three decimal places.
+Also verify the API's `/ready` endpoint, CORS behavior, authentication failures, product pagination, image failures, mobile layout, keyboard navigation, and the configured currency/price-unit convention. The UI formats prices using `Intl.NumberFormat` currency fraction-digit rules, so currencies with zero or three decimal places are not forced into a two-decimal display. The API currently validates a three-letter currency code, not a full currency metadata registry; merchant feeds still need a canonical ISO 4217 validation policy.
 
 Do not merge or deploy until the HTML/JavaScript has been checked in a browser and the catalog integration is tested against a non-production environment.
