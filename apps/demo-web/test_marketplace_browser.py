@@ -70,10 +70,14 @@ class MarketplaceBrowserTests(unittest.TestCase):
         self.page.locator("#settingsBtn").click()
         self.page.locator("#apiBase").fill("http://catalog.example.com")
         self.page.locator("#apiToken").fill("test-token-not-a-secret")
-        with self.page.expect_event("dialog") as dialog_info:
-            self.page.get_by_role("button", name="Connect and load").click()
-        self.assertIn("only be sent to HTTPS", dialog_info.value.message)
-        dialog_info.value.accept()
+        messages = []
+        def accept_dialog(dialog):
+            messages.append(dialog.message)
+            dialog.accept()
+        self.page.once("dialog", accept_dialog)
+        self.page.get_by_role("button", name="Connect and load").click()
+        self.assertTrue(messages, "Expected the insecure URL warning dialog")
+        self.assertIn("only be sent to HTTPS", messages[0])
 
 
 if __name__ == "__main__":
