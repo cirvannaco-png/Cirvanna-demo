@@ -164,7 +164,7 @@ def verify_fit_signature(fit: FitEvidenceIn, signature: str) -> None:
         raise HTTPException(401, detail={"code": "UNTRUSTED_FIT_EVIDENCE"})
 
 
-def _result_json(result) -> dict:
+def _result_json(result, payload: "EligibilityRequest") -> dict:
     arbitration = result.arbitration
     return {
         "service": SERVICE,
@@ -192,8 +192,11 @@ def _result_json(result) -> dict:
                 "model_version": result.fit_estimate.model_version, "calibration_version": result.fit_estimate.calibration_version,
                 "evidence_ids": list(result.fit_estimate.evidence_ids)},
         },
-        "policy": {"minimum_fit_confidence": result.fit_estimate.confidence is not None,
-            "fci_contract_version": result.fit_estimate.model_version},
+        "policy": {"version": result.arbitration.policy_version,
+            "minimum_fit_confidence": payload.minimum_fit_confidence,
+            "minimum_alignment_score": payload.minimum_alignment_score,
+            "fci_model_version": result.fit_estimate.model_version,
+            "fci_calibration_version": result.fit_estimate.calibration_version},
     }
 
 
@@ -285,6 +288,6 @@ def evaluate_eligibility(payload: EligibilityRequest) -> dict:
             minimum_fit_confidence=payload.minimum_fit_confidence,
             minimum_alignment_score=payload.minimum_alignment_score, policy_version=payload.policy_version,
         )
-        return _result_json(result)
+        return _result_json(result, payload)
     except ValueError as exc:
         raise HTTPException(422, detail={"code": "INVALID_DECISION_EVIDENCE", "detail": str(exc)}) from exc
