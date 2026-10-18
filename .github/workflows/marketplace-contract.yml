@@ -28,5 +28,20 @@ jobs:
           python-version: "3.12"
       - name: Run marketplace integration contract checks
         run: python apps/demo-web/test_marketplace_contract.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check inline marketplace JavaScript syntax
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          html = Path("apps/demo-web/marketplace.html").read_text(encoding="utf-8")
+          scripts = re.findall(r"<script(?:\s[^>]*)?>(.*?)</script>", html, re.I | re.S)
+          if not scripts:
+              raise SystemExit("No inline script found in marketplace.html")
+          Path("/tmp/cirvanna-marketplace.js").write_text("\n".join(scripts), encoding="utf-8")
+          PY
+          node --check /tmp/cirvanna-marketplace.js
       - name: Compile catalog service Python syntax
         run: python -m compileall -q services/catalog-service/app
