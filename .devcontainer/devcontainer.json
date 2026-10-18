@@ -1,0 +1,22 @@
+{
+  "name": "Cirvanna Development",
+  "image": "mcr.microsoft.com/devcontainers/universal:2",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "GitHub.vscode-pull-request-github",
+        "redhat.vscode-yaml",
+        "ms-azuretools.vscode-docker"
+      ],
+      "settings": {
+        "editor.formatOnSave": true,
+        "files.trimTrailingWhitespace": true,
+        "python.testing.pytestEnabled": true
+      }
+    }
+  },
+  "postCreateCommand": "python --version && node --version && git --version",
+  "remoteUser": "vscode"
+}
