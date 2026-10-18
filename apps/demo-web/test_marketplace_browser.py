@@ -39,10 +39,6 @@ class MarketplaceBrowserTests(unittest.TestCase):
         self.page.goto(f"{self.base_url}/marketplace.html", wait_until="domcontentloaded")
         self.page.wait_for_function("document.querySelector('#status').textContent.includes('DEMO MODE')", timeout=5000)
 
-    def tearDown(self):
-        self.browser.close()
-        self.playwright.stop()
-
     def test_demo_search_save_and_bag_are_interactive(self):
         self.assertEqual(self.page.locator(".card").count(), 6)
         self.page.locator("#query").fill("serum")
