@@ -5,6 +5,7 @@ on:
     paths:
       - "apps/demo-web/marketplace.html"
       - "apps/demo-web/test_marketplace_contract.py"
+      - "apps/demo-web/test_marketplace_browser.py"
       - "services/catalog-service/app/main.py"
       - ".github/workflows/marketplace-contract.yml"
   push:
@@ -31,6 +32,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Install browser test dependencies
+        run: |
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
+      - name: Run headless marketplace browser tests
+        run: python apps/demo-web/test_marketplace_browser.py
       - name: Check inline marketplace JavaScript syntax
         run: |
           python - <<'PY'
