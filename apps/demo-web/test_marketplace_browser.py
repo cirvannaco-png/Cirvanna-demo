@@ -35,7 +35,7 @@ class MarketplaceBrowserTests(unittest.TestCase):
         self.browser = self.playwright.chromium.launch()
         self.page = self.browser.new_page()
         self.page.goto(f"{self.base_url}/marketplace.html", wait_until="domcontentloaded")
-        self.page.locator("#status").get_by_text("DEMO MODE").wait_for()
+        self.page.wait_for_function("document.querySelector('#status').textContent.includes('DEMO MODE')")
 
     def tearDown(self):
         self.browser.close()
@@ -47,12 +47,12 @@ class MarketplaceBrowserTests(unittest.TestCase):
         self.page.locator("#query").press("Enter")
         self.assertEqual(self.page.locator(".card").count(), 1)
         self.page.locator('.card button[data-action="save"]').click()
-        self.page.locator("#savedCount").get_by_text("1").wait_for()
+        self.assertEqual(self.page.locator("#savedCount").inner_text(), "1")
         self.page.locator("#savedBtn").click()
         self.page.get_by_role("dialog").get_by_text("Radiant Skin Serum").wait_for()
         self.page.get_by_role("button", name="Close").click()
         self.page.locator('.card button[data-action="bag"]').click()
-        self.page.locator("#cartCount").get_by_text("1").wait_for()
+        self.assertEqual(self.page.locator("#cartCount").inner_text(), "1")
         self.page.locator("#cartBtn").click()
         self.page.get_by_role("dialog").get_by_text("Checkout unavailable").wait_for()
         self.assertIn("No stock reservation or order is created.", self.page.get_by_role("dialog").inner_text())
