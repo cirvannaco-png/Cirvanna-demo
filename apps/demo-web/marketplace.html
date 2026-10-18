@@ -71,20 +71,42 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
   }
   async function load(){
     const q=$("query").value.trim(),category=$("category").value;
+    if(config.commerceBase&&config.userToken){
+      mode="commerce";setStatus("Loading approved merchant offers and your account cart…");
+      try{
+        const url=new URL(config.commerceBase+"/marketplace/offers");
+        if(q)url.searchParams.set("q",q);if(category)url.searchParams.set("category",category);
+        url.searchParams.set("limit","20");url.searchParams.set("offset",String(page*20));
+        const headers={Authorization:"Bearer "+config.userToken,Accept:"application/json"};
+        const offersResponse=await fetch(url,{headers});
+        if(!offersResponse.ok)throw new Error(offersResponse.status===401?"Commerce authentication failed (401). Reconnect with a valid user session.":"Commerce offers API returned HTTP "+offersResponse.status+".");
+        const [cartResponse,savedResponse]=await Promise.all([fetch(config.commerceBase+"/cart",{headers}),fetch(config.commerceBase+"/saved-products",{headers})]);
+        if(!cartResponse.ok)throw new Error(cartResponse.status===401?"Your commerce session expired; reconnect to refresh account data.":"Persistent cart API returned HTTP "+cartResponse.status+".");
+        if(!savedResponse.ok)throw new Error(savedResponse.status===401?"Your commerce session expired; reconnect to refresh account data.":"Saved-products API returned HTTP "+savedResponse.status+".");
+        const offersData=await offersResponse.json(),cartData=await cartResponse.json(),savedData=await savedResponse.json();
+        items=(Array.isArray(offersData.items)?offersData.items:[]).map(p=>({...p,product_id:p.catalog_product_id,name:p.product_name,brand:p.merchant_name,description:Object.entries(p.options||{}).map(([k,v])=>k+": "+v).join(" · ")||"Merchant offer; details are provided by the listing.",image_urls:[],attributes:{}}));
+        total=Number(offersData.total)||0;cartVersion=Number(cartData.version)||0;
+        cart=(Array.isArray(cartData.items)?cartData.items:[]).map(x=>({...x,product_id:x.variant_id,name:x.product_name}));
+        saved=(Array.isArray(savedData.items)?savedData.items:[]).map(x=>({product_id:x.catalog_product_id,name:x.catalog_product_id,currency:"",price_minor:null}));
+        updateCategories(items);updateCounts();setStatus("LIVE COMMERCE — "+total+" approved merchant offer(s). Saved products and bag are account-backed; checkout uses hosted payment. Try-on is not yet available.");render();return;
+      }catch(e){items=[];total=0;setStatus((e&&e.message?e.message:"Commerce request failed")+" Check API URL, user authentication, CORS and service readiness. No demo fallback was used.",true);render();return}
+    }
     if(!config.base||!config.token){
-      mode="demo";const all=demoProducts.filter(p=>(!q||(p.name+" "+p.brand+" "+p.sku+" "+p.description).toLowerCase().includes(q.toLowerCase()))&&(!category||p.category===category));
-      total=all.length;items=all.slice(page*20,(page+1)*20);updateCategories(demoProducts);setStatus('DEMO MODE — '+total+' sample products. Connect the authenticated catalog API to browse real catalog records.');render();return;
+      mode="demo";saved=readStore("cirvanna-marketplace-saved");cart=readStore("cirvanna-marketplace-bag");
+      const all=demoProducts.filter(p=>(!q||(p.name+" "+p.brand+" "+p.sku+" "+p.description).toLowerCase().includes(q.toLowerCase()))&&(!category||p.category===category));
+      total=all.length;items=all.slice(page*20,(page+1)*20);updateCategories(demoProducts);updateCounts();setStatus("DEMO MODE — "+total+" sample products. Saves and bag are local to this browser; checkout and try-on are unavailable.");render();return;
     }
     mode="catalog";setStatus("Loading catalog…");
     try{
-      const url=new URL(config.base.replace(/\/$/,"")+"/products");
+      const url=new URL(config.base+"/products");
       if(q)url.searchParams.set("q",q);if(category)url.searchParams.set("category",category);
       url.searchParams.set("limit","20");url.searchParams.set("offset",String(page*20));
       const response=await fetch(url,{headers:{Authorization:"Bearer "+config.token,Accept:"application/json"}});
       if(!response.ok)throw new Error(response.status===401?"Catalog authentication failed (401). Check the token.":"Catalog API returned HTTP "+response.status+".");
       const data=await response.json();items=Array.isArray(data.items)?data.items:[];total=Number(data.total)||0;
-      updateCategories(items);setStatus('LIVE CATALOG — '+total+' product record(s). Checkout and try-on remain unavailable in this build.');render();
-    }catch(e){items=[];total=0;setStatus((e&&e.message?e.message:"Catalog request failed")+' Check the API URL, CORS policy, service health and token. Demo data is not substituted after a live API error.',true);render()}
+      saved=readStore("cirvanna-marketplace-saved");cart=readStore("cirvanna-marketplace-bag");updateCounts();updateCategories(items);
+      setStatus("LIVE CATALOG — "+total+" canonical catalog record(s). Save and bag remain browser-local until the authenticated Commerce API is connected; checkout and try-on are unavailable.");render();
+    }catch(e){items=[];total=0;setStatus((e&&e.message?e.message:"Catalog request failed")+" Check the API URL, CORS policy, service health and token. Demo data is not substituted after a live API error.",true);render()}
   }
   function findProduct(id){return items.find(p=>getId(p)===id)||demoProducts.find(p=>getId(p)===id)}
   function act(action,id){
