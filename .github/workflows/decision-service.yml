@@ -1,0 +1,47 @@
+name: Decision service checks
+
+on:
+  pull_request:
+    paths:
+      - "services/decision-service/**"
+      - "packages/identity-intelligence/catacaci/**"
+      - "packages/identity-intelligence/eepl/**"
+      - "packages/identity-intelligence/usi/**"
+      - "packages/preferences/npl/**"
+      - "packages/fit-intelligence/fci/**"
+      - ".github/workflows/decision-service.yml"
+  push:
+    branches: [main]
+    paths:
+      - "services/decision-service/**"
+      - "packages/identity-intelligence/catacaci/**"
+      - "packages/identity-intelligence/eepl/**"
+      - "packages/identity-intelligence/usi/**"
+      - "packages/preferences/npl/**"
+      - "packages/fit-intelligence/fci/**"
+      - ".github/workflows/decision-service.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  decision-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/decision-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Run decision API contract tests
+        env:
+          DECISION_SERVICE_TOKEN: decision-service-ci-token-minimum-32-bytes
+          FCI_EVIDENCE_HMAC_SECRET: fci-evidence-ci-secret-minimum-32-bytes
+        run: python -m pytest tests -q
+      - name: Compile service and referenced domain packages
+        run: python -m compileall -q app ../../packages/identity-intelligence ../../packages/preferences ../../packages/fit-intelligence
