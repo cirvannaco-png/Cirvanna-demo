@@ -37,3 +37,7 @@ The API does **not** handle payment credentials, checkout, inventory reservation
 - A versioned Alembic schema migration is provided. For deployments, set `CATALOG_DATABASE_URL`, run `alembic upgrade head` from this directory, and set `CATALOG_AUTO_CREATE_SCHEMA=false`. Local/demo runs may use SQLAlchemy `create_all` for convenience. The migration and rollback process still needs an environment-specific rehearsal before production.
 - Production deployment still requires secret management, PostgreSQL provisioning/backup/restore drills, auth integration and authorization policy, rate limiting, observability, dependency/security scans, and deployment-level smoke tests.
 - Image URLs are metadata only; the API does not fetch or proxy remote URLs.
+
+## Marketplace browser integration
+
+The standalone marketplace page calls `GET /products` with a bearer token. For a separately hosted frontend, configure `CATALOG_CORS_ORIGINS` as a comma-separated allowlist of exact trusted origins, for example `https://shop.example.com`. Do not use `*`; authenticated cross-origin browser requests are intentionally disabled unless this allowlist is configured. The middleware permits only `GET`/preflight and the `Authorization` and `Accept` headers. Restart the service after changing the setting. Keep the catalog token in a server-side integration for production; the demo page holds it only in page memory and is not an appropriate production credential-distribution design.
