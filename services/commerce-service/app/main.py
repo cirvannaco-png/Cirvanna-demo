@@ -480,7 +480,7 @@ def merchant_json(m: Merchant) -> dict[str, Any]:
     return {"merchant_id": m.id, "owner_user_id": m.owner_user_id, "display_name": m.display_name,
         "legal_name": m.legal_name, "country_code": m.country_code, "contact_email": m.contact_email,
         "verification_reference": m.verification_reference, "status": m.state, "commission_bps": m.commission_bps,
-        "decision_note": m.decision_note, "created_at": m.created_at}
+        "decision_note": m.decision_note, "created_at": m.created_at.isoformat() if m.created_at else None}
 
 
 def approved_merchant(db: Session, actor: Actor) -> Merchant:
