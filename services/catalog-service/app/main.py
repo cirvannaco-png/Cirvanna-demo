@@ -16,6 +16,7 @@ from typing import Annotated, Any, Iterator, Literal
 from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import (
@@ -348,6 +349,19 @@ app = FastAPI(
     ),
     lifespan=lifespan,
 )
+
+# Cross-origin browser access is opt-in. Configure exact trusted frontend origins in
+# CATALOG_CORS_ORIGINS (comma-separated); never use a wildcard for authenticated APIs.
+_cors_origins = [origin.strip().rstrip("/") for origin in os.getenv("CATALOG_CORS_ORIGINS", "").split(",") if origin.strip()]
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins,
+        allow_credentials=False,
+        allow_methods=["GET", "OPTIONS"],
+        allow_headers=["Authorization", "Accept"],
+        max_age=600,
+    )
 
 
 @app.get("/health", tags=["operations"])
