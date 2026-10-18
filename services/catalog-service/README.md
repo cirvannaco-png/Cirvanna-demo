@@ -34,6 +34,6 @@ The API does **not** handle payment credentials, checkout, inventory reservation
 
 ## Release constraints
 
-- This initial schema bootstrap uses SQLAlchemy `create_all` for local/demo convenience. Before production, add reviewed, versioned migrations (for example, Alembic), set `CATALOG_AUTO_CREATE_SCHEMA=false`, and validate the migration/rollback process.
+- A versioned Alembic schema migration is provided. For deployments, set `CATALOG_DATABASE_URL`, run `alembic upgrade head` from this directory, and set `CATALOG_AUTO_CREATE_SCHEMA=false`. Local/demo runs may use SQLAlchemy `create_all` for convenience. The migration and rollback process still needs an environment-specific rehearsal before production.
 - Production deployment still requires secret management, PostgreSQL provisioning/backup/restore drills, auth integration and authorization policy, rate limiting, observability, dependency/security scans, and deployment-level smoke tests.
 - Image URLs are metadata only; the API does not fetch or proxy remote URLs.
