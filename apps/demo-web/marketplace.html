@@ -44,7 +44,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     {product_id:"demo-006",sku:"CV-ACCESSORY-006",name:"Minimal Crossbody",brand:"Demo Studio",category:"Accessories",description:"Sample product data only; not a live offer.",price_minor:315000,currency:"KES",image_urls:[],attributes:{demo:true}}
   ];
   const $ = id => document.getElementById(id);
-  let config = {base:"",token:""}, items=[], page=0, mode="catalog", total=0;
+  let config = {base:"",token:"",commerceBase:"",userToken:""}, items=[], page=0, mode="demo", total=0, cartVersion=0;
   let saved = readStore("cirvanna-marketplace-saved"), cart = readStore("cirvanna-marketplace-bag");
   function readStore(key){try{return JSON.parse(localStorage.getItem(key)||"[]")}catch{return []}}
   function writeStore(){localStorage.setItem("cirvanna-marketplace-saved",JSON.stringify(saved));localStorage.setItem("cirvanna-marketplace-bag",JSON.stringify(cart));updateCounts()}
@@ -52,11 +52,13 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
   function money(p){const currency=String(p.currency||"KES").toUpperCase();const minor=Number(p.price_minor);if(!Number.isSafeInteger(minor)||minor<0)return "Price unavailable";try{const formatter=new Intl.NumberFormat(undefined,{style:"currency",currency});const digits=formatter.resolvedOptions().maximumFractionDigits;return formatter.format(minor/Math.pow(10,digits))}catch{return currency+" "+(minor/100).toFixed(2)}}
   function escapeHtml(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
   function setStatus(s,error=false){$("status").textContent=s;$("status").classList.toggle("error",error)}
-  function getId(p){return String(p.product_id||p.id||p.sku)}
+  function getId(p){return String(p.variant_id||p.product_id||p.id||p.sku)}
+  function productSaveId(p){return String(p.catalog_product_id||p.product_id||getId(p))}
+  function validateApiBase(raw){let u;try{u=new URL(raw)}catch{throw new Error("Enter a valid absolute API URL.")}const host=(u.hostname||"").toLowerCase();const local=["localhost","127.0.0.1","::1","[::1]"].includes(host);if(u.username||u.password||u.search||u.hash)throw new Error("Use an API base URL without credentials, query parameters or fragments.");if(u.protocol!=="https:"&&!(u.protocol==="http:"&&local))throw new Error("For security, bearer tokens may only be sent to HTTPS endpoints (HTTP is allowed for localhost development).");return u.origin+u.pathname.replace(/\/$/,"")}
   function render(){
     const visible=items;
     $("products").innerHTML=visible.length?visible.map(p=>{
-      const id=getId(p),isSaved=saved.some(x=>x.product_id===id),inBag=cart.some(x=>x.product_id===id);
+      const id=getId(p),saveId=productSaveId(p),isSaved=saved.some(x=>x.product_id===saveId),inBag=cart.some(x=>x.product_id===id||x.variant_id===id);
       const image=Array.isArray(p.image_urls)&&p.image_urls[0]?'<img loading="lazy" alt="'+escapeHtml(p.name)+'" src="'+escapeHtml(p.image_urls[0])+'" referrerpolicy="no-referrer">':'<div class="placeholder" aria-hidden="true">C.</div>';
       return '<article class="card"><div class="visual">'+image+'<span class="tag">'+(p.attributes&&p.attributes.demo?'Demo data':escapeHtml(p.category||'Product'))+'</span></div><div class="card-body"><div class="brandline">'+escapeHtml(p.brand||'Independent brand')+'</div><div class="name">'+escapeHtml(p.name)+'</div><div class="description">'+escapeHtml(p.description||'Product details have not been provided.')+'</div><div class="price">'+money(p)+'</div><div class="brandline">'+escapeHtml(p.sku||'')+'</div><div class="card-actions"><button class="btn" data-action="save" data-id="'+escapeHtml(id)+'">'+(isSaved?'Saved ✓':'Save')+'</button><button class="btn" data-action="bag" data-id="'+escapeHtml(id)+'">'+(inBag?'In bag ✓':'Add to bag')+'</button><button class="btn wide" data-action="tryon" data-id="'+escapeHtml(id)+'" disabled title="Virtual try-on adapter is not connected">Try on — unavailable</button></div></div></article>'
     }).join(''):'<div class="empty">No products match this search. Try a broader term or clear the category filter.</div>';
