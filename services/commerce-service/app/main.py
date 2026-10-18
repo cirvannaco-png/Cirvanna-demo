@@ -22,8 +22,10 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from urllib.parse import urlsplit
+
 from sqlalchemy import (
-    JSON, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint,
+    JSON, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint,
     create_engine, func, select, text, update,
 )
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -95,6 +97,9 @@ class Variant(Base):
     __table_args__ = (
         UniqueConstraint("listing_id", "sku", name="uq_commerce_variant_sku"),
         Index("ix_commerce_variant_listing_state", "listing_id", "state"),
+        CheckConstraint("price_minor >= 0", name="ck_commerce_variant_price_nonnegative"),
+        CheckConstraint("on_hand >= 0", name="ck_commerce_variant_on_hand_nonnegative"),
+        CheckConstraint("reserved_qty >= 0 AND reserved_qty <= on_hand", name="ck_commerce_variant_reservation_bounds"),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     listing_id: Mapped[str] = mapped_column(ForeignKey("commerce_listings.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -139,7 +144,7 @@ class Cart(Base):
 
 class CartItem(Base):
     __tablename__ = "commerce_cart_items"
-    __table_args__ = (UniqueConstraint("cart_id", "variant_id", name="uq_commerce_cart_item"),)
+    __table_args__ = (UniqueConstraint("cart_id", "variant_id", name="uq_commerce_cart_item"), CheckConstraint("quantity > 0", name="ck_commerce_cart_quantity_positive"))
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     cart_id: Mapped[str] = mapped_column(ForeignKey("commerce_carts.id", ondelete="CASCADE"), nullable=False, index=True)
     variant_id: Mapped[str] = mapped_column(ForeignKey("commerce_variants.id"), nullable=False, index=True)
@@ -151,6 +156,7 @@ class CommerceOrder(Base):
     __table_args__ = (
         UniqueConstraint("buyer_user_id", "idempotency_key", name="uq_commerce_order_idempotency"),
         Index("ix_commerce_order_buyer_created", "buyer_user_id", "created_at"),
+        CheckConstraint("subtotal_minor >= 0", name="ck_commerce_order_subtotal_nonnegative"),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     order_number: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
@@ -184,11 +190,12 @@ class OrderItem(Base):
     line_total_minor: Mapped[int] = mapped_column(Integer, nullable=False)
     commission_bps: Mapped[int] = mapped_column(Integer, nullable=False)
     commission_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    __table_args__ = (CheckConstraint("quantity > 0", name="ck_commerce_order_item_quantity_positive"), CheckConstraint("unit_price_minor >= 0 AND line_total_minor >= 0", name="ck_commerce_order_item_price_nonnegative"))
 
 
 class StockReservation(Base):
     __tablename__ = "commerce_stock_reservations"
-    __table_args__ = (UniqueConstraint("order_id", "variant_id", name="uq_commerce_reservation"),)
+    __table_args__ = (UniqueConstraint("order_id", "variant_id", name="uq_commerce_reservation"), CheckConstraint("quantity > 0", name="ck_commerce_reservation_quantity_positive"))
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     order_id: Mapped[str] = mapped_column(ForeignKey("commerce_orders.id", ondelete="CASCADE"), nullable=False, index=True)
     variant_id: Mapped[str] = mapped_column(ForeignKey("commerce_variants.id"), nullable=False, index=True)
@@ -268,7 +275,11 @@ class CatalogClient:
         base, token = os.getenv("CATALOG_API_URL", "").rstrip("/"), os.getenv("CATALOG_API_TOKEN", "")
         if not base or not token:
             raise HTTPException(503, detail={"code": "CATALOG_INTEGRATION_NOT_CONFIGURED"})
-        if not (base.startswith("https://") or base.startswith("http://localhost") or base.startswith("http://127.0.0.1")):
+        parsed = urlsplit(base)
+        local_hosts = {"localhost", "127.0.0.1", "::1"}
+        if not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise HTTPException(503, detail={"code": "INVALID_CATALOG_API_URL"})
+        if parsed.scheme != "https" and not (parsed.scheme == "http" and parsed.hostname.lower() in local_hosts):
             raise HTTPException(503, detail={"code": "CATALOG_API_MUST_USE_HTTPS"})
         try:
             response = httpx.get(f"{base}/products/{pid}", headers={"Authorization": f"Bearer {token}", "Accept": "application/json"}, timeout=4.0)
@@ -656,7 +667,7 @@ def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
     auth_ok = len(os.getenv("COMMERCE_JWT_SECRET", "").encode()) >= 32
     catalog_ok = bool(os.getenv("CATALOG_API_URL") and os.getenv("CATALOG_API_TOKEN"))
     payment_ok = StripeGateway().ready
-    ready = connected and auth_ok
+    ready = connected and auth_ok and catalog_ok and payment_ok
     result = Readiness(status="ready" if ready else "not_ready", service=SERVICE,
         database_connected=connected, authentication_configured=auth_ok,
         catalog_configured=catalog_ok, payment_configured=payment_ok, ready=ready)
