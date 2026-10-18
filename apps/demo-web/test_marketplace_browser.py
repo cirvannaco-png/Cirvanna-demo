@@ -32,10 +32,12 @@ class MarketplaceBrowserTests(unittest.TestCase):
 
     def setUp(self):
         self.playwright = sync_playwright().start()
+        self.addCleanup(self.playwright.stop)
         self.browser = self.playwright.chromium.launch()
+        self.addCleanup(self.browser.close)
         self.page = self.browser.new_page()
         self.page.goto(f"{self.base_url}/marketplace.html", wait_until="domcontentloaded")
-        self.page.wait_for_function("document.querySelector('#status').textContent.includes('DEMO MODE')")
+        self.page.wait_for_function("document.querySelector('#status').textContent.includes('DEMO MODE')", timeout=5000)
 
     def tearDown(self):
         self.browser.close()
