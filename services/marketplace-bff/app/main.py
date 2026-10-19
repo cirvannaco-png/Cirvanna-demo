@@ -88,10 +88,10 @@ def _page_html() -> str:
         html = HTML_PATH.read_text(encoding="utf-8")
     except OSError as exc:
         raise HTTPException(status_code=503, detail={"code": "MARKETPLACE_PAGE_UNAVAILABLE"}) from exc
-    marker = "<script>\\n(() => {"
+    marker = "<script>\n(() => {"
     bootstrap = (
-        '<script>window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce"});</script>\\n'
-        + "<script>\\n(() => {"
+        '<script>window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce"});</script>\n'
+        + "<script>\n(() => {"
     )
     if "CIRVANNA_MARKETPLACE_CONFIG" not in html:
         if html.count(marker) != 1:
