@@ -29,6 +29,6 @@ jobs:
         run: python -m pip install -r services/marketplace-bff/requirements.txt pytest
       - name: Test same-origin marketplace gateway
         working-directory: services/marketplace-bff
-        run: pytest -q
+        run: python -m pytest -q
       - name: Compile BFF Python
         run: python -m compileall -q services/marketplace-bff/app

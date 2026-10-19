@@ -93,7 +93,7 @@ def _page_html() -> str:
         '<script>window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce"});</script>\n'
         + "<script>\n(() => {"
     )
-    if "CIRVANNA_MARKETPLACE_CONFIG" not in html:
+    if 'window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({' not in html:
         if html.count(marker) != 1:
             raise HTTPException(status_code=503, detail={"code": "MARKETPLACE_BOOTSTRAP_MARKER_MISSING"})
         html = html.replace(marker, bootstrap, 1)

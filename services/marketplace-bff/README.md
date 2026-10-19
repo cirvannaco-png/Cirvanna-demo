@@ -30,7 +30,7 @@ From repository root:
     python -m pip install -r services/marketplace-bff/requirements.txt pytest
     cd services/marketplace-bff
     uvicorn app.main:app --host 127.0.0.1 --port 8083
-    pytest -q
+    python -m pytest -q
 
 Build the container from repository root:
 
