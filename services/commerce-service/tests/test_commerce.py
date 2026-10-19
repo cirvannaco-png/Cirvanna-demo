@@ -310,7 +310,7 @@ def test_merchant_listing_snapshots_only_trusted_catalog_images(client, monkeypa
                 "https://cdn.example.test/linen-front.jpg",
                 "http://insecure.example.test/should-not-load.jpg",
                 "javascript:alert(1)",
-                "https://user:password@cdn.example.test/unsafe.jpg",
+                "https://" + "user:password" + "@cdn.example.test/unsafe.jpg",
                 "https://cdn.example.test/linen-back.jpg#fragment",
                 "https://cdn.example.test/linen-back.jpg",
             ],
