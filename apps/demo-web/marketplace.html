@@ -31,7 +31,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
 <section class="grid" id="products" aria-live="polite"></section>
 <div style="display:flex;justify-content:center;gap:10px;padding:0 0 35px"><button class="btn" id="prevBtn">Previous</button><span class="eyebrow" id="pageLabel" style="align-self:center">Page 1</span><button class="btn" id="nextBtn">Next</button></div>
 </main>
-<footer><div class="shell">Cirvanna marketplace vertical slice. Saved items and bag are local to this browser. Checkout, payments, inventory reservation, personalized ranking and real virtual try-on are not enabled in this build.</div></footer>
+<footer><div class="shell">Cirvanna marketplace. Hosted checkout and stock reservation are available only with an authenticated Commerce and Stripe integration; personalized ranking and real virtual try-on remain unavailable in this build.</div></footer>
 <div id="drawerRoot"></div>
 <script>
 (() => {
@@ -83,7 +83,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
         if(!response.ok)throw new Error(response.status===503?"Marketplace API is not ready (503).":"Marketplace offers API returned HTTP "+response.status+".");
         const data=await response.json();
         if(!Array.isArray(data.items)||!Number.isFinite(Number(data.total)))throw new Error("Marketplace API returned an invalid offer list.");
-        items=data.items.map(p=>({...p,product_id:p.catalog_product_id,name:p.product_name,brand:p.merchant_name,description:Object.entries(p.options||{}).map(([k,v])=>k+": "+v).join(" · ")||"Approved merchant offer with current stock.",image_urls:[],attributes:{}}));
+        items=data.items.map(p=>({...p,product_id:p.catalog_product_id,name:p.product_name,brand:p.merchant_name,description:Object.entries(p.options||{}).map(([k,v])=>k+": "+v).join(" · ")||"Approved merchant offer with current stock.",image_urls:p.image_urls||[],attributes:{}}));
         total=Number(data.total)||0;saved=readStore("cirvanna-marketplace-saved");cart=readStore("cirvanna-marketplace-bag");
         updateCategories(items);updateCounts();
         setStatus("LIVE MARKETPLACE — "+total+" in-stock offer(s) from approved merchants. Guest saves and bag stay in this browser; account-backed checkout requires identity-provider sign-in.");
@@ -103,7 +103,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
         if(!cartResponse.ok)throw new Error(cartResponse.status===401?"Your commerce session expired; reconnect to refresh account data.":"Persistent cart API returned HTTP "+cartResponse.status+".");
         if(!savedResponse.ok)throw new Error(savedResponse.status===401?"Your commerce session expired; reconnect to refresh account data.":"Saved-products API returned HTTP "+savedResponse.status+".");
         const offersData=await offersResponse.json(),cartData=await cartResponse.json(),savedData=await savedResponse.json();
-        items=(Array.isArray(offersData.items)?offersData.items:[]).map(p=>({...p,product_id:p.catalog_product_id,name:p.product_name,brand:p.merchant_name,description:Object.entries(p.options||{}).map(([k,v])=>k+": "+v).join(" · ")||"Merchant offer; details are provided by the listing.",image_urls:[],attributes:{}}));
+        items=(Array.isArray(offersData.items)?offersData.items:[]).map(p=>({...p,product_id:p.catalog_product_id,name:p.product_name,brand:p.merchant_name,description:Object.entries(p.options||{}).map(([k,v])=>k+": "+v).join(" · ")||"Merchant offer; details are provided by the listing.",image_urls:p.image_urls||[],attributes:{}}));
         total=Number(offersData.total)||0;cartVersion=Number(cartData.version)||0;
         cart=(Array.isArray(cartData.items)?cartData.items:[]).map(x=>({...x,product_id:x.variant_id,name:x.product_name}));
         saved=(Array.isArray(savedData.items)?savedData.items:[]).map(x=>({product_id:x.catalog_product_id,name:x.catalog_product_id,currency:"",price_minor:null}));

@@ -85,7 +85,7 @@ def client(monkeypatch):
     main.SessionLocal = ORIGINAL_SESSION
 
 
-def seed_offer(stock: int = 8, price_minor: int = 250):
+def seed_offer(stock: int = 8, price_minor: int = 250, image_urls: list[str] | None = None):
     db = TEST_SESSION()
     merchant = main.Merchant(
         id=str(uuid.uuid4()), owner_user_id="merchant-1", display_name="Verified Studio",
@@ -93,7 +93,8 @@ def seed_offer(stock: int = 8, price_minor: int = 250):
         verification_reference="verified-by-admin-123", state="approved", commission_bps=300,
     )
     listing = main.Listing(id=str(uuid.uuid4()), merchant_id=merchant.id,
-        catalog_product_id=str(uuid.uuid4()), product_name="Linen Shirt", category="Fashion", state="active")
+        catalog_product_id=str(uuid.uuid4()), product_name="Linen Shirt", category="Fashion",
+        image_urls=image_urls or [], state="active")
     variant = main.Variant(id=str(uuid.uuid4()), listing_id=listing.id, sku="LINEN-S",
         options={"size": "S", "color": "blue"}, price_minor=price_minor, currency="KES",
         on_hand=stock, reserved_qty=0, state="active", version=1)
@@ -177,7 +178,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
         ))
         connection.execute(
             text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
-            {"revision": "20261018_0001"},
+            {"revision": "20261019_0002"},
         )
 
     ready = client.get("/ready")
@@ -190,7 +191,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
     assert payload["payment_configured"] is True
     assert payload["migrations_required"] is True
     assert payload["migrations_applied"] is True
-    assert payload["schema_revision"] == "20261018_0001"
+    assert payload["schema_revision"] == "20261019_0002"
     assert payload["ready"] is True
 
 
@@ -294,6 +295,39 @@ def test_merchant_application_is_persisted_and_approval_requires_verification(cl
     persisted = client.get("/merchants/me", headers=seller)
     assert persisted.status_code == 200
     assert persisted.json()["merchant_id"] == pending
+
+
+def test_merchant_listing_snapshots_only_trusted_catalog_images(client, monkeypatch):
+    seed_offer()
+    catalog_id = str(uuid.uuid4())
+    monkeypatch.setattr(
+        main.CatalogClient,
+        "product",
+        lambda self, incoming: {
+            "product_id": incoming, "name": "Canonical Linen Shirt", "category": "Fashion",
+            "status": "active",
+            "image_urls": [
+                "https://cdn.example.test/linen-front.jpg",
+                "http://insecure.example.test/should-not-load.jpg",
+                "javascript:alert(1)",
+                "https://user:password@cdn.example.test/unsafe.jpg",
+                "https://cdn.example.test/linen-back.jpg#fragment",
+                "https://cdn.example.test/linen-back.jpg",
+            ],
+        },
+    )
+    response = client.post(
+        "/merchant/listings", headers=auth("merchant-1", "merchant"),
+        json={"catalog_product_id": catalog_id},
+    )
+    assert response.status_code == 201
+    assert response.json()["image_urls"] == [
+        "https://cdn.example.test/linen-front.jpg",
+        "https://cdn.example.test/linen-back.jpg",
+    ]
+    offers = client.get("/marketplace/offers")
+    matching = next(item for item in offers.json()["items"] if item["listing_id"] == response.json()["listing_id"])
+    assert matching["image_urls"] == response.json()["image_urls"]
 
 
 def test_persistent_cart_is_account_scoped_and_rechecks_available_stock(client):

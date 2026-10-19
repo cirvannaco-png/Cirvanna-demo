@@ -37,7 +37,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 
 
 SERVICE = "cirvanna-commerce-service"
-EXPECTED_SCHEMA_REVISION = "20261018_0001"
+EXPECTED_SCHEMA_REVISION = "20261019_0002"
 MAX_QTY = 50
 RESERVATION_MINUTES = 60
 SKU_RE = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,79}$")
@@ -93,6 +93,7 @@ class Listing(Base):
     catalog_product_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     product_name: Mapped[str] = mapped_column(String(180), nullable=False)
     category: Mapped[str] = mapped_column(String(80), nullable=False)
+    image_urls: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     state: Mapped[str] = mapped_column(String(16), nullable=False, default="active", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
 
@@ -847,6 +848,30 @@ def decide_merchant(merchant_id: uuid.UUID, payload: MerchantDecision,
     return merchant_json(merchant)
 
 
+def trusted_catalog_image_urls(product: dict[str, Any]) -> list[str]:
+    raw_urls = product.get("image_urls", [])
+    if not isinstance(raw_urls, list):
+        return []
+    safe: list[str] = []
+    for value in raw_urls:
+        if not isinstance(value, str) or not value.strip() or len(value) > 2048:
+            continue
+        try:
+            parsed = urlsplit(value.strip())
+        except ValueError:
+            continue
+        if parsed.scheme != "https" or not parsed.hostname or parsed.username is not None or parsed.password is not None:
+            continue
+        if parsed.fragment or any(ord(ch) < 32 for ch in value):
+            continue
+        normalized = value.strip()
+        if normalized not in safe:
+            safe.append(normalized)
+        if len(safe) == 8:
+            break
+    return safe
+
+
 @app.post("/merchant/listings", status_code=201)
 def create_listing(payload: ListingIn, actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Session, Depends(get_db)]):
     merchant = approved_merchant(db, actor)
@@ -854,11 +879,13 @@ def create_listing(payload: ListingIn, actor: Annotated[Actor, Depends(require_a
     if db.scalar(select(Listing).where(Listing.merchant_id == merchant.id, Listing.catalog_product_id == product["product_id"])):
         raise HTTPException(409, detail={"code": "LISTING_ALREADY_EXISTS"})
     listing = Listing(id=str(uuid.uuid4()), merchant_id=merchant.id, catalog_product_id=product["product_id"],
-        product_name=str(product["name"])[:180], category=str(product.get("category") or "uncategorized")[:80], state="active")
+        product_name=str(product["name"])[:180], category=str(product.get("category") or "uncategorized")[:80],
+        image_urls=trusted_catalog_image_urls(product), state="active")
     db.add(listing)
     db.commit()
-    return {"listing_id": listing.id, "merchant_id": merchant.id, "catalog_product_id": listing.catalog_product_id,
-        "product_name": listing.product_name, "category": listing.category, "status": listing.state}
+    return {"listing_id": listing.id, "merchant_id": listing.merchant_id, "catalog_product_id": listing.catalog_product_id,
+        "product_name": listing.product_name, "category": listing.category, "image_urls": listing.image_urls,
+        "status": listing.state}
 
 
 @app.post("/merchant/listings/{listing_id}/variants", status_code=201)
@@ -931,7 +958,7 @@ def list_offers(db: Annotated[Session, Depends(get_db)], q: str | None = Query(N
     rows = db.execute(stmt.order_by(Listing.created_at.desc(), Variant.id).offset(offset).limit(limit)).all()
     return {"items": [{"variant_id": v.id, "listing_id": l.id, "merchant_id": m.id, "merchant_name": m.display_name,
         "catalog_product_id": l.catalog_product_id, "product_name": l.product_name, "category": l.category,
-        "sku": v.sku, "options": v.options, "price_minor": v.price_minor, "currency": v.currency,
+        "image_urls": l.image_urls, "sku": v.sku, "options": v.options, "price_minor": v.price_minor, "currency": v.currency,
         "available_stock": v.on_hand - v.reserved_qty} for v, l, m in rows], "total": total, "offset": offset, "limit": limit}
 
 
