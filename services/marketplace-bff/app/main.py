@@ -107,7 +107,7 @@ def health() -> dict[str, str]:
 
 @app.get("/ready")
 def readiness() -> dict:
-    catalog_configured = bool(os.getenv("CATALOG_API_TOKEN"))
+    catalog_configured = bool(os.getenv("CATALOG_API_URL"))
     commerce_configured = bool(os.getenv("COMMERCE_API_URL"))
     catalog_ready = False
     commerce_ready = False
@@ -126,7 +126,7 @@ def readiness() -> dict:
     result = {
         "status": "ready" if ready else "not_ready",
         "service": SERVICE,
-        "catalog_credentials_configured": catalog_configured,
+        "catalog_url_configured": catalog_configured,
         "catalog_ready": catalog_ready,
         "commerce_url_configured": commerce_configured,
         "commerce_ready": commerce_ready,

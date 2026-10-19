@@ -25,7 +25,6 @@ def client():
 
 def configure_upstreams(monkeypatch):
     monkeypatch.setenv("CATALOG_API_URL", "https://catalog.example.test")
-    monkeypatch.setenv("CATALOG_API_TOKEN", "catalog-server-only-test-token")
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
 
 
@@ -100,11 +99,13 @@ def test_account_proxy_forwards_only_allowlisted_headers_and_bearer(client, monk
 
 def test_readiness_fails_closed_until_both_upstreams_are_ready(client, monkeypatch):
     configure_upstreams(monkeypatch)
+    monkeypatch.delenv("CATALOG_API_TOKEN", raising=False)
     monkeypatch.setattr(main.httpx, "get", lambda *args, **kwargs: FakeResponse({"ready": True}))
     ready = client.get("/ready")
     assert ready.status_code == 200
     assert ready.json()["ready"] is True
     assert ready.json()["catalog_ready"] is True
+    assert ready.json()["catalog_url_configured"] is True
     assert ready.json()["commerce_ready"] is True
 
     monkeypatch.setattr(main.httpx, "get", lambda *args, **kwargs: FakeResponse({"ready": False}, status_code=503))

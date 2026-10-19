@@ -6,7 +6,7 @@ This is the server-side browser boundary for marketplace browsing. It serves the
 
 ## Why this boundary exists
 
-- Catalog and Commerce service credentials stay in server-side environment variables, never in the marketplace page.
+- No Catalog or Commerce service credential is embedded in the marketplace page. Catalog secrets remain in Catalog/Commerce service environments; the BFF uses only configured upstream URLs.
 - The browser defaults to GET /api/commerce/marketplace/offers. Commerce returns only active offers from approved merchants with stock available.
 - Account operations require the user's bearer token and are forwarded to Commerce. Commerce remains responsible for signature, issuer, audience, role, ownership, stock, checkout and payment validation.
 - Only customer cart, saved-product, checkout and order routes are proxied. Admin, merchant-management, webhooks, cron, and internal endpoints are not exposed through this gateway.
@@ -17,7 +17,6 @@ This is the server-side browser boundary for marketplace browsing. It serves the
 Set through the deployment secret manager:
 
 - CATALOG_API_URL: deployed canonical Catalog API base URL.
-- CATALOG_API_TOKEN: the private token accepted by Catalog; not sent to the browser.
 - COMMERCE_API_URL: deployed Commerce API base URL.
 - MARKETPLACE_HTML_PATH: optional path override for a nonstandard container layout.
 
