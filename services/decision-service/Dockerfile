@@ -9,4 +9,4 @@ COPY packages/fit-intelligence /app/packages/fit-intelligence
 COPY services/decision-service/app /app/services/decision-service/app
 WORKDIR /app/services/decision-service
 EXPOSE 8082
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8082"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8082}"]
