@@ -25,7 +25,7 @@ class MarketplaceContractTests(unittest.TestCase):
 
     def test_bearer_token_requires_tls_except_local_development(self):
         self.assertIn("bearer tokens may only be sent to HTTPS endpoints", HTML)
-        self.assertIn('parsed.protocol!=="https:"', HTML)
+        self.assertIn('u.protocol!=="https:"', HTML)
 
     def test_price_formatting_respects_currency_fraction_digits(self):
         self.assertIn("formatter.resolvedOptions().maximumFractionDigits", HTML)
@@ -34,7 +34,7 @@ class MarketplaceContractTests(unittest.TestCase):
     def test_unimplemented_commerce_features_are_not_faked(self):
         self.assertIn('disabled title="Virtual try-on adapter is not connected"', HTML)
         self.assertIn('disabled>Checkout unavailable</button>', HTML)
-        self.assertIn("No stock reservation or order is created.", HTML)
+        self.assertIn("No stock is reserved and no order is created.", HTML)
 
     def test_cors_is_explicitly_allowlisted(self):
         self.assertIn("CATALOG_CORS_ORIGINS", CATALOG)
