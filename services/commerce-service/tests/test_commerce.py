@@ -191,7 +191,7 @@ def test_merchant_application_is_persisted_and_approval_requires_verification(cl
     # Applicants cannot self-assert a verification reference; extra fields are forbidden.
     self_asserted = client.post("/merchants/applications",
         json={**body, "verification_reference": "self-asserted-fake-reference"}, headers=seller)
-    assert self_asserted.status_code == 409  # duplicate application remains blocked
+    assert self_asserted.status_code == 422  # applicant cannot supply an admin-only verification field
     admin = auth("admin-1", "admin")
     denied = client.post(f"/admin/merchants/{pending}/decision", json={"decision": "approve"}, headers=admin)
     assert denied.status_code == 409
