@@ -325,6 +325,18 @@ def test_merchant_listing_snapshots_only_trusted_catalog_images(client, monkeypa
         "https://cdn.example.test/linen-front.jpg",
         "https://cdn.example.test/linen-back.jpg",
     ]
+    variant = client.post(
+        f"/merchant/listings/{response.json()['listing_id']}/variants",
+        headers=auth("merchant-1", "merchant"),
+        json={
+            "sku": "LINEN-SHIRT-001",
+            "options": {"size": "M"},
+            "price_minor": 2500,
+            "currency": "KES",
+            "initial_stock": 5,
+        },
+    )
+    assert variant.status_code == 201
     offers = client.get("/marketplace/offers")
     matching = next(item for item in offers.json()["items"] if item["listing_id"] == response.json()["listing_id"])
     assert matching["image_urls"] == response.json()["image_urls"]
