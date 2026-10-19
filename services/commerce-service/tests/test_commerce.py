@@ -6,6 +6,9 @@ import os
 import time
 import uuid
 
+import jwt as pyjwt
+from cryptography.hazmat.primitives.asymmetric import rsa
+
 os.environ.setdefault("COMMERCE_DATABASE_URL", "sqlite:///./test-commerce-import.db")
 os.environ.setdefault("COMMERCE_AUTO_CREATE_SCHEMA", "true")
 
@@ -56,6 +59,10 @@ def client(monkeypatch):
     monkeypatch.setenv("COMMERCE_JWT_SECRET", "test-only-secret-at-least-32-bytes-long")
     monkeypatch.setenv("COMMERCE_JWT_ISSUER", "cirvanna-auth")
     monkeypatch.setenv("COMMERCE_JWT_AUDIENCE", "cirvanna-commerce")
+    monkeypatch.delenv("COMMERCE_ENVIRONMENT", raising=False)
+    monkeypatch.delenv("COMMERCE_AUTH_MODE", raising=False)
+    monkeypatch.delenv("COMMERCE_JWT_JWKS_URL", raising=False)
+    monkeypatch.delenv("COMMERCE_JWT_ROLE_CLAIM", raising=False)
     monkeypatch.setenv("COMMERCE_AUTO_CREATE_SCHEMA", "true")
     monkeypatch.delenv("CATALOG_API_URL", raising=False)
     monkeypatch.delenv("CATALOG_API_TOKEN", raising=False)
@@ -185,6 +192,51 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
     assert payload["migrations_applied"] is True
     assert payload["schema_revision"] == "20261018_0001"
     assert payload["ready"] is True
+
+
+def test_production_rejects_shared_secret_hs256_tokens(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_ENVIRONMENT", "production")
+    monkeypatch.setenv("COMMERCE_AUTH_MODE", "hs256")
+    response = client.get("/cart", headers=auth("production-user"))
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "AUTH_NOT_CONFIGURED"
+    readiness = client.get("/ready")
+    assert readiness.status_code == 503
+    assert readiness.json()["detail"]["authentication_configured"] is False
+
+
+def test_oidc_jwks_mode_verifies_rs256_issuer_audience_and_role(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_ENVIRONMENT", "production")
+    monkeypatch.setenv("COMMERCE_AUTH_MODE", "oidc_jwks")
+    monkeypatch.setenv("COMMERCE_JWT_JWKS_URL", "https://idp.example.test/.well-known/jwks.json")
+    monkeypatch.setenv("COMMERCE_JWT_ISSUER", "https://idp.example.test/")
+    monkeypatch.setenv("COMMERCE_JWT_AUDIENCE", "cirvanna-commerce")
+    monkeypatch.setenv("COMMERCE_JWT_ROLE_CLAIM", "app_role")
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    public_key = private_key.public_key()
+
+    class SigningKey:
+        key = public_key
+
+    class FakeJwksClient:
+        def get_signing_key_from_jwt(self, token):
+            return SigningKey()
+
+    monkeypatch.setattr(main, "_jwks_client", lambda url: FakeJwksClient())
+    claims = {
+        "sub": "oidc-customer-1", "app_role": "customer",
+        "iss": "https://idp.example.test/", "aud": "cirvanna-commerce",
+        "exp": int(time.time()) + 300, "iat": int(time.time()),
+    }
+    token = pyjwt.encode(claims, private_key, algorithm="RS256", headers={"kid": "test-key"})
+    actor = main.decode_actor(token)
+    assert actor.user_id == "oidc-customer-1"
+    assert actor.role == "customer"
+
+    bad_claims = {**claims, "aud": "another-service"}
+    bad_token = pyjwt.encode(bad_claims, private_key, algorithm="RS256", headers={"kid": "test-key"})
+    rejected = client.get("/cart", headers={"Authorization": "Bearer " + bad_token})
+    assert rejected.status_code == 401
 
 
 def test_private_routes_require_a_signed_actor(client):

@@ -14,10 +14,14 @@ import os
 import re
 import time
 import uuid
+from functools import lru_cache
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Iterator, Literal
 
 import httpx
+import jwt as pyjwt
+from jwt import PyJWKClient
+from jwt.exceptions import PyJWKClientConnectionError, PyJWTError
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -221,7 +225,84 @@ class Actor(BaseModel):
 bearer = HTTPBearer(auto_error=False)
 
 
+def _commerce_auth_mode() -> str:
+    return os.getenv("COMMERCE_AUTH_MODE", "hs256").strip().lower()
+
+
+def _production_environment() -> bool:
+    return os.getenv("COMMERCE_ENVIRONMENT", "development").strip().lower() == "production"
+
+
+def _oidc_jwks_url() -> str:
+    raw = os.getenv("COMMERCE_JWT_JWKS_URL", "").strip()
+    parts = urlsplit(raw)
+    host = (parts.hostname or "").lower()
+    local = host in {"localhost", "127.0.0.1", "::1"}
+    if (not raw or not host or parts.username is not None or parts.password is not None
+            or parts.query or parts.fragment
+            or (parts.scheme != "https" and not (parts.scheme == "http" and local))):
+        raise ValueError("A trusted HTTPS JWKS URL is required.")
+    return raw
+
+
+def _authentication_configured() -> bool:
+    mode = _commerce_auth_mode()
+    production = _production_environment()
+    if mode == "hs256":
+        return not production and len(os.getenv("COMMERCE_JWT_SECRET", "").encode()) >= 32
+    if mode != "oidc_jwks":
+        return False
+    issuer = os.getenv("COMMERCE_JWT_ISSUER", "").strip()
+    audience = os.getenv("COMMERCE_JWT_AUDIENCE", "").strip()
+    try:
+        _oidc_jwks_url()
+    except ValueError:
+        return False
+    return bool(issuer and audience)
+
+
+@lru_cache(maxsize=4)
+def _jwks_client(jwks_url: str) -> PyJWKClient:
+    return PyJWKClient(jwks_url, cache_keys=True, cache_jwk_set=True, lifespan=300, timeout=4)
+
+
+def _actor_from_claims(claims: dict[str, Any], role_claim: str = "role") -> Actor:
+    sub, role = claims.get("sub"), claims.get(role_claim)
+    if not isinstance(sub, str) or not sub.strip() or role not in {"customer", "merchant", "admin"}:
+        raise ValueError("Required subject or trusted application role claim is invalid.")
+    email = claims.get("email")
+    if email is not None and (not isinstance(email, str) or len(email) > 254 or not EMAIL_RE.fullmatch(email)):
+        raise ValueError("Email claim is invalid.")
+    return Actor(user_id=sub, role=role, email=email)
+
+
+def _decode_oidc_actor(token: str) -> Actor:
+    if not _authentication_configured():
+        raise HTTPException(503, detail={"code": "AUTH_NOT_CONFIGURED"})
+    jwks_url = _oidc_jwks_url()
+    issuer = os.getenv("COMMERCE_JWT_ISSUER", "").strip()
+    audience = os.getenv("COMMERCE_JWT_AUDIENCE", "").strip()
+    role_claim = os.getenv("COMMERCE_JWT_ROLE_CLAIM", "role").strip() or "role"
+    try:
+        signing_key = _jwks_client(jwks_url).get_signing_key_from_jwt(token)
+        claims = pyjwt.decode(
+            token, signing_key.key, algorithms=["RS256"], issuer=issuer, audience=audience,
+            options={"require": ["exp", "iss", "aud", "sub"]}, leeway=30,
+        )
+        return _actor_from_claims(claims, role_claim=role_claim)
+    except PyJWKClientConnectionError as exc:
+        raise HTTPException(503, detail={"code": "IDENTITY_KEYS_UNAVAILABLE"}) from exc
+    except (PyJWTError, TypeError, ValueError) as exc:
+        raise HTTPException(401, detail="Invalid bearer token.", headers={"WWW-Authenticate": "Bearer"}) from exc
+
+
 def decode_actor(token: str) -> Actor:
+    mode = _commerce_auth_mode()
+    if mode == "oidc_jwks":
+        return _decode_oidc_actor(token)
+    # Shared-secret HS256 is compatibility mode for local development and tests only.
+    if mode != "hs256" or _production_environment():
+        raise HTTPException(503, detail={"code": "AUTH_NOT_CONFIGURED"})
     secret = os.getenv("COMMERCE_JWT_SECRET", "")
     if len(secret.encode()) < 32:
         raise HTTPException(503, detail={"code": "AUTH_NOT_CONFIGURED"})
@@ -246,13 +327,9 @@ def decode_actor(token: str) -> Actor:
         expected_aud = os.getenv("COMMERCE_JWT_AUDIENCE", "cirvanna-commerce")
         if aud != expected_aud and not (isinstance(aud, list) and expected_aud in aud):
             raise ValueError("audience")
-        sub, role = claims.get("sub"), claims.get("role")
-        if not isinstance(sub, str) or not sub.strip() or role not in {"customer", "merchant", "admin"}:
-            raise ValueError("claims")
-        email = claims.get("email")
-        if email is not None and (not isinstance(email, str) or len(email) > 254 or not EMAIL_RE.fullmatch(email)):
-            raise ValueError("email")
-        return Actor(user_id=sub, role=role, email=email)
+        return _actor_from_claims(claims)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(401, detail="Invalid bearer token.", headers={"WWW-Authenticate": "Bearer"}) from exc
 
@@ -473,6 +550,7 @@ class Readiness(BaseModel):
     database_connected: bool
     schema_present: bool
     authentication_configured: bool
+    authentication_mode: str
     catalog_configured: bool
     payment_configured: bool
     migrations_required: bool
@@ -687,7 +765,7 @@ def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
         connected = False
         schema_present = False
 
-    auth_ok = len(os.getenv("COMMERCE_JWT_SECRET", "").encode()) >= 32
+    auth_ok = _authentication_configured()
     catalog_ok = bool(os.getenv("CATALOG_API_URL") and os.getenv("CATALOG_API_TOKEN"))
     payment_ok = StripeGateway().ready
     migrations_applied = schema_revision == EXPECTED_SCHEMA_REVISION
@@ -701,8 +779,8 @@ def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
     )
     result = Readiness(status="ready" if ready else "not_ready", service=SERVICE,
         database_connected=connected, schema_present=schema_present,
-        authentication_configured=auth_ok, catalog_configured=catalog_ok,
-        payment_configured=payment_ok, migrations_required=migrations_required,
+        authentication_configured=auth_ok, authentication_mode=_commerce_auth_mode(),
+        catalog_configured=catalog_ok, payment_configured=payment_ok, migrations_required=migrations_required,
         migrations_applied=migrations_applied, schema_revision=schema_revision, ready=ready)
     if not ready:
         raise HTTPException(503, detail=result.model_dump())
