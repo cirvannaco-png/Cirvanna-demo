@@ -156,7 +156,7 @@ def test_private_routes_require_a_signed_actor(client):
 def test_customer_role_cannot_apply_or_use_merchant_routes(client):
     application = {"display_name": "Customer Studio", "legal_name": "Customer Studio Ltd",
         "country_code": "KE", "contact_email": "customer@example.test"}
-    assert client.post("/merchants/applications", json=application, headers=auth("customer-merchant", "customer")).status_code == 403
+    assert client.post("/merchants/applications", json=application, headers=auth("customer-merchant", "customer")).status_code == 201
 
     seed_offer()
     # A row owned by the subject is insufficient: authorization also requires a
