@@ -153,6 +153,21 @@ def test_private_routes_require_a_signed_actor(client):
     assert client.get("/merchant/orders").status_code == 401
 
 
+def test_customer_role_cannot_apply_or_use_merchant_routes(client):
+    application = {"display_name": "Customer Studio", "legal_name": "Customer Studio Ltd",
+        "country_code": "KE", "contact_email": "customer@example.test"}
+    assert client.post("/merchants/applications", json=application, headers=auth("customer-merchant", "customer")).status_code == 403
+
+    seed_offer()
+    # A row owned by the subject is insufficient: authorization also requires a
+    # merchant-role JWT from the trusted identity issuer.
+    listing_response = client.post("/merchant/listings",
+        json={"catalog_product_id": str(uuid.uuid4())}, headers=auth("merchant-1", "customer"))
+    assert listing_response.status_code == 403
+    assert listing_response.json()["detail"]["code"] == "MERCHANT_ROLE_REQUIRED"
+    assert client.get("/merchant/orders", headers=auth("merchant-1", "customer")).status_code == 403
+
+
 def test_jwt_invalid_signature_expiry_audience_and_role_fail_closed(client):
     token = jwt("user-1")
     header, body, _ = token.split(".")
