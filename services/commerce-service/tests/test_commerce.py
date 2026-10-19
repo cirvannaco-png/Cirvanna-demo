@@ -11,7 +11,7 @@ os.environ.setdefault("COMMERCE_AUTO_CREATE_SCHEMA", "true")
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -67,6 +67,8 @@ def client(monkeypatch):
     monkeypatch.delenv("COMMERCE_CRON_TOKEN", raising=False)
     main.engine = TEST_ENGINE
     main.SessionLocal = TEST_SESSION
+    with TEST_ENGINE.begin() as connection:
+        connection.execute(text("DROP TABLE IF EXISTS alembic_version"))
     main.Base.metadata.drop_all(bind=TEST_ENGINE)
     main.Base.metadata.create_all(bind=TEST_ENGINE)
     with TestClient(main.app) as test_client:
@@ -145,6 +147,44 @@ def test_health_capabilities_and_readiness_fail_closed(client):
     assert capabilities["verified_payment_webhooks"] is False
     assert capabilities["virtual_twin_generation"] is False
     assert client.get("/ready").status_code == 503
+
+
+def test_readiness_requires_current_migration_before_production_ready(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_AUTO_CREATE_SCHEMA", "false")
+    monkeypatch.setenv("CATALOG_API_URL", "https://catalog.example.test")
+    monkeypatch.setenv("CATALOG_API_TOKEN", "catalog-test-token")
+    configure_stripe(monkeypatch)
+
+    pending = client.get("/ready")
+    assert pending.status_code == 503
+    pending_detail = pending.json()["detail"]
+    assert pending_detail["database_connected"] is True
+    assert pending_detail["schema_present"] is True
+    assert pending_detail["migrations_required"] is True
+    assert pending_detail["migrations_applied"] is False
+    assert pending_detail["ready"] is False
+
+    with TEST_ENGINE.begin() as connection:
+        connection.execute(text(
+            "CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)"
+        ))
+        connection.execute(
+            text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
+            {"revision": "20261018_0001"},
+        )
+
+    ready = client.get("/ready")
+    assert ready.status_code == 200
+    payload = ready.json()
+    assert payload["database_connected"] is True
+    assert payload["schema_present"] is True
+    assert payload["authentication_configured"] is True
+    assert payload["catalog_configured"] is True
+    assert payload["payment_configured"] is True
+    assert payload["migrations_required"] is True
+    assert payload["migrations_applied"] is True
+    assert payload["schema_revision"] == "20261018_0001"
+    assert payload["ready"] is True
 
 
 def test_private_routes_require_a_signed_actor(client):

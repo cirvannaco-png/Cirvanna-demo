@@ -26,13 +26,14 @@ from urllib.parse import urlsplit
 
 from sqlalchemy import (
     JSON, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint,
-    create_engine, func, select, text, update,
+    create_engine, func, inspect, select, text, update,
 )
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 
 SERVICE = "cirvanna-commerce-service"
+EXPECTED_SCHEMA_REVISION = "20261018_0001"
 MAX_QTY = 50
 RESERVATION_MINUTES = 60
 SKU_RE = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,79}$")
@@ -470,9 +471,13 @@ class Readiness(BaseModel):
     status: str
     service: str
     database_connected: bool
+    schema_present: bool
     authentication_configured: bool
     catalog_configured: bool
     payment_configured: bool
+    migrations_required: bool
+    migrations_applied: bool
+    schema_revision: str | None
     ready: bool
 
 
@@ -663,22 +668,45 @@ def health() -> dict[str, str]:
 
 @app.get("/ready", response_model=Readiness)
 def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
+    """Require DB reachability, complete schema, current migration, and integrations."""
+    migrations_required = os.getenv("COMMERCE_AUTO_CREATE_SCHEMA", "true").lower() != "true"
+    connected = False
+    schema_present = False
+    schema_revision = None
     try:
         db.execute(text("SELECT 1"))
         connected = True
+        table_names = set(inspect(db.get_bind()).get_table_names())
+        schema_present = set(Base.metadata.tables).issubset(table_names)
+        if "alembic_version" in table_names:
+            schema_revision = db.execute(
+                text("SELECT version_num FROM alembic_version LIMIT 1")
+            ).scalar_one_or_none()
     except SQLAlchemyError:
+        # A failed DB/schema probe must never be interpreted as ready.
         connected = False
+        schema_present = False
+
     auth_ok = len(os.getenv("COMMERCE_JWT_SECRET", "").encode()) >= 32
     catalog_ok = bool(os.getenv("CATALOG_API_URL") and os.getenv("CATALOG_API_TOKEN"))
     payment_ok = StripeGateway().ready
-    ready = connected and auth_ok and catalog_ok and payment_ok
+    migrations_applied = schema_revision == EXPECTED_SCHEMA_REVISION
+    ready = (
+        connected
+        and schema_present
+        and auth_ok
+        and catalog_ok
+        and payment_ok
+        and (not migrations_required or migrations_applied)
+    )
     result = Readiness(status="ready" if ready else "not_ready", service=SERVICE,
-        database_connected=connected, authentication_configured=auth_ok,
-        catalog_configured=catalog_ok, payment_configured=payment_ok, ready=ready)
+        database_connected=connected, schema_present=schema_present,
+        authentication_configured=auth_ok, catalog_configured=catalog_ok,
+        payment_configured=payment_ok, migrations_required=migrations_required,
+        migrations_applied=migrations_applied, schema_revision=schema_revision, ready=ready)
     if not ready:
         raise HTTPException(503, detail=result.model_dump())
     return result
-
 
 @app.get("/capabilities")
 def capabilities() -> dict[str, Any]:

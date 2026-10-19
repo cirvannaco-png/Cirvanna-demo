@@ -30,6 +30,7 @@ from sqlalchemy import (
     UniqueConstraint,
     create_engine,
     func,
+    inspect,
     or_,
     select,
     text,
@@ -40,6 +41,7 @@ from starlette import status
 
 
 SERVICE_NAME = "cirvanna-catalog-service"
+EXPECTED_SCHEMA_REVISION = "20261018_0001"
 MAX_PAGE_SIZE = 100
 MAX_IMAGE_URLS = 20
 MAX_ATTRIBUTES = 100
@@ -275,7 +277,11 @@ class ReadinessOut(BaseModel):
     status: str
     service: str
     database_connected: bool
+    schema_present: bool
     authentication_configured: bool
+    migrations_required: bool
+    migrations_applied: bool
+    schema_revision: str | None
     ready: bool
 
 
@@ -372,20 +378,47 @@ def health() -> dict[str, str]:
 
 @app.get("/ready", response_model=ReadinessOut, tags=["operations"])
 def readiness(db: Annotated[Session, Depends(get_db)]) -> ReadinessOut:
+    """Readiness requires a reachable DB, expected schema and deployment auth config."""
     configured = bool(os.getenv("CATALOG_API_TOKEN"))
+    migrations_required = os.getenv("CATALOG_AUTO_CREATE_SCHEMA", "true").lower() != "true"
+    connected = False
+    schema_present = False
+    schema_revision = None
     try:
         db.execute(text("SELECT 1"))
         connected = True
+        table_names = set(inspect(db.get_bind()).get_table_names())
+        schema_present = set(Base.metadata.tables).issubset(table_names)
+        if "alembic_version" in table_names:
+            schema_revision = db.execute(
+                text("SELECT version_num FROM alembic_version LIMIT 1")
+            ).scalar_one_or_none()
     except SQLAlchemyError:
+        # Never turn a failed connection/schema probe into a successful health check.
         connected = False
-    is_ready = connected and configured
-    return ReadinessOut(
+        schema_present = False
+
+    migrations_applied = schema_revision == EXPECTED_SCHEMA_REVISION
+    is_ready = (
+        connected
+        and schema_present
+        and configured
+        and (not migrations_required or migrations_applied)
+    )
+    result = ReadinessOut(
         status="ready" if is_ready else "not_ready",
         service=SERVICE_NAME,
         database_connected=connected,
+        schema_present=schema_present,
         authentication_configured=configured,
+        migrations_required=migrations_required,
+        migrations_applied=migrations_applied,
+        schema_revision=schema_revision,
         ready=is_ready,
     )
+    if not is_ready:
+        raise HTTPException(status_code=503, detail=result.model_dump())
+    return result
 
 
 @app.get("/capabilities", tags=["operations"])

@@ -5,7 +5,7 @@ os.environ.setdefault("CATALOG_AUTO_CREATE_SCHEMA", "false")
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -29,6 +29,8 @@ def override_get_db():
 
 @pytest.fixture(autouse=True)
 def isolated_database(monkeypatch):
+    with TEST_ENGINE.begin() as connection:
+        connection.execute(text("DROP TABLE IF EXISTS alembic_version"))
     Base.metadata.drop_all(bind=TEST_ENGINE)
     Base.metadata.create_all(bind=TEST_ENGINE)
     app.dependency_overrides[get_db] = override_get_db
@@ -194,14 +196,36 @@ def test_delete_archives_without_erasing_history(client):
     assert [item["change_type"] for item in history] == ["created", "archived"]
 
 
-def test_readiness_reports_database_and_auth_state(client, monkeypatch):
+def test_readiness_requires_current_migration_and_auth_config(client, monkeypatch):
+    pending = client.get("/ready")
+    assert pending.status_code == 503
+    pending_detail = pending.json()["detail"]
+    assert pending_detail["database_connected"] is True
+    assert pending_detail["schema_present"] is True
+    assert pending_detail["migrations_required"] is True
+    assert pending_detail["migrations_applied"] is False
+    assert pending_detail["ready"] is False
+
+    with TEST_ENGINE.begin() as connection:
+        connection.execute(text(
+            "CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL)"
+        ))
+        connection.execute(
+            text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
+            {"revision": "20261018_0001"},
+        )
+
     ready = client.get("/ready")
     assert ready.status_code == 200
     assert ready.json()["database_connected"] is True
+    assert ready.json()["schema_present"] is True
+    assert ready.json()["migrations_required"] is True
+    assert ready.json()["migrations_applied"] is True
+    assert ready.json()["schema_revision"] == "20261018_0001"
     assert ready.json()["authentication_configured"] is True
     assert ready.json()["ready"] is True
 
     monkeypatch.delenv("CATALOG_API_TOKEN")
     not_ready = client.get("/ready")
-    assert not_ready.status_code == 200
-    assert not_ready.json()["ready"] is False
+    assert not_ready.status_code == 503
+    assert not_ready.json()["detail"]["ready"] is False
