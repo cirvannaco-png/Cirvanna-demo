@@ -52,7 +52,7 @@ Configure `CATALOG_API_URL` and `COMMERCE_API_URL` using deployed HTTPS endpoint
 
 1. Take an initial encrypted backup / database snapshot before schema changes.
 2. In the same release image and environment as the target service, run `alembic upgrade head` from `services/catalog-service` with `CATALOG_DATABASE_URL` set; then do the same in `services/commerce-service` with `COMMERCE_DATABASE_URL`.
-3. Confirm `alembic_version.version_num` matches the repository's expected revision `20261018_0001` in each database. Do not enable automatic `create_all` in production.
+3. Confirm `alembic_version.version_num` is `20261018_0001` for Catalog and `20261019_0002` for Commerce. Do not enable automatic `create_all` in production.
 4. Run and retain a backup restore drill to a clean, isolated database. Verify row counts, constraints, order/payment state and inventory invariants after restoration.
 5. Verify database connections and `/ready` for Catalog and Commerce return HTTP 200 only after schema, migration and mandatory configuration are all valid. Confirm they return 503 when a migration or required secret is missing.
 
