@@ -53,7 +53,7 @@ class MarketplaceBrowserTests(unittest.TestCase):
         self.assertEqual(self.page.locator("#cartCount").inner_text(), "1")
         self.page.locator("#cartBtn").click()
         self.page.get_by_role("dialog").get_by_text("Checkout unavailable").wait_for()
-        self.assertIn("No stock reservation or order is created.", self.page.get_by_role("dialog").inner_text())
+        self.assertIn("No stock is reserved and no order is created.", self.page.get_by_role("dialog").inner_text())
 
     def test_try_on_and_checkout_are_not_misrepresented_as_live(self):
         try_on = self.page.locator('.card button[data-action="tryon"]').first
@@ -67,11 +67,13 @@ class MarketplaceBrowserTests(unittest.TestCase):
         self.page.locator("#apiBase").fill("http://catalog.example.com")
         self.page.locator("#apiToken").fill("test-token-not-a-secret")
         messages = []
+
         def accept_dialog(dialog):
             messages.append(dialog.message)
             dialog.accept()
+
         self.page.once("dialog", accept_dialog)
-        self.page.get_by_role("button", name="Connect and load").click()
+        self.page.get_by_role("button", name="Connect catalog only").click()
         self.assertTrue(messages, "Expected the insecure URL warning dialog")
         self.assertIn("only be sent to HTTPS", messages[0])
 
