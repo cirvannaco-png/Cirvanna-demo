@@ -44,6 +44,8 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     {product_id:"demo-006",sku:"CV-ACCESSORY-006",name:"Minimal Crossbody",brand:"Demo Studio",category:"Accessories",description:"Sample product data only; not a live offer.",price_minor:315000,currency:"KES",image_urls:[],attributes:{demo:true}}
   ];
   const $ = id => document.getElementById(id);
+  const bootstrap = window.CIRVANNA_MARKETPLACE_CONFIG || {};
+  let forceDemo = false;
   let config = {base:"",token:"",commerceBase:"",userToken:""}, items=[], page=0, mode="demo", total=0, cartVersion=0;
   let saved = readStore("cirvanna-marketplace-saved"), cart = readStore("cirvanna-marketplace-bag");
   function readStore(key){try{return JSON.parse(localStorage.getItem(key)||"[]")}catch{return []}}
@@ -71,6 +73,23 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
   }
   async function load(){
     const q=$("query").value.trim(),category=$("category").value;
+    if(bootstrap.publicOffersBase && !forceDemo && !(config.commerceBase&&config.userToken) && (!config.base || !config.token)){
+      mode="public_offers";setStatus("Loading approved merchant offers…");
+      try{
+        const url=new URL(bootstrap.publicOffersBase.replace(/\/$/,"")+"/marketplace/offers",window.location.origin);
+        if(q)url.searchParams.set("q",q);if(category)url.searchParams.set("category",category);
+        url.searchParams.set("limit","20");url.searchParams.set("offset",String(page*20));
+        const response=await fetch(url,{headers:{Accept:"application/json"}});
+        if(!response.ok)throw new Error(response.status===503?"Marketplace API is not ready (503).":"Marketplace offers API returned HTTP "+response.status+".");
+        const data=await response.json();
+        if(!Array.isArray(data.items)||!Number.isFinite(Number(data.total)))throw new Error("Marketplace API returned an invalid offer list.");
+        items=data.items.map(p=>({...p,product_id:p.catalog_product_id,name:p.product_name,brand:p.merchant_name,description:Object.entries(p.options||{}).map(([k,v])=>k+": "+v).join(" · ")||"Approved merchant offer with current stock.",image_urls:[],attributes:{}}));
+        total=Number(data.total)||0;saved=readStore("cirvanna-marketplace-saved");cart=readStore("cirvanna-marketplace-bag");
+        updateCategories(items);updateCounts();
+        setStatus("LIVE MARKETPLACE — "+total+" in-stock offer(s) from approved merchants. Guest saves and bag stay in this browser; account-backed checkout requires identity-provider sign-in.");
+        render();return;
+      }catch(e){items=[];total=0;setStatus((e&&e.message?e.message:"Marketplace request failed")+" No demo fallback was used.",true);render();return}
+    }
     if(config.commerceBase&&config.userToken){
       mode="commerce";setStatus("Loading approved merchant offers and your account cart…");
       try{
@@ -149,14 +168,14 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       if(!base||!token){alert("Enter the Commerce API URL and your signed user JWT.");return}
       try{config={base:"",token:"",commerceBase:validateApiBase(base),userToken:token}}
       catch(err){alert(err.message||"Invalid Commerce API URL.");return}
-      page=0;closeDrawer();load();
+      forceDemo=false;page=0;closeDrawer();load();
     }
     if(e.target.id==="connectBtn"){
       const base=$("apiBase").value.trim(),token=$("apiToken").value.trim();
       if(!base||!token){alert("Enter both Catalog API URL and bearer token.");return}
       try{config={...config,base:validateApiBase(base),token,commerceBase:"",userToken:""}}
       catch(err){alert(err.message||"Invalid Catalog API URL.");return}
-      saved=readStore("cirvanna-marketplace-saved");cart=readStore("cirvanna-marketplace-bag");page=0;closeDrawer();load();
+      forceDemo=false;saved=readStore("cirvanna-marketplace-saved");cart=readStore("cirvanna-marketplace-bag");page=0;closeDrawer();load();
     }
     if(e.target.id==="checkoutBtn"){
       if(mode!=="commerce"||!config.commerceBase||!config.userToken)return;
@@ -172,7 +191,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
         .catch(err=>{setStatus((err.message||"Checkout could not start")+" Checkout is not confirmed paid.",true);alert(err.message||"Checkout could not start.")});
     }
     if(e.target.id==="demoBtn"){
-      config={base:"",token:"",commerceBase:"",userToken:""};saved=readStore("cirvanna-marketplace-saved");cart=readStore("cirvanna-marketplace-bag");cartVersion=0;page=0;closeDrawer();load();
+      forceDemo=true;config={base:"",token:"",commerceBase:"",userToken:""};saved=readStore("cirvanna-marketplace-saved");cart=readStore("cirvanna-marketplace-bag");cartVersion=0;page=0;closeDrawer();load();
     }
   });
   updateCounts();load();

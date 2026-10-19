@@ -13,6 +13,9 @@ CATALOG = (ROOT / "services/catalog-service" / "app" / "main.py").read_text(enco
 
 class MarketplaceContractTests(unittest.TestCase):
     def test_page_has_search_and_pagination_controls(self):
+        self.assertIn("CIRVANNA_MARKETPLACE_CONFIG", HTML)
+        self.assertIn("bootstrap.publicOffersBase", HTML)
+        self.assertIn("LIVE MARKETPLACE", HTML)
         for element_id in ("query", "category", "products", "prevBtn", "nextBtn", "settingsBtn"):
             with self.subTest(element_id=element_id):
                 self.assertIn(f'id="{element_id}"', HTML)
