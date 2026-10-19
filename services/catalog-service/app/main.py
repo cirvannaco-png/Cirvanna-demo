@@ -288,22 +288,68 @@ class ReadinessOut(BaseModel):
 bearer = HTTPBearer(auto_error=False)
 
 
-def require_catalog_token(
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+def _catalog_production_mode() -> bool:
+    return os.getenv("CATALOG_ENVIRONMENT", "development").strip().lower() == "production"
+
+
+def _catalog_expected_token(scope: str) -> str:
+    production = _catalog_production_mode()
+    read_token = os.getenv("CATALOG_READ_TOKEN", "").strip()
+    write_token = os.getenv("CATALOG_WRITE_TOKEN", "").strip()
+    if production:
+        # Separate credentials limit the blast radius of the Commerce read credential.
+        if not read_token or not write_token or hmac.compare_digest(read_token, write_token):
+            return ""
+        return read_token if scope == "read" else write_token
+    # One legacy token remains convenient for local tests/development only.
+    scoped = read_token if scope == "read" else write_token
+    return scoped or os.getenv("CATALOG_API_TOKEN", "")
+
+
+def _require_catalog_scope(
+    scope: str,
+    credentials: HTTPAuthorizationCredentials | None,
 ) -> None:
-    expected = os.getenv("CATALOG_API_TOKEN", "")
+    expected = _catalog_expected_token(scope)
     if not expected or credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Configured bearer authentication is required.",
+            detail=f"Configured {scope}-scoped catalog bearer authentication is required.",
             headers={"WWW-Authenticate": "Bearer"},
         )
     if not hmac.compare_digest(credentials.credentials, expected):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid bearer token.",
+            detail="Invalid bearer token for the required catalog scope.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+
+
+def require_catalog_read_token(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+) -> None:
+    _require_catalog_scope("read", credentials)
+
+
+def require_catalog_write_token(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+) -> None:
+    _require_catalog_scope("write", credentials)
+
+
+def _catalog_auth_configured() -> bool:
+    if _catalog_production_mode():
+        read_token = os.getenv("CATALOG_READ_TOKEN", "").strip()
+        write_token = os.getenv("CATALOG_WRITE_TOKEN", "").strip()
+        return bool(read_token and write_token and not hmac.compare_digest(read_token, write_token))
+    return bool(_catalog_expected_token("read") and _catalog_expected_token("write"))
+
+
+# Compatibility name for callers that imported the former generic guard: it is read-only.
+def require_catalog_token(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+) -> None:
+    require_catalog_read_token(credentials)
 
 
 def _snapshot(product: Product) -> dict[str, Any]:
@@ -379,7 +425,7 @@ def health() -> dict[str, str]:
 @app.get("/ready", response_model=ReadinessOut, tags=["operations"])
 def readiness(db: Annotated[Session, Depends(get_db)]) -> ReadinessOut:
     """Readiness requires a reachable DB, expected schema and deployment auth config."""
-    configured = bool(os.getenv("CATALOG_API_TOKEN"))
+    configured = _catalog_auth_configured()
     migrations_required = os.getenv("CATALOG_AUTO_CREATE_SCHEMA", "true").lower() != "true"
     connected = False
     schema_present = False
@@ -446,7 +492,7 @@ def capabilities() -> dict[str, Any]:
     "/products",
     response_model=ProductOut,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_catalog_token)],
+    dependencies=[Depends(require_catalog_write_token)],
     tags=["products"],
 )
 def create_product(payload: ProductCreate, db: Annotated[Session, Depends(get_db)]) -> Product:
@@ -479,7 +525,7 @@ def create_product(payload: ProductCreate, db: Annotated[Session, Depends(get_db
 @app.get(
     "/products",
     response_model=ProductListOut,
-    dependencies=[Depends(require_catalog_token)],
+    dependencies=[Depends(require_catalog_read_token)],
     tags=["products"],
 )
 def list_products(
@@ -514,7 +560,7 @@ def _get_product(db: Session, product_id: uuid.UUID) -> Product:
 @app.get(
     "/products/{product_id}",
     response_model=ProductOut,
-    dependencies=[Depends(require_catalog_token)],
+    dependencies=[Depends(require_catalog_read_token)],
     tags=["products"],
 )
 def get_product(product_id: uuid.UUID, db: Annotated[Session, Depends(get_db)]) -> Product:
@@ -524,7 +570,7 @@ def get_product(product_id: uuid.UUID, db: Annotated[Session, Depends(get_db)]) 
 @app.patch(
     "/products/{product_id}",
     response_model=ProductOut,
-    dependencies=[Depends(require_catalog_token)],
+    dependencies=[Depends(require_catalog_write_token)],
     tags=["products"],
 )
 def update_product(
@@ -563,7 +609,7 @@ def update_product(
 @app.delete(
     "/products/{product_id}",
     response_model=ProductOut,
-    dependencies=[Depends(require_catalog_token)],
+    dependencies=[Depends(require_catalog_write_token)],
     tags=["products"],
 )
 def archive_product(
@@ -590,7 +636,7 @@ def archive_product(
 @app.get(
     "/products/{product_id}/versions",
     response_model=list[ProductVersionOut],
-    dependencies=[Depends(require_catalog_token)],
+    dependencies=[Depends(require_catalog_read_token)],
     tags=["products"],
 )
 def product_versions(product_id: uuid.UUID, db: Annotated[Session, Depends(get_db)]) -> list[ProductVersion]:

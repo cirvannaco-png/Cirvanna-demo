@@ -35,6 +35,9 @@ def isolated_database(monkeypatch):
     Base.metadata.create_all(bind=TEST_ENGINE)
     app.dependency_overrides[get_db] = override_get_db
     monkeypatch.setenv("CATALOG_API_TOKEN", "catalog-test-token")
+    monkeypatch.setenv("CATALOG_ENVIRONMENT", "development")
+    monkeypatch.delenv("CATALOG_READ_TOKEN", raising=False)
+    monkeypatch.delenv("CATALOG_WRITE_TOKEN", raising=False)
     yield
     app.dependency_overrides.clear()
 
@@ -71,6 +74,37 @@ def create_product(client, **overrides):
     )
     assert response.status_code == 201, response.text
     return response.json()
+
+
+def test_production_requires_distinct_read_and_write_catalog_credentials(client, monkeypatch):
+    monkeypatch.setenv("CATALOG_ENVIRONMENT", "production")
+    monkeypatch.delenv("CATALOG_API_TOKEN", raising=False)
+    monkeypatch.setenv("CATALOG_READ_TOKEN", "catalog-production-read-only-secret")
+    monkeypatch.setenv("CATALOG_WRITE_TOKEN", "catalog-production-write-only-secret")
+
+    write_headers = {"Authorization": "Bearer catalog-production-write-only-secret"}
+    read_headers = {"Authorization": "Bearer catalog-production-read-only-secret"}
+    product_response = client.post("/products", headers=write_headers, json=product_payload())
+    assert product_response.status_code == 201
+    product_id = product_response.json()["product_id"]
+
+    assert client.get("/products/" + product_id, headers=read_headers).status_code == 200
+    assert client.get("/products/" + product_id, headers=write_headers).status_code == 401
+    assert client.post("/products", headers=read_headers, json=product_payload(sku="READ-ONLY-001")).status_code == 401
+    assert client.patch(
+        "/products/" + product_id,
+        headers=read_headers,
+        json={"name": "Should Not Update"},
+    ).status_code == 401
+    assert client.patch(
+        "/products/" + product_id,
+        headers=write_headers,
+        json={"name": "Privileged Update"},
+    ).status_code == 200
+
+    # A single shared credential is explicitly rejected in production.
+    monkeypatch.setenv("CATALOG_WRITE_TOKEN", "catalog-production-read-only-secret")
+    assert client.get("/ready").status_code == 503
 
 
 def test_health_is_liveness_only(client):
