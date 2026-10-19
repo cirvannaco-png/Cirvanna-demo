@@ -484,6 +484,10 @@ def merchant_json(m: Merchant) -> dict[str, Any]:
 
 
 def approved_merchant(db: Session, actor: Actor) -> Merchant:
+    # Ownership alone is not an authorization boundary: the signed token must
+    # also carry the merchant role issued by the trusted identity provider.
+    if actor.role != "merchant":
+        raise HTTPException(403, detail={"code": "MERCHANT_ROLE_REQUIRED"})
     merchant = db.scalar(select(Merchant).where(Merchant.owner_user_id == actor.user_id))
     if merchant is None or merchant.state != "approved":
         raise HTTPException(403, detail={"code": "MERCHANT_NOT_APPROVED"})
@@ -689,6 +693,8 @@ def capabilities() -> dict[str, Any]:
 
 @app.post("/merchants/applications", status_code=201)
 def apply_merchant(payload: MerchantApplication, actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Session, Depends(get_db)]):
+    if actor.role != "merchant":
+        raise HTTPException(403, detail={"code": "MERCHANT_ROLE_REQUIRED"})
     exists = db.scalar(select(Merchant).where(Merchant.owner_user_id == actor.user_id))
     if exists:
         raise HTTPException(409, detail={"code": "MERCHANT_APPLICATION_EXISTS", "merchant": merchant_json(exists)})
