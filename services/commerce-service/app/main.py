@@ -361,8 +361,6 @@ class MerchantApplication(BaseModel):
     legal_name: str = Field(min_length=2, max_length=180)
     country_code: str = Field(min_length=2, max_length=2)
     contact_email: str = Field(min_length=5, max_length=254)
-    verification_reference: str | None = Field(default=None, max_length=180)
-
     @field_validator("display_name", "legal_name", "contact_email", mode="before")
     @classmethod
     def trim(cls, v: Any) -> Any:
@@ -389,6 +387,8 @@ class MerchantDecision(BaseModel):
     decision: Literal["approve", "reject", "suspend"]
     commission_bps: int = Field(default=300, ge=0, le=3000)
     note: str | None = Field(default=None, max_length=500)
+    # Only an authenticated admin may attach the external verification reference.
+    verification_reference: str | None = Field(default=None, min_length=3, max_length=180)
 
 
 class ListingIn(BaseModel):
@@ -700,7 +700,7 @@ def apply_merchant(payload: MerchantApplication, actor: Annotated[Actor, Depends
         raise HTTPException(409, detail={"code": "MERCHANT_APPLICATION_EXISTS", "merchant": merchant_json(exists)})
     merchant = Merchant(id=str(uuid.uuid4()), owner_user_id=actor.user_id,
         display_name=payload.display_name, legal_name=payload.legal_name, country_code=payload.country_code,
-        contact_email=payload.contact_email, verification_reference=payload.verification_reference, state="pending")
+        contact_email=payload.contact_email, verification_reference=None, state="pending")
     db.add(merchant)
     try:
         db.commit()
@@ -727,9 +727,11 @@ def decide_merchant(merchant_id: uuid.UUID, payload: MerchantDecision,
     merchant = db.get(Merchant, str(merchant_id))
     if not merchant:
         raise HTTPException(404, detail={"code": "MERCHANT_NOT_FOUND"})
-    if payload.decision == "approve" and not merchant.verification_reference:
-        raise HTTPException(409, detail={"code": "MERCHANT_VERIFICATION_REQUIRED",
-            "detail": "A human-verified business/KYC reference is required before approval."})
+    if payload.decision == "approve":
+        if not payload.verification_reference or not payload.verification_reference.strip():
+            raise HTTPException(409, detail={"code": "MERCHANT_VERIFICATION_REQUIRED",
+                "detail": "An admin-supplied reference from the external business/KYC verification procedure is required."})
+        merchant.verification_reference = payload.verification_reference.strip()
     merchant.state = {"approve": "approved", "reject": "rejected", "suspend": "suspended"}[payload.decision]
     merchant.commission_bps = payload.commission_bps
     merchant.decision_note = payload.note.strip() if payload.note else None
