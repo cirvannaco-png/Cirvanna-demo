@@ -14,7 +14,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel
 from starlette import status
 
-from .model_adapter import ModelConfigurationError, ONNXSkinModel
+from .model_adapter import ModelConfigurationError, SkinAnalysisEngine
 from .validation import verify_signed_validation_report
 
 SERVICE_NAME = "cirvanna-dermalsight"
@@ -53,11 +53,11 @@ class AnalysisResponse(BaseModel):
 
 
 @lru_cache(maxsize=4)
-def _load_model(model_path: str, manifest_path: str) -> ONNXSkinModel:
-    return ONNXSkinModel(model_path, manifest_path)
+def _load_model(model_path: str, manifest_path: str) -> SkinAnalysisEngine:
+    return SkinAnalysisEngine(model_path, manifest_path)
 
 
-def get_model_adapter() -> ONNXSkinModel | None:
+def get_model_adapter() -> SkinAnalysisEngine | None:
     model_path = os.getenv("DERMALSIGHT_MODEL_PATH", "").strip()
     manifest_path = os.getenv("DERMALSIGHT_MODEL_MANIFEST_PATH", "").strip()
     report_path = os.getenv("DERMALSIGHT_VALIDATION_REPORT_PATH", "").strip()
