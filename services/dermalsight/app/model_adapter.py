@@ -218,3 +218,10 @@ class ONNXSkinModel:
                 for name, score in zip(attributes, scores, strict=True)
             ],
         }
+
+class SkinAnalysisEngine(ONNXSkinModel):
+    """Runtime model-backed implementation, separate from the archived legacy stub.
+
+    This named entry point is the production service's SkinAnalysisEngine. It
+    inherits only verified ONNX inference; it never falls back to heuristics.
+    """
