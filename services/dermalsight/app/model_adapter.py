@@ -71,7 +71,8 @@ class ONNXSkinModel:
         with self.model_path.open("rb") as model_file:
             for chunk in iter(lambda: model_file.read(1024 * 1024), b""):
                 hasher.update(chunk)
-        if hasher.hexdigest() != self.manifest["model_sha256"]:
+        self.model_sha256 = hasher.hexdigest()
+        if self.model_sha256 != self.manifest["model_sha256"]:
             raise ModelConfigurationError("Model artifact SHA-256 does not match the manifest.")
 
         if session_factory is None:
