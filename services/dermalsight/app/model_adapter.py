@@ -185,7 +185,7 @@ class ONNXSkinModel:
         if rgb_image.ndim != 3 or rgb_image.shape[2] != 3 or rgb_image.shape[0] == 0 or rgb_image.shape[1] == 0:
             raise ValueError("Image must have shape (height, width, 3).")
         spec = self.manifest["input"]
-        image = Image.fromarray(rgb_image, mode="RGB")
+        image = Image.fromarray(rgb_image)
         image = image.resize((spec["width"], spec["height"]), Image.Resampling.BILINEAR)
         tensor = np.asarray(image, dtype=np.float32) / np.float32(255.0)
         mean = np.asarray(spec["mean"], dtype=np.float32).reshape(1, 1, 3)
