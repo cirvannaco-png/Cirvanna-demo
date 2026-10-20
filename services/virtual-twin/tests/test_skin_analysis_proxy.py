@@ -190,3 +190,19 @@ def test_skin_analysis_rejects_unsupported_upload_type(monkeypatch):
         files={"image": ("capture.bin", b"data", "application/octet-stream")},
     )
     assert response.status_code == 415
+
+
+def test_skin_analysis_rejects_oversized_image_before_forwarding(monkeypatch):
+    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "test-only-token")
+    monkeypatch.setenv("DERMALSIGHT_API_URL", "https://dermalsight.internal")
+    monkeypatch.setenv("DERMALSIGHT_API_TOKEN", "service-token")
+    monkeypatch.setattr(twin_main, "MAX_SKIN_ANALYSIS_IMAGE_BYTES", 3)
+    patch_http_client(monkeypatch)
+    response = client.post(
+        "/skin-analysis",
+        headers={"Authorization": "Bearer test-only-token"},
+        data={"consent": "true"},
+        files={"image": ("capture.png", b"four", "image/png")},
+    )
+    assert response.status_code == 413
+    assert response.json()["detail"]["code"] == "IMAGE_SIZE_LIMIT_EXCEEDED"
