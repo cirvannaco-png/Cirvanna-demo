@@ -2,7 +2,7 @@
 
 **Status: runnable API and ONNX adapter implemented; production inference is blocked until an approved, validated model artifact is supplied.**
 
-DermalSight owns non-diagnostic cosmetic skin-attribute inference. It is a separate service, not a placeholder hidden inside Virtual Twin. The endpoint deliberately fails closed when model assets are absent or invalid; it never substitutes heuristic output for trained-model inference.
+DermalSight owns non-diagnostic cosmetic skin-attribute inference. It is a separate service, not a placeholder hidden inside Virtual Twin. The runnable SkinAnalysisEngine entry point is in app/model_adapter.py; the incomplete legacy class in the staged source archive is not promoted or called by this service. The endpoint deliberately fails closed when model assets are absent or invalid; it never substitutes heuristic output for trained-model inference.
 
 ## Runtime contract
 
