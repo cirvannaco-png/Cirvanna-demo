@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from starlette import status
 
 from .model_adapter import ModelConfigurationError, ONNXSkinModel
+from .validation import verify_signed_validation_report
 
 SERVICE_NAME = "cirvanna-dermalsight"
 SERVICE_VERSION = "0.1.0"
@@ -59,9 +60,20 @@ def _load_model(model_path: str, manifest_path: str) -> ONNXSkinModel:
 def get_model_adapter() -> ONNXSkinModel | None:
     model_path = os.getenv("DERMALSIGHT_MODEL_PATH", "").strip()
     manifest_path = os.getenv("DERMALSIGHT_MODEL_MANIFEST_PATH", "").strip()
+    report_path = os.getenv("DERMALSIGHT_VALIDATION_REPORT_PATH", "").strip()
+    signing_key = os.getenv("DERMALSIGHT_VALIDATION_SIGNING_KEY", "")
     if not model_path or not manifest_path:
         return None
-    return _load_model(model_path, manifest_path)
+    if not report_path or not signing_key:
+        raise ModelConfigurationError("Signed validation report or signing key is not configured.")
+    adapter = _load_model(model_path, manifest_path)
+    verify_signed_validation_report(
+        report_path,
+        signing_key,
+        model_sha256=adapter.model_sha256,
+        model_version=adapter.model_version,
+    )
+    return adapter
 
 
 def require_api_token(
@@ -144,6 +156,7 @@ def capabilities() -> dict[str, object]:
         "contract_version": "1",
         "inference_enabled": adapter_configured,
         "model_type": "hash_verified_onnx_cpu",
+        "signed_validation_report_required": True,
         "explicit_consent_required": True,
         "authentication_required": True,
         "image_persistence": False,
