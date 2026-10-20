@@ -23,6 +23,7 @@ SERVICE_NAME = "cirvanna-virtual-twin"
 MODEL_ADAPTER_IMPLEMENTED = False
 MAX_IMAGES = 6
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_SKIN_ANALYSIS_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_VIDEO_BYTES = 30 * 1024 * 1024
 
 app = FastAPI(
@@ -176,13 +177,13 @@ async def proxy_skin_analysis(
 
     base_url, service_token = config
     try:
-        content = await image.read(MAX_IMAGE_BYTES + 1)
+        content = await image.read(MAX_SKIN_ANALYSIS_IMAGE_BYTES + 1)
     finally:
         await image.close()
-    if len(content) > MAX_IMAGE_BYTES:
+    if len(content) > MAX_SKIN_ANALYSIS_IMAGE_BYTES:
         raise HTTPException(
             status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-            detail={"code": "IMAGE_SIZE_LIMIT_EXCEEDED", "maximum_bytes": MAX_IMAGE_BYTES},
+            detail={"code": "IMAGE_SIZE_LIMIT_EXCEEDED", "maximum_bytes": MAX_SKIN_ANALYSIS_IMAGE_BYTES},
         )
     if not content:
         raise HTTPException(
