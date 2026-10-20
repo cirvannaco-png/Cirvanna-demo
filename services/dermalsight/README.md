@@ -29,4 +29,4 @@ The manifest format is documented in app/model_adapter.py and must contain the a
 
 ## Tests
 
-From this directory, install dependencies and run pytest -q. Tests cover the API security/consent boundary, image validation, fail-closed availability, manifest validation, artifact integrity, preprocessing and output-contract errors. The model adapter tests use a deterministic fake ONNX session; run an additional test suite against the actual approved model artifact before deployment.
+From this directory, install test dependencies with python -m pip install -r requirements-dev.txt and run pytest -q. Tests cover the API security/consent boundary, image validation, fail-closed availability, manifest validation, artifact integrity, preprocessing and output-contract errors. CI also executes a synthetic ONNX graph through ONNX Runtime on CPU to verify the real runtime integration; this fixture is not a trained skin model. The model adapter tests use a deterministic fake ONNX session; run an additional test suite against the actual approved model artifact before deployment.
