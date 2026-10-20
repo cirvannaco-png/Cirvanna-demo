@@ -88,15 +88,38 @@ class ONNXSkinModel:
 
         try:
             self.session = session_factory(str(self.model_path))
-            input_names = {item.name for item in self.session.get_inputs()}
-            output_names = {item.name for item in self.session.get_outputs()}
+            input_infos = {item.name: item for item in self.session.get_inputs()}
+            output_infos = {item.name: item for item in self.session.get_outputs()}
         except Exception as exc:
             raise ModelConfigurationError("ONNX model could not be loaded by the runtime.") from exc
 
-        if self.manifest["input"]["name"] not in input_names:
+        input_name = self.manifest["input"]["name"]
+        output_name = self.manifest["output"]["name"]
+        if input_name not in input_infos:
             raise ModelConfigurationError("Manifest input name is absent from the ONNX model.")
-        if self.manifest["output"]["name"] not in output_names:
+        if output_name not in output_infos:
             raise ModelConfigurationError("Manifest output name is absent from the ONNX model.")
+        input_spec = self.manifest["input"]
+        self._validate_tensor_metadata(
+            input_infos[input_name], (1, 3, input_spec["height"], input_spec["width"]), "input"
+        )
+        self._validate_tensor_metadata(
+            output_infos[output_name], (1, len(self.manifest["output"]["attributes"])), "output"
+        )
+
+    @staticmethod
+    def _validate_tensor_metadata(info: Any, expected_shape: tuple[int, ...], role: str) -> None:
+        tensor_type = getattr(info, "type", None)
+        if tensor_type is not None and tensor_type != "tensor(float)":
+            raise ModelConfigurationError(f"ONNX {role} tensor must use float32 values.")
+        shape = getattr(info, "shape", None)
+        if shape is None:
+            return
+        if len(shape) != len(expected_shape):
+            raise ModelConfigurationError(f"ONNX {role} tensor rank does not match the manifest.")
+        for actual, expected in zip(shape, expected_shape, strict=True):
+            if isinstance(actual, int) and actual > 0 and actual != expected:
+                raise ModelConfigurationError(f"ONNX {role} tensor shape does not match the manifest.")
 
     @staticmethod
     def _validate_manifest(manifest: Any) -> None:
