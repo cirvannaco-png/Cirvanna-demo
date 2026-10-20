@@ -11,3 +11,4 @@ venv
 tests
 *.onnx
 model_manifest.json
+dermalsight-validation-report.json
