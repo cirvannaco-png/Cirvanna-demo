@@ -8,10 +8,14 @@ from __future__ import annotations
 import hmac
 import os
 from typing import Annotated
+from urllib.parse import urlsplit
+
+import httpx
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
+from starlette.responses import JSONResponse
 from starlette import status
 
 SERVICE_NAME = "cirvanna-virtual-twin"
@@ -93,20 +97,147 @@ def ready() -> ReadinessResponse:
     )
 
 
+async def _dermalsight_config() -> tuple[str, str] | None:
+    """Resolve the explicitly configured internal service and bearer token."""
+    base_url = os.getenv("DERMALSIGHT_API_URL", "").strip().rstrip("/")
+    token = os.getenv("DERMALSIGHT_API_TOKEN", "").strip()
+    if not base_url or not token:
+        return None
+    parsed = urlsplit(base_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password:
+        return None
+    return base_url, token
+
+
+async def _dermalsight_ready() -> bool:
+    config = await _dermalsight_config()
+    if config is None:
+        return False
+    base_url, _token = config
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(2.0, connect=1.0), follow_redirects=False, trust_env=False
+        ) as client:
+            response = await client.get(base_url + "/ready")
+        return response.status_code == 200 and response.json().get("ready") is True
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return False
+
+
 @app.get("/capabilities", tags=["operations"])
-def capabilities() -> dict[str, object]:
+async def capabilities() -> dict[str, object]:
     """Report only verified implementation state, not roadmap promises."""
+    dermalsight_ready = await _dermalsight_ready()
     return {
         "service": SERVICE_NAME,
         "twin_generation": False,
         "body_reconstruction": False,
-        "skin_analysis": False,
+        "skin_analysis": dermalsight_ready,
+        "dermalsight_ready": dermalsight_ready,
+        "skin_analysis_reason": None if dermalsight_ready else "dermalsight_not_ready_or_not_configured",
         "fit_prediction": False,
         "ar_rendering": False,
         "click_it_product_reconstruction": False,
         "decision_governance_connected_to_rendering": False,
         "reason": "validated_model_and_rendering_adapters_not_integrated",
     }
+
+
+@app.post(
+    "/skin-analysis",
+    tags=["skin-analysis"],
+)
+async def proxy_skin_analysis(
+    _: Annotated[None, Depends(require_api_token)],
+    consent: Annotated[bool, Form(description="Explicitly consent to in-memory skin analysis.")],
+    image: Annotated[UploadFile, File(description="JPEG, PNG, or WebP image; not persisted by Virtual Twin.")],
+):
+    """Forward consented image analysis to the separately deployed DermalSight service."""
+    if not consent:
+        await image.close()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "EXPLICIT_CONSENT_REQUIRED"},
+        )
+    if image.content_type not in {"image/jpeg", "image/png", "image/webp"}:
+        await image.close()
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail={"code": "UNSUPPORTED_IMAGE_TYPE"},
+        )
+
+    config = await _dermalsight_config()
+    if config is None:
+        await image.close()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "DERMALSIGHT_NOT_CONFIGURED"},
+        )
+
+    base_url, service_token = config
+    try:
+        content = await image.read(MAX_IMAGE_BYTES + 1)
+    finally:
+        await image.close()
+    if len(content) > MAX_IMAGE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail={"code": "IMAGE_SIZE_LIMIT_EXCEEDED", "maximum_bytes": MAX_IMAGE_BYTES},
+        )
+    if not content:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "EMPTY_IMAGE"},
+        )
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(15.0, connect=2.0),
+            follow_redirects=False,
+            trust_env=False,
+        ) as client:
+            upstream = await client.post(
+                base_url + "/api/v1/analyze",
+                headers={"Authorization": "Bearer " + service_token},
+                data={"consent": "true"},
+                files={"image": (image.filename or "capture", content, image.content_type)},
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail={"code": "DERMALSIGHT_TIMEOUT"},
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "DERMALSIGHT_UNAVAILABLE"},
+        ) from exc
+
+    if upstream.status_code == 200:
+        try:
+            payload = upstream.json()
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={"code": "DERMALSIGHT_INVALID_RESPONSE"},
+            ) from exc
+        return JSONResponse(status_code=200, content=payload, headers={"Cache-Control": "no-store"})
+
+    # Only forward known client-side validation statuses and opaque error codes.
+    if upstream.status_code in {400, 413, 415}:
+        try:
+            detail = upstream.json().get("detail", {})
+            code = detail.get("code", "DERMALSIGHT_REQUEST_REJECTED") if isinstance(detail, dict) else "DERMALSIGHT_REQUEST_REJECTED"
+        except ValueError:
+            code = "DERMALSIGHT_REQUEST_REJECTED"
+        raise HTTPException(
+            status_code=upstream.status_code,
+            detail={"code": code},
+        )
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail={"code": "DERMALSIGHT_UNAVAILABLE"},
+    )
 
 
 @app.post(
