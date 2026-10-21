@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import os
-
 import pytest
 from fastapi.testclient import TestClient
 
@@ -10,10 +8,28 @@ from app import main
 TOKEN = "virtual-try-on-test-token"
 
 
+class FixtureConsentVerifier:
+    def __init__(self, result=True):
+        self.result = result
+
+    def verify(self, subject_id, consent):
+        return self.result
+
+
+class FixtureAssetAuthorizer:
+    def __init__(self, result=True):
+        self.result = result
+
+    def authorize(self, subject_id, twin_id, product_id, person_image_asset_id, garment_image_asset_id):
+        return self.result
+
+
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setenv("VIRTUAL_TRY_ON_API_TOKEN", TOKEN)
     monkeypatch.setattr(main, "RENDERER", None)
+    monkeypatch.setattr(main, "CONSENT_VERIFIER", None)
+    monkeypatch.setattr(main, "ASSET_AUTHORIZER", None)
     return TestClient(main.app)
 
 
@@ -41,25 +57,33 @@ def payload(**overrides):
     return value
 
 
+def install_test_authorizers(monkeypatch, consent=True, assets=True):
+    monkeypatch.setattr(main, "CONSENT_VERIFIER", FixtureConsentVerifier(consent))
+    monkeypatch.setattr(main, "ASSET_AUTHORIZER", FixtureAssetAuthorizer(assets))
+
+
 def test_health_is_liveness_only(client):
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["service"] == main.SERVICE_NAME
 
 
-def test_ready_fails_closed_until_renderer_exists(client):
+def test_ready_fails_closed_until_all_providers_exist(client):
     response = client.get("/ready")
     assert response.status_code == 503
-    assert response.json()["detail"]["reason"] == "validated_renderer_and_asset_adapter_not_integrated"
+    assert response.json()["detail"]["reason"] == "validated_renderer_consent_and_asset_authorization_adapters_not_integrated"
 
 
 def test_capabilities_do_not_claim_rendering_is_live(client):
     response = client.get("/capabilities")
     assert response.status_code == 200
-    assert response.json()["orchestration_api"] is True
-    assert response.json()["renderer_configured"] is False
-    assert response.json()["raw_image_upload"] is False
-    assert response.json()["arbitrary_remote_urls"] is False
+    data = response.json()
+    assert data["orchestration_api"] is True
+    assert data["renderer_configured"] is False
+    assert data["consent_verifier_configured"] is False
+    assert data["asset_authorizer_configured"] is False
+    assert data["raw_image_upload"] is False
+    assert data["arbitrary_remote_urls"] is False
 
 
 def test_try_on_requires_authentication(client):
@@ -76,10 +100,10 @@ def test_try_on_requires_each_consent_flag(client, consent_field):
     assert response.json()["detail"]["code"] == "CONSENT_REQUIRED"
 
 
-def test_try_on_fails_closed_without_renderer_and_claims_no_output(client):
+def test_try_on_fails_closed_without_providers_and_claims_no_output(client):
     response = client.post("/v1/try-ons", json=payload(), headers=headers())
     assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "RENDERER_NOT_CONFIGURED"
+    assert response.json()["detail"]["code"] == "TRY_ON_DEPENDENCIES_NOT_CONFIGURED"
     assert "no output was created" in response.json()["detail"]["message"].lower()
 
 
@@ -103,19 +127,44 @@ def test_non_ephemeral_retention_is_rejected(client):
     assert response.json()["detail"]["code"] == "RETENTION_POLICY_UNSUPPORTED"
 
 
-def test_renderer_success_is_only_returned_after_provider_returns_asset_id(client, monkeypatch):
+def test_unverified_consent_blocks_rendering(client, monkeypatch):
+    install_test_authorizers(monkeypatch, consent=False)
     class FixtureRenderer:
         renderer_id = "fixture-renderer"
         renderer_version = "fixture-only"
+        def render(self, request):
+            raise AssertionError("renderer must not be called without verified consent")
+    monkeypatch.setattr(main, "RENDERER", FixtureRenderer())
+    response = client.post("/v1/try-ons", json=payload(), headers=headers())
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "CONSENT_NOT_VERIFIED"
 
+
+def test_unauthorized_assets_block_rendering(client, monkeypatch):
+    install_test_authorizers(monkeypatch, assets=False)
+    class FixtureRenderer:
+        renderer_id = "fixture-renderer"
+        renderer_version = "fixture-only"
+        def render(self, request):
+            raise AssertionError("renderer must not be called for unauthorized assets")
+    monkeypatch.setattr(main, "RENDERER", FixtureRenderer())
+    response = client.post("/v1/try-ons", json=payload(), headers=headers())
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "ASSET_ACCESS_DENIED"
+
+
+def test_renderer_success_is_only_returned_after_authorization_and_real_asset_id(client, monkeypatch):
+    install_test_authorizers(monkeypatch)
+    class FixtureRenderer:
+        renderer_id = "fixture-renderer"
+        renderer_version = "fixture-only"
         def render(self, request):
             assert request.consent.image_processing
             assert request.consent.virtual_try_on
             return "rendered-asset-001"
-
     monkeypatch.setattr(main, "RENDERER", FixtureRenderer())
     response = client.post("/v1/try-ons", json=payload(), headers=headers())
-    assert response.status_code == 202
+    assert response.status_code == 200
     result = response.json()
     assert result["status"] == "complete"
     assert result["output_asset_id"] == "rendered-asset-001"
@@ -123,13 +172,12 @@ def test_renderer_success_is_only_returned_after_provider_returns_asset_id(clien
 
 
 def test_renderer_failure_does_not_leak_provider_error(client, monkeypatch):
+    install_test_authorizers(monkeypatch)
     class BrokenRenderer:
         renderer_id = "fixture-renderer"
         renderer_version = "fixture-only"
-
         def render(self, request):
             raise RuntimeError("private upstream credential and request payload")
-
     monkeypatch.setattr(main, "RENDERER", BrokenRenderer())
     response = client.post("/v1/try-ons", json=payload(), headers=headers())
     assert response.status_code == 502
@@ -139,13 +187,12 @@ def test_renderer_failure_does_not_leak_provider_error(client, monkeypatch):
 
 
 def test_invalid_renderer_output_is_rejected(client, monkeypatch):
+    install_test_authorizers(monkeypatch)
     class BadRenderer:
         renderer_id = "fixture-renderer"
         renderer_version = "fixture-only"
-
         def render(self, request):
             return "https://example.com/fake-output.png"
-
     monkeypatch.setattr(main, "RENDERER", BadRenderer())
     response = client.post("/v1/try-ons", json=payload(), headers=headers())
     assert response.status_code == 502
