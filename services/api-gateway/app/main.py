@@ -6,6 +6,7 @@ Only a CAL SHOW verdict authorizes the response to mark a candidate displayable.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import hmac
 import json
 import os
@@ -15,10 +16,9 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import urljoin
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -263,8 +263,14 @@ def _catalog_attributes_complete(product: dict[str, Any]) -> bool:
     required_keys = _env_csv("CIRVANNA_REQUIRED_PRODUCT_ATTRIBUTES", "style,material,color")
     if not isinstance(attrs, dict) or not required_keys:
         return False
+    normalized = {
+        key.strip().casefold(): value
+        for key, value in attrs.items()
+        if isinstance(key, str) and key.strip()
+    }
     return all(
-        isinstance(attrs.get(key), str) and bool(attrs[key].strip())
+        isinstance(normalized.get(key.casefold()), str)
+        and bool(normalized[key.casefold()].strip())
         for key in required_keys
     )
 
@@ -460,7 +466,9 @@ def _fit_estimate(user_id: str, product_id: str) -> FitConfidenceEstimate:
 
 
 def _audit_path() -> Path:
-    configured = os.getenv("CIRVANNA_AUDIT_DB", "./.cirvanna/audit.sqlite3")
+    configured = os.getenv("CIRVANNA_AUDIT_DB", "./.cirvanna/audit.sqlite3").strip()
+    if not configured or configured == ":memory:":
+        raise RuntimeError("CIRVANNA_AUDIT_DB must identify a durable file path, not an in-memory database.")
     return Path(configured).expanduser()
 
 
@@ -477,8 +485,7 @@ def _record_audit(
 ) -> None:
     """Append minimal decision metadata; omit user IDs, measurements and images."""
     path = _audit_path()
-    if str(path) != ":memory:":
-        path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(parents=True, exist_ok=True)
     try:
         with sqlite3.connect(str(path), timeout=5.0) as connection:
             connection.execute(
@@ -571,14 +578,18 @@ def readiness() -> dict[str, Any]:
             catalog_ready = False
     try:
         path = _audit_path()
-        if str(path) != ":memory:":
-            path.parent.mkdir(parents=True, exist_ok=True)
+        path.parent.mkdir(parents=True, exist_ok=True)
         with sqlite3.connect(str(path), timeout=2.0) as connection:
             connection.execute("SELECT 1")
         audit_ready = True
-    except (OSError, sqlite3.Error):
+    except (OSError, sqlite3.Error, RuntimeError):
         audit_ready = False
-    ready = configured and catalog_ready and audit_ready
+    try:
+        _policy()
+        policy_configured = True
+    except (RuntimeError, ValueError):
+        policy_configured = False
+    ready = configured and catalog_ready and audit_ready and policy_configured
     return {
         "status": "ready" if ready else "not_ready",
         "service": SERVICE_NAME,
@@ -586,6 +597,7 @@ def readiness() -> dict[str, Any]:
         "catalog_auth_configured": bool(os.getenv("CATALOG_API_TOKEN")),
         "catalog_ready": catalog_ready,
         "audit_store_ready": audit_ready,
+        "policy_configuration_valid": policy_configured,
         "fci_available": False,
         "safety_policy_available": False,
         "ready": ready,
@@ -634,9 +646,11 @@ def evaluate_decisions(payload: DecisionRequest) -> DecisionResponse:
     )
     eepl_policy = _policy()
     candidates: list[CandidateDecisionOutput] = []
+    # Bound parallelism so a batch does not serially pay the catalog timeout per item.
+    with ThreadPoolExecutor(max_workers=min(5, len(payload.product_ids))) as executor:
+        products = list(executor.map(fetch_product, payload.product_ids))
 
-    for product_id in payload.product_ids:
-        product = fetch_product(product_id)
+    for product_id, product in zip(payload.product_ids, products):
         attributes = _catalog_attributes(product)
         complete = _catalog_attributes_complete(product)
         upstream_signals = (
