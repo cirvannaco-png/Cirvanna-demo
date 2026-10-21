@@ -452,7 +452,7 @@ def _cultural_signals(
 def _fit_estimate(user_id: str, product_id: str) -> FitConfidenceEstimate:
     """No trained/calibrated FCI provider is registered in this build."""
     return FitConfidenceEstimate(
-        estimate_id=f"fci-unavailable-{uuid.uuid4()}",
+        estimate_id=f"fci-unavailable:{product_id}",
         user_id=user_id,
         candidate_id=product_id,
         model_version="not-configured",
