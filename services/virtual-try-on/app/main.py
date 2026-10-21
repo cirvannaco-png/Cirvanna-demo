@@ -30,7 +30,7 @@ class ConsentInput(BaseModel):
     consent_id: str = Field(min_length=8, max_length=160)
     image_processing: bool
     virtual_try_on: bool
-    retention_policy: Literal["ephemeral"] = "ephemeral"
+    retention_policy: str = Field(default="ephemeral", min_length=1, max_length=32)
 
 
 class TryOnRequest(BaseModel):
