@@ -47,6 +47,8 @@ jobs:
           CIRVANNA_API_TOKEN: ci-test-token
           CIRVANNA_AUDIT_DB: /tmp/cirvanna-ci-audit.sqlite3
         run: python -m pytest tests -q
+      - name: Build decision gateway container
+        run: docker build -f services/api-gateway/Dockerfile -t cirvanna-decision-gateway:ci .
       - name: Validate architecture invariants
         run: python scripts/validate_architecture.py
       - name: Run domain architecture regression suite
