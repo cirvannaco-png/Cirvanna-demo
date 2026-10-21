@@ -1,20 +1,94 @@
 # API gateway / decision composition
 
-**Status:** deterministic EEPL + NPL + explicit cultural policy + USI alignment → CaTaCaCi CAL composition implemented; HTTP routing, authentication, persistence, and production integration are not certified.
+**Status:** the first HTTP decision vertical slice is implemented on the engineering branch. End-to-end CI evidence is still pending; this gateway is not production-certified.
 
-`app/decision_pipeline.py` composes typed domain results without calculating scores:
+## Responsibilities
 
-1. EEPL `PASS` supplies a context gate pass; `BLOCK` maps age bounds to legal-eligibility vetoes and location/occasion/climate violations to context vetoes; missing required context maps to unknown/review.
-2. NPL hard exclusions map to CAL hard-veto signals. A clean NPL result only says no hard exclusion was found.
-3. Cultural identity constraints are evaluated only from explicit user declarations. Hard conflicts map to CAL vetoes; incomplete candidate metadata maps to review. No cultural identity is inferred from appearance or demographic proxies.
-4. USI evaluates declared positive style preferences only. A below-threshold style match is a non-veto review signal, not a permanent exclusion; NPL owns hard dislikes. The default alignment threshold is not empirically calibrated.
-5. The composed request is evaluated by CaTaCaCi CAL. Only CAL `SHOW` authorizes display; passing any individual gate never does.
+- Authenticate requests to the decision API with a configured bearer token.
+- Fetch canonical products from the catalog service; never fall back to invented products.
+- Compose the existing EEPL, NPL, USI, FCI contract and CaTaCaCi/CAL kernels.
+- Apply only explicit user-declared cultural requirements and separately declared hard constraints.
+- Append minimal decision-audit events before returning decisions.
+- Allow display only when CAL explicitly returns `SHOW`.
 
-The adapter checks candidate and user consistency and preserves source/policy versions. It intentionally has no HTTP framework, database access, or model inference. Production work remains: API schema/versioning, auth/consent, durable audit events, persistence adapters, observability, concurrency tests, and end-to-end request tests.
+## Routes
 
-Run the current domain and integration tests from the repository root:
+- `GET /health` — liveness only.
+- `GET /ready` — checks gateway/catalog configuration, catalog readiness, and audit-store accessibility.
+- `GET /capabilities` — reports implemented and unavailable capabilities.
+- `POST /v1/decisions` — evaluates 1–25 active catalog product IDs against the supplied profile inputs.
+
+Decision requests require `Authorization: Bearer $CIRVANNA_API_TOKEN`. The catalog service uses a separate `CATALOG_API_TOKEN`; the gateway forwards it only to the catalog API.
+
+## Local setup
+
+Use separate terminals/processes. Supply credentials through your shell's secret mechanism; do not commit them.
+
+1. From `services/catalog-service`, install `requirements.txt`, configure `CATALOG_API_TOKEN`, and start the service, for example on port 8081. Its local SQLite default is for development only.
+2. From `services/api-gateway`, install this directory's `requirements.txt`, then configure:
+   - `CIRVANNA_API_TOKEN` — inbound gateway bearer token.
+   - `CATALOG_SERVICE_URL` — base URL of the catalog service, e.g. local port 8081.
+   - `CATALOG_API_TOKEN` — outbound service token matching the catalog process.
+   - `CIRVANNA_AUDIT_DB` — persistent local SQLite file path for audit events.
+3. Start the gateway from `services/api-gateway` with `uvicorn app.main:app --host 127.0.0.1 --port 8080`.
+4. Check `/health`, `/ready`, and `/capabilities` before sending a request.
+
+Useful optional policy settings:
+
+| Variable | Purpose |
+|---|---|
+| `CIRVANNA_POLICY_VERSION` | CAL policy version recorded with decisions |
+| `CIRVANNA_EEPL_POLICY_ID`, `CIRVANNA_EEPL_POLICY_VERSION` | EEPL policy identity/version |
+| `CIRVANNA_REQUIRED_CONTEXT_FIELDS` | Comma-separated EEPL context fields; default is `location,occasion,climate` |
+| `CIRVANNA_MINIMUM_AGE`, `CIRVANNA_MAXIMUM_AGE` | Optional configured age bounds |
+| `CIRVANNA_ALLOWED_LOCATIONS`, `CIRVANNA_ALLOWED_OCCASIONS`, `CIRVANNA_ALLOWED_CLIMATES` | Optional comma-separated allowlists |
+| `CIRVANNA_REQUIRED_PRODUCT_ATTRIBUTES` | Product attribute keys needed to consider catalog metadata complete; default is `style,material,color` |
+
+The initial context policy requires location, occasion, and climate inputs but does not impose geographic/occasion/climate allowlists unless configured. Missing required context produces `REVIEW`, not a guessed value.
+
+## Request contract
+
+`POST /v1/decisions` accepts a JSON body with:
+
+- `user_id`: caller-supplied identifier. The current shared-token gateway does **not** bind it to an identity-provider session; keep this API internal/staging-only until that integration exists.
+- `product_ids`: unique UUIDs from the canonical catalog.
+- `context`: optional `age_years`, `location`, `occasion`, and `climate`.
+- `style_preferences`: explicit style attributes and optional weights.
+- `negative_preferences`: explicit item or attribute exclusions. These are hard vetoes.
+- `cultural_requirements`: explicit declaration-linked required/forbidden attributes; no cultural identity is inferred.
+- `hard_constraints`: additional required/forbidden attributes supplied explicitly by the user.
+
+A product's attributes are taken from the catalog, not the request. For the initial apparel-focused slice, metadata is considered complete only when the configured required keys exist as non-empty strings.
+
+## Decision safety
+
+At this stage, the safety policy provider and trained/calibrated FCI provider are **not configured**. The gateway emits `UNKNOWN` safety evidence and an uncalibrated fit estimate, so otherwise eligible candidates normally return `REVIEW`. An NPL, legal, context, cultural, or explicit hard-constraint veto can return `BLOCK`. `SHOW` is possible only when all required gates produce valid results; tests can inject fixture-only provider results to validate that path. No fixture or client input is accepted as a live model result.
+
+The API does not persist user profiles. The audit store persists only the request ID, product ID, verdict, reason codes, product catalog version, policy/contract versions, and timestamp; it omits user IDs, measurements, and images. The local SQLite audit file is suitable only for development/testing. Production requires a managed durable audit backend, migrations, retention/deletion controls, and operational monitoring.
+
+## Tests
+
+From the repository root:
 
 ```bash
-python -m unittest discover -s tests/architecture -v
+python -m pip install -r services/api-gateway/requirements.txt
+cd services/api-gateway
+python -m pytest tests -q
+cd ../..
 python scripts/validate_architecture.py
+python -m unittest discover -s tests/architecture -v
+python scripts/scan_source_secrets.py
 ```
+
+The `.github/workflows/decision-gateway.yml` workflow runs these checks on relevant pushes and pull requests. A passing workflow validates the tested API contracts only; it does not certify a deployed environment, fit accuracy, safety policy quality, identity authentication, or production readiness.
+
+## Remaining release blockers
+
+- Integrate and validate a real product-safety provider.
+- Integrate a trained FCI estimator, including appropriate user fit evidence, calibration, uncertainty, provenance, and model-version tracking.
+- Bind user identity to an authenticated principal; replace shared bearer auth with scoped authorization before external exposure.
+- Replace local SQLite audit with managed durable storage, migrations, access controls, retention, and tested recovery.
+- Add persistence for user profiles only after defining consent, export, correction, and deletion requirements.
+- Run real deployment smoke tests, security/privacy review, load/failure tests, and end-to-end user journey checks.
+
+Virtual Try-On remains a separate next phase: rendering/simulation must consume a supported Virtual Twin/model adapter and catalog assets; it must not be simulated by this decision endpoint.
