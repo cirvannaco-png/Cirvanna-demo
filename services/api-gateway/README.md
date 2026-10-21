@@ -33,6 +33,16 @@ Use separate terminals/processes. Supply credentials through your shell's secret
 3. Start the gateway from `services/api-gateway` with `uvicorn app.main:app --host 127.0.0.1 --port 8080`.
 4. Check `/health`, `/ready`, and `/capabilities` before sending a request.
 
+## Container build
+
+Build from the **repository root** so the image includes the shared domain packages:
+
+```bash
+docker build -f services/api-gateway/Dockerfile -t cirvanna-decision-gateway .
+```
+
+The image runs as a non-root user, uses the platform `PORT` when supplied (otherwise 8080), and stores the local audit SQLite file at `/data/audit.sqlite3`. Mount a persistent volume at `/data` for local/staging persistence. This volume arrangement is not a replacement for a managed production audit store, backup/recovery, or retention controls.
+
 Useful optional policy settings:
 
 | Variable | Purpose |
@@ -80,7 +90,7 @@ python -m unittest discover -s tests/architecture -v
 python scripts/scan_source_secrets.py
 ```
 
-The `.github/workflows/decision-gateway.yml` workflow runs these checks on relevant pushes and pull requests. A passing workflow validates the tested API contracts only; it does not certify a deployed environment, fit accuracy, safety policy quality, identity authentication, or production readiness.
+The `.github/workflows/decision-gateway.yml` workflow runs these checks plus a Docker image build on relevant pushes and pull requests. A passing workflow validates the tested API contracts only; it does not certify a deployed environment, fit accuracy, safety policy quality, identity authentication, or production readiness.
 
 ## Remaining release blockers
 
