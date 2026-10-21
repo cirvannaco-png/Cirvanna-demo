@@ -80,11 +80,34 @@ class CapabilityResponse(BaseModel):
     api_version: str
     orchestration_api: bool
     renderer_configured: bool
+    consent_verifier_configured: bool
+    asset_authorizer_configured: bool
     supported_categories: list[str]
     raw_image_upload: bool
     arbitrary_remote_urls: bool
     output_persistence: bool
     reason: str | None = None
+
+
+class ConsentVerifier(Protocol):
+    """Verify the consent record server-side; never trust request booleans alone."""
+
+    def verify(self, subject_id: str, consent: ConsentInput) -> bool:
+        ...
+
+
+class AssetAuthorizer(Protocol):
+    """Verify ownership and access to both private assets and their parent records."""
+
+    def authorize(
+        self,
+        subject_id: str,
+        twin_id: str,
+        product_id: str,
+        person_image_asset_id: str,
+        garment_image_asset_id: str,
+    ) -> bool:
+        ...
 
 
 class Renderer(Protocol):
@@ -98,8 +121,10 @@ class Renderer(Protocol):
         ...
 
 
-# Deliberately disabled until a real provider, asset resolver, and validation
-# suite are implemented. Never enable this with an environment-variable flag.
+# All three integrations are intentionally disabled until real implementations
+# and independent integration tests exist. Environment flags cannot enable them.
+CONSENT_VERIFIER: ConsentVerifier | None = None
+ASSET_AUTHORIZER: AssetAuthorizer | None = None
 RENDERER: Renderer | None = None
 
 app = FastAPI(
@@ -136,18 +161,31 @@ def health() -> dict[str, str]:
 
 @app.get("/ready", tags=["operations"])
 def ready() -> dict[str, object]:
-    ready_now = RENDERER is not None and bool(os.getenv("VIRTUAL_TRY_ON_API_TOKEN"))
+    ready_now = (
+        RENDERER is not None
+        and CONSENT_VERIFIER is not None
+        and ASSET_AUTHORIZER is not None
+        and bool(os.getenv("VIRTUAL_TRY_ON_API_TOKEN"))
+    )
     if not ready_now:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
                 "status": "not_ready",
                 "service": SERVICE_NAME,
-                "renderer_configured": False,
-                "reason": "validated_renderer_and_asset_adapter_not_integrated",
+                "renderer_configured": RENDERER is not None,
+                "consent_verifier_configured": CONSENT_VERIFIER is not None,
+                "asset_authorizer_configured": ASSET_AUTHORIZER is not None,
+                "reason": "validated_renderer_consent_and_asset_authorization_adapters_not_integrated",
             },
         )
-    return {"status": "ready", "service": SERVICE_NAME, "renderer_configured": True}
+    return {
+        "status": "ready",
+        "service": SERVICE_NAME,
+        "renderer_configured": True,
+        "consent_verifier_configured": True,
+        "asset_authorizer_configured": True,
+    }
 
 
 @app.get("/capabilities", response_model=CapabilityResponse, tags=["operations"])
@@ -158,6 +196,8 @@ def capabilities() -> CapabilityResponse:
         api_version=API_VERSION,
         orchestration_api=True,
         renderer_configured=configured,
+        consent_verifier_configured=CONSENT_VERIFIER is not None,
+        asset_authorizer_configured=ASSET_AUTHORIZER is not None,
         supported_categories=["upper_body", "lower_body", "dress", "outerwear", "full_outfit"],
         raw_image_upload=False,
         arbitrary_remote_urls=False,
@@ -169,7 +209,7 @@ def capabilities() -> CapabilityResponse:
 @app.post(
     "/v1/try-ons",
     response_model=TryOnResult,
-    status_code=status.HTTP_202_ACCEPTED,
+    status_code=status.HTTP_200_OK,
     tags=["try-on"],
 )
 def create_try_on(
@@ -187,14 +227,46 @@ def create_try_on(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"code": "RETENTION_POLICY_UNSUPPORTED", "message": "Only ephemeral processing is currently supported."},
         )
+    consent_verifier = CONSENT_VERIFIER
+    asset_authorizer = ASSET_AUTHORIZER
     renderer = RENDERER
-    if renderer is None:
+    if consent_verifier is None or asset_authorizer is None or renderer is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
-                "code": "RENDERER_NOT_CONFIGURED",
-                "message": "No validated rendering provider is connected. No image was processed and no output was created.",
+                "code": "TRY_ON_DEPENDENCIES_NOT_CONFIGURED",
+                "message": "Validated consent, asset authorization, and rendering integrations are required. No image was processed and no output was created.",
             },
+        )
+    try:
+        consent_is_valid = consent_verifier.verify(payload.subject_id, payload.consent)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "CONSENT_VERIFICATION_UNAVAILABLE", "message": "Consent could not be verified; rendering was not started."},
+        ) from exc
+    if not consent_is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "CONSENT_NOT_VERIFIED", "message": "No matching active server-side consent record was verified."},
+        )
+    try:
+        assets_are_authorized = asset_authorizer.authorize(
+            payload.subject_id,
+            payload.twin_id,
+            payload.product_id,
+            payload.person_image_asset_id,
+            payload.garment_image_asset_id,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "ASSET_AUTHORIZATION_UNAVAILABLE", "message": "Asset access could not be verified; rendering was not started."},
+        ) from exc
+    if not assets_are_authorized:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "ASSET_ACCESS_DENIED", "message": "The subject is not authorized to use one or more referenced assets."},
         )
     try:
         output_asset_id = renderer.render(payload)
