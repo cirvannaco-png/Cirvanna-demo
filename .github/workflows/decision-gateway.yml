@@ -8,6 +8,7 @@ on:
       - "feature/**"
     paths:
       - "services/api-gateway/**"
+      - "services/virtual-try-on/**"
       - "packages/identity-intelligence/**"
       - "packages/preferences/**"
       - "packages/fit-intelligence/**"
@@ -55,3 +56,26 @@ jobs:
         run: python -m unittest discover -s tests/architecture -v
       - name: Scan for credential patterns
         run: python scripts/scan_source_secrets.py
+
+  virtual-try-on:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/virtual-try-on/requirements.txt
+      - name: Install Virtual Try-On dependencies
+        working-directory: services/virtual-try-on
+        run: python -m pip install -r requirements.txt
+      - name: Run Virtual Try-On API and privacy-gate tests
+        working-directory: services/virtual-try-on
+        env:
+          VIRTUAL_TRY_ON_API_TOKEN: ci-test-token
+        run: python -m pytest tests -q
+      - name: Build Virtual Try-On container
+        run: docker build -f services/virtual-try-on/Dockerfile -t cirvanna-virtual-try-on:ci .
