@@ -25,7 +25,11 @@ The current service does not persist images or request bodies. It does not log i
 
 ## Model candidate
 
-[FASHN VTON 1.5](https://huggingface.co/fashn-ai/fashn-vton-1.5) is a candidate worth evaluating: its Hugging Face model metadata identifies it as a 971.8M-parameter PyTorch virtual try-on model under Apache-2.0. This metadata does not prove model quality, acceptable GPU cost/latency, a production inference contract, commercial suitability of every associated asset, or fit accuracy. Do not enable it until the exact revision, input/output contract, inference hardware, image-processing/data-retention terms, license obligations, and representative garment-category performance have been reviewed.
+[FASHN VTON 1.5](https://huggingface.co/fashn-ai/fashn-vton-1.5) is the leading open-source candidate for the first prototype. Its official model card describes a roughly 972M-parameter PyTorch MMDiT model, Apache-2.0 licensing for the model repository, 576×864 output, and three categories: `tops`, `bottoms`, and `one-pieces`. The published model card estimates about 8 GB of VRAM for inference and around 5 seconds on an NVIDIA H100; these are upstream estimates, not Cirvanna benchmark results. The model weights are about 2 GB, and a human-parser dependency adds about 244 MB of weights. See the [official inference example](https://github.com/fashn-AI/fashn-vton-1.5/blob/main/examples/basic_inference.py) and [model card](https://huggingface.co/fashn-ai/fashn-vton-1.5).
+
+**Decision:** prototype FASHN VTON 1.5 in an isolated GPU worker; do not load it inside the public API container. Map Cirvanna categories explicitly: `upper_body` and `outerwear` to `tops`, `lower_body` to `bottoms`, and `dress` / `full_outfit` to `one-pieces`. Unsupported category combinations must be rejected, not silently remapped.
+
+**Before production:** pin the exact source commit and weight revision, verify the license for the full dependency stack (the model card lists a human-parser dependency whose license must be reviewed separately), validate model inputs/outputs, and benchmark representative images. The published model card itself notes imperfect body-shape preservation and possible traces of the original garment during long-to-short or bulky-to-slim swaps. These are material quality risks, not edge cases to ignore.
 
 ## Provider integration contract
 
