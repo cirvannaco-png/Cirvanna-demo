@@ -1,7 +1,7 @@
 # Cirvanna First End-to-End Vertical Slice
 
 **Date:** 2026-10-21  
-**Status:** Proposed execution plan; implementation and release evidence remain pending.
+**Status:** First API slice implemented on the engineering branch; gateway, architecture, domain-regression and secret-scan CI passed on code commit `d999d625c96df326188c3ceeba6977cc297968ad`. Container-build verification is pending after the latest Dockerfile/workflow addition. This is not production certification.
 
 ## Objective
 
@@ -86,3 +86,28 @@ The first slice must accept a user-controlled preference profile, retrieve candi
 The slice is complete only when a clean checkout can reproduce the documented build and tests, a real API request traverses the canonical decision path, the result is persisted where required, the UI presents the actual response, hard constraints are proven by tests, and failure cases are handled honestly.
 
 A plan or passing unit test alone is not proof of end-to-end completion.
+
+## Execution record — 2026-10-21
+
+### Implemented on the engineering branch
+
+- Added `services/api-gateway/app/main.py` with a versioned `POST /v1/decisions` endpoint, liveness/readiness/capability routes, bounded concurrent retrieval from the canonical catalog API, and gateway/catalog bearer-token checks.
+- Composed the existing EEPL, NPL, USI, FCI contract, cultural identity policy, generic explicit hard constraints, and CaTaCaCi/CAL arbitration. No parallel weighted recommender was introduced.
+- Added local append-only SQLite decision-audit events containing request/product IDs, verdict, reason codes, product version, contract/policy versions, and timestamp. User IDs, measurements and images are omitted. The local SQLite store is explicitly development-only; audit failure suppresses the response.
+- Added request validation, fail-closed behavior for inactive/missing catalog products, absent safety evidence, uncalibrated FCI, incomplete metadata, and unavailable catalog/audit dependencies.
+- Added gateway tests and a CI workflow. The gateway tests, architecture validator, existing domain regression tests, and secret scanner passed on the recorded code commit. The first CI attempt correctly caught an import-path error; the package import order was fixed and the subsequent run passed.
+- Added a gateway Dockerfile and container-build CI step. These were added after the previously passing CI run and still require fresh workflow evidence.
+
+### Explicitly not complete
+
+- No independent safety-policy provider is configured; safety remains UNKNOWN.
+- No trained/calibrated fit estimator is configured; FCI remains UNKNOWN. Thus ordinary eligible products return REVIEW until real required signals exist. Fixture-only test injection validates the SHOW branch but is not a live provider.
+- Gateway bearer authentication is not bound to an identity-provider principal; `user_id` is still request-supplied. Do not expose this gateway to public users yet.
+- User preferences are request-scoped, not durably persisted. The audit store is local SQLite, not a managed production event store.
+- Tests mock catalog responses for policy/API cases. A real service-to-service smoke test against a running catalog deployment has not been established.
+- No production deployment, privacy/threat review, recovery drill, load test or production release certification has been performed.
+- No browser UI is connected. A public browser client must not receive the shared gateway token; establish real user authentication and authorization before exposing it.
+
+## Gate decision
+
+The code/API foundation is ready for further integration work, not for production use. The next feature phase is Virtual Try-On, but it must use a validated renderer/model adapter and explicit consented inputs; do not promote reconstructed candidate source or simulate successful rendering.
