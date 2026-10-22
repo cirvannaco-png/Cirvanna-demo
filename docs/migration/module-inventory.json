@@ -76,9 +76,9 @@
     {
       "id": "dermalsight",
       "target": "services/dermalsight",
-      "status": "legacy-candidate",
-      "purpose": "Skin perception and clinically sensitive outputs; consent, quality gates, uncertainty, privacy, and safe user-facing language.",
-      "promotionGate": "Review bias, image handling, clinical claims, thresholds, security, and test coverage."
+      "status": "runtime-scaffold-model-gated",
+      "purpose": "Separate non-diagnostic skin-attribute API with explicit consent, authentication, image bounds, a hash-verified ONNX adapter, and fail-closed model readiness.",
+      "promotionGate": "Supply a licensed approved model artifact and representative evaluation dataset; validate accuracy, calibration, subgroup performance, threat controls, privacy, and end-to-end production deployment. Source candidates remain unpromoted."
     },
     {
       "id": "virtual-twin",
