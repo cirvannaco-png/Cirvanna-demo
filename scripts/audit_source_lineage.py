@@ -198,7 +198,7 @@ def audit() -> tuple[list[str], list[dict[str, str]], dict[str, int]]:
             errors.append(f"snapshot lineage historical byte baseline mismatch: {row['extracted_filename']}")
         if lineage_row.get("historical_sha256") != row.get("sha256"):
             errors.append(f"snapshot lineage historical hash baseline mismatch: {row['extracted_filename']}")
-        if lineage_row.get("audit_bytes") != audit_row.get("byte_count"):
+        if lineage_row.get("audit_bytes") != audit_row.get("bytes"):
             errors.append(f"snapshot lineage audit byte baseline mismatch: {row['extracted_filename']}")
         if lineage_row.get("audit_sha256") != audit_row.get("sha256"):
             errors.append(f"snapshot lineage audit hash baseline mismatch: {row['extracted_filename']}")
