@@ -190,7 +190,7 @@ def audit() -> tuple[list[str], list[dict[str, str]], dict[str, int]]:
         # The source-manifest/source-audit records are historical intake
         # baselines. Check that those records agree with each other, but do
         # not mistake them for the current redacted snapshot content.
-        if row.get("byte_count") != audit_row.get("byte_count"):
+        if row.get("byte_count") != audit_row.get("bytes"):
             errors.append(f"historical manifest/audit byte counts disagree: {row['extracted_filename']}")
         if row.get("sha256") != audit_row.get("sha256"):
             errors.append(f"historical manifest/audit hashes disagree: {row['extracted_filename']}")
