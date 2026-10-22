@@ -18,6 +18,12 @@ This pass promotes one isolated, testable utility from the staged FCI snippets: 
 
 The implementation is informed by the legacy FCI candidate at `integration-staging/source-candidates/09-fci-.txt/src/fci/metrics.py` and its duplicate/near-duplicate FCI V2 and Fit Confidence Index snapshots. It intentionally removes NumPy and PostgreSQL dependencies from the evaluation helper and corrects ambiguous empty-cohort/high-confidence behavior. These metrics are for offline evaluation only; they do not prove model calibration without a sufficiently representative, independently labelled evaluation set.
 
+## File-level inventory
+
+The generated inventory at `docs/migration/code-snippet-inventory.json` records every extracted source file with its source section, source line, declared path, staged path, manifest byte count, current tracked byte count, Git blob SHA-1, duplicate group, canonical destination, and promotion disposition. Regenerate it with `python scripts/build_code_snippet_inventory.py`; CI verifies it with `python scripts/build_code_snippet_inventory.py --check`.
+
+The current snapshot accounts for all **544 of 544** extracted snippets across **31** source sections. The 544 staged paths resolve to **433 unique current file contents**; **179 paths** participate in cross-path duplicate groups. Seven source sections contain no extracted code. Some staged candidates differ in size from their original extraction, so the inventory records source and tracked byte counts separately rather than treating size equality as proof of content identity. All archive snippets remain preserved candidates rather than being silently promoted into runtime. The FCI metrics change is a hardened reimplementation informed by one source snippet, not a direct runtime copy of that candidate file.
+
 ## Source-bundle review register
 
 All currently present top-level bundles under `integration-staging/source-candidates/` were inventoried. The original files remain available for provenance.
