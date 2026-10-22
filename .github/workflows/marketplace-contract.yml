@@ -1,0 +1,55 @@
+name: Marketplace contract checks
+
+on:
+  pull_request:
+    paths:
+      - "apps/demo-web/marketplace.html"
+      - "apps/demo-web/test_marketplace_contract.py"
+      - "apps/demo-web/test_marketplace_browser.py"
+      - "services/catalog-service/app/main.py"
+      - ".github/workflows/marketplace-contract.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/demo-web/marketplace.html"
+      - "apps/demo-web/test_marketplace_contract.py"
+      - "services/catalog-service/app/main.py"
+      - ".github/workflows/marketplace-contract.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run marketplace integration contract checks
+        run: python apps/demo-web/test_marketplace_contract.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install browser test dependencies
+        run: |
+          python -m pip install playwright
+          python -m playwright install --with-deps chromium
+      - name: Run headless marketplace browser tests
+        run: python apps/demo-web/test_marketplace_browser.py
+      - name: Check inline marketplace JavaScript syntax
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          html = Path("apps/demo-web/marketplace.html").read_text(encoding="utf-8")
+          scripts = re.findall(r"<script(?:\s[^>]*)?>(.*?)</script>", html, re.I | re.S)
+          if not scripts:
+              raise SystemExit("No inline script found in marketplace.html")
+          Path("/tmp/cirvanna-marketplace.js").write_text("\n".join(scripts), encoding="utf-8")
+          PY
+          node --check /tmp/cirvanna-marketplace.js
+      - name: Compile catalog service Python syntax
+        run: python -m compileall -q services/catalog-service/app

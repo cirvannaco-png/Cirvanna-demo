@@ -1,0 +1,37 @@
+name: Container image builds
+
+on:
+  pull_request:
+    paths:
+      - "services/catalog-service/**"
+      - "services/commerce-service/**"
+      - "services/decision-service/**"
+      - "services/marketplace-bff/**"
+      - ".github/workflows/container-image-builds.yml"
+  push:
+    branches: [main]
+    paths:
+      - "services/catalog-service/**"
+      - "services/commerce-service/**"
+      - "services/decision-service/**"
+      - "services/marketplace-bff/**"
+      - ".github/workflows/container-image-builds.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Catalog service image
+        run: docker build -f services/catalog-service/Dockerfile -t cirvanna-catalog:ci services/catalog-service
+      - name: Build Commerce service image
+        run: docker build -f services/commerce-service/Dockerfile -t cirvanna-commerce:ci services/commerce-service
+      - name: Build internal Decision service image
+        run: docker build -f services/decision-service/Dockerfile -t cirvanna-decision:ci .
+      - name: Build Marketplace BFF image
+        run: docker build -f services/marketplace-bff/Dockerfile -t cirvanna-marketplace-bff:ci .
