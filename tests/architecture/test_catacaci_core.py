@@ -136,6 +136,32 @@ class CaTaCaCiCoreTests(unittest.TestCase):
         self.assertEqual(result.verdict, DecisionVerdict.REVIEW)
         self.assertEqual(result.reasons[0].code, "FIT_CONFIDENCE_DISAGREEMENT")
 
+    def test_fit_disagreement_tolerance_is_policy_configurable(self):
+        signals = (
+            signal("fit-a", SignalKind.FIT_CONFIDENCE, confidence=0.91),
+            signal("fit-b", SignalKind.FIT_CONFIDENCE, confidence=0.80),
+        )
+        default_result = arbitrate(request(*signals))
+        configured_result = arbitrate(ArbitrationRequest(
+            request_id="request-configured-tolerance",
+            candidate_id="candidate-1",
+            signals=request(*signals).signals,
+            maximum_fit_confidence_disagreement=0.12,
+        ))
+        self.assertEqual(default_result.verdict, DecisionVerdict.REVIEW)
+        self.assertEqual(configured_result.verdict, DecisionVerdict.SHOW)
+
+    def test_invalid_fit_disagreement_tolerance_is_rejected(self):
+        for invalid in (-0.01, 1.01, float("nan"), float("inf")):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ValueError):
+                    ArbitrationRequest(
+                        request_id="request-invalid-tolerance",
+                        candidate_id="candidate-1",
+                        signals=(),
+                        maximum_fit_confidence_disagreement=invalid,
+                    )
+
     def test_invalid_confidence_is_rejected(self):
         with self.assertRaises(ValueError):
             signal("fit", SignalKind.FIT_CONFIDENCE, confidence=1.01)

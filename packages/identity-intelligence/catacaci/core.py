@@ -101,6 +101,7 @@ class ArbitrationRequest:
     minimum_fit_confidence: float = 0.70
     policy_version: str = "1.1.0"
     required_kinds: tuple[SignalKind, ...] = _DEFAULT_REQUIRED_KINDS
+    maximum_fit_confidence_disagreement: float = 0.10
 
     def __post_init__(self) -> None:
         if not isinstance(self.request_id, str) or not self.request_id.strip():
@@ -119,6 +120,13 @@ class ArbitrationRequest:
             raise ValueError("required_kinds must not contain duplicates")
         if not isfinite(self.minimum_fit_confidence) or not 0 <= self.minimum_fit_confidence <= 1:
             raise ValueError("minimum_fit_confidence must be finite and between 0 and 1")
+        if (
+            not isfinite(self.maximum_fit_confidence_disagreement)
+            or not 0 <= self.maximum_fit_confidence_disagreement <= 1
+        ):
+            raise ValueError(
+                "maximum_fit_confidence_disagreement must be finite and between 0 and 1"
+            )
         ids = [signal.signal_id for signal in self.signals]
         if len(ids) != len(set(ids)):
             raise ValueError("signal_id values must be unique within a request")
@@ -246,12 +254,13 @@ def arbitrate(request: ArbitrationRequest) -> ArbitrationResult:
         ], signals)
 
     values = [float(signal.confidence) for signal in fit_signals if signal.confidence is not None]
-    if max(values) - min(values) > 0.10:
+    if max(values) - min(values) > request.maximum_fit_confidence_disagreement:
         return _result(request, DecisionVerdict.REVIEW, [
             ArbitrationReason(
                 "FIT_CONFIDENCE_DISAGREEMENT",
                 signal.signal_id,
-                "Fit-confidence sources disagree by more than 0.10; review is required.",
+                "Fit-confidence sources disagree by more than "
+                f"{request.maximum_fit_confidence_disagreement:.3f}; review is required.",
             )
             for signal in fit_signals
         ], signals)

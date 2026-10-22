@@ -61,6 +61,7 @@ def evaluate_candidate(
     fit_estimate: FitConfidenceEstimate,
     upstream_signals: tuple[DecisionSignal, ...] = (),
     minimum_fit_confidence: float = 0.70,
+    maximum_fit_confidence_disagreement: float = 0.10,
     minimum_alignment_score: float = 0.60,
     policy_version: str = "decision-pipeline-1.0.0",
 ) -> DecisionPipelineResult:
@@ -136,6 +137,7 @@ def evaluate_candidate(
         candidate_id=candidate_id,
         signals=tuple(upstream_signals) + (eepl_signal, npl_signal, usi_signal, fit_signal),
         minimum_fit_confidence=minimum_fit_confidence,
+        maximum_fit_confidence_disagreement=maximum_fit_confidence_disagreement,
         policy_version=policy_version,
     ))
     return DecisionPipelineResult(
