@@ -124,7 +124,7 @@ def build_inventory(root: Path = ROOT) -> dict[str, Any]:
 
 
 def render_inventory(inventory: dict[str, Any]) -> str:
-    return json.dumps(inventory, sort_keys=True, separators=(",", ":")) + chr(10)
+    return json.dumps(inventory, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + chr(10)
 
 
 def main() -> int:
