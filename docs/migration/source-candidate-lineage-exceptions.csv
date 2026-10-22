@@ -1,0 +1,5 @@
+staged_path,approved_reason
+source-candidates/05-cfrp-v6.txt/src/actor/cfrp_actor.py,"Reviewed lifecycle and queue-safety hardening retained in the isolated CFRP V6 candidate; not promoted to canonical runtime."
+source-candidates/05-cfrp-v6.txt/src/core/cfrp_instance.py,"Reviewed snapshot validation and lifecycle hardening retained in the isolated CFRP V6 candidate; persistence adapters remain simulations."
+source-candidates/05-cfrp-v6.txt/src/core/epistemic_invariants.py,"Reviewed finite-value and decay-invariant changes retained in the isolated CFRP V6 candidate; candidate remains non-production."
+source-candidates/05-cfrp-v6.txt/src/core/epistemic_state.py,"Reviewed input-validation and state-copying changes retained in the isolated CFRP V6 candidate; candidate remains non-production."
