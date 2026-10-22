@@ -1,0 +1,39 @@
+name: CFRP candidate contract tests
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "integration-staging/source-candidates/05-cfrp-v6.txt/**"
+      - "tests/cfrp_candidate/**"
+      - ".github/workflows/cfrp-candidate-tests.yml"
+  push:
+    branches: ["fix/cfrp-v6-runtime-safety"]
+    paths:
+      - "integration-staging/source-candidates/05-cfrp-v6.txt/**"
+      - "tests/cfrp_candidate/**"
+      - ".github/workflows/cfrp-candidate-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cfrp-runtime-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install only the candidate's exercised dependency
+        run: python -m pip install "numpy>=1.24,<3"
+      - name: Compile the staged CFRP candidate
+        run: python -m compileall -q integration-staging/source-candidates/05-cfrp-v6.txt
+      - name: Run CFRP runtime contract tests
+        env:
+          PYTHONPATH: integration-staging/source-candidates/05-cfrp-v6.txt
+        run: timeout 60s python -u -m unittest discover -s tests/cfrp_candidate -v
