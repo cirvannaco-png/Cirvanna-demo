@@ -31,7 +31,7 @@ class FCIMetricsTests(unittest.TestCase):
         metrics = compute_calibration_metrics([1.0], [True], bins=10)
         self.assertEqual(metrics.brier_score, 0.0)
         self.assertEqual(metrics.expected_calibration_error, 0.0)
-        self.assertIsNone(metrics.high_confidence_failure_rate)
+        self.assertEqual(metrics.high_confidence_failure_rate, 0.0)
 
     def test_no_high_confidence_predictions_returns_none_not_zero(self):
         metrics = compute_calibration_metrics([0.2, 0.4], [True, False])
