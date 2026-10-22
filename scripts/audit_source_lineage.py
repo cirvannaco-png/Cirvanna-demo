@@ -86,7 +86,7 @@ def _normalise_path(value: str) -> str:
     value = value.strip().strip(chr(96)).strip().replace("\\", "/")
     value = re.sub(r"^(?:#\s*File:|FILE:)\s*", "", value, flags=re.IGNORECASE)
     value = re.sub(r"^(?:#|//|--)\s*", "", value)
-    return value.strip().lstrip("./")
+    return re.sub(r"/+", "/", value.strip().lstrip("./"))
 
 
 def _named_code_blocks(snapshot_text: str) -> dict[str, list[str]]:
