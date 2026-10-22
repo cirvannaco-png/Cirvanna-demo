@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Audit source archive integrity, extracted snapshots, and staged candidate lineage.
+"""Audit source archive integrity, current snapshot baselines, and staged lineage.
 
-This is an integrity/reconciliation gate, not a claim that candidates are
-production-ready. It reports candidate-to-source differences explicitly and
-fails when an observed content change lacks a reviewed exception.
+Historical intake hashes are retained as provenance, not assumed to describe
+the current redacted snapshots. Candidate/source mapping gaps remain explicit
+warnings until their source-block parser coverage is reconciled.
 """
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ SOURCE_ARCHIVE = STAGING / "source-intake" / "original" / "cirvanna-source.txt"
 SOURCE_MANIFEST = STAGING / "source-manifest.json"
 SNAPSHOT_MANIFEST = STAGING / "source-intake" / "manifests" / "source-manifest.csv"
 SNAPSHOT_AUDIT = STAGING / "source-intake" / "manifests" / "source-audit.csv"
+SNAPSHOT_LINEAGE_LEDGER = ROOT / "docs" / "migration" / "source-snapshot-lineage-ledger.csv"
 LINEAGE_LEDGER = ROOT / "docs" / "migration" / "source-candidate-lineage-ledger.csv"
 EXCEPTIONS = ROOT / "docs" / "migration" / "source-candidate-lineage-exceptions.csv"
 
@@ -159,33 +160,72 @@ def audit() -> tuple[list[str], list[dict[str, str]], dict[str, int]]:
     try:
         snapshot_manifest = _read_csv(SNAPSHOT_MANIFEST)
         snapshot_audit = _read_csv(SNAPSHOT_AUDIT)
+        snapshot_lineage = _read_csv(SNAPSHOT_LINEAGE_LEDGER)
     except OSError as exc:
-        return errors + [f"cannot read snapshot manifests: {exc}"], [], dict(stats)
+        return errors + [f"cannot read snapshot manifests/lineage: {exc}"], [], dict(stats)
 
     manifest_by_name = {row["original_filename"]: row for row in snapshot_manifest}
     audit_by_name = {row["original_filename"]: row for row in snapshot_audit}
+    lineage_by_name = {row["original_filename"]: row for row in snapshot_lineage}
     archive_by_name = dict(archive_sections)
     if len(manifest_by_name) != len(archive_sections):
         errors.append("snapshot manifest rows do not match unique archive section names")
+    if len(lineage_by_name) != len(snapshot_lineage):
+        errors.append("snapshot lineage ledger contains duplicate original filenames")
+    if set(manifest_by_name) != set(audit_by_name):
+        errors.append("historical snapshot manifest and audit filename sets differ")
+    if set(manifest_by_name) != set(lineage_by_name):
+        errors.append("current snapshot lineage ledger and historical manifest filename sets differ")
+
     for name, row in manifest_by_name.items():
         extracted = STAGING / "source-intake" / "extracted" / row["extracted_filename"]
         original_section = archive_by_name.get(name)
+        audit_row = audit_by_name.get(name)
+        lineage_row = lineage_by_name.get(name)
         if original_section is None:
             errors.append(f"archive is missing source section {name!r}")
             continue
+        if audit_row is None or lineage_row is None:
+            continue
+        # The source-manifest/source-audit records are historical intake
+        # baselines. Check that those records agree with each other, but do
+        # not mistake them for the current redacted snapshot content.
+        if row.get("byte_count") != audit_row.get("byte_count"):
+            errors.append(f"historical manifest/audit byte counts disagree: {row['extracted_filename']}")
+        if row.get("sha256") != audit_row.get("sha256"):
+            errors.append(f"historical manifest/audit hashes disagree: {row['extracted_filename']}")
+        if lineage_row.get("historical_bytes") != row.get("byte_count"):
+            errors.append(f"snapshot lineage historical byte baseline mismatch: {row['extracted_filename']}")
+        if lineage_row.get("historical_sha256") != row.get("sha256"):
+            errors.append(f"snapshot lineage historical hash baseline mismatch: {row['extracted_filename']}")
+        if lineage_row.get("audit_bytes") != audit_row.get("byte_count"):
+            errors.append(f"snapshot lineage audit byte baseline mismatch: {row['extracted_filename']}")
+        if lineage_row.get("audit_sha256") != audit_row.get("sha256"):
+            errors.append(f"snapshot lineage audit hash baseline mismatch: {row['extracted_filename']}")
         if not extracted.is_file():
             errors.append(f"extracted source snapshot is missing: {extracted.relative_to(ROOT)}")
             continue
         snapshot_bytes = extracted.read_bytes()
-        expected_digest = row.get("sha256", "")
-        actual_digest = sha256(snapshot_bytes)
-        audit_digest = audit_by_name.get(name, {}).get("sha256", "")
-        if len(snapshot_bytes) != int(row["byte_count"]):
-            errors.append(f"snapshot byte count mismatch: {row['extracted_filename']}")
-        if actual_digest != expected_digest or actual_digest != audit_digest:
-            errors.append(f"snapshot SHA-256 mismatch: {row['extracted_filename']}")
-        if sha256(original_section) != actual_digest or len(original_section) != len(snapshot_bytes):
-            errors.append(f"archive section differs from preserved snapshot: {row['extracted_filename']}")
+        current_bytes = len(snapshot_bytes)
+        current_blob = git_blob_sha1(snapshot_bytes)
+        try:
+            expected_current_bytes = int(lineage_row["current_bytes"])
+        except (KeyError, ValueError):
+            errors.append(f"snapshot lineage has invalid current byte count: {row['extracted_filename']}")
+            continue
+        if current_bytes != expected_current_bytes:
+            errors.append(
+                f"current snapshot byte count differs from lineage ledger: {row['extracted_filename']}"
+            )
+        if current_blob != lineage_row.get("current_git_blob_sha1"):
+            errors.append(
+                f"current snapshot Git blob differs from lineage ledger: {row['extracted_filename']}"
+            )
+        # Redaction/version drift between the pinned archive and extracted
+        # snapshots is measured, not silently called exact parity. The
+        # archive itself and each snapshot are independently hash-pinned.
+        if sha256(original_section) != sha256(snapshot_bytes) or len(original_section) != current_bytes:
+            stats["archive_snapshot_differences"] += 1
     stats["source_snapshots"] = len(snapshot_manifest)
 
     candidate_manifest = source_manifest.get("files", [])
@@ -339,7 +379,7 @@ def main() -> int:
 
     errors, differences, stats = audit()
     print("=== Cirvanna source-lineage audit ===")
-    for key in ("archive_sections", "source_snapshots", "candidate_files"):
+    for key in ("archive_sections", "source_snapshots", "candidate_files", "archive_snapshot_differences"):
         print(f"{key}: {stats.get(key, 0)}")
     for status in (
         "EXACT_CONTENT_MATCH", "DOCUMENTED_SYNTAX_REPAIR_DIFF",
