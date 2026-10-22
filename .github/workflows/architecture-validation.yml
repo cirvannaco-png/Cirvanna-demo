@@ -27,6 +27,8 @@ jobs:
           python-version: "3.11"
       - name: Validate ownership and source inventory
         run: python scripts/validate_architecture.py
+      - name: Audit source archive and candidate lineage
+        run: python scripts/audit_source_lineage.py
       - name: Run architecture tests
         run: python -m unittest discover -s tests/architecture -v
       - name: Audit source for credential patterns
