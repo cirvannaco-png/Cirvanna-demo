@@ -84,6 +84,7 @@ def _extract_archive_sections(data: bytes) -> list[tuple[str, bytes]]:
 
 def _normalise_path(value: str) -> str:
     value = value.strip().strip(chr(96)).strip().replace("\\", "/")
+    value = re.sub(r"/+", "/", value)
     value = re.sub(r"^(?:#\s*File:|FILE:)\s*", "", value, flags=re.IGNORECASE)
     value = re.sub(r"^(?:#|//|--)\s*", "", value)
     return re.sub(r"/+", "/", value.strip().lstrip("./"))
