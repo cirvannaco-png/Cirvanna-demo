@@ -30,7 +30,9 @@ MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_IMAGE_PIXELS = 25_000_000
 MAX_PAGE_SIZE = 100
 MAX_MARKETPLACE_CANDIDATES = 1000
-MODEL_ID = os.getenv("CLIP_MODEL_ID", "openai/clip-vit-base-patch32")
+# Immutable reviewed model source. Changing this pin requires a code review and re-evaluation.
+MODEL_ID = "openai/clip-vit-base-patch32"
+PINNED_MODEL_REVISION = "d44250afa9f05af7eca021052567539406661018"
 SHA40 = re.compile(r"^[0-9a-fA-F]{40}$")
 SHA256 = re.compile(r"^[0-9a-fA-F]{64}$")
 SUPPORTED_MIME = {"image/jpeg", "image/png", "image/webp"}
@@ -82,6 +84,8 @@ def _model_configured() -> tuple[bool, str]:
     revision = os.getenv("CLIP_MODEL_REVISION", "").strip()
     if not SHA40.fullmatch(revision):
         return False, "pinned_clip_model_revision_required"
+    if revision != PINNED_MODEL_REVISION:
+        return False, "clip_model_revision_does_not_match_reviewed_pin"
     if not MODEL_ID or "/" not in MODEL_ID:
         return False, "clip_model_id_invalid"
     return True, "configured"
@@ -119,7 +123,9 @@ def _clip():
             from transformers import CLIPModel, CLIPProcessor
 
             revision = os.environ["CLIP_MODEL_REVISION"].strip()
-            model = CLIPModel.from_pretrained(MODEL_ID, revision=revision, trust_remote_code=False)
+            model = CLIPModel.from_pretrained(
+                MODEL_ID, revision=revision, trust_remote_code=False, use_safetensors=True
+            )
             processor = CLIPProcessor.from_pretrained(MODEL_ID, revision=revision, trust_remote_code=False)
             device = "cuda" if torch.cuda.is_available() else "cpu"
             model.to(device)
@@ -487,7 +493,7 @@ def readiness() -> dict[str, Any]:
         "clip_model_configured": clip_configured,
         "clip_model_reason": clip_reason,
         "clip_model_id": MODEL_ID,
-        "clip_model_revision": os.getenv("CLIP_MODEL_REVISION", "") if clip_configured else None,
+        "clip_model_revision": PINNED_MODEL_REVISION if clip_configured else None,
         "clip_model_loaded": _CLIP_MODEL is not None and _CLIP_PROCESSOR is not None,
         "clip_model_startup_error": _MODEL_LOAD_ERRORS.get("clip"),
         "pose_model_configured": pose_configured,
@@ -548,7 +554,7 @@ async def search_by_description(payload: TextSearchRequest) -> dict[str, Any]:
         "candidate_count": len(offers),
         "results": results,
         "catalog_truncated": truncated,
-        "model": {"id": MODEL_ID, "revision": os.getenv("CLIP_MODEL_REVISION")},
+        "model": {"id": MODEL_ID, "revision": PINNED_MODEL_REVISION},
         "scores_are_probabilities": False,
     }
 
