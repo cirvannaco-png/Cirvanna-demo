@@ -86,7 +86,7 @@ async def ready() -> ReadinessResponse:
     consent_configured = _internal_config("CONSENT_API_URL", "CONSENT_API_TOKEN") is not None
     twin_registry_configured = _internal_config("TWIN_REGISTRY_API_URL", "TWIN_REGISTRY_API_TOKEN") is not None
     api_token_configured = len(os.getenv("VIRTUAL_TWIN_API_TOKEN", "").encode("utf-8")) >= 32
-    ready_now = vision_ready and consent_configured and twin_registry_configured and api_token_configured
+    ready_now = vision_ready and consent_configured and api_token_configured
     reason = None
     if not api_token_configured:
         reason = "api_auth_not_configured"
@@ -94,8 +94,6 @@ async def ready() -> ReadinessResponse:
         reason = "vision_worker_not_ready"
     elif not consent_configured:
         reason = "consent_verifier_not_configured"
-    elif not twin_registry_configured:
-        reason = "twin_registry_not_configured"
     result = ReadinessResponse(
         status="ready" if ready_now else "not_ready",
         service=SERVICE_NAME,
@@ -338,7 +336,8 @@ async def capabilities() -> dict[str, object]:
         "fit_prediction": False,
         "ar_rendering": False,
         "click_it_product_reconstruction": False,
-        "click_it_marketplace_search": vision_ready and consent_configured and twin_registry_configured,
+        "click_it_marketplace_search": vision_ready and consent_configured,
+        "click_it_twin_personalization": vision_ready and consent_configured and twin_registry_configured,
         "decision_governance_connected_to_rendering": False,
         "image_persistence": False,
         "display_authorization": "CAL_required_before_candidates_are_shown_or_used_to_purchase",
@@ -529,6 +528,7 @@ async def click_it(
     consent_click_it: Annotated[bool, Form()],
     twin_id: Annotated[str, Form(min_length=3, max_length=128)],
     product_image: Annotated[UploadFile, File()],
+    twin_id: Annotated[str | None, Form(min_length=3, max_length=128)] = None,
     category: Annotated[str | None, Form(max_length=80)] = None,
     limit: Annotated[int, Form(ge=1, le=25)] = 10,
 ):
@@ -540,16 +540,17 @@ async def click_it(
     try:
         if not consent_image_processing or not consent_click_it:
             raise HTTPException(400, detail={"code": "EXPLICIT_CLICK_IT_CONSENT_REQUIRED"})
-        if not twin_id.strip():
-            raise HTTPException(422, detail={"code": "TWIN_ID_REQUIRED"})
         if product_image.content_type not in {"image/jpeg", "image/png", "image/webp"}:
             raise HTTPException(415, detail={"code": "UNSUPPORTED_PRODUCT_IMAGE_TYPE"})
         if product_image.size is not None and product_image.size > MAX_IMAGE_BYTES:
             raise HTTPException(413, detail={"code": "PRODUCT_IMAGE_SIZE_LIMIT_EXCEEDED", "maximum_bytes": MAX_IMAGE_BYTES})
         if _internal_config("VISION_INTELLIGENCE_API_URL", "VISION_INTELLIGENCE_API_TOKEN") is None:
             raise HTTPException(503, detail={"code": "VISION_INFERENCE_NOT_CONFIGURED"})
-        await _verify_consent(subject_id, consent_id, ["image_processing", "click_it"], resource_id=twin_id)
-        await _authorize_twin(subject_id, twin_id)
+        await _verify_consent(
+            subject_id, consent_id, ["image_processing", "click_it"], resource_id=twin_id
+        )
+        if twin_id:
+            await _authorize_twin(subject_id, twin_id)
         content = await product_image.read(MAX_IMAGE_BYTES + 1)
         if not content:
             raise HTTPException(400, detail={"code": "EMPTY_PRODUCT_IMAGE"})
@@ -578,6 +579,7 @@ async def click_it(
         result["decision_status"] = "PENDING_CAL"
         result["decision_notice"] = "Candidates require the canonical CAL decision, NPL hard veto and cultural-identity checks before display or purchase."
         result["twin_id"] = twin_id
+        result["personalization_available"] = bool(twin_id)
         return JSONResponse(content=result, headers={"Cache-Control": "no-store, private"})
     finally:
         await product_image.close()
