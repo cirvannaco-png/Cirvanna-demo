@@ -113,18 +113,21 @@ class GovernanceTransport:
                 "minimum_fit_confidence": 0.70,
                 "minimum_alignment_score": 0.60,
             }
+            freshness = {
+                "npl_loaded_at": now.isoformat(),
+                "cultural_requirements_loaded_at": now.isoformat(),
+                "fit_estimate_generated_at": now.isoformat(),
+                "candidate_attributes_loaded_at": now.isoformat(),
+            }
+            if self.evidence_mode == "stale_source":
+                freshness["npl_loaded_at"] = (now - timedelta(seconds=90)).isoformat()
             return FakeResponse({
                 "request_id": request_id,
                 "subject_id": subject_id,
                 "candidate_id": candidate_id,
                 "issued_at": issued_at.isoformat(),
                 "expires_at": expires_at.isoformat(),
-                "evidence_freshness": {
-                    "npl_loaded_at": now.isoformat(),
-                    "cultural_requirements_loaded_at": now.isoformat(),
-                    "fit_estimate_generated_at": now.isoformat(),
-                    "candidate_attributes_loaded_at": now.isoformat(),
-                },
+                "evidence_freshness": freshness,
                 "decision_request": decision_request,
             })
         if url.endswith("/v1/eligibility/evaluate"):
@@ -210,8 +213,9 @@ def test_block_review_and_candidate_without_stable_id_are_never_returned(monkeyp
     assert "no stable ID product" not in str(result)
 
 
-def test_stale_evidence_is_rejected_before_cal_is_called(monkeypatch):
-    transport = GovernanceTransport(evidence_mode="stale")
+@pytest.mark.parametrize("evidence_mode", ["stale", "stale_source"])
+def test_stale_evidence_is_rejected_before_cal_is_called(monkeypatch, evidence_mode):
+    transport = GovernanceTransport(evidence_mode=evidence_mode)
     configure_gateway(monkeypatch, transport)
 
     result = run_governance("user-42", [
