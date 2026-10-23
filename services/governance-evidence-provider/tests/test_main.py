@@ -64,7 +64,7 @@ def test_assembles_same_candidate_user_and_signed_evidence(client, monkeypatch):
     assert len(decision["npl_evidence_signature"]) == 64
     assert len(decision["cultural_evidence_signature"]) == 64
     assert len(decision["fit_estimate_signature"]) == 64
-    assert set(data["evidence_freshness"]) == {"npl_loaded_at", "cultural_requirements_loaded_at", "fit_estimate_generated_at", "candidate_attributes_loaded_at"}
+    assert set(data["evidence_freshness"]) == {"npl_loaded_at", "cultural_requirements_loaded_at", "fit_estimate_generated_at", "candidate_attributes_loaded_at", "usi_profile_loaded_at", "user_context_loaded_at"}
 
 
 @pytest.mark.parametrize("source,field,value,code", [
