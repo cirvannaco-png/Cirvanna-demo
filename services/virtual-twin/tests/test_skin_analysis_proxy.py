@@ -79,7 +79,7 @@ def test_skin_analysis_requires_explicit_consent(monkeypatch):
     monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "virtual-twin-test-bearer-token-longer-than-thirty-two-bytes")
     response = client.post(
         "/skin-analysis",
-        headers={"Authorization": "Bearer test-only-token"},
+        headers={"Authorization": "Bearer virtual-twin-test-bearer-token-longer-than-thirty-two-bytes"},
         data={"consent": "false"},
         files={"image": ("capture.png", b"image", "image/png")},
     )
@@ -93,7 +93,7 @@ def test_skin_analysis_fails_closed_when_dermalsight_missing(monkeypatch):
     monkeypatch.delenv("DERMALSIGHT_API_TOKEN", raising=False)
     response = client.post(
         "/skin-analysis",
-        headers={"Authorization": "Bearer test-only-token"},
+        headers={"Authorization": "Bearer virtual-twin-test-bearer-token-longer-than-thirty-two-bytes"},
         data={"consent": "true"},
         files={"image": ("capture.png", b"image", "image/png")},
     )
@@ -118,7 +118,7 @@ def test_skin_analysis_forwards_request_to_dermalsight(monkeypatch):
     patch_http_client(monkeypatch)
     response = client.post(
         "/skin-analysis",
-        headers={"Authorization": "Bearer virtual-twin-token"},
+        headers={"Authorization": "Bearer virtual-twin-test-bearer-token-longer-than-thirty-two-bytes"},
         data={"consent": "true"},
         files={"image": ("capture.png", b"image", "image/png")},
     )
@@ -141,7 +141,7 @@ def test_skin_analysis_sanitizes_upstream_unavailability(monkeypatch):
     patch_http_client(monkeypatch)
     response = client.post(
         "/skin-analysis",
-        headers={"Authorization": "Bearer virtual-twin-token"},
+        headers={"Authorization": "Bearer virtual-twin-test-bearer-token-longer-than-thirty-two-bytes"},
         data={"consent": "true"},
         files={"image": ("capture.png", b"image", "image/png")},
     )
@@ -158,7 +158,7 @@ def test_skin_analysis_translates_upstream_timeout(monkeypatch):
     patch_http_client(monkeypatch)
     response = client.post(
         "/skin-analysis",
-        headers={"Authorization": "Bearer virtual-twin-token"},
+        headers={"Authorization": "Bearer virtual-twin-test-bearer-token-longer-than-thirty-two-bytes"},
         data={"consent": "true"},
         files={"image": ("capture.png", b"image", "image/png")},
     )
@@ -185,7 +185,7 @@ def test_skin_analysis_rejects_unsupported_upload_type(monkeypatch):
     monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "virtual-twin-test-bearer-token-longer-than-thirty-two-bytes")
     response = client.post(
         "/skin-analysis",
-        headers={"Authorization": "Bearer test-only-token"},
+        headers={"Authorization": "Bearer virtual-twin-test-bearer-token-longer-than-thirty-two-bytes"},
         data={"consent": "true"},
         files={"image": ("capture.bin", b"data", "application/octet-stream")},
     )
@@ -200,7 +200,7 @@ def test_skin_analysis_rejects_oversized_image_before_forwarding(monkeypatch):
     patch_http_client(monkeypatch)
     response = client.post(
         "/skin-analysis",
-        headers={"Authorization": "Bearer test-only-token"},
+        headers={"Authorization": "Bearer virtual-twin-test-bearer-token-longer-than-thirty-two-bytes"},
         data={"consent": "true"},
         files={"image": ("capture.png", b"four", "image/png")},
     )
