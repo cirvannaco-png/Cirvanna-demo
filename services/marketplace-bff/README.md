@@ -42,3 +42,10 @@ Build the container from repository root:
 Click It stays unavailable until the actual consent-verification service and pinned Vision Intelligence model assets are deployed/configured; an HTML checkbox is not accepted as proof of durable consent. Candidate products remain hidden unless the response is authorized for display by the real CAL decision gateway.
 
 A working proxy does not create a production marketplace by itself. The actual Cirvanna identity provider and token/session flow must be integrated in place of manual test-token entry. Real PostgreSQL migrations, backups/restores and concurrency checks, Stripe test-mode checkout/webhook/reconciliation, shipping/tax policy, refunds/returns, seller payouts and fulfilment, rate limits/alerts, privacy deletion/retention, and live origin/credential smoke tests remain explicit release gates. The marketplace must keep showing account/checkout and AI/try-on features as unavailable until those integrations are verified.
+
+
+## CAL display enforcement — current fail-closed behavior
+
+The BFF currently does **not** have a verified candidate-bound CAL gateway contract that it can call for every product. Accordingly, the public offer endpoint returns `503 CAL_GOVERNANCE_NOT_ENFORCED`, and Xari/Click It responses are stripped of candidate details at the browser boundary and remain `PENDING_CAL`. This intentionally disables product display rather than trusting a retrieval service's `display_authorized` field. It is a containment step, not completion of purchase governance.
+
+To restore display, implement and deploy a trusted server-side gateway that derives the authenticated user, loads current NPL and explicit cultural evidence, validates signed/calibrated fit evidence where required, invokes the decision service for each candidate, and returns only candidate-bound CAL `SHOW` results. BLOCK, REVIEW, missing/stale evidence, timeouts, malformed responses and gateway errors must remain non-displayable. Add live end-to-end tests before removing this guard.
