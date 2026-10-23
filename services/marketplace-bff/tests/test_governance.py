@@ -119,6 +119,12 @@ class GovernanceTransport:
                 "candidate_id": candidate_id,
                 "issued_at": issued_at.isoformat(),
                 "expires_at": expires_at.isoformat(),
+                "evidence_freshness": {
+                    "npl_loaded_at": now.isoformat(),
+                    "cultural_requirements_loaded_at": now.isoformat(),
+                    "fit_estimate_generated_at": now.isoformat(),
+                    "candidate_attributes_loaded_at": now.isoformat(),
+                },
                 "decision_request": decision_request,
             })
         if url.endswith("/v1/eligibility/evaluate"):
