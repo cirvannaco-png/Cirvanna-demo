@@ -80,13 +80,17 @@ def test_click_it_requires_both_consents(client):
 
 def test_click_it_rejects_low_quality_before_loading_model(client, monkeypatch):
     monkeypatch.setattr(main, "_image_embedding", lambda _image: pytest.fail("model must not run"))
+    dark = Image.new("RGB", (240, 320), (0, 0, 0))
+    stream = io.BytesIO()
+    dark.save(stream, format="PNG")
     response = client.post(
         "/v1/click-it/scan",
         headers=auth(),
         data={"consent_image_processing": "true", "consent_click_it": "true"},
-        files={"image": ("dark.png", b"", "image/png")},
+        files={"image": ("dark.png", stream.getvalue(), "image/png")},
     )
-    assert response.status_code in {400, 422}
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "IMAGE_QUALITY_REJECTED"
 
 
 def test_description_search_uses_live_offers_and_never_fabricates_results(client, monkeypatch):
