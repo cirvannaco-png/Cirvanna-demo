@@ -837,7 +837,6 @@ def evaluate_decisions(payload: DecisionRequest) -> DecisionResponse:
         estimate = _fit_estimate(payload.user_id, product_id)
         fit_required_evidence, fit_observed_evidence = _fit_evidence_fields(estimate)
         result = evaluate_candidate(
-            cultural_requirements=cultural_requirements,
             request_id=request_id,
             candidate_id=product_id,
             eepl_policy=eepl_policy,
