@@ -1,59 +1,48 @@
-# Cirvanna Vision Intelligence
+# Vision Intelligence service
 
-**Status:** model-backed inference code and an immutable CLIP model pin are implemented. Runtime deployment, real-weight inference, retrieval accuracy and operational integration remain unverified.
+## Status and release boundary
 
-## What this service does
+This service implements guarded inference APIs for image-to-live-offer retrieval and a partial MediaPipe 3D pose skeleton. It is **not production-validated**. The repository does not prove that the pinned CLIP weights have been downloaded, that a checksummed Pose Landmarker asset is provisioned, or that a CUDA-compatible GPU is attached to a live deployment. Unit tests mock model inference; they do not demonstrate live model quality, throughput, or GPU execution.
 
-- Uses FashionCLIP image/text embeddings to rank current active, approved, in-stock Commerce offers against a product photo or natural-language description.
-- Evaluates capture quality deterministically: valid image format, byte/pixel/dimension bounds, brightness, contrast, sharpness proxy and clipped-pixel fraction.
-- Uses MediaPipe Pose Landmarker to infer normalized 2D and approximate 3D landmarks for a **pose-skeleton Virtual Twin**.
-- Enriches marketplace offer records with canonical Catalog service active product descriptions and attributes in bounded batches.
-- Returns structured, sanitized errors. Submitted photos are decoded in memory and are not written to disk or logged by this service.
+Readiness is deliberately fail-closed. Configure the exact reviewed CLIP revision, the pose model path and SHA-256, a worker token of at least 32 bytes, trusted Commerce/Catalog URLs, and a Catalog read token. The service loads model weights at startup and reports model-load failures via sanitized readiness fields. The Dockerfile is based on CPU-oriented `python:3.12-slim`; it does not install CUDA or prove GPU availability. For GPU deployment, use a separately qualified CUDA base/runtime, compatible NVIDIA driver and pinned PyTorch build, and run a smoke test that asserts `torch.cuda.is_available()` and exercises both image/text embeddings and pose inference.
 
-The Click It image search compares the uploaded image embedding against text/metadata descriptions in CLIP's shared embedding space. It does **not yet compare the photo against every merchant product photograph**, so output is candidate retrieval, not definitive SKU recognition. Similarity values are cosine scores, not calibrated probabilities.
+## Image acceptance criteria (version 1)
 
-The Virtual Twin inference is an approximate pose skeleton, not a body surface mesh. It does not estimate calibrated circumference/fit measurements, produce a photorealistic avatar, or persist a Twin record. These are explicit limitations, not successful results hidden behind placeholders.
+Input contract:
+- JPEG, PNG or WebP only; declared content type and decoded file format must agree with the supported set.
+- At most 10 MiB and 25,000,000 decoded pixels; minimum width and height are each 128 px.
+- Reject empty, malformed, truncated, decompression-bomb, or oversized images before model inference.
+- Decode to RGB and do not persist source image bytes.
 
-## Model lock
+Deterministic capture-quality gate:
+- Mean grayscale intensity must be in [18, 238] on the 0–255 scale.
+- Grayscale standard deviation must be at least 8.0.
+- Laplacian-variance sharpness proxy must be at least 20.0.
+- Fraction of pixels at intensity <=3 or >=252 must not exceed 0.55.
+- Any failed condition returns HTTP 422 with `IMAGE_QUALITY_REJECTED`, stable failure codes, and metrics; model inference must not run.
 
-- Repository: patrickjohncyh/fashion-clip
-- Immutable revision: afacf5e5851d5979ab030e228eab60e2c95a912c
-- CLIP_MODEL_REVISION must be supplied and exactly match this source pin. Any change requires a reviewed code change and renewed evaluation.
-- CLIPModel loading explicitly requires safetensors; mutable branches such as main are rejected.
-- The model hub tags this checkpoint with an MIT license. Its model card describes an English fashion dataset and warns against assuming deployment suitability without studying the intended context; the dataset's commercial/use rights and the checkpoint's representativeness still need review.
-- MediaPipe Pose Landmarker weights are supplied as an external .task file with an exact POSE_LANDMARKER_MODEL_SHA256 checksum. No model weights are committed to this repository.
+These are conservative initial engineering thresholds, not clinically or scientifically validated universal cutoffs. Camera pipelines, image resizing, texture and compression affect them. Calibrate thresholds against a consented, labeled capture set spanning devices, lighting, skin tones, poses, garment types and product photography; publish false-reject/false-accept rates before relaxing them. The sharpness metric is a proxy, not a calibrated focus score.
 
-The upstream FashionCLIP model card says the checkpoint was fine-tuned on an English-language fashion-product dataset and warns that deployment requires context-specific study. Treat this as a controlled prototype until in-domain accuracy, cross-region representativeness, data rights, bias, privacy and commercial-use gates pass. See the [FashionCLIP model card](https://huggingface.co/patrickjohncyh/fashion-clip).
+Pose-specific rejection:
+- Reject if no normalized or world landmarks are returned.
+- Require 33 landmarks in each representation and visibility >=0.45 for both shoulders, both hips, and both ankles.
+- Even accepted landmarks are not calibrated anthropometric measurements. No surface mesh, clothing fit grade, or purchase approval is inferred.
 
-## API
+Retrieval reliability:
+- CLIP cosine similarities are ranking scores, **not probabilities**. The current service does not apply a validated absolute-match threshold or calibrated top-1/top-2 margin because no labeled retrieval evaluation has established one. Therefore results are candidates only; downstream UI must clearly ask the user to confirm the item, and NPL, explicit cultural requirements, and CAL must run before display or action.
+- If embeddings are non-finite/zero-norm, model loading/inference fails, marketplace contracts are malformed, or upstream dependencies are unavailable, return a bounded error rather than fabricated results.
+- Click It currently compares the photographed product embedding with textual offer metadata, not the actual catalog product images. This is approximate cross-modal retrieval, not exact visual duplicate detection.
 
-- GET /health — process liveness only.
-- GET /ready — requires worker authentication configuration, a pinned and loaded CLIP model, an exact-checksummed pose model, and trusted Commerce/Catalog settings.
-- GET /capabilities — exact feature boundaries and model readiness.
-- POST /v1/click-it/scan — in-memory image-quality assessment, image/text similarity and live marketplace-candidate retrieval.
-- POST /v1/search/text — product/garment retrieval from natural-language descriptions.
-- POST /v1/twin/infer — in-memory pose-landmark inference from one still image.
+## Live catalog contracts
 
-All POST routes require an internal bearer token. Never expose VISION_WORKER_TOKEN in browser code. The public-facing adapter must verify durable server-side consent and user/Twin authorization before it invokes this worker. Form consent flags are secondary safeguards, not proof of a stored consent record.
+The service reads `GET {COMMERCE_API_URL}/marketplace/offers?offset=0&limit=100`. Commerce returns `items`, `total`, `offset`, `limit`; offer rows include `variant_id`, `catalog_product_id`, `product_name`, `category`, `options`, `available_stock`. Commerce itself filters inactive offers/variants, unapproved merchants and zero available stock.
 
-## Required environment
+The service enriches canonical product IDs with authenticated `GET {CATALOG_API_URL}/products/batch?ids=<uuid>&ids=<uuid>`, using `CATALOG_API_TOKEN` or `CATALOG_READ_TOKEN`. The catalog response is `{ "items": [ProductOut, ...] }`; active products include `product_id`, `name`, `description`, `category`, `brand`, `attributes`, `image_urls`, and `status`. Unknown/archived catalog products are omitted. The batch limit is 100 UUIDs per request. The adapter fails closed on missing/malformed enrichment rather than silently degrading to title-only search.
 
-- VISION_WORKER_TOKEN: internal bearer secret at least 32 bytes long.
-- CLIP_MODEL_REVISION: exactly afacf5e5851d5979ab030e228eab60e2c95a912c.
-- POSE_LANDMARKER_MODEL_PATH: path to a provisioned MediaPipe Pose Landmarker .task bundle.
-- POSE_LANDMARKER_MODEL_SHA256: exact SHA-256 of that file.
-- COMMERCE_API_URL: trusted HTTPS base URL for Cirvanna Commerce.
-- CATALOG_API_URL and CATALOG_API_TOKEN (or CATALOG_READ_TOKEN): trusted Catalog URL plus read-only token. The service calls GET /products/batch for active descriptions, categories, brands and product attributes.
-- A mounted Hugging Face cache or outbound access to fetch the exact CLIP revision at startup.
+## Required validation before production
 
-Build using services/vision-intelligence/Dockerfile. Keep the service private with bounded concurrency, request-size limits at ingress, per-account rate limits, timeouts, CPU/GPU limits and redacted operational logs. No user images or model weights belong in source control.
-
-## Quality and policy boundaries
-
-- Image-quality guardrails detect clearly unusable captures; they are not trained/calibrated and thresholds need labeled-data validation.
-- Model errors, unreadable images, incomplete body landmarks and missing Catalog metadata fail closed instead of inventing a match.
-- CLIP scores are not probabilities. A high similarity score does not authorize display or purchase.
-- Search candidates must pass NPL hard vetoes, explicit cultural-identity requirements and CAL arbitration before being shown. This worker does not call CAL and cannot mark a result SHOW.
-- Never infer body circumference, skin condition, fit, health status, ethnicity, religion or other sensitive traits from the pose skeleton or marketplace-image embedding.
-
-Before enabling user-facing use, evaluate photo-vs-catalog precision/recall, no-match behavior, duplicate and near-duplicate products, lighting, occlusions, garment categories, body/skin-tone coverage, language performance, end-to-end latency and resource costs using a consented labeled holdout. Confirm license/commercial-use posture and audit data/model retention. Passing mock API tests is not evidence of real inference quality.
+1. Run service unit/contract tests and repository CI.
+2. Run integration tests against the real Commerce and Catalog APIs, including pagination, empty catalog, archived product omission, inventory depletion, upstream timeouts, invalid UUIDs, and malformed responses.
+3. Provision and verify the exact model assets and runtime; record weight hashes, model revisions, device/runtime versions and inference smoke-test output.
+4. Evaluate image-quality thresholds on labeled images and retrieval using top-k recall, precision, score/margin distributions, and subgroup error rates. Do not present a match threshold as confidence until calibrated and independently validated.
+5. Keep durable consent verification, Twin ownership, no-store response headers, and CAL/NPL/cultural hard-veto integration as release gates.
