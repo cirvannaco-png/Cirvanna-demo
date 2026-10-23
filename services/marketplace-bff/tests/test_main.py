@@ -111,16 +111,28 @@ def test_checkout_is_not_forwarded_until_atomic_cal_revalidation_exists(client, 
     assert seen == []
 
 
-def test_readiness_fails_closed_until_both_upstreams_are_ready(client, monkeypatch):
+def test_readiness_requires_catalog_commerce_and_cal_services(client, monkeypatch):
     configure_upstreams(monkeypatch)
-    monkeypatch.delenv("CATALOG_API_TOKEN", raising=False)
     monkeypatch.setattr(main.httpx, "get", lambda *args, **kwargs: FakeResponse({"ready": True}))
+
+    # Catalog and Commerce alone must never make the purchase-governance BFF ready.
+    missing_cal = client.get("/ready")
+    assert missing_cal.status_code == 503
+    assert missing_cal.json()["detail"]["ready"] is False
+    assert missing_cal.json()["detail"]["catalog_ready"] is True
+    assert missing_cal.json()["detail"]["commerce_ready"] is True
+    assert missing_cal.json()["detail"]["governance_evidence_ready"] is False
+    assert missing_cal.json()["detail"]["decision_service_ready"] is False
+
+    monkeypatch.setenv("GOVERNANCE_EVIDENCE_API_URL", "https://evidence.example.test")
+    monkeypatch.setenv("GOVERNANCE_EVIDENCE_API_TOKEN", "evidence-service-token-at-least-thirty-two-bytes")
+    monkeypatch.setenv("DECISION_SERVICE_API_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_SERVICE_TOKEN", "decision-service-token-at-least-thirty-two-bytes")
     ready = client.get("/ready")
     assert ready.status_code == 200
     assert ready.json()["ready"] is True
-    assert ready.json()["catalog_ready"] is True
-    assert ready.json()["catalog_url_configured"] is True
-    assert ready.json()["commerce_ready"] is True
+    assert ready.json()["governance_evidence_ready"] is True
+    assert ready.json()["decision_service_ready"] is True
 
     monkeypatch.setattr(main.httpx, "get", lambda *args, **kwargs: FakeResponse({"ready": False}, status_code=503))
     pending = client.get("/ready")
