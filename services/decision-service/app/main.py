@@ -31,6 +31,7 @@ from catacaci import DecisionSignal, DecisionVerdict, SignalKind, SignalState  #
 from catacaci.pipeline import evaluate_candidate  # noqa: E402
 from eepl import ContextField, EEPLContext, EEPLPolicy  # noqa: E402
 from fci import FitConfidenceEstimate  # noqa: E402
+from cultural_identity import CulturalRequirement, RequirementKind  # noqa: E402
 from npl import NegativePreference, PreferenceSource, TargetType  # noqa: E402
 from usi import StylePreference, USIProfile  # noqa: E402
 
@@ -121,12 +122,24 @@ class FitEvidenceIn(StrictModel):
     upper_bound: float | None = Field(default=None, ge=0, le=1)
     calibration_version: str | None = Field(default=None, max_length=128)
     evidence_ids: list[str] = Field(default_factory=list, max_length=100)
+    required_evidence_fields: list[str] = Field(default_factory=list, max_length=100)
+    observed_evidence_fields: list[str] = Field(default_factory=list, max_length=100)
     interval_level: float = Field(default=0.95, gt=0, lt=1)
+
+
+class CulturalRequirementIn(StrictModel):
+    requirement_id: str = Field(min_length=1, max_length=128)
+    declaration_id: str = Field(min_length=1, max_length=128)
+    user_id: str = Field(min_length=1, max_length=128)
+    attribute: str = Field(min_length=1, max_length=160)
+    kind: Literal["required_attribute", "forbidden_attribute"]
+    hard: bool = True
+    active: bool = True
 
 
 class UpstreamSignalIn(StrictModel):
     signal_id: str = Field(min_length=1, max_length=200)
-    kind: Literal["safety", "legal_eligibility", "user_hard_constraint", "cultural_requirement", "other"]
+    kind: Literal["safety", "legal_eligibility", "user_hard_constraint", "other"]
     state: Literal["pass", "block", "unknown"]
     reason_code: str = Field(min_length=1, max_length=160)
     explanation: str = Field(min_length=1, max_length=1000)
@@ -145,6 +158,7 @@ class EligibilityRequest(StrictModel):
     candidate_attributes: list[str] = Field(max_length=250)
     candidate_attributes_complete: bool
     negative_preferences: list[NegativePreferenceIn] = Field(default_factory=list, max_length=500)
+    cultural_requirements: list[CulturalRequirementIn] = Field(default_factory=list, max_length=250)
     fit_estimate: FitEvidenceIn
     fit_estimate_signature: str = Field(min_length=64, max_length=128)
     upstream_signals: list[UpstreamSignalIn] = Field(default_factory=list, max_length=64)
@@ -184,6 +198,20 @@ def _result_json(result, payload: "EligibilityRequest") -> dict:
             "npl": {"blocked": result.npl.blocked, "reason_code": result.npl.reason_code,
                 "hard_veto_preference_ids": list(result.npl.hard_veto_preference_ids),
                 "soft_negative_preference_ids": list(result.npl.soft_negative_preference_ids)},
+            "cultural_identity": {
+                "verdict": result.cultural_identity.verdict.value,
+                "reason_codes": list(result.cultural_identity.reason_codes),
+                "hard_conflict_ids": list(result.cultural_identity.hard_conflict_ids),
+                "soft_conflict_ids": list(result.cultural_identity.soft_conflict_ids),
+            },
+            "confidence": {
+                "status": result.confidence_assessment.status.value,
+                "coverage_ratio": result.confidence_assessment.coverage_ratio,
+                "required_fields": list(result.confidence_assessment.required_fields),
+                "observed_fields": list(result.confidence_assessment.observed_fields),
+                "missing_fields": list(result.confidence_assessment.missing_fields),
+                "reason_code": result.confidence_assessment.reason_code,
+            },
             "usi": {"verdict": result.usi.verdict.value, "alignment_score": result.usi.alignment_score,
                 "reason_code": result.usi.reason_code, "matched_preference_ids": list(result.usi.matched_preference_ids),
                 "unmatched_preference_ids": list(result.usi.unmatched_preference_ids)},
@@ -274,6 +302,15 @@ def evaluate_eligibility(payload: EligibilityRequest) -> dict:
             calibration_version=payload.fit_estimate.calibration_version,
             evidence_ids=tuple(payload.fit_estimate.evidence_ids), interval_level=payload.fit_estimate.interval_level,
         )
+        cultural_requirements = tuple(CulturalRequirement(
+            requirement_id=item.requirement_id,
+            declaration_id=item.declaration_id,
+            user_id=item.user_id,
+            attribute=item.attribute,
+            kind=RequirementKind(item.kind),
+            hard=item.hard,
+            active=item.active,
+        ) for item in payload.cultural_requirements)
         signals = tuple(DecisionSignal(
             signal_id=item.signal_id, kind=SignalKind(item.kind), state=SignalState(item.state),
             reason_code=item.reason_code, explanation=item.explanation, required=item.required,
@@ -285,6 +322,9 @@ def evaluate_eligibility(payload: EligibilityRequest) -> dict:
             candidate_attributes=tuple(payload.candidate_attributes),
             candidate_attributes_complete=payload.candidate_attributes_complete,
             negative_preferences=negative, fit_estimate=fit, upstream_signals=signals,
+            cultural_requirements=cultural_requirements,
+            fit_required_evidence=tuple(payload.fit_estimate.required_evidence_fields),
+            fit_observed_evidence=tuple(payload.fit_estimate.observed_evidence_fields),
             minimum_fit_confidence=payload.minimum_fit_confidence,
             minimum_alignment_score=payload.minimum_alignment_score, policy_version=payload.policy_version,
         )
