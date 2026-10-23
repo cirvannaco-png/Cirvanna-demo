@@ -31,8 +31,8 @@ MAX_IMAGE_PIXELS = 25_000_000
 MAX_PAGE_SIZE = 100
 MAX_MARKETPLACE_CANDIDATES = 1000
 # Immutable reviewed model source. Changing this pin requires a code review and re-evaluation.
-MODEL_ID = "openai/clip-vit-base-patch32"
-PINNED_MODEL_REVISION = "d44250afa9f05af7eca021052567539406661018"
+MODEL_ID = "patrickjohncyh/fashion-clip"
+PINNED_MODEL_REVISION = "afacf5e5851d5979ab030e228eab60e2c95a912c"
 SHA40 = re.compile(r"^[0-9a-fA-F]{40}$")
 SHA256 = re.compile(r"^[0-9a-fA-F]{64}$")
 SUPPORTED_MIME = {"image/jpeg", "image/png", "image/webp"}
