@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import hmac
 import os
+import httpx
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -40,6 +42,75 @@ def require_api_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+class MarketplaceSearchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    query: str = Field(min_length=3, max_length=1000)
+    category: str | None = Field(default=None, min_length=1, max_length=80)
+    limit: int = Field(default=10, ge=1, le=25)
+
+    @property
+    def normalized_query(self) -> str:
+        return " ".join(self.query.split()).strip()
+
+
+def _marketplace_search_config() -> tuple[str, str] | None:
+    raw = os.getenv("VISION_INTELLIGENCE_API_URL", "").strip().rstrip("/")
+    token = os.getenv("VISION_INTELLIGENCE_API_TOKEN", "").strip()
+    if not raw or len(token.encode("utf-8")) < 32:
+        return None
+    parts = urlsplit(raw)
+    host = (parts.hostname or "").lower()
+    local = host in {"localhost", "127.0.0.1", "::1"}
+    if (
+        not host or parts.username is not None or parts.password is not None
+        or parts.query or parts.fragment
+        or (parts.scheme != "https" and not (parts.scheme == "http" and local))
+    ):
+        return None
+    return raw, token
+
+
+async def _execute_marketplace_search(payload: MarketplaceSearchRequest) -> dict[str, object]:
+    config = _marketplace_search_config()
+    if config is None:
+        raise HTTPException(503, detail={"code": "MARKETPLACE_SEARCH_NOT_CONFIGURED"})
+    base, token = config
+    body: dict[str, object] = {"query": payload.normalized_query, "limit": payload.limit}
+    if payload.category and payload.category.strip():
+        body["category"] = payload.category.strip()
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(12.0, connect=2.0), trust_env=False, follow_redirects=False
+        ) as client:
+            response = await client.post(
+                base + "/v1/search/text",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json=body,
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "MARKETPLACE_SEARCH_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "MARKETPLACE_SEARCH_UNAVAILABLE"}) from exc
+    if response.status_code != 200:
+        if response.status_code in {400, 413, 415, 422}:
+            raise HTTPException(response.status_code, detail={"code": "MARKETPLACE_SEARCH_REQUEST_REJECTED"})
+        if response.status_code in {502, 503, 504}:
+            raise HTTPException(503, detail={"code": "MARKETPLACE_SEARCH_UNAVAILABLE"})
+        raise HTTPException(502, detail={"code": "MARKETPLACE_SEARCH_FAILED"})
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "MARKETPLACE_SEARCH_INVALID_RESPONSE"}) from exc
+    if (
+        not isinstance(result, dict)
+        or result.get("status") != "complete"
+        or not isinstance(result.get("results"), list)
+        or not isinstance(result.get("candidate_count"), int)
+    ):
+        raise HTTPException(502, detail={"code": "MARKETPLACE_SEARCH_INVALID_RESPONSE"})
+    return result
+
+
 class RouteRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     request_id: str = Field(min_length=3, max_length=128)
@@ -56,11 +127,13 @@ def health() -> dict[str, str]:
 @app.get("/ready", tags=["operations"])
 def readiness() -> dict[str, object]:
     token_configured = len(os.getenv("XARI_API_TOKEN", "").encode("utf-8")) >= 32
+    search_configured = _marketplace_search_config() is not None
     result = {
         "status": "ready" if token_configured else "not_ready",
         "service": SERVICE,
         "api_authentication_configured": token_configured,
-        "execution_adapters_enabled": False,
+        "marketplace_search_adapter_configured": search_configured,
+        "execution_adapters_enabled": search_configured,
         "ready": token_configured,
     }
     if not token_configured:
@@ -74,7 +147,14 @@ def capabilities() -> dict[str, object]:
         "contract_version": "1.0.0",
         "canonical_name": "Xari",
         "legacy_names": ["Tari", "Xyra"],
-        "execution_enabled": False,
+        "execution_enabled": _marketplace_search_config() is not None,
+        "marketplace_description_search": {
+            "implemented": True,
+            "configured": _marketplace_search_config() is not None,
+            "endpoint": "POST /v1/marketplace/search",
+            "returns_candidate_results_only": True,
+            "cal_authorization_required_before_display": True,
+        },
         "capabilities": {
             route.intent: {
                 "required_consents": list(route.required_consents),
@@ -107,3 +187,31 @@ def route(request: RouteRequest) -> dict[str, object]:
             "This endpoint plans routing only; it does not execute or claim completion."
         ),
     }
+
+@app.post(
+    "/v1/marketplace/search",
+    tags=["marketplace"],
+    dependencies=[Depends(require_api_token)],
+)
+async def marketplace_search(request: MarketplaceSearchRequest) -> dict[str, object]:
+    """Search active marketplace candidates using a natural-language description.
+
+    Similarity ranks are not probabilities, and this endpoint is not CAL approval.
+    Returned candidates must pass NPL/cultural constraints and CAL before display.
+    """
+    result = await _execute_marketplace_search(request)
+    candidates = result.pop("results", [])
+    return {
+        "status": "complete",
+        "query": request.normalized_query,
+        "candidate_count": result.get("candidate_count", len(candidates)),
+        "candidates": candidates,
+        "catalog_truncated": result.get("catalog_truncated", False),
+        "model": result.get("model"),
+        "scores_are_probabilities": False,
+        "display_authorized": False,
+        "decision_status": "PENDING_CAL",
+        "decision_notice": "Search candidates require NPL hard-veto, cultural-identity and CAL checks before display or purchase.",
+        "provenance": "live_Cirvanna_marketplace_search",
+    }
+
