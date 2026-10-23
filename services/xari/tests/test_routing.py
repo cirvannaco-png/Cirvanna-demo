@@ -55,6 +55,16 @@ def test_health_is_liveness_and_capabilities_are_honest():
     assert data["legacy_names"] == ["Tari", "Xyra"]
     assert data["execution_enabled"] is False
 
+def test_unknown_consent_field_is_a_client_error_not_a_server_error(monkeypatch):
+    monkeypatch.setenv("XARI_API_TOKEN", TOKEN)
+    response = client.post(
+        "/v1/route",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json={"request_id": "req-2", "intent": "wardrobe", "consents": {"infer_culture": True}},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "INVALID_ROUTE_REQUEST"
+
 def test_routes_require_auth_and_do_not_claim_success(monkeypatch):
     monkeypatch.setenv("XARI_API_TOKEN", TOKEN)
     no_auth = client.post("/v1/route", json={"request_id": "req-1", "intent": "marketplace_search"})
