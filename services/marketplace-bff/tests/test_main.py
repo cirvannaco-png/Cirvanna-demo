@@ -38,24 +38,14 @@ def test_page_bootstraps_same_origin_live_offers_not_demo_data(client):
     assert response.headers["referrer-policy"] == "no-referrer"
 
 
-def test_public_offers_are_proxied_without_exposing_catalog_credentials(client, monkeypatch):
+def test_public_offers_fail_closed_until_cal_governance_is_wired(client, monkeypatch):
     configure_upstreams(monkeypatch)
-    seen = {}
-
-    def fake_get(url, **kwargs):
-        seen["url"] = url
-        seen.update(kwargs)
-        return FakeResponse({"items": [{"variant_id": "v1"}], "total": 1, "offset": 0, "limit": 20})
-
-    monkeypatch.setattr(main.httpx, "get", fake_get)
+    calls = []
+    monkeypatch.setattr(main.httpx, "get", lambda *args, **kwargs: calls.append((args, kwargs)))
     response = client.get("/api/commerce/marketplace/offers?q=linen&category=Fashion&offset=20&limit=10")
-    assert response.status_code == 200
-    assert response.json()["total"] == 1
-    assert seen["url"] == "https://commerce.example.test/marketplace/offers"
-    assert seen["params"] == {"offset": 20, "limit": 10, "q": "linen", "category": "Fashion"}
-    assert "Authorization" not in seen["headers"]
-    assert "catalog-server-only-test-token" not in response.text
-
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "CAL_GOVERNANCE_NOT_ENFORCED"
+    assert calls == []
 
 def test_account_proxy_requires_bearer_and_blocks_admin_routes(client, monkeypatch):
     configure_upstreams(monkeypatch)
@@ -156,17 +146,21 @@ def test_description_search_forwards_to_xari_and_keeps_candidates_pending_cal(cl
         "query": "green linen dress",
         "candidate_count": 2,
         "candidates": [{"variant_id": "offer-1", "product_name": "green dress"}],
-        "display_authorized": False,
-        "decision_status": "PENDING_CAL",
+        "display_authorized": True,
+        "decision_status": "SHOW",
         "scores_are_probabilities": False,
     })])
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.post("/api/vision/marketplace-search", json={"query": " green   linen dress ", "limit": 5})
     assert response.status_code == 200, response.text
     data = response.json()
-    assert data["candidate_count"] == 2
+    assert data["candidate_count"] == 0
+    assert data["candidates"] == []
     assert data["display_authorized"] is False
     assert data["decision_status"] == "PENDING_CAL"
+    assert data["governance_status"] == "CAL_GATE_NOT_CONNECTED"
+    assert "offer-1" not in response.text
+    assert "green dress" not in response.text
     assert fake.calls[0][1] == "https://xari.example.test/v1/marketplace/search"
     assert fake.calls[0][2]["json"]["query"] == "green linen dress"
     assert "Authorization" not in response.text
@@ -196,8 +190,9 @@ def test_click_it_uses_verified_commerce_subject_and_returns_only_pending_candid
             "status": "complete",
             "candidates": [{"variant_id": "variant-3", "product_name": "linen shirt"}],
             "candidate_count": 1,
-            "display_authorized": False,
-            "decision_status": "PENDING_CAL",
+            "display_authorized": True,
+            "decision_status": "SHOW",
+            "candidates": [{"variant_id": "variant-3", "product_name": "linen shirt"}],
             "image_persisted": False,
         }),
     ])
@@ -215,7 +210,11 @@ def test_click_it_uses_verified_commerce_subject_and_returns_only_pending_candid
     assert response.status_code == 200, response.text
     assert response.headers["cache-control"] == "no-store, private"
     assert response.json()["display_authorized"] is False
-    assert response.json()["candidates"][0]["variant_id"] == "variant-3"
+    assert response.json()["candidates"] == []
+    assert response.json()["decision_status"] == "PENDING_CAL"
+    assert response.json()["governance_status"] == "CAL_GATE_NOT_CONNECTED"
+    assert "variant-3" not in response.text
+    assert "linen shirt" not in response.text
     assert len(fake.calls) == 2
     assert fake.calls[0][1] == "https://commerce.example.test/me"
     assert fake.calls[1][1] == "https://virtual-twin.example.test/click-it"
