@@ -19,7 +19,7 @@ from cultural_identity import (
     evaluate as evaluate_cultural_identity,
 )
 from eepl import EEPLContext, EEPLPolicy, EEPLResult, GateVerdict, evaluate as evaluate_eepl
-from fci import FitConfidenceEstimate
+from fci import ConfidenceAssessment, FitConfidenceEstimate, assess_fit_confidence
 from npl import NegativePreference, NPLDecision, evaluate as evaluate_npl
 from usi import USIProfile, USIResult, evaluate as evaluate_usi
 
@@ -45,6 +45,7 @@ class DecisionPipelineResult:
     eepl: EEPLResult
     npl: NPLDecision
     cultural_identity: CulturalIdentityResult
+    confidence_assessment: ConfidenceAssessment
     usi: USIResult
     fit_estimate: FitConfidenceEstimate
     arbitration: ArbitrationResult
@@ -71,6 +72,9 @@ def evaluate_candidate(
     negative_preferences: tuple[NegativePreference, ...],
     fit_estimate: FitConfidenceEstimate,
     cultural_requirements: tuple[CulturalRequirement, ...] = (),
+    fit_required_evidence: tuple[str, ...] = (),
+    fit_observed_evidence: tuple[str, ...] = (),
+    minimum_fit_evidence_coverage: float = 1.0,
     upstream_signals: tuple[DecisionSignal, ...] = (),
     minimum_fit_confidence: float = 0.70,
     maximum_fit_confidence_disagreement: float = 0.10,
@@ -172,7 +176,13 @@ def evaluate_candidate(
         minimum_alignment_score=minimum_alignment_score,
     )
     usi_signal = usi_result.to_cal_signal()
-    fit_signal = fit_estimate.to_cal_signal()
+    confidence_assessment = assess_fit_confidence(
+        fit_estimate,
+        required_fields=fit_required_evidence,
+        observed_fields=fit_observed_evidence,
+        minimum_coverage=minimum_fit_evidence_coverage,
+    )
+    fit_signal = confidence_assessment.to_cal_signal()
 
     arbitration = arbitrate(ArbitrationRequest(
         request_id=request_id,
@@ -185,5 +195,6 @@ def evaluate_candidate(
     return DecisionPipelineResult(
         contract_version=CONTRACT_VERSION, eepl=eepl_result, npl=npl_decision,
         cultural_identity=cultural_result,
+        confidence_assessment=confidence_assessment,
         usi=usi_result, fit_estimate=fit_estimate, arbitration=arbitration,
     )
