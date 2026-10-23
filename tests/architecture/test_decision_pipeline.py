@@ -16,7 +16,7 @@ from catacaci import DecisionSignal, DecisionVerdict, SignalKind, SignalState  #
 from catacaci.pipeline import evaluate_candidate  # noqa: E402
 from cultural_identity import CulturalRequirement, RequirementKind, RequirementVerdict  # noqa: E402
 from eepl import EEPLContext, EEPLPolicy  # noqa: E402
-from fci import FitConfidenceEstimate  # noqa: E402
+from fci import ConfidenceStatus, FitConfidenceEstimate  # noqa: E402
 from npl import NegativePreference, PreferenceSource, TargetType  # noqa: E402
 from usi import StylePreference, USIProfile  # noqa: E402
 
@@ -60,6 +60,8 @@ def inputs(**overrides):
         "candidate_attributes_complete": True,
         "negative_preferences": (),
         "fit_estimate": fit(),
+        "fit_required_evidence": ("body_measurements", "garment_size_chart", "garment_geometry"),
+        "fit_observed_evidence": ("body_measurements", "garment_size_chart", "garment_geometry"),
         "upstream_signals": (
             gate("safety", SignalKind.SAFETY),
             gate("legal", SignalKind.LEGAL_ELIGIBILITY),
@@ -76,6 +78,8 @@ class DecisionPipelineIntegrationTests(unittest.TestCase):
         self.assertEqual(result.eepl.verdict.value, "pass")
         self.assertFalse(result.npl.blocked)
         self.assertEqual(result.cultural_identity.verdict, RequirementVerdict.PASS)
+        self.assertEqual(result.confidence_assessment.status, ConfidenceStatus.READY)
+        self.assertEqual(result.confidence_assessment.coverage_ratio, 1.0)
         self.assertEqual(result.usi.verdict.value, "pass")
         self.assertEqual(result.arbitration.verdict, DecisionVerdict.SHOW)
         self.assertTrue(result.may_display)
@@ -130,6 +134,28 @@ class DecisionPipelineIntegrationTests(unittest.TestCase):
             evaluate_candidate(**inputs(cultural_requirements=(requirement,)))
 
     def test_callers_cannot_inject_cultural_approval_signal(self):
+        with self.assertRaises(ValueError):
+            evaluate_candidate(**inputs(upstream_signals=(
+                gate("safety", SignalKind.SAFETY),
+                gate("legal", SignalKind.LEGAL_ELIGIBILITY),
+                gate("user-hard", SignalKind.USER_HARD_CONSTRAINT),
+                gate("spoofed-culture", SignalKind.CULTURAL_REQUIREMENT),
+            )))
+
+
+    def test_missing_required_fit_evidence_forces_review(self):
+        result = evaluate_candidate(**inputs(fit_observed_evidence=("body_measurements",)))
+        self.assertEqual(result.confidence_assessment.status, ConfidenceStatus.INSUFFICIENT_EVIDENCE)
+        self.assertIn("garment_size_chart", result.confidence_assessment.missing_fields)
+        self.assertEqual(result.arbitration.verdict, DecisionVerdict.REVIEW)
+        self.assertFalse(result.may_display)
+
+    def test_no_declared_fit_evidence_requirements_forces_review(self):
+        result = evaluate_candidate(**inputs(fit_required_evidence=(), fit_observed_evidence=()))
+        self.assertEqual(result.confidence_assessment.status, ConfidenceStatus.INSUFFICIENT_EVIDENCE)
+        self.assertEqual(result.arbitration.verdict, DecisionVerdict.REVIEW)
+
+    def test_spoofed_cultural_signal_is_rejected(self):
         with self.assertRaises(ValueError):
             evaluate_candidate(**inputs(upstream_signals=(
                 gate("safety", SignalKind.SAFETY),
