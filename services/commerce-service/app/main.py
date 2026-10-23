@@ -569,6 +569,7 @@ class Readiness(BaseModel):
     catalog_configured: bool
     payment_configured: bool
     cal_gateway_configured: bool
+    cal_gateway_ready: bool
     migrations_required: bool
     migrations_applied: bool
     schema_revision: str | None
@@ -795,6 +796,7 @@ def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
     cal_host = (cal_parts.hostname or "").lower()
     cal_local = cal_host in {"localhost", "127.0.0.1", "::1"}
     cal_ok = bool(cal_host and len(cal_token.encode("utf-8")) >= 32 and cal_parts.username is None and cal_parts.password is None and not cal_parts.query and not cal_parts.fragment and (cal_parts.scheme == "https" or (cal_parts.scheme == "http" and cal_local)))
+    cal_ready = _cal_gateway_ready(cal_url, cal_token) if cal_ok else False
     payment_ok = StripeGateway().ready
     migrations_applied = schema_revision == EXPECTED_SCHEMA_REVISION
     ready = (
@@ -804,12 +806,13 @@ def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
         and catalog_ok
         and payment_ok
         and cal_ok
+        and cal_ready
         and (not migrations_required or migrations_applied)
     )
     result = Readiness(status="ready" if ready else "not_ready", service=SERVICE,
         database_connected=connected, schema_present=schema_present,
         authentication_configured=auth_ok, authentication_mode=_commerce_auth_mode(),
-        catalog_configured=catalog_ok, payment_configured=payment_ok, cal_gateway_configured=cal_ok, migrations_required=migrations_required,
+        catalog_configured=catalog_ok, payment_configured=payment_ok, cal_gateway_configured=cal_ok, cal_gateway_ready=cal_ready, migrations_required=migrations_required,
         migrations_applied=migrations_applied, schema_revision=schema_revision, ready=ready)
     if not ready:
         raise HTTPException(503, detail=result.model_dump())
@@ -1070,6 +1073,18 @@ def remove_cart_item(variant_id: uuid.UUID, actor: Annotated[Actor, Depends(requ
     cart.version, cart.updated_at = cart.version + 1, now()
     db.commit()
     return cart_json(db, cart)
+
+
+def _cal_gateway_ready(raw: str, token: str) -> bool:
+    try:
+        with httpx.Client(timeout=httpx.Timeout(3.0, connect=1.5), trust_env=False, follow_redirects=False) as client:
+            response = client.get(raw.rstrip("/") + "/ready", headers={"Authorization": "Bearer " + token, "Accept": "application/json"})
+        if response.status_code != 200:
+            return False
+        data = response.json()
+        return isinstance(data, dict) and data.get("ready") is True
+    except (httpx.HTTPError, ValueError):
+        return False
 
 
 def _authorize_cal_candidate(user_id: str, candidate_id: str) -> dict[str, Any]:
