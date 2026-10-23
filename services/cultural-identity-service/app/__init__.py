@@ -1,0 +1,1 @@
+"""Cultural declaration service."""
