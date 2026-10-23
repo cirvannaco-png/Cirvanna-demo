@@ -28,7 +28,7 @@ def request_payload():
 
 def valid_source(source: str, payload: dict) -> dict:
     if source == "CATALOG_API_URL":
-        return {"product_id": CANDIDATE, "status": "active", "name": "Linen Shirt", "category": "tops", "brand": "Test Brand", "attributes": {"sleeve_length": "long", "material": "linen"}}
+        return {"product_id": CANDIDATE, "status": "active", "attributes_complete": True, "name": "Linen Shirt", "category": "tops", "brand": "Test Brand", "attributes": {"sleeve_length": "long", "material": "linen"}}
     if source == "NPL_SERVICE_URL":
         return {"request_id": payload["request_id"], "user_id": USER, "candidate_id": CANDIDATE,
                 "negative_preferences": [], "npl_evidence_signature": "a" * 64, "blocked": False}
