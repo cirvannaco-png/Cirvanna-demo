@@ -32,7 +32,7 @@ from catacaci.pipeline import evaluate_candidate  # noqa: E402
 from eepl import ContextField, EEPLContext, EEPLPolicy  # noqa: E402
 from fci import FitConfidenceEstimate  # noqa: E402
 from cultural_identity import CulturalRequirement, RequirementKind  # noqa: E402
-from npl import NegativePreference, PreferenceSource, TargetType  # noqa: E402
+from npl import NegativePreference, PreferenceSource, TargetType, canonical_npl_evidence_payload  # noqa: E402
 from usi import StylePreference, USIProfile  # noqa: E402
 
 
@@ -161,6 +161,7 @@ class EligibilityRequest(StrictModel):
     cultural_requirements: list[CulturalRequirementIn] = Field(default_factory=list, max_length=250)
     fit_estimate: FitEvidenceIn
     fit_estimate_signature: str = Field(min_length=64, max_length=128)
+    npl_evidence_signature: str = Field(min_length=64, max_length=128)
     upstream_signals: list[UpstreamSignalIn] = Field(default_factory=list, max_length=64)
     minimum_fit_confidence: float = Field(default=0.70, ge=0, le=1)
     minimum_alignment_score: float = Field(default=0.60, ge=0, le=1)
@@ -176,6 +177,24 @@ def verify_fit_signature(fit: FitEvidenceIn, signature: str) -> None:
     expected = hmac.new(secret.encode("utf-8"), canonical_fit_payload(fit), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, signature.lower()):
         raise HTTPException(401, detail={"code": "UNTRUSTED_FIT_EVIDENCE"})
+
+
+def verify_npl_signature(payload: "EligibilityRequest") -> None:
+    """Verify the trusted NPL provider's signature over the exact decision context."""
+    secret = _required_env("NPL_EVIDENCE_HMAC_SECRET")
+    try:
+        canonical = canonical_npl_evidence_payload(
+            payload.request_id,
+            payload.context.user_id,
+            payload.candidate_id,
+            payload.candidate_attributes,
+            payload.negative_preferences,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, detail={"code": "INVALID_NPL_EVIDENCE"}) from exc
+    expected = hmac.new(secret.encode("utf-8"), canonical, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, payload.npl_evidence_signature.lower()):
+        raise HTTPException(401, detail={"code": "UNTRUSTED_NPL_EVIDENCE"})
 
 
 def _result_json(result, payload: "EligibilityRequest") -> dict:
@@ -240,9 +259,11 @@ def health() -> dict[str, str]:
 def readiness() -> dict:
     internal_configured = len(os.getenv("DECISION_SERVICE_TOKEN", "").encode("utf-8")) >= 32
     fit_key_configured = len(os.getenv("FCI_EVIDENCE_HMAC_SECRET", "").encode("utf-8")) >= 32
-    ready = internal_configured and fit_key_configured
+    npl_key_configured = len(os.getenv("NPL_EVIDENCE_HMAC_SECRET", "").encode("utf-8")) >= 32
+    ready = internal_configured and fit_key_configured and npl_key_configured
     response = {"status": "ready" if ready else "not_ready", "service": SERVICE,
         "internal_auth_configured": internal_configured, "trusted_fit_evidence_configured": fit_key_configured,
+        "trusted_npl_evidence_configured": npl_key_configured,
         "fci_prediction_model_available": False, "ready": ready}
     if not ready:
         raise HTTPException(503, detail=response)
@@ -254,7 +275,8 @@ def capabilities() -> dict:
     return {"service": SERVICE, "eepl_policy_evaluation": True, "npl_hard_veto": True,
         "usi_explicit_preference_alignment": True, "fci_calibrated_evidence_contract": True,
         "catacaci_cal_arbitration": True, "decision_explanations": True,
-        "fci_prediction_model_available": False, "persisted_user_preference_store": False,
+        "fci_prediction_model_available": False, "signed_npl_evidence_required": True,
+        "persisted_user_preference_store": False,
         "decision_audit_persistence": False, "click_it_reconstruction": False,
         "virtual_twin_generation": False, "virtual_try_on": False}
 
@@ -264,6 +286,7 @@ def evaluate_eligibility(payload: EligibilityRequest) -> dict:
     # The fit provider signs the canonical estimate object with a separate secret.
     # API clients cannot elevate an untrusted self-asserted confidence to a CAL pass.
     verify_fit_signature(payload.fit_estimate, payload.fit_estimate_signature)
+    verify_npl_signature(payload)
     try:
         policy = EEPLPolicy(
             policy_id=payload.eepl_policy.policy_id,
