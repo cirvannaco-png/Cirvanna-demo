@@ -148,6 +148,13 @@ def test_show_requires_all_required_gates_and_a_calibrated_fit_result(client, mo
     monkeypatch.setattr(main, "fetch_product", lambda _: product())
     monkeypatch.setattr(main, "_safety_signal", pass_safety)
     monkeypatch.setattr(main, "_fit_estimate", calibrated_fit)
+    monkeypatch.setattr(
+        main, "_fit_evidence_fields",
+        lambda _estimate: (
+            ("body_measurements", "garment_size_chart", "garment_geometry"),
+            ("body_measurements", "garment_size_chart", "garment_geometry"),
+        ),
+    )
     response = client.post("/v1/decisions", json=request_body(), headers=auth_headers())
 
     assert response.status_code == 200
