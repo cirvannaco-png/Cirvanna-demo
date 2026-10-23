@@ -24,7 +24,7 @@
 | Wardrobe | Domain model and lifecycle contract; authenticated SQLAlchemy API; PostgreSQL migration; owner-scoped CRUD; version-checked transitions; explicit image-storage consent; durable asset-deletion outbox; CI tests. | Deployed PostgreSQL integration/restore, authenticated identity binding at ingress, live object-storage deletion worker and retry/DLQ testing, catalog contract and end-to-end deletion evidence. |
 | Click It | Virtual Twin API reports product reconstruction unavailable. | Validated image-to-product reconstruction adapter, consent-aware inputs, output validation, latency/quality benchmark and safe no-result behavior. |
 | Confidence engine / FCI | Fit estimate contract, uncertainty bounds, evidence provenance, Brier/ECE offline metrics. | Required-evidence coverage gate, calibrated predictor, representative held-out labels, interval coverage and subgroup/bias validation. |
-| Cultural identity | Explicit-declaration policy kernel and tests. Gateway has a separate optional adapter. | Canonical package pipeline integration, declaration lifecycle, reviewed rule catalog, candidate metadata quality and end-to-end CAL evidence. |
+| Cultural identity | Explicit-declaration policy is integrated into canonical CAL; a persistent declaration API stores confirmed declarations, supports auditable retraction, and emits candidate-bound HMAC-signed requirement snapshots; both decision service and gateway have signature-verification paths. | Deploy PostgreSQL, bind user identity at ingress, connect the provider in production, rotate keys safely, and review/version a locale-aware attribute catalog with culturally informed governance. |
 
 ## Work being added in this feature-spine branch
 
@@ -32,8 +32,9 @@
 2. Add a confidence-engine coverage gate so calibrated numbers cannot enter CAL as a positive fit signal when required evidence is missing or no required evidence fields have been declared.
 3. Add a wardrobe domain kernel for owner-scoped item lifecycle changes, opaque image asset identifiers, explicit image-storage consent, versioning, and terminal deletion state.
 4. Add Xari's authenticated route-planning contract for chat, skin analysis, marketplace search, Virtual Twin, wardrobe, Click It, and Virtual Try-On. It is deliberately planning-only until each service's request/response contract and authentication adapter are integrated.
-5. Define an explicit durable NPL ledger interface. This is not itself a PostgreSQL implementation and must not be described as persistent until a real adapter and transaction tests land.
-6. Keep Twin reconstruction and Click It unavailable. Only validated models, measured quality, consented asset handling, and real deployment evidence can enable them.
+5. Add a SQLAlchemy-backed NPL ledger API, PostgreSQL migration, event uniqueness/idempotency and signed candidate-bound evaluation snapshots. Production DB deployment, concurrency/restore tests and live provider configuration remain required.
+6. Add a persistent cultural declaration API with user confirmation, explicit requirement records, correction/retraction events and a signed evidence envelope. The decision service and gateway verify signatures when the provider is integrated; no attributes are inferred from images or demographic proxies.
+7. Keep Twin reconstruction and Click It unavailable. Only validated models, measured quality, consented asset handling, and real deployment evidence can enable them.
 
 ## Required acceptance gates before any feature is called complete
 
@@ -67,11 +68,11 @@
 - CAL thresholds are versioned and evaluated; confidence never overrides hard safety, user, NPL, or cultural blocks.
 
 ### Cultural identity
-- Requirements must trace to a current explicit user declaration and remain scoped to that user.
+- Requirements must trace to a current explicit user declaration and remain scoped to that user. The declaration service stores confirmation versions and retractable declaration records and signs the active requirements bound to each candidate evaluation.
 - Product metadata completeness is measured; unknown requirement status routes to REVIEW.
 - Versioned, reviewed, locale-aware attribute catalog with documented provenance and culturally informed review.
 - Soft preferences are explanatory; explicit hard requirements can block; no demographic inference from images.
-- Canonical CAL tests prove a cultural block always blocks and missing metadata never becomes a pass.
+- Canonical CAL tests prove a cultural block always blocks and missing metadata never becomes a pass; decision-service tests reject modified/foreign-user evidence. Provider deployment, key rotation and an end-to-end production signature test remain release gates.
 
 ## Non-negotiable release rule
 
