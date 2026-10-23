@@ -184,7 +184,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       return;
     }
     if(!data||data.governance_status==="CAL_GATE_NOT_CONNECTED"){
-      setAiStatus(source,"CAL evidence or decision services are not connected. No product details were shown.",true);
+      setAiStatus(source,"PENDING_CAL: CAL evidence or decision services are not connected. No product details were shown.",true);
       return;
     }
     const scoreNote=data.scores_are_probabilities===false?" Retrieval similarities are not probabilities or purchase authorization.":"";
@@ -209,7 +209,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     e.preventDefault();
     const image=$("clickItImage").files&&$("clickItImage").files[0];
     if(!image){setAiStatus("clickItStatus","Take or choose a product photo.",true);return}
-    if(!config.commerceBase||!config.userToken){setAiStatus("clickItStatus","Connect the Commerce API with a signed user JWT in Connect catalog before using Click It.",true);return}
+    if(!config.userToken){setAiStatus("clickItStatus","Connect a signed Cirvanna user session before using Click It.",true);return}
     if(image.size>10*1024*1024){setAiStatus("clickItStatus","Photo exceeds the 10 MB upload limit. Choose a smaller image.",true);return}
     if(!["image/jpeg","image/png","image/webp"].includes(image.type)){setAiStatus("clickItStatus","Use a JPEG, PNG or WEBP photo.",true);return}
     if(!$("clickItImageConsent").checked||!$("clickItSearchConsent").checked){setAiStatus("clickItStatus","Both explicit consent checkboxes are required.",true);return}
