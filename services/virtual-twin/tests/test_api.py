@@ -45,7 +45,7 @@ def test_twin_endpoint_requires_authentication(monkeypatch):
     monkeypatch.delenv("VIRTUAL_TWIN_API_TOKEN", raising=False)
     response = client.post(
         "/twin",
-        data={"height_cm": "180", "weight_kg": "75"},
+        data={"height_cm": "180", "weight_kg": "75", "consent_image_processing": "true", "consent_body_measurements": "true"},
     )
     assert response.status_code == 401
 
@@ -66,7 +66,7 @@ def test_twin_endpoint_rejects_invalid_token(monkeypatch):
     response = client.post(
         "/twin",
         headers={"Authorization": "Bearer wrong-token"},
-        data={"height_cm": "180"},
+        data={"height_cm": "180", "consent_image_processing": "true", "consent_body_measurements": "true"},
     )
     assert response.status_code == 401
 
@@ -118,7 +118,7 @@ def test_twin_endpoint_rejects_height_outside_contract(monkeypatch):
     response = client.post(
         "/twin",
         headers={"Authorization": "Bearer test-only-token"},
-        data={"height_cm": "261"},
+        data={"height_cm": "261", "consent_image_processing": "true", "consent_body_measurements": "true"},
     )
     assert response.status_code == 422
     assert any(
@@ -128,10 +128,33 @@ def test_twin_endpoint_rejects_height_outside_contract(monkeypatch):
 
 
 
+
+def test_click_it_requires_explicit_consent(monkeypatch):
+    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "test-only-token")
+    response = client.post(
+        "/click-it",
+        headers={"Authorization": "Bearer test-only-token"},
+        data={"twin_id": "twin-1", "consent_image_processing": "false", "consent_click_it": "true"},
+        files={"product_image": ("product.jpg", b"photo", "image/jpeg")},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "EXPLICIT_CLICK_IT_CONSENT_REQUIRED"
+
+
+def test_twin_requires_explicit_consent(monkeypatch):
+    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "test-only-token")
+    response = client.post(
+        "/twin",
+        headers={"Authorization": "Bearer test-only-token"},
+        data={"height_cm": "180", "consent_image_processing": "false", "consent_body_measurements": "true"},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "EXPLICIT_TWIN_CONSENT_REQUIRED"
+
 def test_click_it_requires_authentication():
     response = client.post(
         "/click-it",
-        data={"twin_id": "twin-1"},
+        data={"twin_id": "twin-1", "consent_image_processing": "true", "consent_click_it": "true"},
         files={"product_image": ("product.jpg", b"image", "image/jpeg")},
     )
     assert response.status_code == 401
