@@ -12,6 +12,7 @@ import io
 import json
 import os
 import re
+import uuid
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any
@@ -20,7 +21,7 @@ import httpx
 import numpy as np
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from PIL import Image, ImageFilter, UnidentifiedImageError
+from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field
 from starlette import status
 from urllib.parse import urlsplit
@@ -374,7 +375,7 @@ async def _live_offers() -> tuple[list[dict[str, Any]], bool]:
 def _rank_offers(query_vector: list[float], offers: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
     if not offers:
         return []
-    vectors: dict[str, list[float]] = {}
+    vectors: dict[str, dict[str, Any]] = {}
     texts: list[str] = []
     keys: list[str] = []
     for offer in offers:
@@ -449,17 +450,23 @@ def readiness() -> dict[str, Any]:
     catalog_configured = bool(os.getenv("CATALOG_API_URL", "").strip()) and bool(
         os.getenv("CATALOG_API_TOKEN", "").strip() or os.getenv("CATALOG_READ_TOKEN", "").strip()
     )
-    ready = clip_configured and pose_configured and token_configured and commerce_configured and catalog_configured
+    models_loaded = _CLIP_MODEL is not None and _CLIP_PROCESSOR is not None and _POSE_LANDMARKER is not None
+    configured = clip_configured and pose_configured and token_configured and commerce_configured and catalog_configured
+    ready = configured and models_loaded
     result = {
         "status": "ready" if ready else "not_ready",
         "service": SERVICE,
         "ready": ready,
+        "configuration_valid": configured,
+        "models_loaded": models_loaded,
         "clip_model_configured": clip_configured,
         "clip_model_reason": clip_reason,
         "clip_model_id": MODEL_ID,
         "clip_model_revision": os.getenv("CLIP_MODEL_REVISION", "") if clip_configured else None,
+        "clip_model_loaded": _CLIP_MODEL is not None and _CLIP_PROCESSOR is not None,
         "pose_model_configured": pose_configured,
         "pose_model_reason": pose_reason,
+        "pose_model_loaded": _POSE_LANDMARKER is not None,
         "marketplace_services_configured": commerce_configured and catalog_configured,
         "worker_auth_configured": token_configured,
         "input_persistence": False,
@@ -483,9 +490,9 @@ def capabilities() -> dict[str, Any]:
     )
     return {
         "service": SERVICE,
-        "model_backed_image_search": clip_configured and commerce_configured and catalog_configured,
-        "description_search": clip_configured and commerce_configured and catalog_configured,
-        "pose_3d_landmark_inference": pose_configured,
+        "model_backed_image_search": clip_configured and commerce_configured and catalog_configured and _CLIP_MODEL is not None,
+        "description_search": clip_configured and commerce_configured and catalog_configured and _CLIP_MODEL is not None,
+        "pose_3d_landmark_inference": pose_configured and _POSE_LANDMARKER is not None,
         "full_surface_mesh": False,
         "fit_grade_anthropometry": False,
         "input_image_persistence": False,
@@ -558,7 +565,7 @@ async def click_it_scan(
     results = _rank_offers(query_vector, offers, limit)
     return {
         "status": "complete",
-        "scan_id": hashlib.sha256(data).hexdigest()[:24],
+        "scan_id": str(uuid.uuid4()),
         "search_mode": "image_to_catalog_text_similarity",
         "image_quality": quality,
         "candidate_count": len(offers),
@@ -640,7 +647,7 @@ async def infer_twin_pose(
     return {
         "status": "partial_twin_inference",
         "representation_type": "3d_pose_skeleton",
-        "twin_id": "vt_" + hashlib.sha256((hashlib.sha256(data).hexdigest() + str(height_cm)).encode()).hexdigest()[:20],
+        "inference_id": str(uuid.uuid4()),
         "model": {"family": "MediaPipe Pose Landmarker", "model_asset_sha256": os.getenv("POSE_LANDMARKER_MODEL_SHA256", "").lower()},
         "input_quality": quality,
         "pose_quality": {
