@@ -1105,6 +1105,27 @@ def _cal_audit_row(user_id: str, candidate_id: str, receipt: dict[str, Any] | No
     )
 
 
+def _revalidate_cal_candidates(db: Session, user_id: str, candidate_ids: list[str], order_id: str | None = None, persist_success: bool = False) -> list[CALDecisionAudit]:
+    audits: list[CALDecisionAudit] = []
+    for candidate_id in candidate_ids:
+        try:
+            receipt = _authorize_cal_candidate(user_id, candidate_id)
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            code = detail.get("code", "CAL_REVALIDATION_FAILED")
+            audits.append(_cal_audit_row(user_id, candidate_id, None,
+                "NO_SHOW" if exc.status_code == 409 else "UNAVAILABLE", str(code), order_id))
+            db.add_all(audits)
+            db.commit()
+            raise HTTPException(409 if exc.status_code == 409 else 503,
+                detail={"code": "CAL_REVALIDATION_FAILED", "reason_code": str(code)}) from exc
+        audits.append(_cal_audit_row(user_id, candidate_id, receipt, "SHOW", None, order_id))
+    if persist_success:
+        db.add_all(audits)
+        db.commit()
+    return audits
+
+
 @app.post("/checkout", status_code=201)
 def checkout(actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Session, Depends(get_db)],
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=255)]):
@@ -1113,6 +1134,10 @@ def checkout(actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Sess
         raise HTTPException(503, detail={"code": "PAYMENT_PROVIDER_NOT_CONFIGURED"})
     existing = db.scalar(select(CommerceOrder).where(CommerceOrder.buyer_user_id == actor.user_id, CommerceOrder.idempotency_key == idempotency_key))
     if existing:
+        prior_items = list(db.scalars(select(OrderItem).where(OrderItem.order_id == existing.id)).all())
+        if not prior_items:
+            raise HTTPException(409, detail={"code": "ORDER_ITEMS_MISSING"})
+        _revalidate_cal_candidates(db, actor.user_id, [item.catalog_product_id for item in prior_items], order_id=existing.id, persist_success=True)
         return persist_stripe_session(db, existing.id, actor.email, gateway)
     cart = ensure_cart(db, actor.user_id)
     rows = db.execute(select(CartItem, Variant, Listing, Merchant)
@@ -1124,6 +1149,9 @@ def checkout(actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Sess
         raise HTTPException(422, detail={"code": "INVALID_CART_ITEMS"})
     if any(v.state != "active" or l.state != "active" or m.state != "approved" for _, v, l, m in rows):
         raise HTTPException(409, detail={"code": "CART_CONTAINS_UNAVAILABLE_OFFERS"})
+    # Revalidate every canonical catalog product immediately before order/stock
+    # reservation. A cached discovery-time SHOW is never reused for checkout.
+    cal_audits = _revalidate_cal_candidates(db, actor.user_id, [listing.catalog_product_id for _, _, listing, _ in rows])
     currencies = {v.currency for _, v, _, _ in rows}
     if len(currencies) != 1:
         raise HTTPException(422, detail={"code": "MIXED_CURRENCY_CART"})
@@ -1155,6 +1183,9 @@ def checkout(actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Sess
                 delta=0, reason=f"reserve:{order.order_number}:qty={ci.quantity}"))
         db.add(order)
         db.flush()
+        for audit in cal_audits:
+            audit.order_id = order.id
+        db.add_all(cal_audits)
         db.commit()
     except HTTPException:
         db.rollback()
