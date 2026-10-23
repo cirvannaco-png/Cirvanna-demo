@@ -479,6 +479,8 @@ async def create_twin(
         uploaded = images[0]
         if uploaded.content_type not in {"image/jpeg", "image/png", "image/webp"}:
             raise HTTPException(415, detail={"code": "UNSUPPORTED_IMAGE_TYPE"})
+        if uploaded.size is not None and uploaded.size > MAX_IMAGE_BYTES:
+            raise HTTPException(413, detail={"code": "IMAGE_SIZE_LIMIT_EXCEEDED", "maximum_bytes": MAX_IMAGE_BYTES})
         # Check configuration before contacting a consent provider, but never send
         # uploaded bytes to the inference worker until durable consent is verified.
         if _internal_config("VISION_INTELLIGENCE_API_URL", "VISION_INTELLIGENCE_API_TOKEN") is None:
