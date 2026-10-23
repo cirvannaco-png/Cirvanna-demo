@@ -55,7 +55,7 @@ def test_twin_endpoint_does_not_claim_generation_when_adapter_missing(monkeypatc
     response = client.post(
         "/twin",
         headers={"Authorization": "Bearer test-only-token"},
-        data={"height_cm": "180", "weight_kg": "75"},
+        data={"height_cm": "180", "weight_kg": "75", "consent_image_processing": "true", "consent_body_measurements": "true"},
     )
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "MODEL_ADAPTER_NOT_CONFIGURED"
@@ -80,7 +80,7 @@ def test_twin_endpoint_rejects_too_many_images(monkeypatch):
     response = client.post(
         "/twin",
         headers={"Authorization": "Bearer test-only-token"},
-        data={"height_cm": "180"},
+        data={"height_cm": "180", "consent_image_processing": "true", "consent_body_measurements": "true"},
         files=files,
     )
     assert response.status_code == 413
@@ -165,7 +165,7 @@ def test_click_it_rejects_unsupported_media_type(monkeypatch):
     response = client.post(
         "/click-it",
         headers={"Authorization": "Bearer test-only-token"},
-        data={"twin_id": "twin-1"},
+        data={"twin_id": "twin-1", "consent_image_processing": "true", "consent_click_it": "true"},
         files={"product_image": ("product.bin", b"not-image", "application/octet-stream")},
     )
     assert response.status_code == 415
