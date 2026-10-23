@@ -221,7 +221,16 @@ async def govern_candidates(
             # timed-out or unauthenticated evidence/decision responses. None are shown.
             failed = True
             continue
-        shown.append({**candidate, "cal_decision": approval})
+        # Remove any upstream decision/authorization claims before setting values that
+        # are derived solely from the verified canonical CAL response.
+        safe_candidate = {
+            key: value for key, value in candidate.items()
+            if key not in {"display_authorized", "decision_status", "governance_status", "decision", "may_display", "cal_decision"}
+        }
+        safe_candidate["display_authorized"] = True
+        safe_candidate["decision_status"] = "SHOW"
+        safe_candidate["cal_decision"] = approval
+        shown.append(safe_candidate)
 
     return {
         "candidate_count": len(shown),
