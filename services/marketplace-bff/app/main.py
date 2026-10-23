@@ -85,6 +85,34 @@ def _upstream_ready(base: str) -> bool:
         return False
 
 
+async def _verified_user_id(request: Request) -> tuple[str, str]:
+    """Resolve the actor from Commerce's verified /me endpoint, never from browser input."""
+    authorization = request.headers.get("authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise HTTPException(401, detail={"code": "USER_BEARER_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
+    base = _upstream_base("COMMERCE_API_URL")
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(TIMEOUT_SECONDS), trust_env=False, follow_redirects=False) as client:
+            response = await client.get(base + "/me", headers={"Authorization": "Bearer " + token, "Accept": "application/json"})
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "USER_IDENTITY_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "USER_IDENTITY_UNAVAILABLE"}) from exc
+    if response.status_code in {401, 403}:
+        raise HTTPException(401, detail={"code": "USER_AUTHENTICATION_FAILED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "USER_IDENTITY_UNAVAILABLE"})
+    try:
+        actor = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "INVALID_USER_IDENTITY_RESPONSE"}) from exc
+    user_id = actor.get("user_id") if isinstance(actor, dict) else None
+    if not isinstance(user_id, str) or not user_id.strip():
+        raise HTTPException(502, detail={"code": "INVALID_USER_IDENTITY_RESPONSE"})
+    return user_id.strip(), token
+
+
 def _internal_service(url_key: str, token_key: str) -> tuple[str, str]:
     base = _upstream_base(url_key)
     token = os.getenv(token_key, "").strip()
@@ -141,8 +169,9 @@ async def _safe_json_post(
 
 
 @app.post("/api/vision/marketplace-search")
-async def marketplace_description_search(payload: MarketplaceSearchIn) -> dict:
-    """Search marketplace candidates by description without exposing Xari credentials."""
+async def marketplace_description_search(request: Request, payload: MarketplaceSearchIn) -> dict:
+    """Search for the authenticated user; candidate display remains blocked pending CAL."""
+    user_id, _user_token = await _verified_user_id(request)
     base, token = _internal_service("XARI_API_URL", "XARI_API_TOKEN")
     request_body = {"query": payload.normalized_query, "limit": payload.limit}
     if payload.category and payload.category.strip():
@@ -154,6 +183,7 @@ async def marketplace_description_search(payload: MarketplaceSearchIn) -> dict:
     return {
         "status": "complete",
         "query": payload.normalized_query,
+        "user_id": user_id,
         "candidate_count": 0,
         "candidates": [],
         "display_authorized": False,
@@ -367,6 +397,8 @@ def _authorized_commerce_path(method: str, path: str) -> bool:
     parts = path.split("/")
     if any(part in {"", ".", ".."} for part in parts):
         return False
+    if path in {"cart", "saved-products", "checkout"}:
+        return False
     if (method, path) in SERVICE_PATHS:
         return True
     if len(parts) == 2 and parts[0] == "saved-products" and UUID_RE.fullmatch(parts[1]):
@@ -383,6 +415,8 @@ async def commerce_proxy(path: str, request: Request) -> Response:
     """Forward customer operations only; admin/internal/webhook routes are not exposed."""
     method = request.method.upper()
     if not _authorized_commerce_path(method, path):
+        if path in {"cart", "saved-products", "checkout"}:
+            raise HTTPException(status_code=503, detail={"code": "CAL_GOVERNANCE_NOT_ENFORCED", "retryable": True})
         raise HTTPException(status_code=404, detail={"code": "COMMERCE_ROUTE_NOT_AVAILABLE"})
     authorization = request.headers.get("authorization", "")
     scheme, _, token = authorization.partition(" ")
