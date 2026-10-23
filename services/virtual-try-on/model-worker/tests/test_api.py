@@ -25,7 +25,7 @@ def auth():
     return {"Authorization":f"Bearer {TOKEN}"}
 
 def post(client,*,headers=None,consent=True,category="upper_body",person=None,garment=None):
-    return client.post("/v1/render",headers=headers or auth(),
+    return client.post("/v1/render",headers=auth() if headers is None else headers,
         data={"consent_image_processing":str(consent).lower(),"consent_virtual_try_on":"true","category":category},
         files={"person_image":("person.png",person or png(),"image/png"),
                "garment_image":("garment.png",garment or png((180,20,40)),"image/png")})
