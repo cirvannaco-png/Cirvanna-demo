@@ -93,7 +93,7 @@ def test_twin_endpoint_rejects_oversized_image(monkeypatch):
     response = client.post(
         "/twin",
         headers={"Authorization": "Bearer test-only-token"},
-        data={"height_cm": "180"},
+        data={"height_cm": "180", "consent_image_processing": "true", "consent_body_measurements": "true"},
         files={"images": ("large.jpg", b"four", "image/jpeg")},
     )
     assert response.status_code == 413
@@ -106,7 +106,7 @@ def test_twin_endpoint_rejects_oversized_video(monkeypatch):
     response = client.post(
         "/twin",
         headers={"Authorization": "Bearer test-only-token"},
-        data={"height_cm": "180"},
+        data={"height_cm": "180", "consent_image_processing": "true", "consent_body_measurements": "true"},
         files={"video": ("large.mp4", b"four", "video/mp4")},
     )
     assert response.status_code == 413
@@ -178,7 +178,7 @@ def test_click_it_rejects_oversized_product_image(monkeypatch):
     response = client.post(
         "/click-it",
         headers={"Authorization": "Bearer test-only-token"},
-        data={"twin_id": "twin-1"},
+        data={"twin_id": "twin-1", "consent_image_processing": "true", "consent_click_it": "true"},
         files={"product_image": ("product.jpg", b"four", "image/jpeg")},
     )
     assert response.status_code == 413
@@ -190,7 +190,7 @@ def test_click_it_does_not_claim_product_reconstruction_when_pipeline_is_missing
     response = client.post(
         "/click-it",
         headers={"Authorization": "Bearer test-only-token"},
-        data={"twin_id": "twin-1"},
+        data={"twin_id": "twin-1", "consent_image_processing": "true", "consent_click_it": "true"},
         files={"product_image": ("product.jpg", b"photo", "image/jpeg")},
     )
     assert response.status_code == 503
