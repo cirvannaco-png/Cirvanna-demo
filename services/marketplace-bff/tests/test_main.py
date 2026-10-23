@@ -220,7 +220,7 @@ def test_click_it_uses_verified_commerce_subject_and_returns_only_pending_candid
     assert fake.calls[0][1] == "https://commerce.example.test/me"
     assert fake.calls[1][1] == "https://virtual-twin.example.test/click-it"
     assert fake.calls[1][2]["data"]["subject_id"] == "signed-user-42"
-    assert "subject_id" not in response.request.body.decode(errors="ignore")
+    assert "subject_id" not in response.request.content.decode(errors="ignore")
     assert fake.calls[1][2]["files"]["product_image"][1] == b"validated-photo-bytes"
 
 
