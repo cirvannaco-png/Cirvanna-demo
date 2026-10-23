@@ -59,7 +59,7 @@ def require_api_token(
     ],
 ) -> None:
     expected = os.getenv("VIRTUAL_TWIN_API_TOKEN", "")
-    if not expected or credentials is None:
+    if len(expected.encode("utf-8")) < 32 or credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Valid bearer authentication is required.",
@@ -84,7 +84,7 @@ async def ready() -> ReadinessResponse:
     vision_ready = await _vision_worker_ready()
     consent_configured = _internal_config("CONSENT_API_URL", "CONSENT_API_TOKEN") is not None
     twin_registry_configured = _internal_config("TWIN_REGISTRY_API_URL", "TWIN_REGISTRY_API_TOKEN") is not None
-    api_token_configured = bool(os.getenv("VIRTUAL_TWIN_API_TOKEN", "").strip())
+    api_token_configured = len(os.getenv("VIRTUAL_TWIN_API_TOKEN", "").encode("utf-8")) >= 32
     ready_now = vision_ready and consent_configured and twin_registry_configured and api_token_configured
     reason = None
     if not api_token_configured:
