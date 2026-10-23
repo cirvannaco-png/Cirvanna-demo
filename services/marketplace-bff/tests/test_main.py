@@ -130,7 +130,10 @@ def test_readiness_fails_closed_until_both_upstreams_are_ready(client, monkeypat
 
 def test_external_upstream_must_use_https(client, monkeypatch):
     monkeypatch.setenv("COMMERCE_API_URL", "http://commerce.example.test")
-    response = client.get("/api/commerce/marketplace/offers")
+    response = client.get(
+        "/api/commerce/marketplace/offers",
+        headers={"Authorization": "Bearer signed-user-token"},
+    )
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "COMMERCE_API_URL_MUST_BE_TRUSTED_HTTPS"
 
@@ -154,12 +157,12 @@ class FakeAsyncClient:
         return self.responses.pop(0)
 
 
-def test_description_search_fails_closed_without_xari_secret(client, monkeypatch):
+def test_description_search_requires_verified_user_before_upstream_access(client, monkeypatch):
     monkeypatch.delenv("XARI_API_URL", raising=False)
     monkeypatch.delenv("XARI_API_TOKEN", raising=False)
     response = client.post("/api/vision/marketplace-search", json={"query": "blue linen summer dress"})
-    assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "XARI_API_URL_NOT_CONFIGURED"
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "USER_BEARER_REQUIRED"
 
 
 def test_description_search_forwards_to_xari_and_keeps_candidates_pending_cal(client, monkeypatch):
