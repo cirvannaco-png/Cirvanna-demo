@@ -9,7 +9,7 @@ from app.main import app
 client = TestClient(app)
 SUBJECT = "customer-123"
 CONSENT = "consent-record-0001"
-TOKEN = "test-only-token"
+TOKEN = "virtual-twin-test-bearer-token-longer-than-thirty-two-bytes"
 
 
 def auth():
