@@ -43,6 +43,7 @@ jobs:
           DECISION_SERVICE_TOKEN: decision-service-ci-token-minimum-32-bytes
           FCI_EVIDENCE_HMAC_SECRET: fci-evidence-ci-secret-minimum-32-bytes
           NPL_EVIDENCE_HMAC_SECRET: npl-evidence-ci-secret-minimum-32-bytes
+          CULTURAL_IDENTITY_HMAC_SECRET: cultural-evidence-ci-secret-minimum-32-bytes
         run: python -m pytest tests -q
       - name: Compile service and referenced domain packages
         run: python -m compileall -q app ../../packages/identity-intelligence ../../packages/preferences ../../packages/fit-intelligence
