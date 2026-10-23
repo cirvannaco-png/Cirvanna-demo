@@ -46,6 +46,8 @@ def require_internal_token(credentials:Annotated[HTTPAuthorizationCredentials|No
 def store()->WardrobeStore:
     url=os.getenv("WARDROBE_DATABASE_URL","").strip()
     if not url: raise HTTPException(503,detail={"code":"WARDROBE_DATABASE_NOT_CONFIGURED"})
+    if url.startswith("sqlite:///") and os.getenv("WARDROBE_ALLOW_SQLITE_TESTS")!="1":
+        raise HTTPException(503,detail={"code":"WARDROBE_SQLITE_TEST_MODE_REQUIRED"})
     try: return WardrobeStore(engine_for_url(url))
     except ValueError as exc: raise HTTPException(503,detail={"code":"WARDROBE_DATABASE_CONFIGURATION_INVALID"}) from exc
 
