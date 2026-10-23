@@ -449,6 +449,12 @@ def _cultural_signals(
     )
 
 
+def _fit_evidence_fields(estimate: FitConfidenceEstimate) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return trusted field coverage from the fit provider; none is registered yet."""
+    del estimate
+    return (), ()
+
+
 def _fit_estimate(user_id: str, product_id: str) -> FitConfidenceEstimate:
     """No trained/calibrated FCI provider is registered in this build."""
     return FitConfidenceEstimate(
@@ -644,6 +650,18 @@ def evaluate_decisions(payload: DecisionRequest) -> DecisionResponse:
         )
         for item in payload.negative_preferences
     )
+    cultural_requirements = tuple(
+        CulturalRequirement(
+            requirement_id=item.requirement_id,
+            declaration_id=item.declaration_id,
+            user_id=payload.user_id,
+            attribute=item.attribute,
+            kind=RequirementKind(item.kind),
+            hard=item.hard,
+            active=True,
+        )
+        for item in payload.cultural_requirements
+    )
     eepl_policy = _policy()
     candidates: list[CandidateDecisionOutput] = []
     # Bound parallelism so a batch does not serially pay the catalog timeout per item.
@@ -658,11 +676,9 @@ def evaluate_decisions(payload: DecisionRequest) -> DecisionResponse:
             _legal_signal(payload.context, product),
         ) + _user_constraint_signals(
             payload.user_id, product_id, attributes, complete, payload.hard_constraints,
-        ) + _cultural_signals(
-            payload.user_id, product_id, attributes, complete,
-            payload.cultural_requirements, request_id,
         )
         estimate = _fit_estimate(payload.user_id, product_id)
+        fit_required_evidence, fit_observed_evidence = _fit_evidence_fields(estimate)
         result = evaluate_candidate(
             request_id=request_id,
             candidate_id=product_id,
@@ -673,6 +689,9 @@ def evaluate_decisions(payload: DecisionRequest) -> DecisionResponse:
             candidate_attributes_complete=complete,
             negative_preferences=negative_preferences,
             fit_estimate=estimate,
+            cultural_requirements=cultural_requirements,
+            fit_required_evidence=fit_required_evidence,
+            fit_observed_evidence=fit_observed_evidence,
             upstream_signals=upstream_signals,
             policy_version=POLICY_VERSION,
         )
