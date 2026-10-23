@@ -334,20 +334,37 @@ def health() -> dict[str, str]:
 def readiness() -> dict:
     catalog_configured = bool(os.getenv("CATALOG_API_URL"))
     commerce_configured = bool(os.getenv("COMMERCE_API_URL"))
+    evidence_url_configured = bool(os.getenv("GOVERNANCE_EVIDENCE_API_URL"))
+    evidence_token_configured = len(os.getenv("GOVERNANCE_EVIDENCE_API_TOKEN", "").encode("utf-8")) >= 32
+    decision_url_configured = bool(os.getenv("DECISION_SERVICE_API_URL"))
+    decision_token_configured = len(os.getenv("DECISION_SERVICE_TOKEN", "").encode("utf-8")) >= 32
     catalog_ready = False
     commerce_ready = False
-    try:
-        catalog_base = _upstream_base("CATALOG_API_URL")
-        if catalog_configured:
-            catalog_ready = _upstream_ready(catalog_base)
-    except HTTPException:
-        catalog_ready = False
-    try:
-        commerce_base = _upstream_base("COMMERCE_API_URL")
-        commerce_ready = _upstream_ready(commerce_base)
-    except HTTPException:
-        commerce_ready = False
-    ready = catalog_configured and commerce_configured and catalog_ready and commerce_ready
+    evidence_ready = False
+    decision_ready = False
+    for env_key, configured, assign in (
+        ("CATALOG_API_URL", catalog_configured, "catalog"),
+        ("COMMERCE_API_URL", commerce_configured, "commerce"),
+        ("GOVERNANCE_EVIDENCE_API_URL", evidence_url_configured and evidence_token_configured, "evidence"),
+        ("DECISION_SERVICE_API_URL", decision_url_configured and decision_token_configured, "decision"),
+    ):
+        try:
+            upstream_ready = _upstream_ready(_upstream_base(env_key)) if configured else False
+        except HTTPException:
+            upstream_ready = False
+        if assign == "catalog":
+            catalog_ready = upstream_ready
+        elif assign == "commerce":
+            commerce_ready = upstream_ready
+        elif assign == "evidence":
+            evidence_ready = upstream_ready
+        else:
+            decision_ready = upstream_ready
+    ready = (
+        catalog_configured and commerce_configured and catalog_ready and commerce_ready
+        and evidence_url_configured and evidence_token_configured and evidence_ready
+        and decision_url_configured and decision_token_configured and decision_ready
+    )
     result = {
         "status": "ready" if ready else "not_ready",
         "service": SERVICE,
@@ -355,6 +372,12 @@ def readiness() -> dict:
         "catalog_ready": catalog_ready,
         "commerce_url_configured": commerce_configured,
         "commerce_ready": commerce_ready,
+        "governance_evidence_url_configured": evidence_url_configured,
+        "governance_evidence_auth_configured": evidence_token_configured,
+        "governance_evidence_ready": evidence_ready,
+        "decision_service_url_configured": decision_url_configured,
+        "decision_service_auth_configured": decision_token_configured,
+        "decision_service_ready": decision_ready,
         "ready": ready,
     }
     if not ready:
