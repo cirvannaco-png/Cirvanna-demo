@@ -62,6 +62,7 @@ class EvidenceRequest(BaseModel):
     request_id: str = Field(min_length=1, max_length=128)
     subject_id: str = Field(min_length=1, max_length=128)
     candidate_id: str = Field(min_length=1, max_length=128)
+    catalog_product_id: str | None = Field(default=None, max_length=128)
     requested_at: str = Field(min_length=1, max_length=80)
 
 
@@ -157,7 +158,8 @@ async def decision_evidence(payload: EvidenceRequest) -> dict[str, Any]:
         raise HTTPException(422, detail={"code": "REQUEST_TIMESTAMP_INVALID"}) from exc
     if requested.tzinfo is None or abs((now() - requested).total_seconds()) > 30:
         raise HTTPException(409, detail={"code": "REQUEST_TIMESTAMP_STALE"})
-    if not UUID_RE.fullmatch(payload.candidate_id):
+    catalog_product_id = payload.catalog_product_id or payload.candidate_id
+    if not UUID_RE.fullmatch(catalog_product_id):
         raise HTTPException(422, detail={"code": "CANONICAL_CATALOG_PRODUCT_ID_REQUIRED"})
 
     request_id, user_id, candidate_id = payload.request_id, payload.subject_id, payload.candidate_id
