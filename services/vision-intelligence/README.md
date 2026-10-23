@@ -4,7 +4,7 @@
 
 ## What this service does
 
-- Uses OpenAI CLIP image/text embeddings to rank current active, approved, in-stock Commerce offers against a product photo or natural-language description.
+- Uses FashionCLIP image/text embeddings to rank current active, approved, in-stock Commerce offers against a product photo or natural-language description.
 - Evaluates capture quality deterministically: valid image format, byte/pixel/dimension bounds, brightness, contrast, sharpness proxy and clipped-pixel fraction.
 - Uses MediaPipe Pose Landmarker to infer normalized 2D and approximate 3D landmarks for a **pose-skeleton Virtual Twin**.
 - Enriches marketplace offer records with canonical Catalog service active product descriptions and attributes in bounded batches.
@@ -16,13 +16,14 @@ The Virtual Twin inference is an approximate pose skeleton, not a body surface m
 
 ## Model lock
 
-- Repository: openai/clip-vit-base-patch32
-- Immutable revision: d44250afa9f05af7eca021052567539406661018
+- Repository: patrickjohncyh/fashion-clip
+- Immutable revision: afacf5e5851d5979ab030e228eab60e2c95a912c
 - CLIP_MODEL_REVISION must be supplied and exactly match this source pin. Any change requires a reviewed code change and renewed evaluation.
 - CLIPModel loading explicitly requires safetensors; mutable branches such as main are rejected.
+- The model hub tags this checkpoint with an MIT license. Its model card describes an English fashion dataset and warns against assuming deployment suitability without studying the intended context; the dataset's commercial/use rights and the checkpoint's representativeness still need review.
 - MediaPipe Pose Landmarker weights are supplied as an external .task file with an exact POSE_LANDMARKER_MODEL_SHA256 checksum. No model weights are committed to this repository.
 
-The upstream CLIP model card warns that it was not intended as a general deployment model and that evaluation is limited across languages, among other limitations. Treat this implementation as a controlled prototype until the upstream model/use restrictions have been reviewed and in-domain accuracy, bias, privacy and commercial-use gates have passed. See the official [CLIP model card](https://huggingface.co/openai/clip-vit-base-patch32).
+The upstream FashionCLIP model card says the checkpoint was fine-tuned on an English-language fashion-product dataset and warns that deployment requires context-specific study. Treat this as a controlled prototype until in-domain accuracy, cross-region representativeness, data rights, bias, privacy and commercial-use gates pass. See the [FashionCLIP model card](https://huggingface.co/patrickjohncyh/fashion-clip).
 
 ## API
 
@@ -38,7 +39,7 @@ All POST routes require an internal bearer token. Never expose VISION_WORKER_TOK
 ## Required environment
 
 - VISION_WORKER_TOKEN: internal bearer secret at least 32 bytes long.
-- CLIP_MODEL_REVISION: exactly d44250afa9f05af7eca021052567539406661018.
+- CLIP_MODEL_REVISION: exactly afacf5e5851d5979ab030e228eab60e2c95a912c.
 - POSE_LANDMARKER_MODEL_PATH: path to a provisioned MediaPipe Pose Landmarker .task bundle.
 - POSE_LANDMARKER_MODEL_SHA256: exact SHA-256 of that file.
 - COMMERCE_API_URL: trusted HTTPS base URL for Cirvanna Commerce.
