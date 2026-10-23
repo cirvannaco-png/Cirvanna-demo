@@ -1,8 +1,8 @@
 """SQLAlchemy wardrobe persistence with user-scoped versions and deletion outbox."""
 from __future__ import annotations
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
-from sqlalchemy import Boolean, DateTime, Index, Integer, JSON, String, UniqueConstraint, create_engine, func, select
+from sqlalchemy import Boolean, DateTime, Index, Integer, JSON, String, UniqueConstraint, create_engine, func, select, or_
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
@@ -44,12 +44,32 @@ class AssetDeletionOutboxRow(Base):
     command_id: Mapped[str] = mapped_column(String(128), nullable=False)
     state: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    available_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.current_timestamp())
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_owner: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    last_error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.current_timestamp())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+class WorkerHeartbeatRow(Base):
+    __tablename__ = "wardrobe_worker_heartbeats"
+    worker_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 class WardrobeNotFound(Exception):
     pass
 class WardrobeConflict(Exception):
     pass
+
+class DeletionJob:
+    def __init__(self, outbox_id: int, owner_user_id: str, item_id: str, asset_id: str, command_id: str, attempts: int, lease_owner: str):
+        self.outbox_id = outbox_id
+        self.owner_user_id = owner_user_id
+        self.item_id = item_id
+        self.asset_id = asset_id
+        self.command_id = command_id
+        self.attempts = attempts
+        self.lease_owner = lease_owner
 
 def _row_to_domain(row: WardrobeRow) -> WardrobeItem:
     return WardrobeItem(
@@ -131,3 +151,98 @@ def engine_for_url(url: str) -> Engine:
     kwargs: dict[str, Any]={"pool_pre_ping":True}
     if url.startswith("sqlite:///"): kwargs["connect_args"]={"check_same_thread":False}
     return create_engine(url, **kwargs)
+
+
+class WardrobeDeletionQueue:
+    """Transactional outbox lease and retry primitives shared by worker and readiness."""
+
+    def __init__(self, engine: Engine):
+        self.engine = engine
+
+    def heartbeat(self, worker_id: str, now: datetime | None = None) -> None:
+        now = now or datetime.now(timezone.utc)
+        with Session(self.engine) as session, session.begin():
+            row = session.get(WorkerHeartbeatRow, worker_id)
+            if row is None:
+                session.add(WorkerHeartbeatRow(worker_id=worker_id, last_seen_at=now))
+            else:
+                row.last_seen_at = now
+
+    def has_fresh_heartbeat(self, *, max_age_seconds: int = 90, now: datetime | None = None) -> bool:
+        now = now or datetime.now(timezone.utc)
+        cutoff = now - timedelta(seconds=max_age_seconds)
+        with Session(self.engine) as session:
+            rows = session.scalars(select(WorkerHeartbeatRow.last_seen_at)).all()
+        for seen in rows:
+            if seen.tzinfo is None:
+                seen = seen.replace(tzinfo=timezone.utc)
+            if seen >= cutoff:
+                return True
+        return False
+
+    def claim(self, *, worker_id: str, lease_seconds: int = 60, now: datetime | None = None) -> DeletionJob | None:
+        now = now or datetime.now(timezone.utc)
+        with Session(self.engine) as session, session.begin():
+            row = session.scalar(
+                select(AssetDeletionOutboxRow)
+                .where(
+                    or_(
+                        (AssetDeletionOutboxRow.state == "pending") & (AssetDeletionOutboxRow.available_at <= now),
+                        (AssetDeletionOutboxRow.state == "processing") & (AssetDeletionOutboxRow.lease_until < now),
+                    )
+                )
+                .order_by(AssetDeletionOutboxRow.created_at, AssetDeletionOutboxRow.outbox_id)
+                .with_for_update(skip_locked=True)
+                .limit(1)
+            )
+            if row is None:
+                return None
+            row.state = "processing"
+            row.attempts += 1
+            row.lease_owner = worker_id
+            row.lease_until = now + timedelta(seconds=lease_seconds)
+            row.updated_at = now
+            session.flush()
+            return DeletionJob(
+                row.outbox_id, row.owner_user_id, row.item_id, row.asset_id,
+                row.command_id, row.attempts, worker_id,
+            )
+
+    def complete(self, job: DeletionJob, *, now: datetime | None = None) -> bool:
+        now = now or datetime.now(timezone.utc)
+        with Session(self.engine) as session, session.begin():
+            row = session.scalar(select(AssetDeletionOutboxRow).where(
+                AssetDeletionOutboxRow.outbox_id == job.outbox_id,
+                AssetDeletionOutboxRow.state == "processing",
+                AssetDeletionOutboxRow.lease_owner == job.lease_owner,
+            ).with_for_update())
+            if row is None:
+                return False
+            row.state = "completed"
+            row.lease_until = None
+            row.lease_owner = None
+            row.last_error_code = None
+            row.updated_at = now
+            return True
+
+    def retry(self, job: DeletionJob, *, error_code: str, max_attempts: int = 8, now: datetime | None = None) -> str:
+        now = now or datetime.now(timezone.utc)
+        with Session(self.engine) as session, session.begin():
+            row = session.scalar(select(AssetDeletionOutboxRow).where(
+                AssetDeletionOutboxRow.outbox_id == job.outbox_id,
+                AssetDeletionOutboxRow.state == "processing",
+                AssetDeletionOutboxRow.lease_owner == job.lease_owner,
+            ).with_for_update())
+            if row is None:
+                return "lease_lost"
+            row.last_error_code = error_code[:80]
+            row.lease_until = None
+            row.lease_owner = None
+            row.updated_at = now
+            if row.attempts >= max_attempts:
+                row.state = "failed"
+                return "failed"
+            delay = min(15 * (2 ** max(row.attempts - 1, 0)), 900)
+            row.state = "pending"
+            row.available_at = now + timedelta(seconds=delay)
+            return "retry_scheduled"
