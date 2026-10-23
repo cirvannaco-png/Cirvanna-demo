@@ -176,7 +176,9 @@ async def decision_evidence(payload: EvidenceRequest) -> dict[str, Any]:
         cultural = await _request(client, "CULTURAL_IDENTITY_SERVICE_URL", "CULTURAL_IDENTITY_SERVICE_TOKEN", "POST", "/v1/evaluate", {**common, "candidate_attributes_complete": True})
         cultural_loaded_at = iso()
         profile = await _request(client, "USI_PROFILE_API_URL", "USI_PROFILE_API_TOKEN", "GET", "/v1/profiles/" + quote(user_id, safe=""))
+        usi_loaded_at = iso()
         context = await _request(client, "USER_CONTEXT_API_URL", "USER_CONTEXT_API_TOKEN", "GET", "/v1/context/" + quote(user_id, safe=""))
+        context_loaded_at = iso()
         fit = await _request(client, "FIT_EVIDENCE_API_URL", "FIT_EVIDENCE_API_TOKEN", "POST", "/v1/estimate", {**common, "context": context.get("context")})
         fit_generated_at = _fresh_timestamp(fit.get("generated_at"))
 
@@ -219,6 +221,7 @@ async def decision_evidence(payload: EvidenceRequest) -> dict[str, Any]:
         "evidence_freshness": {
             "npl_loaded_at": npl_loaded_at, "cultural_requirements_loaded_at": cultural_loaded_at,
             "fit_estimate_generated_at": fit_generated_at, "candidate_attributes_loaded_at": catalog_loaded_at,
+            "usi_profile_loaded_at": usi_loaded_at, "user_context_loaded_at": context_loaded_at,
         },
         "decision_request": decision_request,
     }
