@@ -5,7 +5,7 @@ import io
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 from app import main
 
@@ -164,3 +164,22 @@ def test_ranker_orders_scores_descending(monkeypatch):
     })
     result = main._rank_offers([1.0, 0.0], offers, 2)
     assert [item["variant_id"] for item in result] == ["a", "b"]
+
+
+def test_image_quality_rejects_blurry_capture_with_laplacian_variance():
+    sharp = Image.new("RGB", (320, 320), (120, 120, 120))
+    draw = ImageDraw.Draw(sharp)
+    for x in range(0, 320, 8):
+        draw.line((x, 0, x, 319), fill=(0, 0, 0), width=2)
+    blurred = sharp.filter(ImageFilter.GaussianBlur(radius=8))
+    quality = main.evaluate_image_quality(blurred)
+    assert quality["sharpness_proxy"] < 20.0
+    assert quality["passed"] is False
+    assert "image_may_be_blurry" in quality["failure_codes"]
+
+
+def test_image_quality_accepts_well_lit_detailed_capture():
+    quality = main.evaluate_image_quality(Image.open(io.BytesIO(image_bytes())))
+    assert quality["passed"] is True
+    assert quality["sharpness_proxy"] >= 20.0
+    assert quality["interpretation"] == "capture_quality_only_not_model_or_fit_confidence"
