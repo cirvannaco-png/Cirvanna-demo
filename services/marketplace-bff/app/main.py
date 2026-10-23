@@ -6,6 +6,7 @@ fabricates decision, fit, Click It, Virtual Twin, or try-on outputs.
 """
 from __future__ import annotations
 
+import hmac
 import os
 import re
 from pathlib import Path
@@ -121,6 +122,12 @@ def _internal_service(url_key: str, token_key: str) -> tuple[str, str]:
     if len(token.encode("utf-8")) < 32:
         raise HTTPException(status_code=503, detail={"code": f"{token_key}_NOT_CONFIGURED"})
     return base, token
+
+
+class InternalCALAuthorizationIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    subject_id: str = Field(min_length=1, max_length=128)
+    candidate_id: str = Field(min_length=1, max_length=128)
 
 
 class MarketplaceSearchIn(BaseModel):
@@ -328,6 +335,29 @@ def _page_html() -> str:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "alive", "service": SERVICE}
+
+
+@app.post("/internal/cal/authorize")
+async def internal_cal_authorize(request: Request, payload: InternalCALAuthorizationIn) -> dict:
+    """Private service-to-service transaction-time revalidation endpoint."""
+    expected = os.getenv("CAL_GATEWAY_SERVICE_TOKEN", "").strip()
+    scheme, _, supplied = request.headers.get("authorization", "").partition(" ")
+    if len(expected.encode("utf-8")) < 32:
+        raise HTTPException(503, detail={"code": "CAL_GATEWAY_SERVICE_TOKEN_NOT_CONFIGURED"})
+    if scheme.lower() != "bearer" or not supplied or not hmac.compare_digest(supplied, expected):
+        raise HTTPException(401, detail={"code": "CAL_GATEWAY_AUTH_FAILED"})
+    governed = await govern_candidates(payload.subject_id.strip(), [{"candidate_id": payload.candidate_id.strip(), "product_id": payload.candidate_id.strip()}])
+    candidates = governed.get("candidates")
+    if not isinstance(candidates, list) or len(candidates) != 1:
+        return {"subject_id": payload.subject_id.strip(), "candidate_id": payload.candidate_id.strip(),
+                "decision": "NO_SHOW", "may_display": False, "reason_code": governed.get("governance_status", "CAL_NO_SHOW")}
+    receipt = candidates[0].get("cal_decision")
+    if not isinstance(receipt, dict) or receipt.get("verdict") != "SHOW" or receipt.get("may_display") is not True:
+        return {"subject_id": payload.subject_id.strip(), "candidate_id": payload.candidate_id.strip(),
+                "decision": "NO_SHOW", "may_display": False, "reason_code": "CAL_RECEIPT_INVALID"}
+    return {"subject_id": payload.subject_id.strip(), "candidate_id": payload.candidate_id.strip(),
+            "decision": "SHOW", "may_display": True, "request_id": receipt.get("request_id"),
+            "policy_version": receipt.get("policy_version")}
 
 
 @app.get("/ready")
