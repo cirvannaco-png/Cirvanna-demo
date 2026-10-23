@@ -97,6 +97,73 @@ def test_catalog_is_not_replaced_with_mock_data_when_unconfigured(client):
     assert response.json()["detail"]["code"] == "CATALOG_NOT_CONFIGURED"
 
 
+
+def test_npl_provider_snapshot_is_verified_and_bound_to_candidate(monkeypatch):
+    from npl import NegativePreference, PreferenceSource, TargetType, canonical_npl_evidence_payload, preference_payload
+    secret = "npl-provider-test-signing-secret-over-32-bytes"
+    token = "npl-provider-test-service-token-over-32-bytes"
+    monkeypatch.setenv("NPL_SERVICE_URL", "https://npl.internal")
+    monkeypatch.setenv("NPL_SERVICE_TOKEN", token)
+    monkeypatch.setenv("NPL_EVIDENCE_HMAC_SECRET", secret)
+    preferences = [NegativePreference(
+        preference_id="persisted-no-blue", user_id="user-001",
+        target_type=TargetType.ATTRIBUTE, target_value="blue",
+        source=PreferenceSource.USER_DECLARED,
+    )]
+    def response_for(url, headers, json):
+        assert url == "https://npl.internal/v1/evaluate"
+        assert headers["Authorization"] == f"Bearer {token}"
+        canonical = canonical_npl_evidence_payload(
+            json["request_id"], json["user_id"], json["candidate_id"],
+            json["candidate_attributes"], preferences,
+        )
+        signature = hmac.new(secret.encode(), canonical, hashlib.sha256).hexdigest()
+        return FakeResponse({
+            "request_id": json["request_id"], "user_id": json["user_id"],
+            "candidate_id": json["candidate_id"], "blocked": True,
+            "negative_preferences": [preference_payload(p) for p in preferences],
+            "npl_evidence_signature": signature,
+        })
+    class FakeResponse:
+        status_code = 200
+        def __init__(self, data): self.data = data
+        def json(self): return self.data
+    class FakeClient:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def post(self, url, headers, json): return response_for(url, headers, json)
+    monkeypatch.setattr(main.httpx, "Client", FakeClient)
+    loaded = main._load_persisted_npl_preferences(
+        request_id="request-1", user_id="user-001", product_id="product-1",
+        attributes=("blue", "cotton"),
+    )
+    assert len(loaded) == 1
+    assert loaded[0].preference_id == "persisted-no-blue"
+
+def test_untrusted_npl_provider_signature_fails_closed(monkeypatch):
+    token = "npl-provider-test-service-token-over-32-bytes"
+    monkeypatch.setenv("NPL_SERVICE_URL", "https://npl.internal")
+    monkeypatch.setenv("NPL_SERVICE_TOKEN", token)
+    monkeypatch.setenv("NPL_EVIDENCE_HMAC_SECRET", "npl-provider-test-signing-secret-over-32-bytes")
+    class FakeResponse:
+        status_code = 200
+        def json(self):
+            return {"request_id":"request-1","user_id":"user-001","candidate_id":"product-1",
+                "negative_preferences":[],"npl_evidence_signature":"0"*64}
+    class FakeClient:
+        def __init__(self,*args,**kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self,*args): return False
+        def post(self,*args,**kwargs): return FakeResponse()
+    monkeypatch.setattr(main.httpx,"Client",FakeClient)
+    with pytest.raises(main.HTTPException) as error:
+        main._load_persisted_npl_preferences(
+            request_id="request-1",user_id="user-001",product_id="product-1",attributes=("blue",)
+        )
+    assert error.value.status_code == 502
+    assert error.value.detail["code"] == "NPL_PROVIDER_EVIDENCE_UNTRUSTED"
+
 def test_missing_safety_and_fit_providers_fail_closed_to_review(client, monkeypatch):
     monkeypatch.setattr(main, "fetch_product", lambda _: product())
     response = client.post("/v1/decisions", json=request_body(), headers=auth_headers())
