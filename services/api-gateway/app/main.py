@@ -7,6 +7,7 @@ Only a CAL SHOW verdict authorizes the response to mark a candidate displayable.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
 import hmac
 import json
 import os
