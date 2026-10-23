@@ -526,9 +526,8 @@ async def click_it(
     consent_id: Annotated[str, Form(min_length=8, max_length=160)],
     consent_image_processing: Annotated[bool, Form()],
     consent_click_it: Annotated[bool, Form()],
-    twin_id: Annotated[str, Form(min_length=3, max_length=128)],
-    product_image: Annotated[UploadFile, File()],
     twin_id: Annotated[str | None, Form(min_length=3, max_length=128)] = None,
+    product_image: Annotated[UploadFile, File()],
     category: Annotated[str | None, Form(max_length=80)] = None,
     limit: Annotated[int, Form(ge=1, le=25)] = 10,
 ):
