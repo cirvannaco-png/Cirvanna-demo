@@ -189,12 +189,19 @@ async def decision_evidence(payload: EvidenceRequest) -> dict[str, Any]:
         raise HTTPException(503, detail={"code": "NPL_EVIDENCE_UNSIGNED"})
     if not isinstance(cultural.get("cultural_evidence_signature"), str) or len(cultural["cultural_evidence_signature"]) != 64:
         raise HTTPException(503, detail={"code": "CULTURAL_EVIDENCE_UNSIGNED"})
-    usi = profile.get("usi_profile")
-    if not isinstance(usi, dict) or usi.get("user_id") != user_id or not isinstance(usi.get("preferences"), list) or not usi["preferences"]:
+    usi_raw = profile.get("usi_profile")
+    if (not isinstance(usi_raw, dict) or usi_raw.get("user_id") != user_id
+            or not isinstance(usi_raw.get("preferences"), list) or not usi_raw["preferences"]
+            or any(not isinstance(item, dict) or item.get("user_id") != user_id for item in usi_raw["preferences"])):
         raise HTTPException(503, detail={"code": "USI_PROFILE_MISSING_OR_MISMATCHED"})
+    # Strip persistence metadata; the canonical decision contract accepts only
+    # the strict USIProfileIn fields.
+    usi = {key: usi_raw[key] for key in ("profile_id", "user_id", "version", "preferences") if key in usi_raw}
     if (context.get("user_id") != user_id or not isinstance(context.get("context"), dict)
             or context["context"].get("user_id") != user_id):
         raise HTTPException(409, detail={"code": "USER_CONTEXT_MISSING_OR_MISMATCHED"})
+    raw_context = context["context"]
+    decision_context = {key: raw_context.get(key) for key in ("user_id", "age_years", "location", "occasion", "climate")}
     estimate, signature = fit.get("fit_estimate"), fit.get("fit_estimate_signature")
     if not isinstance(estimate, dict) or estimate.get("user_id") != user_id or estimate.get("candidate_id") != candidate_id:
         raise HTTPException(409, detail={"code": "FIT_EVIDENCE_BINDING_MISMATCH"})
@@ -204,7 +211,7 @@ async def decision_evidence(payload: EvidenceRequest) -> dict[str, Any]:
     if not isinstance(policy, dict):
         raise HTTPException(503, detail={"code": "EEPL_POLICY_MISSING"})
     decision_request = {
-        "request_id": request_id, "candidate_id": candidate_id, "context": context["context"],
+        "request_id": request_id, "candidate_id": candidate_id, "context": decision_context,
         "eepl_policy": policy, "usi_profile": usi, "candidate_attributes": candidate_attributes,
         "candidate_attributes_complete": True, "negative_preferences": npl.get("negative_preferences"),
         "cultural_requirements": cultural.get("cultural_requirements"),
