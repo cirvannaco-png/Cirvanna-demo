@@ -1,7 +1,7 @@
-"""Guarded Virtual Twin API foundation.
+"""Consent-gated Virtual Twin pose inference and Click It marketplace search.
 
-This service deliberately refuses to claim that a twin was generated until a
-real, configured reconstruction/model adapter is integrated and validated.
+The present model output is a pose skeleton, not a persistent avatar mesh or a
+calibrated body model. Click It returns marketplace candidates pending CAL.
 """
 from __future__ import annotations
 
@@ -30,8 +30,9 @@ app = FastAPI(
     title="Cirvanna Virtual Twin API",
     version="0.1.0",
     description=(
-        "Guarded API foundation. Reconstruction and skin-analysis inference "
-        "remain unavailable until validated model adapters are integrated."
+        "Pose-skeleton inference and Click It candidate retrieval use a private, "
+        "model-backed vision adapter; full-body reconstruction, calibrated fit "
+        "measurements and skin analysis remain separately gated."
     ),
 )
 bearer = HTTPBearer(auto_error=False)
