@@ -70,6 +70,8 @@ def _engine():
         raise HTTPException(503, detail={"code": "USI_DATABASE_NOT_CONFIGURED"})
     if url.startswith("sqlite:///") and os.getenv("USI_ALLOW_SQLITE_TESTS") != "1":
         raise HTTPException(503, detail={"code": "USI_SQLITE_TEST_MODE_REQUIRED"})
+    if url.startswith("postgresql://"):
+        url = "postgresql+psycopg://" + url[len("postgresql://"):]
     parts = urlsplit(url)
     if parts.scheme not in {"postgresql+psycopg", "sqlite"}:
         raise HTTPException(503, detail={"code": "USI_DATABASE_SCHEME_NOT_ALLOWED"})
