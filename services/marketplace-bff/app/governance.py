@@ -236,7 +236,7 @@ async def govern_candidates(
         if candidate_id is None or not isinstance(candidate, dict):
             failed = True
             continue
-        approval = await _evaluate_one(subject_id, candidate_id, evidence_config, decision_config)
+        catalog_product_id = candidate.get("catalog_product_id") or candidate.get("product_id") or candidate_id\n        if not isinstance(catalog_product_id, str) or not catalog_product_id.strip() or len(catalog_product_id) > 128:\n            failed = True\n            continue\n        approval = await _evaluate_one(subject_id, candidate_id, catalog_product_id.strip(), evidence_config, decision_config)
         if approval is None:
             # This covers BLOCK/REVIEW as well as absent, stale, mismatched, malformed,
             # timed-out or unauthenticated evidence/decision responses. None are shown.
