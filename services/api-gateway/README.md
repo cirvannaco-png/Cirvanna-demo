@@ -102,3 +102,14 @@ The `.github/workflows/decision-gateway.yml` workflow runs these checks plus a D
 - Run real deployment smoke tests, security/privacy review, load/failure tests, and end-to-end user journey checks.
 
 Virtual Try-On remains a separate next phase: rendering/simulation must consume a supported Virtual Twin/model adapter and catalog assets; it must not be simulated by this decision endpoint.
+
+
+## Durable NPL provider integration
+
+When configured, the gateway loads each candidate's NPL snapshot from the trusted `NPL_SERVICE_URL` using `NPL_SERVICE_TOKEN` and verifies `NPL_EVIDENCE_HMAC_SECRET` over the request/user/candidate/attribute/preferences envelope before applying the veto. A provider that is partially configured, unavailable or returns invalid signature/context causes a fail-closed service error; it never falls back silently to an empty persistent preference set. If no NPL provider is configured at all, only request-local, explicitly supplied hard exclusions are evaluated and the gateway capability reports `persistent_npl_service_integrated=false`.
+
+- `NPL_SERVICE_URL`: trusted internal HTTPS base URL.
+- `NPL_SERVICE_TOKEN`: internal service token shared with NPL.
+- `NPL_EVIDENCE_HMAC_SECRET`: HMAC key shared only with trusted NPL and consumer services.
+
+This integration does not create persistent preferences from request-local exclusions. User preference creation/correction must use the NPL API and the ingress must bind `user_id` to the authenticated user.
