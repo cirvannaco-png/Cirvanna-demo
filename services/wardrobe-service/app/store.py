@@ -2,7 +2,7 @@
 from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from sqlalchemy import Boolean, DateTime, Index, Integer, JSON, String, UniqueConstraint, create_engine, func, select, or_
+from sqlalchemy import Boolean, DateTime, ForeignKeyConstraint, Index, Integer, JSON, String, UniqueConstraint, create_engine, func, select, or_
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
@@ -35,6 +35,10 @@ class AssetDeletionOutboxRow(Base):
     __tablename__ = "wardrobe_asset_deletion_outbox"
     __table_args__ = (
         UniqueConstraint("owner_user_id", "item_id", "command_id", name="uq_wardrobe_asset_delete_command"),
+        ForeignKeyConstraint(
+            ["owner_user_id", "item_id"], ["wardrobe_items.owner_user_id", "wardrobe_items.item_id"],
+            ondelete="RESTRICT", name="fk_wardrobe_deletion_item",
+        ),
         Index("ix_wardrobe_asset_delete_state", "state", "created_at"),
     )
     outbox_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
