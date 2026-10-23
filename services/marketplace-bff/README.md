@@ -10,7 +10,7 @@ This is the server-side browser boundary for marketplace browsing and visual dis
 - The browser defaults to GET /api/commerce/marketplace/offers. Commerce returns only active offers from approved merchants with stock available.
 - `POST /api/vision/marketplace-search` forwards a bounded written description/category/limit to Xari using a server-side token. It does not expose the Xari secret in browser JavaScript.
 - `POST /api/vision/click-it` requires a signed Commerce user JWT, checks the user through `GET /me`, and forwards a size-bounded product photo to Virtual Twin with a server-side token. It never trusts a browser-supplied subject/user ID.
-- Account operations require the user's bearer token and are forwarded to Commerce. Commerce remains responsible for signature, issuer, audience, role, ownership, stock, checkout and payment validation.
+- The BFF derives the user ID from Commerce `/me` before any candidate governance. Cart, saved-product, order and checkout routes currently return HTTP 503 until current CAL authorization can be revalidated atomically by Commerce.
 - Only customer cart, saved-product, checkout and order routes are proxied. Admin, merchant-management, webhooks, cron, and internal endpoints are not exposed through this gateway.
 - No CORS allowlist is added to this same-origin UI/API. Security headers include CSP, nosniff, no-referrer, frame denial, and disabled camera/microphone/geolocation.
 
@@ -21,6 +21,10 @@ Set through the deployment secret manager:
 - CATALOG_API_URL: deployed canonical Catalog API base URL.
 - COMMERCE_API_URL: deployed Commerce API base URL.
 - MARKETPLACE_HTML_PATH: optional path override for a nonstandard container layout.
+- GOVERNANCE_EVIDENCE_API_URL and GOVERNANCE_EVIDENCE_API_TOKEN: private, authenticated per-candidate evidence provider implementing `POST /v1/decision-evidence`.
+- DECISION_SERVICE_API_URL and DECISION_SERVICE_TOKEN: private canonical decision-service base URL and internal bearer token.
+
+The BFF `/ready` endpoint requires Catalog, Commerce, evidence-provider and decision-service `/ready` checks to succeed. These variables are not proof that current NPL, explicit cultural requirements, or calibrated fit evidence exist; the evidence provider must source and sign each record from its authoritative provider. The decision service still validates all three evidence signatures independently.
 
 Non-local upstream URLs must use HTTPS without URL credentials, query strings or fragments. The /ready endpoint probes both upstream /ready endpoints and fails with HTTP 503 unless the catalog credential is configured and both services independently report ready. /health is liveness only.
 
