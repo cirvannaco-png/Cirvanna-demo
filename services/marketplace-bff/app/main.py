@@ -363,42 +363,6 @@ def public_offers(
         status_code=503,
         detail={"code": "CAL_GOVERNANCE_NOT_ENFORCED", "retryable": True},
     )
-    base = _upstream_base("COMMERCE_API_URL")
-    params: dict[str, str | int] = {"offset": offset, "limit": limit}
-    if q and q.strip():
-        params["q"] = q.strip()
-    if category and category.strip():
-        params["category"] = category.strip()
-    if currency and currency.strip():
-        params["currency"] = currency.strip().upper()
-    try:
-        response = httpx.get(
-            base + "/marketplace/offers",
-            params=params,
-            headers={"Accept": "application/json"},
-            timeout=TIMEOUT_SECONDS,
-            follow_redirects=False,
-        )
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=503, detail={"code": "COMMERCE_OFFERS_UNAVAILABLE"}) from exc
-    if response.status_code != 200:
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "COMMERCE_OFFERS_UNAVAILABLE", "upstream_status": response.status_code},
-        )
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        raise HTTPException(status_code=502, detail={"code": "INVALID_COMMERCE_RESPONSE"}) from exc
-    if not (
-        isinstance(payload, dict)
-        and isinstance(payload.get("items"), list)
-        and isinstance(payload.get("total"), int)
-    ):
-        raise HTTPException(status_code=502, detail={"code": "INVALID_COMMERCE_RESPONSE"})
-    return payload
-
-
 def _authorized_commerce_path(method: str, path: str) -> bool:
     parts = path.split("/")
     if any(part in {"", ".", ".."} for part in parts):
