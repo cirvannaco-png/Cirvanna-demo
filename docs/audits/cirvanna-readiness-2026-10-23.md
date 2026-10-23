@@ -7,7 +7,8 @@ This report is pinned to the repository state inspected on 2026-10-23. It does n
 - Repository: `cirvannaco-png/Cirvanna-demo`
 - Baseline `main` commit: `553777cfe7e19d4d05ee92445073cfe8945ab41a`
 - PR #60 head inspected: `c64188c736edc308ae66b68f3bd14122fc21e8c9`
-- PR #62 head inspected: `c731231ce2e80e0cda2df4865321d91139f3b609`
+- PR #62 initial audit head: `c731231ce2e80e0cda2df4865321d91139f3b609`
+- PR #62 follow-up implementation head: `5a0b8468bc2e235ea11b4596cb1820c70a55d904`
 - Branch inventory: 58 refs returned by GitHub at audit time.
 - Method: GitHub commit comparisons against `main`, pull-request changed-file inventories, source inspection of service contracts/readiness routes and current tests.
 - CI log limitation: GitHub reports failed jobs, but the connected job-log endpoint returns `BlobNotFound`; therefore the exact failing commands could not be independently recovered.
@@ -98,7 +99,7 @@ No branches were deleted. The available GitHub connector exposed no branch-delet
 
 ## CI snapshot and validation limits
 
-At the PR #62 head inspected, the latest workflow attempts reported failures for:
+At follow-up head `5a0b8468bc2e235ea11b4596cb1820c70a55d904`, the latest workflow attempts again reported failures for:
 - Marketplace BFF checks
 - Marketplace contract checks
 - Container image builds
@@ -107,7 +108,7 @@ At the PR #62 head inspected, the latest workflow attempts reported failures for
 - Vision Intelligence / Virtual Twin / Xari contract checks
 - Governance evidence provider tests
 
-The log endpoint returned missing log blobs for sampled jobs. These failures must be diagnosed from an available runner log or reproduced locally before claiming they are fixed. Rerunning a workflow is not a pass.
+The log endpoint returned missing log blobs for sampled jobs, and no artifacts were attached. These failures must be diagnosed from an available runner log or reproduced locally before claiming they are fixed. Rerunning a workflow is not a pass. The private CAL route and Commerce readiness checks were refined after the initial audit, but these changes are still unvalidated by passing CI.
 
 ## Release gates
 
