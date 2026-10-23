@@ -182,7 +182,7 @@ def test_foreign_user_cultural_declaration_is_rejected(client):
     body["cultural_evidence_signature"] = "0" * 64
     response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
     assert response.status_code == 422
-    assert response.json()["detail"]["code"] == "INVALID_DECISION_EVIDENCE"
+    assert response.json()["detail"]["code"] == "INVALID_CULTURAL_EVIDENCE"
 
 
 def test_incomplete_signed_fit_evidence_routes_to_review(client):
