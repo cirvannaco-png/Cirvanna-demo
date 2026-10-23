@@ -1,23 +1,35 @@
 # Xari service
 
-**Status:** authenticated route-planning API scaffold implemented; downstream execution is not enabled.
+**Status:** consent-aware route planning plus an implemented, configuration-gated natural-language marketplace-search adapter.
 
-Xari is the single canonical assistant/orchestration name. Tari and Xyra are legacy source generations under integration staging and must not be deployed as duplicate orchestrators.
+Xari is the canonical assistant/orchestration name. Tari and Xyra are legacy source generations and must not be deployed as duplicate orchestrators.
 
-The API exposes liveness, readiness, capability status, and authenticated `POST /v1/route`. The route planner uses fixed server-side environment names for chat, skin analysis, marketplace search, Virtual Twin, wardrobe, Click It and Virtual Try-On. It enforces explicit consent for image processing, body measurements, wardrobe access, Click It and try-on; rejects unknown intents/consent keys and untrusted upstream URL forms.
+## Marketplace description search
 
-**Important limitation:** route planning is not execution. It does not forward user payloads or claim that chat, search, analysis, fit evaluation, or rendering happened. Execution adapters still need per-service authentication, typed requests/responses, timeout/retry policies, correlation IDs, redaction, rate limits, failure handling and end-to-end tests.
+POST /v1/marketplace/search accepts a natural-language product/garment description and optional category/limit. Xari forwards a typed request to the private Vision Intelligence service, which ranks current active, approved, in-stock Commerce offers enriched with active Catalog descriptions and attributes. This supports requests such as “a modest green linen dress for warm weather” or “a moisturizer with a light texture”.
+
+The result is named candidates, with display_authorized=false and decision_status=PENDING_CAL. Similarity values are not probabilities. Xari does not authorize display, fit, or purchase: NPL, explicit cultural-identity requirements and CAL still have to run before any candidate is shown.
+
+The initial Click It path is POST /click-it on the authenticated Virtual Twin API, which verifies stored consent and Twin ownership before passing a photo to the same private Vision Intelligence service. This path compares image embeddings with text/metadata about active marketplace offers; exact product-photo comparison is not yet implemented.
+
+## API and limits
+
+- GET /health — process liveness.
+- GET /ready — API token configuration.
+- GET /capabilities — route and marketplace-adapter status.
+- POST /v1/route — existing route-planning contract.
+- POST /v1/marketplace/search — authenticated semantic candidate search.
 
 ## Environment
 
-- `XARI_API_TOKEN`: high-entropy internal bearer token (at least 32 UTF-8 bytes).
-- Optional trusted HTTPS base URLs: `XARI_CHAT_API_URL`, `DERMALSIGHT_API_URL`, `MARKETPLACE_BFF_URL`, `VIRTUAL_TRY_ON_API_URL`, `VIRTUAL_TWIN_API_URL`, `WARDROBE_API_URL`.
+- XARI_API_TOKEN: high-entropy internal bearer token (at least 32 UTF-8 bytes).
+- VISION_INTELLIGENCE_API_URL: trusted HTTPS base URL for the private Vision Intelligence service (local HTTP only for development).
+- VISION_INTELLIGENCE_API_TOKEN: internal worker bearer token, at least 32 bytes.
+- Existing optional trusted base URLs: XARI_CHAT_API_URL, DERMALSIGHT_API_URL, MARKETPLACE_BFF_URL, VIRTUAL_TRY_ON_API_URL, VIRTUAL_TWIN_API_URL, WARDROBE_API_URL.
 
-## Local verification
-
-From `services/xari`:
+For local verification:
 
     python -m pip install -r requirements.txt
     python -m pytest -q
 
-Production promotion requires validated downstream adapters and end-to-end consent propagation. Do not expose this internal routing API directly to unauthenticated clients.
+Do not expose service tokens or these internal APIs directly to browser code. The current text-search adapter executes retrieval, but full Xari task execution, live user identity integration and CAL-approved result presentation are separate release gates.
