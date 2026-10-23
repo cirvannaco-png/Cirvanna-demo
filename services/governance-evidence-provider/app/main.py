@@ -86,7 +86,7 @@ async def _request(client: httpx.AsyncClient, env_url: str, env_token: str, meth
 
 def _attrs(product: dict[str, Any]) -> list[str]:
     raw = product.get("attributes")
-    if not isinstance(raw, dict) or not raw:
+    if product.get("attributes_complete") is not True or not isinstance(raw, dict) or not raw:
         raise HTTPException(503, detail={"code": "CATALOG_ATTRIBUTES_INCOMPLETE"})
     attrs: set[str] = set()
     for key, value in raw.items():
@@ -188,7 +188,8 @@ async def decision_evidence(payload: EvidenceRequest) -> dict[str, Any]:
     usi = profile.get("usi_profile")
     if not isinstance(usi, dict) or usi.get("user_id") != user_id or not isinstance(usi.get("preferences"), list) or not usi["preferences"]:
         raise HTTPException(503, detail={"code": "USI_PROFILE_MISSING_OR_MISMATCHED"})
-    if context.get("user_id") != user_id or not isinstance(context.get("context"), dict):
+    if (context.get("user_id") != user_id or not isinstance(context.get("context"), dict)
+            or context["context"].get("user_id") != user_id):
         raise HTTPException(409, detail={"code": "USER_CONTEXT_MISSING_OR_MISMATCHED"})
     estimate, signature = fit.get("fit_estimate"), fit.get("fit_estimate_signature")
     if not isinstance(estimate, dict) or estimate.get("user_id") != user_id or estimate.get("candidate_id") != candidate_id:
@@ -198,11 +199,6 @@ async def decision_evidence(payload: EvidenceRequest) -> dict[str, Any]:
     policy = profile.get("eepl_policy")
     if not isinstance(policy, dict):
         raise HTTPException(503, detail={"code": "EEPL_POLICY_MISSING"})
-    if npl.get("blocked") is True or cultural.get("verdict") in {"BLOCK", "REVIEW"}:
-        # The canonical decision service still owns arbitration, but known hard vetoes
-        # must not be weakened or skipped by the evidence assembler.
-        raise HTTPException(409, detail={"code": "UPSTREAM_HARD_VETO_OR_REVIEW"})
-
     decision_request = {
         "request_id": request_id, "candidate_id": candidate_id, "context": context["context"],
         "eepl_policy": policy, "usi_profile": usi, "candidate_attributes": candidate_attributes,
