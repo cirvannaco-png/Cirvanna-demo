@@ -25,9 +25,19 @@ CREATE TABLE IF NOT EXISTS wardrobe_asset_deletion_outbox (
     command_id VARCHAR(128) NOT NULL,
     state VARCHAR(16) NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','processing','completed','failed')),
     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    available_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    lease_until TIMESTAMPTZ,
+    lease_owner VARCHAR(128),
+    last_error_code VARCHAR(80),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT uq_wardrobe_asset_delete_command UNIQUE (owner_user_id,item_id,command_id),
     CONSTRAINT fk_wardrobe_deletion_item FOREIGN KEY(owner_user_id,item_id)
-        REFERENCES wardrobe_items(owner_user_id,item_id) ON DELETE CASCADE
+        REFERENCES wardrobe_items(owner_user_id,item_id) ON DELETE RESTRICT
 );
 CREATE INDEX IF NOT EXISTS ix_wardrobe_asset_delete_state ON wardrobe_asset_deletion_outbox(state,created_at);
+
+CREATE TABLE IF NOT EXISTS wardrobe_worker_heartbeats (
+    worker_id VARCHAR(128) PRIMARY KEY,
+    last_seen_at TIMESTAMPTZ NOT NULL
+);
