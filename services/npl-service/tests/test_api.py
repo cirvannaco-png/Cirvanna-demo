@@ -14,6 +14,7 @@ SECRET = "npl-evidence-test-secret-with-more-than-32-bytes"
 def client(monkeypatch, tmp_path):
     url = f"sqlite:///{tmp_path / 'npl-test.sqlite'}"
     monkeypatch.setenv("NPL_DATABASE_URL", url)
+    monkeypatch.setenv("NPL_ALLOW_SQLITE_TESTS", "1")
     monkeypatch.setenv("NPL_SERVICE_TOKEN", TOKEN)
     monkeypatch.setenv("NPL_EVIDENCE_HMAC_SECRET", SECRET)
     engine_for_url.cache_clear()
@@ -97,6 +98,12 @@ def test_evaluation_returns_signed_preferences_bound_to_request_and_candidate(cl
     assert hmac.compare_digest(expected, data["npl_evidence_signature"])
     changed = canonical_npl_evidence_payload(request["request_id"], request["user_id"], "different-candidate", request["candidate_attributes"], data["negative_preferences"])
     assert not hmac.compare_digest(expected, hmac.new(SECRET.encode(), changed, hashlib.sha256).hexdigest())
+
+def test_sqlite_does_not_pass_readiness_without_test_opt_in(client, monkeypatch):
+    monkeypatch.delenv("NPL_ALLOW_SQLITE_TESTS", raising=False)
+    response = client.get("/ready")
+    assert response.status_code == 503
+    assert response.json()["detail"]["ready"] is False
 
 def test_unconfigured_database_fails_readiness_closed(client, monkeypatch):
     monkeypatch.delenv("NPL_DATABASE_URL", raising=False)
