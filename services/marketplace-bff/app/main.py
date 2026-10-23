@@ -148,14 +148,17 @@ async def marketplace_description_search(payload: MarketplaceSearchIn) -> dict:
     if payload.category and payload.category.strip():
         request_body["category"] = payload.category.strip()
     data = await _safe_json_post(base, "/v1/marketplace/search", token, request_body)
-    # This endpoint intentionally forwards candidates separately from display authorization.
+    # Retrieval is never display authorization. Until this BFF calls and verifies
+    # the canonical CAL gateway, candidate details must not cross the browser boundary.
+    # Do not trust display_authorized supplied by Xari or a retrieval provider.
     return {
         "status": "complete",
         "query": payload.normalized_query,
-        "candidate_count": data.get("candidate_count", len(data["candidates"])),
-        "candidates": data["candidates"],
-        "display_authorized": data.get("display_authorized") is True,
-        "decision_status": data.get("decision_status", "PENDING_CAL"),
+        "candidate_count": 0,
+        "candidates": [],
+        "display_authorized": False,
+        "decision_status": "PENDING_CAL",
+        "governance_status": "CAL_GATE_NOT_CONNECTED",
         "scores_are_probabilities": False,
     }
 
@@ -250,7 +253,22 @@ async def marketplace_click_it(
     except ValueError as exc:
         raise HTTPException(502, detail={"code": "CLICK_IT_INVALID_RESPONSE"}) from exc
     if response.status_code == 200 and isinstance(data, dict):
-        return JSONResponse(content=data, headers={"Cache-Control": "no-store, private"})
+        # Click It returns retrieval candidates, not CAL approvals. Strip candidate
+        # details at the browser boundary until a verified CAL gateway is integrated.
+        # Never trust a downstream display_authorized flag as an authorization token.
+        return JSONResponse(
+            content={
+                "status": "complete",
+                "candidate_count": 0,
+                "candidates": [],
+                "display_authorized": False,
+                "decision_status": "PENDING_CAL",
+                "governance_status": "CAL_GATE_NOT_CONNECTED",
+                "scores_are_probabilities": False,
+                "image_persisted": data.get("image_persisted") is False,
+            },
+            headers={"Cache-Control": "no-store, private"},
+        )
     detail = data.get("detail", {}) if isinstance(data, dict) else {}
     code = detail.get("code") if isinstance(detail, dict) else None
     safe = {"code": code if isinstance(code, str) else "CLICK_IT_REQUEST_FAILED"}
@@ -335,7 +353,16 @@ def public_offers(
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=MAX_PAGE_SIZE),
 ) -> dict:
-    """Expose only Commerce's active, approved, in-stock merchant offers."""
+    """Fail closed until marketplace offers are evaluated by the canonical CAL gateway.
+
+    Commerce eligibility (active merchant, stock) is not user-specific purchase
+    governance. Returning offers directly here would bypass NPL, explicit cultural
+    requirements and the final CAL verdict.
+    """
+    raise HTTPException(
+        status_code=503,
+        detail={"code": "CAL_GOVERNANCE_NOT_ENFORCED", "retryable": True},
+    )
     base = _upstream_base("COMMERCE_API_URL")
     params: dict[str, str | int] = {"offset": offset, "limit": limit}
     if q and q.strip():
