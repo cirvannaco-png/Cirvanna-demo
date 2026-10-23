@@ -162,8 +162,8 @@ async def decision_evidence(payload: EvidenceRequest) -> dict[str, Any]:
 
     request_id, user_id, candidate_id = payload.request_id, payload.subject_id, payload.candidate_id
     async with httpx.AsyncClient(timeout=httpx.Timeout(TIMEOUT, connect=2), trust_env=False, follow_redirects=False) as client:
-        product = await _request(client, "CATALOG_API_URL", "CATALOG_API_TOKEN", "GET", "/products/" + quote(candidate_id, safe=""))
-        if product.get("product_id", product.get("id")) != candidate_id or product.get("status") != "active":
+        product = await _request(client, "CATALOG_API_URL", "CATALOG_API_TOKEN", "GET", "/products/" + quote(catalog_product_id, safe=""))
+        if product.get("product_id", product.get("id")) != catalog_product_id or product.get("status") != "active":
             raise HTTPException(409, detail={"code": "CATALOG_CANDIDATE_MISMATCH_OR_INACTIVE"})
         candidate_attributes = _attrs(product)
         catalog_loaded_at = iso()
