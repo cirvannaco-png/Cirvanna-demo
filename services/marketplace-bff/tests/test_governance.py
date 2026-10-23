@@ -118,6 +118,8 @@ class GovernanceTransport:
                 "cultural_requirements_loaded_at": now.isoformat(),
                 "fit_estimate_generated_at": now.isoformat(),
                 "candidate_attributes_loaded_at": now.isoformat(),
+                "usi_profile_loaded_at": now.isoformat(),
+                "user_context_loaded_at": now.isoformat(),
             }
             if self.evidence_mode == "stale_source":
                 freshness["npl_loaded_at"] = (now - timedelta(seconds=90)).isoformat()
