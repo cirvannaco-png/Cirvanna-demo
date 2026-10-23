@@ -37,8 +37,6 @@ from catacaci.pipeline import evaluate_candidate  # noqa: E402
 from cultural_identity import (  # noqa: E402
     CulturalRequirement,
     RequirementKind,
-    RequirementVerdict,
-    evaluate as evaluate_cultural_identity,
 )
 from eepl import ContextField, EEPLContext, EEPLPolicy  # noqa: E402
 from fci import FitConfidenceEstimate  # noqa: E402
@@ -404,49 +402,6 @@ def _user_constraint_signals(
             source_version="user-input-v1",
         ))
     return tuple(signals)
-
-
-def _cultural_signals(
-    user_id: str,
-    product_id: str,
-    attributes: tuple[str, ...],
-    complete: bool,
-    raw_requirements: list[CulturalRequirementInput],
-    request_id: str,
-) -> tuple[DecisionSignal, ...]:
-    requirements = tuple(
-        CulturalRequirement(
-            requirement_id=item.requirement_id,
-            declaration_id=item.declaration_id,
-            user_id=user_id,
-            attribute=item.attribute,
-            kind=RequirementKind(item.kind),
-            hard=item.hard,
-        )
-        for item in raw_requirements
-    )
-    result = evaluate_cultural_identity(
-        user_id, product_id, attributes, requirements,
-        candidate_attributes_complete=complete,
-    )
-    state_map = {
-        RequirementVerdict.PASS: SignalState.PASS,
-        RequirementVerdict.BLOCK: SignalState.BLOCK,
-        RequirementVerdict.REVIEW: SignalState.UNKNOWN,
-    }
-    state = state_map[result.verdict]
-    return tuple(
-        DecisionSignal(
-            signal_id=f"cultural:{request_id}:{product_id}:{index}",
-            kind=SignalKind.CULTURAL_REQUIREMENT,
-            state=state,
-            reason_code=code,
-            explanation=explanation,
-            required=True,
-            source_version=result.contract_version,
-        )
-        for index, (code, explanation) in enumerate(zip(result.reason_codes, result.explanations))
-    )
 
 
 def _trusted_internal_base_url(value: str) -> bool:
