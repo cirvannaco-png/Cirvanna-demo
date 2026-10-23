@@ -55,9 +55,9 @@
     {
       "id": "npl",
       "target": "packages/preferences/npl",
-      "status": "policy-kernel-implemented",
+      "status": "persistent-ledger-api-implemented",
       "purpose": "Deterministic NPL domain kernel for explicit hard exclusions, idempotent rejection evidence, durable threshold-based vetoes, and explicit user correction.",
-      "promotionGate": "Add versioned persistence and audit delivery; test concurrent event idempotency, retention/deletion, API contracts, and end-to-end CAL integration."
+      "promotionGate": "Apply and validate PostgreSQL migration in a controlled environment; run concurrent multi-worker, restore, key-rotation, retention/deletion and live CAL-provider integration tests. Decision service verifies signatures; gateway integration is configuration-gated and not yet deployed."
     },
     {
       "id": "fci",
@@ -111,9 +111,9 @@
     {
       "id": "wardrobe-domain",
       "target": "packages/wardrobe",
-      "status": "domain-contract-implemented",
+      "status": "persistent-api-and-domain-contract-implemented",
       "purpose": "Canonical wardrobe item value object, owner-scoped lifecycle transitions, opaque asset-reference validation, and explicit photo-storage consent.",
-      "promotionGate": "Add PostgreSQL repository and migrations, concurrency/idempotency controls, object-storage authorization and deletion workflow, catalog contract tests, and end-to-end tenant-isolation evidence."
+      "promotionGate": "Apply and validate PostgreSQL migration, verify user identity binding at ingress, deploy/test the asset deletion worker and retry/DLQ behavior, then run concurrent version checks, restore and catalog integration tests."
     }
   ],
   "sourceSnapshots": [
