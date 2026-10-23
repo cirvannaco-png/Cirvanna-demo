@@ -119,3 +119,122 @@ def test_external_upstream_must_use_https(client, monkeypatch):
     response = client.get("/api/commerce/marketplace/offers")
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "COMMERCE_API_URL_MUST_BE_TRUSTED_HTTPS"
+
+class FakeAsyncClient:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def get(self, url, **kwargs):
+        self.calls.append(("GET", url, kwargs))
+        return self.responses.pop(0)
+
+    async def post(self, url, **kwargs):
+        self.calls.append(("POST", url, kwargs))
+        return self.responses.pop(0)
+
+
+def test_description_search_fails_closed_without_xari_secret(client, monkeypatch):
+    monkeypatch.delenv("XARI_API_URL", raising=False)
+    monkeypatch.delenv("XARI_API_TOKEN", raising=False)
+    response = client.post("/api/vision/marketplace-search", json={"query": "blue linen summer dress"})
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "XARI_API_URL_NOT_CONFIGURED"
+
+
+def test_description_search_forwards_to_xari_and_keeps_candidates_pending_cal(client, monkeypatch):
+    monkeypatch.setenv("XARI_API_URL", "https://xari.example.test")
+    monkeypatch.setenv("XARI_API_TOKEN", "xari-internal-token-at-least-thirty-two-bytes")
+    fake = FakeAsyncClient([FakeResponse({
+        "status": "complete",
+        "query": "green linen dress",
+        "candidate_count": 2,
+        "candidates": [{"variant_id": "offer-1", "product_name": "green dress"}],
+        "display_authorized": False,
+        "decision_status": "PENDING_CAL",
+        "scores_are_probabilities": False,
+    })])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post("/api/vision/marketplace-search", json={"query": " green   linen dress ", "limit": 5})
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["candidate_count"] == 2
+    assert data["display_authorized"] is False
+    assert data["decision_status"] == "PENDING_CAL"
+    assert fake.calls[0][1] == "https://xari.example.test/v1/marketplace/search"
+    assert fake.calls[0][2]["json"]["query"] == "green linen dress"
+    assert "Authorization" not in response.text
+
+
+def test_click_it_requires_signed_user_token_before_upstream_calls(client, monkeypatch):
+    response = client.post(
+        "/api/vision/click-it",
+        data={
+            "consent_id": "consent-record-1234",
+            "consent_image_processing": "true",
+            "consent_click_it": "true",
+        },
+        files={"product_image": ("dress.png", b"not-used", "image/png")},
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "USER_BEARER_REQUIRED"
+
+
+def test_click_it_uses_verified_commerce_subject_and_returns_only_pending_candidates(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("VIRTUAL_TWIN_API_URL", "https://virtual-twin.example.test")
+    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "virtual-twin-internal-token-at-least-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer", "email": None}),
+        FakeResponse({
+            "status": "complete",
+            "candidates": [{"variant_id": "variant-3", "product_name": "linen shirt"}],
+            "candidate_count": 1,
+            "display_authorized": False,
+            "decision_status": "PENDING_CAL",
+            "image_persisted": False,
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/vision/click-it",
+        headers={"Authorization": "Bearer signed-user-token"},
+        data={
+            "consent_id": "consent-record-1234",
+            "consent_image_processing": "true",
+            "consent_click_it": "true",
+        },
+        files={"product_image": ("dress.png", b"validated-photo-bytes", "image/png")},
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.json()["display_authorized"] is False
+    assert response.json()["candidates"][0]["variant_id"] == "variant-3"
+    assert len(fake.calls) == 2
+    assert fake.calls[0][1] == "https://commerce.example.test/me"
+    assert fake.calls[1][1] == "https://virtual-twin.example.test/click-it"
+    assert fake.calls[1][2]["data"]["subject_id"] == "signed-user-42"
+    assert "subject_id" not in response.request.body.decode(errors="ignore")
+    assert fake.calls[1][2]["files"]["product_image"][1] == b"validated-photo-bytes"
+
+
+def test_click_it_rejects_unsupported_image_before_calling_services(client, monkeypatch):
+    response = client.post(
+        "/api/vision/click-it",
+        headers={"Authorization": "Bearer signed-user-token"},
+        data={
+            "consent_id": "consent-record-1234",
+            "consent_image_processing": "true",
+            "consent_click_it": "true",
+        },
+        files={"product_image": ("payload.bin", b"x", "application/octet-stream")},
+    )
+    assert response.status_code == 415
+    assert response.json()["detail"]["code"] == "UNSUPPORTED_PRODUCT_IMAGE_TYPE"
+
