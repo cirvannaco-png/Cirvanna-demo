@@ -89,7 +89,10 @@ def capabilities() -> dict[str, object]:
 
 @app.post("/v1/route", tags=["routing"], dependencies=[Depends(require_api_token)])
 def route(request: RouteRequest) -> dict[str, object]:
-    plan = plan_route(request.intent, request.consents)
+    try:
+        plan = plan_route(request.intent, request.consents)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": "INVALID_ROUTE_REQUEST"}) from exc
     return {
         "request_id": request.request_id,
         "contract_version": plan.contract_version,
