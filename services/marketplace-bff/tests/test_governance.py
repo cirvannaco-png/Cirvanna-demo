@@ -1,8 +1,13 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from app import governance
+
+
+def run_governance(subject_id, candidates):
+    return asyncio.run(governance.govern_candidates(subject_id, candidates))
 
 
 class FakeResponse:
@@ -105,12 +110,11 @@ def configure_gateway(monkeypatch, transport):
     monkeypatch.setattr(governance.httpx, "AsyncClient", lambda **kwargs: transport)
 
 
-@pytest.mark.asyncio
-async def test_only_exact_cal_show_authorizes_display_and_overwrites_upstream_claims(monkeypatch):
+def test_only_exact_cal_show_authorizes_display_and_overwrites_upstream_claims(monkeypatch):
     transport = GovernanceTransport(decisions={"variant-1": ("SHOW", True)})
     configure_gateway(monkeypatch, transport)
 
-    result = await governance.govern_candidates("user-42", [{
+    result = run_governance("user-42", [{
         "variant_id": "variant-1",
         "product_name": "linen shirt",
         "display_authorized": False,
@@ -131,15 +135,14 @@ async def test_only_exact_cal_show_authorizes_display_and_overwrites_upstream_cl
     assert transport.decision_calls[0]["context"]["user_id"] == "user-42"
 
 
-@pytest.mark.asyncio
-async def test_block_review_and_candidate_without_stable_id_are_never_returned(monkeypatch):
+def test_block_review_and_candidate_without_stable_id_are_never_returned(monkeypatch):
     transport = GovernanceTransport(decisions={
         "block-1": ("BLOCK", False),
         "review-1": ("REVIEW", False),
     })
     configure_gateway(monkeypatch, transport)
 
-    result = await governance.govern_candidates("user-42", [
+    result = run_governance("user-42", [
         {"variant_id": "block-1", "product_name": "blocked product"},
         {"variant_id": "review-1", "product_name": "review product"},
         {"product_name": "no stable ID product"},
@@ -155,12 +158,11 @@ async def test_block_review_and_candidate_without_stable_id_are_never_returned(m
     assert "no stable ID product" not in str(result)
 
 
-@pytest.mark.asyncio
-async def test_stale_evidence_is_rejected_before_cal_is_called(monkeypatch):
+def test_stale_evidence_is_rejected_before_cal_is_called(monkeypatch):
     transport = GovernanceTransport(evidence_mode="stale")
     configure_gateway(monkeypatch, transport)
 
-    result = await governance.govern_candidates("user-42", [
+    result = run_governance("user-42", [
         {"variant_id": "variant-1", "product_name": "stale product"},
     ])
 
@@ -169,13 +171,12 @@ async def test_stale_evidence_is_rejected_before_cal_is_called(monkeypatch):
     assert transport.decision_calls == []
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("evidence_mode", ["foreign_subject", "foreign_candidate"])
-async def test_foreign_subject_or_candidate_evidence_is_rejected(monkeypatch, evidence_mode):
+def test_foreign_subject_or_candidate_evidence_is_rejected(monkeypatch, evidence_mode):
     transport = GovernanceTransport(evidence_mode=evidence_mode)
     configure_gateway(monkeypatch, transport)
 
-    result = await governance.govern_candidates("user-42", [
+    result = run_governance("user-42", [
         {"variant_id": "variant-1", "product_name": "foreign evidence product"},
     ])
 
@@ -183,13 +184,12 @@ async def test_foreign_subject_or_candidate_evidence_is_rejected(monkeypatch, ev
     assert transport.decision_calls == []
 
 
-@pytest.mark.asyncio
 @pytest.mark.parametrize("decision_mode", ["foreign_candidate", "foreign_request", "invalid_json"])
-async def test_malformed_or_mismatched_cal_responses_fail_closed(monkeypatch, decision_mode):
+def test_malformed_or_mismatched_cal_responses_fail_closed(monkeypatch, decision_mode):
     transport = GovernanceTransport(decision_mode={"variant-1": decision_mode})
     configure_gateway(monkeypatch, transport)
 
-    result = await governance.govern_candidates("user-42", [
+    result = run_governance("user-42", [
         {"variant_id": "variant-1", "product_name": "mismatched product"},
     ])
 
@@ -197,15 +197,14 @@ async def test_malformed_or_mismatched_cal_responses_fail_closed(monkeypatch, de
     assert result["display_authorized"] is False
 
 
-@pytest.mark.asyncio
-async def test_upstream_failure_suppresses_only_that_candidate_and_never_trusts_retrieval_flags(monkeypatch):
+def test_upstream_failure_suppresses_only_that_candidate_and_never_trusts_retrieval_flags(monkeypatch):
     transport = GovernanceTransport(
         decisions={"show-1": ("SHOW", True)},
         decision_status={"down-1": "http_error"},
     )
     configure_gateway(monkeypatch, transport)
 
-    result = await governance.govern_candidates("user-42", [
+    result = run_governance("user-42", [
         {"variant_id": "show-1", "product_name": "approved product", "display_authorized": True},
         {"variant_id": "down-1", "product_name": "unavailable product", "display_authorized": True},
     ])
@@ -216,8 +215,7 @@ async def test_upstream_failure_suppresses_only_that_candidate_and_never_trusts_
     assert result["governance_status"] == "CAL_PARTIAL_FAIL_CLOSED"
 
 
-@pytest.mark.asyncio
-async def test_missing_service_configuration_suppresses_every_candidate(monkeypatch):
+def test_missing_service_configuration_suppresses_every_candidate(monkeypatch):
     for name in (
         "GOVERNANCE_EVIDENCE_API_URL",
         "GOVERNANCE_EVIDENCE_API_TOKEN",
@@ -226,7 +224,7 @@ async def test_missing_service_configuration_suppresses_every_candidate(monkeypa
     ):
         monkeypatch.delenv(name, raising=False)
 
-    result = await governance.govern_candidates("user-42", [
+    result = run_governance("user-42", [
         {"variant_id": "variant-1", "product_name": "unconfigured product"},
     ])
 
