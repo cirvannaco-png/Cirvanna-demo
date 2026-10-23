@@ -5,7 +5,8 @@
 - Repository: `cirvannaco-png/Cirvanna-demo`
 - Baseline: `main` at `553777cfe7e19d4d05ee92445073cfe8945ab41a`
 - PR #60: `feature/twin-clickit-live-inference` at `c64188c736edc308ae66b68f3bd14122fc21e8c9`
-- PR #62: `feature/end-to-end-cal-purchase-governance` at `c731231ce2e80e0cda2df4865321d91139f3b609`
+- PR #62 initial compare head: `c731231ce2e80e0cda2df4865321d91139f3b609`
+- PR #62 follow-up head: `5a0b8468bc2e235ea11b4596cb1820c70a55d904`
 - 58 refs were returned by GitHub, including `main`.
 
 Commit comparison identifies unique commit deltas, not semantic safety by itself. A branch with zero commits ahead of main is an ancestor-only branch relative to this baseline; it may be an old work pointer, but deleting it still requires checking ownership/retention needs.
