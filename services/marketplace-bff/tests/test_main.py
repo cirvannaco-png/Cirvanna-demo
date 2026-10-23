@@ -47,6 +47,22 @@ def test_public_offers_fail_closed_until_cal_governance_is_wired(client, monkeyp
     assert response.json()["detail"]["code"] == "CAL_GOVERNANCE_NOT_ENFORCED"
     assert calls == []
 
+
+@pytest.mark.parametrize("path,method", [
+    ("/api/commerce/cart", "GET"),
+    ("/api/commerce/saved-products", "GET"),
+    ("/api/commerce/checkout", "POST"),
+])
+def test_product_bearing_account_and_checkout_routes_fail_closed(client, monkeypatch, path, method):
+    configure_upstreams(monkeypatch)
+    calls = []
+    monkeypatch.setattr(main.httpx, "request", lambda *args, **kwargs: calls.append((args, kwargs)))
+    response = client.request(method, path, headers={"Authorization": "Bearer signed-user-token"}, json={} if method == "POST" else None)
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "CAL_GOVERNANCE_NOT_ENFORCED"
+    assert calls == []
+
+
 def test_account_proxy_requires_bearer_and_blocks_admin_routes(client, monkeypatch):
     configure_upstreams(monkeypatch)
     calls = []
@@ -152,6 +168,8 @@ def test_description_search_forwards_to_xari_and_keeps_candidates_pending_cal(cl
     })])
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.post("/api/vision/marketplace-search", json={"query": " green   linen dress ", "limit": 5})
+    assert response.status_code == 401
+    response = client.post("/api/vision/marketplace-search", headers={"Authorization": "Bearer signed-user-token"}, json={"query": " green   linen dress ", "limit": 5})
     assert response.status_code == 200, response.text
     data = response.json()
     assert data["candidate_count"] == 0
@@ -161,8 +179,10 @@ def test_description_search_forwards_to_xari_and_keeps_candidates_pending_cal(cl
     assert data["governance_status"] == "CAL_GATE_NOT_CONNECTED"
     assert "offer-1" not in response.text
     assert "green dress" not in response.text
-    assert fake.calls[0][1] == "https://xari.example.test/v1/marketplace/search"
-    assert fake.calls[0][2]["json"]["query"] == "green linen dress"
+    assert fake.calls[0][1] == "https://commerce.example.test/me"
+    assert fake.calls[1][1] == "https://xari.example.test/v1/marketplace/search"
+    assert fake.calls[1][2]["json"]["query"] == "green linen dress"
+    assert data["user_id"] == "signed-user-42"
     assert "Authorization" not in response.text
 
 
