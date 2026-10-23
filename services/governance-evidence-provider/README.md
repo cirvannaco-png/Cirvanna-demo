@@ -21,7 +21,7 @@ Any missing, stale, unsigned, malformed, mismatched or unavailable source return
 - User context provider: `GET /v1/context/{user_id}` returns matching `user_id` and a `context` object whose `user_id` is the authenticated subject.
 - Fit evidence provider: `POST /v1/estimate` accepts request/user/candidate/attributes/context and returns `fit_estimate`, `fit_estimate_signature`, and a fresh timezone-aware `generated_at`. It must sign the decision service's canonical normalized FitEvidenceIn payload with `FCI_EVIDENCE_HMAC_SECRET`. A signature alone does not establish scientific validity or calibration.
 
-USI profile, user-context and fit-model providers are not currently demonstrated as deployed in this repository. Until they exist and pass live tests, readiness and product exposure must remain blocked.
+The repository now contains a persistent USI/context service implementation candidate at `services/usi-context-service`; its PostgreSQL migration, internal auth, explicit-confirmation writes and persistence tests are not yet proven in a deployed environment. A trained, calibrated fit-model provider is still not implemented here. Until the USI/context service is deployed and the fit provider is validated, readiness and product exposure must remain blocked.
 
 ## Environment
 
