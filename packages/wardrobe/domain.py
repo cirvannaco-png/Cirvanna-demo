@@ -61,7 +61,7 @@ class WardrobeItem:
                 raise ValueError("image_asset_id must be an opaque internal asset identifier")
             if not self.image_storage_consent:
                 raise ValueError("an image asset requires explicit image_storage_consent")
-        if self.status not in WardrobeItemStatus:
+        if not isinstance(self.status, WardrobeItemStatus):
             raise ValueError("status must be a WardrobeItemStatus")
         if not isinstance(self.version, int) or isinstance(self.version, bool) or self.version < 1:
             raise ValueError("version must be a positive integer")
