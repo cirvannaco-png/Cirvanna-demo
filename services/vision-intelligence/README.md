@@ -46,3 +46,19 @@ The service enriches canonical product IDs with authenticated `GET {CATALOG_API_
 3. Provision and verify the exact model assets and runtime; record weight hashes, model revisions, device/runtime versions and inference smoke-test output.
 4. Evaluate image-quality thresholds on labeled images and retrieval using top-k recall, precision, score/margin distributions, and subgroup error rates. Do not present a match threshold as confidence until calibrated and independently validated.
 5. Keep durable consent verification, Twin ownership, no-store response headers, and CAL/NPL/cultural hard-veto integration as release gates.
+
+
+## Measurable capture rejection criteria
+
+The current deterministic gate is intentionally conservative and is **not a validated accuracy score**. It rejects a capture before inference if any of these checks fail:
+
+- Encoded payload exceeds 10 MiB; image is empty, corrupt, or not a JPEG/PNG/WebP payload matching the supported MIME family.
+- Decoded width or height is below 128 pixels, or total pixels exceed 25,000,000.
+- Mean grayscale brightness is below 18 or above 238 on the 0–255 scale.
+- Grayscale contrast standard deviation is below 8.
+- The sharpness proxy (mean variance of horizontal and vertical adjacent-pixel differences) is below 1.5.
+- More than 55% of pixels are clipped near black (≤3) or white (≥252).
+
+For pose inference, reject if a pose/world-landmark group is absent, fewer than 33 landmarks are returned, or any critical shoulder/hip/ankle landmark visibility is below 0.45. This is a visibility gate, not a guarantee that the person is fully framed or that body geometry is accurate.
+
+These numeric thresholds are versioned heuristics chosen to block obvious failures; they must be re-tuned on a consented, labeled capture set before production. Current Click It does not have a validated semantic “this is a product” classifier or a calibrated no-match threshold. It therefore cannot honestly guarantee rejection of every irrelevant scene or reliable SKU identification. It returns candidate-only results, never display authorization. Before any UI is allowed to surface candidates, CAL must receive the ranking evidence and may abstain; do not interpret cosine scores as probabilities.
