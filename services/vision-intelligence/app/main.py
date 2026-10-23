@@ -13,6 +13,7 @@ import json
 import os
 import re
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -157,7 +158,15 @@ def _warm_start_models() -> None:
             _MODEL_LOAD_ERRORS["pose"] = str(detail.get("code", "POSE_MODEL_LOAD_FAILED"))
 
 
-app.add_event_handler("startup", _warm_start_models)
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    _warm_start_models()
+    yield
+
+
+# Recent Starlette releases use lifespan contexts rather than the removed
+# add_event_handler API. Assign only after the warm-up callback is defined.
+app.router.lifespan_context = _lifespan
 
 
 def _pose():
