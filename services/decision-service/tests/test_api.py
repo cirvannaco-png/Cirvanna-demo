@@ -58,7 +58,10 @@ def request_body(**overrides):
             "estimate_id": "fit-001", "user_id": "user-001", "candidate_id": "catalog-product-001",
             "model_version": "fci-test-model", "calibrated": True, "confidence": 0.86,
             "lower_bound": 0.80, "upper_bound": 0.91, "calibration_version": "fci-calibration-test-1",
-            "evidence_ids": ["body-measurement-record-001", "brand-size-chart-001"], "interval_level": 0.95,
+            "evidence_ids": ["body-measurement-record-001", "brand-size-chart-001"],
+            "required_evidence_fields": ["body_measurements", "garment_size_chart", "garment_geometry"],
+            "observed_evidence_fields": ["body_measurements", "garment_size_chart", "garment_geometry"],
+            "interval_level": 0.95,
         },
         "upstream_signals": [
             {"signal_id": "safety-001", "kind": "safety", "state": "pass", "reason_code": "SAFE",
@@ -67,8 +70,6 @@ def request_body(**overrides):
              "explanation": "Regional listing eligibility passed.", "source_version": "legal-v1"},
             {"signal_id": "hard-001", "kind": "user_hard_constraint", "state": "pass", "reason_code": "HARD",
              "explanation": "Declared hard constraints were checked.", "source_version": "constraints-v1"},
-            {"signal_id": "culture-001", "kind": "cultural_requirement", "state": "pass", "reason_code": "CULTURE",
-             "explanation": "Required cultural policy checks passed.", "source_version": "culture-v1"},
         ],
         "minimum_fit_confidence": 0.70,
         "minimum_alignment_score": 0.60,
@@ -113,10 +114,59 @@ def test_full_eligibility_pipeline_calls_real_cal_and_only_show_authorizes_displ
     assert result["gates"]["eepl"]["verdict"] == "pass"
     assert result["gates"]["npl"]["blocked"] is False
     assert result["gates"]["usi"]["verdict"] == "pass"
+    assert result["gates"]["cultural_identity"]["verdict"] == "pass"
+    assert result["gates"]["confidence"]["status"] == "ready"
+    assert result["gates"]["confidence"]["coverage_ratio"] == 1.0
     assert result["gates"]["fci"]["calibrated"] is True
     assert result["policy"]["minimum_fit_confidence"] == 0.70
     assert any(signal.startswith("eepl:") for signal in result["arbitration"]["evaluated_signal_ids"])
 
+
+
+def test_cultural_requirement_is_evaluated_by_canonical_pipeline(client):
+    body = request_body()
+    body["cultural_requirements"] = [{
+        "requirement_id": "no-sleeveless",
+        "declaration_id": "decl-001",
+        "user_id": "user-001",
+        "attribute": "sleeveless",
+        "kind": "forbidden_attribute",
+        "hard": True,
+        "active": True,
+    }]
+    body["candidate_attributes"].append("sleeveless")
+    response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["decision"] == "BLOCK"
+    assert data["gates"]["cultural_identity"]["verdict"] == "block"
+    assert data["may_display"] is False
+
+
+def test_foreign_user_cultural_declaration_is_rejected(client):
+    body = request_body()
+    body["cultural_requirements"] = [{
+        "requirement_id": "foreign-req",
+        "declaration_id": "decl-foreign",
+        "user_id": "another-user",
+        "attribute": "long-sleeve",
+        "kind": "required_attribute",
+    }]
+    response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "INVALID_DECISION_EVIDENCE"
+
+
+def test_incomplete_signed_fit_evidence_routes_to_review(client):
+    body = request_body()
+    body["fit_estimate"]["observed_evidence_fields"] = ["body_measurements"]
+    body["fit_estimate_signature"] = signed_fit(body["fit_estimate"])
+    response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["decision"] == "REVIEW"
+    assert data["gates"]["confidence"]["status"] == "insufficient_evidence"
+    assert set(data["gates"]["confidence"]["missing_fields"]) == {"garment_size_chart", "garment_geometry"}
 
 def test_npl_hard_veto_beats_high_fit_confidence(client):
     body = request_body()
