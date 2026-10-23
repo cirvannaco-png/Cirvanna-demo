@@ -83,6 +83,27 @@ def _evidence_request_is_bound(
     if expires_at - issued_at > timedelta(seconds=MAX_EVIDENCE_TTL_SECONDS):
         return False
 
+    # A freshly issued envelope is not enough if it merely wraps stale snapshots.
+    # The trusted evidence provider must attest when it loaded each authoritative
+    # source for this exact request. Each read must be recent and not future-dated.
+    freshness = envelope.get("evidence_freshness")
+    required_sources = (
+        "npl_loaded_at",
+        "cultural_requirements_loaded_at",
+        "fit_estimate_generated_at",
+        "candidate_attributes_loaded_at",
+    )
+    if not isinstance(freshness, dict):
+        return False
+    for source in required_sources:
+        loaded_at = _timestamp(freshness.get(source))
+        if loaded_at is None:
+            return False
+        if loaded_at > now + timedelta(seconds=CLOCK_SKEW_SECONDS):
+            return False
+        if now - loaded_at > timedelta(seconds=MAX_EVIDENCE_AGE_SECONDS):
+            return False
+
     payload = envelope.get("decision_request")
     if not isinstance(payload, dict):
         return False
