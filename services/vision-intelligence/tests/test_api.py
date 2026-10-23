@@ -20,7 +20,7 @@ def client(monkeypatch):
 
 
 def image_bytes(pattern: bool = True) -> bytes:
-    image = Image.new("RGB", (240, 320), "white")
+    image = Image.new("RGB", (240, 320), (120, 120, 120))
     if pattern:
         draw = ImageDraw.Draw(image)
         for y in range(0, 320, 16):
