@@ -185,9 +185,15 @@ async def decision_evidence(payload: EvidenceRequest) -> dict[str, Any]:
     for source, data in (("npl", npl), ("cultural", cultural)):
         if data.get("request_id") != request_id or data.get("user_id") != user_id or data.get("candidate_id") != candidate_id:
             raise HTTPException(409, detail={"code": "EVIDENCE_BINDING_MISMATCH", "source": source})
-    if not isinstance(npl.get("npl_evidence_signature"), str) or len(npl["npl_evidence_signature"]) != 64:
+    if not isinstance(npl.get("negative_preferences"), list):
+        raise HTTPException(503, detail={"code": "NPL_EVIDENCE_MISSING"})
+    if not isinstance(npl.get("npl_evidence_signature"), str) or not re.fullmatch(r"[0-9a-fA-F]{64}", npl["npl_evidence_signature"]):
         raise HTTPException(503, detail={"code": "NPL_EVIDENCE_UNSIGNED"})
-    if not isinstance(cultural.get("cultural_evidence_signature"), str) or len(cultural["cultural_evidence_signature"]) != 64:
+    if not isinstance(cultural.get("cultural_requirements"), list):
+        raise HTTPException(503, detail={"code": "CULTURAL_EVIDENCE_MISSING"})
+    if any(not isinstance(item, dict) or item.get("user_id") != user_id for item in cultural["cultural_requirements"]):
+        raise HTTPException(409, detail={"code": "CULTURAL_REQUIREMENT_USER_MISMATCH"})
+    if not isinstance(cultural.get("cultural_evidence_signature"), str) or not re.fullmatch(r"[0-9a-fA-F]{64}", cultural["cultural_evidence_signature"]):
         raise HTTPException(503, detail={"code": "CULTURAL_EVIDENCE_UNSIGNED"})
     usi_raw = profile.get("usi_profile")
     if (not isinstance(usi_raw, dict) or usi_raw.get("user_id") != user_id
@@ -205,7 +211,7 @@ async def decision_evidence(payload: EvidenceRequest) -> dict[str, Any]:
     estimate, signature = fit.get("fit_estimate"), fit.get("fit_estimate_signature")
     if not isinstance(estimate, dict) or estimate.get("user_id") != user_id or estimate.get("candidate_id") != candidate_id:
         raise HTTPException(409, detail={"code": "FIT_EVIDENCE_BINDING_MISMATCH"})
-    if not isinstance(signature, str) or len(signature) != 64:
+    if not isinstance(signature, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", signature):
         raise HTTPException(503, detail={"code": "FIT_EVIDENCE_UNSIGNED"})
     policy = profile.get("eepl_policy")
     if not isinstance(policy, dict):
