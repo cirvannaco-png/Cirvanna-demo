@@ -14,8 +14,9 @@ for package_path in (
 
 from catacaci import DecisionSignal, DecisionVerdict, SignalKind, SignalState  # noqa: E402
 from catacaci.pipeline import evaluate_candidate  # noqa: E402
+from cultural_identity import CulturalRequirement, RequirementKind, RequirementVerdict  # noqa: E402
 from eepl import EEPLContext, EEPLPolicy  # noqa: E402
-from fci import FitConfidenceEstimate  # noqa: E402
+from fci import ConfidenceStatus, FitConfidenceEstimate  # noqa: E402
 from npl import NegativePreference, PreferenceSource, TargetType  # noqa: E402
 from usi import StylePreference, USIProfile  # noqa: E402
 
@@ -59,11 +60,12 @@ def inputs(**overrides):
         "candidate_attributes_complete": True,
         "negative_preferences": (),
         "fit_estimate": fit(),
+        "fit_required_evidence": ("body_measurements", "garment_size_chart", "garment_geometry"),
+        "fit_observed_evidence": ("body_measurements", "garment_size_chart", "garment_geometry"),
         "upstream_signals": (
             gate("safety", SignalKind.SAFETY),
             gate("legal", SignalKind.LEGAL_ELIGIBILITY),
             gate("user-hard", SignalKind.USER_HARD_CONSTRAINT),
-            gate("culture", SignalKind.CULTURAL_REQUIREMENT),
         ),
     }
     values.update(overrides)
@@ -75,11 +77,92 @@ class DecisionPipelineIntegrationTests(unittest.TestCase):
         result = evaluate_candidate(**inputs())
         self.assertEqual(result.eepl.verdict.value, "pass")
         self.assertFalse(result.npl.blocked)
+        self.assertEqual(result.cultural_identity.verdict, RequirementVerdict.PASS)
+        self.assertEqual(result.confidence_assessment.status, ConfidenceStatus.READY)
+        self.assertEqual(result.confidence_assessment.coverage_ratio, 1.0)
         self.assertEqual(result.usi.verdict.value, "pass")
         self.assertEqual(result.arbitration.verdict, DecisionVerdict.SHOW)
         self.assertTrue(result.may_display)
         prefixes = {sid.split(":")[0] for sid in result.arbitration.evaluated_signal_ids if ":" in sid}
-        self.assertTrue({"eepl", "npl", "usi", "fci"}.issubset(prefixes))
+        self.assertTrue({"eepl", "npl", "cultural", "usi", "fci"}.issubset(prefixes))
+
+
+    def test_explicit_cultural_requirement_blocks_candidate(self):
+        requirement = CulturalRequirement(
+            requirement_id="no-sleeveless",
+            declaration_id="decl-1",
+            user_id="user-1",
+            attribute="sleeveless",
+            kind=RequirementKind.FORBIDDEN_ATTRIBUTE,
+            hard=True,
+        )
+        result = evaluate_candidate(**inputs(
+            candidate_attributes=("minimal", "sleeveless", "blue"),
+            cultural_requirements=(requirement,),
+        ))
+        self.assertEqual(result.cultural_identity.verdict, RequirementVerdict.BLOCK)
+        self.assertEqual(result.arbitration.verdict, DecisionVerdict.BLOCK)
+        self.assertFalse(result.may_display)
+
+    def test_incomplete_cultural_candidate_metadata_requires_review(self):
+        requirement = CulturalRequirement(
+            requirement_id="long-sleeve",
+            declaration_id="decl-2",
+            user_id="user-1",
+            attribute="long-sleeve",
+            kind=RequirementKind.REQUIRED_ATTRIBUTE,
+            hard=True,
+        )
+        result = evaluate_candidate(**inputs(
+            candidate_attributes=("minimal", "cotton"),
+            candidate_attributes_complete=False,
+            cultural_requirements=(requirement,),
+        ))
+        self.assertEqual(result.cultural_identity.verdict, RequirementVerdict.REVIEW)
+        self.assertEqual(result.arbitration.verdict, DecisionVerdict.REVIEW)
+        self.assertFalse(result.may_display)
+
+    def test_foreign_user_cultural_requirement_is_rejected(self):
+        requirement = CulturalRequirement(
+            requirement_id="foreign-rule",
+            declaration_id="decl-foreign",
+            user_id="other-user",
+            attribute="long-sleeve",
+            kind=RequirementKind.REQUIRED_ATTRIBUTE,
+        )
+        with self.assertRaises(ValueError):
+            evaluate_candidate(**inputs(cultural_requirements=(requirement,)))
+
+    def test_callers_cannot_inject_cultural_approval_signal(self):
+        with self.assertRaises(ValueError):
+            evaluate_candidate(**inputs(upstream_signals=(
+                gate("safety", SignalKind.SAFETY),
+                gate("legal", SignalKind.LEGAL_ELIGIBILITY),
+                gate("user-hard", SignalKind.USER_HARD_CONSTRAINT),
+                gate("spoofed-culture", SignalKind.CULTURAL_REQUIREMENT),
+            )))
+
+
+    def test_missing_required_fit_evidence_forces_review(self):
+        result = evaluate_candidate(**inputs(fit_observed_evidence=("body_measurements",)))
+        self.assertEqual(result.confidence_assessment.status, ConfidenceStatus.INSUFFICIENT_EVIDENCE)
+        self.assertIn("garment_size_chart", result.confidence_assessment.missing_fields)
+        self.assertEqual(result.arbitration.verdict, DecisionVerdict.REVIEW)
+        self.assertFalse(result.may_display)
+
+    def test_no_declared_fit_evidence_requirements_forces_review(self):
+        result = evaluate_candidate(**inputs(fit_required_evidence=(), fit_observed_evidence=()))
+        self.assertEqual(result.confidence_assessment.status, ConfidenceStatus.INSUFFICIENT_EVIDENCE)
+        self.assertEqual(result.arbitration.verdict, DecisionVerdict.REVIEW)
+
+    def test_spoofed_cultural_signal_is_rejected(self):
+        with self.assertRaises(ValueError):
+            evaluate_candidate(**inputs(upstream_signals=(
+                gate("safety", SignalKind.SAFETY),
+                gate("legal", SignalKind.LEGAL_ELIGIBILITY),
+                gate("user-hard", SignalKind.USER_HARD_CONSTRAINT),
+                gate("spoofed-culture", SignalKind.CULTURAL_REQUIREMENT),
+            )))
 
     def test_npl_veto_blocks_even_with_high_fit_confidence(self):
         veto = NegativePreference(

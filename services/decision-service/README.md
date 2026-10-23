@@ -52,3 +52,13 @@ The module imports existing packages from the monorepo. Do not run this Dockerfi
 - Durable decision audit/replay storage, access audit, key rotation, policy approval and retention/deletion need operational integration.
 - CaTaCaCi only governs product display when downstream consumers actually honor may_display. The commerce and marketplace services are not yet wired to suppress products using this endpoint, so no current marketplace page should claim decisions are being applied end-to-end.
 - This adapter does not produce Click It reconstructions, Virtual Twin geometry or try-on imagery; those require validated model/rendering integrations.
+
+
+## Trusted NPL evidence
+
+The decision endpoint also requires `NPL_EVIDENCE_HMAC_SECRET`, shared only with the trusted NPL service. The signature binds the request ID, user ID, candidate ID, normalized candidate attributes and the complete user-scoped negative-preference envelope. Missing, foreign-user or modified NPL evidence fails before CAL evaluation. This verification proves provenance from a key holder; it does not replace end-to-end identity validation, service authorization or a deployed NPL integration.
+
+
+## Trusted cultural declaration evidence
+
+The decision endpoint requires `CULTURAL_IDENTITY_HMAC_SECRET` and verifies a candidate-bound Cultural Identity evidence envelope before evaluation. The signature binds request ID, user ID, candidate ID, normalized candidate attributes, metadata completeness and the active declaration requirement set. Modified or foreign-user declaration evidence fails before CAL runs. The service key must be shared only with the trusted Cultural Identity service/consumer chain; an internal API token alone does not prove that a cultural declaration is genuine.

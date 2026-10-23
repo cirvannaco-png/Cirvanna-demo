@@ -23,3 +23,8 @@ Run the tests from the repository root:
 python -m unittest discover -s tests/architecture -v
 python scripts/validate_architecture.py
 ```
+
+
+## Durable service boundary
+
+`ports.py` defines the required persistence operations and transaction semantics for a future service adapter. It is an interface only. Do not call NPL persistence-complete until a PostgreSQL adapter, unique event constraints, transaction/concurrency tests, and retention/deletion evidence are merged.

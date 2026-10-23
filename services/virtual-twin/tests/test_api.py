@@ -45,7 +45,7 @@ def test_twin_endpoint_requires_authentication(monkeypatch):
     monkeypatch.delenv("VIRTUAL_TWIN_API_TOKEN", raising=False)
     response = client.post(
         "/twin",
-        data={"height_cm": "180", "weight_kg": "75"},
+        data={"height_cm": "180", "weight_kg": "75", "consent_image_processing": "true", "consent_body_measurements": "true"},
     )
     assert response.status_code == 401
 
@@ -55,7 +55,7 @@ def test_twin_endpoint_does_not_claim_generation_when_adapter_missing(monkeypatc
     response = client.post(
         "/twin",
         headers={"Authorization": "Bearer test-only-token"},
-        data={"height_cm": "180", "weight_kg": "75"},
+        data={"height_cm": "180", "weight_kg": "75", "consent_image_processing": "true", "consent_body_measurements": "true"},
     )
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "MODEL_ADAPTER_NOT_CONFIGURED"
@@ -66,7 +66,7 @@ def test_twin_endpoint_rejects_invalid_token(monkeypatch):
     response = client.post(
         "/twin",
         headers={"Authorization": "Bearer wrong-token"},
-        data={"height_cm": "180"},
+        data={"height_cm": "180", "consent_image_processing": "true", "consent_body_measurements": "true"},
     )
     assert response.status_code == 401
 
@@ -80,7 +80,7 @@ def test_twin_endpoint_rejects_too_many_images(monkeypatch):
     response = client.post(
         "/twin",
         headers={"Authorization": "Bearer test-only-token"},
-        data={"height_cm": "180"},
+        data={"height_cm": "180", "consent_image_processing": "true", "consent_body_measurements": "true"},
         files=files,
     )
     assert response.status_code == 413
@@ -93,7 +93,7 @@ def test_twin_endpoint_rejects_oversized_image(monkeypatch):
     response = client.post(
         "/twin",
         headers={"Authorization": "Bearer test-only-token"},
-        data={"height_cm": "180"},
+        data={"height_cm": "180", "consent_image_processing": "true", "consent_body_measurements": "true"},
         files={"images": ("large.jpg", b"four", "image/jpeg")},
     )
     assert response.status_code == 413
@@ -106,7 +106,7 @@ def test_twin_endpoint_rejects_oversized_video(monkeypatch):
     response = client.post(
         "/twin",
         headers={"Authorization": "Bearer test-only-token"},
-        data={"height_cm": "180"},
+        data={"height_cm": "180", "consent_image_processing": "true", "consent_body_measurements": "true"},
         files={"video": ("large.mp4", b"four", "video/mp4")},
     )
     assert response.status_code == 413
@@ -118,7 +118,7 @@ def test_twin_endpoint_rejects_height_outside_contract(monkeypatch):
     response = client.post(
         "/twin",
         headers={"Authorization": "Bearer test-only-token"},
-        data={"height_cm": "261"},
+        data={"height_cm": "261", "consent_image_processing": "true", "consent_body_measurements": "true"},
     )
     assert response.status_code == 422
     assert any(
@@ -128,10 +128,33 @@ def test_twin_endpoint_rejects_height_outside_contract(monkeypatch):
 
 
 
+
+def test_click_it_requires_explicit_consent(monkeypatch):
+    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "test-only-token")
+    response = client.post(
+        "/click-it",
+        headers={"Authorization": "Bearer test-only-token"},
+        data={"twin_id": "twin-1", "consent_image_processing": "false", "consent_click_it": "true"},
+        files={"product_image": ("product.jpg", b"photo", "image/jpeg")},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "EXPLICIT_CLICK_IT_CONSENT_REQUIRED"
+
+
+def test_twin_requires_explicit_consent(monkeypatch):
+    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "test-only-token")
+    response = client.post(
+        "/twin",
+        headers={"Authorization": "Bearer test-only-token"},
+        data={"height_cm": "180", "consent_image_processing": "false", "consent_body_measurements": "true"},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "EXPLICIT_TWIN_CONSENT_REQUIRED"
+
 def test_click_it_requires_authentication():
     response = client.post(
         "/click-it",
-        data={"twin_id": "twin-1"},
+        data={"twin_id": "twin-1", "consent_image_processing": "true", "consent_click_it": "true"},
         files={"product_image": ("product.jpg", b"image", "image/jpeg")},
     )
     assert response.status_code == 401
@@ -142,7 +165,7 @@ def test_click_it_rejects_unsupported_media_type(monkeypatch):
     response = client.post(
         "/click-it",
         headers={"Authorization": "Bearer test-only-token"},
-        data={"twin_id": "twin-1"},
+        data={"twin_id": "twin-1", "consent_image_processing": "true", "consent_click_it": "true"},
         files={"product_image": ("product.bin", b"not-image", "application/octet-stream")},
     )
     assert response.status_code == 415
@@ -155,7 +178,7 @@ def test_click_it_rejects_oversized_product_image(monkeypatch):
     response = client.post(
         "/click-it",
         headers={"Authorization": "Bearer test-only-token"},
-        data={"twin_id": "twin-1"},
+        data={"twin_id": "twin-1", "consent_image_processing": "true", "consent_click_it": "true"},
         files={"product_image": ("product.jpg", b"four", "image/jpeg")},
     )
     assert response.status_code == 413
@@ -167,7 +190,7 @@ def test_click_it_does_not_claim_product_reconstruction_when_pipeline_is_missing
     response = client.post(
         "/click-it",
         headers={"Authorization": "Bearer test-only-token"},
-        data={"twin_id": "twin-1"},
+        data={"twin_id": "twin-1", "consent_image_processing": "true", "consent_click_it": "true"},
         files={"product_image": ("product.jpg", b"photo", "image/jpeg")},
     )
     assert response.status_code == 503

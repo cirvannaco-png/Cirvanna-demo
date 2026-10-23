@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
+
 import sqlite3
 import uuid
 
@@ -97,6 +100,135 @@ def test_catalog_is_not_replaced_with_mock_data_when_unconfigured(client):
     assert response.json()["detail"]["code"] == "CATALOG_NOT_CONFIGURED"
 
 
+
+def test_npl_provider_snapshot_is_verified_and_bound_to_candidate(monkeypatch):
+    from npl import NegativePreference, PreferenceSource, TargetType, canonical_npl_evidence_payload, preference_payload
+    secret = "npl-provider-test-signing-secret-over-32-bytes"
+    token = "npl-provider-test-service-token-over-32-bytes"
+    monkeypatch.setenv("NPL_SERVICE_URL", "https://npl.internal")
+    monkeypatch.setenv("NPL_SERVICE_TOKEN", token)
+    monkeypatch.setenv("NPL_EVIDENCE_HMAC_SECRET", secret)
+    preferences = [NegativePreference(
+        preference_id="persisted-no-blue", user_id="user-001",
+        target_type=TargetType.ATTRIBUTE, target_value="blue",
+        source=PreferenceSource.USER_DECLARED,
+    )]
+    def response_for(url, headers, json):
+        assert url == "https://npl.internal/v1/evaluate"
+        assert headers["Authorization"] == f"Bearer {token}"
+        canonical = canonical_npl_evidence_payload(
+            json["request_id"], json["user_id"], json["candidate_id"],
+            json["candidate_attributes"], preferences,
+        )
+        signature = hmac.new(secret.encode(), canonical, hashlib.sha256).hexdigest()
+        return FakeResponse({
+            "request_id": json["request_id"], "user_id": json["user_id"],
+            "candidate_id": json["candidate_id"], "blocked": True,
+            "negative_preferences": [preference_payload(p) for p in preferences],
+            "npl_evidence_signature": signature,
+        })
+    class FakeResponse:
+        status_code = 200
+        def __init__(self, data): self.data = data
+        def json(self): return self.data
+    class FakeClient:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def post(self, url, headers, json): return response_for(url, headers, json)
+    monkeypatch.setattr(main.httpx, "Client", FakeClient)
+    loaded = main._load_persisted_npl_preferences(
+        request_id="request-1", user_id="user-001", product_id="product-1",
+        attributes=("blue", "cotton"),
+    )
+    assert len(loaded) == 1
+    assert loaded[0].preference_id == "persisted-no-blue"
+
+def test_untrusted_npl_provider_signature_fails_closed(monkeypatch):
+    token = "npl-provider-test-service-token-over-32-bytes"
+    monkeypatch.setenv("NPL_SERVICE_URL", "https://npl.internal")
+    monkeypatch.setenv("NPL_SERVICE_TOKEN", token)
+    monkeypatch.setenv("NPL_EVIDENCE_HMAC_SECRET", "npl-provider-test-signing-secret-over-32-bytes")
+    class FakeResponse:
+        status_code = 200
+        def json(self):
+            return {"request_id":"request-1","user_id":"user-001","candidate_id":"product-1",
+                "negative_preferences":[],"npl_evidence_signature":"0"*64}
+    class FakeClient:
+        def __init__(self,*args,**kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self,*args): return False
+        def post(self,*args,**kwargs): return FakeResponse()
+    monkeypatch.setattr(main.httpx,"Client",FakeClient)
+    with pytest.raises(main.HTTPException) as error:
+        main._load_persisted_npl_preferences(
+            request_id="request-1",user_id="user-001",product_id="product-1",attributes=("blue",)
+        )
+    assert error.value.status_code == 502
+    assert error.value.detail["code"] == "NPL_PROVIDER_EVIDENCE_UNTRUSTED"
+
+
+def test_cultural_provider_snapshot_is_verified_and_candidate_bound(monkeypatch):
+    from cultural_identity import CulturalRequirement, RequirementKind, canonical_cultural_evidence_payload, requirement_payload
+    secret = "culture-provider-signing-secret-longer-than-32"
+    token = "culture-provider-service-token-longer-than-32"
+    monkeypatch.setenv("CULTURAL_IDENTITY_SERVICE_URL", "https://culture.internal")
+    monkeypatch.setenv("CULTURAL_IDENTITY_SERVICE_TOKEN", token)
+    monkeypatch.setenv("CULTURAL_IDENTITY_HMAC_SECRET", secret)
+    reqs = (CulturalRequirement(
+        requirement_id="declared-sleeves", declaration_id="decl-1",
+        user_id="user-001", attribute="long-sleeve",
+        kind=RequirementKind.REQUIRED_ATTRIBUTE, hard=True, active=True,
+    ),)
+    class FakeResponse:
+        status_code=200
+        def __init__(self,data): self.data=data
+        def json(self): return self.data
+    class FakeClient:
+        def __init__(self,*args,**kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self,*args): return False
+        def post(self,url,headers,json):
+            assert url=="https://culture.internal/v1/evaluate"
+            assert headers["Authorization"]==f"Bearer {token}"
+            canonical=canonical_cultural_evidence_payload(
+                json["request_id"],json["user_id"],json["candidate_id"],
+                json["candidate_attributes"],json["candidate_attributes_complete"],reqs,
+            )
+            signature=hmac.new(secret.encode(),canonical,hashlib.sha256).hexdigest()
+            return FakeResponse({"request_id":json["request_id"],"user_id":json["user_id"],
+                "candidate_id":json["candidate_id"],"cultural_requirements":[requirement_payload(reqs[0])],
+                "cultural_evidence_signature":signature})
+    monkeypatch.setattr(main.httpx,"Client",FakeClient)
+    values=main._load_persisted_cultural_requirements(
+        request_id="req-1",user_id="user-001",product_id="product-1",
+        attributes=("cotton",),attributes_complete=True,
+    )
+    assert len(values)==1 and values[0].requirement_id=="declared-sleeves"
+
+def test_untrusted_cultural_provider_signature_fails_closed(monkeypatch):
+    monkeypatch.setenv("CULTURAL_IDENTITY_SERVICE_URL","https://culture.internal")
+    monkeypatch.setenv("CULTURAL_IDENTITY_SERVICE_TOKEN","culture-provider-service-token-longer-than-32")
+    monkeypatch.setenv("CULTURAL_IDENTITY_HMAC_SECRET","culture-provider-signing-secret-longer-than-32")
+    class FakeResponse:
+        status_code=200
+        def json(self):
+            return {"request_id":"req-1","user_id":"user-001","candidate_id":"product-1",
+                "cultural_requirements":[],"cultural_evidence_signature":"0"*64}
+    class FakeClient:
+        def __init__(self,*args,**kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self,*args): return False
+        def post(self,*args,**kwargs): return FakeResponse()
+    monkeypatch.setattr(main.httpx,"Client",FakeClient)
+    with pytest.raises(main.HTTPException) as error:
+        main._load_persisted_cultural_requirements(
+            request_id="req-1",user_id="user-001",product_id="product-1",
+            attributes=("cotton",),attributes_complete=True,
+        )
+    assert error.value.status_code==502
+    assert error.value.detail["code"]=="CULTURAL_IDENTITY_EVIDENCE_UNTRUSTED"
+
 def test_missing_safety_and_fit_providers_fail_closed_to_review(client, monkeypatch):
     monkeypatch.setattr(main, "fetch_product", lambda _: product())
     response = client.post("/v1/decisions", json=request_body(), headers=auth_headers())
@@ -148,6 +280,13 @@ def test_show_requires_all_required_gates_and_a_calibrated_fit_result(client, mo
     monkeypatch.setattr(main, "fetch_product", lambda _: product())
     monkeypatch.setattr(main, "_safety_signal", pass_safety)
     monkeypatch.setattr(main, "_fit_estimate", calibrated_fit)
+    monkeypatch.setattr(
+        main, "_fit_evidence_fields",
+        lambda _estimate: (
+            ("body_measurements", "garment_size_chart", "garment_geometry"),
+            ("body_measurements", "garment_size_chart", "garment_geometry"),
+        ),
+    )
     response = client.post("/v1/decisions", json=request_body(), headers=auth_headers())
 
     assert response.status_code == 200

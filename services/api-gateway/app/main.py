@@ -7,6 +7,7 @@ Only a CAL SHOW verdict authorizes the response to mark a candidate displayable.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
 import hmac
 import json
 import os
@@ -37,12 +38,11 @@ from catacaci.pipeline import evaluate_candidate  # noqa: E402
 from cultural_identity import (  # noqa: E402
     CulturalRequirement,
     RequirementKind,
-    RequirementVerdict,
-    evaluate as evaluate_cultural_identity,
+    canonical_cultural_evidence_payload,
 )
 from eepl import ContextField, EEPLContext, EEPLPolicy  # noqa: E402
 from fci import FitConfidenceEstimate  # noqa: E402
-from npl import NegativePreference, PreferenceSource, TargetType  # noqa: E402
+from npl import NegativePreference, PreferenceSource, TargetType, canonical_npl_evidence_payload  # noqa: E402
 from usi import StylePreference, USIProfile  # noqa: E402
 
 SERVICE_NAME = "cirvanna-decision-gateway"
@@ -406,47 +406,178 @@ def _user_constraint_signals(
     return tuple(signals)
 
 
-def _cultural_signals(
-    user_id: str,
-    product_id: str,
-    attributes: tuple[str, ...],
-    complete: bool,
-    raw_requirements: list[CulturalRequirementInput],
-    request_id: str,
-) -> tuple[DecisionSignal, ...]:
-    requirements = tuple(
-        CulturalRequirement(
-            requirement_id=item.requirement_id,
-            declaration_id=item.declaration_id,
-            user_id=user_id,
-            attribute=item.attribute,
-            kind=RequirementKind(item.kind),
-            hard=item.hard,
+def _trusted_internal_base_url(value: str) -> bool:
+    from urllib.parse import urlsplit
+    try:
+        parts = urlsplit(value.strip())
+        host = (parts.hostname or "").lower()
+        local = host in {"localhost", "127.0.0.1", "::1"}
+        return bool(
+            host and parts.username is None and parts.password is None
+            and not parts.query and not parts.fragment
+            and (parts.scheme == "https" or (parts.scheme == "http" and local))
         )
-        for item in raw_requirements
-    )
-    result = evaluate_cultural_identity(
-        user_id, product_id, attributes, requirements,
-        candidate_attributes_complete=complete,
-    )
-    state_map = {
-        RequirementVerdict.PASS: SignalState.PASS,
-        RequirementVerdict.BLOCK: SignalState.BLOCK,
-        RequirementVerdict.REVIEW: SignalState.UNKNOWN,
+    except ValueError:
+        return False
+
+
+def _load_persisted_npl_preferences(
+    *, request_id: str, user_id: str, product_id: str, attributes: tuple[str, ...],
+) -> tuple[NegativePreference, ...]:
+    """Fetch and authenticate a candidate-bound snapshot from the durable NPL service."""
+    base = os.getenv("NPL_SERVICE_URL", "").strip().rstrip("/")
+    token = os.getenv("NPL_SERVICE_TOKEN", "")
+    secret = os.getenv("NPL_EVIDENCE_HMAC_SECRET", "")
+    configured = (bool(base), len(token.encode("utf-8")) >= 32, len(secret.encode("utf-8")) >= 32)
+    if not any(configured):
+        return ()
+    if not all(configured) or not _trusted_internal_base_url(base):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "NPL_PROVIDER_CONFIGURATION_INVALID"},
+        )
+    body = {
+        "request_id": request_id,
+        "user_id": user_id,
+        "candidate_id": product_id,
+        "candidate_attributes": list(attributes),
     }
-    state = state_map[result.verdict]
-    return tuple(
-        DecisionSignal(
-            signal_id=f"cultural:{request_id}:{product_id}:{index}",
-            kind=SignalKind.CULTURAL_REQUIREMENT,
-            state=state,
-            reason_code=code,
-            explanation=explanation,
-            required=True,
-            source_version=result.contract_version,
+    try:
+        with httpx.Client(timeout=httpx.Timeout(3.5, connect=1.0)) as client:
+            response = client.post(
+                f"{base}/v1/evaluate",
+                headers={"Authorization": f"Bearer {token}"},
+                json=body,
+            )
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"code": "NPL_PROVIDER_UNAVAILABLE"},
+            )
+        result = response.json()
+        if (
+            result.get("request_id") != request_id
+            or result.get("user_id") != user_id
+            or result.get("candidate_id") != product_id
+            or not isinstance(result.get("negative_preferences"), list)
+            or not isinstance(result.get("npl_evidence_signature"), str)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={"code": "NPL_PROVIDER_RESPONSE_INVALID"},
+            )
+        canonical = canonical_npl_evidence_payload(
+            request_id, user_id, product_id, attributes, result["negative_preferences"]
         )
-        for index, (code, explanation) in enumerate(zip(result.reason_codes, result.explanations))
-    )
+        expected = hmac.new(secret.encode("utf-8"), canonical, "sha256").hexdigest()
+        if not hmac.compare_digest(expected, result["npl_evidence_signature"].lower()):
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={"code": "NPL_PROVIDER_EVIDENCE_UNTRUSTED"},
+            )
+        parsed: list[NegativePreference] = []
+        for item in result["negative_preferences"]:
+            parsed.append(NegativePreference(
+                preference_id=item["preference_id"],
+                user_id=item["user_id"],
+                target_type=TargetType(item["target_type"]),
+                target_value=item["target_value"],
+                source=PreferenceSource(item["source"]),
+                rejection_event_ids=tuple(item.get("rejection_event_ids", ())),
+                rejection_threshold=item.get("rejection_threshold", 3),
+                active=item.get("active", True),
+                correction_event_id=item.get("correction_event_id"),
+            ))
+        return tuple(parsed)
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "NPL_PROVIDER_UNAVAILABLE"},
+        ) from exc
+
+
+def _load_persisted_cultural_requirements(
+    *, request_id: str, user_id: str, product_id: str, attributes: tuple[str, ...],
+    attributes_complete: bool,
+) -> tuple[CulturalRequirement, ...]:
+    """Fetch candidate-bound explicit declarations and authenticate their provenance."""
+    base = os.getenv("CULTURAL_IDENTITY_SERVICE_URL", "").strip().rstrip("/")
+    token = os.getenv("CULTURAL_IDENTITY_SERVICE_TOKEN", "")
+    secret = os.getenv("CULTURAL_IDENTITY_HMAC_SECRET", "")
+    configured = (bool(base), len(token.encode("utf-8")) >= 32, len(secret.encode("utf-8")) >= 32)
+    if not any(configured):
+        return ()
+    if not all(configured) or not _trusted_internal_base_url(base):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "CULTURAL_IDENTITY_PROVIDER_CONFIGURATION_INVALID"},
+        )
+    body = {
+        "request_id": request_id, "user_id": user_id, "candidate_id": product_id,
+        "candidate_attributes": list(attributes),
+        "candidate_attributes_complete": attributes_complete,
+    }
+    try:
+        with httpx.Client(timeout=httpx.Timeout(3.5, connect=1.0)) as client:
+            response = client.post(
+                f"{base}/v1/evaluate",
+                headers={"Authorization": f"Bearer {token}"},
+                json=body,
+            )
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"code": "CULTURAL_IDENTITY_PROVIDER_UNAVAILABLE"},
+            )
+        result = response.json()
+        if (
+            result.get("request_id") != request_id
+            or result.get("user_id") != user_id
+            or result.get("candidate_id") != product_id
+            or not isinstance(result.get("cultural_requirements"), list)
+            or not isinstance(result.get("cultural_evidence_signature"), str)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={"code": "CULTURAL_IDENTITY_PROVIDER_RESPONSE_INVALID"},
+            )
+        canonical = canonical_cultural_evidence_payload(
+            request_id, user_id, product_id, attributes, attributes_complete,
+            result["cultural_requirements"],
+        )
+        expected = hmac.new(secret.encode("utf-8"), canonical, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, result["cultural_evidence_signature"].lower()):
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={"code": "CULTURAL_IDENTITY_EVIDENCE_UNTRUSTED"},
+            )
+        parsed=[]
+        for item in result["cultural_requirements"]:
+            parsed.append(CulturalRequirement(
+                requirement_id=item["requirement_id"],
+                declaration_id=item["declaration_id"],
+                user_id=item["user_id"],
+                attribute=item["attribute"],
+                kind=RequirementKind(item["kind"]),
+                hard=item["hard"],
+                active=item.get("active", True),
+            ))
+        return tuple(parsed)
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "CULTURAL_IDENTITY_PROVIDER_UNAVAILABLE"},
+        ) from exc
+
+
+def _fit_evidence_fields(estimate: FitConfidenceEstimate) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return trusted field coverage from the fit provider; none is registered yet."""
+    del estimate
+    return (), ()
 
 
 def _fit_estimate(user_id: str, product_id: str) -> FitConfidenceEstimate:
@@ -549,7 +680,17 @@ def capabilities() -> dict[str, Any]:
         "catalog_service_integration": True,
         "deterministic_cal_arbitration": True,
         "explicit_negative_preferences": True,
+        "persistent_npl_service_integrated": bool(
+            os.getenv("NPL_SERVICE_URL")
+            and len(os.getenv("NPL_SERVICE_TOKEN", "").encode("utf-8")) >= 32
+            and len(os.getenv("NPL_EVIDENCE_HMAC_SECRET", "").encode("utf-8")) >= 32
+        ),
         "explicit_cultural_requirements": True,
+        "persistent_cultural_declarations_integrated": bool(
+            os.getenv("CULTURAL_IDENTITY_SERVICE_URL")
+            and len(os.getenv("CULTURAL_IDENTITY_SERVICE_TOKEN", "").encode("utf-8")) >= 32
+            and len(os.getenv("CULTURAL_IDENTITY_HMAC_SECRET", "").encode("utf-8")) >= 32
+        ),
         "durable_decision_audit": "sqlite_local_only",
         "trained_fit_predictor": False,
         "calibrated_fci_provider": False,
@@ -634,7 +775,7 @@ def evaluate_decisions(payload: DecisionRequest) -> DecisionResponse:
             for index, item in enumerate(payload.style_preferences)
         ),
     )
-    negative_preferences = tuple(
+    explicit_negative_preferences = tuple(
         NegativePreference(
             preference_id=item.preference_id,
             user_id=payload.user_id,
@@ -643,6 +784,18 @@ def evaluate_decisions(payload: DecisionRequest) -> DecisionResponse:
             source=PreferenceSource.USER_DECLARED,
         )
         for item in payload.negative_preferences
+    )
+    request_cultural_requirements = tuple(
+        CulturalRequirement(
+            requirement_id=item.requirement_id,
+            declaration_id=item.declaration_id,
+            user_id=payload.user_id,
+            attribute=item.attribute,
+            kind=RequirementKind(item.kind),
+            hard=item.hard,
+            active=True,
+        )
+        for item in payload.cultural_requirements
     )
     eepl_policy = _policy()
     candidates: list[CandidateDecisionOutput] = []
@@ -653,16 +806,37 @@ def evaluate_decisions(payload: DecisionRequest) -> DecisionResponse:
     for product_id, product in zip(payload.product_ids, products):
         attributes = _catalog_attributes(product)
         complete = _catalog_attributes_complete(product)
+        persisted_cultural_requirements = _load_persisted_cultural_requirements(
+            request_id=request_id,
+            user_id=payload.user_id,
+            product_id=product_id,
+            attributes=attributes,
+            attributes_complete=complete,
+        )
+        requirement_by_id = {item.requirement_id: item for item in persisted_cultural_requirements}
+        for item in request_cultural_requirements:
+            requirement_by_id.setdefault(item.requirement_id, item)
+        cultural_requirements = tuple(requirement_by_id[key] for key in sorted(requirement_by_id))
         upstream_signals = (
             _safety_signal(product),
             _legal_signal(payload.context, product),
         ) + _user_constraint_signals(
             payload.user_id, product_id, attributes, complete, payload.hard_constraints,
-        ) + _cultural_signals(
-            payload.user_id, product_id, attributes, complete,
-            payload.cultural_requirements, request_id,
         )
+        persisted_preferences = _load_persisted_npl_preferences(
+            request_id=request_id,
+            user_id=payload.user_id,
+            product_id=product_id,
+            attributes=attributes,
+        )
+        # Durable provider values take precedence over request-local IDs; explicit
+        # request exclusions may add a veto but cannot erase a persisted veto.
+        preference_by_id = {item.preference_id: item for item in persisted_preferences}
+        for item in explicit_negative_preferences:
+            preference_by_id.setdefault(item.preference_id, item)
+        negative_preferences = tuple(preference_by_id[key] for key in sorted(preference_by_id))
         estimate = _fit_estimate(payload.user_id, product_id)
+        fit_required_evidence, fit_observed_evidence = _fit_evidence_fields(estimate)
         result = evaluate_candidate(
             request_id=request_id,
             candidate_id=product_id,
@@ -673,6 +847,9 @@ def evaluate_decisions(payload: DecisionRequest) -> DecisionResponse:
             candidate_attributes_complete=complete,
             negative_preferences=negative_preferences,
             fit_estimate=estimate,
+            cultural_requirements=cultural_requirements,
+            fit_required_evidence=fit_required_evidence,
+            fit_observed_evidence=fit_observed_evidence,
             upstream_signals=upstream_signals,
             policy_version=POLICY_VERSION,
         )

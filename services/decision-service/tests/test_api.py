@@ -6,6 +6,8 @@ import time
 
 os.environ.setdefault("DECISION_SERVICE_TOKEN", "decision-service-test-token-32-bytes-min")
 os.environ.setdefault("FCI_EVIDENCE_HMAC_SECRET", "fci-provider-test-key-minimum-32-bytes")
+os.environ.setdefault("NPL_EVIDENCE_HMAC_SECRET", "npl-provider-test-key-minimum-32-bytes")
+os.environ.setdefault("CULTURAL_IDENTITY_HMAC_SECRET", "culture-provider-test-key-minimum-32-bytes")
 
 import pytest
 from fastapi.testclient import TestClient
@@ -16,6 +18,8 @@ from app import main
 def config(monkeypatch):
     monkeypatch.setenv("DECISION_SERVICE_TOKEN", "decision-service-test-token-32-bytes-min")
     monkeypatch.setenv("FCI_EVIDENCE_HMAC_SECRET", "fci-provider-test-key-minimum-32-bytes")
+    monkeypatch.setenv("NPL_EVIDENCE_HMAC_SECRET", "npl-provider-test-key-minimum-32-bytes")
+    monkeypatch.setenv("CULTURAL_IDENTITY_HMAC_SECRET", "culture-provider-test-key-minimum-32-bytes")
 
 
 @pytest.fixture
@@ -28,6 +32,25 @@ def signed_fit(fit: dict) -> str:
     parsed = main.FitEvidenceIn.model_validate(fit)
     payload = main.canonical_fit_payload(parsed)
     return hmac.new(os.environ["FCI_EVIDENCE_HMAC_SECRET"].encode(), payload, hashlib.sha256).hexdigest()
+
+
+def signed_npl(body: dict) -> str:
+    from npl import canonical_npl_evidence_payload
+    canonical = canonical_npl_evidence_payload(
+        body["request_id"], body["context"]["user_id"], body["candidate_id"],
+        body["candidate_attributes"], body["negative_preferences"],
+    )
+    return hmac.new(os.environ["NPL_EVIDENCE_HMAC_SECRET"].encode(), canonical, hashlib.sha256).hexdigest()
+
+
+def signed_cultural(body: dict) -> str:
+    from cultural_identity import canonical_cultural_evidence_payload
+    canonical = canonical_cultural_evidence_payload(
+        body["request_id"], body["context"]["user_id"], body["candidate_id"],
+        body["candidate_attributes"], body["candidate_attributes_complete"],
+        body.get("cultural_requirements", []),
+    )
+    return hmac.new(os.environ["CULTURAL_IDENTITY_HMAC_SECRET"].encode(), canonical, hashlib.sha256).hexdigest()
 
 
 def request_body(**overrides):
@@ -58,7 +81,10 @@ def request_body(**overrides):
             "estimate_id": "fit-001", "user_id": "user-001", "candidate_id": "catalog-product-001",
             "model_version": "fci-test-model", "calibrated": True, "confidence": 0.86,
             "lower_bound": 0.80, "upper_bound": 0.91, "calibration_version": "fci-calibration-test-1",
-            "evidence_ids": ["body-measurement-record-001", "brand-size-chart-001"], "interval_level": 0.95,
+            "evidence_ids": ["body-measurement-record-001", "brand-size-chart-001"],
+            "required_evidence_fields": ["body_measurements", "garment_size_chart", "garment_geometry"],
+            "observed_evidence_fields": ["body_measurements", "garment_size_chart", "garment_geometry"],
+            "interval_level": 0.95,
         },
         "upstream_signals": [
             {"signal_id": "safety-001", "kind": "safety", "state": "pass", "reason_code": "SAFE",
@@ -67,14 +93,14 @@ def request_body(**overrides):
              "explanation": "Regional listing eligibility passed.", "source_version": "legal-v1"},
             {"signal_id": "hard-001", "kind": "user_hard_constraint", "state": "pass", "reason_code": "HARD",
              "explanation": "Declared hard constraints were checked.", "source_version": "constraints-v1"},
-            {"signal_id": "culture-001", "kind": "cultural_requirement", "state": "pass", "reason_code": "CULTURE",
-             "explanation": "Required cultural policy checks passed.", "source_version": "culture-v1"},
         ],
         "minimum_fit_confidence": 0.70,
         "minimum_alignment_score": 0.60,
     }
     body.update(overrides)
     body["fit_estimate_signature"] = signed_fit(body["fit_estimate"])
+    body["npl_evidence_signature"] = signed_npl(body)
+    body["cultural_evidence_signature"] = signed_cultural(body)
     return body
 
 
@@ -113,10 +139,99 @@ def test_full_eligibility_pipeline_calls_real_cal_and_only_show_authorizes_displ
     assert result["gates"]["eepl"]["verdict"] == "pass"
     assert result["gates"]["npl"]["blocked"] is False
     assert result["gates"]["usi"]["verdict"] == "pass"
+    assert result["gates"]["cultural_identity"]["verdict"] == "pass"
+    assert result["gates"]["confidence"]["status"] == "ready"
+    assert result["gates"]["confidence"]["coverage_ratio"] == 1.0
     assert result["gates"]["fci"]["calibrated"] is True
     assert result["policy"]["minimum_fit_confidence"] == 0.70
     assert any(signal.startswith("eepl:") for signal in result["arbitration"]["evaluated_signal_ids"])
 
+
+
+def test_cultural_requirement_is_evaluated_by_canonical_pipeline(client):
+    body = request_body()
+    body["cultural_requirements"] = [{
+        "requirement_id": "no-sleeveless",
+        "declaration_id": "decl-001",
+        "user_id": "user-001",
+        "attribute": "sleeveless",
+        "kind": "forbidden_attribute",
+        "hard": True,
+        "active": True,
+    }]
+    body["candidate_attributes"].append("sleeveless")
+    body["npl_evidence_signature"] = signed_npl(body)
+    body["cultural_evidence_signature"] = signed_cultural(body)
+    response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["decision"] == "BLOCK"
+    assert data["gates"]["cultural_identity"]["verdict"] == "block"
+    assert data["may_display"] is False
+
+
+def test_foreign_user_cultural_declaration_is_rejected(client):
+    body = request_body()
+    body["cultural_requirements"] = [{
+        "requirement_id": "foreign-req",
+        "declaration_id": "decl-foreign",
+        "user_id": "another-user",
+        "attribute": "long-sleeve",
+        "kind": "required_attribute",
+    }]
+    body["cultural_evidence_signature"] = "0" * 64
+    response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "INVALID_CULTURAL_EVIDENCE"
+
+
+def test_incomplete_signed_fit_evidence_routes_to_review(client):
+    body = request_body()
+    body["fit_estimate"]["observed_evidence_fields"] = ["body_measurements"]
+    body["fit_estimate_signature"] = signed_fit(body["fit_estimate"])
+    response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["decision"] == "REVIEW"
+    assert data["gates"]["confidence"]["status"] == "insufficient_evidence"
+    assert set(data["gates"]["confidence"]["missing_fields"]) == {"garment_size_chart", "garment_geometry"}
+
+
+
+def test_cultural_declaration_tampering_is_rejected(client):
+    body = request_body()
+    body["cultural_requirements"] = [{
+        "requirement_id": "tampered", "declaration_id": "decl-1",
+        "user_id": "user-001", "attribute": "long-sleeve",
+        "kind": "required_attribute", "hard": True, "active": True,
+    }]
+    response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "UNTRUSTED_CULTURAL_EVIDENCE"
+
+def test_npl_tampering_is_rejected_before_cal(client):
+    body = request_body()
+    body["negative_preferences"] = [{
+        "preference_id": "tampered", "user_id": "user-001",
+        "target_type": "attribute", "target_value": "blue",
+        "source": "user_declared", "active": True,
+    }]
+    response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "UNTRUSTED_NPL_EVIDENCE"
+
+
+def test_foreign_user_npl_evidence_is_rejected(client):
+    body = request_body()
+    body["negative_preferences"] = [{
+        "preference_id": "foreign", "user_id": "another-user",
+        "target_type": "attribute", "target_value": "blue",
+        "source": "user_declared", "active": True,
+    }]
+    body["npl_evidence_signature"] = signed_npl(body) if False else "0" * 64
+    response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "INVALID_NPL_EVIDENCE"
 
 def test_npl_hard_veto_beats_high_fit_confidence(client):
     body = request_body()
@@ -125,6 +240,7 @@ def test_npl_hard_veto_beats_high_fit_confidence(client):
         "target_value": "blue", "source": "user_declared", "active": True,
     }]
     body["fit_estimate_signature"] = signed_fit(body["fit_estimate"])
+    body["npl_evidence_signature"] = signed_npl(body)
     result = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
     assert result.status_code == 200
     assert result.json()["decision"] == "BLOCK"

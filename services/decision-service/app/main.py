@@ -31,7 +31,8 @@ from catacaci import DecisionSignal, DecisionVerdict, SignalKind, SignalState  #
 from catacaci.pipeline import evaluate_candidate  # noqa: E402
 from eepl import ContextField, EEPLContext, EEPLPolicy  # noqa: E402
 from fci import FitConfidenceEstimate  # noqa: E402
-from npl import NegativePreference, PreferenceSource, TargetType  # noqa: E402
+from cultural_identity import CulturalRequirement, RequirementKind, canonical_cultural_evidence_payload  # noqa: E402
+from npl import NegativePreference, PreferenceSource, TargetType, canonical_npl_evidence_payload  # noqa: E402
 from usi import StylePreference, USIProfile  # noqa: E402
 
 
@@ -121,12 +122,24 @@ class FitEvidenceIn(StrictModel):
     upper_bound: float | None = Field(default=None, ge=0, le=1)
     calibration_version: str | None = Field(default=None, max_length=128)
     evidence_ids: list[str] = Field(default_factory=list, max_length=100)
+    required_evidence_fields: list[str] = Field(default_factory=list, max_length=100)
+    observed_evidence_fields: list[str] = Field(default_factory=list, max_length=100)
     interval_level: float = Field(default=0.95, gt=0, lt=1)
+
+
+class CulturalRequirementIn(StrictModel):
+    requirement_id: str = Field(min_length=1, max_length=128)
+    declaration_id: str = Field(min_length=1, max_length=128)
+    user_id: str = Field(min_length=1, max_length=128)
+    attribute: str = Field(min_length=1, max_length=160)
+    kind: Literal["required_attribute", "forbidden_attribute"]
+    hard: bool = True
+    active: bool = True
 
 
 class UpstreamSignalIn(StrictModel):
     signal_id: str = Field(min_length=1, max_length=200)
-    kind: Literal["safety", "legal_eligibility", "user_hard_constraint", "cultural_requirement", "other"]
+    kind: Literal["safety", "legal_eligibility", "user_hard_constraint", "other"]
     state: Literal["pass", "block", "unknown"]
     reason_code: str = Field(min_length=1, max_length=160)
     explanation: str = Field(min_length=1, max_length=1000)
@@ -145,8 +158,11 @@ class EligibilityRequest(StrictModel):
     candidate_attributes: list[str] = Field(max_length=250)
     candidate_attributes_complete: bool
     negative_preferences: list[NegativePreferenceIn] = Field(default_factory=list, max_length=500)
+    cultural_requirements: list[CulturalRequirementIn] = Field(default_factory=list, max_length=250)
+    cultural_evidence_signature: str = Field(min_length=64, max_length=128)
     fit_estimate: FitEvidenceIn
     fit_estimate_signature: str = Field(min_length=64, max_length=128)
+    npl_evidence_signature: str = Field(min_length=64, max_length=128)
     upstream_signals: list[UpstreamSignalIn] = Field(default_factory=list, max_length=64)
     minimum_fit_confidence: float = Field(default=0.70, ge=0, le=1)
     minimum_alignment_score: float = Field(default=0.60, ge=0, le=1)
@@ -162,6 +178,43 @@ def verify_fit_signature(fit: FitEvidenceIn, signature: str) -> None:
     expected = hmac.new(secret.encode("utf-8"), canonical_fit_payload(fit), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, signature.lower()):
         raise HTTPException(401, detail={"code": "UNTRUSTED_FIT_EVIDENCE"})
+
+
+def verify_cultural_signature(payload: "EligibilityRequest") -> None:
+    """Verify active explicit declarations from the trusted Cultural Identity service."""
+    secret = _required_env("CULTURAL_IDENTITY_HMAC_SECRET")
+    try:
+        canonical = canonical_cultural_evidence_payload(
+            payload.request_id,
+            payload.context.user_id,
+            payload.candidate_id,
+            payload.candidate_attributes,
+            payload.candidate_attributes_complete,
+            payload.cultural_requirements,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, detail={"code": "INVALID_CULTURAL_EVIDENCE"}) from exc
+    expected = hmac.new(secret.encode("utf-8"), canonical, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, payload.cultural_evidence_signature.lower()):
+        raise HTTPException(401, detail={"code": "UNTRUSTED_CULTURAL_EVIDENCE"})
+
+
+def verify_npl_signature(payload: "EligibilityRequest") -> None:
+    """Verify the trusted NPL provider's signature over the exact decision context."""
+    secret = _required_env("NPL_EVIDENCE_HMAC_SECRET")
+    try:
+        canonical = canonical_npl_evidence_payload(
+            payload.request_id,
+            payload.context.user_id,
+            payload.candidate_id,
+            payload.candidate_attributes,
+            payload.negative_preferences,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, detail={"code": "INVALID_NPL_EVIDENCE"}) from exc
+    expected = hmac.new(secret.encode("utf-8"), canonical, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, payload.npl_evidence_signature.lower()):
+        raise HTTPException(401, detail={"code": "UNTRUSTED_NPL_EVIDENCE"})
 
 
 def _result_json(result, payload: "EligibilityRequest") -> dict:
@@ -184,6 +237,20 @@ def _result_json(result, payload: "EligibilityRequest") -> dict:
             "npl": {"blocked": result.npl.blocked, "reason_code": result.npl.reason_code,
                 "hard_veto_preference_ids": list(result.npl.hard_veto_preference_ids),
                 "soft_negative_preference_ids": list(result.npl.soft_negative_preference_ids)},
+            "cultural_identity": {
+                "verdict": result.cultural_identity.verdict.value,
+                "reason_codes": list(result.cultural_identity.reason_codes),
+                "hard_conflict_ids": list(result.cultural_identity.hard_conflict_ids),
+                "soft_conflict_ids": list(result.cultural_identity.soft_conflict_ids),
+            },
+            "confidence": {
+                "status": result.confidence_assessment.status.value,
+                "coverage_ratio": result.confidence_assessment.coverage_ratio,
+                "required_fields": list(result.confidence_assessment.required_fields),
+                "observed_fields": list(result.confidence_assessment.observed_fields),
+                "missing_fields": list(result.confidence_assessment.missing_fields),
+                "reason_code": result.confidence_assessment.reason_code,
+            },
             "usi": {"verdict": result.usi.verdict.value, "alignment_score": result.usi.alignment_score,
                 "reason_code": result.usi.reason_code, "matched_preference_ids": list(result.usi.matched_preference_ids),
                 "unmatched_preference_ids": list(result.usi.unmatched_preference_ids)},
@@ -212,9 +279,13 @@ def health() -> dict[str, str]:
 def readiness() -> dict:
     internal_configured = len(os.getenv("DECISION_SERVICE_TOKEN", "").encode("utf-8")) >= 32
     fit_key_configured = len(os.getenv("FCI_EVIDENCE_HMAC_SECRET", "").encode("utf-8")) >= 32
-    ready = internal_configured and fit_key_configured
+    npl_key_configured = len(os.getenv("NPL_EVIDENCE_HMAC_SECRET", "").encode("utf-8")) >= 32
+    cultural_key_configured = len(os.getenv("CULTURAL_IDENTITY_HMAC_SECRET", "").encode("utf-8")) >= 32
+    ready = internal_configured and fit_key_configured and npl_key_configured and cultural_key_configured
     response = {"status": "ready" if ready else "not_ready", "service": SERVICE,
         "internal_auth_configured": internal_configured, "trusted_fit_evidence_configured": fit_key_configured,
+        "trusted_npl_evidence_configured": npl_key_configured,
+        "trusted_cultural_evidence_configured": cultural_key_configured,
         "fci_prediction_model_available": False, "ready": ready}
     if not ready:
         raise HTTPException(503, detail=response)
@@ -226,7 +297,8 @@ def capabilities() -> dict:
     return {"service": SERVICE, "eepl_policy_evaluation": True, "npl_hard_veto": True,
         "usi_explicit_preference_alignment": True, "fci_calibrated_evidence_contract": True,
         "catacaci_cal_arbitration": True, "decision_explanations": True,
-        "fci_prediction_model_available": False, "persisted_user_preference_store": False,
+        "fci_prediction_model_available": False, "signed_npl_evidence_required": True,
+        "persisted_user_preference_store": False, "signed_cultural_evidence_required": True,
         "decision_audit_persistence": False, "click_it_reconstruction": False,
         "virtual_twin_generation": False, "virtual_try_on": False}
 
@@ -236,6 +308,8 @@ def evaluate_eligibility(payload: EligibilityRequest) -> dict:
     # The fit provider signs the canonical estimate object with a separate secret.
     # API clients cannot elevate an untrusted self-asserted confidence to a CAL pass.
     verify_fit_signature(payload.fit_estimate, payload.fit_estimate_signature)
+    verify_npl_signature(payload)
+    verify_cultural_signature(payload)
     try:
         policy = EEPLPolicy(
             policy_id=payload.eepl_policy.policy_id,
@@ -274,6 +348,15 @@ def evaluate_eligibility(payload: EligibilityRequest) -> dict:
             calibration_version=payload.fit_estimate.calibration_version,
             evidence_ids=tuple(payload.fit_estimate.evidence_ids), interval_level=payload.fit_estimate.interval_level,
         )
+        cultural_requirements = tuple(CulturalRequirement(
+            requirement_id=item.requirement_id,
+            declaration_id=item.declaration_id,
+            user_id=item.user_id,
+            attribute=item.attribute,
+            kind=RequirementKind(item.kind),
+            hard=item.hard,
+            active=item.active,
+        ) for item in payload.cultural_requirements)
         signals = tuple(DecisionSignal(
             signal_id=item.signal_id, kind=SignalKind(item.kind), state=SignalState(item.state),
             reason_code=item.reason_code, explanation=item.explanation, required=item.required,
@@ -285,6 +368,9 @@ def evaluate_eligibility(payload: EligibilityRequest) -> dict:
             candidate_attributes=tuple(payload.candidate_attributes),
             candidate_attributes_complete=payload.candidate_attributes_complete,
             negative_preferences=negative, fit_estimate=fit, upstream_signals=signals,
+            cultural_requirements=cultural_requirements,
+            fit_required_evidence=tuple(payload.fit_estimate.required_evidence_fields),
+            fit_observed_evidence=tuple(payload.fit_estimate.observed_evidence_fields),
             minimum_fit_confidence=payload.minimum_fit_confidence,
             minimum_alignment_score=payload.minimum_alignment_score, policy_version=payload.policy_version,
         )

@@ -1,0 +1,39 @@
+name: Cultural identity declaration service checks
+on:
+  push:
+    branches: ["main", "feature/**", "engineering/**"]
+    paths:
+      - "services/cultural-identity-service/**"
+      - "packages/identity-intelligence/cultural_identity/**"
+      - ".github/workflows/cultural-identity-service.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "services/cultural-identity-service/**"
+      - "packages/identity-intelligence/cultural_identity/**"
+      - ".github/workflows/cultural-identity-service.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  cultural-identity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/cultural-identity-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/cultural-identity-service/requirements.txt
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Check dependency consistency
+        run: python -m pip check
+      - name: Compile service and tests
+        run: python -m compileall -q app tests
+      - name: Run declaration lifecycle and signed evidence tests
+        run: python -m pytest -q

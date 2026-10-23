@@ -1,0 +1,39 @@
+name: NPL ledger service checks
+on:
+  push:
+    branches: ["main", "feature/**", "engineering/**"]
+    paths:
+      - "services/npl-service/**"
+      - "packages/preferences/npl/**"
+      - ".github/workflows/npl-service.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "services/npl-service/**"
+      - "packages/preferences/npl/**"
+      - ".github/workflows/npl-service.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  npl-ledger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/npl-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/npl-service/requirements.txt
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Check installed dependency consistency
+        run: python -m pip check
+      - name: Compile service and tests
+        run: python -m compileall -q app tests
+      - name: Run NPL ledger contract tests
+        run: python -m pytest -q

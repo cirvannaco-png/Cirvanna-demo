@@ -12,19 +12,29 @@ from catacaci import (
     ArbitrationRequest, ArbitrationResult, DecisionSignal, DecisionVerdict,
     SignalKind, SignalState, arbitrate,
 )
+from cultural_identity import (
+    CulturalIdentityResult,
+    CulturalRequirement,
+    RequirementVerdict,
+    evaluate as evaluate_cultural_identity,
+)
 from eepl import EEPLContext, EEPLPolicy, EEPLResult, GateVerdict, evaluate as evaluate_eepl
-from fci import FitConfidenceEstimate
+from fci import ConfidenceAssessment, FitConfidenceEstimate, assess_fit_confidence
 from npl import NegativePreference, NPLDecision, evaluate as evaluate_npl
 from usi import USIProfile, USIResult, evaluate as evaluate_usi
 
 CONTRACT_VERSION = "1.0.0"
 _GENERATED_KINDS = {
-    SignalKind.CONTEXT_ELIGIBILITY, SignalKind.NPL_HARD_NEGATIVE,
-    SignalKind.IDENTITY_ALIGNMENT, SignalKind.FIT_CONFIDENCE,
+    SignalKind.CONTEXT_ELIGIBILITY,
+    SignalKind.NPL_HARD_NEGATIVE,
+    SignalKind.IDENTITY_ALIGNMENT,
+    SignalKind.FIT_CONFIDENCE,
+    SignalKind.CULTURAL_REQUIREMENT,
 }
 _ALLOWED_UPSTREAM_KINDS = {
-    SignalKind.SAFETY, SignalKind.LEGAL_ELIGIBILITY,
-    SignalKind.USER_HARD_CONSTRAINT, SignalKind.CULTURAL_REQUIREMENT,
+    SignalKind.SAFETY,
+    SignalKind.LEGAL_ELIGIBILITY,
+    SignalKind.USER_HARD_CONSTRAINT,
     SignalKind.OTHER,
 }
 
@@ -34,6 +44,8 @@ class DecisionPipelineResult:
     contract_version: str
     eepl: EEPLResult
     npl: NPLDecision
+    cultural_identity: CulturalIdentityResult
+    confidence_assessment: ConfidenceAssessment
     usi: USIResult
     fit_estimate: FitConfidenceEstimate
     arbitration: ArbitrationResult
@@ -59,17 +71,22 @@ def evaluate_candidate(
     candidate_attributes_complete: bool,
     negative_preferences: tuple[NegativePreference, ...],
     fit_estimate: FitConfidenceEstimate,
+    cultural_requirements: tuple[CulturalRequirement, ...] = (),
+    fit_required_evidence: tuple[str, ...] = (),
+    fit_observed_evidence: tuple[str, ...] = (),
+    minimum_fit_evidence_coverage: float = 1.0,
     upstream_signals: tuple[DecisionSignal, ...] = (),
     minimum_fit_confidence: float = 0.70,
     maximum_fit_confidence_disagreement: float = 0.10,
     minimum_alignment_score: float = 0.60,
     policy_version: str = "decision-pipeline-1.0.0",
 ) -> DecisionPipelineResult:
-    """Evaluate EEPL, NPL, USI and FCI and submit typed evidence to CAL.
+    """Evaluate policy and confidence contracts before submitting evidence to CAL.
 
-    Upstream signals must carry independently evaluated safety, legal,
-    user-hard-constraint and cultural policy evidence. Omitting any required
-    gate is valid input but CAL will fail closed to REVIEW.
+    Cultural requirements are evaluated inside this canonical path; callers may
+    not inject a caller-authored CULTURAL_REQUIREMENT signal. Upstream signals
+    carry independent safety, legal, user-hard-constraint, or miscellaneous
+    evidence. Missing required external evidence keeps CAL fail-closed.
     """
     if not isinstance(request_id, str) or not request_id.strip():
         raise ValueError("request_id must not be empty")
@@ -83,6 +100,12 @@ def evaluate_candidate(
         raise ValueError("candidate_attributes must be a tuple")
     if not isinstance(negative_preferences, tuple):
         raise ValueError("negative_preferences must be a tuple")
+    if not isinstance(cultural_requirements, tuple):
+        raise ValueError("cultural_requirements must be a tuple")
+    if any(not isinstance(item, CulturalRequirement) for item in cultural_requirements):
+        raise ValueError("cultural_requirements must contain CulturalRequirement values")
+    if any(item.user_id != context.user_id for item in cultural_requirements):
+        raise ValueError("cultural requirements must belong to the current user")
     if not isinstance(upstream_signals, tuple):
         raise ValueError("upstream_signals must be a tuple")
     for signal in upstream_signals:
@@ -124,23 +147,54 @@ def evaluate_candidate(
         source_version=npl_decision.contract_version,
     )
 
+    cultural_result = evaluate_cultural_identity(
+        context.user_id,
+        candidate_id,
+        candidate_attributes,
+        cultural_requirements,
+        candidate_attributes_complete=candidate_attributes_complete,
+    )
+    if cultural_result.verdict is RequirementVerdict.BLOCK:
+        cultural_state = SignalState.BLOCK
+    elif cultural_result.verdict is RequirementVerdict.REVIEW:
+        cultural_state = SignalState.UNKNOWN
+    else:
+        cultural_state = SignalState.PASS
+    cultural_signal = DecisionSignal(
+        signal_id=f"cultural:{cultural_result.contract_version}:{candidate_id}",
+        kind=SignalKind.CULTURAL_REQUIREMENT,
+        state=cultural_state,
+        reason_code=cultural_result.reason_codes[0],
+        explanation="; ".join(cultural_result.explanations),
+        required=True,
+        source_version=cultural_result.contract_version,
+    )
+
     usi_result = evaluate_usi(
         usi_profile, candidate_id, candidate_attributes,
         candidate_attributes_complete=candidate_attributes_complete,
         minimum_alignment_score=minimum_alignment_score,
     )
     usi_signal = usi_result.to_cal_signal()
-    fit_signal = fit_estimate.to_cal_signal()
+    confidence_assessment = assess_fit_confidence(
+        fit_estimate,
+        required_fields=fit_required_evidence,
+        observed_fields=fit_observed_evidence,
+        minimum_coverage=minimum_fit_evidence_coverage,
+    )
+    fit_signal = confidence_assessment.to_cal_signal()
 
     arbitration = arbitrate(ArbitrationRequest(
         request_id=request_id,
         candidate_id=candidate_id,
-        signals=tuple(upstream_signals) + (eepl_signal, npl_signal, usi_signal, fit_signal),
+        signals=tuple(upstream_signals) + (eepl_signal, npl_signal, cultural_signal, usi_signal, fit_signal),
         minimum_fit_confidence=minimum_fit_confidence,
         maximum_fit_confidence_disagreement=maximum_fit_confidence_disagreement,
         policy_version=policy_version,
     ))
     return DecisionPipelineResult(
         contract_version=CONTRACT_VERSION, eepl=eepl_result, npl=npl_decision,
+        cultural_identity=cultural_result,
+        confidence_assessment=confidence_assessment,
         usi=usi_result, fit_estimate=fit_estimate, arbitration=arbitration,
     )

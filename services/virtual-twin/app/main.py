@@ -249,6 +249,8 @@ async def proxy_skin_analysis(
 )
 async def create_twin(
     _: Annotated[None, Depends(require_api_token)],
+    consent_image_processing: Annotated[bool, Form()],
+    consent_body_measurements: Annotated[bool, Form()],
     height_cm: Annotated[float, Form(gt=0, le=260)],
     weight_kg: Annotated[float | None, Form(gt=0, le=500)] = None,
     images: Annotated[list[UploadFile], File()] = [],
@@ -261,6 +263,11 @@ async def create_twin(
     """
     del height_cm, weight_kg
     try:
+        if not consent_image_processing or not consent_body_measurements:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "EXPLICIT_TWIN_CONSENT_REQUIRED"},
+            )
         if len(images) > MAX_IMAGES:
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
@@ -306,6 +313,8 @@ async def create_twin(
 )
 async def click_it(
     _: Annotated[None, Depends(require_api_token)],
+    consent_image_processing: Annotated[bool, Form()],
+    consent_click_it: Annotated[bool, Form()],
     twin_id: Annotated[str, Form(min_length=1, max_length=128)],
     product_image: Annotated[UploadFile, File()],
 ) -> TwinResponse:
@@ -316,6 +325,11 @@ async def click_it(
     decodes, stores nor forwards the product image.
     """
     try:
+        if not consent_image_processing or not consent_click_it:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={"code": "EXPLICIT_CLICK_IT_CONSENT_REQUIRED"},
+            )
         if not twin_id.strip():
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
