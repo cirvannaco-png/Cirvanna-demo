@@ -485,6 +485,10 @@ def _authorized_commerce_path(method: str, path: str) -> bool:
     parts = path.split("/")
     if any(part in {"", ".", ".."} for part in parts):
         return False
+    # These customer workflows need both item-level display governance and a fresh
+    # checkout-time re-evaluation; that atomic commerce integration is not available.
+    if parts[0] in {"cart", "saved-products", "checkout", "orders"}:
+        return False
     if (method, path) in SERVICE_PATHS:
         return True
     if len(parts) == 2 and parts[0] == "saved-products" and UUID_RE.fullmatch(parts[1]):
@@ -501,6 +505,8 @@ async def commerce_proxy(path: str, request: Request) -> Response:
     """Forward customer operations only; admin/internal/webhook routes are not exposed."""
     method = request.method.upper()
     if not _authorized_commerce_path(method, path):
+        if path.split("/", 1)[0] in {"cart", "saved-products", "checkout", "orders"}:
+            raise HTTPException(status_code=503, detail={"code": "CAL_GOVERNANCE_NOT_ENFORCED", "retryable": True})
         raise HTTPException(status_code=404, detail={"code": "COMMERCE_ROUTE_NOT_AVAILABLE"})
     authorization = request.headers.get("authorization", "")
     scheme, _, token = authorization.partition(" ")
