@@ -11,7 +11,7 @@ from sqlalchemy import inspect, text
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/"packages"))
 from wardrobe import WardrobeItem, WardrobeItemStatus
-from app.store import Base, WardrobeConflict, WardrobeNotFound, WardrobeStore, engine_for_url
+from app.store import Base, WardrobeConflict, WardrobeNotFound, WardrobeStore, WardrobeDeletionQueue, engine_for_url
 
 SERVICE="cirvanna-wardrobe-service"
 bearer=HTTPBearer(auto_error=False)
@@ -78,9 +78,16 @@ def ready()->dict[str,object]:
         schema_ready={"wardrobe_items","wardrobe_asset_deletion_outbox"}.issubset(tables)
         db_ready=schema_ready
     except Exception as exc: db_error=type(exc).__name__
-    deletion_worker_ready=os.getenv("WARDROBE_ASSET_DELETION_READY","").lower()=="true"
+    worker_enabled=os.getenv("WARDROBE_ASSET_DELETION_READY","").lower()=="true"
+    worker_heartbeat_fresh=False
+    if db_ready and worker_enabled:
+        try:
+            worker_heartbeat_fresh=WardrobeDeletionQueue(engine).has_fresh_heartbeat(max_age_seconds=90)
+        except Exception:
+            worker_heartbeat_fresh=False
+    deletion_worker_ready=worker_enabled and worker_heartbeat_fresh
     ready=token_ready and db_ready and deletion_worker_ready
-    data={"status":"ready" if ready else "not_ready","service":SERVICE,"api_authentication_configured":token_ready,"database_connected":db_ready,"schema_ready":schema_ready,"asset_deletion_worker_configured":deletion_worker_ready,"database_error":db_error,"ready":ready}
+    data={"status":"ready" if ready else "not_ready","service":SERVICE,"api_authentication_configured":token_ready,"database_connected":db_ready,"schema_ready":schema_ready,"asset_deletion_worker_configured":worker_enabled,"asset_deletion_worker_heartbeat_fresh":worker_heartbeat_fresh,"database_error":db_error,"ready":ready}
     if not ready: raise HTTPException(503,detail=data)
     return data
 
