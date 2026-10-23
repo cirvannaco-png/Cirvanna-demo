@@ -41,9 +41,9 @@
     {
       "id": "cultural-identity",
       "target": "packages/identity-intelligence/cultural_identity",
-      "status": "explicit-policy-kernel-implemented",
+      "status": "explicit-policy-and-declaration-service-implemented",
       "purpose": "Explicit-declaration-only cultural requirements with hard conflicts, soft preferences, and fail-closed handling of incomplete candidate metadata.",
-      "promotionGate": "Review and version the rule catalog; establish declaration lifecycle, audit delivery, candidate metadata quality, consent controls, and end-to-end CAL integration."
+      "promotionGate": "Deploy and restore-test PostgreSQL; bind declarations to authenticated user identity at ingress; verify HMAC end-to-end from deployed service to decision consumers; establish signing-key rotation, audit retention, and a reviewed locale-aware attribute catalog with culturally informed governance."
     },
     {
       "id": "usi",
@@ -57,7 +57,7 @@
       "target": "packages/preferences/npl",
       "status": "persistent-ledger-api-implemented",
       "purpose": "Deterministic NPL domain kernel for explicit hard exclusions, idempotent rejection evidence, durable threshold-based vetoes, and explicit user correction.",
-      "promotionGate": "Apply and validate PostgreSQL migration in a controlled environment; run concurrent multi-worker, restore, key-rotation, retention/deletion and live CAL-provider integration tests. Decision service verifies signatures; gateway integration is configuration-gated and not yet deployed."
+      "promotionGate": "Apply and validate PostgreSQL migration in a controlled environment; run concurrent multi-worker, restore, key-rotation, retention/deletion and live CAL-provider integration tests. Decision service verifies signatures; gateway integration is configuration-gated and not deployed."
     },
     {
       "id": "fci",
@@ -114,6 +114,13 @@
       "status": "persistent-api-and-domain-contract-implemented",
       "purpose": "Canonical wardrobe item value object, owner-scoped lifecycle transitions, opaque asset-reference validation, and explicit photo-storage consent.",
       "promotionGate": "Apply and validate PostgreSQL migration, verify user identity binding at ingress, deploy/test the asset deletion worker and retry/DLQ behavior, then run concurrent version checks, restore and catalog integration tests."
+    },
+    {
+      "id": "cultural-declaration-service",
+      "target": "services/cultural-identity-service",
+      "status": "api-schema-and-signed-evidence-implemented",
+      "purpose": "Persist explicit cultural declarations, versioned confirmation records, hard/soft requirement attributes, auditable retraction events and candidate-bound signed policy snapshots.",
+      "promotionGate": "Deploy PostgreSQL and migrations, enforce end-user identity binding at trusted ingress, prove key rotation and signature verification end-to-end, and complete culturally informed catalog governance."
     }
   ],
   "sourceSnapshots": [
