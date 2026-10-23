@@ -3,10 +3,17 @@ FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
-    HF_HUB_DISABLE_TELEMETRY=1
+    HF_HUB_DISABLE_TELEMETRY=1 \
+    HF_HOME=/home/app/.cache/huggingface
 
 WORKDIR /app
-RUN groupadd --system app && useradd --system --gid app --home-dir /app app
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      libgl1 libglib2.0-0 libgomp1 && \
+    rm -rf /var/lib/apt/lists/* && \
+    groupadd --system app && \
+    useradd --system --gid app --create-home --home-dir /home/app app && \
+    mkdir -p /home/app/.cache/huggingface && \
+    chown -R app:app /home/app
 
 COPY requirements.txt ./requirements.txt
 RUN python -m pip install --upgrade pip && \
