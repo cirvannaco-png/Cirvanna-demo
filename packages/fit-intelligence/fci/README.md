@@ -1,15 +1,17 @@
 # Fit Confidence Index (FCI)
 
-**Status:** calibrated-estimate contract implemented; no production fit predictor or empirical calibration model is certified.
+**Status:** typed estimate contract, offline calibration metrics, and evidence-coverage gate implemented; no production fit predictor or empirical calibration model is certified.
 
-The FCI contract validates a model estimate's confidence, uncertainty interval, evidence provenance, model version, and calibration version. It maps a calibrated estimate into a typed CaTaCaCi fit-confidence signal. An uncalibrated estimate becomes `UNKNOWN`, which routes through CAL to review; it is never treated as a pass.
+The FCI estimate carries confidence, uncertainty bounds, evidence provenance, model version and calibration version. The confidence assessment additionally reports declared required evidence categories, observed categories, missing categories and coverage ratio. Coverage and estimator claims enter the canonical CaTaCaCi pipeline as a CAL signal; the gate maps missing requirements, incomplete coverage, or an uncalibrated estimate to `UNKNOWN` so CAL routes the candidate to review.
+
+The decision API accepts coverage fields only inside the provider-signed fit-evidence payload. The HMAC verification covers the canonical serialization of the complete fit object, including required/observed field lists. Do not treat unsigned client declarations as trusted model evidence.
 
 ## What this does not claim
 
 - It does not train or run a fit-prediction model.
 - It does not establish that confidence values are statistically calibrated or predictive of returns.
-- It does not invent weights, combine correlated evidence, or silently average disagreeing models.
-- A valid FCI signal does not authorize display. CAL applies the configured threshold and final arbitration.
+- Evidence-field coverage is not the same as model accuracy, measurement accuracy, or statistical calibration.
+- A valid FCI assessment never overrides safety, legal, user hard constraints, NPL, cultural requirements, or other CAL gates.
 
 ## Verification
 
@@ -18,4 +20,4 @@ python -m unittest discover -s tests/architecture -v
 python scripts/validate_architecture.py
 ```
 
-Production promotion requires a reviewed model adapter, held-out calibration evidence, interval coverage tests, demographic/measurement bias evaluation, data provenance, and end-to-end fit/return outcome validation.
+Production promotion requires a reviewed model adapter, representative held-out outcomes, calibration and interval-coverage evidence, confidence/coverage stratification, measurement and subgroup-bias analysis, data provenance, and end-to-end fit/return outcome validation.
