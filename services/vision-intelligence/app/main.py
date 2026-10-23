@@ -13,7 +13,6 @@ import json
 import os
 import re
 import uuid
-from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -97,7 +96,11 @@ def _pose_model_configured() -> tuple[bool, str]:
     if not path.is_file():
         return False, "pose_model_asset_missing"
     try:
-        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        digest_builder = hashlib.sha256()
+        with path.open("rb") as model_file:
+            for chunk in iter(lambda: model_file.read(1024 * 1024), b""):
+                digest_builder.update(chunk)
+        digest = digest_builder.hexdigest()
     except OSError:
         return False, "pose_model_asset_unreadable"
     if not hmac.compare_digest(digest, expected):
@@ -127,6 +130,28 @@ def _clip():
         except Exception as exc:
             raise HTTPException(503, detail={"code": "CLIP_MODEL_LOAD_FAILED"}) from exc
     return _CLIP_MODEL, _CLIP_PROCESSOR
+
+
+_MODEL_LOAD_ERRORS: dict[str, str] = {}
+
+
+def _warm_start_models() -> None:
+    """Load only fully pinned, provisioned models; keep startup errors sanitized."""
+    if _model_configured()[0]:
+        try:
+            _clip()
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            _MODEL_LOAD_ERRORS["clip"] = str(detail.get("code", "CLIP_MODEL_LOAD_FAILED"))
+    if _pose_model_configured()[0]:
+        try:
+            _pose()
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            _MODEL_LOAD_ERRORS["pose"] = str(detail.get("code", "POSE_MODEL_LOAD_FAILED"))
+
+
+app.add_event_handler("startup", _warm_start_models)
 
 
 def _pose():
@@ -464,9 +489,11 @@ def readiness() -> dict[str, Any]:
         "clip_model_id": MODEL_ID,
         "clip_model_revision": os.getenv("CLIP_MODEL_REVISION", "") if clip_configured else None,
         "clip_model_loaded": _CLIP_MODEL is not None and _CLIP_PROCESSOR is not None,
+        "clip_model_startup_error": _MODEL_LOAD_ERRORS.get("clip"),
         "pose_model_configured": pose_configured,
         "pose_model_reason": pose_reason,
         "pose_model_loaded": _POSE_LANDMARKER is not None,
+        "pose_model_startup_error": _MODEL_LOAD_ERRORS.get("pose"),
         "marketplace_services_configured": commerce_configured and catalog_configured,
         "worker_auth_configured": token_configured,
         "input_persistence": False,
