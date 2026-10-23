@@ -92,6 +92,8 @@ def _evidence_request_is_bound(
         "cultural_requirements_loaded_at",
         "fit_estimate_generated_at",
         "candidate_attributes_loaded_at",
+        "usi_profile_loaded_at",
+        "user_context_loaded_at",
     )
     if not isinstance(freshness, dict):
         return False
@@ -122,9 +124,15 @@ def _evidence_request_is_bound(
         and context.get("user_id") == subject_id
         and isinstance(profile, dict)
         and profile.get("user_id") == subject_id
+        and isinstance(profile.get("preferences"), list)
+        and len(profile["preferences"]) > 0
+        and all(isinstance(item, dict) and item.get("user_id") == subject_id for item in profile["preferences"])
         and isinstance(fit, dict)
         and fit.get("user_id") == subject_id
         and fit.get("candidate_id") == candidate_id
+        and fit.get("calibrated") is True
+        and isinstance(fit.get("calibration_version"), str)
+        and bool(fit.get("calibration_version").strip())
         and isinstance(payload.get("candidate_attributes"), list)
         and all(isinstance(attribute, str) for attribute in payload["candidate_attributes"])
         and isinstance(negative, list)
