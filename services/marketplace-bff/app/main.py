@@ -16,6 +16,8 @@ from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFi
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.governance import govern_candidates
+
 SERVICE = "cirvanna-marketplace-bff"
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_HTML = ROOT / "apps" / "demo-web" / "marketplace.html"
@@ -170,26 +172,19 @@ async def _safe_json_post(
 
 @app.post("/api/vision/marketplace-search")
 async def marketplace_description_search(request: Request, payload: MarketplaceSearchIn) -> dict:
-    """Search for the authenticated user; candidate display remains blocked pending CAL."""
+    """Run Xari retrieval, then expose only candidates authorized by canonical CAL."""
     user_id, _user_token = await _verified_user_id(request)
     base, token = _internal_service("XARI_API_URL", "XARI_API_TOKEN")
     request_body = {"query": payload.normalized_query, "limit": payload.limit}
     if payload.category and payload.category.strip():
         request_body["category"] = payload.category.strip()
     data = await _safe_json_post(base, "/v1/marketplace/search", token, request_body)
-    # Retrieval is never display authorization. Until this BFF calls and verifies
-    # the canonical CAL gateway, candidate details must not cross the browser boundary.
-    # Do not trust display_authorized supplied by Xari or a retrieval provider.
+    governed = await govern_candidates(user_id, data["candidates"])
     return {
         "status": "complete",
         "query": payload.normalized_query,
         "user_id": user_id,
-        "candidate_count": 0,
-        "candidates": [],
-        "display_authorized": False,
-        "decision_status": "PENDING_CAL",
-        "governance_status": "CAL_GATE_NOT_CONNECTED",
-        "scores_are_probabilities": False,
+        **governed,
     }
 
 
@@ -283,18 +278,16 @@ async def marketplace_click_it(
     except ValueError as exc:
         raise HTTPException(502, detail={"code": "CLICK_IT_INVALID_RESPONSE"}) from exc
     if response.status_code == 200 and isinstance(data, dict):
-        # Click It returns retrieval candidates, not CAL approvals. Strip candidate
-        # details at the browser boundary until a verified CAL gateway is integrated.
-        # Never trust a downstream display_authorized flag as an authorization token.
+        candidates = data.get("candidates")
+        if not isinstance(candidates, list):
+            raise HTTPException(502, detail={"code": "CLICK_IT_INVALID_RESPONSE"})
+        # Ignore upstream display flags; evaluate every candidate against fresh,
+        # subject-bound evidence and the canonical CAL response.
+        governed = await govern_candidates(subject_id.strip(), candidates)
         return JSONResponse(
             content={
                 "status": "complete",
-                "candidate_count": 0,
-                "candidates": [],
-                "display_authorized": False,
-                "decision_status": "PENDING_CAL",
-                "governance_status": "CAL_GATE_NOT_CONNECTED",
-                "scores_are_probabilities": False,
+                **governed,
                 "image_persisted": data.get("image_persisted") is False,
             },
             headers={"Cache-Control": "no-store, private"},
@@ -376,28 +369,69 @@ def marketplace_page() -> HTMLResponse:
 
 
 @app.get("/api/commerce/marketplace/offers")
-def public_offers(
+async def public_offers(
+    request: Request,
     q: str | None = Query(default=None, max_length=160),
     category: str | None = Query(default=None, max_length=80),
     currency: str | None = Query(default=None, min_length=3, max_length=3),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=MAX_PAGE_SIZE),
 ) -> dict:
-    """Fail closed until marketplace offers are evaluated by the canonical CAL gateway.
+    """Return only offers that received an exact, candidate-bound CAL SHOW decision."""
+    user_id, _user_token = await _verified_user_id(request)
+    base = _upstream_base("COMMERCE_API_URL")
+    params: dict[str, str | int] = {"offset": offset, "limit": limit}
+    for key, value in (("q", q), ("category", category), ("currency", currency)):
+        if value and value.strip():
+            params[key] = value.strip()
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(TIMEOUT_SECONDS), trust_env=False, follow_redirects=False
+        ) as client:
+            upstream = await client.get(
+                base + "/marketplace/offers",
+                params=params,
+                headers={"Accept": "application/json"},
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "COMMERCE_OFFERS_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "COMMERCE_OFFERS_UNAVAILABLE"}) from exc
+    if upstream.status_code != 200:
+        raise HTTPException(503, detail={"code": "COMMERCE_OFFERS_UNAVAILABLE"})
+    try:
+        payload = upstream.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "COMMERCE_OFFERS_INVALID_RESPONSE"}) from exc
+    if (
+        not isinstance(payload, dict)
+        or not isinstance(payload.get("items"), list)
+        or not isinstance(payload.get("total"), int)
+    ):
+        raise HTTPException(502, detail={"code": "COMMERCE_OFFERS_INVALID_RESPONSE"})
+    governed = await govern_candidates(user_id, payload["items"])
+    if governed["governance_status"] == "CAL_GATE_NOT_CONNECTED":
+        raise HTTPException(
+            503,
+            detail={"code": "CAL_GOVERNANCE_NOT_ENFORCED", "retryable": True},
+        )
+    return {
+        **governed,
+        "items": governed["candidates"],
+        "candidates": governed["candidates"],
+        "total": payload["total"],
+        "offset": offset,
+        "limit": limit,
+    }
 
-    Commerce eligibility (active merchant, stock) is not user-specific purchase
-    governance. Returning offers directly here would bypass NPL, explicit cultural
-    requirements and the final CAL verdict.
-    """
-    raise HTTPException(
-        status_code=503,
-        detail={"code": "CAL_GOVERNANCE_NOT_ENFORCED", "retryable": True},
-    )
+
 def _authorized_commerce_path(method: str, path: str) -> bool:
     parts = path.split("/")
     if any(part in {"", ".", ".."} for part in parts):
         return False
-    if path in {"cart", "saved-products", "checkout"}:
+    # These customer workflows need both item-level display governance and a fresh
+    # checkout-time re-evaluation; that atomic commerce integration is not available.
+    if parts[0] in {"cart", "saved-products", "checkout", "orders"}:
         return False
     if (method, path) in SERVICE_PATHS:
         return True
@@ -415,7 +449,7 @@ async def commerce_proxy(path: str, request: Request) -> Response:
     """Forward customer operations only; admin/internal/webhook routes are not exposed."""
     method = request.method.upper()
     if not _authorized_commerce_path(method, path):
-        if path in {"cart", "saved-products", "checkout"}:
+        if path.split("/", 1)[0] in {"cart", "saved-products", "checkout", "orders"}:
             raise HTTPException(status_code=503, detail={"code": "CAL_GOVERNANCE_NOT_ENFORCED", "retryable": True})
         raise HTTPException(status_code=404, detail={"code": "COMMERCE_ROUTE_NOT_AVAILABLE"})
     authorization = request.headers.get("authorization", "")
