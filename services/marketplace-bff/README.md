@@ -49,3 +49,8 @@ A working proxy does not create a production marketplace by itself. The actual C
 The BFF currently does **not** have a verified candidate-bound CAL gateway contract that it can call for every product. Accordingly, the public offer endpoint returns `503 CAL_GOVERNANCE_NOT_ENFORCED`, and Xari/Click It responses are stripped of candidate details at the browser boundary and remain `PENDING_CAL`. This intentionally disables product display rather than trusting a retrieval service's `display_authorized` field. It is a containment step, not completion of purchase governance.
 
 To restore display, implement and deploy a trusted server-side gateway that derives the authenticated user, loads current NPL and explicit cultural evidence, validates signed/calibrated fit evidence where required, invokes the decision service for each candidate, and returns only candidate-bound CAL `SHOW` results. BLOCK, REVIEW, missing/stale evidence, timeouts, malformed responses and gateway errors must remain non-displayable. Add live end-to-end tests before removing this guard.
+
+
+## Expanded fail-closed coverage
+
+Until the trusted per-candidate CAL gateway is implemented and deployed, the BFF requires verified Commerce identity for Xari description search and disables cart, saved-product listing and checkout routes that could disclose product candidates or initiate a purchase without a fresh decision. This is intentionally restrictive containment, not a completed purchase journey. Do not restore these routes until the gateway loads current user-bound evidence, checks freshness and signatures, invokes the decision service per candidate, and permits only exact candidate-bound CAL SHOW / `may_display=true` responses.
