@@ -19,6 +19,7 @@ Cirvanna is an identity-first beauty, fashion, fit, and purchase-decision platfo
 - [Implementation roadmap](#implementation-roadmap)
 - [Validation and release gates](#validation-and-release-gates)
 - [Current implementation status](#current-implementation-status)
+- [Feature readiness and integration gates](docs/architecture/feature-spine-readiness-2026-10-23.md)
 - [Contribution and engineering rules](#contribution-and-engineering-rules)
 
 ## Product vision
