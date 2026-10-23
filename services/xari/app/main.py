@@ -1,7 +1,8 @@
-"""Guarded Xari API: authenticate requests and produce consent-aware route plans.
+"""Authenticated Xari route planning and marketplace-description search.
 
-This API does not run chat, visual analysis, try-on, twin generation, or Click It.
-It intentionally returns route plans only until validated execution adapters exist.
+The dedicated marketplace-search endpoint executes the private model-backed
+retrieval adapter; candidates still require NPL/cultural constraints and CAL.
+Other intents remain route-plan-only until their execution adapters are integrated.
 """
 from __future__ import annotations
 
@@ -22,7 +23,7 @@ bearer = HTTPBearer(auto_error=False)
 app = FastAPI(
     title="Cirvanna Xari API",
     version="0.1.0",
-    description="Authenticated, consent-aware routing contract; execution adapters are not enabled.",
+    description="Authenticated route planning and configuration-gated marketplace description search.",
 )
 
 def require_api_token(
