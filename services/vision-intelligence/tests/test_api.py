@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import asyncio
 
 import numpy as np
 import pytest
@@ -197,8 +198,7 @@ def test_image_quality_rejects_blurred_low_contrast_and_clipped_captures():
     assert "excessive_clipping" in clipped_quality["failure_codes"]
 
 
-@pytest.mark.asyncio
-async def test_live_offer_join_matches_actual_commerce_and_catalog_contracts(monkeypatch):
+def test_live_offer_join_matches_actual_commerce_and_catalog_contracts(monkeypatch):
     monkeypatch.setattr(main, "_trusted_base", lambda name, **kwargs: {
         "COMMERCE_API_URL": "https://commerce.example.test",
         "CATALOG_API_URL": "https://catalog.example.test",
@@ -241,7 +241,7 @@ async def test_live_offer_join_matches_actual_commerce_and_catalog_contracts(mon
         }
 
     monkeypatch.setattr(main, "_get_json", fake_get_json)
-    offers, truncated = await main._live_offers()
+    offers, truncated = asyncio.run(main._live_offers())
     assert truncated is False
     assert len(offers) == 1
     assert offers[0]["variant_id"] == "variant-1"
@@ -250,8 +250,7 @@ async def test_live_offer_join_matches_actual_commerce_and_catalog_contracts(mon
     assert len(calls) == 2
 
 
-@pytest.mark.asyncio
-async def test_live_offer_join_excludes_missing_or_archived_catalog_products(monkeypatch):
+def test_live_offer_join_excludes_missing_or_archived_catalog_products(monkeypatch):
     monkeypatch.setattr(main, "_trusted_base", lambda name, **kwargs: {
         "COMMERCE_API_URL": "https://commerce.example.test",
         "CATALOG_API_URL": "https://catalog.example.test",
@@ -276,5 +275,5 @@ async def test_live_offer_join_excludes_missing_or_archived_catalog_products(mon
         }]}
 
     monkeypatch.setattr(main, "_get_json", fake_get_json)
-    offers, _ = await main._live_offers()
+    offers, _ = asyncio.run(main._live_offers())
     assert offers == []
