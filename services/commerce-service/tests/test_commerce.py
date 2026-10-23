@@ -134,6 +134,12 @@ def sign_stripe_event(raw: bytes, secret: str) -> str:
 
 
 def configure_stripe(monkeypatch, *, session_id="cs_test_checkout_1"):
+    monkeypatch.setenv("COMMERCE_CAL_GATEWAY_URL", "https://cal-gateway.example.test")
+    monkeypatch.setenv("COMMERCE_CAL_GATEWAY_TOKEN", "test-cal-gateway-token-at-least-32-bytes")
+    monkeypatch.setattr(main, "_authorize_cal_candidate", lambda user_id, candidate_id: {
+        "subject_id": user_id, "candidate_id": candidate_id, "decision": "SHOW", "may_display": True,
+        "request_id": "test-cal-request-" + candidate_id, "policy_version": "test-policy-v1"
+    })
     monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_unit_testing_only")
     monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_test_unit_only_secret")
     monkeypatch.setenv("COMMERCE_CHECKOUT_SUCCESS_URL", "https://shop.example.test/success")
@@ -178,7 +184,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
         ))
         connection.execute(
             text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
-            {"revision": "20261019_0002"},
+            {"revision": "20261024_0003"},
         )
 
     ready = client.get("/ready")
