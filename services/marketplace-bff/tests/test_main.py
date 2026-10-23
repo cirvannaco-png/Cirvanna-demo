@@ -38,19 +38,38 @@ def test_page_bootstraps_same_origin_live_offers_not_demo_data(client):
     assert response.headers["referrer-policy"] == "no-referrer"
 
 
-def test_public_offers_fail_closed_until_cal_governance_is_wired(client, monkeypatch):
+def test_public_offers_fail_closed_until_cal_governance_is_configured(client, monkeypatch):
     configure_upstreams(monkeypatch)
-    calls = []
-    monkeypatch.setattr(main.httpx, "get", lambda *args, **kwargs: calls.append((args, kwargs)))
-    response = client.get("/api/commerce/marketplace/offers?q=linen&category=Fashion&offset=20&limit=10")
+    monkeypatch.delenv("GOVERNANCE_EVIDENCE_API_URL", raising=False)
+    monkeypatch.delenv("GOVERNANCE_EVIDENCE_API_TOKEN", raising=False)
+    monkeypatch.delenv("DECISION_SERVICE_API_URL", raising=False)
+    monkeypatch.delenv("DECISION_SERVICE_TOKEN", raising=False)
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42"}),
+        FakeResponse({"items": [{"variant_id": "v-1", "product_name": "linen shirt"}], "total": 1, "offset": 20, "limit": 10}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get(
+        "/api/commerce/marketplace/offers?q=linen&category=Fashion&offset=20&limit=10",
+        headers={"Authorization": "Bearer signed-user-token"},
+    )
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "CAL_GOVERNANCE_NOT_ENFORCED"
-    assert calls == []
+    assert "linen shirt" not in response.text
+    assert [call[1] for call in fake.calls] == [
+        "https://commerce.example.test/me",
+        "https://commerce.example.test/marketplace/offers",
+    ]
 
 
 @pytest.mark.parametrize("path,method", [
     ("/api/commerce/cart", "GET"),
+    ("/api/commerce/cart/items", "POST"),
+    ("/api/commerce/cart/items/123e4567-e89b-42d3-a456-426614174000", "PATCH"),
     ("/api/commerce/saved-products", "GET"),
+    ("/api/commerce/saved-products/123e4567-e89b-42d3-a456-426614174000", "DELETE"),
+    ("/api/commerce/orders", "GET"),
+    ("/api/commerce/orders/123e4567-e89b-42d3-a456-426614174000", "GET"),
     ("/api/commerce/checkout", "POST"),
 ])
 def test_product_bearing_account_and_checkout_routes_fail_closed(client, monkeypatch, path, method):
@@ -67,23 +86,16 @@ def test_account_proxy_requires_bearer_and_blocks_admin_routes(client, monkeypat
     configure_upstreams(monkeypatch)
     calls = []
     monkeypatch.setattr(main.httpx, "request", lambda *args, **kwargs: calls.append(args) or FakeResponse({}))
-    assert client.get("/api/commerce/cart").status_code == 401
+    assert client.get("/api/commerce/cart").status_code == 503
     denied = client.get("/api/commerce/admin/inventory/audit", headers={"Authorization": "Bearer customer-token"})
     assert denied.status_code == 404
     assert calls == []
 
 
-def test_account_proxy_forwards_only_allowlisted_headers_and_bearer(client, monkeypatch):
+def test_checkout_is_not_forwarded_until_atomic_cal_revalidation_exists(client, monkeypatch):
     configure_upstreams(monkeypatch)
-    seen = {}
-
-    def fake_request(method, url, **kwargs):
-        seen["method"] = method
-        seen["url"] = url
-        seen.update(kwargs)
-        return FakeResponse({"order_id": "order-123"}, status_code=201)
-
-    monkeypatch.setattr(main.httpx, "request", fake_request)
+    seen = []
+    monkeypatch.setattr(main.httpx, "request", lambda *args, **kwargs: seen.append((args, kwargs)))
     response = client.post(
         "/api/commerce/checkout",
         headers={
@@ -94,13 +106,9 @@ def test_account_proxy_forwards_only_allowlisted_headers_and_bearer(client, monk
         },
         json={"confirm": True},
     )
-    assert response.status_code == 201
-    assert seen["method"] == "POST"
-    assert seen["url"] == "https://commerce.example.test/checkout"
-    assert seen["headers"]["Authorization"] == "Bearer user-session-token"
-    assert seen["headers"]["idempotency-key"] == "checkout-test-key"
-    assert "cookie" not in seen["headers"]
-    assert "follow_redirects" in seen and seen["follow_redirects"] is False
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "CAL_GOVERNANCE_NOT_ENFORCED"
+    assert seen == []
 
 
 def test_readiness_fails_closed_until_both_upstreams_are_ready(client, monkeypatch):
@@ -157,15 +165,18 @@ def test_description_search_fails_closed_without_xari_secret(client, monkeypatch
 def test_description_search_forwards_to_xari_and_keeps_candidates_pending_cal(client, monkeypatch):
     monkeypatch.setenv("XARI_API_URL", "https://xari.example.test")
     monkeypatch.setenv("XARI_API_TOKEN", "xari-internal-token-at-least-thirty-two-bytes")
-    fake = FakeAsyncClient([FakeResponse({
-        "status": "complete",
-        "query": "green linen dress",
-        "candidate_count": 2,
-        "candidates": [{"variant_id": "offer-1", "product_name": "green dress"}],
-        "display_authorized": True,
-        "decision_status": "SHOW",
-        "scores_are_probabilities": False,
-    })])
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer", "email": None}),
+        FakeResponse({
+            "status": "complete",
+            "query": "green linen dress",
+            "candidate_count": 2,
+            "candidates": [{"variant_id": "offer-1", "product_name": "green dress"}],
+            "display_authorized": True,
+            "decision_status": "SHOW",
+            "scores_are_probabilities": False,
+        }),
+    ])
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.post("/api/vision/marketplace-search", json={"query": " green   linen dress ", "limit": 5})
     assert response.status_code == 401
