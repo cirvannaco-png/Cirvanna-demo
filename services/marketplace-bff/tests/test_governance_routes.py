@@ -160,3 +160,43 @@ def test_click_it_route_runs_reconstructed_candidates_through_cal(monkeypatch):
     assert seen == {"subject_id": "verified-user", "candidate_ids": ["click-1"]}
     assert response.json()["candidates"] == []
     assert "click result" not in response.text
+
+
+def test_internal_checkout_authorization_requires_service_token_and_exact_show(monkeypatch):
+    monkeypatch.setenv("CAL_GATEWAY_SERVICE_TOKEN", "internal-cal-token-that-is-at-least-32-bytes")
+    calls = []
+
+    async def fake_govern(subject_id, candidates):
+        calls.append((subject_id, candidates))
+        return {"candidates": [{
+            "candidate_id": candidates[0]["candidate_id"],
+            "cal_decision": {"verdict": "SHOW", "may_display": True, "request_id": "req-1", "policy_version": "policy-1"},
+        }]}
+
+    monkeypatch.setattr(main, "govern_candidates", fake_govern)
+    with TestClient(main.app) as client:
+        denied = client.post("/internal/cal/authorize", json={"subject_id": "u1", "candidate_id": "p1"})
+        assert denied.status_code == 401
+        allowed = client.post("/internal/cal/authorize",
+            headers={"Authorization": "Bearer internal-cal-token-that-is-at-least-32-bytes"},
+            json={"subject_id": "u1", "candidate_id": "p1"})
+    assert allowed.status_code == 200, allowed.text
+    assert allowed.json()["decision"] == "SHOW" and allowed.json()["may_display"] is True
+    assert allowed.json()["request_id"] == "req-1"
+    assert calls[0][0] == "u1"
+
+
+def test_internal_checkout_authorization_never_upgrades_no_show(monkeypatch):
+    monkeypatch.setenv("CAL_GATEWAY_SERVICE_TOKEN", "internal-cal-token-that-is-at-least-32-bytes")
+
+    async def fake_govern(_subject_id, _candidates):
+        return {"candidates": [], "governance_status": "CAL_GATE_NOT_CONNECTED"}
+
+    monkeypatch.setattr(main, "govern_candidates", fake_govern)
+    with TestClient(main.app) as client:
+        response = client.post("/internal/cal/authorize",
+            headers={"Authorization": "Bearer internal-cal-token-that-is-at-least-32-bytes"},
+            json={"subject_id": "u1", "candidate_id": "p1"})
+    assert response.status_code == 200
+    assert response.json()["decision"] == "NO_SHOW"
+    assert response.json()["may_display"] is False
