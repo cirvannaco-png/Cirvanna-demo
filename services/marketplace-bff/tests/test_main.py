@@ -137,6 +137,7 @@ def test_readiness_requires_catalog_commerce_and_cal_services(client, monkeypatc
     monkeypatch.setenv("GOVERNANCE_EVIDENCE_API_TOKEN", "evidence-service-token-at-least-thirty-two-bytes")
     monkeypatch.setenv("DECISION_SERVICE_API_URL", "https://decision.example.test")
     monkeypatch.setenv("DECISION_SERVICE_TOKEN", "decision-service-token-at-least-thirty-two-bytes")
+    monkeypatch.setenv("CAL_GATEWAY_SERVICE_TOKEN", "internal-cal-service-token-at-least-thirty-two-bytes")
     ready = client.get("/ready")
     assert ready.status_code == 200
     assert ready.json()["ready"] is True
