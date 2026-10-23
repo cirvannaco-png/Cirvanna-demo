@@ -37,7 +37,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 
 
 SERVICE = "cirvanna-commerce-service"
-EXPECTED_SCHEMA_REVISION = "20261019_0002"
+EXPECTED_SCHEMA_REVISION = "20261024_0003"
 MAX_QTY = 50
 RESERVATION_MINUTES = 60
 SKU_RE = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,79}$")
@@ -215,6 +215,20 @@ class PaymentWebhookEvent(Base):
     event_id: Mapped[str] = mapped_column(String(180), primary_key=True)
     event_type: Mapped[str] = mapped_column(String(120), nullable=False)
     processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+
+
+class CALDecisionAudit(Base):
+    __tablename__ = "commerce_cal_decision_audits"
+    audit_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    order_id: Mapped[str | None] = mapped_column(ForeignKey("commerce_orders.id", ondelete="SET NULL"), nullable=True, index=True)
+    buyer_user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    candidate_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    decision: Mapped[str] = mapped_column(String(24), nullable=False)
+    request_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    policy_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    reason_code: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    receipt: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
 
 
 class Actor(BaseModel):
@@ -1048,6 +1062,47 @@ def remove_cart_item(variant_id: uuid.UUID, actor: Annotated[Actor, Depends(requ
     cart.version, cart.updated_at = cart.version + 1, now()
     db.commit()
     return cart_json(db, cart)
+
+
+def _authorize_cal_candidate(user_id: str, candidate_id: str) -> dict[str, Any]:
+    raw = os.getenv("COMMERCE_CAL_GATEWAY_URL", "").strip()
+    token = os.getenv("COMMERCE_CAL_GATEWAY_TOKEN", "").strip()
+    parts = urlsplit(raw)
+    host = (parts.hostname or "").lower()
+    local = host in {"localhost", "127.0.0.1", "::1"}
+    if not raw or len(token.encode("utf-8")) < 32 or not host or parts.username is not None or parts.password is not None or parts.query or parts.fragment or (parts.scheme != "https" and not (parts.scheme == "http" and local)):
+        raise HTTPException(503, detail={"code": "CAL_GATEWAY_NOT_CONFIGURED_OR_UNTRUSTED"})
+    try:
+        with httpx.Client(timeout=httpx.Timeout(5.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+            response = client.post(raw.rstrip("/") + "/internal/cal/authorize",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json={"subject_id": user_id, "candidate_id": candidate_id})
+    except httpx.TimeoutException as exc:
+        raise HTTPException(503, detail={"code": "CAL_REVALIDATION_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "CAL_REVALIDATION_UNAVAILABLE"}) from exc
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "CAL_REVALIDATION_UNAVAILABLE", "upstream_status": response.status_code})
+    try:
+        receipt = response.json()
+    except ValueError as exc:
+        raise HTTPException(503, detail={"code": "CAL_REVALIDATION_INVALID_RESPONSE"}) from exc
+    if not isinstance(receipt, dict) or receipt.get("subject_id") != user_id or receipt.get("candidate_id") != candidate_id:
+        raise HTTPException(503, detail={"code": "CAL_REVALIDATION_BINDING_MISMATCH"})
+    if receipt.get("decision") != "SHOW" or receipt.get("may_display") is not True:
+        raise HTTPException(409, detail={"code": "CAL_REVALIDATION_DENIED", "reason_code": receipt.get("reason_code", "NO_SHOW")})
+    if not isinstance(receipt.get("request_id"), str) or not receipt["request_id"].strip() or not isinstance(receipt.get("policy_version"), str) or not receipt["policy_version"].strip():
+        raise HTTPException(503, detail={"code": "CAL_REVALIDATION_RECEIPT_INCOMPLETE"})
+    return receipt
+
+
+def _cal_audit_row(user_id: str, candidate_id: str, receipt: dict[str, Any] | None, decision: str, reason_code: str | None = None, order_id: str | None = None) -> CALDecisionAudit:
+    receipt = receipt if isinstance(receipt, dict) else {}
+    return CALDecisionAudit(
+        audit_id=str(uuid.uuid4()), order_id=order_id, buyer_user_id=user_id, candidate_id=candidate_id,
+        decision=decision, request_id=receipt.get("request_id"), policy_version=receipt.get("policy_version"),
+        reason_code=reason_code, receipt=receipt,
+    )
 
 
 @app.post("/checkout", status_code=201)
