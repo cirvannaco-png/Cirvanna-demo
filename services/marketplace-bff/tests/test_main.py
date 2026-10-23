@@ -72,30 +72,36 @@ def test_public_offers_fail_closed_until_cal_governance_is_configured(client, mo
     ("/api/commerce/orders/123e4567-e89b-42d3-a456-426614174000", "GET"),
     ("/api/commerce/checkout", "POST"),
 ])
-def test_product_bearing_account_and_checkout_routes_fail_closed(client, monkeypatch, path, method):
+def test_customer_account_and_checkout_routes_forward_to_commerce(client, monkeypatch, path, method):
     configure_upstreams(monkeypatch)
     calls = []
-    monkeypatch.setattr(main.httpx, "request", lambda *args, **kwargs: calls.append((args, kwargs)))
-    response = client.request(method, path, headers={"Authorization": "Bearer signed-user-token"}, json={} if method == "POST" else None)
-    assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "CAL_GOVERNANCE_NOT_ENFORCED"
-    assert calls == []
+    def fake_request(*args, **kwargs):
+        calls.append((args, kwargs))
+        return FakeResponse({"ok": True})
+    monkeypatch.setattr(main.httpx, "request", fake_request)
+    response = client.request(method, path, headers={"Authorization": "Bearer signed-user-token", "Idempotency-Key": "checkout-test-key"}, json={} if method == "POST" else None)
+    assert response.status_code == 200, response.text
+    assert len(calls) == 1
+    assert calls[0][0][0] == method
+    assert calls[0][0][1] == "https://commerce.example.test/" + path.removeprefix("/api/commerce/")
+    assert calls[0][1]["headers"]["Authorization"] == "Bearer signed-user-token"
+    assert "cookie" not in {key.lower() for key in calls[0][1]["headers"]}
 
 
 def test_account_proxy_requires_bearer_and_blocks_admin_routes(client, monkeypatch):
     configure_upstreams(monkeypatch)
     calls = []
     monkeypatch.setattr(main.httpx, "request", lambda *args, **kwargs: calls.append(args) or FakeResponse({}))
-    assert client.get("/api/commerce/cart").status_code == 503
+    assert client.get("/api/commerce/cart").status_code == 401
     denied = client.get("/api/commerce/admin/inventory/audit", headers={"Authorization": "Bearer customer-token"})
     assert denied.status_code == 404
     assert calls == []
 
 
-def test_checkout_is_not_forwarded_until_atomic_cal_revalidation_exists(client, monkeypatch):
+def test_checkout_proxy_forwards_to_commerce_for_transaction_time_cal_revalidation(client, monkeypatch):
     configure_upstreams(monkeypatch)
     seen = []
-    monkeypatch.setattr(main.httpx, "request", lambda *args, **kwargs: seen.append((args, kwargs)))
+    monkeypatch.setattr(main.httpx, "request", lambda *args, **kwargs: seen.append((args, kwargs)) or FakeResponse({"checkout": "handled-by-commerce"}))
     response = client.post(
         "/api/commerce/checkout",
         headers={
@@ -106,9 +112,12 @@ def test_checkout_is_not_forwarded_until_atomic_cal_revalidation_exists(client, 
         },
         json={"confirm": True},
     )
-    assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "CAL_GOVERNANCE_NOT_ENFORCED"
-    assert seen == []
+    assert response.status_code == 200
+    assert response.json()["checkout"] == "handled-by-commerce"
+    assert len(seen) == 1
+    assert seen[0][1]["headers"]["Authorization"] == "Bearer user-session-token"
+    assert seen[0][1]["headers"]["Idempotency-Key"] == "checkout-test-key"
+    assert "cookie" not in {key.lower() for key in seen[0][1]["headers"]}
 
 
 def test_readiness_requires_catalog_commerce_and_cal_services(client, monkeypatch):
