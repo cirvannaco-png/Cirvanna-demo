@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(ROOT / "packages" / "wardrobe"))
+sys.path.insert(0, str(ROOT / "packages"))
 
 from wardrobe import WardrobeItem, WardrobeItemStatus, transition_item  # noqa: E402
 
