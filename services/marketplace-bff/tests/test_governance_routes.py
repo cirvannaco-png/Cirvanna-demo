@@ -30,6 +30,10 @@ class Client:
         self.calls.append(url)
         return self.responses.pop(0)
 
+    async def post(self, url, **kwargs):
+        self.calls.append(url)
+        return self.responses.pop(0)
+
 
 def test_offers_route_passes_verified_user_and_candidates_through_cal(monkeypatch):
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
