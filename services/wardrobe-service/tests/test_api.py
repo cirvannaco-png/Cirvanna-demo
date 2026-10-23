@@ -2,7 +2,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 from app import main
-from app.store import Base, engine_for_url
+from app.store import Base, WardrobeDeletionQueue, engine_for_url
 
 TOKEN="wardrobe-test-token-more-than-32-bytes-long"
 
@@ -15,6 +15,7 @@ def client(monkeypatch,tmp_path):
     monkeypatch.setenv("WARDROBE_ASSET_DELETION_READY","true")
     engine=engine_for_url(url)
     Base.metadata.create_all(engine)
+    WardrobeDeletionQueue(engine).heartbeat("ci-test-worker")
     with TestClient(main.app) as c:
         yield c
     engine.dispose()
@@ -80,6 +81,16 @@ def test_same_command_is_idempotent(client):
     repeated=transition(client,expected_version=1)
     assert repeated.status_code==200
     assert repeated.json()["item"]["version"]==2
+
+def test_readiness_requires_a_recent_worker_heartbeat(client):
+    from app.main import store
+    from app.store import WorkerHeartbeatRow
+    with store().engine.begin() as conn:
+        conn.execute(WorkerHeartbeatRow.__table__.delete())
+    response=client.get("/ready")
+    assert response.status_code==503
+    assert response.json()["detail"]["asset_deletion_worker_heartbeat_fresh"] is False
+
 
 def test_readiness_does_not_accept_sqlite_without_test_override(client,monkeypatch):
     monkeypatch.delenv("WARDROBE_ALLOW_SQLITE_TESTS",raising=False)
