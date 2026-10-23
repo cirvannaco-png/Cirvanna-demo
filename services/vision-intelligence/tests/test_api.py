@@ -183,3 +183,98 @@ def test_image_quality_accepts_well_lit_detailed_capture():
     assert quality["passed"] is True
     assert quality["sharpness_proxy"] >= 20.0
     assert quality["interpretation"] == "capture_quality_only_not_model_or_fit_confidence"
+
+
+def test_image_quality_rejects_blurred_low_contrast_and_clipped_captures():
+    blurred = Image.new("RGB", (240, 320), (120, 120, 120))
+    quality = main.evaluate_image_quality(blurred)
+    assert quality["passed"] is False
+    assert "low_contrast" in quality["failure_codes"]
+    assert "image_may_be_blurry" in quality["failure_codes"]
+    clipped = Image.new("RGB", (240, 320), (255, 255, 255))
+    clipped_quality = main.evaluate_image_quality(clipped)
+    assert "image_too_bright" in clipped_quality["failure_codes"]
+    assert "excessive_clipping" in clipped_quality["failure_codes"]
+
+
+@pytest.mark.asyncio
+async def test_live_offer_join_matches_actual_commerce_and_catalog_contracts(monkeypatch):
+    monkeypatch.setattr(main, "_trusted_base", lambda name, **kwargs: {
+        "COMMERCE_API_URL": "https://commerce.example.test",
+        "CATALOG_API_URL": "https://catalog.example.test",
+    }[name])
+    monkeypatch.setenv("CATALOG_READ_TOKEN", "read-only-test-token")
+    calls = []
+
+    async def fake_get_json(client, url, *, params=None, headers=None):
+        calls.append((url, params, headers))
+        if url.endswith("/marketplace/offers"):
+            return {
+                "items": [{
+                    "variant_id": "variant-1",
+                    "catalog_product_id": "00000000-0000-0000-0000-000000000001",
+                    "product_name": "Indigo linen top",
+                    "category": "tops",
+                    "available_stock": 2,
+                    "price_minor": 1200,
+                    "currency": "KES",
+                    "options": {"size": "M"},
+                }],
+                "total": 1,
+                "offset": 0,
+                "limit": 100,
+            }
+        assert url.endswith("/products/batch")
+        assert params == [("ids", "00000000-0000-0000-0000-000000000001")]
+        assert headers["Authorization"] == "Bearer read-only-test-token"
+        return {
+            "items": [{
+                "product_id": "00000000-0000-0000-0000-000000000001",
+                "name": "Indigo linen top",
+                "description": "Breathable linen top with relaxed fit",
+                "category": "tops",
+                "brand": "Maker",
+                "attributes": {"fabric": "linen"},
+                "image_urls": ["https://cdn.example.test/top.jpg"],
+                "status": "active",
+            }]
+        }
+
+    monkeypatch.setattr(main, "_get_json", fake_get_json)
+    offers, truncated = await main._live_offers()
+    assert truncated is False
+    assert len(offers) == 1
+    assert offers[0]["variant_id"] == "variant-1"
+    assert offers[0]["product"]["product_id"] == "00000000-0000-0000-0000-000000000001"
+    assert "Breathable linen top with relaxed fit" in offers[0]["search_text"]
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_live_offer_join_excludes_missing_or_archived_catalog_products(monkeypatch):
+    monkeypatch.setattr(main, "_trusted_base", lambda name, **kwargs: {
+        "COMMERCE_API_URL": "https://commerce.example.test",
+        "CATALOG_API_URL": "https://catalog.example.test",
+    }[name])
+    monkeypatch.setenv("CATALOG_API_TOKEN", "read-only-test-token")
+
+    async def fake_get_json(client, url, *, params=None, headers=None):
+        if url.endswith("/marketplace/offers"):
+            return {
+                "items": [{
+                    "variant_id": "variant-archived",
+                    "catalog_product_id": "00000000-0000-0000-0000-000000000002",
+                    "product_name": "Archived item",
+                    "category": "tops",
+                }],
+                "total": 1,
+            }
+        return {"items": [{
+            "product_id": "00000000-0000-0000-0000-000000000002",
+            "name": "Archived item",
+            "status": "archived",
+        }]}
+
+    monkeypatch.setattr(main, "_get_json", fake_get_json)
+    offers, _ = await main._live_offers()
+    assert offers == []
