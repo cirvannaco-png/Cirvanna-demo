@@ -1,0 +1,37 @@
+name: Private VTON worker contract tests
+on:
+  push:
+    branches: ["main", "feature/**", "engineering/**"]
+    paths:
+      - "services/virtual-try-on/model-worker/**"
+      - ".github/workflows/vton-worker.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "services/virtual-try-on/model-worker/**"
+      - ".github/workflows/vton-worker.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  worker-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/virtual-try-on/model-worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/virtual-try-on/model-worker/requirements.txt
+      - name: Install light contract-test dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Check dependency consistency
+        run: python -m pip check
+      - name: Compile worker and tests
+        run: python -m compileall -q app tests
+      - name: Run mock inference contract tests
+        run: python -m pytest -q
