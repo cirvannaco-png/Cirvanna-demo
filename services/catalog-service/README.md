@@ -6,6 +6,8 @@
 ## Implemented in this service
 
 - Create, read, search/list, update, and soft-archive catalog products.
+- Read up to 100 canonical active product records with one authenticated `GET /products/batch?ids=<uuid>&ids=<uuid>` call for trusted internal marketplace retrieval.
+- Search product descriptions and categories in addition to name, SKU, and brand for keyword lookup. Semantic ranking is performed by the separate Vision Intelligence service, not in Catalog.
 - Validate normalized SKU, currency code, price minor units, metadata JSON, and HTTP(S) image URLs.
 - Persist product records through SQLAlchemy (SQLite for local development; PostgreSQL through `CATALOG_DATABASE_URL`).
 - Record a version snapshot for creation, updates, and archival.
@@ -30,7 +32,7 @@ The default database is `sqlite:///./catalog.db`. Use a managed PostgreSQL datab
 
 Prices use integer minor units and a three-letter currency code, e.g. `price_minor: 1299, currency: "KES"`. The SKU is normalized to uppercase and must be unique. Product deletion is a soft archive, preserving history. List results are active-only by default; pass `status=archived` or `status=all` when needed.
 
-The API does **not** handle payment credentials, checkout, inventory reservation, merchant bulk import, recommendations, user wardrobes, fit predictions, Click It reconstruction, or Virtual Try-On. Those remain separate domains and must not be inferred from catalog CRUD working.
+The API does **not** handle payment credentials, checkout, inventory reservation, merchant bulk import, personalized recommendations, user wardrobes, fit predictions, Click It reconstruction, or Virtual Try-On. The bounded `/products/batch` endpoint is internal data access for trusted services, not a public search or authorization decision. Those remain separate domains and must not be inferred from catalog CRUD working.
 
 ## Release constraints
 

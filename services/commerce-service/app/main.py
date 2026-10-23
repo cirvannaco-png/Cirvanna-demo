@@ -740,6 +740,12 @@ def startup() -> None:
         Base.metadata.create_all(bind=engine)
 
 
+@app.get("/me", tags=["identity"])
+def get_current_actor(actor: Annotated[Actor, Depends(require_actor)]) -> dict[str, Any]:
+    """Return the actor derived from a verified signed token, never caller-supplied IDs."""
+    return {"user_id": actor.user_id, "role": actor.role, "email": actor.email}
+
+
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "alive", "service": SERVICE}

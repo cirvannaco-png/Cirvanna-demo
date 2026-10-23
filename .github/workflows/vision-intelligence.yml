@@ -1,0 +1,43 @@
+name: Vision intelligence contract tests
+on:
+  push:
+    branches: ["main", "feature/**", "engineering/**"]
+    paths:
+      - "services/vision-intelligence/**"
+      - "services/virtual-twin/**"
+      - "services/xari/**"
+      - "services/catalog-service/**"
+      - ".github/workflows/vision-intelligence.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "services/vision-intelligence/**"
+      - "services/virtual-twin/**"
+      - "services/xari/**"
+      - "services/catalog-service/**"
+      - ".github/workflows/vision-intelligence.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  vision-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: services/vision-intelligence
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/vision-intelligence/requirements.txt
+      - name: Install test dependencies
+        run: python -m pip install -r requirements-test.txt
+      - name: Check dependency consistency
+        run: python -m pip check
+      - name: Compile worker and tests
+        run: python -m compileall -q app tests
+      - name: Run mocked model and API contract tests
+        run: python -m pytest -q

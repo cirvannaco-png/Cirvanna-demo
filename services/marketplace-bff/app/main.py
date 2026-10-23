@@ -12,8 +12,9 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, Response
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse, Response
+from pydantic import BaseModel, ConfigDict, Field
 
 SERVICE = "cirvanna-marketplace-bff"
 ROOT = Path(__file__).resolve().parents[3]
@@ -21,6 +22,7 @@ DEFAULT_HTML = ROOT / "apps" / "demo-web" / "marketplace.html"
 HTML_PATH = Path(os.getenv("MARKETPLACE_HTML_PATH", str(DEFAULT_HTML)))
 TIMEOUT_SECONDS = 5.0
 MAX_PAGE_SIZE = 100
+MAX_VISION_IMAGE_BYTES = 10 * 1024 * 1024
 UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
 SERVICE_PATHS = {
     ("GET", "cart"),
@@ -33,7 +35,7 @@ SERVICE_PATHS = {
 app = FastAPI(
     title="Cirvanna Marketplace BFF",
     version="0.1.0",
-    description="Same-origin marketplace UI and constrained API gateway.",
+    description="Same-origin marketplace UI, account-safe AI search, and constrained API gateway.",
 )
 
 
@@ -81,6 +83,188 @@ def _upstream_ready(base: str) -> bool:
         return isinstance(payload, dict) and payload.get("ready") is True
     except (httpx.HTTPError, ValueError):
         return False
+
+
+def _internal_service(url_key: str, token_key: str) -> tuple[str, str]:
+    base = _upstream_base(url_key)
+    token = os.getenv(token_key, "").strip()
+    if len(token.encode("utf-8")) < 32:
+        raise HTTPException(status_code=503, detail={"code": f"{token_key}_NOT_CONFIGURED"})
+    return base, token
+
+
+class MarketplaceSearchIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    query: str = Field(min_length=3, max_length=1000)
+    category: str | None = Field(default=None, min_length=1, max_length=80)
+    limit: int = Field(default=10, ge=1, le=25)
+
+    @property
+    def normalized_query(self) -> str:
+        return " ".join(self.query.split()).strip()
+
+
+async def _safe_json_post(
+    base: str,
+    path: str,
+    token: str,
+    payload: dict,
+) -> dict:
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(15.0, connect=2.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            response = await client.post(
+                base + path,
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json=payload,
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "VISION_SEARCH_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "VISION_SEARCH_UNAVAILABLE"}) from exc
+    if response.status_code != 200:
+        if response.status_code in {400, 413, 415, 422}:
+            raise HTTPException(response.status_code, detail={"code": "VISION_SEARCH_REQUEST_REJECTED"})
+        if response.status_code in {502, 503, 504}:
+            raise HTTPException(503, detail={"code": "VISION_SEARCH_UNAVAILABLE"})
+        raise HTTPException(502, detail={"code": "VISION_SEARCH_FAILED"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "VISION_SEARCH_INVALID_RESPONSE"}) from exc
+    if not isinstance(data, dict) or data.get("status") != "complete" or not isinstance(data.get("candidates"), list):
+        raise HTTPException(502, detail={"code": "VISION_SEARCH_INVALID_RESPONSE"})
+    return data
+
+
+@app.post("/api/vision/marketplace-search")
+async def marketplace_description_search(payload: MarketplaceSearchIn) -> dict:
+    """Search marketplace candidates by description without exposing Xari credentials."""
+    base, token = _internal_service("XARI_API_URL", "XARI_API_TOKEN")
+    request_body = {"query": payload.normalized_query, "limit": payload.limit}
+    if payload.category and payload.category.strip():
+        request_body["category"] = payload.category.strip()
+    data = await _safe_json_post(base, "/v1/marketplace/search", token, request_body)
+    # This endpoint intentionally forwards candidates separately from display authorization.
+    return {
+        "status": "complete",
+        "query": payload.normalized_query,
+        "candidate_count": data.get("candidate_count", len(data["candidates"])),
+        "candidates": data["candidates"],
+        "display_authorized": data.get("display_authorized") is True,
+        "decision_status": data.get("decision_status", "PENDING_CAL"),
+        "scores_are_probabilities": False,
+    }
+
+
+@app.post("/api/vision/click-it")
+async def marketplace_click_it(
+    request: Request,
+    consent_id: str = Form(min_length=8, max_length=160),
+    consent_image_processing: bool = Form(),
+    consent_click_it: bool = Form(),
+    product_image: UploadFile = File(...),
+    twin_id: str | None = Form(default=None, min_length=3, max_length=128),
+    category: str | None = Form(default=None, max_length=80),
+    limit: int = Form(default=10, ge=1, le=25),
+) -> Response:
+    """Bind Click It to a verified Commerce identity and keep all service tokens private.
+
+    The browser may supply consent flags and an opaque consent reference, but the
+    Virtual Twin service verifies the durable, active record with the consent
+    provider. This endpoint cannot treat a checkbox alone as durable consent.
+    """
+    authorization = request.headers.get("authorization", "")
+    scheme, _, user_token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not user_token.strip():
+        raise HTTPException(401, detail={"code": "USER_BEARER_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
+    if not consent_image_processing or not consent_click_it:
+        raise HTTPException(400, detail={"code": "EXPLICIT_CLICK_IT_CONSENT_REQUIRED"})
+    content_type = product_image.content_type or ""
+    if content_type not in {"image/jpeg", "image/png", "image/webp"}:
+        await product_image.close()
+        raise HTTPException(415, detail={"code": "UNSUPPORTED_PRODUCT_IMAGE_TYPE"})
+    if product_image.size is not None and product_image.size > MAX_VISION_IMAGE_BYTES:
+        await product_image.close()
+        raise HTTPException(413, detail={"code": "PRODUCT_IMAGE_SIZE_LIMIT_EXCEEDED"})
+    content = b""
+    try:
+        content = await product_image.read(MAX_VISION_IMAGE_BYTES + 1)
+    finally:
+        await product_image.close()
+    if not content:
+        raise HTTPException(400, detail={"code": "EMPTY_PRODUCT_IMAGE"})
+    if len(content) > MAX_VISION_IMAGE_BYTES:
+        raise HTTPException(413, detail={"code": "PRODUCT_IMAGE_SIZE_LIMIT_EXCEEDED", "maximum_bytes": MAX_VISION_IMAGE_BYTES})
+
+    commerce_base = _upstream_base("COMMERCE_API_URL")
+    twin_base, twin_token = _internal_service("VIRTUAL_TWIN_API_URL", "VIRTUAL_TWIN_API_TOKEN")
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(8.0, connect=2.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            # /me derives subject_id from a signed/verified Commerce token. Never
+            # trust a subject_id submitted by browser JavaScript.
+            identity = await client.get(
+                commerce_base + "/me",
+                headers={"Authorization": "Bearer " + user_token, "Accept": "application/json"},
+            )
+            if identity.status_code in {401, 403}:
+                raise HTTPException(401, detail={"code": "USER_AUTHENTICATION_FAILED"})
+            if identity.status_code != 200:
+                raise HTTPException(503, detail={"code": "USER_IDENTITY_UNAVAILABLE"})
+            actor = identity.json()
+            subject_id = actor.get("user_id") if isinstance(actor, dict) else None
+            if not isinstance(subject_id, str) or not subject_id.strip():
+                raise HTTPException(502, detail={"code": "INVALID_USER_IDENTITY_RESPONSE"})
+            fields = {
+                "subject_id": subject_id,
+                "consent_id": consent_id.strip(),
+                "consent_image_processing": "true",
+                "consent_click_it": "true",
+                "limit": str(limit),
+            }
+            if twin_id and twin_id.strip():
+                fields["twin_id"] = twin_id.strip()
+            if category and category.strip():
+                fields["category"] = category.strip()
+            response = await client.post(
+                twin_base + "/click-it",
+                headers={"Authorization": "Bearer " + twin_token, "Accept": "application/json"},
+                data=fields,
+                files={"product_image": (product_image.filename or "click-it-image", content, content_type)},
+            )
+    except HTTPException:
+        raise
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "CLICK_IT_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "CLICK_IT_UNAVAILABLE"}) from exc
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "CLICK_IT_INVALID_RESPONSE"}) from exc
+    if response.status_code == 200 and isinstance(data, dict):
+        return JSONResponse(content=data, headers={"Cache-Control": "no-store, private"})
+    detail = data.get("detail", {}) if isinstance(data, dict) else {}
+    code = detail.get("code") if isinstance(detail, dict) else None
+    safe = {"code": code if isinstance(code, str) else "CLICK_IT_REQUEST_FAILED"}
+    if isinstance(detail, dict):
+        for key in ("quality", "message", "maximum_bytes", "visibility"):
+            if key in detail:
+                safe[key] = detail[key]
+    if response.status_code in {400, 403, 413, 415, 422}:
+        raise HTTPException(response.status_code, detail=safe)
+    if response.status_code == 504:
+        raise HTTPException(504, detail={"code": "CLICK_IT_TIMEOUT"})
+    if response.status_code in {502, 503}:
+        raise HTTPException(503 if response.status_code == 503 else 502, detail=safe)
+    raise HTTPException(502, detail={"code": "CLICK_IT_FAILED"})
 
 
 def _page_html() -> str:

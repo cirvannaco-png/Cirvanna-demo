@@ -464,3 +464,20 @@ def test_inventory_audit_is_admin_only_and_detects_clean_database(client):
     assert client.get("/admin/inventory/audit", headers=auth("customer-1")).status_code == 403
     response = client.get("/admin/inventory/audit", headers=auth("admin-1", "admin"))
     assert response.status_code == 200 and response.json()["ok"] is True
+
+def test_current_actor_endpoint_uses_verified_token_subject(client):
+    unauthenticated = client.get("/me")
+    assert unauthenticated.status_code == 401
+    response = client.get("/me", headers=auth("identity-subject-123", role="customer", email="buyer@example.test"))
+    assert response.status_code == 200
+    assert response.json() == {
+        "user_id": "identity-subject-123",
+        "role": "customer",
+        "email": "buyer@example.test",
+    }
+
+
+def test_current_actor_endpoint_rejects_invalid_token(client):
+    response = client.get("/me", headers={"Authorization": "Bearer definitely-not-a-jwt"})
+    assert response.status_code == 401
+

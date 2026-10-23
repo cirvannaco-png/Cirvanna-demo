@@ -230,6 +230,42 @@ def test_delete_archives_without_erasing_history(client):
     assert [item["change_type"] for item in history] == ["created", "archived"]
 
 
+def test_batch_product_lookup_is_read_only_bounded_and_excludes_archived(client):
+    active = create_product(
+        client,
+        sku="BATCH-ACTIVE-001",
+        description="Breathable cotton linen blend for summer.",
+    )
+    archived = create_product(client, sku="BATCH-ARCHIVED-002", name="Archived garment")
+    archive_response = client.delete(
+        f"/products/{archived['product_id']}", headers=auth_headers()
+    )
+    assert archive_response.status_code == 200
+
+    query = f"/products/batch?ids={active['product_id']}&ids={archived['product_id']}"
+    unauthorized = client.get(query)
+    assert unauthorized.status_code == 401
+
+    response = client.get(query, headers=auth_headers())
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert [item["product_id"] for item in body["items"]] == [active["product_id"]]
+    assert body["items"][0]["description"] == "Breathable cotton linen blend for summer."
+
+
+def test_catalog_keyword_search_includes_product_descriptions(client):
+    create_product(
+        client,
+        sku="DETAIL-SEARCH-003",
+        name="Everyday top",
+        description="Soft indigo chambray with a relaxed cut.",
+    )
+    response = client.get("/products?q=chambray", headers=auth_headers())
+    assert response.status_code == 200
+    assert response.json()["total"] == 1
+    assert response.json()["items"][0]["name"] == "Everyday top"
+
+
 def test_readiness_requires_current_migration_and_auth_config(client, monkeypatch):
     pending = client.get("/ready")
     assert pending.status_code == 503

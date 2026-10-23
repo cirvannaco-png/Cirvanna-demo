@@ -263,6 +263,11 @@ class ProductListOut(BaseModel):
     limit: int
 
 
+class ProductBatchOut(BaseModel):
+    """Canonical catalog records fetched in a bounded internal batch."""
+    items: list[ProductOut]
+
+
 class ProductVersionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
@@ -543,11 +548,42 @@ def list_products(
         filters.append(func.lower(Product.category) == category.strip().lower())
     if q and q.strip():
         term = f"%{q.strip()}%"
-        filters.append(or_(Product.name.ilike(term), Product.sku.ilike(term), Product.brand.ilike(term)))
+        # Descriptions and categories matter for semantic marketplace discovery;
+        # this SQL substring search remains a fallback, not an embedding ranking.
+        filters.append(or_(
+            Product.name.ilike(term), Product.sku.ilike(term), Product.brand.ilike(term),
+            Product.description.ilike(term), Product.category.ilike(term),
+        ))
     statement = select(Product).where(*filters)
     total = db.scalar(select(func.count()).select_from(Product).where(*filters)) or 0
     items = list(db.scalars(statement.order_by(Product.created_at.desc(), Product.id).offset(offset).limit(limit)).all())
     return ProductListOut(items=items, total=int(total), offset=offset, limit=limit)
+
+
+@app.get(
+    "/products/batch",
+    response_model=ProductBatchOut,
+    dependencies=[Depends(require_catalog_read_token)],
+    tags=["products"],
+)
+def get_products_batch(
+    db: Annotated[Session, Depends(get_db)],
+    ids: list[uuid.UUID] = Query(..., description="One or more canonical product UUIDs; maximum 100."),
+) -> ProductBatchOut:
+    """Bounded, read-only product enrichment endpoint for trusted retrieval services.
+
+    Archived or unknown records are omitted. It does not expose archived product
+    metadata to the marketplace semantic search service.
+    """
+    if not ids or len(ids) > MAX_PAGE_SIZE:
+        raise HTTPException(status_code=422, detail={"code": "INVALID_BATCH_SIZE", "maximum": MAX_PAGE_SIZE})
+    unique_ids = list(dict.fromkeys(str(pid) for pid in ids))
+    products = list(db.scalars(select(Product).where(
+        Product.id.in_(unique_ids), Product.status == "active"
+    )).all())
+    by_id = {product.id: product for product in products}
+    ordered = [by_id[pid] for pid in unique_ids if pid in by_id]
+    return ProductBatchOut(items=ordered)
 
 
 def _get_product(db: Session, product_id: uuid.UUID) -> Product:
