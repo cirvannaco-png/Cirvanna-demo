@@ -9,6 +9,7 @@ This report is pinned to the repository state inspected on 2026-10-23. It does n
 - PR #60 head inspected: `c64188c736edc308ae66b68f3bd14122fc21e8c9`
 - PR #62 initial audit head: `c731231ce2e80e0cda2df4865321d91139f3b609`
 - PR #62 follow-up implementation head: `5a0b8468bc2e235ea11b4596cb1820c70a55d904`
+- PR #62 latest follow-up head: `c9c17dab733c490ea5525c7d2e4b454bcb7408f1`
 - Branch inventory: 58 refs returned by GitHub at audit time.
 - Method: GitHub commit comparisons against `main`, pull-request changed-file inventories, source inspection of service contracts/readiness routes and current tests.
 - CI log limitation: GitHub reports failed jobs, but the connected job-log endpoint returns `BlobNotFound`; therefore the exact failing commands could not be independently recovered.
@@ -30,7 +31,7 @@ The PR #62 branch contains:
 - A Commerce migration for `commerce_cal_decision_audits`, plus tests for fail-closed checkout and receipt linkage.
 
 These changes remain an **implementation candidate**, not validated production behavior. In particular:
-- The USI profile and user-context providers are specified as private upstream contracts but are not demonstrated as deployed services in this repository.
+- A persistent USI/context service implementation candidate has now been added, with explicit-confirmation writes, user-bound profile/context reads, a PostgreSQL migration and change-event rows. Its deployment and tests are not verified. The calibrated fit provider remains unimplemented.
 - A trained, calibrated FCI inference provider is not present or empirically validated. A signature proves possession of a key, not scientific calibration.
 - The evidence provider cannot become operationally ready until all upstream URLs, tokens, databases, signing keys and migrations are configured.
 - The Catalog and Commerce migrations have not been applied to a live non-production PostgreSQL instance in this audit.
@@ -99,7 +100,7 @@ No branches were deleted. The available GitHub connector exposed no branch-delet
 
 ## CI snapshot and validation limits
 
-At follow-up head `5a0b8468bc2e235ea11b4596cb1820c70a55d904`, the latest workflow attempts again reported failures for:
+At follow-up head `c9c17dab733c490ea5525c7d2e4b454bcb7408f1`, the latest workflow attempts again reported failures for:
 - Marketplace BFF checks
 - Marketplace contract checks
 - Container image builds
@@ -108,7 +109,7 @@ At follow-up head `5a0b8468bc2e235ea11b4596cb1820c70a55d904`, the latest workflo
 - Vision Intelligence / Virtual Twin / Xari contract checks
 - Governance evidence provider tests
 
-The log endpoint returned missing log blobs for sampled jobs, and no artifacts were attached. These failures must be diagnosed from an available runner log or reproduced locally before claiming they are fixed. Rerunning a workflow is not a pass. The private CAL route and Commerce readiness checks were refined after the initial audit, but these changes are still unvalidated by passing CI.
+The log endpoint returned missing log blobs for sampled jobs, and no artifacts were attached. These failures must be diagnosed from an available runner log or reproduced locally before claiming they are fixed. Rerunning a workflow is not a pass. The private CAL route, Commerce readiness checks and persistent USI/context implementation were refined after the initial audit, but these changes are still unvalidated by passing CI.
 
 ## Release gates
 
