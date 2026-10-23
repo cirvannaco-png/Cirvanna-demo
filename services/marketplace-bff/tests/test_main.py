@@ -238,3 +238,17 @@ def test_click_it_rejects_unsupported_image_before_calling_services(client, monk
     assert response.status_code == 415
     assert response.json()["detail"]["code"] == "UNSUPPORTED_PRODUCT_IMAGE_TYPE"
 
+def test_marketplace_ui_has_xari_description_search_and_mobile_click_it_capture(client):
+    response = client.get("/")
+    assert response.status_code == 200
+    assert 'id="aiQuery"' in response.text
+    assert 'id="aiSearchBtn"' in response.text
+    assert 'id="clickItImage"' in response.text
+    assert 'capture="environment"' in response.text
+    assert 'id="clickItConsentId"' in response.text
+    assert 'id="clickItImageConsent"' in response.text
+    assert 'id="clickItSearchConsent"' in response.text
+    assert 'fetch("/api/vision/marketplace-search"' in response.text
+    assert 'fetch("/api/vision/click-it"' in response.text
+    assert "display_authorized===true" in response.text
+    assert "PENDING_CAL" in response.text
