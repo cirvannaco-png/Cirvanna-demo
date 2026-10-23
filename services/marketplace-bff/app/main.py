@@ -368,6 +368,7 @@ def readiness() -> dict:
     evidence_token_configured = len(os.getenv("GOVERNANCE_EVIDENCE_API_TOKEN", "").encode("utf-8")) >= 32
     decision_url_configured = bool(os.getenv("DECISION_SERVICE_API_URL"))
     decision_token_configured = len(os.getenv("DECISION_SERVICE_TOKEN", "").encode("utf-8")) >= 32
+    cal_gateway_token_configured = len(os.getenv("CAL_GATEWAY_SERVICE_TOKEN", "").encode("utf-8")) >= 32
     catalog_ready = False
     commerce_ready = False
     evidence_ready = False
