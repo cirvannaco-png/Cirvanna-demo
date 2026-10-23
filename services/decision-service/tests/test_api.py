@@ -6,6 +6,7 @@ import time
 
 os.environ.setdefault("DECISION_SERVICE_TOKEN", "decision-service-test-token-32-bytes-min")
 os.environ.setdefault("FCI_EVIDENCE_HMAC_SECRET", "fci-provider-test-key-minimum-32-bytes")
+os.environ.setdefault("NPL_EVIDENCE_HMAC_SECRET", "npl-provider-test-key-minimum-32-bytes")
 
 import pytest
 from fastapi.testclient import TestClient
@@ -16,6 +17,7 @@ from app import main
 def config(monkeypatch):
     monkeypatch.setenv("DECISION_SERVICE_TOKEN", "decision-service-test-token-32-bytes-min")
     monkeypatch.setenv("FCI_EVIDENCE_HMAC_SECRET", "fci-provider-test-key-minimum-32-bytes")
+    monkeypatch.setenv("NPL_EVIDENCE_HMAC_SECRET", "npl-provider-test-key-minimum-32-bytes")
 
 
 @pytest.fixture
@@ -28,6 +30,15 @@ def signed_fit(fit: dict) -> str:
     parsed = main.FitEvidenceIn.model_validate(fit)
     payload = main.canonical_fit_payload(parsed)
     return hmac.new(os.environ["FCI_EVIDENCE_HMAC_SECRET"].encode(), payload, hashlib.sha256).hexdigest()
+
+
+def signed_npl(body: dict) -> str:
+    from npl import canonical_npl_evidence_payload
+    canonical = canonical_npl_evidence_payload(
+        body["request_id"], body["context"]["user_id"], body["candidate_id"],
+        body["candidate_attributes"], body["negative_preferences"],
+    )
+    return hmac.new(os.environ["NPL_EVIDENCE_HMAC_SECRET"].encode(), canonical, hashlib.sha256).hexdigest()
 
 
 def request_body(**overrides):
@@ -76,6 +87,7 @@ def request_body(**overrides):
     }
     body.update(overrides)
     body["fit_estimate_signature"] = signed_fit(body["fit_estimate"])
+    body["npl_evidence_signature"] = signed_npl(body)
     return body
 
 
@@ -135,6 +147,7 @@ def test_cultural_requirement_is_evaluated_by_canonical_pipeline(client):
         "active": True,
     }]
     body["candidate_attributes"].append("sleeveless")
+    body["npl_evidence_signature"] = signed_npl(body)
     response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
     assert response.status_code == 200, response.text
     data = response.json()
@@ -168,6 +181,31 @@ def test_incomplete_signed_fit_evidence_routes_to_review(client):
     assert data["gates"]["confidence"]["status"] == "insufficient_evidence"
     assert set(data["gates"]["confidence"]["missing_fields"]) == {"garment_size_chart", "garment_geometry"}
 
+
+def test_npl_tampering_is_rejected_before_cal(client):
+    body = request_body()
+    body["negative_preferences"] = [{
+        "preference_id": "tampered", "user_id": "user-001",
+        "target_type": "attribute", "target_value": "blue",
+        "source": "user_declared", "active": True,
+    }]
+    response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "UNTRUSTED_NPL_EVIDENCE"
+
+
+def test_foreign_user_npl_evidence_is_rejected(client):
+    body = request_body()
+    body["negative_preferences"] = [{
+        "preference_id": "foreign", "user_id": "another-user",
+        "target_type": "attribute", "target_value": "blue",
+        "source": "user_declared", "active": True,
+    }]
+    body["npl_evidence_signature"] = signed_npl(body) if False else "0" * 64
+    response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "INVALID_NPL_EVIDENCE"
+
 def test_npl_hard_veto_beats_high_fit_confidence(client):
     body = request_body()
     body["negative_preferences"] = [{
@@ -175,6 +213,7 @@ def test_npl_hard_veto_beats_high_fit_confidence(client):
         "target_value": "blue", "source": "user_declared", "active": True,
     }]
     body["fit_estimate_signature"] = signed_fit(body["fit_estimate"])
+    body["npl_evidence_signature"] = signed_npl(body)
     result = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
     assert result.status_code == 200
     assert result.json()["decision"] == "BLOCK"
