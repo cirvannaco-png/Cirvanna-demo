@@ -395,6 +395,7 @@ def readiness() -> dict:
         catalog_configured and commerce_configured and catalog_ready and commerce_ready
         and evidence_url_configured and evidence_token_configured and evidence_ready
         and decision_url_configured and decision_token_configured and decision_ready
+        and cal_gateway_token_configured
     )
     result = {
         "status": "ready" if ready else "not_ready",
@@ -409,6 +410,7 @@ def readiness() -> dict:
         "decision_service_url_configured": decision_url_configured,
         "decision_service_auth_configured": decision_token_configured,
         "decision_service_ready": decision_ready,
+        "cal_gateway_service_auth_configured": cal_gateway_token_configured,
         "ready": ready,
     }
     if not ready:
