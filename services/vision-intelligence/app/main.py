@@ -216,6 +216,8 @@ def _decode_image(data: bytes, content_type: str) -> Image.Image:
             return image
     except HTTPException:
         raise
+    except Image.DecompressionBombError as exc:
+        raise HTTPException(413, detail={"code": "IMAGE_PIXEL_LIMIT_EXCEEDED", "maximum_pixels": MAX_IMAGE_PIXELS}) from exc
     except (UnidentifiedImageError, OSError, ValueError) as exc:
         raise HTTPException(422, detail={"code": "INVALID_IMAGE_DATA"}) from exc
 
