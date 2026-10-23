@@ -76,7 +76,7 @@ def test_skin_analysis_requires_virtual_twin_authentication():
 
 
 def test_skin_analysis_requires_explicit_consent(monkeypatch):
-    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "test-only-token")
+    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "virtual-twin-test-bearer-token-longer-than-thirty-two-bytes")
     response = client.post(
         "/skin-analysis",
         headers={"Authorization": "Bearer test-only-token"},
@@ -88,7 +88,7 @@ def test_skin_analysis_requires_explicit_consent(monkeypatch):
 
 
 def test_skin_analysis_fails_closed_when_dermalsight_missing(monkeypatch):
-    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "test-only-token")
+    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "virtual-twin-test-bearer-token-longer-than-thirty-two-bytes")
     monkeypatch.delenv("DERMALSIGHT_API_URL", raising=False)
     monkeypatch.delenv("DERMALSIGHT_API_TOKEN", raising=False)
     response = client.post(
@@ -102,7 +102,7 @@ def test_skin_analysis_fails_closed_when_dermalsight_missing(monkeypatch):
 
 
 def test_skin_analysis_forwards_request_to_dermalsight(monkeypatch):
-    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "virtual-twin-token")
+    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "virtual-twin-test-bearer-token-longer-than-thirty-two-bytes")
     monkeypatch.setenv("DERMALSIGHT_API_URL", "https://dermalsight.internal")
     monkeypatch.setenv("DERMALSIGHT_API_TOKEN", "service-token")
     FakeAsyncClient.post_response = FakeResponse(200, {
@@ -133,7 +133,7 @@ def test_skin_analysis_forwards_request_to_dermalsight(monkeypatch):
 
 
 def test_skin_analysis_sanitizes_upstream_unavailability(monkeypatch):
-    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "virtual-twin-token")
+    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "virtual-twin-test-bearer-token-longer-than-thirty-two-bytes")
     monkeypatch.setenv("DERMALSIGHT_API_URL", "https://dermalsight.internal")
     monkeypatch.setenv("DERMALSIGHT_API_TOKEN", "service-token")
     FakeAsyncClient.post_response = FakeResponse(503, {"detail": "sensitive internal failure"})
@@ -151,7 +151,7 @@ def test_skin_analysis_sanitizes_upstream_unavailability(monkeypatch):
 
 
 def test_skin_analysis_translates_upstream_timeout(monkeypatch):
-    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "virtual-twin-token")
+    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "virtual-twin-test-bearer-token-longer-than-thirty-two-bytes")
     monkeypatch.setenv("DERMALSIGHT_API_URL", "https://dermalsight.internal")
     monkeypatch.setenv("DERMALSIGHT_API_TOKEN", "service-token")
     FakeAsyncClient.post_error = httpx.TimeoutException("internal timeout detail")
@@ -182,7 +182,7 @@ def test_capabilities_only_reports_skin_analysis_when_dermalsight_ready(monkeypa
 
 
 def test_skin_analysis_rejects_unsupported_upload_type(monkeypatch):
-    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "test-only-token")
+    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "virtual-twin-test-bearer-token-longer-than-thirty-two-bytes")
     response = client.post(
         "/skin-analysis",
         headers={"Authorization": "Bearer test-only-token"},
@@ -193,7 +193,7 @@ def test_skin_analysis_rejects_unsupported_upload_type(monkeypatch):
 
 
 def test_skin_analysis_rejects_oversized_image_before_forwarding(monkeypatch):
-    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "test-only-token")
+    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "virtual-twin-test-bearer-token-longer-than-thirty-two-bytes")
     monkeypatch.setenv("DERMALSIGHT_API_URL", "https://dermalsight.internal")
     monkeypatch.setenv("DERMALSIGHT_API_TOKEN", "service-token")
     monkeypatch.setattr(twin_main, "MAX_SKIN_ANALYSIS_IMAGE_BYTES", 3)
