@@ -1,8 +1,9 @@
 # Cirvanna feature-spine audit and integration gates
 
 **Audit date:** 23 October 2026  
-**Reviewed main:** `d4f61184e4a7b34943c91bb2e46eaa86ccff9bc5`  
-**Status:** feature contracts and mock-tested private inference boundary merged; production model-backed features remain gated.
+**Baseline main:** `fe0a61f9b32dcc080d1ac25d70187538a1ec1048`  
+**Change under review:** `feature/twin-clickit-live-inference`  
+**Status:** model-backed pose and marketplace-retrieval adapters implemented in this branch; production model execution, durable consent/Twin-registry integrations and labeled quality evaluation remain gated.
 
 ## Canonical naming and boundary decisions
 
@@ -18,7 +19,7 @@
 
 | Feature | Evidence in repository | Missing acceptance evidence |
 |---|---|---|
-| Tari/Xari | Authenticated Xari route-planning API, fixed intent/upstream allowlist, consent requirements, URL trust checks, capability reporting and contract tests. Tari/Xyra remain legacy names in source lineage. | Downstream execution adapters, tracing, rate limits and production identity/consent propagation. |
+| Tari/Xari | Authenticated route planning plus this branch's dedicated natural-language marketplace-search endpoint, forwarding description/category/limit to the private vision retriever. Tari/Xyra remain legacy names in source lineage. | Other intent execution adapters, production identity/consent propagation, tracing/rate limits, and routing candidate output through the real CAL/NPL/cultural decision gateway. |
 | NPL | Pure policy kernel; SQLAlchemy persistence API, PostgreSQL migration, unique rejection/correction event keys, authenticated API, HMAC-signed candidate-bound snapshots, and CI tests. Decision service verifies the NPL evidence HMAC; gateway can consume and verify snapshots when configured. | Deployed PostgreSQL integration/restore and concurrency evidence; production key management; durable preference onboarding and gateway configuration in the real deployment. |
 | Virtual Twin | Authenticated API, explicit-consent gates, upload bounds, DermalSight proxy contract, Click It contract, readiness/capability reporting and API tests. The private VTON worker is separately isolated with mock-tested image validation and category mapping. | A real Virtual Twin/body-reconstruction model and validated output storage; the VTON worker itself still needs pinned source/weights/GPU deployment and secure orchestrator adapters. |
 | Wardrobe | Domain model and lifecycle contract; authenticated SQLAlchemy API; PostgreSQL migration; owner-scoped CRUD; version-checked transitions; explicit image-storage consent; durable asset-deletion outbox; CI tests. | Deployed PostgreSQL integration/restore, authenticated identity binding at ingress, live object-storage deletion worker and retry/DLQ testing, catalog contract and end-to-end deletion evidence. |
@@ -34,9 +35,21 @@
 4. Add Xari's authenticated route-planning contract for chat, skin analysis, marketplace search, Virtual Twin, wardrobe, Click It, and Virtual Try-On. It is deliberately planning-only until each service's request/response contract and authentication adapter are integrated.
 5. Add a SQLAlchemy-backed NPL ledger API, PostgreSQL migration, event uniqueness/idempotency and signed candidate-bound evaluation snapshots. Production DB deployment, concurrency/restore tests and live provider configuration remain required.
 6. Add a persistent cultural declaration API with user confirmation, explicit requirement records, correction/retraction events and a signed evidence envelope. The decision service and gateway verify signatures when the provider is integrated; no attributes are inferred from images or demographic proxies.
-7. Keep Twin reconstruction and Click It unavailable. Only validated models, measured quality, consented asset handling, and real deployment evidence can enable them.
+7. This branch adds a model-backed pose-skeleton Twin inference path and Click It-to-marketplace candidate retrieval, gated by pinned model/pose assets, internal tokens, durable-consent verification and Twin ownership. Do not describe this as full Twin reconstruction or exact visual SKU matching.
 8. Add a separate private GPU worker boundary for VTON: bearer authentication, explicit consent flags, image decoding/size/pixel checks, explicit category mapping, output PNG validation, no-store handling, CUDA/weights readiness checks, and mandatory exact upstream commit pin. Worker tests use a mock pipeline only; no GPU, weights, or model execution is claimed.
 9. Add dedicated CI for worker contracts without downloading PyTorch or model weights. The worker has not been deployed and the orchestrator's real consent, asset-resolution, authorization, and output-storage adapters are still not connected.
+
+## Branch-only inference implementation and release blockers
+
+This section describes code added in `feature/twin-clickit-live-inference`; it is not yet merged or deployed.
+
+- **FashionCLIP model pin:** `patrickjohncyh/fashion-clip` at immutable revision `afacf5e5851d5979ab030e228eab60e2c95a912c`, with safetensors required and remote code disabled.
+- **Click It:** image decoding and input-quality gates run before inference; the photo embedding is matched to canonical catalog descriptions/attributes for currently purchasable Commerce offers. Catalog has a bounded active-product batch lookup and search considers descriptions/categories. Results are similarity-ranked candidates, not probabilities or approvals.
+- **Xari:** `POST /v1/marketplace/search` executes the private description-search path rather than only returning a route plan.
+- **Virtual Twin:** MediaPipe Pose Landmarker returns approximate pose landmarks and visibility evidence for one still image. The service does not create a full body mesh, calibrated measurements, or a durable Twin record.
+- **Privacy/reliability:** tokens remain server-side; trusted service URLs are constrained; requests have byte/pixel/time bounds; redirects and implicit proxy settings are disabled; failures are sanitized and fail closed; uploaded photos are not intentionally persisted by these new endpoints.
+- **Hard blockers:** the repository does not contain the expected deployed consent verifier (`POST /internal/v1/consents/verify`) or Twin registry authorization endpoint (`POST /internal/v1/twins/authorize`). Their typed adapter contracts are defined, not deployed proof. The vision service also lacks a provisioned checksummed MediaPipe asset and a runtime-configured worker token/service URLs. No GPU or model-weight inference run has been demonstrated.
+- **Evidence boundary:** CI uses mocked API/model results. Before public activation, provision the exact pinned models, verify license and usage restrictions, test the live services, evaluate image-to-marketplace retrieval on labeled holdout data, and ensure candidate results pass NPL, explicit cultural requirements, FCI evidence constraints and CAL before display.
 
 ## Required acceptance gates before any feature is called complete
 
