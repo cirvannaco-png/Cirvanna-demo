@@ -567,8 +567,8 @@ def list_products(
     tags=["products"],
 )
 def get_products_batch(
+    db: Annotated[Session, Depends(get_db)],
     ids: list[uuid.UUID] = Query(..., description="One or more canonical product UUIDs; maximum 100."),
-    db: Annotated[Session, Depends(get_db)] = None,
 ) -> ProductBatchOut:
     """Bounded, read-only product enrichment endpoint for trusted retrieval services.
 
