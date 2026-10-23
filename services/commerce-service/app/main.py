@@ -568,6 +568,7 @@ class Readiness(BaseModel):
     authentication_mode: str
     catalog_configured: bool
     payment_configured: bool
+    cal_gateway_configured: bool
     migrations_required: bool
     migrations_applied: bool
     schema_revision: str | None
@@ -788,6 +789,12 @@ def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
 
     auth_ok = _authentication_configured()
     catalog_ok = bool(os.getenv("CATALOG_API_URL") and os.getenv("CATALOG_API_TOKEN"))
+    cal_url = os.getenv("COMMERCE_CAL_GATEWAY_URL", "").strip()
+    cal_token = os.getenv("COMMERCE_CAL_GATEWAY_TOKEN", "").strip()
+    cal_parts = urlsplit(cal_url)
+    cal_host = (cal_parts.hostname or "").lower()
+    cal_local = cal_host in {"localhost", "127.0.0.1", "::1"}
+    cal_ok = bool(cal_host and len(cal_token.encode("utf-8")) >= 32 and cal_parts.username is None and cal_parts.password is None and not cal_parts.query and not cal_parts.fragment and (cal_parts.scheme == "https" or (cal_parts.scheme == "http" and cal_local)))
     payment_ok = StripeGateway().ready
     migrations_applied = schema_revision == EXPECTED_SCHEMA_REVISION
     ready = (
@@ -796,12 +803,13 @@ def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
         and auth_ok
         and catalog_ok
         and payment_ok
+        and cal_ok
         and (not migrations_required or migrations_applied)
     )
     result = Readiness(status="ready" if ready else "not_ready", service=SERVICE,
         database_connected=connected, schema_present=schema_present,
         authentication_configured=auth_ok, authentication_mode=_commerce_auth_mode(),
-        catalog_configured=catalog_ok, payment_configured=payment_ok, migrations_required=migrations_required,
+        catalog_configured=catalog_ok, payment_configured=payment_ok, cal_gateway_configured=cal_ok, migrations_required=migrations_required,
         migrations_applied=migrations_applied, schema_revision=schema_revision, ready=ready)
     if not ready:
         raise HTTPException(503, detail=result.model_dump())
@@ -814,7 +822,7 @@ def capabilities() -> dict[str, Any]:
         "idempotent_orders": True, "stripe_hosted_checkout": StripeGateway().ready,
         "verified_payment_webhooks": bool(os.getenv("STRIPE_WEBHOOK_SECRET")),
         "automated_seller_payouts": False, "shipping_tax_calculation": False,
-        "catacaci_eligibility": False, "click_it_reconstruction": False,
+        "catacaci_eligibility": bool(os.getenv("COMMERCE_CAL_GATEWAY_URL") and len(os.getenv("COMMERCE_CAL_GATEWAY_TOKEN", "").encode("utf-8")) >= 32), "cal_decision_audit_persistence": "commerce_cal_decision_audits" in set(inspect(engine).get_table_names()), "click_it_reconstruction": False,
         "virtual_twin_generation": False, "virtual_try_on": False}
 
 
