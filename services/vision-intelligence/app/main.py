@@ -227,9 +227,15 @@ def evaluate_image_quality(image: Image.Image) -> dict[str, Any]:
     gray = np.asarray(image.convert("L"), dtype=np.float32)
     brightness = float(gray.mean())
     contrast = float(gray.std())
-    dx = np.diff(gray, axis=1)
-    dy = np.diff(gray, axis=0)
-    sharpness = float((np.var(dx) + np.var(dy)) / 2.0) if dx.size and dy.size else 0.0
+    # Laplacian variance is a reproducible blur proxy; its threshold is a conservative
+    # capture gate, not a universal camera-independent focus score.
+    center = gray[1:-1, 1:-1]
+    laplacian = (
+        gray[:-2, 1:-1] + gray[2:, 1:-1]
+        + gray[1:-1, :-2] + gray[1:-1, 2:]
+        - 4.0 * center
+    )
+    sharpness = float(np.var(laplacian)) if laplacian.size else 0.0
     clipped_fraction = float(np.mean((gray <= 3.0) | (gray >= 252.0)))
     failures: list[str] = []
     if brightness < 18.0:
@@ -238,7 +244,7 @@ def evaluate_image_quality(image: Image.Image) -> dict[str, Any]:
         failures.append("image_too_bright")
     if contrast < 8.0:
         failures.append("low_contrast")
-    if sharpness < 1.5:
+    if sharpness < 20.0:
         failures.append("image_may_be_blurry")
     if clipped_fraction > 0.55:
         failures.append("excessive_clipping")
@@ -562,7 +568,8 @@ async def search_by_description(payload: TextSearchRequest) -> dict[str, Any]:
     return {
         "status": "complete",
         "query": query,
-        "candidate_count": len(offers),
+        "candidate_count": len(results),
+        "catalog_offer_count": len(offers),
         "results": results,
         "catalog_truncated": truncated,
         "model": {"id": MODEL_ID, "revision": PINNED_MODEL_REVISION},
@@ -612,7 +619,8 @@ async def click_it_scan(
         "scan_id": str(uuid.uuid4()),
         "search_mode": "image_to_catalog_text_similarity",
         "image_quality": quality,
-        "candidate_count": len(offers),
+        "candidate_count": len(results),
+        "catalog_offer_count": len(offers),
         "results": results,
         "catalog_truncated": truncated,
         "model": {"id": MODEL_ID, "revision": os.getenv("CLIP_MODEL_REVISION")},
