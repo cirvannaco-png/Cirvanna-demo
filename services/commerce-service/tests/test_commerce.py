@@ -166,6 +166,8 @@ def test_health_capabilities_and_readiness_fail_closed(client):
 def test_readiness_requires_current_migration_before_production_ready(client, monkeypatch):
     monkeypatch.setenv("COMMERCE_AUTO_CREATE_SCHEMA", "false")
     monkeypatch.setenv("CATALOG_API_URL", "https://catalog.example.test")
+    monkeypatch.setenv("COMMERCE_CAL_GATEWAY_URL", "https://cal-gateway.example.test")
+    monkeypatch.setenv("COMMERCE_CAL_GATEWAY_TOKEN", "test-cal-gateway-token-at-least-32-bytes")
     monkeypatch.setenv("CATALOG_API_TOKEN", "catalog-test-token")
     configure_stripe(monkeypatch)
 
