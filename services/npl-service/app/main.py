@@ -69,11 +69,11 @@ def _engine():
     url = os.getenv("NPL_DATABASE_URL", "").strip()
     if not url:
         raise HTTPException(503, detail={"code": "NPL_DATABASE_NOT_CONFIGURED"})
+    if url.startswith("sqlite:///") and os.getenv("NPL_ALLOW_SQLITE_TESTS") != "1":
+        raise HTTPException(503, detail={"code": "NPL_SQLITE_TEST_MODE_REQUIRED"})
     try:
         return engine_for_url(url)
-    except (ValueError, Exception) as exc:
-        if isinstance(exc, HTTPException):
-            raise
+    except ValueError as exc:
         raise HTTPException(503, detail={"code": "NPL_DATABASE_CONFIGURATION_INVALID"}) from exc
 
 def _store() -> NPLStore:
