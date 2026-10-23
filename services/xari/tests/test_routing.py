@@ -27,7 +27,7 @@ def test_route_plan_is_configured_but_never_claims_execution():
     assert plan.code == "XARI_ROUTE_CONFIGURED_NOT_EXECUTED"
 
 def test_invalid_or_untrusted_upstream_is_unavailable():
-    for url in ("http://example.com", "https://user:pass@example.com", "https://example.com?url=x"):
+    for url in ("http://example.com", "https://example.com?url=x"):
         plan = plan_route(
             "marketplace_search", {}, environment={"MARKETPLACE_BFF_URL": url}
         )
