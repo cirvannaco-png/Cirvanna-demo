@@ -10,7 +10,7 @@ This is the server-side browser boundary for marketplace browsing and visual dis
 - The browser defaults to GET /api/commerce/marketplace/offers. Commerce returns only active offers from approved merchants with stock available.
 - `POST /api/vision/marketplace-search` forwards a bounded written description/category/limit to Xari using a server-side token. It does not expose the Xari secret in browser JavaScript.
 - `POST /api/vision/click-it` requires a signed Commerce user JWT, checks the user through `GET /me`, and forwards a size-bounded product photo to Virtual Twin with a server-side token. It never trusts a browser-supplied subject/user ID.
-- The BFF derives the user ID from Commerce `/me` before any candidate governance. Cart, saved-product, order and checkout routes currently return HTTP 503 until current CAL authorization can be revalidated atomically by Commerce.
+- The BFF derives the user ID from Commerce `/me` before any candidate governance. Cart, saved-product, order and checkout routes are proxied only to authenticated Commerce. Commerce must revalidate CAL at checkout and persist its receipt atomically with the order; if the gateway or evidence providers fail, checkout returns an error and does not reserve stock.
 - Only customer cart, saved-product, checkout and order routes are proxied. Admin, merchant-management, webhooks, cron, and internal endpoints are not exposed through this gateway.
 - No CORS allowlist is added to this same-origin UI/API. Security headers include CSP, nosniff, no-referrer, frame denial, and disabled camera/microphone/geolocation.
 
@@ -22,6 +22,7 @@ Set through the deployment secret manager:
 - COMMERCE_API_URL: deployed Commerce API base URL.
 - MARKETPLACE_HTML_PATH: optional path override for a nonstandard container layout.
 - GOVERNANCE_EVIDENCE_API_URL and GOVERNANCE_EVIDENCE_API_TOKEN: private, authenticated per-candidate evidence provider implementing `POST /v1/decision-evidence`.
+- CAL_GATEWAY_SERVICE_TOKEN: at least 32 bytes; shared only with Commerce as COMMERCE_CAL_GATEWAY_TOKEN. It protects the private `/internal/cal/authorize` endpoint used for transaction-time revalidation.
 - DECISION_SERVICE_API_URL and DECISION_SERVICE_TOKEN: private canonical decision-service base URL and internal bearer token.
 
 The BFF `/ready` endpoint requires Catalog, Commerce, evidence-provider and decision-service `/ready` checks to succeed. These variables are not proof that current NPL, explicit cultural requirements, or calibrated fit evidence exist; the evidence provider must source and sign each record from its authoritative provider. The decision service still validates all three evidence signatures independently.
@@ -88,6 +89,6 @@ Each candidate is evaluated independently. BLOCK, REVIEW, mismatched IDs, missin
 
 The candidate-display gateway is implemented, but it is not operationally complete until the evidence provider and decision service are securely deployed, configured and tested against live upstream data. When either service is absent, product display stays fail-closed. Current user-specific NPL persistence and explicit cultural-declaration freshness must be proven by the provider, not inferred by the BFF.
 
-Cart, saved-product, order and checkout routes remain HTTP 503 with `CAL_GOVERNANCE_NOT_ENFORCED`. A listing-time SHOW decision alone is insufficient for purchase: the commerce transaction must atomically revalidate the current candidate, user constraints, stock and price at checkout, and record the decision/request IDs against the order. Do not enable purchase routes until that integration and tamper-resistant audit persistence are implemented and live-tested.
+Checkout now has a code path for fresh CAL revalidation per canonical catalog product and durable decision-audit rows linked to the order in the same database transaction as inventory reservations. This code path is not production-certified until the CAL gateway and all evidence sources are deployed, migrations are applied, and a non-production end-to-end test proves the complete flow.
 
 Production release still requires deployed identity/session integration, model and fit calibration evidence, PostgreSQL migrations/backups/restore drills, payment-provider test-mode reconciliation, shipping/tax/refund/return workflows, seller payouts and fulfilment, privacy deletion/retention, rate limits/alerts, and live origin/credential smoke tests.
