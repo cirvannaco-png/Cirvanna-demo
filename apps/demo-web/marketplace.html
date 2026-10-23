@@ -257,7 +257,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     }
     const scoreNote=data.scores_are_probabilities===false?" Scores are similarities, not probabilities.":"";
     setAiStatus(source,count
-      ? "Search completed: "+count+" marketplace candidate(s) found. They are withheld from display until CAL, NPL and explicit cultural-identity checks return an authorization."+scoreNote
+      ? "PENDING_CAL: Search completed with "+count+" marketplace candidate(s). They are withheld from display until CAL, NPL and explicit cultural-identity checks return an authorization."+scoreNote
       : "Search completed: no marketplace candidates met the current retrieval criteria. Try a different description or photo."+scoreNote);
   }
   $("aiSearchBtn").addEventListener("click",async()=>{
