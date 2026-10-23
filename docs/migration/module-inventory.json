@@ -107,6 +107,13 @@
       "status": "legacy-name-reconciliation",
       "purpose": "Assistant/orchestration product known as Xari; historical snapshots use Tari and Xyra.",
       "promotionGate": "Reconcile versions and service scope before establishing executable entry points."
+    },
+    {
+      "id": "wardrobe-domain",
+      "target": "packages/wardrobe",
+      "status": "domain-contract-implemented",
+      "purpose": "Canonical wardrobe item value object, owner-scoped lifecycle transitions, opaque asset-reference validation, and explicit photo-storage consent.",
+      "promotionGate": "Add PostgreSQL repository and migrations, concurrency/idempotency controls, object-storage authorization and deletion workflow, catalog contract tests, and end-to-end tenant-isolation evidence."
     }
   ],
   "sourceSnapshots": [
