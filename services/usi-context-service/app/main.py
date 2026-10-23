@@ -10,7 +10,7 @@ import os
 import uuid
 from datetime import datetime, timezone
 from functools import lru_cache
-from typing import Any, Iterator
+from typing import Any, Iterator, Literal
 from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -124,7 +124,7 @@ class EEPLPolicy(StrictModel):
     allowed_locations: list[str] = Field(default_factory=list, max_length=100)
     allowed_occasions: list[str] = Field(default_factory=list, max_length=100)
     allowed_climates: list[str] = Field(default_factory=list, max_length=100)
-    required_context: list[str] = Field(default_factory=list, max_length=4)
+    required_context: list[Literal["age", "location", "occasion", "climate"]] = Field(default_factory=list, max_length=4)
 
 
 class ProfileWrite(StrictModel):
