@@ -37,6 +37,7 @@ from catacaci.pipeline import evaluate_candidate  # noqa: E402
 from cultural_identity import (  # noqa: E402
     CulturalRequirement,
     RequirementKind,
+    canonical_cultural_evidence_payload,
 )
 from eepl import ContextField, EEPLContext, EEPLPolicy  # noqa: E402
 from fci import FitConfidenceEstimate  # noqa: E402
@@ -496,6 +497,82 @@ def _load_persisted_npl_preferences(
         ) from exc
 
 
+def _load_persisted_cultural_requirements(
+    *, request_id: str, user_id: str, product_id: str, attributes: tuple[str, ...],
+    attributes_complete: bool,
+) -> tuple[CulturalRequirement, ...]:
+    """Fetch candidate-bound explicit declarations and authenticate their provenance."""
+    base = os.getenv("CULTURAL_IDENTITY_SERVICE_URL", "").strip().rstrip("/")
+    token = os.getenv("CULTURAL_IDENTITY_SERVICE_TOKEN", "")
+    secret = os.getenv("CULTURAL_IDENTITY_HMAC_SECRET", "")
+    configured = (bool(base), len(token.encode("utf-8")) >= 32, len(secret.encode("utf-8")) >= 32)
+    if not any(configured):
+        return ()
+    if not all(configured) or not _trusted_internal_base_url(base):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "CULTURAL_IDENTITY_PROVIDER_CONFIGURATION_INVALID"},
+        )
+    body = {
+        "request_id": request_id, "user_id": user_id, "candidate_id": product_id,
+        "candidate_attributes": list(attributes),
+        "candidate_attributes_complete": attributes_complete,
+    }
+    try:
+        with httpx.Client(timeout=httpx.Timeout(3.5, connect=1.0)) as client:
+            response = client.post(
+                f"{base}/v1/evaluate",
+                headers={"Authorization": f"Bearer {token}"},
+                json=body,
+            )
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"code": "CULTURAL_IDENTITY_PROVIDER_UNAVAILABLE"},
+            )
+        result = response.json()
+        if (
+            result.get("request_id") != request_id
+            or result.get("user_id") != user_id
+            or result.get("candidate_id") != product_id
+            or not isinstance(result.get("cultural_requirements"), list)
+            or not isinstance(result.get("cultural_evidence_signature"), str)
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={"code": "CULTURAL_IDENTITY_PROVIDER_RESPONSE_INVALID"},
+            )
+        canonical = canonical_cultural_evidence_payload(
+            request_id, user_id, product_id, attributes, attributes_complete,
+            result["cultural_requirements"],
+        )
+        expected = hmac.new(secret.encode("utf-8"), canonical, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, result["cultural_evidence_signature"].lower()):
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail={"code": "CULTURAL_IDENTITY_EVIDENCE_UNTRUSTED"},
+            )
+        parsed=[]
+        for item in result["cultural_requirements"]:
+            parsed.append(CulturalRequirement(
+                requirement_id=item["requirement_id"],
+                declaration_id=item["declaration_id"],
+                user_id=item["user_id"],
+                attribute=item["attribute"],
+                kind=RequirementKind(item["kind"]),
+                hard=item["hard"],
+                active=item.get("active", True),
+            ))
+        return tuple(parsed)
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "CULTURAL_IDENTITY_PROVIDER_UNAVAILABLE"},
+        ) from exc
+
+
 def _fit_evidence_fields(estimate: FitConfidenceEstimate) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Return trusted field coverage from the fit provider; none is registered yet."""
     del estimate
@@ -608,6 +685,11 @@ def capabilities() -> dict[str, Any]:
             and len(os.getenv("NPL_EVIDENCE_HMAC_SECRET", "").encode("utf-8")) >= 32
         ),
         "explicit_cultural_requirements": True,
+        "persistent_cultural_declarations_integrated": bool(
+            os.getenv("CULTURAL_IDENTITY_SERVICE_URL")
+            and len(os.getenv("CULTURAL_IDENTITY_SERVICE_TOKEN", "").encode("utf-8")) >= 32
+            and len(os.getenv("CULTURAL_IDENTITY_HMAC_SECRET", "").encode("utf-8")) >= 32
+        ),
         "durable_decision_audit": "sqlite_local_only",
         "trained_fit_predictor": False,
         "calibrated_fci_provider": False,
@@ -702,7 +784,7 @@ def evaluate_decisions(payload: DecisionRequest) -> DecisionResponse:
         )
         for item in payload.negative_preferences
     )
-    cultural_requirements = tuple(
+    request_cultural_requirements = tuple(
         CulturalRequirement(
             requirement_id=item.requirement_id,
             declaration_id=item.declaration_id,
@@ -723,6 +805,17 @@ def evaluate_decisions(payload: DecisionRequest) -> DecisionResponse:
     for product_id, product in zip(payload.product_ids, products):
         attributes = _catalog_attributes(product)
         complete = _catalog_attributes_complete(product)
+        persisted_cultural_requirements = _load_persisted_cultural_requirements(
+            request_id=request_id,
+            user_id=payload.user_id,
+            product_id=product_id,
+            attributes=attributes,
+            attributes_complete=complete,
+        )
+        requirement_by_id = {item.requirement_id: item for item in persisted_cultural_requirements}
+        for item in request_cultural_requirements:
+            requirement_by_id.setdefault(item.requirement_id, item)
+        cultural_requirements = tuple(requirement_by_id[key] for key in sorted(requirement_by_id))
         upstream_signals = (
             _safety_signal(product),
             _legal_signal(payload.context, product),
@@ -744,6 +837,7 @@ def evaluate_decisions(payload: DecisionRequest) -> DecisionResponse:
         estimate = _fit_estimate(payload.user_id, product_id)
         fit_required_evidence, fit_observed_evidence = _fit_evidence_fields(estimate)
         result = evaluate_candidate(
+            cultural_requirements=cultural_requirements,
             request_id=request_id,
             candidate_id=product_id,
             eepl_policy=eepl_policy,
