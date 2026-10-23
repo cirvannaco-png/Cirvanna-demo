@@ -113,3 +113,8 @@ When configured, the gateway loads each candidate's NPL snapshot from the truste
 - `NPL_EVIDENCE_HMAC_SECRET`: HMAC key shared only with trusted NPL and consumer services.
 
 This integration does not create persistent preferences from request-local exclusions. User preference creation/correction must use the NPL API and the ingress must bind `user_id` to the authenticated user.
+
+
+## Durable cultural declaration integration
+
+When `CULTURAL_IDENTITY_SERVICE_URL`, `CULTURAL_IDENTITY_SERVICE_TOKEN`, and `CULTURAL_IDENTITY_HMAC_SECRET` are configured, each candidate decision loads its active declared requirements from the cultural-identity service and verifies the candidate-bound HMAC before CAL evaluation. A partially configured, unavailable, or tampered provider response fails closed. Request-local explicit requirements may add a restriction but cannot overwrite an existing persisted requirement with the same ID. When the provider is not configured, the capability is reported as false and only request-local explicit requirements are available.
