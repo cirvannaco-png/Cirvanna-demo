@@ -34,6 +34,9 @@ MAX_MARKETPLACE_CANDIDATES = 1000
 # Immutable reviewed model source. Changing this pin requires a code review and re-evaluation.
 MODEL_ID = "patrickjohncyh/fashion-clip"
 PINNED_MODEL_REVISION = "afacf5e5851d5979ab030e228eab60e2c95a912c"
+PINNED_CLIP_SAFETENSORS_SHA256 = "4977e3a54929eccf065ce449aeaf296f0e5cb6b28e8798c3c97d67cb2f6dafc9"
+POSE_LANDMARKER_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task"
+PINNED_POSE_MODEL_SHA256 = "4eaa5eb7a98365221087693fcc286334cf0858e2eb6e15b506aa4a7ecdcec4ad"
 SHA40 = re.compile(r"^[0-9a-fA-F]{40}$")
 SHA256 = re.compile(r"^[0-9a-fA-F]{64}$")
 SUPPORTED_MIME = {"image/jpeg", "image/png", "image/webp"}
@@ -97,6 +100,10 @@ def _pose_model_configured() -> tuple[bool, str]:
     expected = os.getenv("POSE_LANDMARKER_MODEL_SHA256", "").strip().lower()
     if not model_path or not SHA256.fullmatch(expected):
         return False, "pose_model_path_and_sha256_required"
+    # The configured digest must match a source-reviewed pin. An operator-supplied
+    # path and digest alone must not be able to bless an arbitrary replacement model.
+    if not hmac.compare_digest(expected, PINNED_POSE_MODEL_SHA256):
+        return False, "pose_model_sha256_does_not_match_reviewed_pin"
     path = Path(model_path)
     if not path.is_file():
         return False, "pose_model_asset_missing"
@@ -108,7 +115,7 @@ def _pose_model_configured() -> tuple[bool, str]:
         digest = digest_builder.hexdigest()
     except OSError:
         return False, "pose_model_asset_unreadable"
-    if not hmac.compare_digest(digest, expected):
+    if not hmac.compare_digest(digest, PINNED_POSE_MODEL_SHA256):
         return False, "pose_model_sha256_mismatch"
     return True, "configured"
 
