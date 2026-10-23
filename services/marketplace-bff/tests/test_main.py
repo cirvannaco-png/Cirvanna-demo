@@ -285,3 +285,11 @@ def test_marketplace_ui_has_xari_description_search_and_mobile_click_it_capture(
     assert 'fetch("/api/vision/click-it"' in response.text
     assert "display_authorized===true" in response.text
     assert "PENDING_CAL" in response.text
+    assert 'cal_decision.verdict==="SHOW"' in response.text
+    assert 'config.userToken)headers.Authorization="Bearer "+config.userToken' in response.text
+    assert 'id="savedBtn" disabled' in response.text
+    assert 'id="cartBtn" disabled' in response.text
+    assert "config.commerceBase" not in response.text
+    assert 'config.base+"/products"' not in response.text
+    assert "Radiant Skin Serum" not in response.text
+    assert 'fetch(config.commerceBase+"/checkout"' not in response.text
