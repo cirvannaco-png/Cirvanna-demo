@@ -12,8 +12,14 @@ This service boundary adapts the supplied brand authentication proposal. The rep
 - Registration persists a pending application and stores only a password hash. Approval requires an authorized actor and audit record.
 - Rate limiting, email verification, password policy, security event logging, token revocation, migrations and tenant-isolation tests are release gates.
 
-## Persistence contract
-`repository_contract.py` defines the async account and refresh-token repository interfaces. It deliberately does not provide an in-memory or pretend production database. Implement and test an adapter against the platform's canonical persistence layer before exposing login, registration, approval or refresh routes.
+## Persistence implementation
+- `repository_contract.py` defines the async account and refresh-token repository interfaces.
+- `postgres_repository.py` implements PostgreSQL account lookup/creation, status changes, permission replacement, audit events, and atomic one-time refresh-session rotation/revocation using an asyncpg-compatible pool.
+- `account_service.py` provides normalized-email registration, scrypt password hashing, active-account authentication, and permission-gated status transitions.
+- `refresh_tokens.py` issues persisted refresh sessions and rotates them once, returning access tokens built from freshly loaded permissions.
+- `schema.sql` is the candidate schema for account, permission, refresh-session, and audit tables.
+
+The adapter and schema are not connected to a configured database or deployed route. Apply the schema through an approved migration process, wire a validated DATABASE_URL through secret storage, and run PostgreSQL integration and tenant-isolation tests before enabling endpoints. The adapter must be tested against the target PostgreSQL version; the in-memory repository used in tests is test-only.
 
 ## Data model direction
 The proposed `brands`, `brand_products` and `brand_analytics` tables are candidate schema only. Reconcile them with Cirvanna's existing catalog/product models before adding migrations; do not create duplicate product ownership tables.
