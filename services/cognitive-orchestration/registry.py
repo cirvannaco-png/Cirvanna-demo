@@ -1,6 +1,9 @@
 """Fail-closed registry: unconfigured cognitive domains cannot fabricate outcomes."""
 from collections.abc import Awaitable, Callable
-from .contracts import CognitiveRequest, CognitiveResponse, CognitiveSystem
+try:
+    from .contracts import CognitiveRequest, CognitiveResponse, CognitiveSystem
+except ImportError:  # Supports direct loading in the current monorepo validation harness.
+    from contracts import CognitiveRequest, CognitiveResponse, CognitiveSystem
 
 CognitiveHandler = Callable[[CognitiveRequest], Awaitable[CognitiveResponse]]
 _handlers: dict[CognitiveSystem, CognitiveHandler] = {}
