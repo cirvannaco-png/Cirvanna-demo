@@ -109,7 +109,11 @@ class GovernanceTransport:
                 },
                 "fit_estimate_signature": "f" * 64,
                 "npl_evidence_signature": "n" * 64,
-                "upstream_signals": [],
+                "upstream_signals": [
+                    {"signal_id": "safe-1", "kind": "safety", "state": "pass", "reason_code": "SAFE", "explanation": "Safety policy passed", "required": True, "confidence": 1.0, "source_version": "policy-v1"},
+                    {"signal_id": "legal-1", "kind": "legal_eligibility", "state": "pass", "reason_code": "LEGAL", "explanation": "Regional eligibility passed", "required": True, "confidence": 1.0, "source_version": "policy-v1"},
+                    {"signal_id": "hard-1", "kind": "user_hard_constraint", "state": "pass", "reason_code": "HARD", "explanation": "User hard constraints checked", "required": True, "confidence": 1.0, "source_version": "policy-v1"},
+                ],
                 "minimum_fit_confidence": 0.70,
                 "minimum_alignment_score": 0.60,
             }
@@ -120,6 +124,7 @@ class GovernanceTransport:
                 "candidate_attributes_loaded_at": now.isoformat(),
                 "usi_profile_loaded_at": now.isoformat(),
                 "user_context_loaded_at": now.isoformat(),
+                "policy_evidence_loaded_at": now.isoformat(),
             }
             if self.evidence_mode == "stale_source":
                 freshness["npl_loaded_at"] = (now - timedelta(seconds=90)).isoformat()
@@ -127,6 +132,7 @@ class GovernanceTransport:
                 "request_id": request_id,
                 "subject_id": subject_id,
                 "candidate_id": candidate_id,
+                "catalog_product_id": json["catalog_product_id"],
                 "issued_at": issued_at.isoformat(),
                 "expires_at": expires_at.isoformat(),
                 "evidence_freshness": freshness,
