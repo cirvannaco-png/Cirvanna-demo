@@ -39,6 +39,9 @@ class BrandAccountRepository(Protocol):
 class RefreshTokenRepository(Protocol):
     """Server-side storage must hash token identifiers and support atomic rotation/revocation."""
 
+    async def create_refresh_session(
+        self, *, token_id: str, brand_id: str, token_hash: str, expires_at: datetime
+    ) -> None: ...
     async def consume_and_rotate(
         self, *, token_id: str, brand_id: str, presented_token_hash: str,
         replacement_token_id: str, replacement_token_hash: str, expires_at: datetime
