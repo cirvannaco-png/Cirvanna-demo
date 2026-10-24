@@ -102,6 +102,7 @@ class ArbitrationRequest:
     policy_version: str = "1.1.0"
     required_kinds: tuple[SignalKind, ...] = _DEFAULT_REQUIRED_KINDS
     maximum_fit_confidence_disagreement: float = 0.10
+    require_fit_confidence: bool = True
 
     def __post_init__(self) -> None:
         if not isinstance(self.request_id, str) or not self.request_id.strip():
@@ -120,6 +121,8 @@ class ArbitrationRequest:
             raise ValueError("required_kinds must not contain duplicates")
         if not isfinite(self.minimum_fit_confidence) or not 0 <= self.minimum_fit_confidence <= 1:
             raise ValueError("minimum_fit_confidence must be finite and between 0 and 1")
+        if not isinstance(self.require_fit_confidence, bool):
+            raise ValueError("require_fit_confidence must be a boolean")
         if (
             not isfinite(self.maximum_fit_confidence_disagreement)
             or not 0 <= self.maximum_fit_confidence_disagreement <= 1
@@ -233,54 +236,57 @@ def arbitrate(request: ArbitrationRequest) -> ArbitrationResult:
         return _result(request, DecisionVerdict.REVIEW, reasons, signals)
 
     fit_signals = [signal for signal in signals if signal.kind is SignalKind.FIT_CONFIDENCE]
-    if not fit_signals:
-        return _result(request, DecisionVerdict.REVIEW, [
-            ArbitrationReason(
-                "FIT_CONFIDENCE_MISSING",
-                None,
-                "No fit-confidence signal was supplied; display is not authorized.",
-            )
-        ], signals)
+    if request.require_fit_confidence:
+            if not fit_signals:
+            return _result(request, DecisionVerdict.REVIEW, [
+                ArbitrationReason(
+                    "FIT_CONFIDENCE_MISSING",
+                    None,
+                    "No fit-confidence signal was supplied; display is not authorized.",
+                )
+            ], signals)
 
-    unavailable = [signal for signal in fit_signals if signal.confidence is None]
-    if unavailable:
-        return _result(request, DecisionVerdict.REVIEW, [
-            ArbitrationReason(
-                "FIT_CONFIDENCE_UNAVAILABLE",
-                signal.signal_id,
-                "Fit-confidence signal has no calibrated confidence value.",
-            )
-            for signal in unavailable
-        ], signals)
+        unavailable = [signal for signal in fit_signals if signal.confidence is None]
+        if unavailable:
+            return _result(request, DecisionVerdict.REVIEW, [
+                ArbitrationReason(
+                    "FIT_CONFIDENCE_UNAVAILABLE",
+                    signal.signal_id,
+                    "Fit-confidence signal has no calibrated confidence value.",
+                )
+                for signal in unavailable
+            ], signals)
 
-    values = [float(signal.confidence) for signal in fit_signals if signal.confidence is not None]
-    if max(values) - min(values) > request.maximum_fit_confidence_disagreement:
-        return _result(request, DecisionVerdict.REVIEW, [
-            ArbitrationReason(
-                "FIT_CONFIDENCE_DISAGREEMENT",
-                signal.signal_id,
-                "Fit-confidence sources disagree by more than "
-                f"{request.maximum_fit_confidence_disagreement:.3f}; review is required.",
-            )
-            for signal in fit_signals
-        ], signals)
+        values = [float(signal.confidence) for signal in fit_signals if signal.confidence is not None]
+        if max(values) - min(values) > request.maximum_fit_confidence_disagreement:
+            return _result(request, DecisionVerdict.REVIEW, [
+                ArbitrationReason(
+                    "FIT_CONFIDENCE_DISAGREEMENT",
+                    signal.signal_id,
+                    "Fit-confidence sources disagree by more than "
+                    f"{request.maximum_fit_confidence_disagreement:.3f}; review is required.",
+                )
+                for signal in fit_signals
+            ], signals)
 
-    below = [
-        signal for signal in fit_signals
-        if signal.confidence is not None
-        and signal.confidence < request.minimum_fit_confidence
-    ]
-    if below:
-        return _result(request, DecisionVerdict.REVIEW, [
-            ArbitrationReason(
-                "FIT_CONFIDENCE_BELOW_THRESHOLD",
-                signal.signal_id,
-                f"Fit confidence {signal.confidence:.3f} is below threshold "
-                f"{request.minimum_fit_confidence:.3f}.",
-            )
-            for signal in below
-        ], signals)
+        below = [
+            signal for signal in fit_signals
+            if signal.confidence is not None
+            and signal.confidence < request.minimum_fit_confidence
+        ]
+        if below:
+            return _result(request, DecisionVerdict.REVIEW, [
+                ArbitrationReason(
+                    "FIT_CONFIDENCE_BELOW_THRESHOLD",
+                    signal.signal_id,
+                    f"Fit confidence {signal.confidence:.3f} is below threshold "
+                    f"{request.minimum_fit_confidence:.3f}.",
+                )
+                for signal in below
+            ], signals)
 
+    # Product-only decisions may explicitly waive physical fit confidence. This
+    # does not waive any other required gate or turn unknown evidence into PASS.
     return _result(request, DecisionVerdict.SHOW, [
         ArbitrationReason(
             "ALL_REQUIRED_GATES_PASSED",
