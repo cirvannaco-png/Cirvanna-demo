@@ -149,7 +149,10 @@ def _evidence_request_is_bound(
     if any(not isinstance(item, dict) or item.get("user_id") != subject_id for item in cultural):
         return False
     required_policy_kinds = {"safety", "legal_eligibility", "user_hard_constraint"}
-    if not required_policy_kinds.issubset({item.get("kind") for item in upstream_signals if isinstance(item, dict)}):
+    if not required_policy_kinds.issubset({
+        item.get("kind") for item in upstream_signals
+        if isinstance(item, dict) and item.get("required") is True
+    }):
         return False
     # Signatures are verified cryptographically by the decision service, but reject
     # obviously absent/truncated signatures before spending a decision-service call.
