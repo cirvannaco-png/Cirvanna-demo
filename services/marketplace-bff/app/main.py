@@ -357,7 +357,13 @@ async def internal_cal_authorize(request: Request, payload: InternalCALAuthoriza
     if not isinstance(candidates, list) or len(candidates) != 1:
         return {"subject_id": payload.subject_id.strip(), "candidate_id": payload.candidate_id.strip(), "catalog_product_id": payload.catalog_product_id.strip(),
                 "decision": "NO_SHOW", "may_display": False, "reason_code": governed.get("governance_status", "CAL_NO_SHOW")}
-    receipt = candidates[0].get("cal_decision")
+    returned_candidate = candidates[0]
+    if (returned_candidate.get("candidate_id") != payload.candidate_id.strip()
+            or returned_candidate.get("catalog_product_id") != payload.catalog_product_id.strip()):
+        return {"subject_id": payload.subject_id.strip(), "candidate_id": payload.candidate_id.strip(),
+                "catalog_product_id": payload.catalog_product_id.strip(), "decision": "NO_SHOW",
+                "may_display": False, "reason_code": "CAL_CANDIDATE_BINDING_MISMATCH"}
+    receipt = returned_candidate.get("cal_decision")
     if not isinstance(receipt, dict) or receipt.get("verdict") != "SHOW" or receipt.get("may_display") is not True:
         return {"subject_id": payload.subject_id.strip(), "candidate_id": payload.candidate_id.strip(), "catalog_product_id": payload.catalog_product_id.strip(),
                 "decision": "NO_SHOW", "may_display": False, "reason_code": "CAL_RECEIPT_INVALID"}
