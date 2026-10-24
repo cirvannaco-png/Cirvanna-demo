@@ -23,7 +23,6 @@ contract = _load("repository_contract", SERVICE / "repository_contract.py")
 token_security = _load("token_security", SERVICE / "token_security.py")
 accounts = _load("account_service", SERVICE / "account_service.py")
 refresh_tokens = _load("refresh_tokens", SERVICE / "refresh_tokens.py")
-token_security = _load("token_security", SERVICE / "token_security.py")
 
 
 class FakeRepository:
