@@ -128,6 +128,7 @@ class InternalCALAuthorizationIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     subject_id: str = Field(min_length=1, max_length=128)
     candidate_id: str = Field(min_length=1, max_length=128)
+    catalog_product_id: str = Field(min_length=1, max_length=128)
 
 
 class MarketplaceSearchIn(BaseModel):
@@ -346,16 +347,21 @@ async def internal_cal_authorize(request: Request, payload: InternalCALAuthoriza
         raise HTTPException(503, detail={"code": "CAL_GATEWAY_SERVICE_TOKEN_NOT_CONFIGURED"})
     if scheme.lower() != "bearer" or not supplied or not hmac.compare_digest(supplied, expected):
         raise HTTPException(401, detail={"code": "CAL_GATEWAY_AUTH_FAILED"})
-    governed = await govern_candidates(payload.subject_id.strip(), [{"candidate_id": payload.candidate_id.strip(), "product_id": payload.candidate_id.strip()}])
+    if not UUID_RE.fullmatch(payload.catalog_product_id.strip()):
+        raise HTTPException(422, detail={"code": "CANONICAL_CATALOG_PRODUCT_ID_REQUIRED"})
+    governed = await govern_candidates(payload.subject_id.strip(), [{
+        "candidate_id": payload.candidate_id.strip(),
+        "catalog_product_id": payload.catalog_product_id.strip(),
+    }])
     candidates = governed.get("candidates")
     if not isinstance(candidates, list) or len(candidates) != 1:
-        return {"subject_id": payload.subject_id.strip(), "candidate_id": payload.candidate_id.strip(),
+        return {"subject_id": payload.subject_id.strip(), "candidate_id": payload.candidate_id.strip(), "catalog_product_id": payload.catalog_product_id.strip(),
                 "decision": "NO_SHOW", "may_display": False, "reason_code": governed.get("governance_status", "CAL_NO_SHOW")}
     receipt = candidates[0].get("cal_decision")
     if not isinstance(receipt, dict) or receipt.get("verdict") != "SHOW" or receipt.get("may_display") is not True:
-        return {"subject_id": payload.subject_id.strip(), "candidate_id": payload.candidate_id.strip(),
+        return {"subject_id": payload.subject_id.strip(), "candidate_id": payload.candidate_id.strip(), "catalog_product_id": payload.catalog_product_id.strip(),
                 "decision": "NO_SHOW", "may_display": False, "reason_code": "CAL_RECEIPT_INVALID"}
-    return {"subject_id": payload.subject_id.strip(), "candidate_id": payload.candidate_id.strip(),
+    return {"subject_id": payload.subject_id.strip(), "candidate_id": payload.candidate_id.strip(), "catalog_product_id": payload.catalog_product_id.strip(),
             "decision": "SHOW", "may_display": True, "request_id": receipt.get("request_id"),
             "policy_version": receipt.get("policy_version")}
 
