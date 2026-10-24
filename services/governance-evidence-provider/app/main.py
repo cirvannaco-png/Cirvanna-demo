@@ -7,7 +7,9 @@ fit estimates. Missing providers and malformed/stale/mismatched evidence fail cl
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
+import json
 import os
 import re
 from datetime import datetime, timedelta, timezone
@@ -86,6 +88,47 @@ async def _request(client: httpx.AsyncClient, env_url: str, env_token: str, meth
     return result
 
 
+POLICY_SIGNAL_KINDS = {"safety", "legal_eligibility", "user_hard_constraint", "other"}
+POLICY_SIGNAL_STATES = {"pass", "block", "unknown"}
+
+
+def _canonical_policy_evidence(
+    request_id: str, user_id: str, candidate_id: str, catalog_product_id: str,
+    candidate_attributes: list[str], upstream_signals: list[dict[str, Any]],
+) -> bytes:
+    """Canonical signature contract shared with the trusted policy-evidence provider."""
+    normalized: list[dict[str, Any]] = []
+    for signal in upstream_signals:
+        if not isinstance(signal, dict):
+            raise ValueError("upstream signals must be objects")
+        kind, state = signal.get("kind"), signal.get("state")
+        if kind not in POLICY_SIGNAL_KINDS or state not in POLICY_SIGNAL_STATES:
+            raise ValueError("unsupported policy signal kind or state")
+        if not isinstance(signal.get("required"), bool):
+            raise ValueError("signal required must be boolean")
+        if any(not isinstance(signal.get(key), str) or not signal[key].strip()
+               for key in ("signal_id", "reason_code", "explanation", "source_version")):
+            raise ValueError("policy signal provenance fields are required")
+        confidence = signal.get("confidence")
+        if confidence is not None and (isinstance(confidence, bool) or not isinstance(confidence, (int, float)) or not 0 <= confidence <= 1):
+            raise ValueError("policy signal confidence must be between zero and one")
+        normalized.append({key: signal.get(key) for key in (
+            "signal_id", "kind", "state", "reason_code", "explanation", "required", "confidence", "source_version"
+        )})
+    if len({item["signal_id"] for item in normalized}) != len(normalized):
+        raise ValueError("duplicate policy signal identifiers")
+    required_kinds = {"safety", "legal_eligibility", "user_hard_constraint"}
+    if not required_kinds.issubset({item["kind"] for item in normalized}):
+        raise ValueError("required safety, legal eligibility, and user hard-constraint signals are missing")
+    document = {
+        "contract_version": "1.0.0", "request_id": request_id, "user_id": user_id,
+        "candidate_id": candidate_id, "catalog_product_id": catalog_product_id,
+        "candidate_attributes": sorted({item.strip().casefold() for item in candidate_attributes}),
+        "upstream_signals": sorted(normalized, key=lambda item: item["signal_id"]),
+    }
+    return json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
+
+
 def _attrs(product: dict[str, Any]) -> list[str]:
     raw = product.get("attributes")
     if product.get("attributes_complete") is not True or not isinstance(raw, dict) or not raw:
@@ -150,8 +193,8 @@ async def _dependency_ready(
 
 @app.get("/ready")
 async def readiness() -> dict[str, Any]:
-    keys = ("EVIDENCE_PROVIDER_TOKEN", "NPL_SERVICE_TOKEN", "CULTURAL_IDENTITY_SERVICE_TOKEN", "CATALOG_API_TOKEN", "USI_PROFILE_API_TOKEN", "USER_CONTEXT_API_TOKEN", "FIT_EVIDENCE_API_TOKEN")
-    urls = ("NPL_SERVICE_URL", "CULTURAL_IDENTITY_SERVICE_URL", "CATALOG_API_URL", "USI_PROFILE_API_URL", "USER_CONTEXT_API_URL", "FIT_EVIDENCE_API_URL")
+    keys = ("EVIDENCE_PROVIDER_TOKEN", "NPL_SERVICE_TOKEN", "CULTURAL_IDENTITY_SERVICE_TOKEN", "CATALOG_API_TOKEN", "USI_PROFILE_API_TOKEN", "USER_CONTEXT_API_TOKEN", "FIT_EVIDENCE_API_TOKEN", "POLICY_EVIDENCE_API_TOKEN", "POLICY_EVIDENCE_HMAC_SECRET")
+    urls = ("NPL_SERVICE_URL", "CULTURAL_IDENTITY_SERVICE_URL", "CATALOG_API_URL", "USI_PROFILE_API_URL", "USER_CONTEXT_API_URL", "FIT_EVIDENCE_API_URL", "POLICY_EVIDENCE_API_URL")
     configured = {key: len(os.getenv(key, "").encode("utf-8")) >= 32 for key in keys}
     for key in urls:
         try:
@@ -170,6 +213,7 @@ async def readiness() -> dict[str, Any]:
                 ("usi_profile", "USI_PROFILE_API_URL", "USI_PROFILE_API_TOKEN", False),
                 ("user_context", "USER_CONTEXT_API_URL", "USER_CONTEXT_API_TOKEN", False),
                 ("fit_evidence", "FIT_EVIDENCE_API_URL", "FIT_EVIDENCE_API_TOKEN", True),
+                ("policy_evidence", "POLICY_EVIDENCE_API_URL", "POLICY_EVIDENCE_API_TOKEN", False),
             )
             checks = await asyncio.gather(*(
                 _dependency_ready(client, url_key, token_key, fit_provider=is_fit)
@@ -184,7 +228,7 @@ async def readiness() -> dict[str, Any]:
                 if is_fit:
                     fit_health = health
     else:
-        upstream_ready = {name: False for name in ("npl", "cultural_identity", "catalog", "usi_profile", "user_context", "fit_evidence")}
+        upstream_ready = {name: False for name in ("npl", "cultural_identity", "catalog", "usi_profile", "user_context", "fit_evidence", "policy_evidence")}
     ready = all(configured.values()) and all(upstream_ready.values())
     result = {
         "service": SERVICE, "ready": ready, "configured": configured,
@@ -234,7 +278,11 @@ async def decision_evidence(payload: EvidenceRequest) -> dict[str, Any]:
             raise HTTPException(409, detail={"code": "USER_CONTEXT_MISSING_OR_MISMATCHED"})
         raw_context_for_fit = context["context"]
         fit_context = {key: raw_context_for_fit.get(key) for key in ("user_id", "age_years", "location", "occasion", "climate")}
-        fit = await _request(client, "FIT_EVIDENCE_API_URL", "FIT_EVIDENCE_API_TOKEN", "POST", "/v1/estimate", {**common, "context": fit_context})
+        policy = await _request(client, "POLICY_EVIDENCE_API_URL", "POLICY_EVIDENCE_API_TOKEN", "POST", "/v1/evaluate", {
+            **common, "catalog_product_id": catalog_product_id, "context": fit_context,
+        })
+        policy_loaded_at = iso()
+        fit = await _request(client, "FIT_EVIDENCE_API_URL", "FIT_EVIDENCE_API_TOKEN", "POST", "/v1/estimate", {**common, "catalog_product_id": catalog_product_id, "context": fit_context})
         fit_generated_at = _fresh_timestamp(fit.get("generated_at"))
 
     for source, data in (("npl", npl), ("cultural", cultural)):
@@ -263,6 +311,26 @@ async def decision_evidence(payload: EvidenceRequest) -> dict[str, Any]:
         raise HTTPException(409, detail={"code": "USER_CONTEXT_MISSING_OR_MISMATCHED"})
     raw_context = context["context"]
     decision_context = {key: raw_context.get(key) for key in ("user_id", "age_years", "location", "occasion", "climate")}
+    if (policy.get("request_id") != request_id or policy.get("user_id") != user_id
+            or policy.get("candidate_id") != candidate_id
+            or policy.get("catalog_product_id") != catalog_product_id):
+        raise HTTPException(409, detail={"code": "POLICY_EVIDENCE_BINDING_MISMATCH"})
+    upstream_signals = policy.get("upstream_signals")
+    if not isinstance(upstream_signals, list):
+        raise HTTPException(503, detail={"code": "POLICY_EVIDENCE_MISSING"})
+    policy_signature = policy.get("policy_evidence_signature")
+    if not isinstance(policy_signature, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", policy_signature):
+        raise HTTPException(503, detail={"code": "POLICY_EVIDENCE_UNSIGNED"})
+    try:
+        canonical_policy = _canonical_policy_evidence(
+            request_id, user_id, candidate_id, catalog_product_id, candidate_attributes, upstream_signals
+        )
+    except ValueError as exc:
+        raise HTTPException(422, detail={"code": "POLICY_EVIDENCE_INVALID"}) from exc
+    policy_secret = _token("POLICY_EVIDENCE_HMAC_SECRET")
+    expected_policy_signature = hmac.new(policy_secret.encode("utf-8"), canonical_policy, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected_policy_signature, policy_signature.lower()):
+        raise HTTPException(401, detail={"code": "POLICY_EVIDENCE_SIGNATURE_INVALID"})
     estimate, signature = fit.get("fit_estimate"), fit.get("fit_estimate_signature")
     if not isinstance(estimate, dict) or estimate.get("user_id") != user_id or estimate.get("candidate_id") != candidate_id:
         raise HTTPException(409, detail={"code": "FIT_EVIDENCE_BINDING_MISMATCH"})
@@ -279,17 +347,20 @@ async def decision_evidence(payload: EvidenceRequest) -> dict[str, Any]:
         "cultural_evidence_signature": cultural["cultural_evidence_signature"],
         "fit_estimate": estimate, "fit_estimate_signature": signature,
         "npl_evidence_signature": npl["npl_evidence_signature"],
+        "upstream_signals": upstream_signals,
         "policy_version": "decision-pipeline-1.0.0",
         "minimum_fit_confidence": 0.70, "minimum_alignment_score": 0.60,
     }
     issued = now()
     return {
         "request_id": request_id, "subject_id": user_id, "candidate_id": candidate_id,
+        "catalog_product_id": catalog_product_id,
         "issued_at": iso(issued), "expires_at": iso(issued + timedelta(seconds=45)),
         "evidence_freshness": {
             "npl_loaded_at": npl_loaded_at, "cultural_requirements_loaded_at": cultural_loaded_at,
             "fit_estimate_generated_at": fit_generated_at, "candidate_attributes_loaded_at": catalog_loaded_at,
             "usi_profile_loaded_at": usi_loaded_at, "user_context_loaded_at": context_loaded_at,
+            "policy_evidence_loaded_at": policy_loaded_at,
         },
         "decision_request": decision_request,
     }
