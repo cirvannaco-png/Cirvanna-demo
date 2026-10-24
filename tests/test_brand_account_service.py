@@ -22,6 +22,8 @@ def _load(name, path):
 contract = _load("repository_contract", SERVICE / "repository_contract.py")
 token_security = _load("token_security", SERVICE / "token_security.py")
 accounts = _load("account_service", SERVICE / "account_service.py")
+refresh_tokens = _load("refresh_tokens", SERVICE / "refresh_tokens.py")
+token_security = _load("token_security", SERVICE / "token_security.py")
 
 
 class FakeRepository:
@@ -158,3 +160,68 @@ def test_deleted_brand_cannot_be_reactivated():
         assert "Deleted accounts" in str(exc)
     else:
         raise AssertionError("Deleted accounts must not be reactivated")
+
+
+
+class FakeRefreshRepository:
+    def __init__(self):
+        self.sessions = {}
+
+    async def create_refresh_session(self, *, token_id, brand_id, token_hash, expires_at):
+        self.sessions[token_id] = {
+            "brand_id": brand_id, "token_hash": token_hash, "expires_at": expires_at,
+            "consumed": False, "revoked": False, "replacement": None,
+        }
+
+    async def consume_and_rotate(self, *, token_id, brand_id, presented_token_hash,
+                                 replacement_token_id, replacement_token_hash, expires_at):
+        row = self.sessions.get(token_id)
+        now = datetime.now(timezone.utc)
+        if (row is None or row["brand_id"] != brand_id or row["token_hash"] != presented_token_hash
+                or row["expires_at"] <= now or row["consumed"] or row["revoked"] or expires_at <= now):
+            return False
+        row["consumed"] = True
+        row["replacement"] = replacement_token_id
+        self.sessions[replacement_token_id] = {
+            "brand_id": brand_id, "token_hash": replacement_token_hash, "expires_at": expires_at,
+            "consumed": False, "revoked": False, "replacement": None,
+        }
+        return True
+
+    async def revoke_all_for_brand(self, *, brand_id, actor_id):
+        count = 0
+        for row in self.sessions.values():
+            if row["brand_id"] == brand_id and not row["consumed"] and not row["revoked"]:
+                row["revoked"] = True
+                count += 1
+        return count
+
+
+def test_refresh_token_rotates_once_and_access_uses_live_permissions(monkeypatch):
+    monkeypatch.setenv("BRAND_JWT_SECRET", "test-only-secret-that-is-long-enough-123")
+    repo = FakeRepository()
+    account = asyncio.run(accounts.register_brand(
+        repo, email="brand@example.com", brand_name="Example Brand",
+        password="a-strong-test-password",
+    ))
+    asyncio.run(repo.replace_permissions(
+        brand_id=account.brand_id, permissions=("products:read",), actor_id="reviewer",
+    ))
+    asyncio.run(repo.update_status(
+        brand_id=account.brand_id, status=contract.BrandAccountStatus.ACTIVE, actor_id="reviewer",
+    ))
+    principal = asyncio.run(accounts.authenticate_brand(
+        repo, email="brand@example.com", password="a-strong-test-password",
+    ))
+    refresh_repo = FakeRefreshRepository()
+    initial = asyncio.run(refresh_tokens.issue_refresh_token(refresh_repo, principal))
+    access, replacement = asyncio.run(refresh_tokens.rotate_refresh_token(refresh_repo, repo, initial))
+    decoded = token_security.decode_access_token(access)
+    assert decoded.permissions == ["products:read"]
+    assert replacement != initial
+    try:
+        asyncio.run(refresh_tokens.rotate_refresh_token(refresh_repo, repo, initial))
+    except accounts.BrandAccountError:
+        pass
+    else:
+        raise AssertionError("A consumed refresh token must not be replayable")
