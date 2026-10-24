@@ -6,6 +6,7 @@ fit estimates. Missing providers and malformed/stale/mismatched evidence fail cl
 """
 from __future__ import annotations
 
+import asyncio
 import hmac
 import os
 import re
@@ -62,7 +63,7 @@ class EvidenceRequest(BaseModel):
     request_id: str = Field(min_length=1, max_length=128)
     subject_id: str = Field(min_length=1, max_length=128)
     candidate_id: str = Field(min_length=1, max_length=128)
-    catalog_product_id: str | None = Field(default=None, max_length=128)
+    catalog_product_id: str = Field(min_length=36, max_length=36)
     requested_at: str = Field(min_length=1, max_length=80)
 
 
@@ -170,8 +171,15 @@ async def readiness() -> dict[str, Any]:
                 ("user_context", "USER_CONTEXT_API_URL", "USER_CONTEXT_API_TOKEN", False),
                 ("fit_evidence", "FIT_EVIDENCE_API_URL", "FIT_EVIDENCE_API_TOKEN", True),
             )
-            for name, url_key, token_key, is_fit in dependencies:
-                ready, health = await _dependency_ready(client, url_key, token_key, fit_provider=is_fit)
+            checks = await asyncio.gather(*(
+                _dependency_ready(client, url_key, token_key, fit_provider=is_fit)
+                for _, url_key, token_key, is_fit in dependencies
+            ), return_exceptions=True)
+            for (name, _url_key, _token_key, is_fit), check in zip(dependencies, checks):
+                if isinstance(check, BaseException):
+                    ready, health = False, {}
+                else:
+                    ready, health = check
                 upstream_ready[name] = ready
                 if is_fit:
                     fit_health = health
@@ -198,7 +206,9 @@ async def decision_evidence(payload: EvidenceRequest) -> dict[str, Any]:
         raise HTTPException(422, detail={"code": "REQUEST_TIMESTAMP_INVALID"}) from exc
     if requested.tzinfo is None or abs((now() - requested).total_seconds()) > 30:
         raise HTTPException(409, detail={"code": "REQUEST_TIMESTAMP_STALE"})
-    catalog_product_id = payload.catalog_product_id or payload.candidate_id
+    catalog_product_id = payload.catalog_product_id.strip()
+    if not UUID_RE.fullmatch(payload.candidate_id.strip()):
+        raise HTTPException(422, detail={"code": "CANONICAL_CANDIDATE_ID_REQUIRED"})
     if not UUID_RE.fullmatch(catalog_product_id):
         raise HTTPException(422, detail={"code": "CANONICAL_CATALOG_PRODUCT_ID_REQUIRED"})
 
