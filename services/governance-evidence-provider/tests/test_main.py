@@ -87,7 +87,7 @@ def valid_source(source: str, payload: dict) -> dict:
             {"signal_id": "legal-1", "kind": "legal_eligibility", "state": "pass", "reason_code": "LEGAL", "explanation": "Legal eligibility passed", "required": True, "confidence": 1.0, "source_version": "policy-v1"},
             {"signal_id": "hard-1", "kind": "user_hard_constraint", "state": "pass", "reason_code": "HARD", "explanation": "Hard constraints checked", "required": True, "confidence": 1.0, "source_version": "policy-v1"},
         ]
-        canonical = main._canonical_policy_evidence(payload["request_id"], USER, CANDIDATE, PRODUCT, payload["candidate_attributes"], signals)
+        canonical = main._canonical_policy_evidence(payload["request_id"], USER, CANDIDATE, PRODUCT, payload["candidate_attributes"], payload["context"], signals)
         signature = hmac.new(os.environ["POLICY_EVIDENCE_HMAC_SECRET"].encode(), canonical, hashlib.sha256).hexdigest()
         return {"request_id": payload["request_id"], "user_id": USER, "candidate_id": CANDIDATE,
                 "catalog_product_id": PRODUCT, "upstream_signals": signals, "policy_evidence_signature": signature}
