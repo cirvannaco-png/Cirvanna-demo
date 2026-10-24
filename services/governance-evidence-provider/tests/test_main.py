@@ -23,7 +23,7 @@ def client(monkeypatch):
 
 def request_payload():
     return {"request_id": str(uuid.uuid4()), "subject_id": USER, "candidate_id": CANDIDATE,
-            "requested_at": datetime.now(timezone.utc).isoformat()}
+            "catalog_product_id": CANDIDATE, "requested_at": datetime.now(timezone.utc).isoformat()}
 
 
 def valid_source(source: str, payload: dict) -> dict:
