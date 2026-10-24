@@ -72,3 +72,80 @@ These are source-level changes, not production verification.
 ## Final disposition
 
 **Not ready for merge, deployment, or production traffic.** The audited source improves candidate identity binding and fail-closed readiness, but CI on the exact snapshot and all live-service/payment/ML evidence remain unverified. Do not promote the branch until those gates have concrete, reproducible artifacts.
+
+
+## Expanded branch comparison (2026-10-24)
+
+Branch comparisons were made against `main` and, for non-ancestor candidates, against the current integration line. These are ancestry/path-difference results, not proof that a branch's code is production-ready.
+
+### Fully ancestral / no unique commit diff against main
+
+The following refs each had `ahead_by=0` and no changed file paths relative to `main`; their commits are already ancestors of `main`, so their current tips add no unique source changes:
+- `architecture/catacaci-decision-contract-audit`
+- `architecture/cirvanna-monorepo-foundation`
+- `audit/cfrp-v6-integration-review`
+- `audit/full-code-snippet-inventory-2026-10-22`
+- `audit/source-completeness-governance-2026-10-17`
+- `chore/codespaces-workspace-bootstrap`
+- `docs/codespaces-and-vertical-slice-2026-10-22`
+- `docs/current-implementation-status-2026-10-22`
+- `docs/implementation-status-2026-10-15`
+- `docs/implementation-status-v2`
+- `docs/update-current-status`
+- `docs/update-marketplace-status-2026-10-18`
+- `docs/virtual-try-on-model-readiness-2026-10-21`
+- `engineering/cirvanna-end-to-end-slice-2026-10-21`
+- `engineering/dermalsight-onnx-service`
+- `engineering/vertical-slice-plan-2026-10-21`
+- `feature/fci-confidence-contract`
+- `feature/eepl-context-policy-core`
+- `feature/fci-cal-pipeline-integration`
+- `feature/npl-hard-veto-core`
+- `feature/usi-explicit-alignment-core`
+- `feature/virtual-try-on-foundation-2026-10-21`
+- `feature/marketplace-vertical-slice-2026-10-18`
+- `fix/cfrp-v6-runtime-safety`
+- `fix/cultural-policy-unknown-fail-closed`
+- `fix/malformed-policy-result-fail-closed`
+- `fix/restore-ignored-source-candidates`
+- `fix/virtual-twin-upload-limits`
+- `integration/catacaci-governance-extensions`
+- `integration/fci-source-snippet-promotion-2026-10-22`
+- `integration/source-lineage-governor-2026-10-22`
+- `integration/source-lineage-integrity-2026-10-22`
+- `integration/source-reconstruction`
+- `integration/virtual-twin-api-foundation`
+- `maintenance/classify-staged-cdic-manifest`
+- `maintenance/classify-staged-cdic-manifest-v2`
+- `maintenance/rename-cdic-source-fragment`
+- `migration/arrange-cirvanna-source-candidates`
+- `migration/preserve-all-source-material`
+- `migration/source-lineage-governor-2026-10-17`
+- `repair/source-candidate-syntax`
+- `security/detect-unquoted-password-defaults`
+- `security/expand-secret-scan-coverage`
+- `security/source-intake-credential-audit`
+- `test/secret-scan-regressions`
+- `test/virtual-twin-api-contracts`
+- `feature/catacaci-governance-contracts`
+- `feature/catalog-service-foundation`
+- `feature/cultural-identity-explicit-policy`
+- `feature/eepl-npl-cal-integration`
+- `feature/virtual-try-on-foundation-2026-10-21`
+- `integration/catacaci-governance-extensions`
+
+The repeated branch names in the list reflect that the branch census was gathered in multiple comparison batches; the conclusion is unchanged: no unique commit diff relative to main. These refs are candidates for retirement only after checking open PRs, required audit retention, and branch protection/policy. No branch deletion was performed.
+
+### Non-ancestral branches that need selective review
+
+- `feature/cal-gateway-integration-v2`: 23 commits ahead of main and 8 changed paths, but its tree is fully behind the current integration line; no unique diff remains relative to PR #62. Treat as superseded.
+- `feature/cirvanna-feature-spine`: 101 commits ahead / 4 behind main, with 60 changed paths. Compared to PR #62 it remains divergent (101 commits on that branch, 122 on the integration branch, 60 changed paths). It contains distinct FCI confidence, NPL/cultural evidence, Wardrobe, Xari and CI/documentation work. Do **not** merge wholesale. Extract and review each still-needed capability against the current tree and active PRs.
+- `feature/private-vton-gpu-worker`: 9 commits ahead / 3 behind main, 8 changed paths; compared to PR #62 it has 9 unique commits and 8 changed paths, including a private try-on model-worker Dockerfile/API/tests/workflow. Keep isolated pending model-license, consent, security, image validation and real GPU/runtime tests; no evidence currently justifies promotion.
+- `fix/vision-pose-model-integrity`: 2 commits ahead of main with 2 changed paths, and 2 unique paths relative to PR #62. Preserve for selective review of model asset integrity checks; do not cherry-pick blindly without reviewing the exact patch and CI.
+- `docs/refresh-feature-spine-audit`: 1 commit ahead / 2 behind main with a single architecture readiness document; documentation-only candidate for reconciliation after its claims are checked against current evidence.
+- `feature/twin-clickit-live-inference` / PR #60: 61 commits ahead / 1 behind main with 27 paths, but was closed as superseded. The PR description records no paths unique to its tree versus PR #62; overlapping files were intentionally replaced in PR #62.
+- `feature/end-to-end-cal-purchase-governance` / PR #62 is the active integration line and remains draft.
+
+### Branch retirement policy
+
+No destructive branch deletion was performed. A branch that is behind main with zero unique changes is technically redundant at the source level, but may still be referenced by an open PR, used as audit evidence, or retained for provenance. Before deletion, verify the open-PR list, branch protection, deployment/workflow references and required retention. Keep unique model-worker and vision-integrity work quarantined until individually reviewed.
