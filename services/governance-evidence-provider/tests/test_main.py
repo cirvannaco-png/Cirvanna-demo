@@ -127,6 +127,11 @@ def test_assembles_same_candidate_user_and_signed_evidence(client, monkeypatch):
     ("POLICY_EVIDENCE_API_URL", "policy_evidence_signature", "", "POLICY_EVIDENCE_UNSIGNED"),
     ("POLICY_EVIDENCE_API_URL", "policy_evidence_signature", "0" * 64, "POLICY_EVIDENCE_SIGNATURE_INVALID"),
     ("POLICY_EVIDENCE_API_URL", "upstream_signals", None, "POLICY_EVIDENCE_MISSING"),
+    ("POLICY_EVIDENCE_API_URL", "upstream_signals", [
+        {"signal_id": "safe-1", "kind": "safety", "state": "pass", "reason_code": "SAFE", "explanation": "Safety checked", "required": False, "confidence": 1.0, "source_version": "policy-v1"},
+        {"signal_id": "legal-1", "kind": "legal_eligibility", "state": "pass", "reason_code": "LEGAL", "explanation": "Legal checked", "required": True, "confidence": 1.0, "source_version": "policy-v1"},
+        {"signal_id": "hard-1", "kind": "user_hard_constraint", "state": "pass", "reason_code": "HARD", "explanation": "Hard constraints checked", "required": True, "confidence": 1.0, "source_version": "policy-v1"},
+    ], "POLICY_EVIDENCE_INVALID"),
 ])
 def test_rejects_mismatched_unsigned_stale_or_missing_evidence(client, monkeypatch, source, field, value, code):
     async def fake_request(_client, env_url, _env_token, _method, _path, payload=None):
