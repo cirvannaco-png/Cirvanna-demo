@@ -223,6 +223,7 @@ class CALDecisionAudit(Base):
     order_id: Mapped[str | None] = mapped_column(ForeignKey("commerce_orders.id", ondelete="SET NULL"), nullable=True, index=True)
     buyer_user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     candidate_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    catalog_product_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
     decision: Mapped[str] = mapped_column(String(24), nullable=False)
     request_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     policy_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -1087,7 +1088,7 @@ def _cal_gateway_ready(raw: str, token: str) -> bool:
         return False
 
 
-def _authorize_cal_candidate(user_id: str, candidate_id: str) -> dict[str, Any]:
+def _authorize_cal_candidate(user_id: str, candidate_id: str, catalog_product_id: str) -> dict[str, Any]:
     raw = os.getenv("COMMERCE_CAL_GATEWAY_URL", "").strip()
     token = os.getenv("COMMERCE_CAL_GATEWAY_TOKEN", "").strip()
     parts = urlsplit(raw)
@@ -1099,7 +1100,7 @@ def _authorize_cal_candidate(user_id: str, candidate_id: str) -> dict[str, Any]:
         with httpx.Client(timeout=httpx.Timeout(5.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
             response = client.post(raw.rstrip("/") + "/internal/cal/authorize",
                 headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
-                json={"subject_id": user_id, "candidate_id": candidate_id})
+                json={"subject_id": user_id, "candidate_id": candidate_id, "catalog_product_id": catalog_product_id})
     except httpx.TimeoutException as exc:
         raise HTTPException(503, detail={"code": "CAL_REVALIDATION_TIMEOUT"}) from exc
     except httpx.HTTPError as exc:
@@ -1110,7 +1111,9 @@ def _authorize_cal_candidate(user_id: str, candidate_id: str) -> dict[str, Any]:
         receipt = response.json()
     except ValueError as exc:
         raise HTTPException(503, detail={"code": "CAL_REVALIDATION_INVALID_RESPONSE"}) from exc
-    if not isinstance(receipt, dict) or receipt.get("subject_id") != user_id or receipt.get("candidate_id") != candidate_id:
+    if (not isinstance(receipt, dict) or receipt.get("subject_id") != user_id
+            or receipt.get("candidate_id") != candidate_id
+            or receipt.get("catalog_product_id") != catalog_product_id):
         raise HTTPException(503, detail={"code": "CAL_REVALIDATION_BINDING_MISMATCH"})
     if receipt.get("decision") != "SHOW" or receipt.get("may_display") is not True:
         raise HTTPException(409, detail={"code": "CAL_REVALIDATION_DENIED", "reason_code": receipt.get("reason_code", "NO_SHOW")})
@@ -1119,30 +1122,30 @@ def _authorize_cal_candidate(user_id: str, candidate_id: str) -> dict[str, Any]:
     return receipt
 
 
-def _cal_audit_row(user_id: str, candidate_id: str, receipt: dict[str, Any] | None, decision: str, reason_code: str | None = None, order_id: str | None = None) -> CALDecisionAudit:
+def _cal_audit_row(user_id: str, candidate_id: str, catalog_product_id: str, receipt: dict[str, Any] | None, decision: str, reason_code: str | None = None, order_id: str | None = None) -> CALDecisionAudit:
     receipt = receipt if isinstance(receipt, dict) else {}
     return CALDecisionAudit(
         audit_id=str(uuid.uuid4()), order_id=order_id, buyer_user_id=user_id, candidate_id=candidate_id,
-        decision=decision, request_id=receipt.get("request_id"), policy_version=receipt.get("policy_version"),
+        catalog_product_id=catalog_product_id, decision=decision, request_id=receipt.get("request_id"), policy_version=receipt.get("policy_version"),
         reason_code=reason_code, receipt=receipt,
     )
 
 
-def _revalidate_cal_candidates(db: Session, user_id: str, candidate_ids: list[str], order_id: str | None = None, persist_success: bool = False) -> list[CALDecisionAudit]:
+def _revalidate_cal_candidates(db: Session, user_id: str, candidates: list[tuple[str, str]], order_id: str | None = None, persist_success: bool = False) -> list[CALDecisionAudit]:
     audits: list[CALDecisionAudit] = []
-    for candidate_id in candidate_ids:
+    for candidate_id, catalog_product_id in candidates:
         try:
-            receipt = _authorize_cal_candidate(user_id, candidate_id)
+            receipt = _authorize_cal_candidate(user_id, candidate_id, catalog_product_id)
         except HTTPException as exc:
             detail = exc.detail if isinstance(exc.detail, dict) else {}
             code = detail.get("code", "CAL_REVALIDATION_FAILED")
-            audits.append(_cal_audit_row(user_id, candidate_id, None,
+            audits.append(_cal_audit_row(user_id, candidate_id, catalog_product_id, None,
                 "NO_SHOW" if exc.status_code == 409 else "UNAVAILABLE", str(code), order_id))
             db.add_all(audits)
             db.commit()
             raise HTTPException(409 if exc.status_code == 409 else 503,
                 detail={"code": "CAL_REVALIDATION_FAILED", "reason_code": str(code)}) from exc
-        audits.append(_cal_audit_row(user_id, candidate_id, receipt, "SHOW", None, order_id))
+        audits.append(_cal_audit_row(user_id, candidate_id, catalog_product_id, receipt, "SHOW", None, order_id))
     if persist_success:
         db.add_all(audits)
         db.commit()
@@ -1160,7 +1163,7 @@ def checkout(actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Sess
         prior_items = list(db.scalars(select(OrderItem).where(OrderItem.order_id == existing.id)).all())
         if not prior_items:
             raise HTTPException(409, detail={"code": "ORDER_ITEMS_MISSING"})
-        _revalidate_cal_candidates(db, actor.user_id, [item.catalog_product_id for item in prior_items], order_id=existing.id, persist_success=True)
+        _revalidate_cal_candidates(db, actor.user_id, [(item.variant_id, item.catalog_product_id) for item in prior_items], order_id=existing.id, persist_success=True)
         return persist_stripe_session(db, existing.id, actor.email, gateway)
     cart = ensure_cart(db, actor.user_id)
     rows = db.execute(select(CartItem, Variant, Listing, Merchant)
@@ -1172,9 +1175,9 @@ def checkout(actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Sess
         raise HTTPException(422, detail={"code": "INVALID_CART_ITEMS"})
     if any(v.state != "active" or l.state != "active" or m.state != "approved" for _, v, l, m in rows):
         raise HTTPException(409, detail={"code": "CART_CONTAINS_UNAVAILABLE_OFFERS"})
-    # Revalidate every canonical catalog product immediately before order/stock
-    # reservation. A cached discovery-time SHOW is never reused for checkout.
-    cal_audits = _revalidate_cal_candidates(db, actor.user_id, [listing.catalog_product_id for _, _, listing, _ in rows])
+    # Revalidate every exact purchasable variant immediately before order/stock
+    # reservation. Catalog identity is separately bound for trusted metadata lookup.
+    cal_audits = _revalidate_cal_candidates(db, actor.user_id, [(variant.id, listing.catalog_product_id) for _, variant, listing, _ in rows])
     currencies = {v.currency for _, v, _, _ in rows}
     if len(currencies) != 1:
         raise HTTPException(422, detail={"code": "MIXED_CURRENCY_CART"})
