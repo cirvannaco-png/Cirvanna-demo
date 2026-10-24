@@ -3,21 +3,21 @@
 This service boundary adapts the ten PAMASMMA cognitive domains for Cirvanna. It is an orchestration boundary, not a second decision core. CaTaCaCi/CAL remains authoritative for user-facing product suitability and policy arbitration.
 
 ## Domains
-- S1 executive operations
-- S2 marketing intelligence
-- S3 relationship management
-- S4 narrative governance
-- S5 creator economy
-- S6 audience psychology
-- S7 behavioral consistency
-- S8 persuasion governance
-- S9 voice presence
-- S10 strategic narrative
+- S1 executive operations — implemented as severity-based incident triage only
+- S2 marketing intelligence — unavailable until a real handler is implemented
+- S3 relationship management — implemented as declared-category support routing only
+- S4 narrative governance — implemented as explicit required-term preflight only
+- S5 creator economy — unavailable until a real handler is implemented
+- S6 audience psychology — unavailable until privacy/fairness evaluation and a real handler exist
+- S7 behavioral consistency — unavailable until consent-aware implementation exists
+- S8 persuasion governance — implemented as a limited deterministic lexical preflight, never a policy certification
+- S9 voice presence — unavailable until a real handler is implemented
+- S10 strategic narrative — unavailable until a real handler is implemented
 
 ## Safety contract
-The uploaded router returned hard-coded example decisions, quality scores and confidence values. Those outputs are not carried forward as live behavior. A domain must have a registered implementation before it can execute; otherwise the service reports it as unavailable. No score is emitted unless the implementation supplies an evidence-backed score with documented semantics.
+Unconfigured domains fail closed. No fixed example decisions or fabricated quality/confidence scores are emitted. These handlers do not make purchase-suitability decisions; those remain with CaTaCaCi/CAL. The S8 preflight is not a legal review or proof of ethical compliance; all campaign content requires human review and is never published by this service.
 
-Every request should carry a unique event ID, requester, timestamp and validated context. Implementations must enforce least privilege, bounded execution, idempotency where actions mutate state, structured audit events and explicit approval policy. S6 must not infer sensitive identity traits; S7 must respect consent and opt-outs; S8 must be an enforceable policy gate, not a self-attested boolean.
+Handlers only produce bounded recommendations/findings. They do not send messages, publish campaigns, remediate incidents, infer sensitive identity traits, or override consent, hard user constraints, NPL, cultural requirements, or CAL.
 
 ## Integration status
-Scaffold/documentation only. No model providers or external side effects are enabled. Do not describe the ten systems as operational until each has an implementation, tests, monitoring and an approved autonomy policy.
+Four narrow deterministic handlers and an explicit startup registry bootstrap exist. They are not exposed as HTTP endpoints or deployed as a service yet. Production integration requires API authentication, bounded execution, audit events, monitoring, real domain implementations, privacy/fairness tests and a reviewed autonomy policy.
