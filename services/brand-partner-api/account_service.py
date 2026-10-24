@@ -83,4 +83,11 @@ async def change_brand_status(repository: BrandAccountRepository, *, brand_id: s
         raise BrandAccountError("Insufficient permission to change brand status")
     if new_status not in {BrandAccountStatus.ACTIVE, BrandAccountStatus.SUSPENDED, BrandAccountStatus.DELETED}:
         raise BrandAccountError("Unsupported target account status")
+    current = await repository.get_by_id(brand_id)
+    if current is None:
+        raise BrandAccountError("Brand account not found")
+    if current.status is BrandAccountStatus.DELETED:
+        raise BrandAccountError("Deleted accounts cannot be reactivated")
+    if current.status is BrandAccountStatus.PENDING and new_status is BrandAccountStatus.SUSPENDED:
+        raise BrandAccountError("Pending accounts must be approved or rejected through the review workflow")
     return await repository.update_status(brand_id=brand_id, status=new_status, actor_id=actor_id)
