@@ -67,7 +67,8 @@ def candidate_identifier(candidate: Any) -> str | None:
 
 
 def _evidence_request_is_bound(
-    envelope: dict[str, Any], subject_id: str, candidate_id: str, request_id: str
+    envelope: dict[str, Any], subject_id: str, candidate_id: str,
+    catalog_product_id: str, request_id: str
 ) -> bool:
     issued_at = _timestamp(envelope.get("issued_at"))
     expires_at = _timestamp(envelope.get("expires_at"))
@@ -94,6 +95,7 @@ def _evidence_request_is_bound(
         "candidate_attributes_loaded_at",
         "usi_profile_loaded_at",
         "user_context_loaded_at",
+        "policy_evidence_loaded_at",
     )
     if not isinstance(freshness, dict):
         return False
@@ -114,10 +116,12 @@ def _evidence_request_is_bound(
     fit = payload.get("fit_estimate")
     negative = payload.get("negative_preferences")
     cultural = payload.get("cultural_requirements")
+    upstream_signals = payload.get("upstream_signals")
     if not (
         envelope.get("request_id") == request_id
         and envelope.get("subject_id") == subject_id
         and envelope.get("candidate_id") == candidate_id
+        and envelope.get("catalog_product_id") == catalog_product_id
         and payload.get("request_id") == request_id
         and payload.get("candidate_id") == candidate_id
         and isinstance(context, dict)
@@ -137,11 +141,15 @@ def _evidence_request_is_bound(
         and all(isinstance(attribute, str) for attribute in payload["candidate_attributes"])
         and isinstance(negative, list)
         and isinstance(cultural, list)
+        and isinstance(upstream_signals, list)
     ):
         return False
     if any(not isinstance(item, dict) or item.get("user_id") != subject_id for item in negative):
         return False
     if any(not isinstance(item, dict) or item.get("user_id") != subject_id for item in cultural):
+        return False
+    required_policy_kinds = {"safety", "legal_eligibility", "user_hard_constraint"}
+    if not required_policy_kinds.issubset({item.get("kind") for item in upstream_signals if isinstance(item, dict)}):
         return False
     # Signatures are verified cryptographically by the decision service, but reject
     # obviously absent/truncated signatures before spending a decision-service call.
@@ -187,7 +195,7 @@ async def _evaluate_one(
             except ValueError:
                 return None
             if not isinstance(envelope, dict) or not _evidence_request_is_bound(
-                envelope, subject_id, candidate_id, request_id
+                envelope, subject_id, candidate_id, catalog_product_id, request_id
             ):
                 return None
 
