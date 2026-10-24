@@ -19,8 +19,6 @@ pytestmark = pytest.mark.skipif(
 
 def test_postgres_account_and_refresh_session_lifecycle():
     import asyncpg
-    from services_brand_partner_api_imports import load_repository  # local loader below
-
     async def exercise():
         dsn = os.environ["TEST_DATABASE_URL"]
         pool = await asyncpg.create_pool(dsn=dsn, min_size=1, max_size=3)
