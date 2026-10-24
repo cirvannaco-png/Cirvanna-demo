@@ -94,7 +94,7 @@ POLICY_SIGNAL_STATES = {"pass", "block", "unknown"}
 
 def _canonical_policy_evidence(
     request_id: str, user_id: str, candidate_id: str, catalog_product_id: str,
-    candidate_attributes: list[str], upstream_signals: list[dict[str, Any]],
+    candidate_attributes: list[str], context: dict[str, Any], upstream_signals: list[dict[str, Any]],
 ) -> bytes:
     """Canonical signature contract shared with the trusted policy-evidence provider."""
     normalized: list[dict[str, Any]] = []
@@ -120,9 +120,22 @@ def _canonical_policy_evidence(
     required_kinds = {"safety", "legal_eligibility", "user_hard_constraint"}
     if not required_kinds.issubset({item["kind"] for item in normalized}):
         raise ValueError("required safety, legal eligibility, and user hard-constraint signals are missing")
+    if not isinstance(context, dict) or context.get("user_id") != user_id:
+        raise ValueError("policy context must belong to the evaluated user")
+    context_fields = ("user_id", "age_years", "location", "occasion", "climate")
+    normalized_context = {key: context.get(key) for key in context_fields}
+    if (normalized_context["age_years"] is not None and
+            (isinstance(normalized_context["age_years"], bool) or not isinstance(normalized_context["age_years"], int)
+             or not 0 <= normalized_context["age_years"] <= 125)):
+        raise ValueError("policy context age is invalid")
+    for key in ("location", "occasion", "climate"):
+        value = normalized_context[key]
+        if value is not None and (not isinstance(value, str) or len(value) > 120):
+            raise ValueError("policy context fields are invalid")
     document = {
         "contract_version": "1.0.0", "request_id": request_id, "user_id": user_id,
         "candidate_id": candidate_id, "catalog_product_id": catalog_product_id,
+        "context": normalized_context,
         "candidate_attributes": sorted({item.strip().casefold() for item in candidate_attributes}),
         "upstream_signals": sorted(normalized, key=lambda item: item["signal_id"]),
     }
@@ -278,7 +291,7 @@ async def decision_evidence(payload: EvidenceRequest) -> dict[str, Any]:
             raise HTTPException(409, detail={"code": "USER_CONTEXT_MISSING_OR_MISMATCHED"})
         raw_context_for_fit = context["context"]
         fit_context = {key: raw_context_for_fit.get(key) for key in ("user_id", "age_years", "location", "occasion", "climate")}
-        policy = await _request(client, "POLICY_EVIDENCE_API_URL", "POLICY_EVIDENCE_API_TOKEN", "POST", "/v1/evaluate", {
+        policy_evidence = await _request(client, "POLICY_EVIDENCE_API_URL", "POLICY_EVIDENCE_API_TOKEN", "POST", "/v1/evaluate", {
             **common, "catalog_product_id": catalog_product_id, "context": fit_context,
         })
         policy_loaded_at = iso()
@@ -311,19 +324,19 @@ async def decision_evidence(payload: EvidenceRequest) -> dict[str, Any]:
         raise HTTPException(409, detail={"code": "USER_CONTEXT_MISSING_OR_MISMATCHED"})
     raw_context = context["context"]
     decision_context = {key: raw_context.get(key) for key in ("user_id", "age_years", "location", "occasion", "climate")}
-    if (policy.get("request_id") != request_id or policy.get("user_id") != user_id
-            or policy.get("candidate_id") != candidate_id
-            or policy.get("catalog_product_id") != catalog_product_id):
+    if (policy_evidence.get("request_id") != request_id or policy_evidence.get("user_id") != user_id
+            or policy_evidence.get("candidate_id") != candidate_id
+            or policy_evidence.get("catalog_product_id") != catalog_product_id):
         raise HTTPException(409, detail={"code": "POLICY_EVIDENCE_BINDING_MISMATCH"})
-    upstream_signals = policy.get("upstream_signals")
+    upstream_signals = policy_evidence.get("upstream_signals")
     if not isinstance(upstream_signals, list):
         raise HTTPException(503, detail={"code": "POLICY_EVIDENCE_MISSING"})
-    policy_signature = policy.get("policy_evidence_signature")
+    policy_signature = policy_evidence.get("policy_evidence_signature")
     if not isinstance(policy_signature, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", policy_signature):
         raise HTTPException(503, detail={"code": "POLICY_EVIDENCE_UNSIGNED"})
     try:
         canonical_policy = _canonical_policy_evidence(
-            request_id, user_id, candidate_id, catalog_product_id, candidate_attributes, upstream_signals
+            request_id, user_id, candidate_id, catalog_product_id, candidate_attributes, fit_context, upstream_signals
         )
     except ValueError as exc:
         raise HTTPException(422, detail={"code": "POLICY_EVIDENCE_INVALID"}) from exc
@@ -336,12 +349,12 @@ async def decision_evidence(payload: EvidenceRequest) -> dict[str, Any]:
         raise HTTPException(409, detail={"code": "FIT_EVIDENCE_BINDING_MISMATCH"})
     if not isinstance(signature, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", signature):
         raise HTTPException(503, detail={"code": "FIT_EVIDENCE_UNSIGNED"})
-    policy = profile.get("eepl_policy")
-    if not isinstance(policy, dict):
+    eepl_policy = profile.get("eepl_policy")
+    if not isinstance(eepl_policy, dict):
         raise HTTPException(503, detail={"code": "EEPL_POLICY_MISSING"})
     decision_request = {
         "request_id": request_id, "candidate_id": candidate_id, "context": decision_context,
-        "eepl_policy": policy, "usi_profile": usi, "candidate_attributes": candidate_attributes,
+        "eepl_policy": eepl_policy, "usi_profile": usi, "candidate_attributes": candidate_attributes,
         "candidate_attributes_complete": True, "negative_preferences": npl.get("negative_preferences"),
         "cultural_requirements": cultural.get("cultural_requirements"),
         "cultural_evidence_signature": cultural["cultural_evidence_signature"],
