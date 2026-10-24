@@ -10,7 +10,7 @@
 4. It fetches the user-scoped USI profile and user context from configured trusted providers, and asks the trusted fit provider for a signed estimate.
 5. It returns the exact decision-service request plus short-lived envelope/source freshness timestamps. The existing BFF calls `POST /v1/eligibility/evaluate`; CAL remains the only authorization authority.
 
-Any missing, stale, unsigned, malformed, mismatched or unavailable source returns an error. The BFF must continue to suppress candidates on every error. Product IDs passed to this service must be canonical Catalog product UUIDs; variant/offer IDs are not silently treated as product IDs.
+Any missing, stale, unsigned, malformed, mismatched or unavailable source returns an error. The BFF must continue to suppress candidates on every error. The request must provide separate canonical UUIDs for the exact candidate/variant and its canonical Catalog product; they are never silently substituted for one another.
 
 ## Required private upstream contracts
 
