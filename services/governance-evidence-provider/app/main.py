@@ -131,8 +131,24 @@ def health() -> dict[str, str]:
     return {"status": "alive", "service": SERVICE}
 
 
+async def _dependency_ready(
+    client: httpx.AsyncClient, url_key: str, token_key: str, *, fit_provider: bool = False
+) -> tuple[bool, dict[str, Any]]:
+    """Probe source readiness, not just whether its URL is set."""
+    try:
+        result = await _request(client, url_key, token_key, "GET", "/ready")
+    except HTTPException:
+        return False, {}
+    ready = result.get("ready") is True
+    if fit_provider:
+        # HMAC provenance cannot substitute for empirical fit-model calibration.
+        ready = ready and result.get("fci_prediction_model_available") is True \
+            and result.get("calibration_report_valid") is True
+    return ready, result
+
+
 @app.get("/ready")
-def readiness() -> dict[str, Any]:
+async def readiness() -> dict[str, Any]:
     keys = ("EVIDENCE_PROVIDER_TOKEN", "NPL_SERVICE_TOKEN", "CULTURAL_IDENTITY_SERVICE_TOKEN", "CATALOG_API_TOKEN", "USI_PROFILE_API_TOKEN", "USER_CONTEXT_API_TOKEN", "FIT_EVIDENCE_API_TOKEN")
     urls = ("NPL_SERVICE_URL", "CULTURAL_IDENTITY_SERVICE_URL", "CATALOG_API_URL", "USI_PROFILE_API_URL", "USER_CONTEXT_API_URL", "FIT_EVIDENCE_API_URL")
     configured = {key: len(os.getenv(key, "").encode("utf-8")) >= 32 for key in keys}
@@ -142,8 +158,32 @@ def readiness() -> dict[str, Any]:
             configured[key] = True
         except HTTPException:
             configured[key] = False
-    ready = all(configured.values())
-    result = {"service": SERVICE, "ready": ready, "configured": configured, "fci_model_available": False}
+    upstream_ready: dict[str, bool] = {}
+    fit_health: dict[str, Any] = {}
+    if all(configured.values()):
+        async with httpx.AsyncClient(timeout=httpx.Timeout(TIMEOUT, connect=2), trust_env=False, follow_redirects=False) as client:
+            dependencies = (
+                ("npl", "NPL_SERVICE_URL", "NPL_SERVICE_TOKEN", False),
+                ("cultural_identity", "CULTURAL_IDENTITY_SERVICE_URL", "CULTURAL_IDENTITY_SERVICE_TOKEN", False),
+                ("catalog", "CATALOG_API_URL", "CATALOG_API_TOKEN", False),
+                ("usi_profile", "USI_PROFILE_API_URL", "USI_PROFILE_API_TOKEN", False),
+                ("user_context", "USER_CONTEXT_API_URL", "USER_CONTEXT_API_TOKEN", False),
+                ("fit_evidence", "FIT_EVIDENCE_API_URL", "FIT_EVIDENCE_API_TOKEN", True),
+            )
+            for name, url_key, token_key, is_fit in dependencies:
+                ready, health = await _dependency_ready(client, url_key, token_key, fit_provider=is_fit)
+                upstream_ready[name] = ready
+                if is_fit:
+                    fit_health = health
+    else:
+        upstream_ready = {name: False for name in ("npl", "cultural_identity", "catalog", "usi_profile", "user_context", "fit_evidence")}
+    ready = all(configured.values()) and all(upstream_ready.values())
+    result = {
+        "service": SERVICE, "ready": ready, "configured": configured,
+        "upstream_ready": upstream_ready,
+        "fci_model_available": fit_health.get("fci_prediction_model_available") is True,
+        "fit_calibration_report_valid": fit_health.get("calibration_report_valid") is True,
+    }
     if not ready:
         raise HTTPException(503, detail=result)
     return result
@@ -179,7 +219,12 @@ async def decision_evidence(payload: EvidenceRequest) -> dict[str, Any]:
         usi_loaded_at = iso()
         context = await _request(client, "USER_CONTEXT_API_URL", "USER_CONTEXT_API_TOKEN", "GET", "/v1/context/" + quote(user_id, safe=""))
         context_loaded_at = iso()
-        fit = await _request(client, "FIT_EVIDENCE_API_URL", "FIT_EVIDENCE_API_TOKEN", "POST", "/v1/estimate", {**common, "context": context.get("context")})
+        if (context.get("user_id") != user_id or not isinstance(context.get("context"), dict)
+                or context["context"].get("user_id") != user_id):
+            raise HTTPException(409, detail={"code": "USER_CONTEXT_MISSING_OR_MISMATCHED"})
+        raw_context_for_fit = context["context"]
+        fit_context = {key: raw_context_for_fit.get(key) for key in ("user_id", "age_years", "location", "occasion", "climate")}
+        fit = await _request(client, "FIT_EVIDENCE_API_URL", "FIT_EVIDENCE_API_TOKEN", "POST", "/v1/estimate", {**common, "context": fit_context})
         fit_generated_at = _fresh_timestamp(fit.get("generated_at"))
 
     for source, data in (("npl", npl), ("cultural", cultural)):
