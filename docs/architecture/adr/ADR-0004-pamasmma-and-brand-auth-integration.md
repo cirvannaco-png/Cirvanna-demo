@@ -1,22 +1,23 @@
 # ADR-0004: PAMASMMA cognitive services and brand-partner security
 
-- Status: Proposed implementation boundary; not production enabled
+- Status: Implementation in progress; production not enabled
 - Date: 2026-10-24
 
 ## Context
-Two supplied prototypes propose (1) ten PAMASMMA cognitive endpoints and (2) brand-partner JWT authentication plus brand/product/analytics tables. The cognitive prototype returns fixed placeholder decisions and unverified scores. The authentication prototype uses a placeholder JWT secret, mock login identity, does not persist registration, and restores permissions from a constant during refresh.
+The supplied prototypes propose ten PAMASMMA cognitive endpoints and brand-partner authentication plus brand/product/analytics tables. The cognitive prototype returned fixed placeholder decisions and unverified scores. The authentication prototype used a placeholder JWT secret, mock login identity, no persistent registration, and hard-coded permissions on refresh.
 
-Cirvanna already defines CaTaCaCi as canonical decision authority and CAL as the deterministic arbitration kernel. Existing architecture records also require avoiding duplicate decision logic and reconciling new catalog persistence with canonical catalog ownership.
+Cirvanna's repository documents the API gateway and catalog service as scaffolds. CaTaCaCi's deterministic core is present at `packages/identity-intelligence/catacaci/core.py`; its documented role is canonical arbitration, not recommendation.
 
-## Decision
-1. Add a PAMASMMA-derived cognitive service boundary with typed contracts and a fail-closed handler registry. No domain executes until a real handler is registered. No fabricated scores or mock business decisions are returned.
-2. Keep CaTaCaCi/CAL authoritative for user-facing suitability, consent and policy decisions. Cognitive services may provide specialized evidence, drafts, alerts and recommendations; they do not bypass CAL or override hard user constraints.
-3. Add brand-token security primitives only. Do not expose registration, login or refresh routes until the authoritative brand repository, password verification, account approval/status checks, refresh-token rotation/revocation and permission loading are implemented.
-4. Do not create brand product tables until the existing catalog/product model is reconciled. Tenant isolation must be enforced at every data-access boundary and tested across brands.
-5. Ship these changes on an isolated feature branch and validate through CI/review before merging to main.
+## Decisions
+1. Add typed contracts and a fail-closed handler registry. No domain executes until a real handler is registered.
+2. Implement four narrow deterministic handlers first: incident triage, support queue routing, explicit required-term preflight, and limited marketing-risk lexical preflight. They do not perform external side effects.
+3. Keep CaTaCaCi/CAL authoritative for user-facing suitability, consent and policy decisions. Cognitive services cannot bypass CAL or override hard user constraints.
+4. Add brand token primitives and a repository Protocol, but do not expose registration/login/refresh routes until the canonical persistence adapter, password verification, account approval/status checks, refresh-token rotation/revocation and live permission loading are implemented.
+5. Do not create brand product tables until the existing catalog model is reconciled. Tenant isolation must be enforced at every data-access boundary and tested across brands.
+6. Expand CI to test the new contracts on pull requests targeting the current integration branch.
 
-## Required release gates
-- Unit/contract tests for every cognitive handler and token validation.
+## Release gates
+- Unit/contract tests for every handler and token validation.
 - Negative tests for unconfigured cognitive systems, invalid/expired/wrong-type tokens, missing permissions and suspended brands.
 - Cross-tenant access tests for product, upload and analytics paths.
 - Secret scanning and configuration validation.
@@ -24,4 +25,4 @@ Cirvanna already defines CaTaCaCi as canonical decision authority and CAL as the
 - Observability, audit provenance, bounded execution, consent and autonomy/approval policies before enabling cognitive actions.
 
 ## Consequences
-This integrates the architecture without representing prototype behavior as live functionality. Production capability remains explicitly unavailable until the gates above pass.
+This integration adds executable, bounded logic without representing prototype behavior as production capability. Production capability remains unavailable until the required gates pass.
