@@ -125,6 +125,7 @@ def test_assembles_same_candidate_user_and_signed_evidence(client, monkeypatch):
     ("USI_PROFILE_API_URL", "usi_profile", None, "USI_PROFILE_MISSING_OR_MISMATCHED"),
     ("POLICY_EVIDENCE_API_URL", "candidate_id", "someone-else", "POLICY_EVIDENCE_BINDING_MISMATCH"),
     ("POLICY_EVIDENCE_API_URL", "policy_evidence_signature", "", "POLICY_EVIDENCE_UNSIGNED"),
+    ("POLICY_EVIDENCE_API_URL", "policy_evidence_signature", "0" * 64, "POLICY_EVIDENCE_SIGNATURE_INVALID"),
     ("POLICY_EVIDENCE_API_URL", "upstream_signals", None, "POLICY_EVIDENCE_MISSING"),
 ])
 def test_rejects_mismatched_unsigned_stale_or_missing_evidence(client, monkeypatch, source, field, value, code):
