@@ -203,7 +203,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
     assert payload["payment_configured"] is True
     assert payload["migrations_required"] is True
     assert payload["migrations_applied"] is True
-    assert payload["schema_revision"] == "20261019_0002"
+    assert payload["schema_revision"] == "20261024_0003"
     assert payload["ready"] is True
 
 
