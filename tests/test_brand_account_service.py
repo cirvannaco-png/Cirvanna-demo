@@ -119,3 +119,42 @@ def test_only_authorized_actor_can_approve_brand():
         assert "permission" in str(exc).lower()
     else:
         raise AssertionError("Unauthorized actor must not approve a brand")
+
+
+def test_active_brand_authenticates_with_current_repository_permissions():
+    repo = FakeRepository()
+    account = asyncio.run(accounts.register_brand(
+        repo, email="brand@example.com", brand_name="Example Brand",
+        password="a-strong-test-password",
+    ))
+    asyncio.run(repo.replace_permissions(
+        brand_id=account.brand_id, permissions=("products:read",), actor_id="reviewer",
+    ))
+    asyncio.run(repo.update_status(
+        brand_id=account.brand_id, status=contract.BrandAccountStatus.ACTIVE, actor_id="reviewer",
+    ))
+    principal = asyncio.run(accounts.authenticate_brand(
+        repo, email="BRAND@example.com", password="a-strong-test-password",
+    ))
+    assert principal.brand_id == account.brand_id
+    assert principal.permissions == ["products:read"]
+
+
+def test_deleted_brand_cannot_be_reactivated():
+    repo = FakeRepository()
+    account = asyncio.run(accounts.register_brand(
+        repo, email="brand@example.com", brand_name="Example Brand",
+        password="a-strong-test-password",
+    ))
+    asyncio.run(repo.update_status(
+        brand_id=account.brand_id, status=contract.BrandAccountStatus.DELETED, actor_id="reviewer",
+    ))
+    try:
+        asyncio.run(accounts.change_brand_status(
+            repo, brand_id=account.brand_id, actor_id="reviewer",
+            actor_permissions={"brands:approve"}, new_status=contract.BrandAccountStatus.ACTIVE,
+        ))
+    except accounts.BrandAccountError as exc:
+        assert "Deleted accounts" in str(exc)
+    else:
+        raise AssertionError("Deleted accounts must not be reactivated")
