@@ -54,6 +54,9 @@ class GovernanceTransport:
                 subject_id = "some-other-user"
             if self.evidence_mode == "foreign_candidate":
                 candidate_id = "different-candidate"
+            catalog_product_id = json["catalog_product_id"]
+            if self.evidence_mode == "foreign_catalog_product":
+                catalog_product_id = "00000000-0000-4000-8000-000000000000"
             decision_request = {
                 "request_id": request_id,
                 "candidate_id": candidate_id,
@@ -132,7 +135,7 @@ class GovernanceTransport:
                 "request_id": request_id,
                 "subject_id": subject_id,
                 "candidate_id": candidate_id,
-                "catalog_product_id": json["catalog_product_id"],
+                "catalog_product_id": catalog_product_id,
                 "issued_at": issued_at.isoformat(),
                 "expires_at": expires_at.isoformat(),
                 "evidence_freshness": freshness,
@@ -235,7 +238,7 @@ def test_stale_evidence_is_rejected_before_cal_is_called(monkeypatch, evidence_m
     assert transport.decision_calls == []
 
 
-@pytest.mark.parametrize("evidence_mode", ["foreign_subject", "foreign_candidate"])
+@pytest.mark.parametrize("evidence_mode", ["foreign_subject", "foreign_candidate", "foreign_catalog_product"])
 def test_foreign_subject_or_candidate_evidence_is_rejected(monkeypatch, evidence_mode):
     transport = GovernanceTransport(evidence_mode=evidence_mode)
     configure_gateway(monkeypatch, transport)
