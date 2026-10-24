@@ -237,7 +237,7 @@ def arbitrate(request: ArbitrationRequest) -> ArbitrationResult:
 
     fit_signals = [signal for signal in signals if signal.kind is SignalKind.FIT_CONFIDENCE]
     if request.require_fit_confidence:
-            if not fit_signals:
+        if not fit_signals:
             return _result(request, DecisionVerdict.REVIEW, [
                 ArbitrationReason(
                     "FIT_CONFIDENCE_MISSING",
@@ -291,7 +291,7 @@ def arbitrate(request: ArbitrationRequest) -> ArbitrationResult:
         ArbitrationReason(
             "ALL_REQUIRED_GATES_PASSED",
             None,
-            "No hard veto or required unknown remains, and fit confidence meets policy.",
+            "No hard veto or required unknown remains; all gates required by the decision profile passed.",
         )
     ], signals)
 
