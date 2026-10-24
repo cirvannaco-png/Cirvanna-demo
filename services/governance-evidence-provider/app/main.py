@@ -118,7 +118,7 @@ def _canonical_policy_evidence(
     if len({item["signal_id"] for item in normalized}) != len(normalized):
         raise ValueError("duplicate policy signal identifiers")
     required_kinds = {"safety", "legal_eligibility", "user_hard_constraint"}
-    if not required_kinds.issubset({item["kind"] for item in normalized}):
+    if not required_kinds.issubset({item["kind"] for item in normalized if item["required"] is True}):
         raise ValueError("required safety, legal eligibility, and user hard-constraint signals are missing")
     if not isinstance(context, dict) or context.get("user_id") != user_id:
         raise ValueError("policy context must belong to the evaluated user")
