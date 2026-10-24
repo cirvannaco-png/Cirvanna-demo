@@ -40,6 +40,7 @@ class RefreshTokenRepository(Protocol):
     """Server-side storage must hash token identifiers and support atomic rotation/revocation."""
 
     async def consume_and_rotate(
-        self, *, token_id: str, brand_id: str, replacement_token_hash: str, expires_at: datetime
+        self, *, token_id: str, brand_id: str, presented_token_hash: str,
+        replacement_token_id: str, replacement_token_hash: str, expires_at: datetime
     ) -> bool: ...
     async def revoke_all_for_brand(self, *, brand_id: str, actor_id: str) -> int: ...
