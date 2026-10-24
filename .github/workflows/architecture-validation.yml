@@ -7,8 +7,11 @@ on:
       - "architecture/**"
       - "integration/**"
       - "migration/**"
+      - "feature/pamasmma-cognitive-brand-auth"
   pull_request:
-    branches: [main]
+    branches:
+      - main
+      - "integration/source-reconstruction"
   workflow_dispatch:
 
 permissions:
@@ -17,7 +20,7 @@ permissions:
 jobs:
   architecture:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,9 +28,13 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip "pydantic>=2,<3" "fastapi>=0.104,<1" "python-jose[cryptography]>=3.3,<4" pytest
       - name: Validate ownership and source inventory
         run: python scripts/validate_architecture.py
       - name: Run architecture tests
         run: python -m unittest discover -s tests/architecture -v
+      - name: Run new integration contract tests
+        run: python -m pytest -q tests/test_cognitive_orchestration_contracts.py tests/test_cognitive_handlers.py tests/test_brand_token_security.py
       - name: Audit source for credential patterns
         run: python scripts/scan_source_secrets.py
