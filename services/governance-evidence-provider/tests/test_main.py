@@ -103,3 +103,34 @@ def test_unavailable_source_fails_closed(client, monkeypatch):
     monkeypatch.setattr(main, "_request", unavailable)
     response = client.post("/v1/decision-evidence", headers={"Authorization": f"Bearer {TOKEN}"}, json=request_payload())
     assert response.status_code == 503
+
+
+@pytest.mark.parametrize("fit_health,expected_ready", [
+    ({"ready": True, "fci_prediction_model_available": False, "calibration_report_valid": False}, False),
+    ({"ready": True, "fci_prediction_model_available": True, "calibration_report_valid": False}, False),
+    ({"ready": True, "fci_prediction_model_available": True, "calibration_report_valid": True}, True),
+])
+def test_readiness_requires_live_dependencies_and_validated_fit_model(client, monkeypatch, fit_health, expected_ready):
+    for key in ("NPL_SERVICE_TOKEN", "CULTURAL_IDENTITY_SERVICE_TOKEN", "CATALOG_API_TOKEN",
+                "USI_PROFILE_API_TOKEN", "USER_CONTEXT_API_TOKEN", "FIT_EVIDENCE_API_TOKEN"):
+        monkeypatch.setenv(key, "test-secret-with-at-least-thirty-two-bytes")
+    for key in ("NPL_SERVICE_URL", "CULTURAL_IDENTITY_SERVICE_URL", "CATALOG_API_URL",
+                "USI_PROFILE_API_URL", "USER_CONTEXT_API_URL", "FIT_EVIDENCE_API_URL"):
+        monkeypatch.setenv(key, "https://"+key.lower()+".example.test")
+    async def fake_request(_client, url_key, _token_key, _method, path, payload=None):
+        if path == "/ready" and url_key == "FIT_EVIDENCE_API_URL":
+            return fit_health
+        if path == "/ready":
+            return {"ready": True}
+        raise AssertionError((url_key, path))
+    monkeypatch.setattr(main, "_request", fake_request)
+    response = client.get("/ready")
+    if expected_ready:
+        assert response.status_code == 200, response.text
+        assert response.json()["ready"] is True
+        assert response.json()["fci_model_available"] is True
+    else:
+        assert response.status_code == 503
+        detail = response.json()["detail"]
+        assert detail["ready"] is False
+        assert detail["upstream_ready"]["fit_evidence"] is False
