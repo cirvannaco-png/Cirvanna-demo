@@ -170,19 +170,21 @@ def test_internal_checkout_authorization_requires_service_token_and_exact_show(m
         calls.append((subject_id, candidates))
         return {"candidates": [{
             "candidate_id": candidates[0]["candidate_id"],
+            "catalog_product_id": candidates[0]["catalog_product_id"],
             "cal_decision": {"verdict": "SHOW", "may_display": True, "request_id": "req-1", "policy_version": "policy-1"},
         }]}
 
     monkeypatch.setattr(main, "govern_candidates", fake_govern)
     with TestClient(main.app) as client:
-        denied = client.post("/internal/cal/authorize", json={"subject_id": "u1", "candidate_id": "p1"})
+        denied = client.post("/internal/cal/authorize", json={"subject_id": "u1", "candidate_id": "p1", "catalog_product_id": "7f2d2c1a-2b3c-4d5e-8f90-123456789abc"})
         assert denied.status_code == 401
         allowed = client.post("/internal/cal/authorize",
             headers={"Authorization": "Bearer internal-cal-token-that-is-at-least-32-bytes"},
-            json={"subject_id": "u1", "candidate_id": "p1"})
+            json={"subject_id": "u1", "candidate_id": "p1", "catalog_product_id": "7f2d2c1a-2b3c-4d5e-8f90-123456789abc"})
     assert allowed.status_code == 200, allowed.text
     assert allowed.json()["decision"] == "SHOW" and allowed.json()["may_display"] is True
     assert allowed.json()["request_id"] == "req-1"
+    assert allowed.json()["catalog_product_id"] == "7f2d2c1a-2b3c-4d5e-8f90-123456789abc"
     assert calls[0][0] == "u1"
 
 
@@ -196,7 +198,7 @@ def test_internal_checkout_authorization_never_upgrades_no_show(monkeypatch):
     with TestClient(main.app) as client:
         response = client.post("/internal/cal/authorize",
             headers={"Authorization": "Bearer internal-cal-token-that-is-at-least-32-bytes"},
-            json={"subject_id": "u1", "candidate_id": "p1"})
+            json={"subject_id": "u1", "candidate_id": "p1", "catalog_product_id": "7f2d2c1a-2b3c-4d5e-8f90-123456789abc"})
     assert response.status_code == 200
     assert response.json()["decision"] == "NO_SHOW"
     assert response.json()["may_display"] is False
