@@ -29,7 +29,9 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install test dependencies
-        run: python -m pip install --upgrade pip "pydantic>=2,<3" "fastapi>=0.104,<1" "python-jose[cryptography]>=3.3,<4" pytest
+        run: python -m pip install --upgrade pip "pydantic>=2,<3" "fastapi>=0.104,<1" "python-jose[cryptography]>=3.3,<4" "asyncpg>=0.29,<1" pytest
+      - name: Compile Python sources and tests
+        run: python -m compileall -q services/cognitive-orchestration services/brand-partner-api tests/test_cognitive_orchestration_contracts.py tests/test_cognitive_handlers.py tests/test_brand_token_security.py tests/test_brand_account_service.py
       - name: Validate ownership and source inventory
         run: python scripts/validate_architecture.py
       - name: Run architecture tests
