@@ -153,6 +153,23 @@ class PostgresBrandRepository:
                     created_at=current.created_at, updated_at=current.updated_at,
                 )
 
+    async def create_refresh_session(
+        self, *, token_id: str, brand_id: str, token_hash: str, expires_at: datetime,
+    ) -> None:
+        async with self._pool.acquire() as connection:
+            async with connection.transaction():
+                active = await connection.fetchval(
+                    "SELECT status = 'active' FROM brand_accounts WHERE brand_id = $1::uuid FOR UPDATE",
+                    brand_id,
+                )
+                if active is not True:
+                    raise ValueError("Only active brand accounts may receive refresh sessions")
+                await connection.execute(
+                    """INSERT INTO brand_refresh_sessions (token_id, brand_id, token_hash, expires_at)
+                       VALUES ($1::uuid, $2::uuid, $3, $4)""",
+                    token_id, brand_id, token_hash, expires_at,
+                )
+
     async def consume_and_rotate(
         self, *, token_id: str, brand_id: str, presented_token_hash: str,
         replacement_token_id: str, replacement_token_hash: str, expires_at: datetime,
