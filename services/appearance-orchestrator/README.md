@@ -28,7 +28,7 @@ preference ledger, write catalog data, or own checkout/payments.
 
 ## Configuration
 
-Set `CATALOG_BASE_URL` and a read-only `CATALOG_READ_TOKEN` of at least 32 bytes. Remote URLs must use HTTPS; HTTP is allowed only for loopback development. Pagination failures, duplicate IDs, invalid records, a moving total, and over-limit snapshots fail closed. The catalog API currently has no point-in-time snapshot token or transaction boundary; the adapter detects total changes and duplicates but cannot guarantee atomic consistency if catalog records change between page reads. Do not treat this read as checkout/stock revalidation.
+Set `CATALOG_BASE_URL` and `CATALOG_READ_TOKEN`, plus `NPL_BASE_URL` and `NPL_SERVICE_TOKEN`; both tokens must be at least 32 bytes. Remote URLs must use HTTPS; HTTP is allowed only for loopback development. Keep both services on trusted internal ingress. Pagination failures, duplicate IDs, invalid records, a moving total, and over-limit snapshots fail closed. The catalog API currently has no point-in-time snapshot token or transaction boundary; the adapter detects total changes and duplicates but cannot guarantee atomic consistency if catalog records change between page reads. Do not treat this read as checkout/stock revalidation.
 
 Install the adapter's declared runtime dependency and the test runner, then run tests from the repository root:
 
