@@ -26,11 +26,13 @@ catalog data, or own checkout/payments.
 
 Set `CATALOG_BASE_URL` and a read-only `CATALOG_READ_TOKEN` of at least 32 bytes. Remote URLs must use HTTPS; HTTP is allowed only for loopback development. Pagination failures, duplicate IDs, invalid records, a moving total, and over-limit snapshots fail closed. The catalog API currently has no point-in-time snapshot token or transaction boundary; the adapter detects total changes and duplicates but cannot guarantee atomic consistency if catalog records change between page reads. Do not treat this read as checkout/stock revalidation.
 
-Run tests from the repository root:
+Install the adapter's declared runtime dependency and the test runner, then run tests from the repository root:
 
 ```bash
+python -m pip install -r services/appearance-orchestrator/requirements.txt "pytest>=8,<9"
 PYTHONPATH=packages/appearance-intelligence:packages/identity-intelligence:packages/preferences:services/appearance-orchestrator \
   python -m pytest tests/appearance_intelligence -q
+python -m pytest tests/architecture/test_catacaci_core.py -q
 ```
 
 Tests use fixtures and an HTTP mock. They prove contract wiring, not model accuracy or production readiness.
