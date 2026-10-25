@@ -32,7 +32,7 @@ No canonical Hair, Face, Makeup, Footwear, Skincare, or complete-look specialist
 
 ## Decision flow and safeguards
 
-1. The catalog adapter reads authenticated active products from the canonical Catalog Service. Incomplete, duplicate, malformed, over-limit, or mid-pagination-changing reads fail closed; no demo fallback is allowed.
+1. The catalog adapter reads authenticated active products from the canonical Catalog Service. Incomplete, duplicate, malformed, over-limit, or mid-pagination-changing reads fail closed; no demo fallback is allowed. Because the current Catalog Service exposes no point-in-time snapshot token or transaction boundary, this is not an atomic catalog snapshot under concurrent writes, and it must not replace checkout/stock revalidation.
 2. Candidates retain canonical product IDs and catalog attributes. No second product store is introduced.
 3. The canonical NPL kernel evaluates every candidate only when the current user's preference state was successfully loaded. A missing NPL snapshot is UNKNOWN and yields CAL REVIEW; an explicit empty tuple means a trusted read succeeded and found no active preferences. Cross-user preference rows are rejected. A hard negative becomes a CAL hard-veto and cannot be reversed or reintroduced by a specialist/composer.
 4. Safety and legal/eligibility evidence default to UNKNOWN. Trusted server-side providers must explicitly supply PASS.
