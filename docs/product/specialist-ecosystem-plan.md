@@ -26,7 +26,7 @@ The candidate branch now contains executable Python library code for the seven-d
 ## 2. Non-negotiable architecture rules
 
 - **CaTaCaCi / CAL remains the sole final display-arbitration authority.** A specialist may provide evidence or a candidate; it cannot independently authorize display, checkout, or override a CAL BLOCK or REVIEW result.
-- **NPL hard negatives are global constraints.** A rejected item or declared dislike must not re-enter through another specialist or the complete-look composer.
+- **NPL hard negatives are global constraints.** A rejected item or declared dislike must not re-enter through another specialist or the complete-look composer. An absent/unavailable preference snapshot is UNKNOWN, not an empty preference set, and cannot authorize display.
 - **No duplicate product source of truth.** Specialists consume the canonical catalog/product contracts; do not create specialist-owned product tables or competing catalog identifiers.
 - **Evidence before claims.** A module is not called live until its provider, model/assets (if any), permissions, quality evaluation, latency, failure behavior, and integration tests are demonstrated.
 - **No sensitive inference from images.** Do not infer race, ethnicity, religion, health diagnoses, or other sensitive identity attributes. Cultural requirements must be user-declared or otherwise explicitly consented and governed.
