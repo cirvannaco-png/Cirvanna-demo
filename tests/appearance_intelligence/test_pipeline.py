@@ -6,6 +6,8 @@ from catacaci import ArbitrationRequest, DecisionSignal, DecisionVerdict, Signal
 from npl import NegativePreference, PreferenceSource, TargetType
 from appearance_intelligence import AppearanceContext, CatalogProduct, CatalogSnapshot, EvaluationStatus, SpecialistId, SPECIALISTS, build_look, evaluate_candidate, run_specialist
 from catalog_client import CatalogClient, CatalogUnavailable
+from npl_client import NPLClient, NPLUnavailable
+from orchestrator import AppearanceOrchestrator
 
 def signal(signal_id: str, kind: SignalKind, state: SignalState = SignalState.PASS, *, confidence: float | None = None) -> DecisionSignal:
     return DecisionSignal(signal_id=signal_id, kind=kind, state=state, reason_code="TEST_" + signal_id.upper().replace(":", "_").replace("-", "_"), explanation="Explicit test evidence.", confidence=confidence, source_version="test-fixture-v1")
@@ -250,6 +252,99 @@ def test_npl_hard_negative_cannot_be_reintroduced_by_look_composition():
     assert len(result.options) == 1
     assert result.options[0].product_ids == (apparel.product_id, allowed_makeup.product_id)
     assert all(rejected_makeup.product_id not in option.product_ids for option in result.options)
+
+
+def npl_preference_record(user_id: str = "user-1") -> dict:
+    return {
+        "preference_id": "avoid-red",
+        "user_id": user_id,
+        "target_type": "attribute",
+        "target_value": "red",
+        "source": "user_declared",
+        "rejection_event_ids": [],
+        "rejection_threshold": 3,
+        "active": True,
+        "correction_event_id": None,
+    }
+
+
+def test_npl_client_reads_and_validates_the_canonical_user_scoped_preferences():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/preferences"
+        assert request.headers.get("authorization") == "Bearer " + "N" * 40
+        assert request.url.params["user_id"] == "user-1"
+        return httpx.Response(200, json={
+            "user_id": "user-1",
+            "preferences": [npl_preference_record()],
+        })
+
+    with httpx.Client(transport=httpx.MockTransport(handler), trust_env=False) as client:
+        preferences = NPLClient("http://127.0.0.1:8123", "N" * 40, client=client).fetch_preferences("user-1")
+    assert len(preferences) == 1
+    assert preferences[0].user_id == "user-1"
+    assert preferences[0].target_type is TargetType.ATTRIBUTE
+    assert preferences[0].target_value == "red"
+
+
+def test_npl_client_rejects_foreign_user_rows_even_with_matching_response_envelope():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "user_id": "user-1",
+            "preferences": [npl_preference_record("user-2")],
+        })
+
+    with httpx.Client(transport=httpx.MockTransport(handler), trust_env=False) as client:
+        adapter = NPLClient("http://127.0.0.1:8123", "N" * 40, client=client)
+        with pytest.raises(NPLUnavailable, match="outside the requested user scope"):
+            adapter.fetch_preferences("user-1")
+
+
+def test_orchestrator_wires_canonical_preference_state_into_npl_and_cal():
+    item = catalog_product("orch-red-lipstick", "makeup", attributes={"color": "red"})
+    context = AppearanceContext("req-orchestrator", "user-1", "KES", 3000)
+
+    class CatalogReaderFixture:
+        def fetch_active_catalog(self, *, now=None):
+            return snapshot(item)
+
+    class PreferencesReaderFixture:
+        def fetch_preferences(self, user_id):
+            assert user_id == "user-1"
+            return (NegativePreference(
+                "avoid-red", user_id, TargetType.ATTRIBUTE, "red",
+                PreferenceSource.USER_DECLARED,
+            ),)
+
+    result = AppearanceOrchestrator(
+        CatalogReaderFixture(), PreferencesReaderFixture()
+    ).run_specialist(
+        context, SpecialistId.MAKEUP,
+        {item.product_id: product_gates(item.product_id)},
+    )
+    assert result.candidates[0].arbitration.verdict is DecisionVerdict.BLOCK
+    assert not result.candidates[0].may_display
+
+
+def test_orchestrator_returns_review_when_canonical_npl_service_is_unavailable():
+    item = catalog_product("orch-clean-makeup", "makeup")
+
+    class CatalogReaderFixture:
+        def fetch_active_catalog(self, *, now=None):
+            return snapshot(item)
+
+    class UnavailablePreferencesReader:
+        def fetch_preferences(self, user_id):
+            raise NPLUnavailable("internal detail intentionally not propagated")
+
+    result = AppearanceOrchestrator(
+        CatalogReaderFixture(), UnavailablePreferencesReader()
+    ).run_specialist(
+        AppearanceContext("req-npl-down", "user-1", "KES", 3000),
+        SpecialistId.MAKEUP,
+        {item.product_id: product_gates(item.product_id)},
+    )
+    assert result.status is EvaluationStatus.NEEDS_REVIEW
+    assert result.candidates == ()
 
 
 def test_catalog_client_reads_a_valid_complete_page():
