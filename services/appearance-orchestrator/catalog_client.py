@@ -67,6 +67,10 @@ class CatalogClient:
                         raise CatalogUnavailable("catalog exceeds the complete-snapshot limit")
                 elif total != expected_total:
                     raise CatalogUnavailable("catalog total changed during pagination; retry the request")
+                if len(items) > self.PAGE_SIZE:
+                    raise CatalogUnavailable("catalog returned more products than the requested page size")
+                if len(items) > max(0, total - offset):
+                    raise CatalogUnavailable("catalog page contains more products than its declared total")
                 if not items and offset < total:
                     raise CatalogUnavailable("catalog pagination ended before all products were read")
                 for raw in items:
