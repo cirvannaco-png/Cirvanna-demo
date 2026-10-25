@@ -17,6 +17,26 @@ preference ledger, write catalog data, or own checkout/payments.
 - `SHOW` is the only display authorization. `BLOCK` and `REVIEW` remain non-displayable.
 - Look + Makeup composition uses catalog-declared compatibility metadata and re-arbitrates the bundle total and bundle-level evidence.
 
+## Internal library usage
+
+The host service must construct `AppearanceContext` from an authenticated server-side identity and obtain safety/legal/fit evidence from trusted providers. A basic catalog-backed evaluation can then be invoked with:
+
+```python
+from orchestrator import AppearanceOrchestrator
+from appearance_intelligence import AppearanceContext, SpecialistId
+
+orchestrator = AppearanceOrchestrator()
+result = orchestrator.run_specialist(
+    authenticated_context,
+    SpecialistId.MAKEUP,
+    trusted_signals_by_product=trusted_server_evidence,
+)
+# Present only candidates whose CAL result explicitly returns SHOW.
+displayable = [candidate for candidate in result.candidates if candidate.may_display]
+```
+
+The variables `authenticated_context` and `trusted_server_evidence` must be created by the host's trusted authentication/evidence boundary, not copied from request JSON.
+
 ## Limits
 
 - Hair/face image inference, virtual makeup, virtual try-on, stock/availability, size/comfort prediction, and model ranking are unavailable.
@@ -24,7 +44,7 @@ preference ledger, write catalog data, or own checkout/payments.
 - Skincare does catalog metadata matching only; it does not diagnose, prescribe treatment, or guarantee ingredient safety.
 - Safety/legal/fit signals must come from trusted server-side providers. They must never be client-supplied. The orchestrator loads NPL rows using the internal bearer-authenticated NPL API; only a successful response whose user scope matches the authenticated context is accepted. An unavailable read returns REVIEW and no candidates. The lower-level evaluator's omitted NPL snapshot remains UNKNOWN; an explicit empty tuple is valid only after a successful canonical read. Cross-user rows are rejected.
 - The current NPLClient reads the NPL Service over the authenticated internal channel; it does not verify an HMAC response envelope for the list endpoint. Keep this API on trusted internal ingress. For lower-trust service crossings or signed candidate-bound evidence, use the canonical NPL `/v1/evaluate` envelope and verify its HMAC as the decision service does.
-- There is intentionally no public endpoint until trusted identity, NPL persistence, evidence provenance, rate limiting, audit receipts, and checkout revalidation are wired through the gateway.
+- There is intentionally no public endpoint until authenticated identity binding, production NPL datastore/configuration, trusted evidence provenance, rate limiting, durable audit receipts, and checkout revalidation are wired through the gateway.
 
 ## Configuration
 
