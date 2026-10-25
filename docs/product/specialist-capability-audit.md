@@ -42,7 +42,7 @@ No canonical Hair, Face, Makeup, Footwear, Skincare, or complete-look specialist
 
 ## Release blockers
 
-- Bind authenticated identity and canonical NPL persistence through a trusted internal service boundary before adding an HTTP endpoint.
+- The internal orchestrator now loads preferences through the authenticated NPLClient. Before exposing an HTTP endpoint, bind the context user ID only from the authenticated server identity, deploy and verify both internal service credentials/TLS, and use candidate-bound signed NPL evidence when crossing a lower-trust service boundary.
 - Integrate trusted safety/legal providers, calibrated fit evidence, and curated compatibility metadata. Missing evidence correctly yields REVIEW.
 - Add audit receipt persistence, rate limits, observability, privacy/consent controls, checkout revalidation, and gateway integration before endpoint exposure.
 - No real ONNX model, image provider, production preference store, or checkout workflow was added by this increment.
