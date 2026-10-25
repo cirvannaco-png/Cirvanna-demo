@@ -72,7 +72,7 @@ def evaluate_candidate(
     negative_preferences: Sequence[NegativePreference] = (),
     trusted_signals: Sequence[DecisionSignal] = (),
     *,
-    require_fit_confidence: bool = False,
+    require_fit_confidence: bool = True,
     identity_override: DecisionSignal | None = None,
 ) -> CandidateEvaluation:
     """Evaluate one canonical product. Only CAL SHOW permits display.
