@@ -5,6 +5,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any, Mapping
+from catacaci import ArbitrationResult
+from npl import NPLDecision
 
 _CURRENCY = re.compile(r"^[A-Z]{3}$")
 
@@ -168,8 +170,8 @@ class AppearanceContext:
 @dataclass(frozen=True)
 class CandidateEvaluation:
     product: CatalogProduct
-    npl_decision: Any
-    arbitration: Any
+    npl_decision: NPLDecision
+    arbitration: ArbitrationResult
 
     @property
     def may_display(self) -> bool:
