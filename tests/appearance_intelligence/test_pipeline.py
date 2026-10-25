@@ -347,6 +347,35 @@ def test_orchestrator_returns_review_when_canonical_npl_service_is_unavailable()
     assert result.candidates == ()
 
 
+def test_orchestrator_returns_no_look_options_when_npl_service_is_unavailable():
+    apparel = catalog_product(
+        "orchestrated-top", "apparel", price_minor=4000,
+        attributes={"look_compatibility_group": "formal-neutral"},
+    )
+    makeup = catalog_product(
+        "orchestrated-makeup", "makeup", price_minor=1500,
+        attributes={"look_compatibility_group": "formal-neutral"},
+    )
+
+    class CatalogReaderFixture:
+        def fetch_active_catalog(self, *, now=None):
+            return snapshot(apparel, makeup)
+
+    class UnavailablePreferencesReader:
+        def fetch_preferences(self, user_id):
+            raise NPLUnavailable("internal detail intentionally not propagated")
+
+    result = AppearanceOrchestrator(
+        CatalogReaderFixture(), UnavailablePreferencesReader()
+    ).compose_look(
+        AppearanceContext("req-look-npl-down", "user-1", "KES", 7000),
+        bundle_signals=bundle_gates(),
+    )
+    assert result.status is EvaluationStatus.NEEDS_REVIEW
+    assert result.options == ()
+    assert "NPL state is unavailable" in result.notices[0]
+
+
 def test_catalog_client_reads_a_valid_complete_page():
     record = product_record("api-makeup", "makeup", attributes={"finish": "matte"})
     def handler(request: httpx.Request) -> httpx.Response:
