@@ -2,9 +2,10 @@
 
 **Status: executable library slice; no public HTTP route is exposed.**
 
-The read-only adapter consumes the canonical Catalog Service. Domain evaluation lives in
-`packages/appearance-intelligence`. This does not create a new product database, write
-catalog data, or own checkout/payments.
+The read-only adapters consume the canonical Catalog Service and the existing NPL Service.
+Domain evaluation lives in `packages/appearance-intelligence`; the internal application
+wiring lives in `orchestrator.py`. This does not create a new product database, duplicate the
+preference ledger, write catalog data, or own checkout/payments.
 
 ## Included in this increment
 
