@@ -1,8 +1,14 @@
-"""Unittest discovery tests for the governed appearance-specialist slice."""
+"""Small cross-package architecture smoke tests for appearance decision wiring.
+
+Detailed catalog pagination and composer regressions live in
+tests/appearance_intelligence/test_pipeline.py. Keep this file dependency-light
+so the repository-wide unittest architecture job can run without pytest/httpx.
+"""
 from __future__ import annotations
+
 import sys
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -13,144 +19,124 @@ for relative in (
 ):
     sys.path.insert(0, str(ROOT / relative))
 
-from catacaci import ArbitrationRequest, DecisionSignal, DecisionVerdict, SignalKind, SignalState, arbitrate
+from catacaci import DecisionSignal, DecisionVerdict, SignalKind, SignalState
 from npl import NegativePreference, PreferenceSource, TargetType
 from appearance_intelligence import (
-    AppearanceContext, CatalogProduct, CatalogSnapshot, EvaluationStatus,
-    SpecialistId, SPECIALISTS, build_look, run_specialist,
+    AppearanceContext,
+    CatalogProduct,
+    CatalogSnapshot,
+    EvaluationStatus,
+    SpecialistId,
+    SPECIALISTS,
+    run_specialist,
 )
 
 
-def gate(signal_id, kind, confidence=None):
-    return DecisionSignal(
-        signal_id=signal_id, kind=kind, state=SignalState.PASS,
-        reason_code="TEST_PASS", explanation="Explicit trusted test evidence.",
-        confidence=confidence, source_version="test-v1",
-    )
-
-
-def product(product_id, category, price=1500, attributes=None):
+def product(product_id: str, category: str, attributes: dict | None = None) -> CatalogProduct:
     return CatalogProduct.from_mapping({
-        "product_id": product_id, "sku": "SKU-" + product_id.upper(),
-        "name": product_id.title(), "category": category,
-        "price_minor": price, "currency": "KES",
-        "attributes": attributes or {}, "status": "active", "catalog_version": 1,
+        "product_id": product_id,
+        "sku": "SKU-" + product_id.upper(),
+        "name": product_id.replace("-", " ").title(),
+        "category": category,
+        "price_minor": 1500,
+        "currency": "KES",
+        "attributes": attributes or {},
+        "status": "active",
+        "catalog_version": 1,
     })
 
 
-def snap(*items, fetched_at=None, complete=True):
-    return CatalogSnapshot(tuple(items), fetched_at or datetime.now(timezone.utc), complete)
+def snapshot(*products: CatalogProduct) -> CatalogSnapshot:
+    return CatalogSnapshot(tuple(products), datetime.now(timezone.utc), complete=True)
 
 
-def product_gates(product_id, with_fit=False):
-    rows = [gate("safe:" + product_id, SignalKind.SAFETY), gate("legal:" + product_id, SignalKind.LEGAL_ELIGIBILITY)]
-    if with_fit:
-        rows.append(gate("fit:" + product_id, SignalKind.FIT_CONFIDENCE, 0.94))
-    return tuple(rows)
+def trusted_gates(product_id: str, *, fit: bool = False) -> tuple[DecisionSignal, ...]:
+    result = [
+        DecisionSignal(
+            signal_id="safety:" + product_id,
+            kind=SignalKind.SAFETY,
+            state=SignalState.PASS,
+            reason_code="TEST_SAFETY_PASS",
+            explanation="Explicit trusted test evidence.",
+            source_version="architecture-test-v1",
+        ),
+        DecisionSignal(
+            signal_id="legal:" + product_id,
+            kind=SignalKind.LEGAL_ELIGIBILITY,
+            state=SignalState.PASS,
+            reason_code="TEST_LEGAL_PASS",
+            explanation="Explicit trusted test evidence.",
+            source_version="architecture-test-v1",
+        ),
+    ]
+    if fit:
+        result.append(DecisionSignal(
+            signal_id="fit:" + product_id,
+            kind=SignalKind.FIT_CONFIDENCE,
+            state=SignalState.PASS,
+            reason_code="TEST_FIT_PASS",
+            explanation="Explicit calibrated fit fixture.",
+            confidence=0.94,
+            source_version="architecture-test-v1",
+        ))
+    return tuple(result)
 
 
-class AppearanceSpecialistContractTests(unittest.TestCase):
-    def test_all_seven_domains_registered_and_skin_is_not_skincare(self):
+class AppearanceArchitectureSmokeTests(unittest.TestCase):
+    def test_seven_specialists_are_registered_and_skin_analysis_fails_closed(self):
         self.assertEqual(set(SPECIALISTS), set(SpecialistId))
-        self.assertFalse(SPECIALISTS[SpecialistId.SKIN].catalog_matching_available)
-        self.assertTrue(SPECIALISTS[SpecialistId.SKINCARE].catalog_matching_available)
+        result = run_specialist(
+            AppearanceContext("smoke-skin", "user-1"),
+            SpecialistId.SKIN,
+            snapshot(product("cleanser-1", "skincare")),
+            (),
+        )
+        self.assertEqual(result.status, EvaluationStatus.PROVIDER_UNAVAILABLE)
+        self.assertEqual(result.candidates, ())
 
-    def test_makeup_show_requires_trusted_safety_and_legal_gates(self):
-        item = product("makeup-1", "makeup", attributes={"finish": "matte"})
-        context = AppearanceContext("req-1", "user-1", "KES", 2000)
-        result = run_specialist(context, SpecialistId.MAKEUP, snap(item), (), {item.product_id: product_gates(item.product_id)})
-        self.assertEqual(result.candidates[0].arbitration.verdict, DecisionVerdict.SHOW)
-
-    def test_missing_safety_legal_evidence_is_review_not_show(self):
-        item = product("makeup-2", "makeup")
-        result = run_specialist(AppearanceContext("req-2", "user-1"), SpecialistId.MAKEUP, snap(item))
+    def test_missing_npl_state_never_authorizes_makeup_display(self):
+        item = product("makeup-1", "makeup")
+        result = run_specialist(
+            AppearanceContext("smoke-npl", "user-1", "KES", 3000),
+            SpecialistId.MAKEUP,
+            snapshot(item),
+            None,
+            {item.product_id: trusted_gates(item.product_id)},
+        )
         self.assertEqual(result.candidates[0].arbitration.verdict, DecisionVerdict.REVIEW)
         self.assertFalse(result.candidates[0].may_display)
+        self.assertIn("NPL_EVIDENCE_UNAVAILABLE", result.candidates[0].reason_codes)
 
-    def test_npl_hard_negative_forces_cal_block(self):
-        item = product("red-lipstick", "makeup", attributes={"color": "red"})
-        negative = NegativePreference("avoid-red", "user-1", TargetType.ATTRIBUTE, "red", PreferenceSource.USER_DECLARED)
-        result = run_specialist(AppearanceContext("req-3", "user-1"), SpecialistId.MAKEUP, snap(item), (negative,))
+    def test_explicit_npl_negative_blocks_candidate_despite_positive_provider_evidence(self):
+        item = product("red-lipstick", "makeup", {"color": "red"})
+        negative = NegativePreference(
+            "avoid-red",
+            "user-1",
+            TargetType.ATTRIBUTE,
+            "red",
+            PreferenceSource.USER_DECLARED,
+        )
+        result = run_specialist(
+            AppearanceContext("smoke-hard-negative", "user-1", "KES", 3000),
+            SpecialistId.MAKEUP,
+            snapshot(item),
+            (negative,),
+            {item.product_id: trusted_gates(item.product_id)},
+        )
         self.assertTrue(result.candidates[0].npl_decision.blocked)
         self.assertEqual(result.candidates[0].arbitration.verdict, DecisionVerdict.BLOCK)
 
-    def test_footwear_fit_gate_remains_mandatory(self):
-        item = product("shoe-1", "footwear")
-        context = AppearanceContext("req-4", "user-1", "KES", 3000)
-        no_fit = run_specialist(context, SpecialistId.FOOTWEAR, snap(item), (), {item.product_id: product_gates(item.product_id)})
-        with_fit = run_specialist(context, SpecialistId.FOOTWEAR, snap(item), (), {item.product_id: product_gates(item.product_id, True)})
-        self.assertEqual(no_fit.candidates[0].arbitration.verdict, DecisionVerdict.REVIEW)
-        self.assertEqual(with_fit.candidates[0].arbitration.verdict, DecisionVerdict.SHOW)
-
-    def test_skincare_product_matching_runs_while_skin_provider_fails_closed(self):
-        item = product("cleanser-1", "skincare", attributes={"skin_type": "dry"})
-        context = AppearanceContext("req-5", "user-1", "KES", 5000)
-        skincare = run_specialist(context, SpecialistId.SKINCARE, snap(item), (), {item.product_id: product_gates(item.product_id)})
-        skin = run_specialist(context, SpecialistId.SKIN, snap(item))
-        self.assertEqual(skincare.candidates[0].arbitration.verdict, DecisionVerdict.SHOW)
-        self.assertEqual(skin.status, EvaluationStatus.PROVIDER_UNAVAILABLE)
-
-    def test_declared_hard_constraint_mismatch_blocks_and_missing_evidence_reviews(self):
-        context = AppearanceContext("req-6", "user-1", "KES", 3000, hard_constraints={"material": "cotton"})
-        mismatch = product("top-1", "apparel", attributes={"material": "polyester"})
-        blocked = run_specialist(context, SpecialistId.LOOK, snap(mismatch), (), {mismatch.product_id: product_gates(mismatch.product_id, True)})
-        missing = product("top-2", "apparel", attributes={"color": "navy"})
-        review = run_specialist(context, SpecialistId.LOOK, snap(missing), (), {missing.product_id: product_gates(missing.product_id, True)})
-        self.assertEqual(blocked.candidates[0].arbitration.verdict, DecisionVerdict.BLOCK)
-        self.assertEqual(review.candidates[0].arbitration.verdict, DecisionVerdict.REVIEW)
-
-    def test_look_plus_makeup_only_emerges_after_component_and_bundle_show(self):
-        context = AppearanceContext("req-7", "user-1", "KES", 7000)
-        apparel = product("look-top", "apparel", 4000, {"look_compatibility_group": "ceremony-neutral", "color": "navy"})
-        makeup = product("makeup-3", "makeup", 1800, {"look_compatibility_group": "ceremony-neutral", "shade": "rose"})
-        evidence = {
-            apparel.product_id: product_gates(apparel.product_id, True),
-            makeup.product_id: product_gates(makeup.product_id),
-        }
-        bundle_evidence = (
-            gate("bundle-safe", SignalKind.SAFETY),
-            gate("bundle-legal", SignalKind.LEGAL_ELIGIBILITY),
-            gate("bundle-fit", SignalKind.FIT_CONFIDENCE, 0.92),
+    def test_look_stays_fit_strict_without_calibrated_fit_evidence(self):
+        item = product("top-1", "apparel", {"look_compatibility_group": "formal-neutral"})
+        result = run_specialist(
+            AppearanceContext("smoke-fit", "user-1", "KES", 3000),
+            SpecialistId.LOOK,
+            snapshot(item),
+            (),
+            {item.product_id: trusted_gates(item.product_id)},
         )
-        result = build_look(context, snap(apparel, makeup), (), evidence, bundle_signals=bundle_evidence)
-        self.assertEqual(result.status, EvaluationStatus.COMPLETED)
-        self.assertEqual(len(result.options), 1)
-        self.assertEqual(result.options[0].total_price_minor, 5800)
-        self.assertTrue(result.options[0].may_display)
-
-    def test_look_without_bundle_fit_or_compatibility_is_review(self):
-        context = AppearanceContext("req-8", "user-1", "KES", 7000)
-        apparel = product("top-3", "apparel", 4000, {"color": "navy"})
-        makeup = product("makeup-4", "makeup", 1800, {"shade": "rose"})
-        evidence = {
-            apparel.product_id: product_gates(apparel.product_id, True),
-            makeup.product_id: product_gates(makeup.product_id),
-        }
-        result = build_look(context, snap(apparel, makeup), (), evidence)
-        self.assertEqual(result.options, ())
-        self.assertEqual(result.evaluated_bundles[0].arbitration.verdict, DecisionVerdict.REVIEW)
-
-    def test_stale_catalog_snapshot_is_not_used(self):
-        item = product("makeup-5", "makeup")
-        stale = snap(item, fetched_at=datetime.now(timezone.utc) - timedelta(minutes=5))
-        result = run_specialist(AppearanceContext("req-9", "user-1"), SpecialistId.MAKEUP, stale)
-        self.assertEqual(result.status, EvaluationStatus.NEEDS_REVIEW)
-        self.assertEqual(result.candidates, ())
-
-    def test_cal_fit_confidence_is_optional_only_when_profile_explicitly_disables_it(self):
-        required = (
-            SignalKind.SAFETY, SignalKind.LEGAL_ELIGIBILITY, SignalKind.USER_HARD_CONSTRAINT,
-            SignalKind.NPL_HARD_NEGATIVE, SignalKind.CULTURAL_REQUIREMENT,
-            SignalKind.CONTEXT_ELIGIBILITY, SignalKind.IDENTITY_ALIGNMENT,
-        )
-        signals = tuple(gate("pass:" + kind.value, kind) for kind in required)
-        cosmetic = arbitrate(ArbitrationRequest(
-            request_id="req-10", candidate_id="cosmetic-1", signals=signals,
-            required_kinds=required, require_fit_confidence=False,
-        ))
-        physical = arbitrate(ArbitrationRequest(request_id="req-10", candidate_id="shoe-1", signals=signals))
-        self.assertEqual(cosmetic.verdict, DecisionVerdict.SHOW)
-        self.assertEqual(physical.verdict, DecisionVerdict.REVIEW)
+        self.assertEqual(result.candidates[0].arbitration.verdict, DecisionVerdict.REVIEW)
+        self.assertFalse(result.candidates[0].may_display)
 
 
 if __name__ == "__main__":
