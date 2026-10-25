@@ -279,6 +279,22 @@ def test_catalog_snapshot_freshness_uses_read_start_not_read_completion():
     assert not result.is_fresh(datetime.now(timezone.utc), max_age_seconds=120)
 
 
+def test_catalog_client_rejects_page_larger_than_declared_total():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={
+            "items": [
+                product_record("p-1", "makeup"),
+                product_record("p-2", "makeup"),
+            ],
+            "total": 1, "offset": 0, "limit": 100,
+        })
+
+    with httpx.Client(transport=httpx.MockTransport(handler), trust_env=False) as client:
+        adapter = CatalogClient("http://127.0.0.1:8123", "R" * 40, client=client)
+        with pytest.raises(CatalogUnavailable, match="more products than its declared total"):
+            adapter.fetch_active_catalog()
+
+
 def test_catalog_client_rejects_total_changing_mid_pagination():
     def handler(request: httpx.Request) -> httpx.Response:
         offset = int(request.url.params["offset"])
