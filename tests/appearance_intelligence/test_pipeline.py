@@ -4,7 +4,7 @@ import httpx
 import pytest
 from catacaci import ArbitrationRequest, DecisionSignal, DecisionVerdict, SignalKind, SignalState, arbitrate
 from npl import NegativePreference, PreferenceSource, TargetType
-from appearance_intelligence import AppearanceContext, CatalogProduct, CatalogSnapshot, EvaluationStatus, SpecialistId, SPECIALISTS, build_look, run_specialist
+from appearance_intelligence import AppearanceContext, CatalogProduct, CatalogSnapshot, EvaluationStatus, SpecialistId, SPECIALISTS, build_look, evaluate_candidate, run_specialist
 from catalog_client import CatalogClient, CatalogUnavailable
 
 def signal(signal_id: str, kind: SignalKind, state: SignalState = SignalState.PASS, *, confidence: float | None = None) -> DecisionSignal:
@@ -32,6 +32,14 @@ def test_all_seven_specialists_are_registered_and_skincare_is_separate_from_skin
     assert set(SPECIALISTS) == {SpecialistId.HAIR, SpecialistId.FACE, SpecialistId.SKIN, SpecialistId.LOOK, SpecialistId.FOOTWEAR, SpecialistId.MAKEUP, SpecialistId.SKINCARE}
     assert not SPECIALISTS[SpecialistId.SKIN].catalog_matching_available
     assert SPECIALISTS[SpecialistId.SKINCARE].catalog_matching_available
+
+def test_low_level_candidate_evaluation_is_fit_strict_by_default():
+    context = AppearanceContext("req-default-fit", "user-1", "KES", 2000)
+    item = catalog_product("makeup-default-fit", "makeup")
+    candidate = evaluate_candidate(context, item, trusted_signals=product_gates(item.product_id))
+    assert candidate.arbitration.verdict is DecisionVerdict.REVIEW
+    assert "FIT_CONFIDENCE_MISSING" in candidate.reason_codes
+
 
 def test_makeup_candidate_can_show_only_with_trusted_required_gates():
     context = AppearanceContext("req-1", "user-1", "KES", 2000)
