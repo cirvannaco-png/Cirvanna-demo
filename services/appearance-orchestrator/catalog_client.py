@@ -36,6 +36,9 @@ class CatalogClient:
         return cls(os.getenv("CATALOG_BASE_URL", ""), os.getenv("CATALOG_READ_TOKEN", ""))
 
     def fetch_active_catalog(self, *, now: datetime | None = None) -> CatalogSnapshot:
+        # Timestamp the beginning of pagination so a slow multi-page read cannot
+        # make old records appear fresh merely because the final page was slow.
+        snapshot_started_at = now or datetime.now(timezone.utc)
         owned = self._client is None
         client = self._client or httpx.Client(timeout=httpx.Timeout(self._timeout, connect=min(2.0, self._timeout)), trust_env=False, follow_redirects=False)
         products: list[CatalogProduct] = []
@@ -44,7 +47,7 @@ class CatalogClient:
         try:
             while True:
                 try:
-                    response = client.get(self.base_url + "/products", params={"offset": offset, "limit": self.PAGE_SIZE}, headers={"Authorization": "Bearer " + self._token, "Accept": "application/json"})
+                    response = client.get(self.base_url + "/products", params={"status": "active", "offset": offset, "limit": self.PAGE_SIZE}, headers={"Authorization": "Bearer " + self._token, "Accept": "application/json"})
                 except httpx.HTTPError as exc:
                     raise CatalogUnavailable("canonical catalog request failed") from exc
                 if response.status_code != 200:
@@ -84,6 +87,6 @@ class CatalogClient:
             if owned:
                 client.close()
         try:
-            return CatalogSnapshot(tuple(products), now or datetime.now(timezone.utc), complete=True)
+            return CatalogSnapshot(tuple(products), snapshot_started_at, complete=True)
         except (TypeError, ValueError) as exc:
             raise CatalogUnavailable("catalog snapshot failed validation") from exc
