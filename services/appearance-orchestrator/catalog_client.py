@@ -2,8 +2,8 @@
 from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
-from urllib.parse import urlsplit
 import httpx
+from client_security import validate_internal_service_credentials
 from appearance_intelligence.contracts import CatalogProduct, CatalogSnapshot
 
 class CatalogUnavailable(RuntimeError):
@@ -14,20 +14,14 @@ class CatalogClient:
     PAGE_SIZE = 100
 
     def __init__(self, base_url: str, read_token: str, *, timeout_seconds: float = 5.0, max_products: int = 5000, client: httpx.Client | None = None) -> None:
-        if not isinstance(base_url, str) or not base_url.strip():
-            raise ValueError("catalog base URL is required")
-        parts = urlsplit(base_url.strip().rstrip("/"))
-        host = (parts.hostname or "").lower()
-        local = host in {"localhost", "127.0.0.1", "::1"}
-        if not host or parts.username is not None or parts.password is not None or parts.query or parts.fragment or not (parts.scheme == "https" or (parts.scheme == "http" and local)):
-            raise ValueError("catalog URL must use HTTPS; HTTP is allowed only for loopback development")
-        if not isinstance(read_token, str) or len(read_token.encode("utf-8")) < 32:
-            raise ValueError("catalog read token must contain at least 32 bytes")
-        if not isinstance(timeout_seconds, (int, float)) or timeout_seconds <= 0:
+        normalized_url = validate_internal_service_credentials(
+            base_url, read_token, service_name="catalog", token_name="CATALOG_READ_TOKEN"
+        )
+        if not isinstance(timeout_seconds, (int, float)) or isinstance(timeout_seconds, bool) or timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         if isinstance(max_products, bool) or not isinstance(max_products, int) or max_products < 1:
             raise ValueError("max_products must be positive")
-        self.base_url, self._token = base_url.strip().rstrip("/"), read_token
+        self.base_url, self._token = normalized_url, read_token
         self._timeout, self._max_products, self._client = float(timeout_seconds), max_products, client
 
     @classmethod
