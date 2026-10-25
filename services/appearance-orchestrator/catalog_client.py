@@ -1,6 +1,7 @@
 """Authenticated, read-only adapter for the canonical Catalog Service."""
 from __future__ import annotations
 from datetime import datetime, timezone
+from math import isfinite
 from typing import Any
 import httpx
 from client_security import validate_internal_service_credentials
@@ -17,8 +18,13 @@ class CatalogClient:
         normalized_url = validate_internal_service_credentials(
             base_url, read_token, service_name="catalog", token_name="CATALOG_READ_TOKEN"
         )
-        if not isinstance(timeout_seconds, (int, float)) or isinstance(timeout_seconds, bool) or timeout_seconds <= 0:
-            raise ValueError("timeout_seconds must be positive")
+        if (
+            not isinstance(timeout_seconds, (int, float))
+            or isinstance(timeout_seconds, bool)
+            or not isfinite(timeout_seconds)
+            or timeout_seconds <= 0
+        ):
+            raise ValueError("timeout_seconds must be a finite positive number")
         if isinstance(max_products, bool) or not isinstance(max_products, int) or max_products < 1:
             raise ValueError("max_products must be positive")
         self.base_url, self._token = normalized_url, read_token
