@@ -295,6 +295,19 @@ def test_catalog_client_rejects_page_larger_than_declared_total():
             adapter.fetch_active_catalog()
 
 
+def test_catalog_client_rejects_more_items_than_requested_page_size():
+    def handler(request: httpx.Request) -> httpx.Response:
+        items = [product_record(f"p-{i}", "makeup") for i in range(101)]
+        return httpx.Response(200, json={
+            "items": items, "total": 101, "offset": 0, "limit": 100,
+        })
+
+    with httpx.Client(transport=httpx.MockTransport(handler), trust_env=False) as client:
+        adapter = CatalogClient("http://127.0.0.1:8123", "R" * 40, client=client)
+        with pytest.raises(CatalogUnavailable, match="more products than the requested page size"):
+            adapter.fetch_active_catalog()
+
+
 def test_catalog_client_rejects_total_changing_mid_pagination():
     def handler(request: httpx.Request) -> httpx.Response:
         offset = int(request.url.params["offset"])
