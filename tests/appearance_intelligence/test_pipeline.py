@@ -123,6 +123,69 @@ def test_non_fit_cal_profile_does_not_fabricate_fit_confidence_and_default_remai
     assert product_only.verdict is DecisionVerdict.SHOW
     assert default_fit_sensitive.verdict is DecisionVerdict.REVIEW
 
+def test_product_only_profile_ignores_fit_gate_states_but_not_other_required_gates():
+    required = (
+        SignalKind.SAFETY,
+        SignalKind.LEGAL_ELIGIBILITY,
+        SignalKind.USER_HARD_CONSTRAINT,
+        SignalKind.NPL_HARD_NEGATIVE,
+        SignalKind.CULTURAL_REQUIREMENT,
+        SignalKind.CONTEXT_ELIGIBILITY,
+        SignalKind.IDENTITY_ALIGNMENT,
+    )
+    for fit_state in (SignalState.UNKNOWN, SignalState.BLOCK):
+        signals = tuple(signal("pass:" + kind.value, kind) for kind in required)
+        signals += (signal("fit:irrelevant", SignalKind.FIT_CONFIDENCE, fit_state),)
+        result = arbitrate(ArbitrationRequest(
+            request_id="req-product-only-fit-state",
+            candidate_id="cosmetic-1",
+            signals=signals,
+            required_kinds=required + (SignalKind.FIT_CONFIDENCE,),
+            require_fit_confidence=False,
+        ))
+        assert result.verdict is DecisionVerdict.SHOW
+
+
+def test_npl_hard_negative_cannot_be_reintroduced_by_look_composition():
+    context = AppearanceContext("req-npl-bundle", "user-1", "KES", 7000)
+    apparel = catalog_product(
+        "look-top-npl", "apparel", price_minor=4000,
+        attributes={"look_compatibility_group": "formal-neutral"},
+    )
+    rejected_makeup = catalog_product(
+        "blocked-red-makeup", "makeup", price_minor=1500,
+        attributes={"look_compatibility_group": "formal-neutral", "color": "red"},
+    )
+    allowed_makeup = catalog_product(
+        "allowed-rose-makeup", "makeup", price_minor=1200,
+        attributes={"look_compatibility_group": "formal-neutral", "color": "rose"},
+    )
+    negative = NegativePreference(
+        "avoid-red", "user-1", TargetType.ATTRIBUTE, "red",
+        PreferenceSource.USER_DECLARED,
+    )
+    evidence = {
+        apparel.product_id: product_gates(apparel.product_id, include_fit=True),
+        rejected_makeup.product_id: product_gates(rejected_makeup.product_id),
+        allowed_makeup.product_id: product_gates(allowed_makeup.product_id),
+    }
+    result = build_look(
+        context,
+        snapshot(apparel, rejected_makeup, allowed_makeup),
+        (negative,),
+        evidence,
+        bundle_signals=bundle_gates(),
+    )
+    makeup_candidates = result.components[SpecialistId.MAKEUP].candidates
+    rejected = next(c for c in makeup_candidates if c.product.product_id == rejected_makeup.product_id)
+    assert rejected.npl_decision.blocked
+    assert rejected.arbitration.verdict is DecisionVerdict.BLOCK
+    assert result.status is EvaluationStatus.COMPLETED
+    assert len(result.options) == 1
+    assert result.options[0].product_ids == (apparel.product_id, allowed_makeup.product_id)
+    assert all(rejected_makeup.product_id not in option.product_ids for option in result.options)
+
+
 def test_catalog_client_reads_a_valid_complete_page():
     record = product_record("api-makeup", "makeup", attributes={"finish": "matte"})
     def handler(request: httpx.Request) -> httpx.Response:
