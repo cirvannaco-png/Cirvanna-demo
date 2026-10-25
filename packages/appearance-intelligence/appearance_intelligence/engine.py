@@ -69,7 +69,7 @@ def _validated_provider_signals(signals: Sequence[DecisionSignal]) -> tuple[Deci
 def evaluate_candidate(
     context: AppearanceContext,
     product: CatalogProduct,
-    negative_preferences: Sequence[NegativePreference] = (),
+    negative_preferences: Sequence[NegativePreference] | None = None,
     trusted_signals: Sequence[DecisionSignal] = (),
     *,
     require_fit_confidence: bool = True,
@@ -82,14 +82,27 @@ def evaluate_candidate(
     """
     if not isinstance(context, AppearanceContext) or not isinstance(product, CatalogProduct):
         raise ValueError("context and product must use canonical appearance contracts")
-    if not isinstance(negative_preferences, (tuple, list)) or any(not isinstance(p, NegativePreference) for p in negative_preferences):
-        raise ValueError("negative_preferences must contain canonical NPL objects")
+    if negative_preferences is not None and (
+        not isinstance(negative_preferences, (tuple, list))
+        or any(not isinstance(p, NegativePreference) for p in negative_preferences)
+    ):
+        raise ValueError("negative_preferences must be None or contain canonical NPL objects")
+    if negative_preferences is not None and any(
+        preference.user_id != context.user_id for preference in negative_preferences
+    ):
+        raise ValueError("NPL preferences must be scoped to the authenticated context user")
     provider_signals = _validated_provider_signals(trusted_signals)
     if identity_override is not None:
         if not isinstance(identity_override, DecisionSignal) or identity_override.kind is not SignalKind.IDENTITY_ALIGNMENT or identity_override.source_version == "unspecified":
             raise ValueError("identity_override must be a versioned identity-alignment signal")
 
-    npl = evaluate_npl(context.user_id, product.product_id, product.npl_attributes(), tuple(negative_preferences))
+    # None means NPL state was not successfully loaded; an explicit empty
+    # tuple is the trusted result of a successful read with no active preferences.
+    npl = (
+        evaluate_npl(context.user_id, product.product_id, product.npl_attributes(), tuple(negative_preferences))
+        if negative_preferences is not None
+        else None
+    )
     signals: list[DecisionSignal] = list(provider_signals)
     for kind, prefix, explanation in (
         (SignalKind.SAFETY, "safety", "No trusted safety/claims gate evidence was provided."),
@@ -98,13 +111,22 @@ def evaluate_candidate(
         if not any(s.kind is kind for s in signals):
             signals.append(_signal(f"{prefix}:{product.product_id}", kind, SignalState.UNKNOWN, prefix.upper() + "_EVIDENCE_MISSING", explanation, source_version="appearance-intelligence:missing-evidence-v1"))
 
-    signals.append(_signal(
-        f"npl:{product.product_id}", SignalKind.NPL_HARD_NEGATIVE,
-        SignalState.BLOCK if npl.blocked else SignalState.PASS,
-        "NPL_HARD_NEGATIVE" if npl.blocked else "NPL_NO_HARD_VETO",
-        "Canonical NPL matched an active hard exclusion." if npl.blocked else "Canonical NPL found no active hard exclusion.",
-        source_version="npl:" + npl.contract_version,
-    ))
+    if npl is None:
+        signals.append(_signal(
+            f"npl:{product.product_id}", SignalKind.NPL_HARD_NEGATIVE,
+            SignalState.UNKNOWN,
+            "NPL_EVIDENCE_UNAVAILABLE",
+            "The current user's NPL state was not loaded; no display decision is authorized.",
+            source_version="appearance-intelligence:missing-npl-state-v1",
+        ))
+    else:
+        signals.append(_signal(
+            f"npl:{product.product_id}", SignalKind.NPL_HARD_NEGATIVE,
+            SignalState.BLOCK if npl.blocked else SignalState.PASS,
+            "NPL_HARD_NEGATIVE" if npl.blocked else "NPL_NO_HARD_VETO",
+            "Canonical NPL matched an active hard exclusion." if npl.blocked else "Canonical NPL found no active hard exclusion.",
+            source_version="npl:" + npl.contract_version,
+        ))
 
     hard_state, hard_code, hard_explanation = _attribute_constraint_state(product, context.hard_constraints)
     signals.append(_signal(f"hard-constraints:{product.product_id}", SignalKind.USER_HARD_CONSTRAINT, hard_state, hard_code, hard_explanation))
@@ -141,7 +163,7 @@ def run_specialist(
     context: AppearanceContext,
     specialist: SpecialistId | str,
     snapshot: CatalogSnapshot,
-    negative_preferences: Sequence[NegativePreference] = (),
+    negative_preferences: Sequence[NegativePreference] | None = None,
     trusted_signals_by_product: Mapping[str, Sequence[DecisionSignal]] | None = None,
     *,
     now: datetime | None = None,
@@ -161,7 +183,9 @@ def run_specialist(
         return SpecialistResult(descriptor.specialist, EvaluationStatus.NO_CATALOG_CANDIDATES, (), ("No active catalog products matched the specialist's declared category aliases.",))
     evidence = trusted_signals_by_product or {}
     results = tuple(evaluate_candidate(
-        context, p, tuple(negative_preferences), tuple(evidence.get(p.product_id, ())),
+        context, p,
+        None if negative_preferences is None else tuple(negative_preferences),
+        tuple(evidence.get(p.product_id, ())),
         require_fit_confidence=descriptor.requires_fit_confidence,
     ) for p in sorted(matches, key=lambda item: item.product_id))
     notices = (descriptor.description, "Candidates are catalog records, not image analysis or a guarantee of personal suitability.") + descriptor.limits
