@@ -15,6 +15,10 @@ def validate_internal_service_credentials(
         raise ValueError(f"{service_name} base URL is required")
     value = base_url.strip().rstrip("/")
     parts = urlsplit(value)
+    try:
+        _port = parts.port
+    except ValueError as exc:
+        raise ValueError(f"{service_name} URL contains an invalid port") from exc
     host = (parts.hostname or "").lower()
     loopback = host in {"localhost", "127.0.0.1", "::1"}
     if (
