@@ -51,7 +51,7 @@ class NPLClient:
         }
         if not isinstance(raw, dict) or not required.issubset(raw):
             raise NPLUnavailable("NPL service returned an incomplete preference record")
-        if not isinstance(raw["user_id"], str) or raw["user_id"].strip() != expected_user_id:
+        if not isinstance(raw["user_id"], str) or raw["user_id"] != expected_user_id:
             raise NPLUnavailable("NPL service returned preferences outside the requested user scope")
         event_ids = raw["rejection_event_ids"]
         if not isinstance(event_ids, list) or any(not isinstance(item, str) or not item.strip() for item in event_ids):
@@ -67,7 +67,7 @@ class NPLClient:
         try:
             return NegativePreference(
                 preference_id=raw["preference_id"],
-                user_id=raw["user_id"].strip(),
+                user_id=raw["user_id"],
                 target_type=TargetType(raw["target_type"]),
                 target_value=raw["target_value"],
                 source=PreferenceSource(raw["source"]),
