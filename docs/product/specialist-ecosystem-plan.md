@@ -1,22 +1,27 @@
 # Cirvanna Specialist Ecosystem — Architecture and Delivery Plan
 
-- Status: Proposed; implementation and runtime capabilities are not implied
+- Status: Implementation candidate on this branch; CI has not produced a successful execution; no production/storefront certification implied
 - Date: 2026-10-24
 - Target: `cirvannaco-png/Cirvanna-demo`
 - Branch: `feature/specialist-ecosystem-foundation`
 
 ## 1. Product direction
 
-Evolve Cirvanna toward a coordinated personal-appearance intelligence platform. The initial specialist domains are:
+Evolve Cirvanna toward a coordinated personal-appearance intelligence platform. The specialist ecosystem has seven distinct domains (implementation state is recorded in specialist-capability-audit.md):
 
 1. Hair
 2. Face and facial styling
-3. Skin
+3. Skin analysis
 4. Complete look / personal styling
 5. Footwear
 6. Makeup
+7. Skincare (ingredient/routine/product compatibility, distinct from skin analysis)
 
-These are domain capabilities under one product experience, not six independent recommendation engines. The user should be able to request a complete look while retaining control over identity, preferences, budget, occasion, consent, and hard exclusions.
+These are domain capabilities under one product experience, not seven independent recommendation engines. The user should be able to request a complete look while retaining control over identity, preferences, budget, occasion, consent, and hard exclusions.
+
+## 1A. Current implementation boundary
+
+The candidate branch now contains executable Python library code for the seven-domain registry, catalog-backed candidate evaluation, NPL hard-negative enforcement, CAL arbitration, and deterministic Look + Makeup composition. The Catalog Service remains the product source of truth through a read-only adapter. This is not yet a complete storefront integration: no public orchestrator route, preference persistence binding, audit receipt persistence, checkout revalidation, production evidence providers, or validated image/model providers are enabled. The latest GitHub Actions runs terminated before job steps started (no runner was assigned), so this branch has no confirmed green CI result yet. See specialist-capability-audit.md for the exact capability inventory and limits.
 
 ## 2. Non-negotiable architecture rules
 
@@ -69,6 +74,12 @@ Do not treat confidence as policy approval. Missing, stale, unsigned, or contrad
 - Include image-quality checks, uncertainty, consent, and safe escalation for concerning symptoms.
 - Product compatibility requires ingredients and user-declared sensitivities; image analysis alone cannot establish safety.
 
+### Skincare
+- Keep skincare product discovery separate from image-based cosmetic skin analysis.
+- Match routines/products only against verified catalog fields and explicit user declarations (for example, declared skin type, ingredients to avoid, budget, and routine step).
+- Do not infer allergies or ingredient compatibility from an image, and do not guarantee safety without authoritative ingredient evidence and a reviewed compatibility policy.
+- Do not diagnose conditions or prescribe treatment; missing ingredient data or uncertain compatibility must remain unresolved rather than being presented as safe.
+
 ### Look / complete-look composer
 - Orchestrates hair, makeup, clothing, footwear, and accessories for an occasion and budget.
 - Applies cross-category color/style compatibility as explainable evidence, not as a substitute for user preference.
@@ -104,7 +115,8 @@ Provide one entry point such as **Build my look**, with optional specialist cont
 
 - Hair
 - Face
-- Skin
+- Skin analysis
+- Skincare
 - Outfit / Look
 - Shoes
 - Makeup
