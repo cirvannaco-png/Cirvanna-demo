@@ -77,7 +77,7 @@ def _identity_compatibility(products: tuple[CatalogProduct, ...]) -> DecisionSig
 def build_look(
     context: AppearanceContext,
     snapshot: CatalogSnapshot,
-    negative_preferences: Sequence[NegativePreference] = (),
+    negative_preferences: Sequence[NegativePreference] | None = None,
     trusted_signals_by_product: Mapping[str, Sequence[DecisionSignal]] | None = None,
     *,
     bundle_signals: Sequence[DecisionSignal] = (),
@@ -124,7 +124,9 @@ def build_look(
         identity = _identity_compatibility(combo)
         bundle_context = replace(context, hard_constraints={}, preferred_attributes={})
         evaluation = evaluate_candidate(
-            bundle_context, bundle, tuple(negative_preferences), tuple(bundle_signals),
+            bundle_context, bundle,
+            None if negative_preferences is None else tuple(negative_preferences),
+            tuple(bundle_signals),
             require_fit_confidence=True, identity_override=identity,
         )
         bundles.append(evaluation)
