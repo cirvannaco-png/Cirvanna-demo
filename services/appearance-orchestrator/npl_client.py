@@ -1,8 +1,9 @@
 """Authenticated read-only adapter for the canonical NPL preference ledger."""
 from __future__ import annotations
 
+import os
+from math import isfinite
 from typing import Any
-from urllib.parse import urlsplit
 import httpx
 
 from npl import NegativePreference, PreferenceSource, TargetType
@@ -24,8 +25,13 @@ class NPLClient:
         timeout_seconds: float = 5.0,
         client: httpx.Client | None = None,
     ) -> None:
-        if not isinstance(timeout_seconds, (int, float)) or isinstance(timeout_seconds, bool) or timeout_seconds <= 0:
-            raise ValueError("timeout_seconds must be positive")
+        if (
+            not isinstance(timeout_seconds, (int, float))
+            or isinstance(timeout_seconds, bool)
+            or not isfinite(timeout_seconds)
+            or timeout_seconds <= 0
+        ):
+            raise ValueError("timeout_seconds must be a finite positive number")
         self.base_url = validate_internal_service_credentials(
             base_url, service_token, service_name="NPL service", token_name="NPL_SERVICE_TOKEN"
         )
@@ -35,7 +41,6 @@ class NPLClient:
 
     @classmethod
     def from_env(cls) -> "NPLClient":
-        import os
         return cls(os.getenv("NPL_BASE_URL", ""), os.getenv("NPL_SERVICE_TOKEN", ""))
 
     @staticmethod
