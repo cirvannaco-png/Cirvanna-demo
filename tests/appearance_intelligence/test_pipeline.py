@@ -199,11 +199,27 @@ def test_catalog_client_reads_a_valid_complete_page():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/products"
         assert request.headers.get("authorization") == "Bearer " + "R" * 40
+        assert request.url.params["status"] == "active"
         assert request.url.params["offset"] == "0" and request.url.params["limit"] == "100"
         return httpx.Response(200, json={"items": [record], "total": 1, "offset": 0, "limit": 100})
     with httpx.Client(transport=httpx.MockTransport(handler), trust_env=False) as client:
         result = CatalogClient("http://127.0.0.1:8123", "R" * 40, client=client).fetch_active_catalog()
     assert result.complete and len(result.products) == 1 and result.products[0].product_id == "api-makeup"
+
+def test_catalog_snapshot_freshness_uses_read_start_not_read_completion():
+    record = product_record("stamped-makeup", "makeup")
+    read_started = datetime.now(timezone.utc) - timedelta(seconds=200)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"items": [record], "total": 1, "offset": 0, "limit": 100})
+
+    with httpx.Client(transport=httpx.MockTransport(handler), trust_env=False) as client:
+        adapter = CatalogClient("http://127.0.0.1:8123", "R" * 40, client=client)
+        result = adapter.fetch_active_catalog(now=read_started)
+
+    assert result.fetched_at == read_started
+    assert not result.is_fresh(datetime.now(timezone.utc), max_age_seconds=120)
+
 
 def test_catalog_client_rejects_total_changing_mid_pagination():
     def handler(request: httpx.Request) -> httpx.Response:
