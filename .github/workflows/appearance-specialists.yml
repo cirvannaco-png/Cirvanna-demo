@@ -9,6 +9,7 @@ on:
       - "packages/preferences/npl/**"
       - "services/appearance-orchestrator/**"
       - "tests/appearance_intelligence/**"
+      - "tests/architecture/test_appearance_pipeline.py"
       - "docs/product/specialist-capability-audit.md"
       - ".github/workflows/appearance-specialists.yml"
   push:
@@ -19,6 +20,7 @@ on:
       - "packages/preferences/npl/**"
       - "services/appearance-orchestrator/**"
       - "tests/appearance_intelligence/**"
+      - "tests/architecture/test_appearance_pipeline.py"
       - "docs/product/specialist-capability-audit.md"
       - ".github/workflows/appearance-specialists.yml"
   workflow_dispatch:
@@ -40,7 +42,6 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
       - name: Install test/runtime adapter dependency
         run: python -m pip install "httpx>=0.27,<1.0" "pytest>=8,<9"
       - name: Compile implementation and tests
