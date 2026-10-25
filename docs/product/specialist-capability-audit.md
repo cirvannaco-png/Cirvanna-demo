@@ -34,7 +34,7 @@ No canonical Hair, Face, Makeup, Footwear, Skincare, or complete-look specialist
 
 1. The catalog adapter reads authenticated active products from the canonical Catalog Service. Incomplete, duplicate, malformed, over-limit, or mid-pagination-changing reads fail closed; no demo fallback is allowed.
 2. Candidates retain canonical product IDs and catalog attributes. No second product store is introduced.
-3. The canonical NPL kernel evaluates every candidate. A hard negative becomes a CAL hard-veto and cannot be reversed by a specialist.
+3. The canonical NPL kernel evaluates every candidate only when the current user's preference state was successfully loaded. A missing NPL snapshot is UNKNOWN and yields CAL REVIEW; an explicit empty tuple means a trusted read succeeded and found no active preferences. Cross-user preference rows are rejected. A hard negative becomes a CAL hard-veto and cannot be reversed or reintroduced by a specialist/composer.
 4. Safety and legal/eligibility evidence default to UNKNOWN. Trusted server-side providers must explicitly supply PASS.
 5. The CAL product-only profile may omit physical-fit confidence for non-fit-sensitive catalog decisions. It does not invent confidence or waive other required gates. CAL's default remains fit-strict.
 6. Apparel and footwear require fit-confidence signals. A complete look needs component SHOW, bundle-level safety/legal/fit evidence, a same-currency budget check, NPL evaluation, and shared catalog-declared look compatibility metadata.
