@@ -9,8 +9,10 @@ preference ledger, write catalog data, or own checkout/payments.
 
 ## Included in this increment
 
-- Authenticated read-only pagination of `GET /products` with complete-snapshot validation.
-- Seven registered domains: Hair, Face, Skin, Look, Footwear, Makeup, and Skincare.
+- Authenticated read-only pagination of the canonical catalog's `GET /products` endpoint with bounded pagination validation.
+- Authenticated read-only loading of the current user's preference records from the canonical NPL Service.
+- Internal application methods that wire catalog + NPL reads into specialist evaluation and Look + Makeup composition.
+- Seven registered domains: Hair, Face, Skin analysis, Look, Footwear, Makeup, and Skincare.
 - Canonical NPL hard-negative enforcement and CaTaCaCi/CAL arbitration.
 - `SHOW` is the only display authorization. `BLOCK` and `REVIEW` remain non-displayable.
 - Look + Makeup composition uses catalog-declared compatibility metadata and re-arbitrates the bundle total and bundle-level evidence.
