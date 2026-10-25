@@ -19,7 +19,7 @@ catalog data, or own checkout/payments.
 - Hair/face image inference, virtual makeup, virtual try-on, stock/availability, size/comfort prediction, and model ranking are unavailable.
 - Skin reports `provider_unavailable` until DermalSight has a validated model artifact and signed validation report.
 - Skincare does catalog metadata matching only; it does not diagnose, prescribe treatment, or guarantee ingredient safety.
-- Safety/legal/fit signals and NPL rows must come from trusted server-side providers. They must never be client-supplied.
+- Safety/legal/fit signals and NPL rows must come from trusted server-side providers. They must never be client-supplied. An omitted NPL snapshot is UNKNOWN and forces CAL REVIEW; pass an explicit empty preference tuple only after the canonical NPL store successfully confirms there are no active preferences for that user. Cross-user rows are rejected.
 - There is intentionally no public endpoint until trusted identity, NPL persistence, evidence provenance, rate limiting, audit receipts, and checkout revalidation are wired through the gateway.
 
 ## Configuration
