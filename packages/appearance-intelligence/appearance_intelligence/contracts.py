@@ -170,7 +170,7 @@ class AppearanceContext:
 @dataclass(frozen=True)
 class CandidateEvaluation:
     product: CatalogProduct
-    npl_decision: NPLDecision
+    npl_decision: NPLDecision | None
     arbitration: ArbitrationResult
 
     @property
