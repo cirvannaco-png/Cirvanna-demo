@@ -192,6 +192,10 @@ def arbitrate(request: ArbitrationRequest) -> ArbitrationResult:
     non_veto_blocks = [
         signal for signal in signals
         if signal.state is SignalState.BLOCK
+        and (
+            request.require_fit_confidence
+            or signal.kind is not SignalKind.FIT_CONFIDENCE
+        )
     ]
     if non_veto_blocks:
         return _result(request, DecisionVerdict.REVIEW, [
@@ -223,6 +227,10 @@ def arbitrate(request: ArbitrationRequest) -> ArbitrationResult:
         signal for signal in signals
         if (signal.required or signal.kind in required_kinds)
         and signal.state is SignalState.UNKNOWN
+        and (
+            request.require_fit_confidence
+            or signal.kind is not SignalKind.FIT_CONFIDENCE
+        )
     ]
     if unknown_required:
         reasons = [
