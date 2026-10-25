@@ -100,7 +100,7 @@ Do not treat confidence as policy approval. Missing, stale, unsigned, or contrad
 
 1. Obtain user intent, preferences, budget, context, and required consent.
 2. Retrieve candidates from the canonical catalog and relevant profile/wardrobe services.
-3. Apply eligibility, consent, declared cultural constraints, and NPL hard negatives.
+3. Load the authenticated user's canonical NPL state; missing or cross-user state fails closed. Apply eligibility, consent, declared cultural constraints, and NPL hard negatives.
 4. Request evidence from only the specialists required by the task.
 5. Validate contract versions, provenance, freshness, and evidence completeness.
 6. Compose candidates and cross-category compatibility evidence.
