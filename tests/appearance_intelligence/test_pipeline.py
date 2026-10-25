@@ -136,6 +136,33 @@ def test_look_plus_makeup_composes_only_after_component_and_bundle_show():
     assert result.options[0].total_price_minor == 5800
     assert result.options[0].product_ids == ("look-top", "makeup-3")
 
+def test_look_composition_does_not_authorize_display_when_npl_snapshot_is_missing():
+    context = AppearanceContext("req-look-npl-missing", "user-1", "KES", 7000)
+    apparel = catalog_product(
+        "look-top-missing-npl", "apparel", price_minor=4000,
+        attributes={"look_compatibility_group": "formal-neutral"},
+    )
+    makeup = catalog_product(
+        "look-makeup-missing-npl", "makeup", price_minor=1500,
+        attributes={"look_compatibility_group": "formal-neutral"},
+    )
+    evidence = {
+        apparel.product_id: product_gates(apparel.product_id, include_fit=True),
+        makeup.product_id: product_gates(makeup.product_id),
+    }
+    result = build_look(
+        context, snapshot(apparel, makeup),
+        trusted_signals_by_product=evidence, bundle_signals=bundle_gates(),
+    )
+    assert result.status is EvaluationStatus.NEEDS_REVIEW
+    assert result.options == ()
+    assert all(
+        not candidate.may_display
+        for component in result.components.values()
+        for candidate in component.candidates
+    )
+
+
 def test_bundle_without_compatibility_or_bundle_evidence_never_shows():
     context = AppearanceContext("req-8", "user-1", "KES", 7000)
     apparel = catalog_product("look-top-2", "apparel", price_minor=4000, attributes={"color": "navy"})
