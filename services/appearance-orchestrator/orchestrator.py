@@ -42,8 +42,8 @@ class AppearanceOrchestrator:
         catalog: CatalogReader | None = None,
         preferences: PreferenceReader | None = None,
     ) -> None:
-        self._catalog = catalog or CatalogClient.from_env()
-        self._preferences = preferences or NPLClient.from_env()
+        self._catalog = CatalogClient.from_env() if catalog is None else catalog
+        self._preferences = NPLClient.from_env() if preferences is None else preferences
 
     @staticmethod
     def _review_specialist(specialist: SpecialistId, notice: str) -> SpecialistResult:
