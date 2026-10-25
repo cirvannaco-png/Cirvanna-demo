@@ -36,7 +36,7 @@ def test_all_seven_specialists_are_registered_and_skincare_is_separate_from_skin
 def test_low_level_candidate_evaluation_is_fit_strict_by_default():
     context = AppearanceContext("req-default-fit", "user-1", "KES", 2000)
     item = catalog_product("makeup-default-fit", "makeup")
-    candidate = evaluate_candidate(context, item, trusted_signals=product_gates(item.product_id))
+    candidate = evaluate_candidate(context, item, negative_preferences=(), trusted_signals=product_gates(item.product_id))
     assert candidate.arbitration.verdict is DecisionVerdict.REVIEW
     assert "FIT_CONFIDENCE_MISSING" in candidate.reason_codes
 
@@ -57,6 +57,37 @@ def test_missing_safety_or_legal_evidence_fails_closed_to_review():
     assert candidate.arbitration.verdict is DecisionVerdict.REVIEW
     assert not candidate.may_display
     assert {"SAFETY_EVIDENCE_MISSING", "LEGAL_EVIDENCE_MISSING"}.issubset(set(candidate.reason_codes))
+
+def test_missing_npl_state_reviews_but_verified_empty_state_can_show():
+    context = AppearanceContext("req-npl-missing", "user-1", "KES", 2000)
+    item = catalog_product("makeup-npl-state", "makeup")
+    evidence = {item.product_id: product_gates(item.product_id)}
+
+    unavailable = run_specialist(
+        context, SpecialistId.MAKEUP, snapshot(item),
+        trusted_signals_by_product=evidence,
+    ).candidates[0]
+    assert unavailable.arbitration.verdict is DecisionVerdict.REVIEW
+    assert "NPL_EVIDENCE_UNAVAILABLE" in unavailable.reason_codes
+    assert not unavailable.may_display
+
+    verified_empty = run_specialist(
+        context, SpecialistId.MAKEUP, snapshot(item), (),
+        evidence,
+    ).candidates[0]
+    assert verified_empty.arbitration.verdict is DecisionVerdict.SHOW
+
+
+def test_cross_user_npl_rows_are_rejected_at_the_appearance_boundary():
+    context = AppearanceContext("req-npl-user-scope", "user-1")
+    item = catalog_product("makeup-user-scope", "makeup")
+    foreign = NegativePreference(
+        "foreign-preference", "user-2", TargetType.ATTRIBUTE, "red",
+        PreferenceSource.USER_DECLARED,
+    )
+    with pytest.raises(ValueError, match="scoped to the authenticated context user"):
+        run_specialist(context, SpecialistId.MAKEUP, snapshot(item), (foreign,))
+
 
 def test_npl_hard_negative_blocks_before_missing_gates():
     context = AppearanceContext("req-3", "user-1")
