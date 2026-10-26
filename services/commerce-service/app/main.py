@@ -37,7 +37,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 
 
 SERVICE = "cirvanna-commerce-service"
-EXPECTED_SCHEMA_REVISION = "20261019_0002"
+EXPECTED_SCHEMA_REVISION = "20261024_0003"
 MAX_QTY = 50
 RESERVATION_MINUTES = 60
 SKU_RE = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,79}$")
@@ -215,6 +215,21 @@ class PaymentWebhookEvent(Base):
     event_id: Mapped[str] = mapped_column(String(180), primary_key=True)
     event_type: Mapped[str] = mapped_column(String(120), nullable=False)
     processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+
+
+class CALDecisionAudit(Base):
+    __tablename__ = "commerce_cal_decision_audits"
+    audit_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    order_id: Mapped[str | None] = mapped_column(ForeignKey("commerce_orders.id", ondelete="SET NULL"), nullable=True, index=True)
+    buyer_user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    candidate_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    catalog_product_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    decision: Mapped[str] = mapped_column(String(24), nullable=False)
+    request_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    policy_version: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    reason_code: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    receipt: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
 
 
 class Actor(BaseModel):
@@ -554,6 +569,8 @@ class Readiness(BaseModel):
     authentication_mode: str
     catalog_configured: bool
     payment_configured: bool
+    cal_gateway_configured: bool
+    cal_gateway_ready: bool
     migrations_required: bool
     migrations_applied: bool
     schema_revision: str | None
@@ -774,6 +791,13 @@ def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
 
     auth_ok = _authentication_configured()
     catalog_ok = bool(os.getenv("CATALOG_API_URL") and os.getenv("CATALOG_API_TOKEN"))
+    cal_url = os.getenv("COMMERCE_CAL_GATEWAY_URL", "").strip()
+    cal_token = os.getenv("COMMERCE_CAL_GATEWAY_TOKEN", "").strip()
+    cal_parts = urlsplit(cal_url)
+    cal_host = (cal_parts.hostname or "").lower()
+    cal_local = cal_host in {"localhost", "127.0.0.1", "::1"}
+    cal_ok = bool(cal_host and len(cal_token.encode("utf-8")) >= 32 and cal_parts.username is None and cal_parts.password is None and not cal_parts.query and not cal_parts.fragment and (cal_parts.scheme == "https" or (cal_parts.scheme == "http" and cal_local)))
+    cal_ready = _cal_gateway_ready(cal_url, cal_token) if cal_ok else False
     payment_ok = StripeGateway().ready
     migrations_applied = schema_revision == EXPECTED_SCHEMA_REVISION
     ready = (
@@ -782,12 +806,14 @@ def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
         and auth_ok
         and catalog_ok
         and payment_ok
+        and cal_ok
+        and cal_ready
         and (not migrations_required or migrations_applied)
     )
     result = Readiness(status="ready" if ready else "not_ready", service=SERVICE,
         database_connected=connected, schema_present=schema_present,
         authentication_configured=auth_ok, authentication_mode=_commerce_auth_mode(),
-        catalog_configured=catalog_ok, payment_configured=payment_ok, migrations_required=migrations_required,
+        catalog_configured=catalog_ok, payment_configured=payment_ok, cal_gateway_configured=cal_ok, cal_gateway_ready=cal_ready, migrations_required=migrations_required,
         migrations_applied=migrations_applied, schema_revision=schema_revision, ready=ready)
     if not ready:
         raise HTTPException(503, detail=result.model_dump())
@@ -800,7 +826,7 @@ def capabilities() -> dict[str, Any]:
         "idempotent_orders": True, "stripe_hosted_checkout": StripeGateway().ready,
         "verified_payment_webhooks": bool(os.getenv("STRIPE_WEBHOOK_SECRET")),
         "automated_seller_payouts": False, "shipping_tax_calculation": False,
-        "catacaci_eligibility": False, "click_it_reconstruction": False,
+        "catacaci_eligibility": bool(os.getenv("COMMERCE_CAL_GATEWAY_URL") and len(os.getenv("COMMERCE_CAL_GATEWAY_TOKEN", "").encode("utf-8")) >= 32), "cal_decision_audit_persistence": "commerce_cal_decision_audits" in set(inspect(engine).get_table_names()), "click_it_reconstruction": False,
         "virtual_twin_generation": False, "virtual_try_on": False}
 
 
@@ -1050,6 +1076,82 @@ def remove_cart_item(variant_id: uuid.UUID, actor: Annotated[Actor, Depends(requ
     return cart_json(db, cart)
 
 
+def _cal_gateway_ready(raw: str, token: str) -> bool:
+    try:
+        with httpx.Client(timeout=httpx.Timeout(3.0, connect=1.5), trust_env=False, follow_redirects=False) as client:
+            response = client.get(raw.rstrip("/") + "/ready", headers={"Authorization": "Bearer " + token, "Accept": "application/json"})
+        if response.status_code != 200:
+            return False
+        data = response.json()
+        return isinstance(data, dict) and data.get("ready") is True
+    except (httpx.HTTPError, ValueError):
+        return False
+
+
+def _authorize_cal_candidate(user_id: str, candidate_id: str, catalog_product_id: str) -> dict[str, Any]:
+    raw = os.getenv("COMMERCE_CAL_GATEWAY_URL", "").strip()
+    token = os.getenv("COMMERCE_CAL_GATEWAY_TOKEN", "").strip()
+    parts = urlsplit(raw)
+    host = (parts.hostname or "").lower()
+    local = host in {"localhost", "127.0.0.1", "::1"}
+    if not raw or len(token.encode("utf-8")) < 32 or not host or parts.username is not None or parts.password is not None or parts.query or parts.fragment or (parts.scheme != "https" and not (parts.scheme == "http" and local)):
+        raise HTTPException(503, detail={"code": "CAL_GATEWAY_NOT_CONFIGURED_OR_UNTRUSTED"})
+    try:
+        with httpx.Client(timeout=httpx.Timeout(5.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+            response = client.post(raw.rstrip("/") + "/internal/cal/authorize",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json={"subject_id": user_id, "candidate_id": candidate_id, "catalog_product_id": catalog_product_id})
+    except httpx.TimeoutException as exc:
+        raise HTTPException(503, detail={"code": "CAL_REVALIDATION_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "CAL_REVALIDATION_UNAVAILABLE"}) from exc
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "CAL_REVALIDATION_UNAVAILABLE", "upstream_status": response.status_code})
+    try:
+        receipt = response.json()
+    except ValueError as exc:
+        raise HTTPException(503, detail={"code": "CAL_REVALIDATION_INVALID_RESPONSE"}) from exc
+    if (not isinstance(receipt, dict) or receipt.get("subject_id") != user_id
+            or receipt.get("candidate_id") != candidate_id
+            or receipt.get("catalog_product_id") != catalog_product_id):
+        raise HTTPException(503, detail={"code": "CAL_REVALIDATION_BINDING_MISMATCH"})
+    if receipt.get("decision") != "SHOW" or receipt.get("may_display") is not True:
+        raise HTTPException(409, detail={"code": "CAL_REVALIDATION_DENIED", "reason_code": receipt.get("reason_code", "NO_SHOW")})
+    if not isinstance(receipt.get("request_id"), str) or not receipt["request_id"].strip() or not isinstance(receipt.get("policy_version"), str) or not receipt["policy_version"].strip():
+        raise HTTPException(503, detail={"code": "CAL_REVALIDATION_RECEIPT_INCOMPLETE"})
+    return receipt
+
+
+def _cal_audit_row(user_id: str, candidate_id: str, catalog_product_id: str, receipt: dict[str, Any] | None, decision: str, reason_code: str | None = None, order_id: str | None = None) -> CALDecisionAudit:
+    receipt = receipt if isinstance(receipt, dict) else {}
+    return CALDecisionAudit(
+        audit_id=str(uuid.uuid4()), order_id=order_id, buyer_user_id=user_id, candidate_id=candidate_id,
+        catalog_product_id=catalog_product_id, decision=decision, request_id=receipt.get("request_id"), policy_version=receipt.get("policy_version"),
+        reason_code=reason_code, receipt=receipt,
+    )
+
+
+def _revalidate_cal_candidates(db: Session, user_id: str, candidates: list[tuple[str, str]], order_id: str | None = None, persist_success: bool = False) -> list[CALDecisionAudit]:
+    audits: list[CALDecisionAudit] = []
+    for candidate_id, catalog_product_id in candidates:
+        try:
+            receipt = _authorize_cal_candidate(user_id, candidate_id, catalog_product_id)
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            code = detail.get("code", "CAL_REVALIDATION_FAILED")
+            audits.append(_cal_audit_row(user_id, candidate_id, catalog_product_id, None,
+                "NO_SHOW" if exc.status_code == 409 else "UNAVAILABLE", str(code), order_id))
+            db.add_all(audits)
+            db.commit()
+            raise HTTPException(409 if exc.status_code == 409 else 503,
+                detail={"code": "CAL_REVALIDATION_FAILED", "reason_code": str(code)}) from exc
+        audits.append(_cal_audit_row(user_id, candidate_id, catalog_product_id, receipt, "SHOW", None, order_id))
+    if persist_success:
+        db.add_all(audits)
+        db.commit()
+    return audits
+
+
 @app.post("/checkout", status_code=201)
 def checkout(actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Session, Depends(get_db)],
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=255)]):
@@ -1058,6 +1160,10 @@ def checkout(actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Sess
         raise HTTPException(503, detail={"code": "PAYMENT_PROVIDER_NOT_CONFIGURED"})
     existing = db.scalar(select(CommerceOrder).where(CommerceOrder.buyer_user_id == actor.user_id, CommerceOrder.idempotency_key == idempotency_key))
     if existing:
+        prior_items = list(db.scalars(select(OrderItem).where(OrderItem.order_id == existing.id)).all())
+        if not prior_items:
+            raise HTTPException(409, detail={"code": "ORDER_ITEMS_MISSING"})
+        _revalidate_cal_candidates(db, actor.user_id, [(item.variant_id, item.catalog_product_id) for item in prior_items], order_id=existing.id, persist_success=True)
         return persist_stripe_session(db, existing.id, actor.email, gateway)
     cart = ensure_cart(db, actor.user_id)
     rows = db.execute(select(CartItem, Variant, Listing, Merchant)
@@ -1069,6 +1175,9 @@ def checkout(actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Sess
         raise HTTPException(422, detail={"code": "INVALID_CART_ITEMS"})
     if any(v.state != "active" or l.state != "active" or m.state != "approved" for _, v, l, m in rows):
         raise HTTPException(409, detail={"code": "CART_CONTAINS_UNAVAILABLE_OFFERS"})
+    # Revalidate every exact purchasable variant immediately before order/stock
+    # reservation. Catalog identity is separately bound for trusted metadata lookup.
+    cal_audits = _revalidate_cal_candidates(db, actor.user_id, [(variant.id, listing.catalog_product_id) for _, variant, listing, _ in rows])
     currencies = {v.currency for _, v, _, _ in rows}
     if len(currencies) != 1:
         raise HTTPException(422, detail={"code": "MIXED_CURRENCY_CART"})
@@ -1100,6 +1209,9 @@ def checkout(actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Sess
                 delta=0, reason=f"reserve:{order.order_number}:qty={ci.quantity}"))
         db.add(order)
         db.flush()
+        for audit in cal_audits:
+            audit.order_id = order.id
+        db.add_all(cal_audits)
         db.commit()
     except HTTPException:
         db.rollback()

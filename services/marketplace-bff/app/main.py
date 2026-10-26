@@ -6,6 +6,7 @@ fabricates decision, fit, Click It, Virtual Twin, or try-on outputs.
 """
 from __future__ import annotations
 
+import hmac
 import os
 import re
 from pathlib import Path
@@ -15,6 +16,8 @@ import httpx
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
+
+from app.governance import govern_candidates
 
 SERVICE = "cirvanna-marketplace-bff"
 ROOT = Path(__file__).resolve().parents[3]
@@ -85,12 +88,47 @@ def _upstream_ready(base: str) -> bool:
         return False
 
 
+async def _verified_user_id(request: Request) -> tuple[str, str]:
+    """Resolve the actor from Commerce's verified /me endpoint, never from browser input."""
+    authorization = request.headers.get("authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise HTTPException(401, detail={"code": "USER_BEARER_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
+    base = _upstream_base("COMMERCE_API_URL")
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(TIMEOUT_SECONDS), trust_env=False, follow_redirects=False) as client:
+            response = await client.get(base + "/me", headers={"Authorization": "Bearer " + token, "Accept": "application/json"})
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "USER_IDENTITY_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "USER_IDENTITY_UNAVAILABLE"}) from exc
+    if response.status_code in {401, 403}:
+        raise HTTPException(401, detail={"code": "USER_AUTHENTICATION_FAILED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "USER_IDENTITY_UNAVAILABLE"})
+    try:
+        actor = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "INVALID_USER_IDENTITY_RESPONSE"}) from exc
+    user_id = actor.get("user_id") if isinstance(actor, dict) else None
+    if not isinstance(user_id, str) or not user_id.strip():
+        raise HTTPException(502, detail={"code": "INVALID_USER_IDENTITY_RESPONSE"})
+    return user_id.strip(), token
+
+
 def _internal_service(url_key: str, token_key: str) -> tuple[str, str]:
     base = _upstream_base(url_key)
     token = os.getenv(token_key, "").strip()
     if len(token.encode("utf-8")) < 32:
         raise HTTPException(status_code=503, detail={"code": f"{token_key}_NOT_CONFIGURED"})
     return base, token
+
+
+class InternalCALAuthorizationIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    subject_id: str = Field(min_length=1, max_length=128)
+    candidate_id: str = Field(min_length=1, max_length=128)
+    catalog_product_id: str = Field(min_length=1, max_length=128)
 
 
 class MarketplaceSearchIn(BaseModel):
@@ -141,22 +179,20 @@ async def _safe_json_post(
 
 
 @app.post("/api/vision/marketplace-search")
-async def marketplace_description_search(payload: MarketplaceSearchIn) -> dict:
-    """Search marketplace candidates by description without exposing Xari credentials."""
+async def marketplace_description_search(request: Request, payload: MarketplaceSearchIn) -> dict:
+    """Run Xari retrieval, then expose only candidates authorized by canonical CAL."""
+    user_id, _user_token = await _verified_user_id(request)
     base, token = _internal_service("XARI_API_URL", "XARI_API_TOKEN")
     request_body = {"query": payload.normalized_query, "limit": payload.limit}
     if payload.category and payload.category.strip():
         request_body["category"] = payload.category.strip()
     data = await _safe_json_post(base, "/v1/marketplace/search", token, request_body)
-    # This endpoint intentionally forwards candidates separately from display authorization.
+    governed = await govern_candidates(user_id, data["candidates"])
     return {
         "status": "complete",
         "query": payload.normalized_query,
-        "candidate_count": data.get("candidate_count", len(data["candidates"])),
-        "candidates": data["candidates"],
-        "display_authorized": data.get("display_authorized") is True,
-        "decision_status": data.get("decision_status", "PENDING_CAL"),
-        "scores_are_probabilities": False,
+        "user_id": user_id,
+        **governed,
     }
 
 
@@ -250,7 +286,20 @@ async def marketplace_click_it(
     except ValueError as exc:
         raise HTTPException(502, detail={"code": "CLICK_IT_INVALID_RESPONSE"}) from exc
     if response.status_code == 200 and isinstance(data, dict):
-        return JSONResponse(content=data, headers={"Cache-Control": "no-store, private"})
+        candidates = data.get("candidates")
+        if not isinstance(candidates, list):
+            raise HTTPException(502, detail={"code": "CLICK_IT_INVALID_RESPONSE"})
+        # Ignore upstream display flags; evaluate every candidate against fresh,
+        # subject-bound evidence and the canonical CAL response.
+        governed = await govern_candidates(subject_id.strip(), candidates)
+        return JSONResponse(
+            content={
+                "status": "complete",
+                **governed,
+                "image_persisted": data.get("image_persisted") is False,
+            },
+            headers={"Cache-Control": "no-store, private"},
+        )
     detail = data.get("detail", {}) if isinstance(data, dict) else {}
     code = detail.get("code") if isinstance(detail, dict) else None
     safe = {"code": code if isinstance(code, str) else "CLICK_IT_REQUEST_FAILED"}
@@ -289,24 +338,77 @@ def health() -> dict[str, str]:
     return {"status": "alive", "service": SERVICE}
 
 
+@app.post("/internal/cal/authorize")
+async def internal_cal_authorize(request: Request, payload: InternalCALAuthorizationIn) -> dict:
+    """Private service-to-service transaction-time revalidation endpoint."""
+    expected = os.getenv("CAL_GATEWAY_SERVICE_TOKEN", "").strip()
+    scheme, _, supplied = request.headers.get("authorization", "").partition(" ")
+    if len(expected.encode("utf-8")) < 32:
+        raise HTTPException(503, detail={"code": "CAL_GATEWAY_SERVICE_TOKEN_NOT_CONFIGURED"})
+    if scheme.lower() != "bearer" or not supplied or not hmac.compare_digest(supplied, expected):
+        raise HTTPException(401, detail={"code": "CAL_GATEWAY_AUTH_FAILED"})
+    if not UUID_RE.fullmatch(payload.catalog_product_id.strip()):
+        raise HTTPException(422, detail={"code": "CANONICAL_CATALOG_PRODUCT_ID_REQUIRED"})
+    governed = await govern_candidates(payload.subject_id.strip(), [{
+        "candidate_id": payload.candidate_id.strip(),
+        "catalog_product_id": payload.catalog_product_id.strip(),
+    }])
+    candidates = governed.get("candidates")
+    if not isinstance(candidates, list) or len(candidates) != 1:
+        return {"subject_id": payload.subject_id.strip(), "candidate_id": payload.candidate_id.strip(), "catalog_product_id": payload.catalog_product_id.strip(),
+                "decision": "NO_SHOW", "may_display": False, "reason_code": governed.get("governance_status", "CAL_NO_SHOW")}
+    returned_candidate = candidates[0]
+    if (returned_candidate.get("candidate_id") != payload.candidate_id.strip()
+            or returned_candidate.get("catalog_product_id") != payload.catalog_product_id.strip()):
+        return {"subject_id": payload.subject_id.strip(), "candidate_id": payload.candidate_id.strip(),
+                "catalog_product_id": payload.catalog_product_id.strip(), "decision": "NO_SHOW",
+                "may_display": False, "reason_code": "CAL_CANDIDATE_BINDING_MISMATCH"}
+    receipt = returned_candidate.get("cal_decision")
+    if not isinstance(receipt, dict) or receipt.get("verdict") != "SHOW" or receipt.get("may_display") is not True:
+        return {"subject_id": payload.subject_id.strip(), "candidate_id": payload.candidate_id.strip(), "catalog_product_id": payload.catalog_product_id.strip(),
+                "decision": "NO_SHOW", "may_display": False, "reason_code": "CAL_RECEIPT_INVALID"}
+    return {"subject_id": payload.subject_id.strip(), "candidate_id": payload.candidate_id.strip(), "catalog_product_id": payload.catalog_product_id.strip(),
+            "decision": "SHOW", "may_display": True, "request_id": receipt.get("request_id"),
+            "policy_version": receipt.get("policy_version")}
+
+
 @app.get("/ready")
 def readiness() -> dict:
     catalog_configured = bool(os.getenv("CATALOG_API_URL"))
     commerce_configured = bool(os.getenv("COMMERCE_API_URL"))
+    evidence_url_configured = bool(os.getenv("GOVERNANCE_EVIDENCE_API_URL"))
+    evidence_token_configured = len(os.getenv("GOVERNANCE_EVIDENCE_API_TOKEN", "").encode("utf-8")) >= 32
+    decision_url_configured = bool(os.getenv("DECISION_SERVICE_API_URL"))
+    decision_token_configured = len(os.getenv("DECISION_SERVICE_TOKEN", "").encode("utf-8")) >= 32
+    cal_gateway_token_configured = len(os.getenv("CAL_GATEWAY_SERVICE_TOKEN", "").encode("utf-8")) >= 32
     catalog_ready = False
     commerce_ready = False
-    try:
-        catalog_base = _upstream_base("CATALOG_API_URL")
-        if catalog_configured:
-            catalog_ready = _upstream_ready(catalog_base)
-    except HTTPException:
-        catalog_ready = False
-    try:
-        commerce_base = _upstream_base("COMMERCE_API_URL")
-        commerce_ready = _upstream_ready(commerce_base)
-    except HTTPException:
-        commerce_ready = False
-    ready = catalog_configured and commerce_configured and catalog_ready and commerce_ready
+    evidence_ready = False
+    decision_ready = False
+    for env_key, configured, assign in (
+        ("CATALOG_API_URL", catalog_configured, "catalog"),
+        ("COMMERCE_API_URL", commerce_configured, "commerce"),
+        ("GOVERNANCE_EVIDENCE_API_URL", evidence_url_configured and evidence_token_configured, "evidence"),
+        ("DECISION_SERVICE_API_URL", decision_url_configured and decision_token_configured, "decision"),
+    ):
+        try:
+            upstream_ready = _upstream_ready(_upstream_base(env_key)) if configured else False
+        except HTTPException:
+            upstream_ready = False
+        if assign == "catalog":
+            catalog_ready = upstream_ready
+        elif assign == "commerce":
+            commerce_ready = upstream_ready
+        elif assign == "evidence":
+            evidence_ready = upstream_ready
+        else:
+            decision_ready = upstream_ready
+    ready = (
+        catalog_configured and commerce_configured and catalog_ready and commerce_ready
+        and evidence_url_configured and evidence_token_configured and evidence_ready
+        and decision_url_configured and decision_token_configured and decision_ready
+        and cal_gateway_token_configured
+    )
     result = {
         "status": "ready" if ready else "not_ready",
         "service": SERVICE,
@@ -314,6 +416,13 @@ def readiness() -> dict:
         "catalog_ready": catalog_ready,
         "commerce_url_configured": commerce_configured,
         "commerce_ready": commerce_ready,
+        "governance_evidence_url_configured": evidence_url_configured,
+        "governance_evidence_auth_configured": evidence_token_configured,
+        "governance_evidence_ready": evidence_ready,
+        "decision_service_url_configured": decision_url_configured,
+        "decision_service_auth_configured": decision_token_configured,
+        "decision_service_ready": decision_ready,
+        "cal_gateway_service_auth_configured": cal_gateway_token_configured,
         "ready": ready,
     }
     if not ready:
@@ -328,48 +437,60 @@ def marketplace_page() -> HTMLResponse:
 
 
 @app.get("/api/commerce/marketplace/offers")
-def public_offers(
+async def public_offers(
+    request: Request,
     q: str | None = Query(default=None, max_length=160),
     category: str | None = Query(default=None, max_length=80),
     currency: str | None = Query(default=None, min_length=3, max_length=3),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=MAX_PAGE_SIZE),
 ) -> dict:
-    """Expose only Commerce's active, approved, in-stock merchant offers."""
+    """Return only offers that received an exact, candidate-bound CAL SHOW decision."""
+    user_id, _user_token = await _verified_user_id(request)
     base = _upstream_base("COMMERCE_API_URL")
     params: dict[str, str | int] = {"offset": offset, "limit": limit}
-    if q and q.strip():
-        params["q"] = q.strip()
-    if category and category.strip():
-        params["category"] = category.strip()
-    if currency and currency.strip():
-        params["currency"] = currency.strip().upper()
+    for key, value in (("q", q), ("category", category), ("currency", currency)):
+        if value and value.strip():
+            params[key] = value.strip()
     try:
-        response = httpx.get(
-            base + "/marketplace/offers",
-            params=params,
-            headers={"Accept": "application/json"},
-            timeout=TIMEOUT_SECONDS,
-            follow_redirects=False,
-        )
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(TIMEOUT_SECONDS), trust_env=False, follow_redirects=False
+        ) as client:
+            upstream = await client.get(
+                base + "/marketplace/offers",
+                params=params,
+                headers={"Accept": "application/json"},
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "COMMERCE_OFFERS_TIMEOUT"}) from exc
     except httpx.HTTPError as exc:
-        raise HTTPException(status_code=503, detail={"code": "COMMERCE_OFFERS_UNAVAILABLE"}) from exc
-    if response.status_code != 200:
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "COMMERCE_OFFERS_UNAVAILABLE", "upstream_status": response.status_code},
-        )
+        raise HTTPException(503, detail={"code": "COMMERCE_OFFERS_UNAVAILABLE"}) from exc
+    if upstream.status_code != 200:
+        raise HTTPException(503, detail={"code": "COMMERCE_OFFERS_UNAVAILABLE"})
     try:
-        payload = response.json()
+        payload = upstream.json()
     except ValueError as exc:
-        raise HTTPException(status_code=502, detail={"code": "INVALID_COMMERCE_RESPONSE"}) from exc
-    if not (
-        isinstance(payload, dict)
-        and isinstance(payload.get("items"), list)
-        and isinstance(payload.get("total"), int)
+        raise HTTPException(502, detail={"code": "COMMERCE_OFFERS_INVALID_RESPONSE"}) from exc
+    if (
+        not isinstance(payload, dict)
+        or not isinstance(payload.get("items"), list)
+        or not isinstance(payload.get("total"), int)
     ):
-        raise HTTPException(status_code=502, detail={"code": "INVALID_COMMERCE_RESPONSE"})
-    return payload
+        raise HTTPException(502, detail={"code": "COMMERCE_OFFERS_INVALID_RESPONSE"})
+    governed = await govern_candidates(user_id, payload["items"])
+    if governed["governance_status"] == "CAL_GATE_NOT_CONNECTED":
+        raise HTTPException(
+            503,
+            detail={"code": "CAL_GOVERNANCE_NOT_ENFORCED", "retryable": True},
+        )
+    return {
+        **governed,
+        "items": governed["candidates"],
+        "candidates": governed["candidates"],
+        "total": payload["total"],
+        "offset": offset,
+        "limit": limit,
+    }
 
 
 def _authorized_commerce_path(method: str, path: str) -> bool:

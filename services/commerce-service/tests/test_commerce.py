@@ -64,6 +64,8 @@ def client(monkeypatch):
     monkeypatch.delenv("COMMERCE_JWT_JWKS_URL", raising=False)
     monkeypatch.delenv("COMMERCE_JWT_ROLE_CLAIM", raising=False)
     monkeypatch.setenv("COMMERCE_AUTO_CREATE_SCHEMA", "true")
+    monkeypatch.delenv("COMMERCE_CAL_GATEWAY_URL", raising=False)
+    monkeypatch.delenv("COMMERCE_CAL_GATEWAY_TOKEN", raising=False)
     monkeypatch.delenv("CATALOG_API_URL", raising=False)
     monkeypatch.delenv("CATALOG_API_TOKEN", raising=False)
     monkeypatch.delenv("STRIPE_SECRET_KEY", raising=False)
@@ -134,6 +136,13 @@ def sign_stripe_event(raw: bytes, secret: str) -> str:
 
 
 def configure_stripe(monkeypatch, *, session_id="cs_test_checkout_1"):
+    monkeypatch.setenv("COMMERCE_CAL_GATEWAY_URL", "https://cal-gateway.example.test")
+    monkeypatch.setenv("COMMERCE_CAL_GATEWAY_TOKEN", "test-cal-gateway-token-at-least-32-bytes")
+    monkeypatch.setattr(main, "_authorize_cal_candidate", lambda user_id, candidate_id, catalog_product_id: {
+        "subject_id": user_id, "candidate_id": candidate_id, "catalog_product_id": catalog_product_id,
+        "decision": "SHOW", "may_display": True,
+        "request_id": "test-cal-request-" + candidate_id, "policy_version": "test-policy-v1"
+    })
     monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_unit_testing_only")
     monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_test_unit_only_secret")
     monkeypatch.setenv("COMMERCE_CHECKOUT_SUCCESS_URL", "https://shop.example.test/success")
@@ -158,8 +167,11 @@ def test_health_capabilities_and_readiness_fail_closed(client):
 
 
 def test_readiness_requires_current_migration_before_production_ready(client, monkeypatch):
+    monkeypatch.setattr(main, "_cal_gateway_ready", lambda _url, _token: True)
     monkeypatch.setenv("COMMERCE_AUTO_CREATE_SCHEMA", "false")
     monkeypatch.setenv("CATALOG_API_URL", "https://catalog.example.test")
+    monkeypatch.setenv("COMMERCE_CAL_GATEWAY_URL", "https://cal-gateway.example.test")
+    monkeypatch.setenv("COMMERCE_CAL_GATEWAY_TOKEN", "test-cal-gateway-token-at-least-32-bytes")
     monkeypatch.setenv("CATALOG_API_TOKEN", "catalog-test-token")
     configure_stripe(monkeypatch)
 
@@ -178,7 +190,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
         ))
         connection.execute(
             text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
-            {"revision": "20261019_0002"},
+            {"revision": "20261024_0003"},
         )
 
     ready = client.get("/ready")
@@ -191,7 +203,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
     assert payload["payment_configured"] is True
     assert payload["migrations_required"] is True
     assert payload["migrations_applied"] is True
-    assert payload["schema_revision"] == "20261019_0002"
+    assert payload["schema_revision"] == "20261024_0003"
     assert payload["ready"] is True
 
 
@@ -410,6 +422,11 @@ def test_checkout_reserves_stock_idempotently_and_only_signed_paid_webhook_settl
     assert order["status"] == "pending_payment"
     assert order["subtotal_minor"] == 500
     assert order["commission_minor"] == 15
+    audits = TEST_SESSION().query(main.CALDecisionAudit).filter_by(order_id=order["order_id"]).all()
+    assert len(audits) == 1 and audits[0].decision == "SHOW"
+    assert audits[0].candidate_id == offer["variant_id"]
+    assert audits[0].catalog_product_id == offer["catalog_product_id"]
+    assert audits[0].request_id == "test-cal-request-" + offer["variant_id"]
     v = row(main.Variant, offer["variant_id"])
     assert v.on_hand == 8 and v.reserved_qty == 2
 
@@ -434,6 +451,30 @@ def test_checkout_reserves_stock_idempotently_and_only_signed_paid_webhook_settl
     assert client.get("/cart", headers=buyer).json()["items"] == []
     replay = client.post("/webhooks/stripe", content=raw, headers={"Stripe-Signature": sig, "Content-Type": "application/json"})
     assert replay.status_code == 200 and replay.json()["duplicate"] is True
+
+
+
+def test_checkout_fails_closed_and_persists_denial_audit_when_cal_unavailable(client, monkeypatch):
+    offer = seed_offer(stock=2)
+    buyer = auth("buyer-cal-denied")
+    assert client.post("/cart/items", json={"variant_id": offer["variant_id"], "quantity": 1}, headers=buyer).status_code == 201
+    configure_stripe(monkeypatch)
+    def unavailable(_user_id, _candidate_id, _catalog_product_id):
+        raise main.HTTPException(503, detail={"code": "CAL_REVALIDATION_UNAVAILABLE"})
+    monkeypatch.setattr(main, "_authorize_cal_candidate", unavailable)
+    response = client.post("/checkout", headers={**buyer, "Idempotency-Key": "checkout-cal-unavailable-01"})
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "CAL_REVALIDATION_FAILED"
+    db = TEST_SESSION()
+    try:
+        assert db.query(main.CommerceOrder).count() == 0
+        audit = db.query(main.CALDecisionAudit).one()
+        assert audit.decision == "UNAVAILABLE"
+        assert audit.reason_code == "CAL_REVALIDATION_UNAVAILABLE"
+        assert audit.order_id is None
+    finally:
+        db.close()
+    assert row(main.Variant, offer["variant_id"]).reserved_qty == 0
 
 
 def test_stripe_webhook_rejects_invalid_signature_and_amount_mismatch(client, monkeypatch):

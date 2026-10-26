@@ -1,0 +1,35 @@
+name: Governance evidence provider tests
+on:
+  push:
+    branches: [main, "feature/**", "engineering/**"]
+    paths:
+      - "services/governance-evidence-provider/**"
+      - ".github/workflows/governance-evidence-provider.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "services/governance-evidence-provider/**"
+      - ".github/workflows/governance-evidence-provider.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  evidence-provider:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: services/governance-evidence-provider
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/governance-evidence-provider/requirements.txt
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt pytest
+      - name: Compile service and tests
+        run: python -m compileall -q app tests
+      - name: Run provider contract and fail-closed tests
+        run: python -m pytest -q

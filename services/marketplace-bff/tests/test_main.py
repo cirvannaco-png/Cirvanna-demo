@@ -38,23 +38,54 @@ def test_page_bootstraps_same_origin_live_offers_not_demo_data(client):
     assert response.headers["referrer-policy"] == "no-referrer"
 
 
-def test_public_offers_are_proxied_without_exposing_catalog_credentials(client, monkeypatch):
+def test_public_offers_fail_closed_until_cal_governance_is_configured(client, monkeypatch):
     configure_upstreams(monkeypatch)
-    seen = {}
+    monkeypatch.delenv("GOVERNANCE_EVIDENCE_API_URL", raising=False)
+    monkeypatch.delenv("GOVERNANCE_EVIDENCE_API_TOKEN", raising=False)
+    monkeypatch.delenv("DECISION_SERVICE_API_URL", raising=False)
+    monkeypatch.delenv("DECISION_SERVICE_TOKEN", raising=False)
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42"}),
+        FakeResponse({"items": [{"variant_id": "v-1", "product_name": "linen shirt"}], "total": 1, "offset": 20, "limit": 10}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get(
+        "/api/commerce/marketplace/offers?q=linen&category=Fashion&offset=20&limit=10",
+        headers={"Authorization": "Bearer signed-user-token"},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "CAL_GOVERNANCE_NOT_ENFORCED"
+    assert "linen shirt" not in response.text
+    assert [call[1] for call in fake.calls] == [
+        "https://commerce.example.test/me",
+        "https://commerce.example.test/marketplace/offers",
+    ]
 
-    def fake_get(url, **kwargs):
-        seen["url"] = url
-        seen.update(kwargs)
-        return FakeResponse({"items": [{"variant_id": "v1"}], "total": 1, "offset": 0, "limit": 20})
 
-    monkeypatch.setattr(main.httpx, "get", fake_get)
-    response = client.get("/api/commerce/marketplace/offers?q=linen&category=Fashion&offset=20&limit=10")
-    assert response.status_code == 200
-    assert response.json()["total"] == 1
-    assert seen["url"] == "https://commerce.example.test/marketplace/offers"
-    assert seen["params"] == {"offset": 20, "limit": 10, "q": "linen", "category": "Fashion"}
-    assert "Authorization" not in seen["headers"]
-    assert "catalog-server-only-test-token" not in response.text
+@pytest.mark.parametrize("path,method", [
+    ("/api/commerce/cart", "GET"),
+    ("/api/commerce/cart/items", "POST"),
+    ("/api/commerce/cart/items/123e4567-e89b-42d3-a456-426614174000", "PATCH"),
+    ("/api/commerce/saved-products", "GET"),
+    ("/api/commerce/saved-products/123e4567-e89b-42d3-a456-426614174000", "DELETE"),
+    ("/api/commerce/orders", "GET"),
+    ("/api/commerce/orders/123e4567-e89b-42d3-a456-426614174000", "GET"),
+    ("/api/commerce/checkout", "POST"),
+])
+def test_customer_account_and_checkout_routes_forward_to_commerce(client, monkeypatch, path, method):
+    configure_upstreams(monkeypatch)
+    calls = []
+    def fake_request(*args, **kwargs):
+        calls.append((args, kwargs))
+        return FakeResponse({"ok": True})
+    monkeypatch.setattr(main.httpx, "request", fake_request)
+    response = client.request(method, path, headers={"Authorization": "Bearer signed-user-token", "Idempotency-Key": "checkout-test-key"}, json={} if method == "POST" else None)
+    assert response.status_code == 200, response.text
+    assert len(calls) == 1
+    assert calls[0][0][0] == method
+    assert calls[0][0][1] == "https://commerce.example.test/" + path.removeprefix("/api/commerce/")
+    assert calls[0][1]["headers"]["Authorization"] == "Bearer signed-user-token"
+    assert "cookie" not in {key.lower() for key in calls[0][1]["headers"]}
 
 
 def test_account_proxy_requires_bearer_and_blocks_admin_routes(client, monkeypatch):
@@ -67,17 +98,10 @@ def test_account_proxy_requires_bearer_and_blocks_admin_routes(client, monkeypat
     assert calls == []
 
 
-def test_account_proxy_forwards_only_allowlisted_headers_and_bearer(client, monkeypatch):
+def test_checkout_proxy_forwards_to_commerce_for_transaction_time_cal_revalidation(client, monkeypatch):
     configure_upstreams(monkeypatch)
-    seen = {}
-
-    def fake_request(method, url, **kwargs):
-        seen["method"] = method
-        seen["url"] = url
-        seen.update(kwargs)
-        return FakeResponse({"order_id": "order-123"}, status_code=201)
-
-    monkeypatch.setattr(main.httpx, "request", fake_request)
+    seen = []
+    monkeypatch.setattr(main.httpx, "request", lambda *args, **kwargs: seen.append((args, kwargs)) or FakeResponse({"checkout": "handled-by-commerce"}))
     response = client.post(
         "/api/commerce/checkout",
         headers={
@@ -88,25 +112,37 @@ def test_account_proxy_forwards_only_allowlisted_headers_and_bearer(client, monk
         },
         json={"confirm": True},
     )
-    assert response.status_code == 201
-    assert seen["method"] == "POST"
-    assert seen["url"] == "https://commerce.example.test/checkout"
-    assert seen["headers"]["Authorization"] == "Bearer user-session-token"
-    assert seen["headers"]["idempotency-key"] == "checkout-test-key"
-    assert "cookie" not in seen["headers"]
-    assert "follow_redirects" in seen and seen["follow_redirects"] is False
+    assert response.status_code == 200
+    assert response.json()["checkout"] == "handled-by-commerce"
+    assert len(seen) == 1
+    assert seen[0][1]["headers"]["Authorization"] == "Bearer user-session-token"
+    assert seen[0][1]["headers"]["Idempotency-Key"] == "checkout-test-key"
+    assert "cookie" not in {key.lower() for key in seen[0][1]["headers"]}
 
 
-def test_readiness_fails_closed_until_both_upstreams_are_ready(client, monkeypatch):
+def test_readiness_requires_catalog_commerce_and_cal_services(client, monkeypatch):
     configure_upstreams(monkeypatch)
-    monkeypatch.delenv("CATALOG_API_TOKEN", raising=False)
     monkeypatch.setattr(main.httpx, "get", lambda *args, **kwargs: FakeResponse({"ready": True}))
+
+    # Catalog and Commerce alone must never make the purchase-governance BFF ready.
+    missing_cal = client.get("/ready")
+    assert missing_cal.status_code == 503
+    assert missing_cal.json()["detail"]["ready"] is False
+    assert missing_cal.json()["detail"]["catalog_ready"] is True
+    assert missing_cal.json()["detail"]["commerce_ready"] is True
+    assert missing_cal.json()["detail"]["governance_evidence_ready"] is False
+    assert missing_cal.json()["detail"]["decision_service_ready"] is False
+
+    monkeypatch.setenv("GOVERNANCE_EVIDENCE_API_URL", "https://evidence.example.test")
+    monkeypatch.setenv("GOVERNANCE_EVIDENCE_API_TOKEN", "evidence-service-token-at-least-thirty-two-bytes")
+    monkeypatch.setenv("DECISION_SERVICE_API_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_SERVICE_TOKEN", "decision-service-token-at-least-thirty-two-bytes")
+    monkeypatch.setenv("CAL_GATEWAY_SERVICE_TOKEN", "internal-cal-service-token-at-least-thirty-two-bytes")
     ready = client.get("/ready")
     assert ready.status_code == 200
     assert ready.json()["ready"] is True
-    assert ready.json()["catalog_ready"] is True
-    assert ready.json()["catalog_url_configured"] is True
-    assert ready.json()["commerce_ready"] is True
+    assert ready.json()["governance_evidence_ready"] is True
+    assert ready.json()["decision_service_ready"] is True
 
     monkeypatch.setattr(main.httpx, "get", lambda *args, **kwargs: FakeResponse({"ready": False}, status_code=503))
     pending = client.get("/ready")
@@ -116,7 +152,10 @@ def test_readiness_fails_closed_until_both_upstreams_are_ready(client, monkeypat
 
 def test_external_upstream_must_use_https(client, monkeypatch):
     monkeypatch.setenv("COMMERCE_API_URL", "http://commerce.example.test")
-    response = client.get("/api/commerce/marketplace/offers")
+    response = client.get(
+        "/api/commerce/marketplace/offers",
+        headers={"Authorization": "Bearer signed-user-token"},
+    )
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "COMMERCE_API_URL_MUST_BE_TRUSTED_HTTPS"
 
@@ -140,35 +179,46 @@ class FakeAsyncClient:
         return self.responses.pop(0)
 
 
-def test_description_search_fails_closed_without_xari_secret(client, monkeypatch):
+def test_description_search_requires_verified_user_before_upstream_access(client, monkeypatch):
     monkeypatch.delenv("XARI_API_URL", raising=False)
     monkeypatch.delenv("XARI_API_TOKEN", raising=False)
     response = client.post("/api/vision/marketplace-search", json={"query": "blue linen summer dress"})
-    assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "XARI_API_URL_NOT_CONFIGURED"
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "USER_BEARER_REQUIRED"
 
 
 def test_description_search_forwards_to_xari_and_keeps_candidates_pending_cal(client, monkeypatch):
     monkeypatch.setenv("XARI_API_URL", "https://xari.example.test")
     monkeypatch.setenv("XARI_API_TOKEN", "xari-internal-token-at-least-thirty-two-bytes")
-    fake = FakeAsyncClient([FakeResponse({
-        "status": "complete",
-        "query": "green linen dress",
-        "candidate_count": 2,
-        "candidates": [{"variant_id": "offer-1", "product_name": "green dress"}],
-        "display_authorized": False,
-        "decision_status": "PENDING_CAL",
-        "scores_are_probabilities": False,
-    })])
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer", "email": None}),
+        FakeResponse({
+            "status": "complete",
+            "query": "green linen dress",
+            "candidate_count": 2,
+            "candidates": [{"variant_id": "offer-1", "product_name": "green dress"}],
+            "display_authorized": True,
+            "decision_status": "SHOW",
+            "scores_are_probabilities": False,
+        }),
+    ])
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.post("/api/vision/marketplace-search", json={"query": " green   linen dress ", "limit": 5})
+    assert response.status_code == 401
+    response = client.post("/api/vision/marketplace-search", headers={"Authorization": "Bearer signed-user-token"}, json={"query": " green   linen dress ", "limit": 5})
     assert response.status_code == 200, response.text
     data = response.json()
-    assert data["candidate_count"] == 2
+    assert data["candidate_count"] == 0
+    assert data["candidates"] == []
     assert data["display_authorized"] is False
     assert data["decision_status"] == "PENDING_CAL"
-    assert fake.calls[0][1] == "https://xari.example.test/v1/marketplace/search"
-    assert fake.calls[0][2]["json"]["query"] == "green linen dress"
+    assert data["governance_status"] == "CAL_GATE_NOT_CONNECTED"
+    assert "offer-1" not in response.text
+    assert "green dress" not in response.text
+    assert fake.calls[0][1] == "https://commerce.example.test/me"
+    assert fake.calls[1][1] == "https://xari.example.test/v1/marketplace/search"
+    assert fake.calls[1][2]["json"]["query"] == "green linen dress"
+    assert data["user_id"] == "signed-user-42"
     assert "Authorization" not in response.text
 
 
@@ -196,8 +246,9 @@ def test_click_it_uses_verified_commerce_subject_and_returns_only_pending_candid
             "status": "complete",
             "candidates": [{"variant_id": "variant-3", "product_name": "linen shirt"}],
             "candidate_count": 1,
-            "display_authorized": False,
-            "decision_status": "PENDING_CAL",
+            "display_authorized": True,
+            "decision_status": "SHOW",
+            "candidates": [{"variant_id": "variant-3", "product_name": "linen shirt"}],
             "image_persisted": False,
         }),
     ])
@@ -215,7 +266,11 @@ def test_click_it_uses_verified_commerce_subject_and_returns_only_pending_candid
     assert response.status_code == 200, response.text
     assert response.headers["cache-control"] == "no-store, private"
     assert response.json()["display_authorized"] is False
-    assert response.json()["candidates"][0]["variant_id"] == "variant-3"
+    assert response.json()["candidates"] == []
+    assert response.json()["decision_status"] == "PENDING_CAL"
+    assert response.json()["governance_status"] == "CAL_GATE_NOT_CONNECTED"
+    assert "variant-3" not in response.text
+    assert "linen shirt" not in response.text
     assert len(fake.calls) == 2
     assert fake.calls[0][1] == "https://commerce.example.test/me"
     assert fake.calls[1][1] == "https://virtual-twin.example.test/click-it"
@@ -252,3 +307,11 @@ def test_marketplace_ui_has_xari_description_search_and_mobile_click_it_capture(
     assert 'fetch("/api/vision/click-it"' in response.text
     assert "display_authorized===true" in response.text
     assert "PENDING_CAL" in response.text
+    assert 'cal_decision.verdict==="SHOW"' in response.text
+    assert 'config.userToken)headers.Authorization="Bearer "+config.userToken' in response.text
+    assert 'id="savedBtn" disabled' in response.text
+    assert 'id="cartBtn" disabled' in response.text
+    assert "config.commerceBase" not in response.text
+    assert 'config.base+"/products"' not in response.text
+    assert "Radiant Skin Serum" not in response.text
+    assert 'fetch(config.commerceBase+"/checkout"' not in response.text

@@ -135,6 +135,7 @@ def test_create_normalizes_sku_and_records_initial_version(client):
     assert product["catalog_version"] == 1
     assert product["status"] == "active"
     assert product["attributes"]["shade"] == "rose"
+    assert product["attributes_complete"] is False
 
     history = client.get(
         f"/products/{product['product_id']}/versions", headers=auth_headers()
@@ -169,6 +170,21 @@ def test_invalid_currency_and_non_http_image_url_are_rejected(client):
         json=product_payload(sku="GLOW-002", image_urls=["javascript:alert(1)"]),
     )
     assert response.status_code == 422
+
+
+def test_attribute_completeness_requires_explicit_attestation(client):
+    product = create_product(client, sku="GLOW-COMPLETE")
+    assert product["attributes_complete"] is False
+    response = client.patch(
+        f"/products/{product['product_id']}?expected_version=1",
+        headers=auth_headers(),
+        json={"attributes_complete": True},
+    )
+    assert response.status_code == 200
+    assert response.json()["attributes_complete"] is True
+    assert response.json()["catalog_version"] == 2
+    history = client.get(f"/products/{product['product_id']}/versions", headers=auth_headers()).json()
+    assert history[-1]["snapshot"]["attributes_complete"] is True
 
 
 def test_patch_increments_version_and_rejects_stale_writer(client):
@@ -282,7 +298,7 @@ def test_readiness_requires_current_migration_and_auth_config(client, monkeypatc
         ))
         connection.execute(
             text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
-            {"revision": "20261018_0001"},
+            {"revision": "20261024_0002"},
         )
 
     ready = client.get("/ready")
@@ -291,7 +307,7 @@ def test_readiness_requires_current_migration_and_auth_config(client, monkeypatc
     assert ready.json()["schema_present"] is True
     assert ready.json()["migrations_required"] is True
     assert ready.json()["migrations_applied"] is True
-    assert ready.json()["schema_revision"] == "20261018_0001"
+    assert ready.json()["schema_revision"] == "20261024_0002"
     assert ready.json()["authentication_configured"] is True
     assert ready.json()["ready"] is True
 

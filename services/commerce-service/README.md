@@ -43,6 +43,7 @@ Set these in a secret manager; never commit real secrets.
 - COMMERCE_JWT_ROLE_CLAIM: claim containing customer, merchant, or admin; defaults to role. The identity provider must control this claim and grant merchant/admin roles only to authorized accounts.
 - COMMERCE_JWT_SECRET: minimum 32 bytes for local HS256 mode only; it is not a production authentication mechanism.
 - CATALOG_API_URL and CATALOG_API_TOKEN: server-side canonical-catalog lookup. In production, CATALOG_API_TOKEN must equal Catalog's CATALOG_READ_TOKEN; never configure Catalog's write token here. Non-local URLs must use HTTPS.
+- COMMERCE_CAL_GATEWAY_URL and COMMERCE_CAL_GATEWAY_TOKEN: private Marketplace BFF CAL authorization endpoint and shared service token (at least 32 bytes). Checkout fails closed unless each canonical catalog product receives a fresh candidate/user-bound `SHOW` receipt. Apply migration `20261024_0003_cal_decision_audit.py` before production-like rollout.
 - COMMERCE_CORS_ORIGINS: optional comma-separated exact frontend origins. No wildcard is used.
 - STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET: Stripe Checkout and webhook signing secrets; validate with test-mode keys.
 - COMMERCE_CHECKOUT_SUCCESS_URL and COMMERCE_CHECKOUT_CANCEL_URL: trusted HTTPS destinations.
@@ -81,4 +82,5 @@ This repository does not issue login sessions or manage the user lifecycle. Conn
 - Configure a non-production catalog and verify real TLS, credentials and CORS from the intended origin.
 - Configure Stripe test mode and exercise real test payment, expiry, retry, webhook replay and reconciliation. This service currently charges item subtotal only; shipping/tax computation is not implemented.
 - Seller payouts/Connect onboarding, refunds/returns, fulfillment, fraud/rate limits, reconciliation dashboards, retention/deletion and alerting are not implemented.
-- CaTaCaCi eligibility, Click It reconstruction, Virtual Twin and try-on remain explicitly unavailable until real adapters/models are integrated and independently validated.
+- Checkout now calls the private CAL gateway per product and persists decision receipts in `commerce_cal_decision_audits` linked to the order transaction. This is implementation code only: do not enable a production purchase path until the evidence provider, user context/USI sources and calibrated fit provider are deployed, migration applied, and the full staging browse-to-webhook path passes.
+- Click It reconstruction, Virtual Twin and try-on remain explicitly unavailable until real adapters/models are integrated and independently validated.

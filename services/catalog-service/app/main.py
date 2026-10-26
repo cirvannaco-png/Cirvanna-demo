@@ -20,6 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import (
+    Boolean,
     JSON,
     DateTime,
     ForeignKey,
@@ -41,7 +42,7 @@ from starlette import status
 
 
 SERVICE_NAME = "cirvanna-catalog-service"
-EXPECTED_SCHEMA_REVISION = "20261018_0001"
+EXPECTED_SCHEMA_REVISION = "20261024_0002"
 MAX_PAGE_SIZE = 100
 MAX_IMAGE_URLS = 20
 MAX_ATTRIBUTES = 100
@@ -88,6 +89,7 @@ class Product(Base):
     price_minor: Mapped[int] = mapped_column(Integer, nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     attributes: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    attributes_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     image_urls: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active", index=True)
     catalog_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
@@ -169,6 +171,7 @@ class ProductCreate(BaseModel):
     price_minor: int = Field(ge=0, le=2_000_000_000, description="Price in the smallest currency unit, such as cents.")
     currency: str = Field(min_length=3, max_length=3)
     attributes: dict[str, Any] = Field(default_factory=dict)
+    attributes_complete: bool = False
     image_urls: list[str] = Field(default_factory=list)
 
     @field_validator("sku")
@@ -208,6 +211,7 @@ class ProductPatch(BaseModel):
     price_minor: int | None = Field(default=None, ge=0, le=2_000_000_000)
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     attributes: dict[str, Any] | None = None
+    attributes_complete: bool | None = None
     image_urls: list[str] | None = None
     status: Literal["active", "archived"] | None = None
 
@@ -249,6 +253,7 @@ class ProductOut(BaseModel):
     price_minor: int
     currency: str
     attributes: dict[str, Any]
+    attributes_complete: bool
     image_urls: list[str]
     status: Literal["active", "archived"]
     catalog_version: int
@@ -369,6 +374,7 @@ def _snapshot(product: Product) -> dict[str, Any]:
         "price_minor": product.price_minor,
         "currency": product.currency,
         "attributes": product.attributes,
+        "attributes_complete": product.attributes_complete,
         "image_urls": product.image_urls,
         "status": product.status,
         "catalog_version": product.catalog_version,
@@ -511,6 +517,7 @@ def create_product(payload: ProductCreate, db: Annotated[Session, Depends(get_db
         price_minor=payload.price_minor,
         currency=payload.currency,
         attributes=payload.attributes,
+        attributes_complete=payload.attributes_complete,
         image_urls=payload.image_urls,
         status="active",
         catalog_version=1,
