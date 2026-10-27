@@ -74,6 +74,18 @@ try {
   const context = await browser.newContext({ permissions: ["camera"] });
   const page = await context.newPage();
   page.on("pageerror", (error) => pageErrors.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") pageErrors.push("console: " + message.text());
+  });
+  await page.addInitScript(() => {
+    window.__cspViolations = [];
+    document.addEventListener("securitypolicyviolation", (event) => {
+      window.__cspViolations.push({
+        directive: event.violatedDirective,
+        blockedURI: event.blockedURI,
+      });
+    });
+  });
   page.on("request", (request) => {
     const url = new URL(request.url());
     if (!["blob:", "data:"].includes(url.protocol) && url.origin !== origin) {
@@ -87,13 +99,13 @@ try {
   assert.ok(initialCsp?.includes("worker-src 'self'"));
 
   await page.getByRole("button", { name: "Use camera" }).click();
-  await page.waitForFunction(() => document.querySelector("#status")?.textContent.includes("Camera is active"), { timeout: 15000 });
+  await page.waitForFunction(() => document.querySelector("#status")?.textContent.includes("Camera is active"), null, { timeout: 15000 });
   await page.locator("#ar-consent").check();
   await page.getByRole("button", { name: "Start on-device try-on" }).click();
   await page.waitForFunction(() => {
     const value = document.querySelector("#ar-status")?.textContent ?? "";
     return value.includes("Local face and hair models are ready") || value.includes("Could not load the local models") || value.includes("local vision worker failed");
-  }, { timeout: 90000 });
+  }, null, { timeout: 90000 });
   const initializationStatus = await page.locator("#ar-status").innerText();
   assert.match(initializationStatus, /Local face and hair models are ready/, "Local model initialization failed: " + initializationStatus);
 
@@ -105,8 +117,10 @@ try {
   await page.getByRole("button", { name: "Stop tracking" }).click();
   await page.waitForFunction(() => (document.querySelector("#ar-status")?.textContent ?? "").includes("On-device face tracking is stopped"));
 
+  const cspViolations = await page.evaluate(() => window.__cspViolations ?? []);
   assert.deepEqual(externalRequests, [], "Unexpected cross-origin network request(s): " + externalRequests.join(", "));
-  assert.deepEqual(pageErrors, [], "Unexpected browser page errors: " + pageErrors.join(" | "));
+  assert.deepEqual(cspViolations, [], "Unexpected CSP violation(s): " + JSON.stringify(cspViolations));
+  assert.deepEqual(pageErrors, [], "Unexpected browser page/console errors: " + pageErrors.join(" | "));
   status = "PASS: local models initialized, makeup and hair modes selected, local worker stopped, and zero cross-origin requests observed.";
   await context.close();
 } catch (error) {
