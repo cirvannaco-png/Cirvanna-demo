@@ -25,21 +25,47 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  browser-contracts:
+  local-vision:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+
       - name: Check JavaScript syntax
         run: |
           node --check apps/living-filters/src/app.mjs
           node --check apps/living-filters/src/filter-catalog.mjs
           node --check apps/living-filters/src/request-epoch.mjs
           node --check apps/living-filters/src/landmark-frame-contract.mjs
-      - name: Run Living Filters contract tests
+          node --check apps/living-filters/src/face-renderer.mjs
+          node --check apps/living-filters/src/vision-worker.mjs
+          node --check apps/living-filters/scripts/prepare-vision-assets.mjs
+          node --check apps/living-filters/scripts/verify-vision-assets.mjs
+          node --check apps/living-filters/scripts/browser-smoke.mjs
+
+      - name: Run unit and boundary contract tests
         run: node --test apps/living-filters/tests/*.test.mjs
+
+      - name: Prepare pinned local runtime, WASM and model assets
+        run: node apps/living-filters/scripts/prepare-vision-assets.mjs
+
+      - name: Verify local asset hashes, licences and CSP
+        run: node apps/living-filters/scripts/verify-vision-assets.mjs
+
+      - name: Install pinned browser test runner
+        working-directory: apps/living-filters
+        run: npm install --no-save --no-package-lock --ignore-scripts playwright@1.55.0
+
+      - name: Install Chromium
+        working-directory: apps/living-filters
+        run: npx playwright install --with-deps chromium
+
+      - name: Run local-only browser/model smoke test
+        working-directory: apps/living-filters
+        run: node scripts/browser-smoke.mjs
