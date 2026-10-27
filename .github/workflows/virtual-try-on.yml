@@ -1,4 +1,4 @@
-name: Virtual Try-On API checks
+name: Virtual Try-On and Living Filters checks
 
 on:
   push:
@@ -8,11 +8,13 @@ on:
       - "engineering/**"
     paths:
       - "services/virtual-try-on/**"
+      - "apps/living-filters/**"
       - ".github/workflows/virtual-try-on.yml"
   pull_request:
     branches: [main]
     paths:
       - "services/virtual-try-on/**"
+      - "apps/living-filters/**"
       - ".github/workflows/virtual-try-on.yml"
   workflow_dispatch:
 
@@ -42,3 +44,11 @@ jobs:
         run: python -m pytest tests -q
       - name: Build container
         run: docker build -f services/virtual-try-on/Dockerfile -t cirvanna-virtual-try-on:ci .
+      - name: Set up Node.js for Living Filters
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check Living Filters JavaScript syntax
+        run: node --check apps/living-filters/src/app.mjs && node --check apps/living-filters/src/filter-catalog.mjs
+      - name: Run Living Filters catalogue contract tests
+        run: node --test apps/living-filters/tests/*.test.mjs
