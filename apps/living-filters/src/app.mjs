@@ -1,4 +1,5 @@
 import { FILTERS, getFilterById } from "./filter-catalog.mjs";
+import { createRequestEpoch } from "./request-epoch.mjs";
 
 const elements = {
   stage: document.querySelector("#stage"),
@@ -16,6 +17,8 @@ const elements = {
   selectedName: document.querySelector("#selected-name"),
   selectedDescription: document.querySelector("#selected-description"),
 };
+
+const cameraRequestEpoch = createRequestEpoch();
 
 let cameraStream = null;
 let uploadedObjectUrl = null;
@@ -82,6 +85,8 @@ function showSource(source) {
 }
 
 function stopCamera() {
+  // Invalidate any unresolved getUserMedia request before releasing current tracks.
+  cameraRequestEpoch.invalidate();
   if (cameraStream) {
     for (const track of cameraStream.getTracks()) track.stop();
     cameraStream = null;
@@ -108,13 +113,21 @@ async function startCamera() {
     return;
   }
   if (cameraStream) stopCamera();
+  const requestEpoch = cameraRequestEpoch.begin();
   setStatus("Requesting camera permission…");
   elements.startCamera.disabled = true;
   try {
-    cameraStream = await navigator.mediaDevices.getUserMedia({
+    const stream = await navigator.mediaDevices.getUserMedia({
       audio: false,
       video: { facingMode: { ideal: "user" }, width: { ideal: 1280 }, height: { ideal: 960 } },
     });
+    // A user may choose a photo or leave the page while permission is pending.
+    // Never let a late permission result replace the newer user-selected state.
+    if (!cameraRequestEpoch.isCurrent(requestEpoch)) {
+      for (const track of stream.getTracks()) track.stop();
+      return;
+    }
+    cameraStream = stream;
     elements.video.srcObject = cameraStream;
     await elements.video.play();
     releaseUploadedPhoto();
@@ -122,6 +135,7 @@ async function startCamera() {
     elements.capture.disabled = !isSourceReady();
     setStatus("Camera is active. Your video is processed locally and is not uploaded.");
   } catch (error) {
+    if (!cameraRequestEpoch.isCurrent(requestEpoch)) return;
     stopCamera();
     const message = error?.name === "NotAllowedError"
       ? "Camera permission was denied. Enable it in browser settings or choose a photo."
