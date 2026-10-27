@@ -587,10 +587,9 @@ elements.video.addEventListener("loadeddata", () => {
   updateARControls();
 });
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) {
-    if (cameraStream) stopCamera();
-    else stopVision("Page hidden. Local face/hair processing was stopped.");
-  }
+  // Always invalidate unresolved permission prompts, not only an adopted stream.
+  // stopCamera() also tears down any active worker when the tab becomes hidden.
+  if (document.hidden) stopCamera();
 });
 window.addEventListener("pagehide", () => {
   stopCamera();
