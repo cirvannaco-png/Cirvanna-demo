@@ -1,3 +1,3 @@
-# Generated third-party runtime and model assets. Prepare at build time from the pinned manifest.
-apps/living-filters/vendor/
-apps/living-filters/models/
+/vendor/
+/models/
+/node_modules/
