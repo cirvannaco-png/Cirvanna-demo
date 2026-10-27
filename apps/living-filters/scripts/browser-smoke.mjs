@@ -38,6 +38,10 @@ for (const required of [
 const server = createServer(async (request, response) => {
   try {
     const parsed = new URL(request.url, "http://127.0.0.1");
+    if (parsed.pathname === "/favicon.ico") {
+      response.writeHead(204).end();
+      return;
+    }
     const requestedPath = decodeURIComponent(parsed.pathname === "/" ? "/index.html" : parsed.pathname);
     const path = resolve(appRoot, "." + requestedPath);
     if (!path.startsWith(appRoot + sep)) {
