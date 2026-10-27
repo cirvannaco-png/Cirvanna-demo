@@ -9,6 +9,7 @@
 - Eight curated visual treatments: Original, Golden Hour, Dewy Light, Rose Tint, Editorial, Aurora, Starlight, and Soft Film.
 - Local PNG capture of the selected visual treatment.
 - Camera tracks stop when the user stops the camera or the page becomes hidden.
+- Late camera-permission results are discarded and their tracks stopped if the user switches to a photo or the page is hidden while permission is pending.
 - Responsive controls and a restrictive Content Security Policy.
 
 ## What does not work yet
