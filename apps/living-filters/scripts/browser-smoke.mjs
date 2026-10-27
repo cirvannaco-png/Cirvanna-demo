@@ -113,6 +113,9 @@ try {
   const initializationStatus = await page.locator("#ar-status").innerText();
   assert.match(initializationStatus, /Local face and hair models are ready/, "Local model initialization failed: " + initializationStatus);
 
+  // Disable browser networking after initialization. All subsequent frame
+  // processing, masks and canvas effects must work from local in-memory state.
+  await context.setOffline(true);
   await page.locator('[data-ar-mode="makeup"]').click();
   await page.waitForTimeout(1200);
   await page.locator('[data-ar-mode="hair-copper"]').click();
@@ -125,7 +128,7 @@ try {
   assert.deepEqual(externalRequests, [], "Unexpected cross-origin network request(s): " + externalRequests.join(", "));
   assert.deepEqual(cspViolations, [], "Unexpected CSP violation(s): " + JSON.stringify(cspViolations));
   assert.deepEqual(pageErrors, [], "Unexpected browser page/console errors: " + pageErrors.join(" | "));
-  status = "PASS: local models initialized, makeup and hair modes selected, local worker stopped, and zero cross-origin requests observed.";
+  status = "PASS: local models initialized, browser networking disabled, makeup/hair modes selected, local worker stopped, and zero cross-origin requests/CSP violations observed.";
   await context.close();
 } catch (error) {
   status = "FAIL: " + (error?.stack ?? error);
