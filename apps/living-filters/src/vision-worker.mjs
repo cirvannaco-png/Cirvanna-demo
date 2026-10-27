@@ -39,7 +39,7 @@ async function initialise() {
 function makeCanonicalFrame(result, timestamp, sourceWidth, sourceHeight) {
   const detectedFaces = result?.faceLandmarks ?? [];
   const landmarks = detectedFaces[0];
-  const faces = Array.isArray(landmarks) && landmarks.length >= 455
+  const faces = Array.isArray(landmarks) && landmarks.length === 478
     ? [{ landmarks: landmarks.map(({ x, y, z }) => ({ x, y, z })) }]
     : [];
   const candidate = {
