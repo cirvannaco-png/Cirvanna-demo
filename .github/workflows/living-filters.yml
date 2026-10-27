@@ -1,0 +1,31 @@
+name: Living Filters
+
+on:
+  pull_request:
+    paths:
+      - "apps/living-filters/**"
+      - ".github/workflows/living-filters.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/living-filters/**"
+      - ".github/workflows/living-filters.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  catalog-tests:
+    name: Catalog contract tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run catalogue invariants
+        run: node --test apps/living-filters/tests/*.test.mjs
