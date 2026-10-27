@@ -60,9 +60,17 @@ function getHairMask(frame, timestamp) {
   try {
     const mask = result?.categoryMask;
     if (!mask || !Number.isSafeInteger(mask.width) || !Number.isSafeInteger(mask.height)) return null;
-    // The MediaPipe mask buffer is only guaranteed during result lifetime; clone it before close().
-    const data = mask.getAsUint8Array().slice();
-    return { width: mask.width, height: mask.height, data: data.buffer };
+    const labels = hairSegmenter.getLabels().map((label) => String(label).trim().toLowerCase());
+    const hairClass = labels.findIndex((label) => label === "hair" || label.includes("hair"));
+    if (hairClass < 0) throw new Error("The pinned segmentation model does not declare a hair class.");
+    // The MediaPipe mask buffer is only guaranteed during result lifetime; clone
+    // and normalize the model's label index to a binary hair mask before closing.
+    const source = mask.getAsUint8Array();
+    const binary = new Uint8Array(source.length);
+    for (let index = 0; index < source.length; index += 1) {
+      binary[index] = source[index] === hairClass ? 1 : 0;
+    }
+    return { width: mask.width, height: mask.height, data: binary.buffer };
   } finally {
     result?.close?.();
   }
