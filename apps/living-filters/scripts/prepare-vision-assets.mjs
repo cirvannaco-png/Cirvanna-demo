@@ -52,7 +52,7 @@ async function downloadPinnedAsset(asset, destination, maxBytes) {
   // A same-directory rename is atomic on supported local filesystems.
   const { renameSync } = await import("node:fs");
   renameSync(temporaryPath, destination);
-  return { path: relative(appRoot, destination).split(sep).join("/"), sizeBytes: bytes.length, sha256: digest };
+  return { path: asset.path, sizeBytes: bytes.length, sha256: digest };
 }
 
 function listFiles(directory) {
