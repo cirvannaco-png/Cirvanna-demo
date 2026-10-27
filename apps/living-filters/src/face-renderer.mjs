@@ -181,6 +181,36 @@ export function drawTrackedAccessory(context, landmarks, width, height, kind = "
       context.lineTo(cx, cy + radius * 1.7);
       context.stroke();
     }
+  } else if (kind === "headband") {
+    const leftTemple = point(landmarks, 109, width, height);
+    const forehead = point(landmarks, 10, width, height);
+    const rightTemple = point(landmarks, 338, width, height);
+    if (!leftTemple || !forehead || !rightTemple) {
+      context.restore();
+      return false;
+    }
+    const span = distance(leftTemple, rightTemple);
+    if (span < 8) {
+      context.restore();
+      return false;
+    }
+    // Two landmark-anchored curves form a small decorative headband.
+    context.strokeStyle = "rgba(209, 167, 91, 0.96)";
+    context.lineWidth = Math.max(2, span * 0.035);
+    context.beginPath();
+    context.moveTo(leftTemple.x, leftTemple.y);
+    context.quadraticCurveTo(forehead.x, forehead.y - span * 0.045, rightTemple.x, rightTemple.y);
+    context.stroke();
+    context.strokeStyle = "rgba(255, 229, 179, 0.95)";
+    context.lineWidth = Math.max(1, span * 0.012);
+    context.beginPath();
+    context.moveTo(leftTemple.x, leftTemple.y + span * 0.018);
+    context.quadraticCurveTo(forehead.x, forehead.y - span * 0.015, rightTemple.x, rightTemple.y + span * 0.018);
+    context.stroke();
+    context.fillStyle = "rgba(255, 239, 191, 0.98)";
+    context.beginPath();
+    context.arc(forehead.x, forehead.y - span * 0.045, Math.max(2, span * 0.018), 0, Math.PI * 2);
+    context.fill();
   } else {
     context.restore();
     return false;
