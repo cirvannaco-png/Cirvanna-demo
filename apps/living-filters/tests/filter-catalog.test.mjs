@@ -50,7 +50,7 @@ test("the browser shell exposes every element required by the application", () =
 test("every catalogue entry has a stylesheet rule for preview rendering", () => {
   const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
   for (const filter of FILTERS) {
-    assert.ok(css.includes('.stage[data-filter="' + filter.id + '"] .media'), "missing preview CSS for " + filter.id);
+    assert.ok(css.includes('.stage[data-filter="' + filter.id + '"] .media:not(.ar-overlay)'), "missing preview CSS for " + filter.id);
   }
 });
 
