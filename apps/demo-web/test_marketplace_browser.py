@@ -93,6 +93,18 @@ class MarketplaceBrowserTests(unittest.TestCase):
         self.assertIn("Relaxed Linen Shirt", self.page.locator(".card").inner_text())
 
 
+    def test_price_precision_matches_selected_currency_minor_units(self):
+        self.page.locator("#filterDetails summary").click()
+        self.page.locator("#filterCurrency").select_option("JPY")
+        self.page.locator("#filterMinPrice").fill("1.5")
+        self.page.locator("#applyFiltersBtn").click()
+        self.assertIn("more decimal places than JPY supports", self.page.locator("#status").inner_text())
+        self.assertEqual(self.page.locator(".card").count(), 0)
+
+        self.page.locator("#filterMinPrice").fill("1")
+        self.page.locator("#applyFiltersBtn").click()
+        self.assertIn("DEMO MODE", self.page.locator("#status").inner_text())
+
     def test_try_on_and_checkout_are_not_misrepresented_as_live(self):
         try_on = self.page.locator('.card button[data-action="tryon"]').first
         self.assertTrue(try_on.is_disabled())
