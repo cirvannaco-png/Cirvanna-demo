@@ -39,6 +39,7 @@ const visionState = {
   lastTimestamp: -1,
   rafId: null,
   hairCanvas: null,
+  photoHairRetryCount: 0,
 };
 
 let cameraStream = null;
@@ -219,6 +220,7 @@ function startVision() {
   visionState.hairMask = null;
   visionState.frameInFlight = false;
   visionState.lastTimestamp = -1;
+  visionState.photoHairRetryCount = 0;
   updateARControls();
   setARStatus("Loading pinned local vision runtime and model files… no CDN fallback is used.");
 
@@ -254,15 +256,21 @@ function startVision() {
         data: new Uint8Array(data.hairMask.data),
       };
       renderAROverlay();
+      const hairModeActive = visionState.mode === "hair-copper" || visionState.mode === "hair-violet";
       if (!visionState.latestLandmarks && visionState.mode !== "off") {
         setARStatus("No clear face was detected. Face-anchored effects are hidden; adjust lighting or face the camera.");
       } else if (activeSource === "photo" && visionState.mode !== "off") {
-        setARStatus(visionState.mode.startsWith("hair-") && !visionState.hairMask
-          ? "Face landmarks are ready. Hair mask is not available yet; no hair recolour is shown."
-          : "Local try-on preview updated. The effect is approximate and is not a skin or fit assessment.");
-      }
-      if (activeSource === "photo" && (visionState.mode === "hair-copper" || visionState.mode === "hair-violet") && !visionState.hairMask) {
-        queueVisionFrame();
+        if (hairModeActive && !visionState.hairMask) {
+          if (visionState.photoHairRetryCount < 1) {
+            visionState.photoHairRetryCount += 1;
+            setARStatus("Refreshing the local hair mask…");
+            queueVisionFrame();
+          } else {
+            setARStatus("Face landmarks are ready, but a usable hair mask was not returned. No hair recolour is shown.");
+          }
+        } else {
+          setARStatus("Local try-on preview updated. The effect is approximate and is not a skin or fit assessment.");
+        }
       }
     } else if (data?.type === "error") {
       visionState.frameInFlight = false;
@@ -285,6 +293,7 @@ function startVision() {
 function selectAREffect(mode) {
   if (!visionState.ready) return;
   visionState.mode = mode;
+  visionState.photoHairRetryCount = 0;
   if (!mode.startsWith("hair-")) {
     // Keep a previously computed hair mask in memory only for this session; it is never persisted.
   } else if (!visionState.hairMask && activeSource === "photo") {
