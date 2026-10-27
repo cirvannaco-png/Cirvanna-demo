@@ -7,6 +7,7 @@ let hairSegmenter = null;
 let busy = false;
 let disposed = false;
 let lastTimestamp = -1;
+let sessionToken = 0;
 
 const wasmRoot = new URL("../vendor/mediapipe/wasm/", import.meta.url).href;
 const faceModelPath = new URL("../models/face_landmarker.task", import.meta.url).href;
@@ -32,7 +33,7 @@ async function initialise() {
     outputConfidenceMasks: false,
   });
   lastTimestamp = -1;
-  self.postMessage({ type: "ready" });
+  self.postMessage({ type: "ready", session: sessionToken });
 }
 
 function makeCanonicalFrame(result, timestamp, sourceWidth, sourceHeight) {
@@ -73,7 +74,7 @@ async function processFrame(message) {
     self.postMessage({ type: "error", session, message: "A frame could not be transferred to the vision worker." });
     return;
   }
-  if (busy || !faceLandmarker || disposed) {
+  if (session !== sessionToken || busy || !faceLandmarker || disposed) {
     bitmap.close();
     return;
   }
@@ -125,17 +126,20 @@ self.addEventListener("message", async (event) => {
   if (message.type === "init") {
     try {
       dispose();
+      sessionToken = message.session;
       await initialise();
     } catch (error) {
       dispose();
       self.postMessage({
         type: "init-error",
+        session: message.session,
         message: error?.message || "Local vision assets could not be initialized.",
       });
     }
   } else if (message.type === "frame") {
     await processFrame(message);
   } else if (message.type === "dispose") {
+    sessionToken = message.session;
     dispose();
     self.postMessage({ type: "disposed", session: message.session });
   }
