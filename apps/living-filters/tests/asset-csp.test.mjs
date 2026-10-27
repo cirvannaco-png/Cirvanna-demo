@@ -72,3 +72,13 @@ test("face renderer and worker stay isolated from DermalSight inputs and remote 
   assert.match(renderer, /drawTrackedAccessory/);
   assert.match(renderer, /makeHairTintPixels/);
 });
+
+test("worker discards stale initialization results and closes superseded models", () => {
+  const worker = read("src/vision-worker.mjs");
+  assert.match(worker, /async function initialise\(requestedSession\)/);
+  assert.match(worker, /const isCurrent = \(\) => !disposed && requestedSession === sessionToken/);
+  assert.match(worker, /if \(!isCurrent\(\)\) return;/);
+  assert.match(worker, /nextFaceLandmarker\?\.close/);
+  assert.match(worker, /nextHairSegmenter\?\.close/);
+  assert.match(worker, /sessionToken !== message\.session \|\| disposed/);
+});
