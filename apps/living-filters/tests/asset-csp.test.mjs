@@ -9,7 +9,7 @@ test("runtime and model versions are immutable pins with expected integrity meta
   const manifest = JSON.parse(read("vision-assets.manifest.json"));
   assert.equal(manifest.runtime.package, "@mediapipe/tasks-vision");
   assert.equal(manifest.runtime.version, "0.10.21");
-  assert.match(manifest.runtime.tarballIntegrity, /^sha512-[A-Za-z0-9+/]{43}=$/);
+  assert.match(manifest.runtime.tarballIntegrity, /^sha512-[A-Za-z0-9+/]{86}==$/);
   assert.equal(manifest.runtime.license, "Apache-2.0");
   assert.equal(manifest.runtime.tarballUrl.includes("@latest"), false);
   assert.equal(manifest.models.length, 2);
