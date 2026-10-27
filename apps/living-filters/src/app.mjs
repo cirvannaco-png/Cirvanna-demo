@@ -34,8 +34,7 @@ function isSourceReady() {
 
 function applyFilter(filter) {
   activeFilter = filter;
-  elements.video.style.filter = filter.cssFilter;
-  elements.image.style.filter = filter.cssFilter;
+  elements.stage.dataset.filter = filter.id;
   elements.stage.dataset.effect = filter.effect;
   elements.selectedName.textContent = filter.name;
   elements.selectedDescription.textContent = filter.description;
@@ -108,8 +107,7 @@ async function startCamera() {
     setStatus("Camera access is unavailable here. Use HTTPS or localhost, or choose a photo.");
     return;
   }
-  stopCamera();
-  releaseUploadedPhoto();
+  if (cameraStream) stopCamera();
   setStatus("Requesting camera permission…");
   elements.startCamera.disabled = true;
   try {
@@ -119,6 +117,7 @@ async function startCamera() {
     });
     elements.video.srcObject = cameraStream;
     await elements.video.play();
+    releaseUploadedPhoto();
     showSource("camera");
     elements.capture.disabled = !isSourceReady();
     setStatus("Camera is active. Your video is processed locally and is not uploaded.");
@@ -236,7 +235,7 @@ function saveImage() {
       document.body.append(anchor);
       anchor.click();
       anchor.remove();
-      URL.revokeObjectURL(url);
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
       setStatus("Filtered image saved to your device. No copy was sent to Cirvanna.");
     }, "image/png");
   } catch {
@@ -248,6 +247,9 @@ elements.file.addEventListener("change", (event) => loadPhoto(event.currentTarge
 elements.startCamera.addEventListener("click", startCamera);
 elements.stopCamera.addEventListener("click", stopCamera);
 elements.capture.addEventListener("click", saveImage);
+elements.video.addEventListener("loadeddata", () => {
+  if (activeSource === "camera") elements.capture.disabled = false;
+});
 document.addEventListener("visibilitychange", () => {
   if (document.hidden && cameraStream) stopCamera();
 });
