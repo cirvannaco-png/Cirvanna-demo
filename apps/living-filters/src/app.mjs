@@ -132,6 +132,8 @@ function drawARToContext(context, width, height) {
     drawTrackedAccessory(context, landmarks, width, height, "glasses");
   } else if (visionState.mode === "earrings" && landmarks) {
     drawTrackedAccessory(context, landmarks, width, height, "earrings");
+  } else if (visionState.mode === "headband" && landmarks) {
+    drawTrackedAccessory(context, landmarks, width, height, "headband");
   }
 }
 
@@ -309,6 +311,7 @@ function selectAREffect(mode) {
     "hair-violet": "Violet recolour follows the local hair segmentation mask. Hair-shape replacement is not included.",
     glasses: "A decorative 2D glasses overlay follows eye-corner landmarks; it is not a real product fit preview.",
     earrings: "Decorative hoop earrings follow approximate face-side anchors; real 3D occlusion is not implemented.",
+    headband: "A decorative headband follows forehead and temple landmarks; hair occlusion and 3D fit are not implemented.",
   };
   setARStatus(descriptions[mode] || "Local effect selected.");
   if (activeSource === "photo") queueVisionFrame();
