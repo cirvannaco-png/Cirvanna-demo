@@ -13,27 +13,45 @@ const wasmRoot = new URL("../vendor/mediapipe/wasm/", import.meta.url).href;
 const faceModelPath = new URL("../models/face_landmarker.task", import.meta.url).href;
 const hairModelPath = new URL("../models/hair_segmenter.tflite", import.meta.url).href;
 
-async function initialise() {
+async function initialise(requestedSession) {
   disposed = false;
-  const vision = await FilesetResolver.forVisionTasks(wasmRoot);
-  faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
-    baseOptions: { modelAssetPath: faceModelPath, delegate: "CPU" },
-    runningMode: "VIDEO",
-    numFaces: 1,
-    minFaceDetectionConfidence: 0.55,
-    minFacePresenceConfidence: 0.55,
-    minTrackingConfidence: 0.55,
-    outputFaceBlendshapes: false,
-    outputFacialTransformationMatrixes: false,
-  });
-  hairSegmenter = await ImageSegmenter.createFromOptions(vision, {
-    baseOptions: { modelAssetPath: hairModelPath, delegate: "CPU" },
-    runningMode: "VIDEO",
-    outputCategoryMask: true,
-    outputConfidenceMasks: false,
-  });
-  lastTimestamp = -1;
-  self.postMessage({ type: "ready", session: sessionToken });
+  let nextFaceLandmarker = null;
+  let nextHairSegmenter = null;
+  const isCurrent = () => !disposed && requestedSession === sessionToken;
+  try {
+    const vision = await FilesetResolver.forVisionTasks(wasmRoot);
+    if (!isCurrent()) return;
+
+    nextFaceLandmarker = await FaceLandmarker.createFromOptions(vision, {
+      baseOptions: { modelAssetPath: faceModelPath, delegate: "CPU" },
+      runningMode: "VIDEO",
+      numFaces: 1,
+      minFaceDetectionConfidence: 0.55,
+      minFacePresenceConfidence: 0.55,
+      minTrackingConfidence: 0.55,
+      outputFaceBlendshapes: false,
+      outputFacialTransformationMatrixes: false,
+    });
+    if (!isCurrent()) return;
+
+    nextHairSegmenter = await ImageSegmenter.createFromOptions(vision, {
+      baseOptions: { modelAssetPath: hairModelPath, delegate: "CPU" },
+      runningMode: "VIDEO",
+      outputCategoryMask: true,
+      outputConfidenceMasks: false,
+    });
+    if (!isCurrent()) return;
+
+    faceLandmarker = nextFaceLandmarker;
+    hairSegmenter = nextHairSegmenter;
+    nextFaceLandmarker = null;
+    nextHairSegmenter = null;
+    lastTimestamp = -1;
+    self.postMessage({ type: "ready", session: requestedSession });
+  } finally {
+    try { nextFaceLandmarker?.close?.(); } catch {}
+    try { nextHairSegmenter?.close?.(); } catch {}
+  }
 }
 
 function makeCanonicalFrame(result, timestamp, sourceWidth, sourceHeight) {
@@ -139,8 +157,9 @@ self.addEventListener("message", async (event) => {
     try {
       dispose();
       sessionToken = message.session;
-      await initialise();
+      await initialise(message.session);
     } catch (error) {
+      if (sessionToken !== message.session || disposed) return;
       dispose();
       self.postMessage({
         type: "init-error",
