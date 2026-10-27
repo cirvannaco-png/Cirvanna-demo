@@ -48,7 +48,7 @@ These tests validate immutable filter metadata and invariants. They are not brow
 ## Integration plan
 
 1. Add browser-based end-to-end tests for permission denial, file validation, capture, keyboard access, and camera-track cleanup.
-2. Select and pin a licensed face-landmark provider only after cross-device, latency, accessibility, and data-flow review.
+2. Follow [ADR-0002](../../docs/architecture/adr/ADR-0002-living-filters-landmark-provider.md): MediaPipe Tasks Vision is the preferred local prototype candidate, but runtime/model adoption remains blocked on pinned local assets, licence review, device quality, CSP/offline and latency gates. A provider-neutral landmark-frame validator and contract tests now establish the adapter boundary; they do not perform face detection.
 3. Add consent-scoped face-anchored cosmetic effects behind a renderer adapter; never use a beauty filter's rendered pixels as DermalSight input.
 4. Add hairstyle/accessory preview only when segmentation/asset alignment has measured quality and fallback behavior.
 5. Route product suggestions through existing product/identity services and CaTaCaCi/CAL. Client-side filter selection must never authorize a recommendation, claim fit, or infer sensitive identity.
