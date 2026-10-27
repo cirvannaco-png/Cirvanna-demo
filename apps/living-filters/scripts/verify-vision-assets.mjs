@@ -89,7 +89,7 @@ function main() {
   ]) {
     if (!csp.includes(directive)) throw new Error("CSP is missing required directive: " + directive);
   }
-  if (/(?:^|\\s)'unsafe-eval'(?:\\s|;|$)/.test(csp)) {
+  if (/(?:^|\s)'unsafe-eval'(?:\s|;|$)/.test(csp)) {
     throw new Error("CSP may not enable general unsafe-eval.");
   }
 
