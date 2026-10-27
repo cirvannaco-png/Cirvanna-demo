@@ -61,7 +61,11 @@ function getHairMask(frame, timestamp) {
     const mask = result?.categoryMask;
     if (!mask || !Number.isSafeInteger(mask.width) || !Number.isSafeInteger(mask.height)) return null;
     const labels = hairSegmenter.getLabels().map((label) => String(label).trim().toLowerCase());
-    const hairClass = labels.findIndex((label) => label === "hair" || label.includes("hair"));
+    const discoveredHairClass = labels.findIndex((label) => label === "hair" || label.includes("hair"));
+    // The pinned HairSegmenter v1 model card specifies 0=background, 1=hair.
+    // Use this documented fallback only when model metadata has no label map;
+    // never guess when a supplied label map contradicts the expected class.
+    const hairClass = labels.length === 0 ? 1 : discoveredHairClass;
     if (hairClass < 0) throw new Error("The pinned segmentation model does not declare a hair class.");
     // The MediaPipe mask buffer is only guaranteed during result lifetime; clone
     // and normalize the model's label index to a binary hair mask before closing.
