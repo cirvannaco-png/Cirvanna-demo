@@ -70,10 +70,12 @@ jobs:
         working-directory: apps/living-filters
         run: node scripts/browser-smoke.mjs
 
-      - name: Archive verified asset lock
+      - name: Archive prepared local runtime and models
         if: always() && hashFiles('apps/living-filters/vendor/mediapipe/assets-lock.json') != ''
         uses: actions/upload-artifact@v4
         with:
-          name: living-filters-asset-lock
-          path: apps/living-filters/vendor/mediapipe/assets-lock.json
+          name: living-filters-prepared-runtime
+          path: |
+            apps/living-filters/vendor/mediapipe/
+            apps/living-filters/models/
           retention-days: 30
