@@ -151,6 +151,12 @@ function loadPhoto(file) {
   releaseUploadedPhoto();
   uploadedObjectUrl = URL.createObjectURL(file);
   elements.image.onload = () => {
+    if (elements.image.naturalWidth * elements.image.naturalHeight > 40000000) {
+      releaseUploadedPhoto();
+      showSource(null);
+      setStatus("This image has too many pixels for a safe preview. Choose a smaller image.");
+      return;
+    }
     showSource("photo");
     elements.capture.disabled = false;
     setStatus("Photo loaded locally. It has not been uploaded or added to an account.");
