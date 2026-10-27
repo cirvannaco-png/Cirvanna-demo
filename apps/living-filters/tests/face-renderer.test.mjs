@@ -45,6 +45,7 @@ function mockContext() {
     beginPath() { calls.push("beginPath"); },
     moveTo() { calls.push("moveTo"); },
     lineTo() { calls.push("lineTo"); },
+    quadraticCurveTo() { calls.push("quadraticCurveTo"); },
     closePath() { calls.push("closePath"); },
     fill(rule) { calls.push(["fill", rule]); },
     stroke() { calls.push("stroke"); },
@@ -89,6 +90,9 @@ test("face-tracked glasses and earrings use landmark anchors", () => {
   const earringsContext = mockContext();
   assert.equal(drawTrackedAccessory(earringsContext, mockFace(), 640, 480, "earrings"), true);
   assert.equal(earringsContext.calls.filter((call) => call === "arc").length, 2);
+  const headbandContext = mockContext();
+  assert.equal(drawTrackedAccessory(headbandContext, mockFace(), 640, 480, "headband"), true);
+  assert.ok(headbandContext.calls.includes("quadraticCurveTo"));
   assert.equal(drawTrackedAccessory(mockContext(), mockFace(), 640, 480, "unknown"), false);
 });
 
