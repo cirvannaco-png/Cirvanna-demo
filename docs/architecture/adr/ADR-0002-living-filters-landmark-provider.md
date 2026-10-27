@@ -1,13 +1,13 @@
 # ADR-0002: Living Filters face-landmark provider and renderer boundary
 
-- **Status:** Proposed implementation decision; runtime adoption is gated
+- **Status:** Preferred provider implemented behind an opt-in experimental adapter; release remains gated on successful asset preparation, integrity checks, browser smoke tests and device-quality evidence
 - **Date:** 2026-10-27
 - **Owners:** Cirvanna architecture / Living Filters
 - **Scope:** `apps/living-filters/` only; this ADR does not authorize changes to DermalSight, Virtual Try-On orchestration, or CAL
 
 ## Context
 
-Living Filters currently applies deterministic CSS colour treatments and decorative overlays to a local camera/photo preview. It does not track a face. The app's current Content Security Policy forbids network connections, and the privacy promise is that media remains on-device. Face landmarks are geometry for a visual renderer; they are not skin-health evidence, identity evidence, or permission to recommend products.
+Living Filters has deterministic CSS colour treatments plus an opt-in local vision path for face-tracked makeup, hair-mask recolouring, and generic 2D glasses/earrings/headband overlays. The runtime and models are prepared as build artifacts and are not committed as opaque binaries. Face landmarks are geometry for a visual renderer; they are not skin-health evidence, identity evidence, or permission to recommend products.
 
 A real implementation needs a versioned provider adapter, explicit model/runtime assets, a rendering layer, device-quality tests, and graceful fallback. Adding a CDN script or silently downloading model files would violate the current no-network design.
 
@@ -28,7 +28,7 @@ References:
 
 ## Decision
 
-Use **MediaPipe Tasks Vision Face Landmarker as the preferred candidate for a local, opt-in prototype**, subject to all gates below. This is a selection for evaluation, not a claim that the runtime or face tracking is already implemented. Do not add a CDN, runtime dependency, or model binary in this change.
+Use the pinned `@mediapipe/tasks-vision@0.10.21` package, with the version-1 Face Landmarker and HairSegmenter models, behind a local module worker. The implementation uses the pinned runtime and models only after preparation. No CDN or remote model fallback is wired into the application. The generated runtime/WASM and model files are kept out of Git and must be produced by the preparation script on a network-enabled build machine.
 
 The implementation must keep these boundaries:
 
@@ -54,3 +54,25 @@ The implementation must keep these boundaries:
 ## Consequences
 
 The first follow-up can implement a small canonical contract and contract tests without importing a model. Actual face-anchored makeup, hair segmentation and accessory placement remain disabled until the above gates are met. This deliberately avoids converting an architectural decision into an unsupported feature-completion claim.
+
+
+## Pinned implementation and release gate
+
+The implementation files are:
+- `apps/living-filters/src/vision-worker.mjs`: local module worker that initializes both models, validates the output frame, copies the hair mask before releasing model resources, and handles disposal/stale sessions.
+- `apps/living-filters/src/face-renderer.mjs`: 2D lipstick, eye-colour wash/blush, generic glasses, hoop earrings and headband overlays; plus hair-mask recolouring.
+- `apps/living-filters/vision-assets.manifest.json`: immutable package/model URLs, versions, checksums and licence declarations.
+- `apps/living-filters/scripts/prepare-vision-assets.mjs`: build-time download, integrity validation, licence retention and asset-lock generation.
+- `apps/living-filters/scripts/verify-vision-assets.mjs`: verifies the generated lock, every runtime/WASM file, model hash/size, and CSP.
+- `apps/living-filters/scripts/browser-smoke.mjs`: Chromium smoke test that initializes the local models, exercises makeup/hair selection, stops the worker, and asserts no cross-origin request or CSP violation occurred.
+
+The runtime package is pinned at 0.10.21 with npm SHA-512 integrity `sha512-TuhKH+credq4zLksGbYrnvJ1aLIWMc5r0UHwzxzql4BHECJwIAoBR61ZrqwGOW6ZmSBIzU1t4VtKj8hbxFaKeA==`. The face model and hair model are version-1 URLs listed in the manifest; each is checked by its SHA-256 before installation. Apache-2.0 notices, model-card links and asset provenance are recorded in `apps/living-filters/THIRD_PARTY_NOTICES.md` and the complete upstream Apache licence text is copied into the project.
+
+MediaPipe's public Tasks privacy notice describes performance/utilization metrics being sent to Google. This project does not enable third-party endpoints in the application CSP, and its browser smoke test is designed to fail if a cross-origin request or CSP violation is observed. The SDK version must not be upgraded without rechecking the actual bundle and network behavior; if the smoke test sees an outbound metrics attempt, the build is rejected and the SDK must be replaced or a separately approved privacy decision made. Media/video/landmarks are never sent to an app backend by this feature.
+
+## Explicit limits
+
+- The hair model supplies a hair/background segmentation mask, not an image generator; effects recolour visible hair rather than synthesize a different haircut.
+- Makeup and accessories are 2D landmark overlays; product-specific matching, depth occlusion, realistic materials, and physically accurate fit remain unimplemented.
+- Asset preparation requires network access at build time. After preparation, runtime model/script/WASM loading is same-origin. This is not a promise that the app's HTML can be opened without a host or that an unprepared deployment will work.
+- The browser workflow must pass after assets are generated. Unit/contract tests alone do not prove real model initialization, face tracking quality, zero egress, mobile performance, or supported-device quality.
