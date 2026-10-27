@@ -252,14 +252,17 @@ function startVision() {
     } else if (data?.type === "frame-result") {
       visionState.frameInFlight = false;
       visionState.latestLandmarks = data.frame?.faces?.[0]?.landmarks ?? null;
-      if (data.hairMask) visionState.hairMask = {
+      visionState.hairMask = data.hairMask ? {
         width: data.hairMask.width,
         height: data.hairMask.height,
         data: new Uint8Array(data.hairMask.data),
-      };
+      } : null;
       renderAROverlay();
+      const hairModeActive = visionState.mode === "hair-copper" || visionState.mode === "hair-violet";
       if (!visionState.latestLandmarks && visionState.mode !== "off") {
-        setARStatus("No clear face was detected. Face-anchored effects are hidden; adjust lighting or face the camera.");
+        setARStatus(hairModeActive && visionState.hairMask
+          ? "No clear face landmarks. Hair-mask recolouring may remain available; face-anchored makeup/accessories are hidden."
+          : "No clear face was detected. Face-anchored effects are hidden; adjust lighting or face the camera.");
       } else if (activeSource === "photo" && visionState.mode !== "off") {
         if (hairModeActive && !visionState.hairMask) {
           if (visionState.photoHairRetryCount < 1) {
