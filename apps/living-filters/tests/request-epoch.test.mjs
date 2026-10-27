@@ -37,3 +37,10 @@ test("camera integration disposes streams returned after user intent changed", (
   assert.match(app, /if \(!cameraRequestEpoch\.isCurrent\(requestEpoch\)\) \{[\s\S]*?for \(const track of stream\.getTracks\(\)\) track\.stop\(\)/);
   assert.match(app, /cameraRequestEpoch\.invalidate\(\)/);
 });
+
+
+test("hiding the page invalidates pending camera access through the common cleanup path", () => {
+  const app = readFileSync(new URL("../src/app.mjs", import.meta.url), "utf8");
+  assert.match(app, /document\.addEventListener\("visibilitychange",\s*\(\) => \{[\s\S]*?if \(document\.hidden\) stopCamera\(\)/);
+  assert.match(app, /function stopCamera\(\) \{[\s\S]*?cameraRequestEpoch\.invalidate\(\)/);
+});
