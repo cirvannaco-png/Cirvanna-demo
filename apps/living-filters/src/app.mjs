@@ -1,8 +1,10 @@
 import { FILTERS, getFilterById } from "./filter-catalog.mjs";
 import { createRequestEpoch } from "./request-epoch.mjs";
+import { drawTrackedAccessory, drawTrackedMakeup, makeHairTintPixels } from "./face-renderer.mjs";
 
 const elements = {
   stage: document.querySelector("#stage"),
+  overlayCanvas: document.querySelector("#ar-overlay"),
   video: document.querySelector("#camera-preview"),
   image: document.querySelector("#photo-preview"),
   empty: document.querySelector("#stage-empty"),
@@ -16,9 +18,28 @@ const elements = {
   filterCount: document.querySelector("#filter-count"),
   selectedName: document.querySelector("#selected-name"),
   selectedDescription: document.querySelector("#selected-description"),
+  arConsent: document.querySelector("#ar-consent"),
+  arStart: document.querySelector("#ar-start"),
+  arStop: document.querySelector("#ar-stop"),
+  arModeGrid: document.querySelector("#ar-mode-grid"),
+  arStatus: document.querySelector("#ar-status"),
 };
 
 const cameraRequestEpoch = createRequestEpoch();
+const visionState = {
+  worker: null,
+  session: 0,
+  loading: false,
+  ready: false,
+  mode: "off",
+  latestLandmarks: null,
+  hairMask: null,
+  frameInFlight: false,
+  lastFrameSentAt: -Infinity,
+  lastTimestamp: -1,
+  rafId: null,
+  hairCanvas: null,
+};
 
 let cameraStream = null;
 let uploadedObjectUrl = null;
@@ -27,6 +48,261 @@ let activeFilter = getFilterById("original");
 
 function setStatus(message) {
   elements.status.textContent = message;
+}
+
+function setARStatus(message) {
+  elements.arStatus.textContent = message;
+}
+
+function currentSourceElement() {
+  if (activeSource === "camera") return elements.video;
+  if (activeSource === "photo") return elements.image;
+  return null;
+}
+
+function updateARControls() {
+  elements.arStart.disabled = !elements.arConsent.checked
+    || !isSourceReady() || Boolean(visionState.worker) || visionState.loading;
+  elements.arStop.disabled = !visionState.worker && !visionState.loading;
+  for (const button of elements.arModeGrid.querySelectorAll("button[data-ar-mode]")) {
+    button.disabled = !visionState.ready;
+    button.setAttribute("aria-pressed", String(button.dataset.arMode === visionState.mode));
+  }
+}
+
+function clearARCanvas() {
+  const context = elements.overlayCanvas.getContext("2d");
+  if (context) context.clearRect(0, 0, elements.overlayCanvas.width, elements.overlayCanvas.height);
+  elements.overlayCanvas.hidden = true;
+}
+
+function stopVision(message = "On-device face tracking is stopped.", showStatus = true) {
+  visionState.session += 1;
+  if (visionState.rafId !== null) cancelAnimationFrame(visionState.rafId);
+  visionState.rafId = null;
+  if (visionState.worker) {
+    try { visionState.worker.postMessage({ type: "dispose", session: visionState.session }); } catch {}
+    visionState.worker.terminate();
+  }
+  visionState.worker = null;
+  visionState.loading = false;
+  visionState.ready = false;
+  visionState.mode = "off";
+  visionState.latestLandmarks = null;
+  visionState.hairMask = null;
+  visionState.frameInFlight = false;
+  visionState.lastFrameSentAt = -Infinity;
+  visionState.lastTimestamp = -1;
+  clearARCanvas();
+  updateARControls();
+  if (showStatus) setARStatus(message);
+}
+
+function drawHairOverlay(context, width, height, mask, color) {
+  if (!mask || !mask.data || !mask.width || !mask.height) return false;
+  const data = mask.data instanceof Uint8Array ? mask.data : new Uint8Array(mask.data);
+  const pixels = makeHairTintPixels(data, mask.width, mask.height, color, 150);
+  if (!visionState.hairCanvas) visionState.hairCanvas = document.createElement("canvas");
+  const canvas = visionState.hairCanvas;
+  if (canvas.width !== mask.width) canvas.width = mask.width;
+  if (canvas.height !== mask.height) canvas.height = mask.height;
+  const maskContext = canvas.getContext("2d");
+  if (!maskContext) return false;
+  maskContext.putImageData(new ImageData(pixels, mask.width, mask.height), 0, 0);
+  context.save();
+  context.globalAlpha = 0.76;
+  context.filter = "blur(0.65px)";
+  context.drawImage(canvas, 0, 0, width, height);
+  context.restore();
+  return true;
+}
+
+function drawARToContext(context, width, height) {
+  const landmarks = visionState.latestLandmarks;
+  if (visionState.mode === "hair-copper") {
+    drawHairOverlay(context, width, height, visionState.hairMask, "#b65f35");
+  } else if (visionState.mode === "hair-violet") {
+    drawHairOverlay(context, width, height, visionState.hairMask, "#8650b8");
+  } else if (visionState.mode === "lipstick" && landmarks) {
+    drawTrackedMakeup(context, landmarks, width, height, "berry");
+  } else if (visionState.mode === "makeup" && landmarks) {
+    drawTrackedMakeup(context, landmarks, width, height, "full");
+  } else if (visionState.mode === "glasses" && landmarks) {
+    drawTrackedAccessory(context, landmarks, width, height, "glasses");
+  } else if (visionState.mode === "earrings" && landmarks) {
+    drawTrackedAccessory(context, landmarks, width, height, "earrings");
+  }
+}
+
+function renderAROverlay() {
+  const [width, height] = getSourceDimensions();
+  if (!visionState.ready || visionState.mode === "off" || !width || !height) {
+    clearARCanvas();
+    return;
+  }
+  if (elements.overlayCanvas.width !== width) elements.overlayCanvas.width = width;
+  if (elements.overlayCanvas.height !== height) elements.overlayCanvas.height = height;
+  const context = elements.overlayCanvas.getContext("2d");
+  if (!context) {
+    clearARCanvas();
+    return;
+  }
+  context.clearRect(0, 0, width, height);
+  drawARToContext(context, width, height);
+  elements.overlayCanvas.hidden = false;
+}
+
+function queueVisionFrame() {
+  if (!visionState.worker || !visionState.ready || visionState.frameInFlight || !isSourceReady()) return;
+  const now = performance.now();
+  const hairMode = visionState.mode === "hair-copper" || visionState.mode === "hair-violet";
+  const minimumInterval = hairMode ? 230 : 90;
+  if (activeSource === "camera" && now - visionState.lastFrameSentAt < minimumInterval) return;
+
+  const source = currentSourceElement();
+  if (!source) return;
+  const session = visionState.session;
+  const timestamp = Math.max(Math.floor(now), visionState.lastTimestamp + 1);
+  visionState.lastTimestamp = timestamp;
+  visionState.lastFrameSentAt = now;
+  visionState.frameInFlight = true;
+
+  createImageBitmap(source).then((bitmap) => {
+    if (session !== visionState.session || !visionState.worker || !visionState.ready) {
+      bitmap.close();
+      visionState.frameInFlight = false;
+      return;
+    }
+    visionState.worker.postMessage({
+      type: "frame",
+      session,
+      timestamp,
+      needHair: hairMode,
+      bitmap,
+    }, [bitmap]);
+  }).catch(() => {
+    if (session !== visionState.session) return;
+    visionState.frameInFlight = false;
+    setARStatus("This browser could not create a local video frame. Stop try-on or use the photo preview.");
+  });
+}
+
+function startVisionLoop() {
+  if (visionState.rafId !== null) cancelAnimationFrame(visionState.rafId);
+  const tick = () => {
+    if (!visionState.worker || !visionState.ready) {
+      visionState.rafId = null;
+      return;
+    }
+    if (activeSource === "camera") queueVisionFrame();
+    visionState.rafId = requestAnimationFrame(tick);
+  };
+  visionState.rafId = requestAnimationFrame(tick);
+}
+
+function startVision() {
+  if (!elements.arConsent.checked) {
+    setARStatus("Please opt in to local face/hair landmark processing before starting.");
+    return;
+  }
+  if (!isSourceReady()) {
+    setARStatus("Choose a photo or start the camera before enabling face-tracked effects.");
+    return;
+  }
+  if (visionState.worker || visionState.loading) return;
+
+  visionState.session += 1;
+  const session = visionState.session;
+  visionState.loading = true;
+  visionState.mode = "off";
+  visionState.latestLandmarks = null;
+  visionState.hairMask = null;
+  visionState.frameInFlight = false;
+  visionState.lastTimestamp = -1;
+  updateARControls();
+  setARStatus("Loading pinned local vision runtime and model files… no CDN fallback is used.");
+
+  let worker;
+  try {
+    worker = new Worker(new URL("./vision-worker.mjs", import.meta.url), {
+      type: "module",
+      name: "cirvanna-living-filters-vision",
+    });
+  } catch {
+    visionState.loading = false;
+    updateARControls();
+    setARStatus("This browser could not start the local vision worker. Existing colour filters still work.");
+    return;
+  }
+  visionState.worker = worker;
+  worker.onmessage = (event) => {
+    const data = event.data;
+    if (session !== visionState.session || (data?.session !== undefined && data.session !== session)) return;
+    if (data?.type === "ready") {
+      visionState.loading = false;
+      visionState.ready = true;
+      updateARControls();
+      setARStatus("Local face and hair models are ready. Choose a makeup, hair-colour, or accessory effect.");
+      if (activeSource === "camera") startVisionLoop();
+      else queueVisionFrame();
+    } else if (data?.type === "frame-result") {
+      visionState.frameInFlight = false;
+      visionState.latestLandmarks = data.frame?.faces?.[0]?.landmarks ?? null;
+      if (data.hairMask) visionState.hairMask = {
+        width: data.hairMask.width,
+        height: data.hairMask.height,
+        data: new Uint8Array(data.hairMask.data),
+      };
+      renderAROverlay();
+      if (!visionState.latestLandmarks && visionState.mode !== "off") {
+        setARStatus("No clear face was detected. Face-anchored effects are hidden; adjust lighting or face the camera.");
+      } else if (activeSource === "photo" && visionState.mode !== "off") {
+        setARStatus(visionState.mode.startsWith("hair-") && !visionState.hairMask
+          ? "Face landmarks are ready. Hair mask is not available yet; no hair recolour is shown."
+          : "Local try-on preview updated. The effect is approximate and is not a skin or fit assessment.");
+      }
+      if (activeSource === "photo" && (visionState.mode === "hair-copper" || visionState.mode === "hair-violet") && !visionState.hairMask) {
+        queueVisionFrame();
+      }
+    } else if (data?.type === "error") {
+      visionState.frameInFlight = false;
+      if (data.message !== "A stale frame was discarded.") {
+        setARStatus("Local vision skipped a frame. Keep the face visible and try again.");
+      }
+    } else if (data?.type === "init-error") {
+      stopVision("Local vision assets are missing, corrupt, or unsupported. Run the pinned asset preparation script on a network-enabled build machine, then reload.", false);
+      setARStatus("Could not load the local models. No remote fallback was attempted. Run node apps/living-filters/scripts/prepare-vision-assets.mjs and reload.");
+    }
+  };
+  worker.onerror = () => {
+    if (session !== visionState.session) return;
+    stopVision("The local vision worker failed. Check that the pinned runtime and model assets were prepared successfully.", false);
+    setARStatus("The local vision worker failed. Run node apps/living-filters/scripts/prepare-vision-assets.mjs and reload; no network fallback was attempted.");
+  };
+  worker.postMessage({ type: "init", session });
+}
+
+function selectAREffect(mode) {
+  if (!visionState.ready) return;
+  visionState.mode = mode;
+  if (!mode.startsWith("hair-")) {
+    // Keep a previously computed hair mask in memory only for this session; it is never persisted.
+  } else if (!visionState.hairMask && activeSource === "photo") {
+    queueVisionFrame();
+  }
+  updateARControls();
+  renderAROverlay();
+  const descriptions = {
+    off: "Tracked effects are cleared. Local landmark processing remains active until you stop it.",
+    lipstick: "Berry lipstick is anchored to detected lip landmarks.",
+    makeup: "Lip colour, eye colour wash, and cheek tint follow detected face landmarks.",
+    "hair-copper": "Copper recolour follows the local hair segmentation mask. Hair-shape replacement is not included.",
+    "hair-violet": "Violet recolour follows the local hair segmentation mask. Hair-shape replacement is not included.",
+    glasses: "A decorative 2D glasses overlay follows eye-corner landmarks; it is not a real product fit preview.",
+    earrings: "Decorative hoop earrings follow approximate face-side anchors; real 3D occlusion is not implemented.",
+  };
+  setARStatus(descriptions[mode] || "Local effect selected.");
+  if (activeSource === "photo") queueVisionFrame();
 }
 
 function isSourceReady() {
@@ -82,9 +358,11 @@ function showSource(source) {
   elements.capture.disabled = source === null || !isSourceReady();
   elements.stopCamera.disabled = source !== "camera";
   elements.label.textContent = source === "camera" ? "LIVE PREVIEW" : source === "photo" ? "LOCAL PHOTO" : "PREVIEW ONLY";
+  updateARControls();
 }
 
 function stopCamera() {
+  stopVision("Source changed or camera stopped. Re-enable local try-on after selecting a source.");
   // Invalidate any unresolved getUserMedia request before releasing current tracks.
   cameraRequestEpoch.invalidate();
   if (cameraStream) {
@@ -112,6 +390,7 @@ async function startCamera() {
     setStatus("Camera access is unavailable here. Use HTTPS or localhost, or choose a photo.");
     return;
   }
+  stopVision("Camera source is changing. Re-enable local try-on after the camera starts.", false);
   if (cameraStream) stopCamera();
   const requestEpoch = cameraRequestEpoch.begin();
   setStatus("Requesting camera permission…");
@@ -173,6 +452,7 @@ function loadPhoto(file) {
     }
     showSource("photo");
     elements.capture.disabled = false;
+    updateARControls();
     setStatus("Photo loaded locally. It has not been uploaded or added to an account.");
   };
   elements.image.onerror = () => {
@@ -243,6 +523,9 @@ function saveImage() {
     context.drawImage(activeSource === "camera" ? elements.video : elements.image, 0, 0, width, height);
     context.filter = "none";
     drawDecorativeOverlay(context, width, height, activeFilter.effect);
+    if (!elements.overlayCanvas.hidden && elements.overlayCanvas.width === width && elements.overlayCanvas.height === height) {
+      context.drawImage(elements.overlayCanvas, 0, 0, width, height);
+    }
     canvas.toBlob((blob) => {
       if (!blob) {
         setStatus("The browser could not create the image. Try a smaller photo.");
@@ -267,16 +550,36 @@ elements.file.addEventListener("change", (event) => loadPhoto(event.currentTarge
 elements.startCamera.addEventListener("click", startCamera);
 elements.stopCamera.addEventListener("click", stopCamera);
 elements.capture.addEventListener("click", saveImage);
+elements.arStart.addEventListener("click", startVision);
+elements.arStop.addEventListener("click", () => stopVision());
+elements.arConsent.addEventListener("change", () => {
+  if (!elements.arConsent.checked) {
+    stopVision("Consent withdrawn. Local face and hair processing stopped.");
+  } else {
+    updateARControls();
+    setARStatus("Opt-in recorded for this page session. Start try-on when a photo or camera preview is ready.");
+  }
+});
+elements.arModeGrid.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-ar-mode]");
+  if (button && !button.disabled) selectAREffect(button.dataset.arMode);
+});
 elements.video.addEventListener("loadeddata", () => {
   if (activeSource === "camera") elements.capture.disabled = false;
+  updateARControls();
 });
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden && cameraStream) stopCamera();
+  if (document.hidden) {
+    if (cameraStream) stopCamera();
+    else stopVision("Page hidden. Local face/hair processing was stopped.");
+  }
 });
 window.addEventListener("pagehide", () => {
   stopCamera();
+  stopVision("Page closed. Local face/hair processing was stopped.", false);
   releaseUploadedPhoto();
 });
 
 renderFilterButtons();
 applyFilter(activeFilter);
+updateARControls();
