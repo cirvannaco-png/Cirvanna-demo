@@ -52,7 +52,7 @@ class MarketplaceContractTests(unittest.TestCase):
     def test_price_formatting_respects_currency_fraction_digits(self):
         self.assertIn("formatter.resolvedOptions().maximumFractionDigits", HTML)
         self.assertIn("Math.pow(10,digits)", HTML)
-        self.assertIn("more decimal places than "+currency+" supports", HTML)
+        self.assertIn('more decimal places than "+currency+" supports', HTML)
         self.assertIn("price exceeds the supported filter range", HTML)
 
     def test_unimplemented_commerce_features_are_not_faked(self):
