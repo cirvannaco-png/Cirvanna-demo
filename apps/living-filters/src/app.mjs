@@ -156,7 +156,7 @@ function renderAROverlay() {
 }
 
 function queueVisionFrame() {
-  if (!visionState.worker || !visionState.ready || visionState.frameInFlight || !isSourceReady()) return;
+  if (!visionState.worker || !visionState.ready || visionState.mode === "off" || visionState.frameInFlight || !isSourceReady()) return;
   const now = performance.now();
   const hairMode = visionState.mode === "hair-copper" || visionState.mode === "hair-violet";
   const minimumInterval = hairMode ? 230 : 90;
@@ -197,7 +197,7 @@ function startVisionLoop() {
       visionState.rafId = null;
       return;
     }
-    if (activeSource === "camera") queueVisionFrame();
+    if (activeSource === "camera" && visionState.mode !== "off") queueVisionFrame();
     visionState.rafId = requestAnimationFrame(tick);
   };
   visionState.rafId = requestAnimationFrame(tick);
@@ -248,7 +248,7 @@ function startVision() {
       updateARControls();
       setARStatus("Local face and hair models are ready. Choose a makeup, hair-colour, or accessory effect.");
       if (activeSource === "camera") startVisionLoop();
-      else queueVisionFrame();
+      else if (visionState.mode !== "off") queueVisionFrame();
     } else if (data?.type === "frame-result") {
       visionState.frameInFlight = false;
       visionState.latestLandmarks = data.frame?.faces?.[0]?.landmarks ?? null;
@@ -258,7 +258,6 @@ function startVision() {
         data: new Uint8Array(data.hairMask.data),
       };
       renderAROverlay();
-      const hairModeActive = visionState.mode === "hair-copper" || visionState.mode === "hair-violet";
       if (!visionState.latestLandmarks && visionState.mode !== "off") {
         setARStatus("No clear face was detected. Face-anchored effects are hidden; adjust lighting or face the camera.");
       } else if (activeSource === "photo" && visionState.mode !== "off") {
