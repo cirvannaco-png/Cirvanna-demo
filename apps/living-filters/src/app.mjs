@@ -276,8 +276,12 @@ function startVision() {
       }
     } else if (data?.type === "error") {
       visionState.frameInFlight = false;
+      // Never leave a previous face/hair overlay on screen after an invalid inference.
+      visionState.latestLandmarks = null;
+      visionState.hairMask = null;
+      renderAROverlay();
       if (data.message !== "A stale frame was discarded.") {
-        setARStatus("Local vision skipped a frame. Keep the face visible and try again.");
+        setARStatus("Local vision skipped a frame. The tracked overlay was cleared; keep the face visible and try again.");
       }
     } else if (data?.type === "init-error") {
       stopVision("Local vision assets are missing, corrupt, or unsupported. Run the pinned asset preparation script on a network-enabled build machine, then reload.", false);
