@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#f6f0f6">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; style-src 'self'; script-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Living Filters · Cirvanna</title>
+  <meta name="description" content="Experiment with Cirvanna Living Filters. Camera and image effects run locally in your browser.">
+  <link rel="stylesheet" href="./styles.css">
+  <script type="module" src="./src/app.mjs"></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <a class="wordmark" href="./" aria-label="Cirvanna Living Filters home">cirvanna<span>•</span></a>
+      <span class="eyebrow">EXPERIENCE LAB / EARLY PREVIEW</span>
+    </header>
+    <section class="intro" aria-labelledby="page-title">
+      <p class="eyebrow">MAKE ROOM FOR YOUR MANY SELVES</p>
+      <h1 id="page-title">Living <em>Filters</em></h1>
+      <p class="lede">Explore a mood, catch a light, and make a look your own. Your media stays on this device in this preview.</p>
+    </section>
+    <div class="privacy-note" role="note">
+      <span aria-hidden="true" class="privacy-icon">◈</span>
+      <p><strong>Local by design.</strong> Camera and photo processing happen in this browser. Nothing is uploaded or saved to a Cirvanna account. This preview uses visual effects, not face tracking, skin analysis, or realistic hair/accessory try-on.</p>
+    </div>
+    <div class="workspace">
+      <section class="preview-panel" aria-label="Filter preview">
+        <div class="stage" id="stage" data-effect="none">
+          <video id="camera-preview" class="media" playsinline muted aria-label="Live camera preview" hidden></video>
+          <img id="photo-preview" class="media" alt="Selected photo preview" hidden>
+          <div class="effect-layer" aria-hidden="true"></div>
+          <div class="stage-empty" id="stage-empty">
+            <div class="empty-orbit" aria-hidden="true"><span>✧</span><i>✳</i></div>
+            <p class="empty-title">Your next look starts here</p>
+            <p class="empty-copy">Use your camera or choose a photo to begin.</p>
+          </div>
+          <div class="stage-label" id="stage-label">PREVIEW ONLY</div>
+        </div>
+        <div class="source-actions" aria-label="Media controls">
+          <label class="button button-primary" for="photo-input">Choose a photo</label>
+          <input id="photo-input" class="visually-hidden" type="file" accept="image/jpeg,image/png,image/webp,image/avif">
+          <button class="button button-secondary" id="start-camera" type="button">Use camera</button>
+          <button class="button button-secondary" id="stop-camera" type="button" disabled>Stop camera</button>
+          <button class="button button-capture" id="capture" type="button" disabled>Save image</button>
+        </div>
+        <p class="status" id="status" role="status" aria-live="polite">Choose a photo or enable your camera to start.</p>
+      </section>
+      <aside class="controls-panel" aria-labelledby="filters-title">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">YOUR EXPRESSION</p>
+            <h2 id="filters-title">Choose a mood</h2>
+          </div>
+          <span class="count" id="filter-count">8 looks</span>
+        </div>
+        <div class="filter-grid" id="filter-grid" role="group" aria-label="Available filters"></div>
+        <div class="selected-filter" aria-live="polite">
+          <span class="selected-dot" aria-hidden="true"></span>
+          <div>
+            <strong id="selected-name">Original</strong>
+            <p id="selected-description">A clear view, exactly as captured.</p>
+          </div>
+        </div>
+        <div class="coming-next">
+          <p class="eyebrow">ON THE HORIZON</p>
+          <h3>More than a colour grade</h3>
+          <p>Face-tracked makeup, hairstyle and accessory try-on will require a separately validated landmark/rendering pipeline, consent checks, and device-quality testing. They are not represented as working in this build.</p>
+        </div>
+      </aside>
+    </div>
+    <footer class="footer">
+      <p>Cirvanna Living Filters · Prototype v0.1</p>
+      <p>Effects are cosmetic simulations, not skin-health measurements or product guarantees.</p>
+    </footer>
+  </main>
+  <noscript><p class="noscript">Enable JavaScript to use Living Filters.</p></noscript>
+</body>
+</html>
