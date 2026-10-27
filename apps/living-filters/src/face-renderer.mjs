@@ -43,7 +43,7 @@ function pathFromIndices(context, landmarks, indices, width, height) {
 }
 
 export function hasRenderableFace(landmarks) {
-  if (!Array.isArray(landmarks) || landmarks.length < 455) return false;
+  if (!Array.isArray(landmarks) || landmarks.length !== 478) return false;
   const required = [
     LANDMARKS.leftEyeOuter, LANDMARKS.leftEyeInner,
     LANDMARKS.rightEyeInner, LANDMARKS.rightEyeOuter,
