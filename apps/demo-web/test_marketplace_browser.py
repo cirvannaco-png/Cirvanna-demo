@@ -55,6 +55,44 @@ class MarketplaceBrowserTests(unittest.TestCase):
         self.page.get_by_role("dialog").get_by_text("Checkout unavailable").wait_for()
         self.assertIn("No stock is reserved and no order is created.", self.page.get_by_role("dialog").inner_text())
 
+    def test_advanced_metadata_filters_apply_and_clear_in_demo_mode(self):
+        self.page.locator("#filterDetails summary").click()
+        self.page.locator("#filterMaterial").fill("linen")
+        self.page.locator("#applyFiltersBtn").click()
+        self.assertEqual(self.page.locator(".card").count(), 1)
+        self.assertIn("Relaxed Linen Shirt", self.page.locator(".card").inner_text())
+        self.assertIn("1 active filter", self.page.locator("#activeFilterCount").inner_text())
+
+        self.page.locator("#clearFiltersBtn").click()
+        self.assertEqual(self.page.locator(".card").count(), 6)
+        self.assertIn("0 active filters", self.page.locator("#activeFilterCount").inner_text())
+
+    def test_domain_characteristic_filter_matches_metadata_in_demo_mode(self):
+        self.page.locator("#filterDetails summary").click()
+        self.page.locator("#filterAttributeKey").select_option("texture")
+        self.page.locator("#filterAttributeValue").fill("lightweight")
+        self.page.locator("#applyFiltersBtn").click()
+        self.assertEqual(self.page.locator(".card").count(), 1)
+        self.assertIn("Radiant Skin Serum", self.page.locator(".card").inner_text())
+
+        self.page.locator("#clearFiltersBtn").click()
+        self.assertEqual(self.page.locator(".card").count(), 6)
+
+
+    def test_price_filters_require_a_currency_and_use_price_bounds(self):
+        self.page.locator("#filterDetails summary").click()
+        self.page.locator("#filterMinPrice").fill("2000")
+        self.page.locator("#applyFiltersBtn").click()
+        self.assertIn("Select a currency", self.page.locator("#status").inner_text())
+        self.assertEqual(self.page.locator(".card").count(), 0)
+
+        self.page.locator("#filterCurrency").select_option("KES")
+        self.page.locator("#filterMaxPrice").fill("3000")
+        self.page.locator("#applyFiltersBtn").click()
+        self.assertEqual(self.page.locator(".card").count(), 1)
+        self.assertIn("Relaxed Linen Shirt", self.page.locator(".card").inner_text())
+
+
     def test_try_on_and_checkout_are_not_misrepresented_as_live(self):
         try_on = self.page.locator('.card button[data-action="tryon"]').first
         self.assertTrue(try_on.is_disabled())

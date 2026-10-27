@@ -35,6 +35,19 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
 .ai-status.error{border-color:var(--danger);color:var(--danger)}
 .ai-result-count{color:var(--gold);font-weight:700}
 @media(max-width:700px){.ai-grid{grid-template-columns:1fr}.ai-controls{grid-template-columns:1fr}.ai-controls .wide{grid-column:auto}}
+.advanced-filters{padding:0 0 14px;border-bottom:1px solid var(--line);margin-bottom:4px}
+#filterDetails>summary{cursor:pointer;list-style:none;padding:12px 0;color:var(--cream);font-size:13px}
+#filterDetails>summary::-webkit-details-marker{display:none}
+#filterDetails>summary:focus-visible{outline:1px solid var(--gold)}
+#activeFilterCount{color:var(--gold);margin-left:8px;font-size:11px}
+.filter-content{padding:8px 0 14px}
+.filter-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.filter-grid label{display:flex;flex-direction:column;gap:5px;color:var(--muted);font-size:11px}
+.filter-grid input,.filter-grid select{min-height:42px}
+.filter-actions{display:flex;gap:8px;margin-top:12px;flex-wrap:wrap}
+.filter-note{font-size:11px;color:var(--muted);margin:10px 0 0}
+@media(max-width:900px){.filter-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:620px){.filter-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.filter-grid label{font-size:10px}.filter-grid input,.filter-grid select{padding:9px 7px;min-height:40px}}
 
 </style>
 </head>
@@ -42,7 +55,48 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
 <header><div class="shell nav"><div><div class="brand">CIRVANNA<span>.</span></div><div class="eyebrow">Purchase certainty begins before checkout</div></div><div class="nav-actions"><button class="btn" id="savedBtn">Saved <span id="savedCount">0</span></button><button class="btn" id="cartBtn">Bag <span id="cartCount">0</span></button><button class="btn" id="settingsBtn">Connect catalog</button></div></div></header>
 <main class="shell">
 <section class="hero"><div><div class="eyebrow">The Cirvanna marketplace</div><h1>Find what feels<br><span style="color:var(--gold)">like you.</span></h1><p>Explore beauty and fashion with product details in one place. Save pieces you love, compare options, and keep your choices intentional.</p></div><div class="hero-note"><strong style="color:var(--cream)">Identity first. Choice always yours.</strong><br>Catalog search is connected to Cirvanna's canonical catalog API when configured. This page does not pretend to perform AI fit analysis or virtual try-on when those services are unavailable.</div></section>
-<section class="toolbar" aria-label="Product filters"><input id="query" type="search" placeholder="Search product, brand or SKU…" aria-label="Search products"><select id="category" aria-label="Category"><option value="">All categories</option></select><button class="btn" id="searchBtn">Search</button></section>
+<section class="toolbar" aria-label="Product search"><input id="query" type="search" placeholder="Search product, brand or SKU…" aria-label="Search products"><select id="category" aria-label="Category"><option value="">All categories</option></select><button class="btn" id="searchBtn">Search</button></section>
+<section class="advanced-filters" aria-label="Advanced product filters">
+  <details id="filterDetails">
+    <summary>Refine results <span id="activeFilterCount">0 active filters</span></summary>
+    <div class="filter-content">
+      <div class="filter-grid">
+        <label>Brand or merchant<input id="filterBrand" type="search" maxlength="100" placeholder="Any brand"></label>
+        <label>Currency<select id="filterCurrency"><option value="">Any currency</option><option value="KES">KES · Kenyan shilling</option><option value="USD">USD · US dollar</option><option value="INR">INR · Indian rupee</option><option value="AED">AED · UAE dirham</option><option value="GBP">GBP · Pound sterling</option><option value="EUR">EUR · Euro</option><option value="JPY">JPY · Japanese yen</option><option value="KWD">KWD · Kuwaiti dinar</option></select></label>
+        <label>Minimum price<input id="filterMinPrice" type="number" min="0" step="any" inputmode="decimal" placeholder="No minimum"></label>
+        <label>Maximum price<input id="filterMaxPrice" type="number" min="0" step="any" inputmode="decimal" placeholder="No maximum"></label>
+        <label>Color<input id="filterColor" type="search" maxlength="64" placeholder="e.g. black, blue"></label>
+        <label>Size<input id="filterSize" type="search" maxlength="64" placeholder="e.g. S, M, 42"></label>
+        <label>Material<input id="filterMaterial" type="search" maxlength="64" placeholder="e.g. linen, cotton"></label>
+        <label>Style<input id="filterStyle" type="search" maxlength="64" placeholder="e.g. minimalist"></label>
+        <label>Occasion<input id="filterOccasion" type="search" maxlength="64" placeholder="e.g. everyday, work"></label>
+        <label>Finish<input id="filterFinish" type="search" maxlength="64" placeholder="e.g. matte, glossy"></label>
+        <label>Shade<input id="filterShade" type="search" maxlength="64" placeholder="e.g. rose, warm brown"></label>
+        <label>Skin-concern tag<input id="filterSkinConcern" type="search" maxlength="64" placeholder="Catalog tag only"></label>
+        <label>More characteristics<select id="filterAttributeKey">
+          <option value="">Choose a characteristic…</option>
+          <option value="ingredient">Ingredient</option><option value="ingredients">Ingredients (tag/list)</option>
+          <option value="texture">Texture</option><option value="hydration">Hydration tag</option>
+          <option value="pigmentation">Pigmentation tag</option><option value="redness">Redness tag</option>
+          <option value="routine_compatibility">Routine compatibility tag</option><option value="undertone">Undertone</option>
+          <option value="foundation_match">Foundation match tag</option><option value="makeup_intensity">Makeup intensity</option>
+          <option value="hair_color">Hair color</option><option value="hairstyle">Hairstyle</option>
+          <option value="silhouette">Silhouette</option><option value="fit">Fit tag</option>
+          <option value="color_palette">Color palette</option><option value="climate">Climate tag</option>
+          <option value="cultural_context">Cultural context tag</option><option value="accessibility">Accessibility tag</option>
+          <option value="durability">Durability tag</option><option value="delivery_region">Delivery-region tag</option>
+          <option value="ethical_preference">Ethical preference tag</option><option value="mood">Mood</option>
+          <option value="desired_impression">Desired impression</option><option value="season">Season</option>
+          <option value="formality">Formality</option><option value="prep_time">Preparation-time tag</option>
+        </select></label>
+        <label>Characteristic value<input id="filterAttributeValue" type="search" maxlength="128" placeholder="Value to match"></label>
+        <label>Sort by<select id="filterSort"><option value="newest">Newest</option><option value="price_low">Price: low to high</option><option value="price_high">Price: high to low</option></select></label>
+      </div>
+      <div class="filter-actions"><button class="btn primary" id="applyFiltersBtn">Apply filters</button><button class="btn" id="clearFiltersBtn">Clear all</button></div>
+      <p class="filter-note">Filters narrow results using catalog or merchant-supplied metadata. Price filters and price sorting require a currency. Metadata tags do not establish fit, skin compatibility, safety, or CAL authorization.</p>
+    </div>
+  </details>
+</section>
 <section class="ai-tools" aria-label="AI product discovery">
   <div class="ai-grid">
     <section class="ai-panel" aria-labelledby="descriptionSearchTitle">
@@ -84,12 +138,12 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
 <script>
 (() => {
   const demoProducts = [
-    {product_id:"demo-001",sku:"CV-BEAUTY-001",name:"Radiant Skin Serum",brand:"Demo Beauty",category:"Beauty",description:"A sample catalog item for testing marketplace browsing.",price_minor:185000,currency:"KES",image_urls:[],attributes:{demo:true}},
-    {product_id:"demo-002",sku:"CV-FASHION-002",name:"Sculpted Everyday Jacket",brand:"Demo Studio",category:"Fashion",description:"A sample apparel item. No real inventory is implied.",price_minor:420000,currency:"KES",image_urls:[],attributes:{demo:true}},
-    {product_id:"demo-003",sku:"CV-ACCESSORY-003",name:"Golden Hour Hoops",brand:"Demo Studio",category:"Accessories",description:"A sample accessory item for UI and interaction testing.",price_minor:95000,currency:"KES",image_urls:[],attributes:{demo:true}},
-    {product_id:"demo-004",sku:"CV-BEAUTY-004",name:"Soft Matte Lip Colour",brand:"Demo Beauty",category:"Beauty",description:"Sample beauty product. Compatibility is not assessed.",price_minor:120000,currency:"KES",image_urls:[],attributes:{demo:true}},
-    {product_id:"demo-005",sku:"CV-FASHION-005",name:"Relaxed Linen Shirt",brand:"Demo Studio",category:"Fashion",description:"A demo item to test category and text filtering.",price_minor:260000,currency:"KES",image_urls:[],attributes:{demo:true}},
-    {product_id:"demo-006",sku:"CV-ACCESSORY-006",name:"Minimal Crossbody",brand:"Demo Studio",category:"Accessories",description:"Sample product data only; not a live offer.",price_minor:315000,currency:"KES",image_urls:[],attributes:{demo:true}}
+    {product_id:"demo-001",sku:"CV-BEAUTY-001",name:"Radiant Skin Serum",brand:"Demo Beauty",category:"Beauty",description:"A sample catalog item for testing marketplace browsing.",price_minor:185000,currency:"KES",image_urls:[],attributes:{demo:true,finish:"hydrating",shade:"rose",skin_concern:"dryness",texture:"lightweight"}},
+    {product_id:"demo-002",sku:"CV-FASHION-002",name:"Sculpted Everyday Jacket",brand:"Demo Studio",category:"Fashion",description:"A sample apparel item. No real inventory is implied.",price_minor:420000,currency:"KES",image_urls:[],attributes:{demo:true,material:"cotton",style:"minimalist",occasion:"work",color:"black",size:"M"}},
+    {product_id:"demo-003",sku:"CV-ACCESSORY-003",name:"Golden Hour Hoops",brand:"Demo Studio",category:"Accessories",description:"A sample accessory item for UI and interaction testing.",price_minor:95000,currency:"KES",image_urls:[],attributes:{demo:true,material:"metal",style:"elegant",occasion:"event",color:"gold",size:"one size"}},
+    {product_id:"demo-004",sku:"CV-BEAUTY-004",name:"Soft Matte Lip Colour",brand:"Demo Beauty",category:"Beauty",description:"Sample beauty product. Compatibility is not assessed.",price_minor:120000,currency:"KES",image_urls:[],attributes:{demo:true,finish:"matte",shade:"rose",color:"rose",skin_concern:"appearance"}},
+    {product_id:"demo-005",sku:"CV-FASHION-005",name:"Relaxed Linen Shirt",brand:"Demo Studio",category:"Fashion",description:"A demo item to test category and text filtering.",price_minor:260000,currency:"KES",image_urls:[],attributes:{demo:true,material:"linen",style:"minimalist",occasion:"everyday",color:"natural",size:"M"}},
+    {product_id:"demo-006",sku:"CV-ACCESSORY-006",name:"Minimal Crossbody",brand:"Demo Studio",category:"Accessories",description:"Sample product data only; not a live offer.",price_minor:315000,currency:"KES",image_urls:[],attributes:{demo:true,material:"leather",style:"minimalist",occasion:"everyday",color:"black",size:"one size"}}
   ];
   const $ = id => document.getElementById(id);
   const bootstrap = window.CIRVANNA_MARKETPLACE_CONFIG || {};
@@ -100,6 +154,45 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
   function writeStore(){localStorage.setItem("cirvanna-marketplace-saved",JSON.stringify(saved));localStorage.setItem("cirvanna-marketplace-bag",JSON.stringify(cart));updateCounts()}
   function updateCounts(){$("savedCount").textContent=saved.length;$("cartCount").textContent=cart.reduce((n,x)=>n+x.quantity,0)}
   function money(p){const currency=String(p.currency||"KES").toUpperCase();const minor=Number(p.price_minor);if(!Number.isSafeInteger(minor)||minor<0)return "Price unavailable";try{const formatter=new Intl.NumberFormat(undefined,{style:"currency",currency});const digits=formatter.resolvedOptions().maximumFractionDigits;return formatter.format(minor/Math.pow(10,digits))}catch{return currency+" "+(minor/100).toFixed(2)}}
+  function filterState(){
+    const currency=$("filterCurrency").value;
+    const minRaw=$("filterMinPrice").value.trim(),maxRaw=$("filterMaxPrice").value.trim();
+    const minValue=minRaw===""?null:Number(minRaw),maxValue=maxRaw===""?null:Number(maxRaw);
+    const sortBy=$("filterSort").value;
+    const attributeKey=$("filterAttributeKey").value,attributeValue=$("filterAttributeValue").value.trim();
+    if((attributeKey&&!attributeValue)||(!attributeKey&&attributeValue))return {error:"Choose both a characteristic and a value, or clear both fields."};
+    if((minValue!==null||maxValue!==null||sortBy!=="newest")&&!currency)return {error:"Select a currency before filtering or sorting by price; currencies cannot be compared directly."};
+    if((minValue!==null&&(!Number.isFinite(minValue)||minValue<0))||(maxValue!==null&&(!Number.isFinite(maxValue)||maxValue<0)))return {error:"Price bounds must be valid non-negative numbers."};
+    if(minValue!==null&&maxValue!==null&&minValue>maxValue)return {error:"Minimum price cannot exceed maximum price."};
+    let digits=2;
+    if(currency){try{digits=new Intl.NumberFormat("en",{style:"currency",currency}).resolvedOptions().maximumFractionDigits}catch{return {error:"Select a supported currency."};}}
+    const minor=value=>value===null?null:Math.round(value*Math.pow(10,digits));
+    return {brand:$("filterBrand").value.trim(),currency,minPriceMinor:minor(minValue),maxPriceMinor:minor(maxValue),
+      color:$("filterColor").value.trim(),size:$("filterSize").value.trim(),material:$("filterMaterial").value.trim(),
+      style:$("filterStyle").value.trim(),occasion:$("filterOccasion").value.trim(),finish:$("filterFinish").value.trim(),
+      shade:$("filterShade").value.trim(),skinConcern:$("filterSkinConcern").value.trim(),
+      attributeKey,attributeValue,sortBy};
+  }
+  function appendFilterParams(url,filters){
+    const values={brand:filters.brand,currency:filters.currency,min_price_minor:filters.minPriceMinor,max_price_minor:filters.maxPriceMinor,
+      color:filters.color,size:filters.size,material:filters.material,style:filters.style,occasion:filters.occasion,
+      finish:filters.finish,shade:filters.shade,skin_concern:filters.skinConcern,
+      attribute_key:filters.attributeKey,attribute_value:filters.attributeValue,sort_by:filters.sortBy==="newest"?"":filters.sortBy};
+    Object.entries(values).forEach(([key,value])=>{if(value!==null&&value!==undefined&&value!=="")url.searchParams.set(key,String(value))});
+  }
+  function updateFilterCount(){
+    const f=filterState();
+    const active=f.error?["filterBrand","filterCurrency","filterMinPrice","filterMaxPrice","filterColor","filterSize","filterMaterial","filterStyle","filterOccasion","filterFinish","filterShade","filterSkinConcern"].filter(id=>$(id).value.trim()).length+($("filterAttributeKey").value||$("filterAttributeValue").value.trim()?1:0)
+      :["brand","currency","minPriceMinor","maxPriceMinor","color","size","material","style","occasion","finish","shade","skinConcern"].filter(key=>f[key]!==null&&f[key]!==undefined&&f[key]!=="").length+(f.attributeKey&&f.attributeValue?1:0)+(f.sortBy!=="newest"?1:0);
+    $("activeFilterCount").textContent=active+" active filter"+(active===1?"":"s");
+  }
+  function metadataValue(product,key){
+    const metadata=product.attributes||product.options||{};
+    const value=metadata[key]??product[key];
+    return Array.isArray(value)?value.join(" "):String(value??"");
+  }
+  function matchesMetadata(product,key,value){return !value||metadataValue(product,key).toLowerCase().includes(value.toLowerCase())}
+  
   function escapeHtml(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
   function setStatus(s,error=false){$("status").textContent=s;$("status").classList.toggle("error",error)}
   function getId(p){return String(p.variant_id||p.product_id||p.id||p.sku)}
@@ -120,18 +213,20 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     if(cats.includes(current))$("category").value=current;
   }
   async function load(){
-    const q=$("query").value.trim(),category=$("category").value;
+    const q=$("query").value.trim(),category=$("category").value,filters=filterState();
+    if(filters.error){items=[];total=0;setStatus(filters.error,true);render();return}
     if(bootstrap.publicOffersBase && !forceDemo && !(config.commerceBase&&config.userToken) && (!config.base || !config.token)){
       mode="public_offers";setStatus("Loading approved merchant offers…");
       try{
         const url=new URL(bootstrap.publicOffersBase.replace(/\/$/,"")+"/marketplace/offers",window.location.origin);
         if(q)url.searchParams.set("q",q);if(category)url.searchParams.set("category",category);
+        appendFilterParams(url,filters);
         url.searchParams.set("limit","20");url.searchParams.set("offset",String(page*20));
         const response=await fetch(url,{headers:{Accept:"application/json"}});
         if(!response.ok)throw new Error(response.status===503?"Marketplace API is not ready (503).":"Marketplace offers API returned HTTP "+response.status+".");
         const data=await response.json();
         if(!Array.isArray(data.items)||!Number.isFinite(Number(data.total)))throw new Error("Marketplace API returned an invalid offer list.");
-        items=data.items.map(p=>({...p,product_id:p.catalog_product_id,name:p.product_name,brand:p.merchant_name,description:Object.entries(p.options||{}).map(([k,v])=>k+": "+v).join(" · ")||"Approved merchant offer with current stock.",image_urls:p.image_urls||[],attributes:{}}));
+        items=data.items.map(p=>({...p,product_id:p.catalog_product_id,name:p.product_name,brand:p.merchant_name,description:Object.entries(p.options||{}).map(([k,v])=>k+": "+v).join(" · ")||"Approved merchant offer with current stock.",image_urls:p.image_urls||[],attributes:p.options||{}}));
         total=Number(data.total)||0;saved=readStore("cirvanna-marketplace-saved");cart=readStore("cirvanna-marketplace-bag");
         updateCategories(items);updateCounts();
         setStatus("LIVE MARKETPLACE — "+total+" in-stock offer(s) from approved merchants. Guest saves and bag stay in this browser; account-backed checkout requires identity-provider sign-in.");
@@ -143,6 +238,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       try{
         const url=new URL(config.commerceBase+"/marketplace/offers");
         if(q)url.searchParams.set("q",q);if(category)url.searchParams.set("category",category);
+        appendFilterParams(url,filters);
         url.searchParams.set("limit","20");url.searchParams.set("offset",String(page*20));
         const headers={Authorization:"Bearer "+config.userToken,Accept:"application/json"};
         const offersResponse=await fetch(url,{headers});
@@ -151,7 +247,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
         if(!cartResponse.ok)throw new Error(cartResponse.status===401?"Your commerce session expired; reconnect to refresh account data.":"Persistent cart API returned HTTP "+cartResponse.status+".");
         if(!savedResponse.ok)throw new Error(savedResponse.status===401?"Your commerce session expired; reconnect to refresh account data.":"Saved-products API returned HTTP "+savedResponse.status+".");
         const offersData=await offersResponse.json(),cartData=await cartResponse.json(),savedData=await savedResponse.json();
-        items=(Array.isArray(offersData.items)?offersData.items:[]).map(p=>({...p,product_id:p.catalog_product_id,name:p.product_name,brand:p.merchant_name,description:Object.entries(p.options||{}).map(([k,v])=>k+": "+v).join(" · ")||"Merchant offer; details are provided by the listing.",image_urls:p.image_urls||[],attributes:{}}));
+        items=(Array.isArray(offersData.items)?offersData.items:[]).map(p=>({...p,product_id:p.catalog_product_id,name:p.product_name,brand:p.merchant_name,description:Object.entries(p.options||{}).map(([k,v])=>k+": "+v).join(" · ")||"Merchant offer; details are provided by the listing.",image_urls:p.image_urls||[],attributes:p.options||{}}));
         total=Number(offersData.total)||0;cartVersion=Number(cartData.version)||0;
         cart=(Array.isArray(cartData.items)?cartData.items:[]).map(x=>({...x,product_id:x.variant_id,name:x.product_name}));
         saved=(Array.isArray(savedData.items)?savedData.items:[]).map(x=>({product_id:x.catalog_product_id,name:x.catalog_product_id,currency:"",price_minor:null}));
@@ -160,13 +256,29 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     }
     if(!config.base||!config.token){
       mode="demo";saved=readStore("cirvanna-marketplace-saved");cart=readStore("cirvanna-marketplace-bag");
-      const all=demoProducts.filter(p=>(!q||(p.name+" "+p.brand+" "+p.sku+" "+p.description).toLowerCase().includes(q.toLowerCase()))&&(!category||p.category===category));
+      const all=demoProducts.filter(p=>(!q||(p.name+" "+p.brand+" "+p.sku+" "+p.description).toLowerCase().includes(q.toLowerCase()))&&(!category||p.category===category))
+        .filter(p=>(!filters.brand||String(p.brand||"").toLowerCase().includes(filters.brand.toLowerCase())))
+        .filter(p=>(!filters.currency||String(p.currency||"").toUpperCase()===filters.currency))
+        .filter(p=>(filters.minPriceMinor===null||p.price_minor>=filters.minPriceMinor))
+        .filter(p=>(filters.maxPriceMinor===null||p.price_minor<=filters.maxPriceMinor))
+        .filter(p=>matchesMetadata(p,"color",filters.color))
+        .filter(p=>matchesMetadata(p,"size",filters.size))
+        .filter(p=>matchesMetadata(p,"material",filters.material))
+        .filter(p=>matchesMetadata(p,"style",filters.style))
+        .filter(p=>matchesMetadata(p,"occasion",filters.occasion))
+        .filter(p=>matchesMetadata(p,"finish",filters.finish))
+        .filter(p=>matchesMetadata(p,"shade",filters.shade))
+        .filter(p=>matchesMetadata(p,"skin_concern",filters.skinConcern))
+        .filter(p=>matchesMetadata(p,filters.attributeKey,filters.attributeValue));
+      if(filters.sortBy==="price_low")all.sort((a,b)=>a.price_minor-b.price_minor);
+      if(filters.sortBy==="price_high")all.sort((a,b)=>b.price_minor-a.price_minor);
       total=all.length;items=all.slice(page*20,(page+1)*20);updateCategories(demoProducts);updateCounts();setStatus("DEMO MODE — "+total+" sample products. Saves and bag are local to this browser; checkout and try-on are unavailable.");render();return;
     }
     mode="catalog";setStatus("Loading catalog…");
     try{
       const url=new URL(config.base+"/products");
       if(q)url.searchParams.set("q",q);if(category)url.searchParams.set("category",category);
+      appendFilterParams(url,filters);
       url.searchParams.set("limit","20");url.searchParams.set("offset",String(page*20));
       const response=await fetch(url,{headers:{Authorization:"Bearer "+config.token,Accept:"application/json"}});
       if(!response.ok)throw new Error(response.status===401?"Catalog authentication failed (401). Check the token.":"Catalog API returned HTTP "+response.status+".");
@@ -200,6 +312,15 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
   }
   $("products").addEventListener("click",e=>{const b=e.target.closest("button[data-action]");if(b&&!b.disabled)act(b.dataset.action,b.dataset.id)});
   $("searchBtn").addEventListener("click",()=>{page=0;load()});$("query").addEventListener("keydown",e=>{if(e.key==="Enter"){page=0;load()}});$("category").addEventListener("change",()=>{page=0;load()});
+  const advancedFilterIds=["filterBrand","filterCurrency","filterMinPrice","filterMaxPrice","filterColor","filterSize","filterMaterial","filterStyle","filterOccasion","filterFinish","filterShade","filterSkinConcern","filterAttributeKey","filterAttributeValue","filterSort"];
+  advancedFilterIds.forEach(id=>$(id).addEventListener("input",updateFilterCount));
+  advancedFilterIds.forEach(id=>$(id).addEventListener("change",updateFilterCount));
+  $("applyFiltersBtn").addEventListener("click",()=>{page=0;load()});
+  $("clearFiltersBtn").addEventListener("click",()=>{
+    $("query").value="";$("category").value="";
+    advancedFilterIds.forEach(id=>{if(id==="filterSort")$(id).value="newest";else $(id).value=""});
+    page=0;updateFilterCount();load();
+  });
   $("prevBtn").addEventListener("click",()=>{if(page>0){page--;load()}});$("nextBtn").addEventListener("click",()=>{if((page+1)*20<total){page++;load()}});
   function closeDrawer(){$("drawerRoot").innerHTML=""}
   function openDrawer(title,content){
@@ -302,7 +423,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     }finally{setAiBusy("clickItBtn",false,"Scan photo and search marketplace")}
   });
 
-  updateCounts();load();
+  updateFilterCount();updateCounts();load();
 })();
 </script>
 </body>

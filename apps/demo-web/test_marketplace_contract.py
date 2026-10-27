@@ -26,6 +26,25 @@ class MarketplaceContractTests(unittest.TestCase):
         self.assertIn('Authorization:"Bearer "+config.token', HTML)
         self.assertIn('Demo data is not substituted after a live API error.', HTML)
 
+    def test_intelligent_filters_exist_and_reach_each_search_path(self):
+        for element_id in (
+            "filterBrand", "filterCurrency", "filterMinPrice", "filterMaxPrice",
+            "filterColor", "filterSize", "filterMaterial", "filterStyle",
+            "filterOccasion", "filterFinish", "filterShade", "filterSkinConcern",
+            "filterAttributeKey", "filterAttributeValue", "filterSort",
+            "applyFiltersBtn", "clearFiltersBtn",
+        ):
+            with self.subTest(element_id=element_id):
+                self.assertIn(f'id="{element_id}"', HTML)
+        self.assertIn("function appendFilterParams(url,filters)", HTML)
+        self.assertGreaterEqual(HTML.count("appendFilterParams(url,filters)"), 4)
+        self.assertIn("PRICE_FILTER_REQUIRES_CURRENCY", CATALOG)
+        self.assertIn('"skin_concern": skin_concern', CATALOG)
+        self.assertIn("Product.attributes[key].as_string().ilike", CATALOG)
+        self.assertIn("ALLOWED_ATTRIBUTE_FILTER_KEYS", CATALOG)
+        self.assertIn("attribute_key:filters.attributeKey", HTML)
+        self.assertIn("Metadata tags do not establish fit, skin compatibility, safety, or CAL authorization.", HTML)
+
     def test_bearer_token_requires_tls_except_local_development(self):
         self.assertIn("bearer tokens may only be sent to HTTPS endpoints", HTML)
         self.assertIn('u.protocol!=="https:"', HTML)

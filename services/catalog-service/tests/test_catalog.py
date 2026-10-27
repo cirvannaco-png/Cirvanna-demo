@@ -207,6 +207,80 @@ def test_list_search_pagination_and_active_default(client):
     assert response.json()["items"][0]["name"] == "Rose Lipstick"
 
 
+def test_server_side_metadata_filters_sort_and_require_a_currency_for_price(client):
+    create_product(
+        client,
+        sku="FILTER-LINEN-001",
+        name="Minimal Linen Shirt",
+        category="Fashion",
+        brand="Studio A",
+        price_minor=260000,
+        currency="KES",
+        attributes={"material": "linen", "color": "black", "size": "M", "style": "minimalist", "texture": "fine"},
+    )
+    create_product(
+        client,
+        sku="FILTER-COTTON-002",
+        name="Cotton Jacket",
+        category="Fashion",
+        brand="Studio B",
+        price_minor=420000,
+        currency="KES",
+        attributes={"material": "cotton", "color": "blue", "size": "L"},
+    )
+    create_product(
+        client,
+        sku="FILTER-USD-003",
+        name="Linen Bag",
+        category="Accessories",
+        brand="Studio A",
+        price_minor=1200,
+        currency="USD",
+        attributes={"material": "linen", "color": "black"},
+    )
+
+    response = client.get(
+        "/products?currency=KES&min_price_minor=200000&max_price_minor=300000"
+        "&material=linen&color=black&brand=Studio%20A&attribute_key=texture&attribute_value=fine&sort_by=price_low",
+        headers=auth_headers(),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["total"] == 1
+    assert body["items"][0]["sku"] == "FILTER-LINEN-001"
+
+    missing_currency = client.get(
+        "/products?min_price_minor=200000", headers=auth_headers()
+    )
+    assert missing_currency.status_code == 422
+    assert missing_currency.json()["detail"]["code"] == "PRICE_FILTER_REQUIRES_CURRENCY"
+
+    invalid_range = client.get(
+        "/products?currency=KES&min_price_minor=300000&max_price_minor=200000",
+        headers=auth_headers(),
+    )
+    assert invalid_range.status_code == 422
+    assert invalid_range.json()["detail"]["code"] == "INVALID_PRICE_RANGE"
+
+    missing_sort_currency = client.get(
+        "/products?sort_by=price_low", headers=auth_headers()
+    )
+    assert missing_sort_currency.status_code == 422
+    assert missing_sort_currency.json()["detail"]["code"] == "PRICE_SORT_REQUIRES_CURRENCY"
+
+    missing_attribute_value = client.get(
+        "/products?attribute_key=undertone", headers=auth_headers()
+    )
+    assert missing_attribute_value.status_code == 422
+    assert missing_attribute_value.json()["detail"]["code"] == "ATTRIBUTE_FILTER_KEY_VALUE_REQUIRED"
+
+    unsupported_attribute = client.get(
+        "/products?attribute_key=internal_secret&attribute_value=x", headers=auth_headers()
+    )
+    assert unsupported_attribute.status_code == 422
+    assert unsupported_attribute.json()["detail"]["code"] == "UNSUPPORTED_ATTRIBUTE_FILTER"
+
+
 def test_delete_archives_without_erasing_history(client):
     product = create_product(client)
     response = client.delete(

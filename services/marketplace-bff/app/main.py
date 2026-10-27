@@ -23,6 +23,15 @@ HTML_PATH = Path(os.getenv("MARKETPLACE_HTML_PATH", str(DEFAULT_HTML)))
 TIMEOUT_SECONDS = 5.0
 MAX_PAGE_SIZE = 100
 MAX_VISION_IMAGE_BYTES = 10 * 1024 * 1024
+CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
+ALLOWED_ATTRIBUTE_FILTER_KEYS = frozenset({
+    "color", "size", "material", "style", "occasion", "finish", "shade", "skin_concern",
+    "ingredient", "ingredients", "texture", "hydration", "pigmentation", "redness",
+    "routine_compatibility", "undertone", "foundation_match", "makeup_intensity",
+    "hair_color", "hairstyle", "silhouette", "fit", "color_palette", "climate",
+    "cultural_context", "accessibility", "durability", "delivery_region",
+    "ethical_preference", "mood", "desired_impression", "season", "formality", "prep_time",
+})
 UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
 SERVICE_PATHS = {
     ("GET", "cart"),
@@ -331,19 +340,61 @@ def marketplace_page() -> HTMLResponse:
 def public_offers(
     q: str | None = Query(default=None, max_length=160),
     category: str | None = Query(default=None, max_length=80),
+    brand: str | None = Query(default=None, max_length=100),
     currency: str | None = Query(default=None, min_length=3, max_length=3),
+    min_price_minor: int | None = Query(default=None, ge=0, le=2_000_000_000),
+    max_price_minor: int | None = Query(default=None, ge=0, le=2_000_000_000),
+    color: str | None = Query(default=None, max_length=64),
+    size: str | None = Query(default=None, max_length=64),
+    material: str | None = Query(default=None, max_length=64),
+    style: str | None = Query(default=None, max_length=64),
+    occasion: str | None = Query(default=None, max_length=64),
+    finish: str | None = Query(default=None, max_length=64),
+    shade: str | None = Query(default=None, max_length=64),
+    skin_concern: str | None = Query(default=None, max_length=64),
+    attribute_key: str | None = Query(default=None, max_length=64),
+    attribute_value: str | None = Query(default=None, max_length=128),
+    sort_by: str = Query(default="newest", pattern="^(newest|price_low|price_high)$"),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=MAX_PAGE_SIZE),
 ) -> dict:
-    """Expose only Commerce's active, approved, in-stock merchant offers."""
+    """Expose approved, available offers and forward an explicit filter allowlist."""
+    normalized_currency = currency.strip().upper() if currency and currency.strip() else None
+    if normalized_currency and not CURRENCY_RE.fullmatch(normalized_currency):
+        raise HTTPException(422, detail={"code": "INVALID_CURRENCY"})
+    if min_price_minor is not None or max_price_minor is not None:
+        if not normalized_currency:
+            raise HTTPException(422, detail={"code": "PRICE_FILTER_REQUIRES_CURRENCY"})
+        if min_price_minor is not None and max_price_minor is not None and min_price_minor > max_price_minor:
+            raise HTTPException(422, detail={"code": "INVALID_PRICE_RANGE"})
+    if sort_by in {"price_low", "price_high"} and not normalized_currency:
+        raise HTTPException(422, detail={"code": "PRICE_SORT_REQUIRES_CURRENCY"})
+    normalized_attribute_key = attribute_key.strip().lower() if attribute_key and attribute_key.strip() else None
+    normalized_attribute_value = attribute_value.strip() if attribute_value and attribute_value.strip() else None
+    if bool(normalized_attribute_key) != bool(normalized_attribute_value):
+        raise HTTPException(422, detail={"code": "ATTRIBUTE_FILTER_KEY_VALUE_REQUIRED"})
+    if normalized_attribute_key and normalized_attribute_key not in ALLOWED_ATTRIBUTE_FILTER_KEYS:
+        raise HTTPException(422, detail={"code": "UNSUPPORTED_ATTRIBUTE_FILTER"})
     base = _upstream_base("COMMERCE_API_URL")
     params: dict[str, str | int] = {"offset": offset, "limit": limit}
     if q and q.strip():
         params["q"] = q.strip()
     if category and category.strip():
         params["category"] = category.strip()
+    if brand and brand.strip():
+        params["brand"] = brand.strip()
     if currency and currency.strip():
-        params["currency"] = currency.strip().upper()
+        params["currency"] = normalized_currency
+    for key, value in {
+        "min_price_minor": min_price_minor, "max_price_minor": max_price_minor,
+        "color": color, "size": size, "material": material, "style": style,
+        "occasion": occasion, "finish": finish, "shade": shade, "skin_concern": skin_concern,
+        "attribute_key": normalized_attribute_key, "attribute_value": normalized_attribute_value,
+    }.items():
+        if value is not None and (not isinstance(value, str) or value.strip()):
+            params[key] = value.strip() if isinstance(value, str) else value
+    if sort_by != "newest":
+        params["sort_by"] = sort_by
     try:
         response = httpx.get(
             base + "/marketplace/offers",
