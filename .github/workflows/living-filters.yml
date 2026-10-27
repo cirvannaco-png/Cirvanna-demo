@@ -1,0 +1,45 @@
+name: Living Filters validation
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/living-filters/**"
+      - ".github/workflows/living-filters.yml"
+      - "docs/architecture/adr/ADR-0002-living-filters-landmark-provider.md"
+  push:
+    branches:
+      - main
+      - "feature/living-filters-mvp"
+    paths:
+      - "apps/living-filters/**"
+      - ".github/workflows/living-filters.yml"
+      - "docs/architecture/adr/ADR-0002-living-filters-landmark-provider.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: living-filters-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Check JavaScript syntax
+        run: |
+          node --check apps/living-filters/src/app.mjs
+          node --check apps/living-filters/src/filter-catalog.mjs
+          node --check apps/living-filters/src/request-epoch.mjs
+          node --check apps/living-filters/src/landmark-frame-contract.mjs
+      - name: Run Living Filters contract tests
+        run: node --test apps/living-filters/tests/*.test.mjs
