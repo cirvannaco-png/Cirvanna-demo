@@ -96,13 +96,16 @@ async function main() {
     if (!existsSync(runtimeSource) || !statSync(runtimeSource).isFile()) fail("Pinned runtime entry is missing from npm package.");
     if (!existsSync(wasmSource) || !statSync(wasmSource).isDirectory()) fail("Pinned WASM directory is missing from npm package.");
     const packageLicense = ["LICENSE", "LICENSE.md", "LICENSE.txt"].map((file) => join(packageRoot, file)).find(existsSync);
-    if (!packageLicense) fail("Runtime package has no discoverable licence file; refusing installation.");
+    const repositoryLicense = join(appRoot, "third-party", "mediapipe-LICENSE");
+    if (!packageLicense && !existsSync(repositoryLicense)) {
+      fail("Runtime package licence is missing and the reviewed upstream licence copy is unavailable.");
+    }
 
     const runtimeTarget = join(stagingDirectory, "vendor", "mediapipe");
     mkdirSync(runtimeTarget, { recursive: true });
     copyFileSync(runtimeSource, join(runtimeTarget, manifest.runtime.runtimeEntry));
     cpSync(wasmSource, join(runtimeTarget, "wasm"), { recursive: true });
-    copyFileSync(packageLicense, join(runtimeTarget, "LICENSE"));
+    copyFileSync(packageLicense ?? repositoryLicense, join(runtimeTarget, "LICENSE"));
 
     const installedModels = [];
     for (const model of manifest.models) {
