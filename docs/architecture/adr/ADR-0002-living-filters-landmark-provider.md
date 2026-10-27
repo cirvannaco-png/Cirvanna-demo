@@ -53,7 +53,7 @@ The implementation must keep these boundaries:
 
 ## Consequences
 
-The first follow-up can implement a small canonical contract and contract tests without importing a model. Actual face-anchored makeup, hair segmentation and accessory placement remain disabled until the above gates are met. This deliberately avoids converting an architectural decision into an unsupported feature-completion claim.
+The canonical contract, local module worker, makeup/accessory renderer, hair mask recolouring, and opt-in controls now exist in the feature branch. Runtime/WASM/model files are not checked into Git; the asset preparation script downloads the pinned artifacts during the build and checks their hashes before installation. The controls remain unavailable when those files are missing or unsupported. This is an experimental implementation, not a completed or production-validated AR release. The asset and Chromium workflow must pass, then device-quality and privacy review must be recorded before launch.
 
 
 ## Pinned implementation and release gate
