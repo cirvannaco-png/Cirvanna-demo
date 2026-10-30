@@ -157,24 +157,27 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
   function filterState(){
     const currency=$("filterCurrency").value;
     const minRaw=$("filterMinPrice").value.trim(),maxRaw=$("filterMaxPrice").value.trim();
-    const minValue=minRaw===""?null:Number(minRaw),maxValue=maxRaw===""?null:Number(maxRaw);
+    const hasPrice=minRaw!==""||maxRaw!=="";
     const sortBy=$("filterSort").value;
     const attributeKey=$("filterAttributeKey").value,attributeValue=$("filterAttributeValue").value.trim();
     if((attributeKey&&!attributeValue)||(!attributeKey&&attributeValue))return {error:"Choose both a characteristic and a value, or clear both fields."};
-    if((minValue!==null||maxValue!==null||sortBy!=="newest")&&!currency)return {error:"Select a currency before filtering or sorting by price; currencies cannot be compared directly."};
-    if((minValue!==null&&(!Number.isFinite(minValue)||minValue<0))||(maxValue!==null&&(!Number.isFinite(maxValue)||maxValue<0)))return {error:"Price bounds must be valid non-negative numbers."};
-    if(minValue!==null&&maxValue!==null&&minValue>maxValue)return {error:"Minimum price cannot exceed maximum price."};
+    if((hasPrice||sortBy!=="newest")&&!currency)return {error:"Select a currency before filtering or sorting by price; currencies cannot be compared directly."};
     let digits=2;
     if(currency){try{digits=new Intl.NumberFormat("en",{style:"currency",currency}).resolvedOptions().maximumFractionDigits}catch{return {error:"Select a supported currency."};}}
-    const precisionLimit=Math.pow(10,digits);
-    for(const [label,value] of [["Minimum",minValue],["Maximum",maxValue]]){
-      if(value!==null&&(!Number.isSafeInteger(Math.round(value*precisionLimit))||Math.abs(value*precisionLimit-Math.round(value*precisionLimit))>1e-7)){
-        return {error:label+" price has more decimal places than "+currency+" supports."};
-      }
-      if(value!==null&&value*precisionLimit>2_000_000_000)return {error:label+" price exceeds the supported filter range."};
+    const scale=10n**BigInt(digits);
+    let minPriceMinor=null,maxPriceMinor=null;
+    for(const [label,raw] of [["Minimum",minRaw],["Maximum",maxRaw]]){
+      if(raw==="")continue;
+      if(!/^(?:\\d+(?:\\.\\d*)?|\\.\\d+)$/.test(raw))return {error:"Price bounds must be valid non-negative decimal numbers."};
+      const [whole,fraction=""]=raw.split(".");
+      if(/[1-9]/.test(fraction.slice(digits)))return {error:label+" price has more decimal places than "+currency+" supports."};
+      if((whole||"0").length>10)return {error:label+" price exceeds the supported filter range."};
+      const minor=BigInt(whole||"0")*scale+BigInt(fraction.slice(0,digits).padEnd(digits,"0")||"0");
+      if(minor>2_000_000_000n)return {error:label+" price exceeds the supported filter range."};
+      if(label==="Minimum")minPriceMinor=Number(minor);else maxPriceMinor=Number(minor);
     }
-    const minor=value=>value===null?null:Math.round(value*precisionLimit);
-    return {brand:$("filterBrand").value.trim(),currency,minPriceMinor:minor(minValue),maxPriceMinor:minor(maxValue),
+    if(minPriceMinor!==null&&maxPriceMinor!==null&&minPriceMinor>maxPriceMinor)return {error:"Minimum price cannot exceed maximum price."};
+    return {brand:$("filterBrand").value.trim(),currency,minPriceMinor,maxPriceMinor,
       color:$("filterColor").value.trim(),size:$("filterSize").value.trim(),material:$("filterMaterial").value.trim(),
       style:$("filterStyle").value.trim(),occasion:$("filterOccasion").value.trim(),finish:$("filterFinish").value.trim(),
       shade:$("filterShade").value.trim(),skinConcern:$("filterSkinConcern").value.trim(),
