@@ -168,7 +168,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     let minPriceMinor=null,maxPriceMinor=null;
     for(const [label,raw] of [["Minimum",minRaw],["Maximum",maxRaw]]){
       if(raw==="")continue;
-      if(!/^(?:\\d+(?:\\.\\d*)?|\\.\\d+)$/.test(raw))return {error:"Price bounds must be valid non-negative decimal numbers."};
+      if(!/^(?:[0-9]+(?:[.][0-9]*)?|[.][0-9]+)$/.test(raw))return {error:"Price bounds must be valid non-negative decimal numbers."};
       const [whole,fraction=""]=raw.split(".");
       if(/[1-9]/.test(fraction.slice(digits)))return {error:label+" price has more decimal places than "+currency+" supports."};
       if((whole||"0").length>10)return {error:label+" price exceeds the supported filter range."};
