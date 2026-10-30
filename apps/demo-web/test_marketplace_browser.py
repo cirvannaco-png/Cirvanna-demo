@@ -105,6 +105,26 @@ class MarketplaceBrowserTests(unittest.TestCase):
         self.page.locator("#applyFiltersBtn").click()
         self.assertIn("DEMO MODE", self.page.locator("#status").inner_text())
 
+    def test_currency_precision_and_catalog_price_ceiling(self):
+        self.page.locator("#filterDetails summary").click()
+        self.page.locator("#filterCurrency").select_option("KWD")
+        self.page.locator("#filterMinPrice").fill("1.234")
+        self.page.locator("#applyFiltersBtn").click()
+        self.assertIn("DEMO MODE", self.page.locator("#status").inner_text())
+
+        self.page.locator("#filterMinPrice").fill("1.2345")
+        self.page.locator("#applyFiltersBtn").click()
+        self.assertIn("more decimal places than KWD supports", self.page.locator("#status").inner_text())
+
+        self.page.locator("#filterCurrency").select_option("KES")
+        self.page.locator("#filterMinPrice").fill("20000000.01")
+        self.page.locator("#applyFiltersBtn").click()
+        self.assertIn("exceeds the supported filter range", self.page.locator("#status").inner_text())
+
+        self.page.locator("#filterMinPrice").fill("20000000")
+        self.page.locator("#applyFiltersBtn").click()
+        self.assertIn("DEMO MODE", self.page.locator("#status").inner_text())
+
     def test_try_on_and_checkout_are_not_misrepresented_as_live(self):
         try_on = self.page.locator('.card button[data-action="tryon"]').first
         self.assertTrue(try_on.is_disabled())
