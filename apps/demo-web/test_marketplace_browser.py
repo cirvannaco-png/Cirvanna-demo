@@ -116,6 +116,11 @@ class MarketplaceBrowserTests(unittest.TestCase):
         self.page.locator("#applyFiltersBtn").click()
         self.assertIn("more decimal places than KWD supports", self.page.locator("#status").inner_text())
 
+        self.page.locator("#filterCurrency").select_option("USD")
+        self.page.locator("#filterMinPrice").fill("1.0000000001")
+        self.page.locator("#applyFiltersBtn").click()
+        self.assertIn("more decimal places than USD supports", self.page.locator("#status").inner_text())
+
         self.page.locator("#filterCurrency").select_option("KES")
         self.page.locator("#filterMinPrice").fill("20000000.01")
         self.page.locator("#applyFiltersBtn").click()
