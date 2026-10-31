@@ -327,6 +327,46 @@ As implementation grows, add the relevant checks:
 
 Every validation report should identify the commit, environment, command, result, and known limitations. A passing architecture test is not a substitute for application tests, and a successful build is not proof of production readiness.
 
+## CI/CD status — 31 October 2026
+
+**Current release gate: blocked.** This section records observed workflow state, not an assumption about why the workflows failed.
+
+### GitHub Actions
+
+The latest inspected marketplace-filter pull request is [PR #67](https://github.com/cirvannaco-png/Cirvanna-demo/pull/67), from `feature/intelligent-filter-layer` into `main`. Its inspected head was `ce09b6f187914abefa39e955e030d5bf6789e2da` (30 October 2026).
+
+Eight workflow runs for that head were observed as completed with a `failure` conclusion:
+
+| Workflow | Observed result |
+|---|---|
+| Container image builds | Failure |
+| Architecture validation | Failure |
+| Marketplace contract checks | Failure |
+| Marketplace BFF checks | Failure |
+| Catalog service checks | Failure |
+| Commerce service checks | Failure |
+| Vision intelligence contract tests | Failure |
+| Twin, Vision, Catalog and Xari contract tests | Failure |
+
+The available job responses did not include execution steps, and the earlier log retrieval attempts did not return usable logs. Therefore the root cause is **not established**. Do not infer that application tests failed, or that the runner alone failed, until job logs and runner evidence are available. A failed workflow conclusion is not a passing test result.
+
+### Merge and deployment policy
+
+- Keep PR #67 unmerged until the failure cause is identified and the required checks pass on the exact final head.
+- Do not treat a committed test, a workflow dispatch, a successful image build on another commit, or an earlier PR's green checks as proof that this head is validated.
+- After CI is repaired, rerun the full required suite and retain the commit SHA, workflow run URLs, job logs, test summaries, and artifact references.
+- Verify the default-branch checks after merge, then run authenticated staging smoke tests for the relevant marketplace and decision flows.
+- Production release additionally requires verified environment configuration, migrations, service health, security/privacy checks, monitoring, backup restoration, and rollback evidence.
+- No production deployment or production-readiness approval is established by the workflow evidence recorded here.
+
+### CI recovery checklist
+
+1. Make failed jobs inspectable: verify workflow permissions, runner availability/labels, job initialization, log retention, and artifact upload.
+2. Capture the actual failure point for each workflow; distinguish queue/runner/bootstrap errors from dependency, compilation, assertion, and integration failures.
+3. Fix the underlying cause without weakening required checks or skipping tests.
+4. Re-run the exact PR head and confirm every required workflow is green.
+5. Record the final validated commit SHA and update this section when new evidence supersedes this snapshot.
+
 ## Current implementation status
 
 **Cirvanna is not yet a verified end-to-end product.** The following status distinguishes tested domain/API contracts from live services, calibrated models, and production operations; passing a workflow does not erase the remaining release gates.
@@ -341,7 +381,7 @@ Every validation report should identify the commit, environment, command, result
 | Virtual Try-On | Guarded FastAPI orchestration API is merged (PR #46); API/privacy-gate tests and the Docker build passed. Rendering remains disabled until real server-side consent, asset authorization, and renderer/model integrations are deployed. | Integrate the selected model in an isolated GPU worker, connect authorized asset storage and consent services, then validate image quality, privacy, cost, latency, and output persistence |
 | Virtual Twin and Virtual Try-On | Guarded APIs are merged, but Twin generation and Try-On rendering remain disabled until validated model/renderer adapters, server-side consent, asset authorization, and output storage are integrated and tested. | Validate model/render quality, ownership boundaries, privacy, latency, cost, failure paths, and deployed end-to-end preview behavior |\n| DermalSight | Consent- and model-gated API code and API tests are merged; validated skin-inference weights/provider and real inference are not configured or independently verified. No medical diagnosis claim is supported. | Validate the model/data license, output quality and bias, input/consent/access controls, inference provenance, retention/deletion, and production runtime behavior |
 | Security and privacy | Requirements documented; compliance unverified | Threat model, secret scan, access-control and privacy tests |
-| CI and deployment | Architecture, decision-gateway, marketplace/catalog/commerce, Virtual Twin, DermalSight API, and staged CFRP candidate workflows passed on their reviewed PR heads. The current merge set still does not prove live cross-service operation or deployment; no marketplace or beauty inference deployment is certified. | Run main-branch checks after the latest merges, real staging smoke tests, infrastructure/security checks, backup restore drills, operational runbooks, and evidence from a real environment |
+| CI and deployment | Historical workflow passes on earlier reviewed PR heads are not evidence for the current head. On 31 October 2026, the latest inspected PR #67 head (`ce09b6f187914abefa39e955e030d5bf6789e2da`) had eight GitHub Actions workflow runs complete with `failure`: container image builds, architecture validation, marketplace contract checks, marketplace BFF, catalog service, commerce service, vision intelligence, and Twin/Vision/Catalog/Xari contracts. The connector returned no job steps and prior log retrieval was unavailable, so the failure origin is **unclassified**; it is not valid to label these as confirmed test assertion failures or confirmed runner failures. No successful current-head CI result or production deployment is verified. | Restore inspectable CI execution first; classify runner/setup failures separately from build/test failures; rerun the exact PR head; require green required checks, main-branch verification, staging smoke tests, security/infrastructure checks, backup-restore evidence, and deployment/rollback evidence |
 | Production readiness | **Not established** | All required release gates with recorded evidence |
 
 This table deliberately avoids inventing completion percentages. Update it only when the underlying code, tests, and operational evidence support a status change.
