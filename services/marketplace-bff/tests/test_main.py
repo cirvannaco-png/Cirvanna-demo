@@ -57,6 +57,66 @@ def test_public_offers_are_proxied_without_exposing_catalog_credentials(client, 
     assert "catalog-server-only-test-token" not in response.text
 
 
+def test_public_offers_forwards_the_explicit_advanced_filter_allowlist(client, monkeypatch):
+    configure_upstreams(monkeypatch)
+    seen = {}
+
+    def fake_get(url, **kwargs):
+        seen["url"] = url
+        seen.update(kwargs)
+        return FakeResponse({"items": [], "total": 0, "offset": 0, "limit": 20})
+
+    monkeypatch.setattr(main.httpx, "get", fake_get)
+    response = client.get(
+        "/api/commerce/marketplace/offers?brand=Studio&currency=KES"
+        "&min_price_minor=100&max_price_minor=500&color=black&size=M"
+        "&material=linen&style=minimalist&occasion=work&finish=matte"
+        "&shade=rose&skin_concern=dryness&attribute_key=undertone&attribute_value=warm&sort_by=price_low"
+    )
+    assert response.status_code == 200, response.text
+    assert seen["params"] == {
+        "offset": 0, "limit": 20, "brand": "Studio", "currency": "KES",
+        "min_price_minor": 100, "max_price_minor": 500, "color": "black",
+        "size": "M", "material": "linen", "style": "minimalist",
+        "occasion": "work", "finish": "matte", "shade": "rose",
+        "skin_concern": "dryness", "attribute_key": "undertone",
+        "attribute_value": "warm", "sort_by": "price_low",
+    }
+    assert "Authorization" not in seen["headers"]
+
+
+def test_public_offers_reject_invalid_price_filter_combinations_before_upstream(client, monkeypatch):
+    configure_upstreams(monkeypatch)
+    calls = []
+    monkeypatch.setattr(main.httpx, "get", lambda *args, **kwargs: calls.append(args) or FakeResponse({}))
+    missing_currency = client.get("/api/commerce/marketplace/offers?min_price_minor=100")
+    assert missing_currency.status_code == 422
+    assert missing_currency.json()["detail"]["code"] == "PRICE_FILTER_REQUIRES_CURRENCY"
+
+    invalid_range = client.get(
+        "/api/commerce/marketplace/offers?currency=KES&min_price_minor=200&max_price_minor=100"
+    )
+    assert invalid_range.status_code == 422
+    assert invalid_range.json()["detail"]["code"] == "INVALID_PRICE_RANGE"
+
+    invalid_sort = client.get("/api/commerce/marketplace/offers?sort_by=price_low")
+    assert invalid_sort.status_code == 422
+    assert invalid_sort.json()["detail"]["code"] == "PRICE_SORT_REQUIRES_CURRENCY"
+
+    missing_attribute_value = client.get(
+        "/api/commerce/marketplace/offers?attribute_key=undertone"
+    )
+    assert missing_attribute_value.status_code == 422
+    assert missing_attribute_value.json()["detail"]["code"] == "ATTRIBUTE_FILTER_KEY_VALUE_REQUIRED"
+
+    unsupported_attribute = client.get(
+        "/api/commerce/marketplace/offers?attribute_key=internal_secret&attribute_value=x"
+    )
+    assert unsupported_attribute.status_code == 422
+    assert unsupported_attribute.json()["detail"]["code"] == "UNSUPPORTED_ATTRIBUTE_FILTER"
+    assert calls == []
+
+
 def test_account_proxy_requires_bearer_and_blocks_admin_routes(client, monkeypatch):
     configure_upstreams(monkeypatch)
     calls = []

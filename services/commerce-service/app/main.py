@@ -30,7 +30,7 @@ from urllib.parse import urlsplit
 
 from sqlalchemy import (
     JSON, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint,
-    create_engine, func, inspect, select, text, update,
+    create_engine, func, inspect, or_, select, text, update,
 )
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
@@ -44,6 +44,14 @@ SKU_RE = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,79}$")
 CODE3_RE = re.compile(r"^[A-Z]{3}$")
 COUNTRY_RE = re.compile(r"^[A-Z]{2}$")
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+ALLOWED_ATTRIBUTE_FILTER_KEYS = frozenset({
+    "color", "size", "material", "style", "occasion", "finish", "shade", "skin_concern",
+    "ingredient", "ingredients", "texture", "hydration", "pigmentation", "redness",
+    "routine_compatibility", "undertone", "foundation_match", "makeup_intensity",
+    "hair_color", "hairstyle", "silhouette", "fit", "color_palette", "climate",
+    "cultural_context", "accessibility", "durability", "delivery_region",
+    "ethical_preference", "mood", "desired_impression", "season", "formality", "prep_time",
+})
 
 
 def now() -> datetime:
@@ -946,22 +954,96 @@ def adjust_inventory(variant_id: uuid.UUID, payload: InventoryAdjustment,
 
 
 @app.get("/marketplace/offers")
-def list_offers(db: Annotated[Session, Depends(get_db)], q: str | None = Query(None, max_length=160),
-    category: str | None = Query(None, max_length=80), currency: str | None = Query(None, min_length=3, max_length=3),
-    offset: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=100)):
-    stmt = select(Variant, Listing, Merchant).join(Listing, Variant.listing_id == Listing.id).join(Merchant, Listing.merchant_id == Merchant.id).where(
-        Variant.state == "active", Listing.state == "active", Merchant.state == "approved", Variant.on_hand > Variant.reserved_qty)
+def list_offers(
+    db: Annotated[Session, Depends(get_db)],
+    q: str | None = Query(None, max_length=160),
+    category: str | None = Query(None, max_length=80),
+    brand: str | None = Query(None, max_length=100),
+    currency: str | None = Query(None, min_length=3, max_length=3),
+    min_price_minor: int | None = Query(None, ge=0, le=2_000_000_000),
+    max_price_minor: int | None = Query(None, ge=0, le=2_000_000_000),
+    color: str | None = Query(None, max_length=64),
+    size: str | None = Query(None, max_length=64),
+    material: str | None = Query(None, max_length=64),
+    style: str | None = Query(None, max_length=64),
+    occasion: str | None = Query(None, max_length=64),
+    finish: str | None = Query(None, max_length=64),
+    shade: str | None = Query(None, max_length=64),
+    skin_concern: str | None = Query(None, max_length=64),
+    attribute_key: str | None = Query(None, max_length=64),
+    attribute_value: str | None = Query(None, max_length=128),
+    sort_by: Literal["newest", "price_low", "price_high"] = Query("newest"),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+):
+    """Return available, approved offers after applying metadata-only filters.
+
+    Price comparisons require one currency and use integer minor units. Variant
+    options are merchant-supplied metadata and do not establish fit, safety,
+    skin compatibility, or authorization to display personalized recommendations.
+    """
+    stmt = select(Variant, Listing, Merchant).join(
+        Listing, Variant.listing_id == Listing.id
+    ).join(
+        Merchant, Listing.merchant_id == Merchant.id
+    ).where(
+        Variant.state == "active",
+        Listing.state == "active",
+        Merchant.state == "approved",
+        Variant.on_hand > Variant.reserved_qty,
+    )
     if q and q.strip():
-        stmt = stmt.where(func.lower(Listing.product_name).like(f"%{q.strip().lower()}%"))
-    if category:
+        term = f"%{q.strip().lower()}%"
+        stmt = stmt.where(or_(
+            func.lower(Listing.product_name).like(term),
+            func.lower(Variant.sku).like(term),
+            func.lower(Merchant.display_name).like(term),
+        ))
+    if category and category.strip():
         stmt = stmt.where(func.lower(Listing.category) == category.strip().lower())
-    if currency:
-        curr = currency.strip().upper()
-        if not CODE3_RE.fullmatch(curr):
+    if brand and brand.strip():
+        stmt = stmt.where(func.lower(Merchant.display_name).like(f"%{brand.strip().lower()}%"))
+    normalized_currency = None
+    if currency and currency.strip():
+        normalized_currency = currency.strip().upper()
+        if not CODE3_RE.fullmatch(normalized_currency):
             raise HTTPException(422, detail={"code": "INVALID_CURRENCY"})
-        stmt = stmt.where(Variant.currency == curr)
+        stmt = stmt.where(Variant.currency == normalized_currency)
+    if min_price_minor is not None or max_price_minor is not None:
+        if normalized_currency is None:
+            raise HTTPException(422, detail={"code": "PRICE_FILTER_REQUIRES_CURRENCY"})
+        if min_price_minor is not None and max_price_minor is not None and min_price_minor > max_price_minor:
+            raise HTTPException(422, detail={"code": "INVALID_PRICE_RANGE"})
+        if min_price_minor is not None:
+            stmt = stmt.where(Variant.price_minor >= min_price_minor)
+        if max_price_minor is not None:
+            stmt = stmt.where(Variant.price_minor <= max_price_minor)
+    if sort_by in {"price_low", "price_high"} and normalized_currency is None:
+        raise HTTPException(422, detail={"code": "PRICE_SORT_REQUIRES_CURRENCY"})
+    normalized_attribute_key = attribute_key.strip().lower() if attribute_key and attribute_key.strip() else None
+    normalized_attribute_value = attribute_value.strip() if attribute_value and attribute_value.strip() else None
+    if bool(normalized_attribute_key) != bool(normalized_attribute_value):
+        raise HTTPException(422, detail={"code": "ATTRIBUTE_FILTER_KEY_VALUE_REQUIRED"})
+    if normalized_attribute_key and normalized_attribute_key not in ALLOWED_ATTRIBUTE_FILTER_KEYS:
+        raise HTTPException(422, detail={"code": "UNSUPPORTED_ATTRIBUTE_FILTER"})
+    for key, raw_value in {
+        "color": color, "size": size, "material": material, "style": style,
+        "occasion": occasion, "finish": finish, "shade": shade, "skin_concern": skin_concern,
+    }.items():
+        if raw_value and raw_value.strip():
+            # SQLAlchemy's JSON string accessor keeps this portable across
+            # SQLite development and PostgreSQL deployment databases.
+            stmt = stmt.where(Variant.options[key].as_string().ilike(f"%{raw_value.strip()}%"))
+    if normalized_attribute_key:
+        stmt = stmt.where(Variant.options[normalized_attribute_key].as_string().ilike(f"%{normalized_attribute_value}%"))
     total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
-    rows = db.execute(stmt.order_by(Listing.created_at.desc(), Variant.id).offset(offset).limit(limit)).all()
+    if sort_by == "price_low":
+        ordering = (Variant.price_minor.asc(), Variant.id)
+    elif sort_by == "price_high":
+        ordering = (Variant.price_minor.desc(), Variant.id)
+    else:
+        ordering = (Listing.created_at.desc(), Variant.id)
+    rows = db.execute(stmt.order_by(*ordering).offset(offset).limit(limit)).all()
     return {"items": [{"variant_id": v.id, "listing_id": l.id, "merchant_id": m.id, "merchant_name": m.display_name,
         "catalog_product_id": l.catalog_product_id, "product_name": l.product_name, "category": l.category,
         "image_urls": l.image_urls, "sku": v.sku, "options": v.options, "price_minor": v.price_minor, "currency": v.currency,

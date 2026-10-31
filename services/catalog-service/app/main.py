@@ -47,6 +47,14 @@ MAX_IMAGE_URLS = 20
 MAX_ATTRIBUTES = 100
 SKU_PATTERN = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,79}$")
 CURRENCY_PATTERN = re.compile(r"^[A-Z]{3}$")
+ALLOWED_ATTRIBUTE_FILTER_KEYS = frozenset({
+    "color", "size", "material", "style", "occasion", "finish", "shade", "skin_concern",
+    "ingredient", "ingredients", "texture", "hydration", "pigmentation", "redness",
+    "routine_compatibility", "undertone", "foundation_match", "makeup_intensity",
+    "hair_color", "hairstyle", "silhouette", "fit", "color_palette", "climate",
+    "cultural_context", "accessibility", "durability", "delivery_region",
+    "ethical_preference", "mood", "desired_impression", "season", "formality", "prep_time",
+})
 
 
 def _now() -> datetime:
@@ -537,26 +545,86 @@ def list_products(
     db: Annotated[Session, Depends(get_db)],
     q: str | None = Query(default=None, max_length=160),
     category: str | None = Query(default=None, max_length=80),
+    brand: str | None = Query(default=None, max_length=100),
+    currency: str | None = Query(default=None, min_length=3, max_length=3),
+    min_price_minor: int | None = Query(default=None, ge=0, le=2_000_000_000),
+    max_price_minor: int | None = Query(default=None, ge=0, le=2_000_000_000),
+    color: str | None = Query(default=None, max_length=64),
+    size: str | None = Query(default=None, max_length=64),
+    material: str | None = Query(default=None, max_length=64),
+    style: str | None = Query(default=None, max_length=64),
+    occasion: str | None = Query(default=None, max_length=64),
+    finish: str | None = Query(default=None, max_length=64),
+    shade: str | None = Query(default=None, max_length=64),
+    skin_concern: str | None = Query(default=None, max_length=64),
+    attribute_key: str | None = Query(default=None, max_length=64),
+    attribute_value: str | None = Query(default=None, max_length=128),
+    sort_by: Literal["newest", "price_low", "price_high"] = Query(default="newest"),
     status_filter: Literal["active", "archived", "all"] = Query(default="active", alias="status"),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=MAX_PAGE_SIZE),
 ) -> ProductListOut:
+    """Search the canonical catalog with server-side, metadata-only filters.
+
+    Price comparison is permitted only inside one currency; values are stored in
+    integer minor units. Attribute filters inspect merchant-supplied metadata and
+    do not imply fit, skin compatibility, safety, or CAL display authorization.
+    """
     filters = []
     if status_filter != "all":
         filters.append(Product.status == status_filter)
-    if category:
+    if category and category.strip():
         filters.append(func.lower(Product.category) == category.strip().lower())
+    if brand and brand.strip():
+        filters.append(Product.brand.ilike(f"%{brand.strip()}%"))
+    normalized_currency = None
+    if currency and currency.strip():
+        normalized_currency = currency.strip().upper()
+        if not CURRENCY_PATTERN.fullmatch(normalized_currency):
+            raise HTTPException(status_code=422, detail={"code": "INVALID_CURRENCY"})
+        filters.append(Product.currency == normalized_currency)
+    if min_price_minor is not None or max_price_minor is not None:
+        if normalized_currency is None:
+            raise HTTPException(status_code=422, detail={"code": "PRICE_FILTER_REQUIRES_CURRENCY"})
+        if min_price_minor is not None and max_price_minor is not None and min_price_minor > max_price_minor:
+            raise HTTPException(status_code=422, detail={"code": "INVALID_PRICE_RANGE"})
+        if min_price_minor is not None:
+            filters.append(Product.price_minor >= min_price_minor)
+        if max_price_minor is not None:
+            filters.append(Product.price_minor <= max_price_minor)
+    if sort_by in {"price_low", "price_high"} and normalized_currency is None:
+        raise HTTPException(status_code=422, detail={"code": "PRICE_SORT_REQUIRES_CURRENCY"})
+    normalized_attribute_key = attribute_key.strip().lower() if attribute_key and attribute_key.strip() else None
+    normalized_attribute_value = attribute_value.strip() if attribute_value and attribute_value.strip() else None
+    if bool(normalized_attribute_key) != bool(normalized_attribute_value):
+        raise HTTPException(status_code=422, detail={"code": "ATTRIBUTE_FILTER_KEY_VALUE_REQUIRED"})
+    if normalized_attribute_key and normalized_attribute_key not in ALLOWED_ATTRIBUTE_FILTER_KEYS:
+        raise HTTPException(status_code=422, detail={"code": "UNSUPPORTED_ATTRIBUTE_FILTER"})
+    for key, raw_value in {
+        "color": color, "size": size, "material": material, "style": style,
+        "occasion": occasion, "finish": finish, "shade": shade, "skin_concern": skin_concern,
+    }.items():
+        if raw_value and raw_value.strip():
+            # Attributes are untrusted catalog metadata: substring matching only,
+            # never a compatibility or safety judgment.
+            filters.append(Product.attributes[key].as_string().ilike(f"%{raw_value.strip()}%"))
+    if normalized_attribute_key:
+        filters.append(Product.attributes[normalized_attribute_key].as_string().ilike(f"%{normalized_attribute_value}%"))
     if q and q.strip():
         term = f"%{q.strip()}%"
-        # Descriptions and categories matter for semantic marketplace discovery;
-        # this SQL substring search remains a fallback, not an embedding ranking.
         filters.append(or_(
             Product.name.ilike(term), Product.sku.ilike(term), Product.brand.ilike(term),
             Product.description.ilike(term), Product.category.ilike(term),
         ))
     statement = select(Product).where(*filters)
     total = db.scalar(select(func.count()).select_from(Product).where(*filters)) or 0
-    items = list(db.scalars(statement.order_by(Product.created_at.desc(), Product.id).offset(offset).limit(limit)).all())
+    if sort_by == "price_low":
+        ordering = (Product.price_minor.asc(), Product.id)
+    elif sort_by == "price_high":
+        ordering = (Product.price_minor.desc(), Product.id)
+    else:
+        ordering = (Product.created_at.desc(), Product.id)
+    items = list(db.scalars(statement.order_by(*ordering).offset(offset).limit(limit)).all())
     return ProductListOut(items=items, total=int(total), offset=offset, limit=limit)
 
 

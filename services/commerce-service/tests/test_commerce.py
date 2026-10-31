@@ -342,6 +342,48 @@ def test_merchant_listing_snapshots_only_trusted_catalog_images(client, monkeypa
     assert matching["image_urls"] == response.json()["image_urls"]
 
 
+def test_marketplace_offer_metadata_filters_and_currency_safe_price_sort(client):
+    seed_offer(stock=5, price_minor=250)
+    matched = client.get(
+        "/marketplace/offers?brand=Verified&currency=KES&min_price_minor=200"
+        "&max_price_minor=300&color=blue&size=S&attribute_key=size&attribute_value=S&sort_by=price_low"
+    )
+    assert matched.status_code == 200, matched.text
+    assert matched.json()["total"] == 1
+    assert matched.json()["items"][0]["merchant_name"] == "Verified Studio"
+    assert matched.json()["items"][0]["options"]["size"] == "S"
+
+    no_match = client.get(
+        "/marketplace/offers?currency=KES&color=red"
+    )
+    assert no_match.status_code == 200
+    assert no_match.json()["total"] == 0
+
+    missing_currency = client.get("/marketplace/offers?min_price_minor=200")
+    assert missing_currency.status_code == 422
+    assert missing_currency.json()["detail"]["code"] == "PRICE_FILTER_REQUIRES_CURRENCY"
+
+    invalid_range = client.get(
+        "/marketplace/offers?currency=KES&min_price_minor=300&max_price_minor=200"
+    )
+    assert invalid_range.status_code == 422
+    assert invalid_range.json()["detail"]["code"] == "INVALID_PRICE_RANGE"
+
+    missing_sort_currency = client.get("/marketplace/offers?sort_by=price_low")
+    assert missing_sort_currency.status_code == 422
+    assert missing_sort_currency.json()["detail"]["code"] == "PRICE_SORT_REQUIRES_CURRENCY"
+
+    missing_attribute_value = client.get("/marketplace/offers?attribute_key=fit")
+    assert missing_attribute_value.status_code == 422
+    assert missing_attribute_value.json()["detail"]["code"] == "ATTRIBUTE_FILTER_KEY_VALUE_REQUIRED"
+
+    unsupported_attribute = client.get(
+        "/marketplace/offers?attribute_key=private_field&attribute_value=x"
+    )
+    assert unsupported_attribute.status_code == 422
+    assert unsupported_attribute.json()["detail"]["code"] == "UNSUPPORTED_ATTRIBUTE_FILTER"
+
+
 def test_persistent_cart_is_account_scoped_and_rechecks_available_stock(client):
     offer = seed_offer(stock=3)
     buyer1 = auth("buyer-one")
