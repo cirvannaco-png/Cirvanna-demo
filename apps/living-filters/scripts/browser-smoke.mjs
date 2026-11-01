@@ -111,7 +111,7 @@ try {
     return value.includes("Local face and hair models are ready") || value.includes("Could not load the local models") || value.includes("local vision worker failed");
   }, null, { timeout: 90000 });
   const initializationStatus = await page.locator("#ar-status").innerText();
-  assert.match(initializationStatus, /Local face and hair models are ready/, "Local model initialization failed: " + initializationStatus);
+  assert.match(initializationStatus, /Local face and hair models are ready/, "Local model initialization failed: " + initializationStatus + "; browser errors: " + pageErrors.join(" | "));
 
   // Disable browser networking after initialization. All subsequent frame
   // processing, masks and canvas effects must work from local in-memory state.
