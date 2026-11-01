@@ -26,6 +26,7 @@ const mimeTypes = new Map([
 
 for (const required of [
   "vendor/mediapipe/vision_bundle.mjs",
+  "src/vision-worker.bundle.js",
   "models/face_landmarker.task",
   "models/hair_segmenter.tflite",
 ]) {
