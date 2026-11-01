@@ -9,9 +9,12 @@ let disposed = false;
 let lastTimestamp = -1;
 let sessionToken = 0;
 
-const wasmRoot = new URL("../vendor/mediapipe/wasm/", import.meta.url).href;
-const faceModelPath = new URL("../models/face_landmarker.task", import.meta.url).href;
-const hairModelPath = new URL("../models/hair_segmenter.tflite", import.meta.url).href;
+// This entry point is bundled as a classic worker because MediaPipe 0.10.21's
+// WASM glue uses importScripts(), which is not available in module workers.
+const workerBaseUrl = self.location.href;
+const wasmRoot = new URL("../vendor/mediapipe/wasm/", workerBaseUrl).href;
+const faceModelPath = new URL("../models/face_landmarker.task", workerBaseUrl).href;
+const hairModelPath = new URL("../models/hair_segmenter.tflite", workerBaseUrl).href;
 
 async function initialise(requestedSession) {
   disposed = false;
