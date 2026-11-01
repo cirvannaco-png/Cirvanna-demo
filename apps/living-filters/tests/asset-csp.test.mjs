@@ -53,7 +53,7 @@ test("third-party notice and preparation/verification scripts are present", () =
   const verify = read("scripts/verify-vision-assets.mjs");
   const license = read("third-party/mediapipe-LICENSE");
   assert.match(notice, /Apache License 2\.0/);
-  assert.match(notice, /sha256/i);
+  assert.match(notice, /sha-?256/i);
   assert.match(prep, /tarballIntegrity/);
   assert.match(prep, /SHA-256 mismatch/);
   assert.match(prep, /mediapipe-LICENSE/);
