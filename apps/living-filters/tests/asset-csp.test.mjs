@@ -41,6 +41,13 @@ test("MediaPipe executes in a classic bundled worker so its WASM glue can use im
   assert.match(worker, /self\.location\.href/);
 });
 
+test("the CI build pins and emits the classic worker bundle before verification", () => {
+  const workflow = readFileSync(new URL("../../.github/workflows/living-filters.yml", import.meta.url), "utf8");
+  assert.match(workflow, /esbuild@0\.28\.2/);
+  assert.match(workflow, /--format=iife/);
+  assert.match(workflow, /src\/vision-worker\.bundle\.js/);
+});
+
 test("CSP allows same-origin workers and WASM compilation but forbids remote fallback and general eval", () => {
   const html = read("index.html");
   const csp = html.match(/http-equiv="Content-Security-Policy" content="([^"]+)"/i)?.[1];
