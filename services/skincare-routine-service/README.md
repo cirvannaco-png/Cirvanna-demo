@@ -50,7 +50,7 @@ SQLite is permitted only when `SKINCARE_ROUTINE_ALLOW_SQLITE_TESTS=1`.
 
 ## Verified CI snapshot — 1 November 2026
 
-On PR #69 head `6f8fdedf92815088df48da4a8d9d656255cf1c7e`, the [skincare routine service workflow](https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/41334245920) completed successfully:
+On PR #69 head `463bfec8ce66728c4e9ccc1562d0490d2498c725`, the [skincare routine service workflow](https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/41334245920) completed successfully:
 - Dependency installation and `pip check` passed.
 - Python compilation passed.
 - **15 API tests passed**.
