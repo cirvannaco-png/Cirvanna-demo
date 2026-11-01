@@ -48,6 +48,18 @@ Routine text and product/recommendation references are user-controlled content. 
 
 SQLite is permitted only when `SKINCARE_ROUTINE_ALLOW_SQLITE_TESTS=1`.
 
+## Verified CI snapshot — 1 November 2026
+
+On PR #69 head `6f8fdedf92815088df48da4a8d9d656255cf1c7e`, the [skincare routine service workflow](https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/41334245920) completed successfully:
+- Dependency installation and `pip check` passed.
+- Python compilation passed.
+- **15 API tests passed**.
+- The Docker image built successfully.
+
+The [architecture validation workflow](https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/41334245950) also passed on the same PR head. The test run emitted one Starlette/httpx deprecation warning; it did not fail the workflow.
+
+This evidence validates the isolated service and architecture checks only. It does not prove the application UI, end-user identity integration, a live recommendation provider, production PostgreSQL operation, or a production deployment.
+
 ## Remaining integration gates
 
 1. Bind end-user identity at the authenticated API gateway before public app use.
