@@ -29,15 +29,15 @@ test("the shipped application requests only local model/runtime URLs", () => {
   assert.doesNotMatch(worker, /https?:\/\//i);
   assert.doesNotMatch(app, /\bfetch\s*\(|XMLHttpRequest|https?:\/\//i);
   assert.match(worker, /new URL\("\.\.\/vendor\/mediapipe\/wasm\/", workerBaseUrl\)/);
-  assert.match(worker, /new URL\("\.\.\/models\/face_landmarker\.task", import\.meta\.url\)/);
-  assert.match(worker, /new URL\("\.\.\/models\/hair_segmenter\.tflite", import\.meta\.url\)/);
+  assert.match(worker, /new URL\("\.\.\/models\/face_landmarker\.task", workerBaseUrl\)/);
+  assert.match(worker, /new URL\("\.\.\/models\/hair_segmenter\.tflite", workerBaseUrl\)/);
 });
 
 test("MediaPipe executes in a classic bundled worker so its WASM glue can use importScripts", () => {
   const app = read("src/app.mjs");
   const worker = read("src/vision-worker.mjs");
   assert.match(app, /new Worker\(new URL\("\.\/vision-worker\.bundle\.js", import\.meta\.url\)/);
-  assert.doesNotMatch(app, /type:\\s*["']module["']/);
+  assert.doesNotMatch(app, /type:\s*["']module["']/);
   assert.match(worker, /self\.location\.href/);
 });
 
