@@ -79,8 +79,15 @@ try {
   const context = await browser.newContext({ permissions: ["camera"] });
   const page = await context.newPage();
   page.on("pageerror", (error) => pageErrors.push(error.message));
+  // TensorFlow Lite reports this successful delegate setup at INFO level,
+  // but Chromium's console bridge can classify it as an error message. Ignore
+  // only this exact informational startup line; all other console errors remain fatal.
+  const benignTfliteInfo = /^INFO: Created TensorFlow Lite XNNPACK delegate for CPU\\.$/;
   page.on("console", (message) => {
-    if (message.type() === "error") pageErrors.push("console: " + message.text());
+    const text = message.text().trim();
+    if (message.type() === "error" && !benignTfliteInfo.test(text)) {
+      pageErrors.push("console: " + text);
+    }
   });
   await page.addInitScript(() => {
     window.__cspViolations = [];
