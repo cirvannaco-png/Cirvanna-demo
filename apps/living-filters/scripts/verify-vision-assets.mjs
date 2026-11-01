@@ -77,6 +77,18 @@ function main() {
   }
 
   const html = readFileSync(join(appRoot, "index.html"), "utf8");
+  const app = readFileSync(join(appRoot, "src", "app.mjs"), "utf8");
+  const workerBundlePath = join(appRoot, "src", "vision-worker.bundle.js");
+  if (!app.includes('new Worker(new URL("./vision-worker.bundle.js", import.meta.url)')) {
+    throw new Error("Application must start the bundled classic vision worker.");
+  }
+  if (!existsSync(workerBundlePath) || !statSync(workerBundlePath).isFile()) {
+    throw new Error("Bundled classic vision worker is missing. Run the pinned esbuild build step.");
+  }
+  const workerBundle = readFileSync(workerBundlePath, "utf8");
+  if (/^\\s*import\\s/m.test(workerBundle) || /^\\s*export\\s/m.test(workerBundle)) {
+    throw new Error("Vision worker bundle must be a classic script with no top-level ESM imports/exports.");
+  }
   const csp = html.match(/http-equiv="Content-Security-Policy" content="([^"]+)"/i)?.[1];
   if (!csp) throw new Error("Missing Content Security Policy.");
   for (const directive of [
