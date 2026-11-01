@@ -55,12 +55,18 @@ jobs:
       - name: Prepare pinned local runtime, WASM and model assets
         run: node apps/living-filters/scripts/prepare-vision-assets.mjs
 
-      - name: Verify local asset hashes, licences and CSP
-        run: node apps/living-filters/scripts/verify-vision-assets.mjs
-
-      - name: Install pinned browser test runner
+      - name: Install pinned browser and bundler tools
         working-directory: apps/living-filters
-        run: npm install --no-save --no-package-lock --ignore-scripts playwright@1.55.0
+        run: npm install --no-save --no-package-lock --ignore-scripts playwright@1.55.0 esbuild@0.28.2
+
+      - name: Build classic local vision worker bundle
+        working-directory: apps/living-filters
+        run: |
+          npx --no-install esbuild src/vision-worker.mjs --bundle --platform=browser --format=iife --target=es2022 --outfile=src/vision-worker.bundle.js
+          node --check src/vision-worker.bundle.js
+
+      - name: Verify local asset hashes, licences, CSP and worker bundle
+        run: node apps/living-filters/scripts/verify-vision-assets.mjs
 
       - name: Install Chromium
         working-directory: apps/living-filters
@@ -78,4 +84,5 @@ jobs:
           path: |
             apps/living-filters/vendor/mediapipe/
             apps/living-filters/models/
+            apps/living-filters/src/vision-worker.bundle.js
           retention-days: 30
