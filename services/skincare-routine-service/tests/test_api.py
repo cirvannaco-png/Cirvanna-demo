@@ -177,3 +177,35 @@ def test_delete_revokes_share_and_removes_routine(client):
 def test_random_share_tokens_do_not_authenticate_internal_routes(client):
     response = client.get("/v1/routines", params={"owner_user_id": "user-1"})
     assert response.status_code == 401
+
+
+def test_expired_share_token_is_rejected(client):
+    from datetime import datetime, timedelta, timezone
+    from app.store import RoutineStore
+
+    routine = create(client)
+    share = client.post(
+        f"/v1/routines/{routine['routine_id']}/share",
+        headers=auth(),
+        json={"owner_user_id": "user-1", "expires_in_days": 1},
+    )
+    token = share.json()["share_path"].rsplit("/", 1)[1]
+    routine_store = RoutineStore(engine_for_url(
+        __import__("os").environ["SKINCARE_ROUTINE_DATABASE_URL"]
+    ))
+    expired = routine_store.get_shared(token, now=datetime.now(timezone.utc) + timedelta(days=2))
+    assert expired is None
+
+
+def test_step_text_cannot_be_blank(client):
+    response = client.post(
+        "/v1/routines",
+        headers=auth(),
+        json=payload(morning_steps=[step("am-cleanse", "   ")]),
+    )
+    assert response.status_code == 422
+
+
+def test_owner_identifier_cannot_be_blank(client):
+    response = client.post("/v1/routines", headers=auth(), json=payload(owner_user_id="   "))
+    assert response.status_code == 422
