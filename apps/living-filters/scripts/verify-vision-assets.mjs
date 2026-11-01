@@ -86,7 +86,7 @@ function main() {
     throw new Error("Bundled classic vision worker is missing. Run the pinned esbuild build step.");
   }
   const workerBundle = readFileSync(workerBundlePath, "utf8");
-  if (/^\\s*import\\s/m.test(workerBundle) || /^\\s*export\\s/m.test(workerBundle)) {
+  if (/^\s*import\s/m.test(workerBundle) || /^\s*export\s/m.test(workerBundle)) {
     throw new Error("Vision worker bundle must be a classic script with no top-level ESM imports/exports.");
   }
   const csp = html.match(/http-equiv="Content-Security-Policy" content="([^"]+)"/i)?.[1];
