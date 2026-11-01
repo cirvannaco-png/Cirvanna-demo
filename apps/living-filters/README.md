@@ -6,7 +6,7 @@
 
 - Camera preview after explicit browser permission, and local JPEG/PNG/WebP/AVIF photo preview (12 MB file cap; decoded image capped at 40 million pixels).
 - Eight curated colour/creative treatments and local PNG export.
-- Optional on-device 478-point Face Landmarker, running in a module worker.
+- Optional on-device 478-point Face Landmarker, running in a bundled classic worker. MediaPipe 0.10.21's WASM glue uses `importScripts()`, so the worker is bundled as a classic script rather than loaded as an ES module.
 - Landmark-anchored cosmetic rendering: berry lipstick, an eye-colour wash and blush. These are approximate 2D effects, not makeup product matching or a skin-health analysis.
 - Optional hair segmentation with copper/violet recolouring from a hair/background mask. This segments visible hair pixels; it does **not** synthesize a different cut, add volume, replace braids, or generate a new hairstyle.
 - Landmark-anchored 2D accessory placement: glasses, hoop earrings and a decorative headband. These are generic overlays, not product-specific assets, physical fit estimates, reliable occlusion, or 3D rendering.
@@ -51,10 +51,13 @@ Check syntax and verify installed binary hashes:
     node --check apps/living-filters/src/face-renderer.mjs
     node apps/living-filters/scripts/verify-vision-assets.mjs
 
-Run the Chromium end-to-end smoke test after asset preparation:
+Run the Chromium end-to-end smoke test after asset preparation, pinned worker bundling and asset verification:
 
     cd apps/living-filters
-    npm install --no-save --no-package-lock --ignore-scripts playwright@1.55.0
+    npm install --no-save --no-package-lock --ignore-scripts playwright@1.55.0 esbuild@0.28.2
+    npx --no-install esbuild src/vision-worker.mjs --bundle --platform=browser --format=iife --target=es2022 --outfile=src/vision-worker.bundle.js
+    node --check src/vision-worker.bundle.js
+    node scripts/verify-vision-assets.mjs
     npx playwright install chromium
     node scripts/browser-smoke.mjs
 
