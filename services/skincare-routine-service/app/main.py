@@ -41,7 +41,7 @@ class RoutineStep(StrictModel):
     recommendation_id: str | None = Field(default=None, max_length=128)
     instruction: str | None = Field(default=None, max_length=280)
 
-    @field_validator("step_id", "label", "recommendation_id", "instruction", mode="before")
+    @field_validator("step_id", "label", "product_id", "recommendation_id", "instruction", mode="before")
     @classmethod
     def trim_text(cls, value):
         if isinstance(value, str):
@@ -98,15 +98,30 @@ class RoutineFields(StrictModel):
 class RoutineCreate(RoutineFields):
     owner_user_id: str = Field(min_length=1, max_length=128)
 
+    @field_validator("owner_user_id", mode="before")
+    @classmethod
+    def trim_owner(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
 
 class RoutineUpdate(RoutineFields):
     owner_user_id: str = Field(min_length=1, max_length=128)
     expected_version: int = Field(ge=1)
 
+    @field_validator("owner_user_id", mode="before")
+    @classmethod
+    def trim_owner(cls, value):
+        return value.strip() if isinstance(value, str) else value
+
 
 class ShareCreate(StrictModel):
     owner_user_id: str = Field(min_length=1, max_length=128)
     expires_in_days: int = Field(default=30, ge=1, le=90)
+
+    @field_validator("owner_user_id", mode="before")
+    @classmethod
+    def trim_owner(cls, value):
+        return value.strip() if isinstance(value, str) else value
 
 
 def require_internal_token(
