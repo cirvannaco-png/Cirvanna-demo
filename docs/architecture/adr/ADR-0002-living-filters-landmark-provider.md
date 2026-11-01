@@ -28,7 +28,7 @@ References:
 
 ## Decision
 
-Use the pinned `@mediapipe/tasks-vision@0.10.21` package, with the version-1 Face Landmarker and HairSegmenter models, behind a local module worker. The implementation uses the pinned runtime and models only after preparation. No CDN or remote model fallback is wired into the application. The generated runtime/WASM and model files are kept out of Git and must be produced by the preparation script on a network-enabled build machine.
+Use the pinned `@mediapipe/tasks-vision@0.10.21` package, with the version-1 Face Landmarker and HairSegmenter models, behind a bundled classic worker. The implementation uses the pinned runtime and models only after preparation. No CDN or remote model fallback is wired into the application. The generated runtime/WASM and model files are kept out of Git and must be produced by the preparation script on a network-enabled build machine.
 
 The implementation must keep these boundaries:
 
@@ -53,13 +53,13 @@ The implementation must keep these boundaries:
 
 ## Consequences
 
-The canonical contract, local module worker, makeup/accessory renderer, hair mask recolouring, and opt-in controls now exist in the feature branch. Runtime/WASM/model files are not checked into Git; the asset preparation script downloads the pinned artifacts during the build and checks their hashes before installation. The controls remain unavailable when those files are missing or unsupported. This is an experimental implementation, not a completed or production-validated AR release. The asset and Chromium workflow must pass, then device-quality and privacy review must be recorded before launch.
+The canonical contract, local classic worker, makeup/accessory renderer, hair mask recolouring, and opt-in controls now exist in the feature branch. Runtime/WASM/model files are not checked into Git; the asset preparation script downloads the pinned artifacts during the build and checks their hashes before installation. The controls remain unavailable when those files are missing or unsupported. This is an experimental implementation, not a completed or production-validated AR release. The build pins esbuild and emits `src/vision-worker.bundle.js` as a classic worker because MediaPipe 0.10.21's WASM glue calls `importScripts()`, which is invalid in module workers. The asset and Chromium workflow must pass, then device-quality and privacy review must be recorded before launch.
 
 
 ## Pinned implementation and release gate
 
 The implementation files are:
-- `apps/living-filters/src/vision-worker.mjs`: local module worker that initializes both models, validates the output frame, copies the hair mask before releasing model resources, and handles disposal/stale sessions.
+- `apps/living-filters/src/vision-worker.mjs`: worker source bundled into a classic script for execution; it initializes both models, validates the output frame, copies the hair mask before releasing model resources, and handles disposal/stale sessions.
 - `apps/living-filters/src/face-renderer.mjs`: 2D lipstick, eye-colour wash/blush, generic glasses, hoop earrings and headband overlays; plus hair-mask recolouring.
 - `apps/living-filters/vision-assets.manifest.json`: immutable package/model URLs, versions, checksums and licence declarations.
 - `apps/living-filters/scripts/prepare-vision-assets.mjs`: build-time download, integrity validation, licence retention and asset-lock generation.
