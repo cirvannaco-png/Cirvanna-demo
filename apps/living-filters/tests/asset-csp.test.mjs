@@ -42,7 +42,7 @@ test("MediaPipe executes in a classic bundled worker so its WASM glue can use im
 });
 
 test("the CI build pins and emits the classic worker bundle before verification", () => {
-  const workflow = readFileSync(new URL("../../.github/workflows/living-filters.yml", import.meta.url), "utf8");
+  const workflow = readFileSync(new URL("../../../.github/workflows/living-filters.yml", import.meta.url), "utf8");
   assert.match(workflow, /esbuild@0\.28\.2/);
   assert.match(workflow, /--format=iife/);
   assert.match(workflow, /src\/vision-worker\.bundle\.js/);
