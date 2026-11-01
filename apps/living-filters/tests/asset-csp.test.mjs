@@ -48,6 +48,13 @@ test("the CI build pins and emits the classic worker bundle before verification"
   assert.match(workflow, /src\/vision-worker\.bundle\.js/);
 });
 
+test("browser smoke only filters the known TensorFlow Lite informational startup line", () => {
+  const smoke = read("scripts/browser-smoke.mjs");
+  assert.ok(smoke.includes("INFO: Created TensorFlow Lite XNNPACK delegate for CPU"));
+  assert.ok(smoke.includes('message.type() === "error" && !benignTfliteInfo.test(text)'));
+  assert.ok(smoke.includes('page.on("pageerror"'));
+});
+
 test("CSP allows same-origin workers and WASM compilation but forbids remote fallback and general eval", () => {
   const html = read("index.html");
   const csp = html.match(/http-equiv="Content-Security-Policy" content="([^"]+)"/i)?.[1];
