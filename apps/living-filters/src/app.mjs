@@ -228,8 +228,7 @@ function startVision() {
 
   let worker;
   try {
-    worker = new Worker(new URL("./vision-worker.mjs", import.meta.url), {
-      type: "module",
+    worker = new Worker(new URL("./vision-worker.bundle.js", import.meta.url), {
       name: "cirvanna-living-filters-vision",
     });
   } catch {
