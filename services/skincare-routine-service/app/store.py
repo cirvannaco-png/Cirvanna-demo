@@ -144,7 +144,7 @@ class RoutineStore:
             row.morning_steps = morning_steps
             row.evening_steps = evening_steps
             row.version += 1
-            row.updated_at = func.current_timestamp()
+            row.updated_at = datetime.now(timezone.utc)
             session.flush()
             return row
 
