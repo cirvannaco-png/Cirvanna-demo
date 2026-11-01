@@ -18,8 +18,10 @@ async function initialise(requestedSession) {
   let nextFaceLandmarker = null;
   let nextHairSegmenter = null;
   const isCurrent = () => !disposed && requestedSession === sessionToken;
+  let initializationStage = "WASM runtime setup";
   try {
     const vision = await FilesetResolver.forVisionTasks(wasmRoot);
+    initializationStage = "Face Landmarker initialization";
     if (!isCurrent()) return;
 
     nextFaceLandmarker = await FaceLandmarker.createFromOptions(vision, {
@@ -34,6 +36,7 @@ async function initialise(requestedSession) {
     });
     if (!isCurrent()) return;
 
+    initializationStage = "Hair Segmenter initialization";
     nextHairSegmenter = await ImageSegmenter.createFromOptions(vision, {
       baseOptions: { modelAssetPath: hairModelPath, delegate: "CPU" },
       runningMode: "VIDEO",
@@ -48,6 +51,9 @@ async function initialise(requestedSession) {
     nextHairSegmenter = null;
     lastTimestamp = -1;
     self.postMessage({ type: "ready", session: requestedSession });
+  } catch (error) {
+    const detail = error?.message || String(error) || "Unknown initialization error";
+    throw new Error(`${initializationStage}: ${detail}`);
   } finally {
     try { nextFaceLandmarker?.close?.(); } catch {}
     try { nextHairSegmenter?.close?.(); } catch {}
