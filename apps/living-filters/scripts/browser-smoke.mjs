@@ -82,7 +82,7 @@ try {
   // TensorFlow Lite reports this successful delegate setup at INFO level,
   // but Chromium's console bridge can classify it as an error message. Ignore
   // only this exact informational startup line; all other console errors remain fatal.
-  const benignTfliteInfo = /^INFO: Created TensorFlow Lite XNNPACK delegate for CPU\\.$/;
+  const benignTfliteInfo = /^INFO: Created TensorFlow Lite XNNPACK delegate for CPU\.$/;
   page.on("console", (message) => {
     const text = message.text().trim();
     if (message.type() === "error" && !benignTfliteInfo.test(text)) {
