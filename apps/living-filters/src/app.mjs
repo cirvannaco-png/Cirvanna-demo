@@ -287,7 +287,8 @@ function startVision() {
       }
     } else if (data?.type === "init-error") {
       stopVision("Local vision assets are missing, corrupt, or unsupported. Run the pinned asset preparation script on a network-enabled build machine, then reload.", false);
-      setARStatus("Could not load the local models. No remote fallback was attempted. Run node apps/living-filters/scripts/prepare-vision-assets.mjs and reload.");
+      const detail = typeof data.message === "string" ? data.message.replace(/\\s+/g, " ").slice(0, 240) : "Unknown initialization error";
+      setARStatus("Could not load the local models (" + detail + "). No remote fallback was attempted. Run node apps/living-filters/scripts/prepare-vision-assets.mjs and reload.");
     }
   };
   worker.onerror = () => {
