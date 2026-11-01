@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hmac
 import os
+from functools import lru_cache
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -16,6 +17,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import inspect, text
+from sqlalchemy.engine import Engine
 
 from app.store import (
     RoutineConflict, RoutineNotFound, RoutineStore, engine_for_url,
@@ -137,6 +139,11 @@ def require_internal_token(
         )
 
 
+@lru_cache(maxsize=4)
+def configured_engine(url: str) -> Engine:
+    return engine_for_url(url)
+
+
 def store() -> RoutineStore:
     url = os.getenv("SKINCARE_ROUTINE_DATABASE_URL", "").strip()
     if not url:
@@ -144,7 +151,7 @@ def store() -> RoutineStore:
     if url.startswith("sqlite:///") and os.getenv("SKINCARE_ROUTINE_ALLOW_SQLITE_TESTS") != "1":
         raise HTTPException(503, detail={"code": "SKINCARE_ROUTINE_SQLITE_TEST_MODE_REQUIRED"})
     try:
-        return RoutineStore(engine_for_url(url))
+        return RoutineStore(configured_engine(url))
     except ValueError as exc:
         raise HTTPException(503, detail={"code": "SKINCARE_ROUTINE_DATABASE_CONFIGURATION_INVALID"}) from exc
 
@@ -209,7 +216,7 @@ def ready() -> dict[str, object]:
     try:
         if url.startswith("sqlite:///") and os.getenv("SKINCARE_ROUTINE_ALLOW_SQLITE_TESTS") != "1":
             raise ValueError("SQLite is test-only")
-        engine = engine_for_url(url)
+        engine = configured_engine(url)
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))
         tables = set(inspect(engine).get_table_names())
