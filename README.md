@@ -19,6 +19,7 @@ Cirvanna is an identity-first beauty, fashion, fit, and purchase-decision platfo
 - [Implementation roadmap](#implementation-roadmap)
 - [Validation and release gates](#validation-and-release-gates)
 - [Current implementation status](#current-implementation-status)
+- [Skincare routine service](services/skincare-routine-service/README.md)
 - [Feature readiness and integration gates](docs/architecture/feature-spine-readiness-2026-10-23.md)
 - [Contribution and engineering rules](#contribution-and-engineering-rules)
 
@@ -88,6 +89,7 @@ The following is the **target capability map**, not a declaration that each feat
 - **RadianceScore:** a proposed product or experience metric whose definition, validation, limitations, and user-facing interpretation must be established before launch.
 - **DermalSight:** intended skin-analysis experience requiring specific privacy, consent, safety, bias, and clinical-claim boundaries. It must not present unvalidated outputs as a diagnosis.
 - **Xari:** intended AI beauty and product-discovery assistant, potentially connecting user questions, catalog search, and supported look-generation flows. Its tools and permissions must be explicitly bounded.
+- **Skincare routines:** user-controlled morning and evening organization of selected skincare steps, with persistent saving and opt-in, revocable sharing. This organizer does not itself generate skin recommendations or authorize products.
 
 ### Marketplace and commerce
 
@@ -99,6 +101,12 @@ The following is the **target capability map**, not a declaration that each feat
 - Merchant analytics and return-related outcome measurement.
 
 Any stated catalog size, latency target, conversion improvement, or return-reduction figure is a target or hypothesis until the relevant environment and measurement methodology demonstrate it.
+
+## Skincare routine capability
+
+A dedicated [Skincare Routine Service](services/skincare-routine-service/README.md) has been added on the feature branch. Its API stores separate morning and evening steps, supports owner-scoped retrieval and version-checked edits, and issues time-limited read-only share links that can be revoked. Public shares omit owner identifiers and do not include skin-analysis images or private analysis results.
+
+This is a backend persistence contract, not a finished user-facing feature. It is not yet connected to the app UI or a live skincare-recommendation provider, and user identity must be bound by trusted ingress before public use. DermalSight remains non-diagnostic and does not prescribe products. Only upstream recommendations that have passed the applicable product, consent, safety, and CaTaCaCi/CAL gates should be added to a user's routine.
 
 ## Target system architecture
 
@@ -339,9 +347,11 @@ Every validation report should identify the commit, environment, command, result
 | CaTaCaCi / CAL and supporting layers | Deterministic CAL arbitration and a contract-level EEPL/NPL/USI/FCI pipeline exist; initial TAL/CAM/CIL/VSL pure contracts are present. Full trusted signal provenance, calibrated providers, durable evidence receipts, replay, and production workflows remain incomplete. | Validate independent safety and calibrated-fit providers, strengthen adversarial contract tests, persist complete decision evidence/version receipts, and prove end-to-end authorization before display |
 | Catalog, marketplace and decision API | Catalog API, authenticated decision gateway, marketplace browser/BFF, and catalog/commerce/decision service code are merged with CI checks on their reviewed heads. Local saved items/bag are not a durable account/cart implementation; the marketplace release runbook remains blocked pending live identity, separate managed databases, migrations, payment/webhook verification, stock/order invariants, backup restore, and end-to-end staging tests. No live deployment is certified. | Run authenticated staging browse-to-checkout and payment-webhook flows, verify tenant boundaries/inventory/idempotency, test restore/recovery, and record actual deployed service-to-service evidence |
 | Virtual Try-On | Guarded FastAPI orchestration API is merged (PR #46); API/privacy-gate tests and the Docker build passed. Rendering remains disabled until real server-side consent, asset authorization, and renderer/model integrations are deployed. | Integrate the selected model in an isolated GPU worker, connect authorized asset storage and consent services, then validate image quality, privacy, cost, latency, and output persistence |
-| Virtual Twin and Virtual Try-On | Guarded APIs are merged, but Twin generation and Try-On rendering remain disabled until validated model/renderer adapters, server-side consent, asset authorization, and output storage are integrated and tested. | Validate model/render quality, ownership boundaries, privacy, latency, cost, failure paths, and deployed end-to-end preview behavior |\n| DermalSight | Consent- and model-gated API code and API tests are merged; validated skin-inference weights/provider and real inference are not configured or independently verified. No medical diagnosis claim is supported. | Validate the model/data license, output quality and bias, input/consent/access controls, inference provenance, retention/deletion, and production runtime behavior |
+| Virtual Twin and Virtual Try-On | Guarded APIs are merged, but Twin generation and Try-On rendering remain disabled until validated model/renderer adapters, server-side consent, asset authorization, and output storage are integrated and tested. | Validate model/render quality, ownership boundaries, privacy, latency, cost, failure paths, and deployed end-to-end preview behavior |
+| DermalSight | Consent- and model-gated API code and API tests are merged; validated skin-inference weights/provider and real inference are not configured or independently verified. No medical diagnosis claim is supported. | Validate the model/data license, output quality and bias, input/consent/access controls, inference provenance, retention/deletion, and production runtime behavior |
+| Skincare routines | New internal API and PostgreSQL migration support AM/PM step organization, owner-scoped save/edit/delete, version checks, and expiring/revocable read-only share links. PR #69 CI passed (15 API tests, compile, dependency check, Docker build) and architecture validation passed on head `463bfec8ce66728c4e9ccc1562d0490d2498c725`. User-facing UI, end-user identity binding, and live recommendation provider are not integrated. | Integrate authenticated ingress and app UI, connect a recommendation source that honors CAL and safety gates, then validate PostgreSQL migration/restore, concurrency, privacy, sharing, and full staging journeys |
 | Security and privacy | Requirements documented; compliance unverified | Threat model, secret scan, access-control and privacy tests |
-| CI and deployment | Architecture, decision-gateway, marketplace/catalog/commerce, Virtual Twin, DermalSight API, and staged CFRP candidate workflows passed on their reviewed PR heads. The current merge set still does not prove live cross-service operation or deployment; no marketplace or beauty inference deployment is certified. | Run main-branch checks after the latest merges, real staging smoke tests, infrastructure/security checks, backup restore drills, operational runbooks, and evidence from a real environment |
+| CI and deployment | The dedicated skincare-routine-service workflow passed on PR #69 head `463bfec8ce66728c4e9ccc1562d0490d2498c725`: dependency consistency, Python compilation, 15 API tests, and Docker image build all succeeded. Architecture validation also passed on that head. These are service/architecture checks only; they do not establish user-facing, live recommendation, identity-integration, or production readiness. Historical checks on unrelated PR heads remain separate evidence. | Continue with authenticated app integration, live recommendation-provider checks, PostgreSQL migration/restore, security/privacy checks, staging smoke tests, operational monitoring, and rollback evidence |
 | Production readiness | **Not established** | All required release gates with recorded evidence |
 
 This table deliberately avoids inventing completion percentages. Update it only when the underlying code, tests, and operational evidence support a status change.
