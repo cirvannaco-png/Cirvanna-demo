@@ -60,6 +60,8 @@ def test_capabilities_do_not_claim_clinical_diagnosis(monkeypatch):
     assert data["inference_enabled"] is False
     assert data["clinical_diagnosis"] is False
     assert data["image_persistence"] is False
+    assert data["longitudinal_forecasting"] is False
+    assert data["forecast_status"] == "unavailable_until_validated_longitudinal_model_and_dataset_exist"
 
 
 def test_endpoint_requires_authentication(monkeypatch):
