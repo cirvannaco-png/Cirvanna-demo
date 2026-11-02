@@ -53,7 +53,7 @@ def compose_fragrance(preferences: dict[str, Any], look: dict[str, Any]) -> dict
         "occasion": occasions[:3],
         "longevity_preference": preferences.get("fragrance_longevity") or "any",
         "budget": budget,
-        "intensity": preferences.get("fragrance_intensity") or "moderate",
+        "intensity": intensity,
         "reason": (
             "The scent direction is constrained by your selected families, scent profiles, occasion and budget. "
             "Longevity is a target preference; actual wear time varies by formula, skin, climate and application."
