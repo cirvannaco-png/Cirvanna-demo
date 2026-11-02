@@ -144,6 +144,42 @@ class DiscoveryRequest(BaseModel):
         return normalized
 
 
+
+class USIProfilePreferenceInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    preference_id: str = Field(min_length=1, max_length=128)
+    attribute: str = Field(min_length=1, max_length=120)
+    weight: float = Field(default=1.0, gt=0, le=1)
+    active: bool = True
+
+
+class USIProfileUpdateInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_version: int | None = Field(default=None, ge=0)
+    preferences: list[USIProfilePreferenceInput] = Field(max_length=100)
+
+
+class ConsentReceiptInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    receipt_id: str = Field(min_length=8, max_length=128)
+    scope: Literal["personalization", "style_learning", "profile_storage"]
+    consent_version: str = Field(min_length=1, max_length=80)
+    granted: bool
+
+
+class TALObservationInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    event_id: str = Field(min_length=1, max_length=128)
+    idempotency_key: str = Field(min_length=8, max_length=160)
+    consent_receipt_id: str = Field(min_length=8, max_length=128)
+    feature_key: str = Field(min_length=1, max_length=120)
+    value: str = Field(min_length=1, max_length=2000)
+    observed_at: str
+    expires_at: str | None = None
+    event_kind: Literal["observation", "correction"] = "observation"
+    supersedes_event_id: str | None = Field(default=None, max_length=128)
+
+
 class ComplementerAdvisoryRequest(BaseModel):
     """Request-scoped style advisory; this is not a persisted identity profile."""
     model_config = ConfigDict(extra="forbid")
@@ -790,6 +826,39 @@ def _load_verified_usi_profile(subject_id: str) -> USIProfile:
     )
 
 
+
+def _identity_service_request(method: str, path: str, subject_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    base = os.getenv("IDENTITY_SERVICE_URL", "").strip().rstrip("/")
+    token = os.getenv("IDENTITY_SERVICE_TOKEN", "").strip()
+    if not base or not _trusted_internal_base_url(base) or len(token.encode("utf-8")) < 32:
+        raise HTTPException(503, detail={"code": "IDENTITY_SERVICE_NOT_CONFIGURED"})
+    params = {"subject_id": subject_id}
+    try:
+        with httpx.Client(timeout=httpx.Timeout(5.0, connect=1.5), trust_env=False, follow_redirects=False) as client:
+            response = client.request(
+                method, base + path,
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                params=params,
+                json=payload,
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "IDENTITY_SERVICE_UNAVAILABLE"}) from exc
+    try:
+        data = response.json() if response.content else {}
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "IDENTITY_SERVICE_RESPONSE_INVALID"}) from exc
+    if response.status_code in {400, 401, 403, 404, 409, 422}:
+        raise HTTPException(response.status_code, detail=data.get("detail", data))
+    if response.status_code < 200 or response.status_code >= 300 or not isinstance(data, dict):
+        raise HTTPException(503, detail={"code": "IDENTITY_SERVICE_REQUEST_FAILED"})
+    return data
+
+
+def _verified_actor_from_header(end_user_authorization: str | None) -> str:
+    return _resolve_verified_subject(end_user_authorization)
+
+
+
 def _discover_catalog_and_offers(payload: DiscoveryRequest) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Join canonical active Catalog products to currently purchasable Commerce offers."""
     catalog_base = os.getenv("CATALOG_SERVICE_URL", "").strip().rstrip("/")
@@ -1249,6 +1318,68 @@ def readiness() -> dict[str, Any]:
 def recommend_complementary_look(payload: ComplementerAdvisoryRequest) -> dict[str, Any]:
     """Return styling guidance only; product candidates require the separate CAL decision path."""
     return _complementer_advisory(payload)
+
+
+@app.get("/v1/me/style-profile", dependencies=[Depends(require_api_token)], tags=["identity and learning"])
+def read_my_style_profile(
+    end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
+):
+    subject = _verified_actor_from_header(end_user_authorization)
+    return _identity_service_request("GET", f"/v1/profiles/{subject}", subject)
+
+
+@app.put("/v1/me/style-profile", dependencies=[Depends(require_api_token)], tags=["identity and learning"])
+def update_my_style_profile(
+    payload: USIProfileUpdateInput,
+    end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
+):
+    subject = _verified_actor_from_header(end_user_authorization)
+    return _identity_service_request("PUT", f"/v1/profiles/{subject}", subject, payload.model_dump(mode="json"))
+
+
+@app.post("/v1/me/consents", dependencies=[Depends(require_api_token)], tags=["identity and learning"])
+def create_my_consent_receipt(
+    payload: ConsentReceiptInput,
+    end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
+):
+    subject = _verified_actor_from_header(end_user_authorization)
+    return _identity_service_request("POST", "/v1/tal/consents", subject, payload.model_dump(mode="json"))
+
+
+@app.post("/v1/me/consents/{receipt_id}/revoke", dependencies=[Depends(require_api_token)], tags=["identity and learning"])
+def revoke_my_consent_receipt(
+    receipt_id: str,
+    end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
+):
+    subject = _verified_actor_from_header(end_user_authorization)
+    return _identity_service_request("POST", f"/v1/tal/consents/{receipt_id}/revoke", subject)
+
+
+@app.post("/v1/me/tal/events", dependencies=[Depends(require_api_token)], tags=["identity and learning"])
+def append_my_learning_event(
+    payload: TALObservationInput,
+    end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
+):
+    subject = _verified_actor_from_header(end_user_authorization)
+    return _identity_service_request("POST", "/v1/tal/events", subject, payload.model_dump(mode="json"))
+
+
+@app.get("/v1/me/tal/export", dependencies=[Depends(require_api_token)], tags=["identity and learning"])
+def export_my_learning_data(
+    end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
+):
+    subject = _verified_actor_from_header(end_user_authorization)
+    return _identity_service_request("GET", f"/v1/tal/export/{subject}", subject)
+
+
+@app.delete("/v1/me/tal/data", dependencies=[Depends(require_api_token)], tags=["identity and learning"])
+def delete_my_learning_data(
+    end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
+):
+    subject = _verified_actor_from_header(end_user_authorization)
+    return _identity_service_request("DELETE", f"/v1/tal/users/{subject}", subject)
+
+
 
 
 @app.post(
