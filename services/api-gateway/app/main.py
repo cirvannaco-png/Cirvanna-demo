@@ -888,6 +888,8 @@ def _provider_manifest_valid(manifest: Any, *, prefix: str, expected_scope: str,
         or manifest.get("independent_validation") is not True
         or not isinstance(manifest.get("evaluator_id"), str)
         or not manifest.get("evaluator_id").strip()
+        or not isinstance(provider_id, str)
+        or not provider_id.strip()
         or manifest.get("evaluator_id") == provider_id
     ):
         return False
@@ -1147,8 +1149,18 @@ def capabilities() -> dict[str, Any]:
         ),
         "durable_decision_audit": "sqlite_local_only",
         "trained_fit_predictor": False,
-        "calibrated_fci_provider": False,
-        "independent_safety_policy_provider": False,
+        "calibrated_fci_provider": all(
+            os.getenv(key, "").strip() for key in (
+                "FCI_SERVICE_URL", "FCI_SERVICE_TOKEN", "FCI_EVIDENCE_HMAC_SECRET",
+                "FCI_VALIDATION_HMAC_SECRET", "FCI_VALIDATION_REPORT_SHA256",
+            )
+        ),
+        "independent_safety_policy_provider": all(
+            os.getenv(key, "").strip() for key in (
+                "SAFETY_SERVICE_URL", "SAFETY_SERVICE_TOKEN", "SAFETY_EVIDENCE_HMAC_SECRET",
+                "SAFETY_VALIDATION_HMAC_SECRET", "SAFETY_VALIDATION_REPORT_SHA256",
+            )
+        ),
         "persisted_user_profiles": bool(
             _verified_identity_required()
             and os.getenv("IDENTITY_SERVICE_URL")
@@ -1222,8 +1234,9 @@ def readiness() -> dict[str, Any]:
         "policy_configuration_valid": policy_configured,
         "identity_provider_binding": identity_binding_configured,
         "identity_learning_service_ready": identity_ready,
-        "fci_available": False,
-        "safety_policy_available": False,
+        "fci_available": all(os.getenv(key, "").strip() for key in ("FCI_SERVICE_URL", "FCI_SERVICE_TOKEN", "FCI_EVIDENCE_HMAC_SECRET", "FCI_VALIDATION_HMAC_SECRET", "FCI_VALIDATION_REPORT_SHA256")),
+        "safety_policy_available": all(os.getenv(key, "").strip() for key in ("SAFETY_SERVICE_URL", "SAFETY_SERVICE_TOKEN", "SAFETY_EVIDENCE_HMAC_SECRET", "SAFETY_VALIDATION_HMAC_SECRET", "SAFETY_VALIDATION_REPORT_SHA256")),
+        "decision_evidence_ready": all(os.getenv(key, "").strip() for key in ("FCI_SERVICE_URL", "FCI_SERVICE_TOKEN", "FCI_EVIDENCE_HMAC_SECRET", "FCI_VALIDATION_HMAC_SECRET", "FCI_VALIDATION_REPORT_SHA256", "SAFETY_SERVICE_URL", "SAFETY_SERVICE_TOKEN", "SAFETY_EVIDENCE_HMAC_SECRET", "SAFETY_VALIDATION_HMAC_SECRET", "SAFETY_VALIDATION_REPORT_SHA256")),
         "ready": ready,
     }
 
