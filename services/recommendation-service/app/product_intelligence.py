@@ -20,6 +20,10 @@ MIN_HISTORICAL_SAMPLE_SIZE = 20
 
 
 def _normalise(values: Any) -> set[str]:
+    # Single-valued context fields (climate, occasion) and multi-valued facets
+    # share the same normalization path.
+    if isinstance(values, str):
+        values = [values]
     if not isinstance(values, (list, tuple, set)):
         return set()
     return {
