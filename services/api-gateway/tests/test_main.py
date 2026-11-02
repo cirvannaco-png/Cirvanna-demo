@@ -251,6 +251,10 @@ def test_missing_safety_and_fit_providers_fail_closed_to_review(client, monkeypa
     decision = response.json()["candidates"][0]
     assert decision["verdict"] == "review"
     assert decision["may_display"] is False
+    assert decision["name"] is None
+    assert decision["sku"] is None
+    assert decision["price_minor"] is None
+    assert decision["image_urls"] == []
     assert any(reason["code"] == "REQUIRED_SIGNAL_UNKNOWN" for reason in decision["reasons"])
     assert "safety" in " ".join(reason["explanation"] for reason in decision["reasons"])
     assert "fit_confidence" in " ".join(reason["explanation"] for reason in decision["reasons"])
@@ -269,6 +273,10 @@ def test_explicit_negative_preference_blocks_candidate(client, monkeypatch):
     decision = response.json()["candidates"][0]
     assert decision["verdict"] == "block"
     assert decision["may_display"] is False
+    assert decision["name"] is None
+    assert decision["brand"] is None
+    assert decision["price_minor"] is None
+    assert decision["image_urls"] == []
     assert any(reason["code"] == "NPL_HARD_NEGATIVE" for reason in decision["reasons"])
 
 
@@ -309,6 +317,9 @@ def test_show_requires_all_required_gates_and_a_calibrated_fit_result(client, mo
     assert decision["may_display"] is True
     assert any(reason["code"] == "ALL_REQUIRED_GATES_PASSED" for reason in decision["reasons"])
     assert decision["catalog_version"] == 3
+    assert decision["name"] == "Test garment"
+    assert decision["price_minor"] == 150000
+    assert decision["image_urls"] == []
 
 
 def test_incomplete_catalog_metadata_cannot_confirm_user_hard_constraint(client, monkeypatch):
