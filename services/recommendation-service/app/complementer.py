@@ -79,7 +79,7 @@ def compose_complementary_look(payload: dict[str, Any]) -> dict[str, Any]:
             "Fragrance longevity is a preference target, not a guarantee of actual wear time; no allergy-safety claim is made.",
             "No gender, culture, religion, modesty, skin tone, undertone or facial feature is inferred from appearance.",
             "Cultural styling is used only when the user explicitly selects the cultural context.",
-            "Specific products, brands, SKUs, prices and stock must come from the canonical Catalog/Commerce sources and pass CaTaCaCi/CAL before display.",
+            "Specific catalog products, brands, SKUs, prices and stock must come from canonical Catalog/Commerce sources and pass CaTaCaCi/CAL before display.",
         ],
         "persistence": "stateless_request_only",
     }
