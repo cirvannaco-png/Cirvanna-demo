@@ -162,6 +162,8 @@ def capabilities() -> dict[str, object]:
         "image_persistence": False,
         "clinical_diagnosis": False,
         "recommendations": False,
+        "longitudinal_forecasting": False,
+        "forecast_status": "unavailable_until_validated_longitudinal_model_and_dataset_exist",
         "reason": None if adapter_configured else "validated_model_artifact_not_configured",
     }
 
