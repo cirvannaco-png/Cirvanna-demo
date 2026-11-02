@@ -53,6 +53,8 @@ def request_body(**overrides):
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("CIRVANNA_API_TOKEN", TOKEN)
     monkeypatch.setenv("CIRVANNA_AUDIT_DB", str(tmp_path / "audit.sqlite3"))
+    # Legacy request-scoped profile tests explicitly opt into local/demo mode.
+    monkeypatch.setenv("CIRVANNA_REQUIRE_VERIFIED_IDENTITY", "false")
     monkeypatch.delenv("CATALOG_SERVICE_URL", raising=False)
     monkeypatch.delenv("CATALOG_API_TOKEN", raising=False)
     return TestClient(main.app)
@@ -86,6 +88,18 @@ def pass_safety(product_payload):
         explanation="A test-only independent safety result was injected.",
         source_version="test-fixture-only",
     )
+
+
+def test_decision_requires_verified_identity_when_setting_is_absent(client, monkeypatch):
+    monkeypatch.delenv("CIRVANNA_REQUIRE_VERIFIED_IDENTITY", raising=False)
+    monkeypatch.setattr(main, "fetch_product", lambda _: pytest.fail("must reject before Catalog access"))
+    response = client.post(
+        "/v1/decisions",
+        json=request_body(),
+        headers=auth_headers(),
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "END_USER_BEARER_REQUIRED"
 
 
 def test_decision_endpoint_requires_bearer_authentication(client, monkeypatch):
