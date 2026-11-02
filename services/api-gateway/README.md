@@ -1,120 +1,156 @@
-# API gateway / decision composition
+# Cirvanna API Gateway
 
-**Status:** the first HTTP decision vertical slice is implemented on the engineering branch. End-to-end CI evidence is still pending; this gateway is not production-certified.
+**Status:** the authenticated decision gateway and request-scoped Complementer advisory proxy are implemented on this feature branch. The gateway is not production-certified.
 
 ## Responsibilities
 
-- Authenticate requests to the decision API with a configured bearer token.
-- Fetch canonical products from the catalog service; never fall back to invented products.
-- Compose the existing EEPL, NPL, USI, FCI contract and CaTaCaCi/CAL kernels.
-- Apply only explicit user-declared cultural requirements and separately declared hard constraints.
-- Append minimal decision-audit events before returning decisions.
-- Allow display only when CAL explicitly returns `SHOW`.
+- Authenticate internal API requests using the gateway bearer token.
+- Fetch canonical products from Catalog; never fabricate product records.
+- Compose the existing EEPL, USI, NPL, FCI evidence contract, cultural-declaration evidence, and CaTaCaCi/CAL kernels.
+- Load persistent NPL and cultural-declaration snapshots only when their trusted providers are configured and their candidate-bound HMAC signatures verify.
+- Append minimal decision-audit events before returning a decision.
+- Authorize product display only when the actual CAL verdict is SHOW.
+- Optionally proxy request-scoped Complementer styling advice. This route never returns product candidates and never authorizes display.
 
 ## Routes
 
-- `GET /health` — liveness only.
-- `GET /ready` — checks gateway/catalog configuration, catalog readiness, and audit-store accessibility.
-- `GET /capabilities` — reports implemented and unavailable capabilities.
-- `POST /v1/decisions` — evaluates 1–25 active catalog product IDs against the supplied profile inputs.
+- GET /health — liveness only.
+- GET /ready — checks gateway authentication, Catalog readiness, audit-store access, and policy configuration. Complementer is optional and does not gate decision readiness.
+- GET /capabilities — reports configured integrations and unavailable capabilities.
+- POST /v1/decisions — evaluates 1–25 active canonical Catalog product IDs.
+- POST /v1/complementer/recommend — forwards explicit preferences and current-look context to the stateless Complementer service and returns styling guidance only.
 
-Decision requests require `Authorization: Bearer $CIRVANNA_API_TOKEN`. The catalog service uses a separate `CATALOG_API_TOKEN`; the gateway forwards it only to the catalog API.
+Both POST routes require Authorization: Bearer $CIRVANNA_API_TOKEN. The gateway uses a separate server-side bearer token for Complementer and a separate Catalog credential. Never expose service credentials in browser code.
 
 ## Local setup
 
-Use separate terminals/processes. Supply credentials through your shell's secret mechanism; do not commit them.
+Use separate processes and virtual environments. Supply credentials through the shell or a local secret store; do not commit them.
 
-1. From `services/catalog-service`, install `requirements.txt`, configure `CATALOG_API_TOKEN`, and start the service, for example on port 8081. Its local SQLite default is for development only.
-2. From `services/api-gateway`, install this directory's `requirements.txt`, then configure:
-   - `CIRVANNA_API_TOKEN` — inbound gateway bearer token.
-   - `CATALOG_SERVICE_URL` — base URL of the catalog service, e.g. local port 8081.
-   - `CATALOG_API_TOKEN` — outbound service token matching the catalog process.
-   - `CIRVANNA_AUDIT_DB` — persistent local SQLite file path for audit events.
-3. Start the gateway from `services/api-gateway` with `uvicorn app.main:app --host 127.0.0.1 --port 8080`.
-4. Check `/health`, `/ready`, and `/capabilities` before sending a request.
+1. Start Catalog from services/catalog-service. Install its requirements, configure a local Catalog token, and start it on port 8081. SQLite is for local development only.
+2. Start Complementer from services/recommendation-service. Install its requirements, set COMPLEMENTER_SERVICE_TOKEN to a random value of at least 32 bytes, and start it on port 8090.
+3. Start the gateway from services/api-gateway. Install its requirements and configure:
+   - CIRVANNA_API_TOKEN — inbound internal gateway bearer token.
+   - CATALOG_SERVICE_URL and CATALOG_API_TOKEN — Catalog base URL and read credential.
+   - CIRVANNA_AUDIT_DB — durable local SQLite file path for decision audit events.
+   - COMPLEMENTER_SERVICE_URL — trusted Complementer base URL; HTTPS is required except for localhost during development.
+   - COMPLEMENTER_SERVICE_TOKEN — outbound Complementer bearer token, at least 32 bytes.
+4. Start the gateway on port 8080 and verify /health, /ready, and /capabilities.
 
-## Container build
+Example commands, run from each service directory:
 
-Build from the **repository root** so the image includes the shared domain packages:
+    python -m pip install -r requirements.txt
+    uvicorn app.main:app --host 127.0.0.1 --port 8090
+    python -m pytest tests -q
 
-```bash
-docker build -f services/api-gateway/Dockerfile -t cirvanna-decision-gateway .
-```
+The gateway and Complementer must run as separate processes for the HTTP proxy integration to be exercised.
 
-The image runs as a non-root user, uses the platform `PORT` when supplied (otherwise 8080), and stores the local audit SQLite file at `/data/audit.sqlite3`. Mount a persistent volume at `/data` for local/staging persistence. This volume arrangement is not a replacement for a managed production audit store, backup/recovery, or retention controls.
+## Complementer advisory contract
 
-Useful optional policy settings:
+POST /v1/complementer/recommend accepts request_id, user_id, preferences, and look. The gateway forwards the complete validated JSON to Complementer's POST /v1/complementer/recommend endpoint with its private service token.
+
+The request's user_id is currently an opaque request-scope identifier supplied by the caller. The gateway does **not** bind it to a verified end-user identity provider. Complementer is stateless and does not load or persist a user profile, so this route must remain internal/staging-only until trusted identity binding exists.
+
+The gateway validates the upstream response schema, request/user scope, and stateless persistence declaration. It always wraps the response with:
+
+- mode = advisory_only
+- display_authorized = false
+- durable_personal_memory = false
+
+No product name, SKU, price, offer, stock value, or purchase link is sourced from Complementer. Product candidates must be retrieved from canonical Catalog/Commerce services and evaluated through the separate decision route.
+
+Complementer feedback remains a consent-gated TAL handoff only. This gateway does not forward feedback into NPL and does not create hard exclusions from rejected recommendations.
+
+## Product decision contract
+
+POST /v1/decisions accepts:
+- user_id: caller-supplied request identity; it is not authenticated identity.
+- product_ids: 1–25 unique UUIDs from canonical Catalog.
+- context: optional age, location, occasion, and climate.
+- style_preferences: explicit positive attributes evaluated by USI.
+- negative_preferences: explicit item/attribute hard exclusions.
+- cultural_requirements: explicit user-declared requirements.
+- hard_constraints: explicitly supplied required/forbidden attributes.
+
+The gateway fetches product facts from Catalog. When configured, it loads NPL and cultural declarations from their separate persistent services and verifies the signed evidence for the exact request, user, candidate, and attributes. NPL is never silently treated as empty after a partial configuration or provider failure.
+
+## CAL and safety behavior
+
+Only CAL SHOW sets may_display=true. BLOCK is a hard veto. REVIEW is fail-closed when required evidence is missing, unknown, incomplete, or untrusted.
+
+The independent product-safety provider and trained/calibrated FCI predictor are not configured in this repository build. The gateway therefore produces UNKNOWN safety evidence and an unavailable fit estimate; otherwise eligible candidates normally remain REVIEW. Tests may inject fixture-only providers to exercise SHOW, but such fixtures are not live provider results.
+
+The gateway's local audit store is SQLite. It records request/product IDs, verdicts, reason codes, Catalog version, policy/contract versions, and timestamp; it omits user IDs, measurements, and images. This is not a managed production audit backend.
+
+## Configuration
 
 | Variable | Purpose |
 |---|---|
-| `CIRVANNA_POLICY_VERSION` | CAL policy version recorded with decisions |
-| `CIRVANNA_EEPL_POLICY_ID`, `CIRVANNA_EEPL_POLICY_VERSION` | EEPL policy identity/version |
-| `CIRVANNA_REQUIRED_CONTEXT_FIELDS` | Comma-separated EEPL context fields; default is `location,occasion,climate` |
-| `CIRVANNA_MINIMUM_AGE`, `CIRVANNA_MAXIMUM_AGE` | Optional configured age bounds |
-| `CIRVANNA_ALLOWED_LOCATIONS`, `CIRVANNA_ALLOWED_OCCASIONS`, `CIRVANNA_ALLOWED_CLIMATES` | Optional comma-separated allowlists |
-| `CIRVANNA_REQUIRED_PRODUCT_ATTRIBUTES` | Product attribute keys needed to consider catalog metadata complete; default is `style,material,color` |
+| CIRVANNA_API_TOKEN | Inbound internal gateway bearer token |
+| CIRVANNA_AUDIT_DB | Persistent local/staging SQLite audit path; not a production managed store |
+| CIRVANNA_POLICY_VERSION | Version stamped onto decision outputs |
+| CIRVANNA_REQUIRED_CONTEXT_FIELDS | Comma-separated EEPL required fields; default location,occasion,climate |
+| CIRVANNA_REQUIRED_PRODUCT_ATTRIBUTES | Catalog fields required for complete candidate metadata; default style,material,color |
+| CIRVANNA_MINIMUM_AGE / CIRVANNA_MAXIMUM_AGE | Optional age boundaries |
+| CIRVANNA_ALLOWED_LOCATIONS / CIRVANNA_ALLOWED_OCCASIONS / CIRVANNA_ALLOWED_CLIMATES | Optional context allowlists |
+| CATALOG_SERVICE_URL | Trusted Catalog API base URL |
+| CATALOG_API_TOKEN | Catalog read credential |
+| COMPLEMENTER_SERVICE_URL | Trusted Complementer API base URL |
+| COMPLEMENTER_SERVICE_TOKEN | Internal Complementer bearer token, at least 32 bytes |
+| NPL_SERVICE_URL | Optional trusted persistent NPL service URL |
+| NPL_SERVICE_TOKEN | NPL bearer token |
+| NPL_EVIDENCE_HMAC_SECRET | Shared HMAC key used to verify NPL evidence |
+| CULTURAL_IDENTITY_SERVICE_URL | Optional trusted cultural declaration service URL |
+| CULTURAL_IDENTITY_SERVICE_TOKEN | Cultural service bearer token |
+| CULTURAL_IDENTITY_HMAC_SECRET | Shared HMAC key used to verify cultural evidence |
 
-The initial context policy requires location, occasion, and climate inputs but does not impose geographic/occasion/climate allowlists unless configured. Missing required context produces `REVIEW`, not a guessed value.
+Non-local service URLs must use HTTPS and must not include embedded URL credentials, query strings, or fragments. NPL and cultural services are optional when completely unconfigured; partial configuration or an invalid provider response fails closed.
 
-## Request contract
+## Container build
 
-`POST /v1/decisions` accepts a JSON body with:
+Build from the repository root so the image includes the shared packages:
 
-- `user_id`: caller-supplied identifier. The current shared-token gateway does **not** bind it to an identity-provider session; keep this API internal/staging-only until that integration exists.
-- `product_ids`: unique UUIDs from the canonical catalog.
-- `context`: optional `age_years`, `location`, `occasion`, and `climate`.
-- `style_preferences`: explicit style attributes and optional weights.
-- `negative_preferences`: explicit item or attribute exclusions. These are hard vetoes.
-- `cultural_requirements`: explicit declaration-linked required/forbidden attributes; no cultural identity is inferred.
-- `hard_constraints`: additional required/forbidden attributes supplied explicitly by the user.
+    docker build -f services/api-gateway/Dockerfile -t cirvanna-decision-gateway .
+    docker build -f services/recommendation-service/Dockerfile -t cirvanna-complementer .
 
-A product's attributes are taken from the catalog, not the request. For the initial apparel-focused slice, metadata is considered complete only when the configured required keys exist as non-empty strings.
+The gateway image uses the platform PORT when supplied and stores its local audit database under /data. Mount persistent storage for local/staging use; this is not a substitute for managed production audit storage, retention, backup, and recovery.
 
-## Decision safety
-
-At this stage, the safety policy provider and trained/calibrated FCI provider are **not configured**. The gateway emits `UNKNOWN` safety evidence and an uncalibrated fit estimate, so otherwise eligible candidates normally return `REVIEW`. An NPL, legal, context, cultural, or explicit hard-constraint veto can return `BLOCK`. `SHOW` is possible only when all required gates produce valid results; tests can inject fixture-only provider results to validate that path. No fixture or client input is accepted as a live model result.
-
-The API does not persist user profiles. The audit store persists only the request ID, product ID, verdict, reason codes, product catalog version, policy/contract versions, and timestamp; it omits user IDs, measurements, and images. The local SQLite audit file is suitable only for development/testing. Production requires a managed durable audit backend, migrations, retention/deletion controls, and operational monitoring.
-
-## Tests
+## Validation
 
 From the repository root:
 
-```bash
-python -m pip install -r services/api-gateway/requirements.txt
-cd services/api-gateway
-python -m pytest tests -q
-cd ../..
-python scripts/validate_architecture.py
-python -m unittest discover -s tests/architecture -v
-python scripts/scan_source_secrets.py
-```
+    python -m pip install -r services/api-gateway/requirements.txt
+    cd services/api-gateway
+    python -m pytest tests -q
+    cd ../..
+    python -m pip install -r services/recommendation-service/requirements.txt
+    cd services/recommendation-service
+    python -m pytest tests -q
+    cd ../..
+    python scripts/validate_architecture.py
+    python -m unittest discover -s tests/architecture -v
+    python scripts/scan_source_secrets.py
 
-The `.github/workflows/decision-gateway.yml` workflow runs these checks plus a Docker image build on relevant pushes and pull requests. A passing workflow validates the tested API contracts only; it does not certify a deployed environment, fit accuracy, safety policy quality, identity authentication, or production readiness.
+The Decision Gateway workflow runs API integration tests, the container build, architecture validation, the architecture regression suite, and source secret scanning. It also runs when the Complementer service contract changes.
+
+## Security and privacy boundaries
+
+- These bearer tokens are service credentials, not end-user identity.
+- The gateway currently has no verified identity-provider binding for user_id. Do not expose the decision or Complementer endpoints as public user APIs until subject binding and scoped authorization are added.
+- Keep Catalog write credentials out of the gateway; use only the read token.
+- Keep NPL and cultural HMAC keys private and independently rotated.
+- Complementer receives explicit preference/look JSON only and has no image upload route.
+- Feedback requires explicit personalisation consent; a rejection remains a soft TAL observation.
+- Never infer culture, religion, ethnicity, gender, modesty, skin tone, or facial geometry from appearance.
+- No response from Complementer may authorize product display or checkout.
+- Do not log tokens, images, sensitive preference values, or raw upstream error bodies.
 
 ## Remaining release blockers
 
-- Integrate and validate a real product-safety provider.
-- Integrate a trained FCI estimator, including appropriate user fit evidence, calibration, uncertainty, provenance, and model-version tracking.
-- Bind user identity to an authenticated principal; replace shared bearer auth with scoped authorization before external exposure.
-- Replace local SQLite audit with managed durable storage, migrations, access controls, retention, and tested recovery.
-- Add persistence for user profiles only after defining consent, export, correction, and deletion requirements.
-- Run real deployment smoke tests, security/privacy review, load/failure tests, and end-to-end user journey checks.
-
-Virtual Try-On remains a separate next phase: rendering/simulation must consume a supported Virtual Twin/model adapter and catalog assets; it must not be simulated by this decision endpoint.
-
-
-## Durable NPL provider integration
-
-When configured, the gateway loads each candidate's NPL snapshot from the trusted `NPL_SERVICE_URL` using `NPL_SERVICE_TOKEN` and verifies `NPL_EVIDENCE_HMAC_SECRET` over the request/user/candidate/attribute/preferences envelope before applying the veto. A provider that is partially configured, unavailable or returns invalid signature/context causes a fail-closed service error; it never falls back silently to an empty persistent preference set. If no NPL provider is configured at all, only request-local, explicitly supplied hard exclusions are evaluated and the gateway capability reports `persistent_npl_service_integrated=false`.
-
-- `NPL_SERVICE_URL`: trusted internal HTTPS base URL.
-- `NPL_SERVICE_TOKEN`: internal service token shared with NPL.
-- `NPL_EVIDENCE_HMAC_SECRET`: HMAC key shared only with trusted NPL and consumer services.
-
-This integration does not create persistent preferences from request-local exclusions. User preference creation/correction must use the NPL API and the ingress must bind `user_id` to the authenticated user.
-
-
-## Durable cultural declaration integration
-
-When `CULTURAL_IDENTITY_SERVICE_URL`, `CULTURAL_IDENTITY_SERVICE_TOKEN`, and `CULTURAL_IDENTITY_HMAC_SECRET` are configured, each candidate decision loads its active declared requirements from the cultural-identity service and verifies the candidate-bound HMAC before CAL evaluation. A partially configured, unavailable, or tampered provider response fails closed. Request-local explicit requirements may add a restriction but cannot overwrite an existing persisted requirement with the same ID. When the provider is not configured, the capability is reported as false and only request-local explicit requirements are available.
+- Bind user_id to a verified end-user principal and enforce tenant isolation across profile and preference providers.
+- Build the canonical USI profile service/persistence and trusted hydration path.
+- Implement durable TAL storage, consent receipts, replay/idempotency, retention, correction, export, deletion, and audit.
+- Connect Complementer marketplace retrieval to canonical Catalog/Commerce records without bypassing CAL.
+- Configure a real product-safety provider and a separately validated, calibrated FCI provider.
+- Replace local SQLite audit with managed durable storage and tested recovery.
+- Run deployed PostgreSQL migration/backup/restore tests, service key rotation, real staging E2E, load/failure tests, observability, and rollback drills.
+- Keep skin-state forecasting disabled until DermalSight has a validated longitudinal dataset/model and calibrated independent validation.

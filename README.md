@@ -2,42 +2,43 @@
 
 **Computing purchase certainty before checkout.**
 
-Cirvanna is an identity-first beauty, fashion, fit, and commerce-intelligence platform. It is designed to help people evaluate whether a product or complete look fits their declared preferences, context, and available evidence before they buy. For merchants, the goal is to improve product relevance and measure avoidable returns through controlled pilots—not to promise unverified conversion or return-reduction gains.
+Cirvanna is an identity-first beauty, fashion, fit, and commerce-intelligence platform. It is designed to help people evaluate whether products and complete looks fit their declared preferences, context, and available evidence before purchase. For merchants, the objective is to improve relevance and measure avoidable returns through controlled pilots—not to promise unverified conversion or return-reduction gains.
 
-> **Engineering status — 2 November 2026:** Cirvanna is an active, multi-service codebase with tested domain contracts and several runnable APIs. The current Complementer expansion and Catalog product-intelligence work are on [draft PR #72](https://github.com/cirvannaco-png/Cirvanna-demo/pull/72), branch \`feature/complementer-agent\`. Its relevant GitHub Actions checks passed on head \`7278e59df426ea344f54cdee6a93d557a2f07d93\`, including 22 Complementer tests and the Catalog, architecture, DermalSight, Vision Intelligence, marketplace-contract, and related service checks. PR #72 is **open, draft, and unmerged**. These results validate the tested commit and contracts; they do not certify a live production deployment or complete user journey. Durable TAL preference memory, trusted identity binding for Complementer, end-to-end marketplace ranking with CAL-gated display, and validated longitudinal skin forecasting remain incomplete. DermalSight's current capability contract explicitly reports longitudinal forecasting as unavailable. **Cirvanna is not production-ready.**
-
----
+> **Engineering status — 2 November 2026:** Cirvanna is an active multi-service codebase with deterministic domain contracts and runnable API foundations. Complementer Personal Aesthetic Intelligence and Catalog product-intelligence validation are implemented on draft PR #72. This change adds an authenticated, request-scoped gateway proxy for Complementer styling advice. The proxy is advisory only; Catalog product facts and final product display remain separate and CAL-governed. TAL durable memory, trusted end-user identity binding, calibrated fit prediction, an independent safety provider, live marketplace ranking through CAL, validated DermalSight inference, and longitudinal skin forecasting are not complete. **Cirvanna is not production-ready.**
 
 ## Contents
 
 - [Product vision](#product-vision)
 - [Experience and capability map](#experience-and-capability-map)
-- [System architecture and ownership](#system-architecture-and-ownership)
+- [Architecture and domain ownership](#architecture-and-domain-ownership)
+- [Decision and display flow](#decision-and-display-flow)
 - [Complementer: Personal Aesthetic Intelligence](#complementer-personal-aesthetic-intelligence)
-- [Marketplace product intelligence](#marketplace-product-intelligence)
-- [CaTaCaCi decision governance](#catacaci-decision-governance)
-- [Skin-state forecasting](#skin-state-forecasting)
-- [Repository structure](#repository-structure)
-- [Local development and validation](#local-development-and-validation)
-- [Privacy, security, and responsible AI](#privacy-security-and-responsible-ai)
+- [Catalog product intelligence](#catalog-product-intelligence)
+- [Modules and services](#modules-and-services)
+- [Data ownership and privacy](#data-ownership-and-privacy)
+- [Local development](#local-development)
+- [Configuration](#configuration)
+- [Testing and CI](#testing-and-ci)
+- [Deployment](#deployment)
+- [Security and responsible AI](#security-and-responsible-ai)
 - [Implementation status](#implementation-status)
-- [Roadmap and release gates](#roadmap-and-release-gates)
-- [Contribution and engineering rules](#contribution-and-engineering-rules)
+- [Release roadmap](#release-roadmap)
+- [Contribution rules](#contribution-rules)
 - [Architecture references](#architecture-references)
 
 ## Product vision
 
-Most commerce systems optimize discovery and clicks. Cirvanna's intended distinction is to evaluate suitability before checkout.
+Most commerce systems optimize discovery and conversion. Cirvanna aims to evaluate suitability before checkout.
 
-The decision should combine user-declared preferences, explicit exclusions, occasion and climate context, product facts, available fit evidence, and uncertainty. A recommendation score is not permission to show a product. Candidates must pass the canonical decision process, and the user remains the final decision-maker.
+The intended decision combines user-declared preferences, explicit exclusions, occasion and climate context, product facts, fit evidence, and uncertainty. A recommendation score is not permission to show a product. The candidate must pass the canonical decision process, and the user remains the final decision-maker.
 
 ### User value
 
 - Build and revise a personal style representation from information the user chooses to provide.
-- Coordinate clothing, makeup, fragrance, jewellery, hairstyles, and accessories without flattening individual identity.
-- Discover products using climate, occasion, product attributes, and personal preferences.
-- Understand why a suggestion was made and what evidence is missing.
-- Preview looks only where the required visualization capability is genuinely available.
+- Coordinate clothing, makeup, fragrance, jewellery, hairstyles, and accessories without treating identity as a defect to correct.
+- Discover products through personal preferences, context, and evidence-backed product metadata.
+- Understand why a suggestion was made and which information is missing.
+- Preview looks only when the relevant visualization capability is actually available.
 - Control consent, saved preferences, images, and personal history.
 
 ### Merchant value
@@ -51,42 +52,42 @@ Revenue, conversion lift, purchase certainty, and return reduction are hypothese
 
 ## Experience and capability map
 
-This is the intended product map. A named capability is not automatically a shipped, connected, or production-enabled feature.
+This is the intended product map. A named capability is not automatically a shipped, integrated, or production-enabled feature.
 
 ### Identity and personalisation
 
 - **USI — User Style Index:** canonical owner of positive, user-declared style preferences and approved profile updates.
-- **NPL — Negative Preference Layer:** canonical owner of explicit hard exclusions and governed negative preferences. A single rejected suggestion is not automatically a permanent veto.
-- **Cultural context:** uses context explicitly selected by the user. Cirvanna must not infer culture, ethnicity, religion, or identity from a face, name, location, or shopping behaviour.
+- **NPL — Negative Preference Layer:** canonical owner of explicit hard exclusions and governed negative-preference state. A single rejected suggestion is not automatically a permanent veto.
+- **Cultural Identity:** stores user-declared cultural requirements. Culture, ethnicity, religion, and modesty are never inferred from appearance, name, location, or behavioural proxies.
 - **TAL — Temporal Learning:** intended owner of consented, versioned preference observations and temporal profile learning.
-- **Revival / preference continuity:** intended cross-session continuity, subject to consent, retention, correction, export, and deletion controls.
+- **Preference continuity:** intended cross-session continuity, subject to consent, retention, correction, export, and deletion controls.
 
 ### Personal Aesthetic Intelligence
 
-Complementer coordinates a complete look using declared preferences and current-look information:
+Complementer coordinates a complete look from declared preferences and current-look context:
 
 - Fragrance families and scent profiles, occasion, target longevity, intensity, and currency-scoped budget.
 - Colour coordination across clothing, makeup, jewellery, and accessories.
 - Jewellery and accessories including earrings, necklaces, glasses, and selected accessory categories.
 - Aesthetic directions such as minimalist, elegant, classic, romantic, bold, bohemian, streetwear, editorial, and natural.
-- Conservative look completion that preserves the user's existing silhouette and statement pieces.
-- Explainable recommendations grounded in a stated preference, supplied look attribute, or clearly identified styling rule.
-- Consent-gated feedback events intended for future preference learning.
+- Conservative look completion that preserves the user's selected silhouette and statement pieces.
+- Explanations grounded in a declared preference, supplied look attribute, or clearly identified styling rule.
+- Consent-gated feedback events intended for future learning.
 
-Complementer is advisory. It must not become a second user-profile database, product database, NPL implementation, or final display authority.
+Complementer is advisory. It is not a second profile database, product database, NPL implementation, or final display authority.
 
 ### Fit and purchase confidence
 
 - **FCI — Fit Confidence Intelligence:** intended to estimate suitability from actual product and user evidence.
-- **CRFP / CFRP:** source material uses both names. Resolve their definitions and contracts before designating one canonical implementation.
+- **CRFP / CFRP:** source material uses both names. Resolve their definitions and contracts before choosing a canonical implementation.
 - **Purchase-decision support:** communicates evidence and uncertainty; it must not imply certainty where only an estimate exists.
-- **Merchant insights:** aggregate reporting subject to data minimisation, privacy controls, and measured definitions.
+- **Merchant insights:** aggregate reporting subject to data minimisation, privacy controls, and validated metrics.
 
 ### Beauty, visualization, and personal experiences
 
-- **DermalSight:** non-diagnostic cosmetic skin-attribute analysis. It requires a validated model, signed validation report, explicit consent, and appropriate privacy controls.
-- **Virtual Twin and Virtual Try-On:** guarded orchestration and API foundations exist; actual generation/rendering remains dependent on validated model adapters, consent, asset authorization, and runtime deployment.
-- **Living Filters:** face-tracked makeup, hairstyle, and accessory visualization requires verified runtime/model assets, licensing, offline/CSP review, and device QA.
+- **DermalSight:** non-diagnostic cosmetic skin-attribute inference. It requires an approved model, signed validation evidence, explicit consent, and privacy controls.
+- **Virtual Twin and Virtual Try-On:** guarded API/orchestration foundations exist; actual generation/rendering depends on validated models, consent, asset authorization, and runtime deployment.
+- **Living Filters:** face-tracked makeup, hairstyle, and accessory visualization requires licensed runtime/model assets, segmentation/tracking validation, device QA, and offline/CSP/security review.
 - **Wardrobe:** intended digitisation and outfit-combination experiences.
 - **Experience Lab and moodboards:** intended spaces to explore, save, and compare looks.
 - **RadianceScore:** requires a defined construct, validation, calibration, and safe user-facing interpretation before it is treated as a reliable score.
@@ -94,320 +95,353 @@ Complementer is advisory. It must not become a second user-profile database, pro
 
 ### Marketplace and commerce
 
-The target includes canonical catalog ingestion, product search, product detail, merchant onboarding, offer/variant identity, saved products, cart and checkout, payment handoff, inventory invariants, and outcome measurement. Service code and browser/BFF foundations do not prove that a live marketplace, account system, payment integration, or durable cart is operational.
+The target includes canonical product ingestion, product search, merchant offers and variants, product detail, saved products, cart and checkout, payment handoff, inventory invariants, and outcome measurement. API and browser foundations do not prove a live marketplace, account system, payment integration, or durable cart is operational.
 
-## System architecture and ownership
+## Architecture and domain ownership
 
-The architecture uses bounded domains and canonical owners. Cross-service integrations should use authenticated, versioned contracts rather than duplicated business logic.
+Cirvanna uses bounded domains and canonical owners. Cross-service integrations must use authenticated, versioned contracts rather than duplicate business logic.
 
 | Domain | Canonical owner | Responsibility |
 |---|---|---|
 | Positive style preferences | USI | User-declared and approved positive preferences |
 | Hard negative preferences | NPL | Explicit exclusions and governed negative-preference state |
-| Temporal preference learning | CaTaCaCi / TAL | Consent-bound, versioned observations and temporal state |
+| Temporal learning | CaTaCaCi / TAL | Consented, versioned observations and temporal state |
 | Decision arbitration | CaTaCaCi / CAL | Final SHOW, BLOCK, or REVIEW decision for candidates |
 | Product identity and product facts | Catalog | Canonical products, attributes, provenance, and version history |
 | Personal aesthetic coordination | Recommendation service / Complementer | Advisory styling and look coordination |
 | Cosmetic skin attributes | DermalSight | Non-diagnostic skin-attribute inference |
-| Final candidate display | CaTaCaCi / CAL | The final display authorization boundary |
-| Commerce transactions | Commerce service | Order, payment, inventory, and transaction invariants |
+| Commerce transactions | Commerce service | Merchant offers, variants, inventory, orders, and payment invariants |
+| Marketplace web boundary | Marketplace BFF | Same-origin UI and tightly allowlisted server-side proxies |
 
-Do not create parallel user-style or product truth stores inside Complementer. Do not let recommendation scores bypass CAL. Do not treat catalog metadata, merchant assertions, or aggregate outcomes as display authorization.
+Do not create parallel user-style or product-truth stores inside Complementer. Do not let a recommender, similarity score, merchant assertion, or AI-generated explanation bypass CAL.
 
-### Request and decision flow
+### Application and service layers
 
-The target flow is:
+- The demo web application and Marketplace BFF own presentation and browser-facing boundaries.
+- API Gateway coordinates Catalog retrieval and deterministic eligibility/decision contracts.
+- Catalog owns canonical product identity and product-version history.
+- Recommendation service owns Complementer advisory composition.
+- NPL and Cultural Identity services own their respective persistent declarations and signed decision evidence.
+- The decision service and gateway use shared domain packages for policy and arbitration.
+- Model-backed services run behind bounded APIs with explicit readiness, provenance, timeouts, and failure behavior.
 
-1. Authenticate the caller and derive the subject identity from a trusted credential—not from an untrusted user-supplied identifier.
-2. Validate the request, assign a correlation ID, and enforce consent and eligibility requirements.
-3. Load canonical user preferences from their owning services.
-4. Retrieve canonical product and offer records from Catalog.
-5. Evaluate explicit NPL exclusions and relevant context constraints.
-6. Evaluate fit and other evidence only when the relevant provider is configured and validated.
-7. Ask CAL to arbitrate the candidate and return SHOW, BLOCK, or REVIEW with reason codes.
-8. Display only candidates authorized by CAL.
-9. Record the minimum auditable decision metadata required for permitted operations and learning.
-10. Process feedback through consented, reversible, idempotent workflows.
+The repository also contains preserved source-intake and candidate implementations. Their presence does not make them canonical runtime dependencies. See the source-lineage and architecture documentation before promoting staged code.
 
-The exact integration path is not yet complete end to end. A README description does not enforce this flow; executable contracts, service authentication, integration tests, and production evidence must do so.
+## Decision and display flow
+
+The intended product path is:
+
+1. A trusted application collects explicit user preferences and context.
+2. Catalog returns canonical product records and versioned metadata.
+3. USI evaluates positive style alignment; NPL evaluates explicit hard exclusions; EEPL checks configured context/eligibility policy; explicit cultural requirements are evaluated by their canonical service.
+4. Fit and independent safety evidence are supplied by trusted providers. Missing or untrusted evidence remains UNKNOWN.
+5. CaTaCaCi/CAL arbitrates the required evidence and returns SHOW, BLOCK, or REVIEW.
+6. A product can be shown only when the decision is SHOW. REVIEW and BLOCK are not displayable.
+7. Audit records preserve minimal decision metadata without unnecessary user measurements or image content.
+
+The current API Gateway runs this decision path against canonical Catalog products. It can optionally retrieve persistent NPL and cultural-declaration evidence and verify candidate-bound HMAC signatures. However, its current user_id is caller-supplied and is not bound to a verified identity-provider session. The gateway advertises that limitation and is not certified for public user traffic.
+
+Safety policy and calibrated FCI providers are not configured in this build. Consequently, otherwise eligible products normally remain REVIEW. Fixture-only tests can exercise SHOW, but test fixtures are not live provider evidence.
 
 ## Complementer: Personal Aesthetic Intelligence
 
-Complementer v2 is implemented as advisory code on PR #72. It is designed as a coordinator, not an autonomous identity authority.
+Complementer is a deterministic advisory composer exposed by the recommendation service.
 
-### Current advisory capabilities
+### Implemented advisory domains
 
-- **Fragrance:** declared scent families/profiles, occasion, desired longevity, intensity, and budget with an explicit currency. Desired longevity is a preference target, not a guarantee of product performance.
-- **Colour:** coordinates supplied clothing, makeup, jewellery, and accessory colours. Reasons should distinguish user preferences from curated harmony rules.
-- **Jewellery and accessories:** earrings, necklaces, glasses, and user-selected accessory categories. Face shape is optional and self-reported; the service does not infer it from images.
-- **Aesthetic direction:** minimalist, elegant, classic, romantic, bold, bohemian, streetwear, editorial, natural, and user-selected cultural context.
-- **Look completion:** at most two optional changes, with an explicit statement of what should be preserved. Existing identity and silhouette are not defects to correct.
-- **Explanations:** every recommendation should be tied to a declared preference or supplied look attribute. Missing inputs should produce \`needs_input\`, not invented personal facts.
+- Fragrance direction: scent families/profiles, occasion, target longevity, intensity, fragrance-free preference, and currency-scoped budget.
+- Colour coordination: clothing, makeup, jewellery, and accessory colours, respecting explicit favourites and exclusions.
+- Jewellery/accessories: earrings, necklaces, glasses, metals, and selected categories.
+- Aesthetic direction: multiple style families, including user-selected cultural styling context.
+- Look completion: at most two optional changes while preserving the chosen silhouette and statement pieces.
+- Explanations: recommendations reference user-entered preferences or current-look attributes; missing data produces needs_input.
+- Feedback event contract: approval/rejection requires explicit personalisation consent and yields a versioned TAL handoff.
 
-### Feedback and learning boundary
+### Gateway integration
 
-The feedback contract accepts approval/rejection with explicit personalisation consent. A rejection is a soft observation; it must not silently create a permanent NPL hard veto. An optional save-preference action requires a value explicitly chosen by the user.
+The API Gateway exposes POST /v1/complementer/recommend as an optional server-to-server proxy to the Complementer service. It uses COMPLEMENTER_SERVICE_URL and COMPLEMENTER_SERVICE_TOKEN, validates the upstream schema and request scope, and wraps results as advisory_only.
 
-The current Complementer feedback implementation creates a versioned TAL handoff event and reports that persistence is not configured. The canonical TAL module currently provides an in-memory deterministic event ledger for contract testing; it is not durable storage. NPL has a separate authenticated, database-backed service, but NPL is not a substitute for TAL and must not receive every rejection as a hard exclusion.
+The route always sets display_authorized=false and durable_personal_memory=false. It does not return Catalog/Commerce candidates or purchase details. Product discovery and display authorization remain separate through the Catalog and CAL decision path.
 
-Before this capability can be described as persistent personal memory, the platform needs trusted subject binding, canonical TAL persistence/replay, consent receipts, retention, export, correction, deletion, idempotency, audit, and tested cross-service integration. Those controls are not complete.
+The user_id in this request is an opaque caller-supplied request-scope identifier, not a verified end-user identity. It is not used to hydrate a stored profile. Keep the route internal until the gateway is bound to a trusted identity provider.
 
-See [Complementer, Marketplace Product Intelligence and Skin-State Forecasting](docs/architecture/complementer-product-intelligence-skin-forecast.md).
+### Feedback and TAL boundary
 
-## Marketplace product intelligence
+The feedback endpoint accepts approval or rejection only when explicit personalisation consent is true. Rejections are soft observations; they do not create NPL hard vetoes. An explicit preference save requires a user-selected value.
 
-Catalog's optional \`attributes.product_intelligence\` contract adds typed, evidence-backed product metadata to the canonical product record. The existing product attributes and version snapshots own this data; PR #72 does not introduce a parallel product database or a new migration for this namespace.
+The current Complementer API builds a versioned handoff event for CaTaCaCi/TAL. TAL's shared-package implementation is an in-memory deterministic contract ledger, not durable storage. There is no cross-session memory, event replay service, retention job, export/deletion flow, or production consent receipt integration. Do not market this as persistent personal memory.
 
-Supported metadata categories include:
+## Catalog product intelligence
 
-- **Climate compatibility:** supported climate-condition tags such as hot-humid, hot-dry, temperate, and cool, with provenance.
-- **Context usage:** intended contexts such as daily, work, evening, formal, travel, or sport.
-- **Cultural usage:** editorially reviewed product/context tags. These describe a product or styling context; they do not classify the buyer.
-- **Skin response:** ingredient-label and non-clinical cosmetic-intent/caution metadata with source evidence. This is not diagnosis or a guarantee of compatibility.
+Catalog accepts an optional typed attributes.product_intelligence namespace and validates it before product create/update. The existing canonical product JSON attributes and product-version snapshots own the metadata; no second product database is created.
+
+Supported categories include:
+
+- **Climate compatibility:** hot-humid, hot-dry, temperate, and cool conditions with evidence provenance.
+- **Context usage:** intended contexts such as daily, work, evening, formal, date, travel, sport, and special occasion.
+- **Cultural usage:** explicitly reviewed product/context tags. These describe the product context, not the buyer's identity.
+- **Skin response:** ingredient-label and non-clinical cosmetic-intent/caution metadata with source evidence. This is not a diagnosis or compatibility guarantee.
 - **Appearance complement:** shade families, declared undertone matches, finishes, pairing colours, and feature-complement tags.
-- **Observed outcomes:** consented aggregate metrics with a minimum cohort of 30, an observation window, source reference, and stated limitations.
+- **Observed outcomes:** consented aggregate metrics with a minimum sample size of 30, observation window, evidence reference, and limitations.
 
-The cohort threshold is a disclosure safeguard. It is not differential privacy, proof of representativeness, causal evidence, or a guarantee of future results. Merchant claims require provenance and review. Product candidates must still pass the canonical decision pipeline and CAL before display.
+The 30-observation floor is a disclosure safeguard. It is not differential privacy, proof of representativeness, causal evidence, or a guarantee of future results. Product metadata is not a personalized ranking model. The current API Gateway does not claim that Complementer performs live product ranking from this metadata, and every candidate still needs CAL authorization.
 
-Live personalised Catalog/Commerce ranking, exact candidate-bound CAL authorization, and a complete user journey are not established by metadata validation alone.
+## Modules and services
 
-## CaTaCaCi decision governance
+The actual repository is a multi-service monorepo. Important areas are:
 
-CaTaCaCi is the decision-governance core. CAL is not merely a weighted recommender.
+| Path | Role |
+|---|---|
+| apps/demo-web | Demo and marketplace browser application |
+| services/api-gateway | Catalog retrieval, USI/NPL/EEPL/FCI contracts, CAL arbitration, optional Complementer proxy |
+| services/recommendation-service | Complementer advisory API and domain modules |
+| services/catalog-service | Canonical product CRUD, metadata validation, product versions |
+| services/npl-service | Persistent NPL preference ledger and signed evidence API |
+| services/cultural-identity-service | Persistent explicit cultural declaration lifecycle and signed evidence |
+| services/decision-service | Authenticated eligibility/decision API adapter over canonical domain packages |
+| services/dermalsight | Consent- and model-gated non-diagnostic skin analysis |
+| services/commerce-service | Merchant offers, inventory, carts, orders, payments, and webhook boundaries |
+| services/marketplace-bff | Same-origin marketplace UI and server-side proxy boundary |
+| services/vision-intelligence | Vision model runtime and worker-facing APIs |
+| services/virtual-twin | Guarded Twin and Click It APIs |
+| services/virtual-try-on | Consent-gated try-on orchestration; renderer is not enabled |
+| services/wardrobe-service | Wardrobe API foundation |
+| services/xari | Conversational discovery and orchestration foundation |
+| services/graph-service, perception-service, sync-service | Supporting service foundations; inspect their READMEs before use |
+| packages/identity-intelligence | CaTaCaCi, USI, EEPL, and cultural identity domain contracts |
+| packages/preferences/npl | Canonical NPL policy and evidence contract |
+| packages/fit-intelligence | Fit-confidence evidence contracts; no calibrated predictor is registered |
+| packages/shared-contracts | Shared contract package |
+| packages/wardrobe | Wardrobe domain package |
+| integration-staging | Preserved source bundles and candidate implementations; not automatically runtime code |
+| tests/architecture | Domain and architecture regression tests |
+| docs/architecture | Architecture decisions, boundaries, readiness, and release gates |
+| .github/workflows | Service, architecture, container, and contract CI workflows |
 
-- **CAL — Cognitive Arbitration Layer:** resolves conflicts and determines SHOW, BLOCK, or REVIEW according to explicit policy and evidence.
-- **TAL — Temporal Learning:** manages consented preference observations over time.
-- **CAM — Counterfactual Auditing:** intended to preserve decision evidence and support analysis of alternatives.
-- **CIL — Collective Intelligence:** intended to govern aggregate signals without overriding individual constraints.
-- **VSL — Value System Layer:** intended to govern controlled, versioned changes to decision values.
+## Data ownership and privacy
 
-The repository contains a deterministic CAL arbitration kernel and initial TAL/CAM/CIL/VSL domain contracts. The TAL implementation currently available in the shared package is an in-memory contract ledger; it does not provide durable personal memory. Full evidence receipts, replay, and production governance workflows remain incomplete.
+| Data | Owner | Current persistence status |
+|---|---|---|
+| Catalog product records and product metadata | Catalog | SQLAlchemy store and product-version snapshots; production DB operation must be verified per environment |
+| Negative preferences and corrections | NPL service | PostgreSQL-targeted SQLAlchemy ledger and schema; deploy/restore and trusted identity binding remain gates |
+| Cultural declarations and corrections | Cultural Identity service | PostgreSQL-targeted declaration store and schema; deploy/restore and trusted identity binding remain gates |
+| Positive style profile | USI | Domain contract; no complete persistent profile service is certified |
+| Feedback and temporal learning | TAL | In-memory contract ledger; no durable personal-memory service |
+| Decision audit | API Gateway | Minimal local SQLite audit file; not a managed production audit backend |
+| Skin-analysis images | DermalSight | Read and decoded in memory; not persisted by the service |
+| Commerce records | Commerce service | Database-backed code and migration foundations; production DB, identity, payment and restore tests remain gates |
 
-### Arbitration invariants
+Retention, correction, export, and deletion must be implemented at the canonical data owner. Never persist user profiles or feedback inside Complementer as a shortcut.
 
-1. Legal, safety, consent, and eligibility constraints take precedence over recommendation scores.
-2. An explicit hard negative cannot be overridden by trends, popularity, or collaborative signals.
-3. Cultural requirements are user-directed and must not be inferred.
-4. Fit confidence must reflect real evidence and expose uncertainty.
-5. Missing or conflicting evidence produces REVIEW or a safe fallback, not a fabricated positive.
-6. Learning must not silently weaken explicit constraints.
-7. Arbitration policy and model changes must be versioned and regression-tested.
+## Local development
 
-## Skin-state forecasting
+Use Python 3.12 for the current service workflows. This repository does not have a single root requirements file or a one-command local deployment for every microservice. Install dependencies from the service or package being tested.
 
-**Longitudinal skin-state forecasting is unavailable.** DermalSight's current \`/capabilities\` contract explicitly reports \`longitudinal_forecasting: false\` and an unavailable status until a validated longitudinal model and dataset exist.
+### Complementer service
 
-A future scenario experience may compare a baseline with user-selected conditions over a stated horizon, including exact product/variant, ingredient-label facts, application frequency, humidity, self-reported sleep disruption, and optional user-reported cycle context. These inputs are not currently a validated forecasting model.
+From services/recommendation-service:
 
-Before forecast outputs can be enabled, DermalSight requires:
+    python -m pip install -r requirements.txt
+    python -m pip check
+    python -m compileall -q app tests
+    python -m pytest -q
 
-1. A licensed longitudinal dataset with repeated measurements, exposure details, baseline variation, and consent for the intended use.
-2. A distinct time-series model with versioned weights, preprocessing, and reproducible validation.
-3. Calibration and error analysis across relevant skin-tone groups, devices, lighting, climate/humidity, sleep patterns, and coverage limitations.
-4. Calibrated ranges with uncertainty, horizon, evidence coverage, and model/data versions—not deterministic promises or causal claims.
-5. Temporal holdouts, a no-change baseline, drift monitoring, and independent review of user-facing claims.
-6. Explicit revocable consent, minimised sensitive inputs, retention/deletion controls, access logging, and privacy/threat assessment.
+Run the API locally with a random test token of at least 32 bytes:
 
-Cycle or hormonal context is sensitive. It must be optional, separately consented, user-reported, minimised, excluded from advertising, and never inferred from a face, name, calendar, or behaviour. Cirvanna must not diagnose hormonal imbalance. A language-model narrative or heuristic score is not a substitute for a validated forecast.
+    COMPLEMENTER_SERVICE_TOKEN='local-random-token-of-at-least-32-bytes' uvicorn app.main:app --host 127.0.0.1 --port 8090
 
-## Repository structure
+### Catalog service
 
-The repository contains both canonical application code and preserved source-intake material. The latter is evidence for migration and comparison; it must not be treated as a production runtime merely because it exists.
+From services/catalog-service:
 
-Important areas include:
+    python -m pip install -r requirements.txt
+    uvicorn app.main:app --host 127.0.0.1 --port 8081
+    python -m pytest -q
 
-- \`apps/\` — demo and user-facing application code.
-- \`services/api-gateway/\` — authenticated API gateway and decision-pipeline integration.
-- \`services/catalog-service/\` — canonical product catalog API and product metadata validation.
-- \`services/commerce-service/\` — commerce domain service.
-- \`services/decision-service/\` — decision API and governance integration.
-- \`services/npl-service/\` — authenticated persistent NPL service.
-- \`services/recommendation-service/\` — Complementer advisory service.
-- \`services/dermalsight/\` — non-diagnostic cosmetic skin-analysis API and model adapter.
-- \`services/virtual-twin/\`, \`services/virtual-try-on/\`, \`services/wardrobe-service/\`, \`services/xari/\` — experience and orchestration services.
-- \`packages/identity-intelligence/\` — USI, CaTaCaCi, decision and cultural-identity domain packages.
-- \`packages/preferences/npl/\` — canonical NPL domain logic and evidence contracts.
-- \`packages/fit-intelligence/\` — fit-confidence and CFRP candidate work.
-- \`packages/shared-contracts/\` — shared API/domain contracts.
-- \`integration-staging/source-intake/\` and \`integration-staging/source-candidates/\` — preserved source material and candidate implementations; not automatically runtime code.
-- \`docs/architecture/\` — architecture decisions, service boundaries, and release gates.
-- \`.github/workflows/\` — service and architecture CI workflows.
+For shared environments, set CATALOG_DATABASE_URL to managed PostgreSQL and apply the provided Alembic migration using the documented deployment process. SQLite is for local development and tests.
 
-Always inspect the current branch tree and service README before assuming a path, command, or deployment exists.
+### API Gateway
 
-## Local development and validation
+From services/api-gateway:
 
-The repository is a multi-service project. Run checks from the relevant service or package directory; do not assume a single root command validates everything.
+    python -m pip install -r requirements.txt
+    uvicorn app.main:app --host 127.0.0.1 --port 8080
+    python -m pytest tests -q
 
-### Complementer
+For the Complementer proxy, configure COMPLEMENTER_SERVICE_URL=http://127.0.0.1:8090 and the same COMPLEMENTER_SERVICE_TOKEN in the gateway and Complementer processes. Local HTTP is permitted only for loopback hosts; remote internal service URLs must use HTTPS.
 
-From \`services/recommendation-service/\`:
+### Other service checks
 
-\`\`\`bash
-python -m pip install -r requirements.txt
-python -m pip check
-python -m compileall -q app tests
-python -m pytest -q
-\`\`\`
+- NPL: from services/npl-service install requirements.txt and run python -m pytest -q. Set NPL_DATABASE_URL to PostgreSQL outside test mode.
+- Cultural Identity: from services/cultural-identity-service install requirements.txt and run python -m pytest -q. Set CULTURAL_IDENTITY_DATABASE_URL to PostgreSQL outside test mode.
+- Decision service: from services/decision-service install requirements.txt and run python -m pytest -q. Its signed evidence keys must be independently provisioned.
+- DermalSight: from services/dermalsight install requirements-dev.txt and run pytest -q. Actual inference is unavailable until a verified ONNX model and signed validation report are provided.
+- Commerce, marketplace BFF, Vision Intelligence, Twin, Try-On, Wardrobe, and Xari: follow the service-specific README and workflow. Do not assume a model/adapter is available because the API code exists.
 
-### Catalog
+## Configuration
 
-From \`services/catalog-service/\`:
+The root .env.example is a development template for common platform and Commerce settings. It is not a complete secret manifest for every service. Use service-specific configuration documentation and supply secrets through environment variables or a secret manager. Never commit a populated .env file.
 
-\`\`\`bash
-python -m pip install -r requirements.txt
-python -m pytest -q
-\`\`\`
+### Complementer and gateway
 
-Use the service's documented migration procedure for database-backed tests and environments. Do not run production migrations from a developer workstation without an approved deployment plan.
+| Variable | Purpose |
+|---|---|
+| CIRVANNA_API_TOKEN | Inbound internal API Gateway bearer token |
+| CIRVANNA_AUDIT_DB | Local/staging SQLite decision-audit path |
+| COMPLEMENTER_SERVICE_URL | Trusted internal Complementer API base URL |
+| COMPLEMENTER_SERVICE_TOKEN | Complementer internal bearer token, at least 32 bytes |
+| CIRVANNA_POLICY_VERSION | Decision policy version |
+| CIRVANNA_REQUIRED_CONTEXT_FIELDS | EEPL fields required before context can pass |
+| CIRVANNA_REQUIRED_PRODUCT_ATTRIBUTES | Catalog attributes required for metadata completeness |
 
-### NPL
+### Catalog and NPL
 
-From \`services/npl-service/\`:
+| Variable | Purpose |
+|---|---|
+| CATALOG_DATABASE_URL | Catalog database URL; PostgreSQL for shared/production use |
+| CATALOG_READ_TOKEN / CATALOG_WRITE_TOKEN | Separate production read/write credentials |
+| CATALOG_API_TOKEN | Gateway/Commerce Catalog read credential |
+| NPL_DATABASE_URL | NPL database URL; PostgreSQL for shared/production use |
+| NPL_SERVICE_TOKEN | Internal NPL API bearer token, at least 32 bytes |
+| NPL_SERVICE_URL | Trusted internal NPL service URL |
+| NPL_EVIDENCE_HMAC_SECRET | HMAC key shared only by the trusted NPL provider and consumer |
 
-\`\`\`bash
-python -m pip install -r requirements.txt
-python -m pytest -q
-\`\`\`
+### Cultural Identity
 
-Production readiness requires a PostgreSQL database, applied schema, a high-entropy \`NPL_SERVICE_TOKEN\`, and a high-entropy \`NPL_EVIDENCE_HMAC_SECRET\`. The service's \`/ready\` endpoint checks token, signing, database, and schema readiness. Do not use SQLite outside the explicit test mode.
+| Variable | Purpose |
+|---|---|
+| CULTURAL_IDENTITY_DATABASE_URL | Cultural declaration database URL |
+| CULTURAL_IDENTITY_SERVICE_URL | Trusted internal declaration service URL |
+| CULTURAL_IDENTITY_SERVICE_TOKEN | Internal bearer token, at least 32 bytes |
+| CULTURAL_IDENTITY_HMAC_SECRET | Candidate-bound evidence HMAC key |
 
 ### DermalSight
 
-From \`services/dermalsight/\`:
+| Variable | Purpose |
+|---|---|
+| DERMALSIGHT_API_TOKEN | Internal bearer token |
+| DERMALSIGHT_MODEL_PATH | Approved ONNX model artifact path |
+| DERMALSIGHT_MODEL_MANIFEST_PATH | Model preprocessing/output manifest |
+| DERMALSIGHT_VALIDATION_REPORT_PATH | Signed release-evidence report |
+| DERMALSIGHT_VALIDATION_SIGNING_KEY | Private report HMAC key, at least 32 bytes |
 
-\`\`\`bash
-python -m pip install -r requirements-dev.txt
-pytest -q
-\`\`\`
+DermalSight remains not-ready when model assets, manifest, report, signing key, or API token are absent or invalid.
 
-The API requires bearer authentication and explicit consent. Actual inference requires an approved ONNX artifact, manifest, signed validation report, and signing key. Unit tests and synthetic ONNX fixtures validate wiring, not model accuracy. No model weights or secrets should be committed.
+### Commerce and marketplace
 
-### Architecture checks
+Commerce requires its own database, identity, and payment configuration. See services/commerce-service/README.md and the root .env.example for COMMERCE_DATABASE_URL, COMMERCE_AUTH_MODE, COMMERCE_JWT_JWKS_URL, COMMERCE_JWT_ISSUER, COMMERCE_JWT_AUDIENCE, Stripe secrets, and checkout settings. Production authentication must use provider-issued RS256/JWKS tokens; local HS256 is development/test-only. Marketplace BFF requires trusted Catalog and Commerce URLs and does not issue user identity.
 
-The repository has architecture tests under \`tests/architecture/\`. Inspect the current workflow definitions and run the exact commands used by CI for the branch being changed. Do not assume an old README command remains valid if the workflow or tree has changed.
+## Testing and CI
 
-### CI evidence and reporting
+Run the relevant service tests plus architecture and security checks:
 
-For every validation report, identify:
+    python scripts/validate_architecture.py
+    python -m unittest discover -s tests/architecture -v
+    python scripts/scan_source_secrets.py
 
-- Repository and branch.
-- Commit SHA.
-- Workflow and job names.
-- Exact test/build result.
-- Warnings, skipped tests, and known limitations.
+Service workflows are path-scoped. The Decision Gateway workflow runs API/contract tests, container build, architecture checks, and source secret scanning. It also triggers when the Complementer service changes because the gateway proxy depends on its response contract. The Complementer workflow runs dependency checks, compileall, and its API/domain tests. Catalog, NPL, Cultural Identity, DermalSight, marketplace, Commerce, Vision Intelligence, Twin, Try-On, Wardrobe and Xari have separate workflows.
 
-A passing test suite validates only the exercised code and environment. It does not prove production deployment health, live database readiness, real model quality, full cross-service operation, or business outcomes.
+For every CI report, record the branch, commit SHA, workflow/job, exact test result, warnings, skips, and limitations. A passing unit suite or container build does not prove production readiness, model quality, live database health, cross-service identity, backup recovery, or commercial outcomes.
 
-## Privacy, security, and responsible AI
+## Deployment
 
-Cirvanna may process personal preferences, face/body images, cosmetic skin attributes, and shopping history. These require strict purpose limitation and controls.
+Deploy bounded services independently. Build container images from the repository root when the Dockerfile requires shared packages. Examples:
 
-- Collect only data needed for a stated feature.
-- Obtain explicit consent for image analysis and personalisation where required.
-- Use trusted authentication and derive subject identity from verified credentials; do not trust arbitrary client-supplied user IDs for cross-account access.
-- Enforce least privilege, tenant isolation, and service-to-service authentication.
-- Define retention, export, correction, and deletion before claiming persistent personal memory.
-- Encrypt data in transit and at rest where supported by the selected infrastructure.
-- Keep credentials, tokens, model weights, validation reports, and customer data out of Git.
-- Restrict access to uploaded images and generated assets; DermalSight currently processes uploaded images in memory and does not persist them.
-- Avoid unnecessary personal data in logs, analytics, traces, and model prompts.
-- Never infer sensitive identity or cultural affiliation from appearance.
-- Treat skin outputs as non-diagnostic cosmetic attributes, not medical diagnosis or treatment advice.
-- Keep model outputs subordinate to consent, policy, and explicit user constraints.
-- Provide safe failure behavior when models, databases, or downstream services are unavailable.
+    docker build -f services/api-gateway/Dockerfile -t cirvanna-decision-gateway .
+    docker build -f services/recommendation-service/Dockerfile -t cirvanna-complementer .
+    docker build -f services/catalog-service/Dockerfile -t cirvanna-catalog .
 
-If a secret may have been committed, remove it from active source and rotate it. Deleting a string from the latest commit does not invalidate an exposed credential.
+Before a shared or production deployment:
+
+1. Provision distinct managed databases and provision secrets in a secret manager.
+2. Apply reviewed migrations; do not rely on automatic schema creation in production.
+3. Configure private service networking, HTTPS, least-privilege service tokens, and independently rotated signing keys.
+4. Verify /health, /ready, and /capabilities for each service. Liveness is not readiness.
+5. Run authenticated staging smoke tests across gateway, Complementer, Catalog, NPL, Cultural Identity, and CAL.
+6. Verify audit persistence, PostgreSQL backup/restore, deletion/retention, and concurrency behavior.
+7. Run load, timeout, dependency-failure, alerting, rollback, and security exercises.
+8. Promote features only after evidence from the actual deployed environment is recorded.
+
+There is no verified production deployment or full release certification represented by this repository status.
+
+## Security and responsible AI
+
+- Service bearer tokens are machine credentials, not end-user identity.
+- Bind subjects to verified identity-provider principals before reading or mutating user-owned data. Never trust arbitrary user IDs from public clients.
+- Enforce tenant isolation and least privilege at every service boundary.
+- Use separate secrets for API authentication and evidence signing; rotate exposed credentials.
+- Keep Catalog write credentials out of the gateway and browser.
+- Keep images and sensitive preference values out of logs and traces.
+- Use explicit, revocable consent for image processing and personalisation.
+- Do not infer culture, religion, ethnicity, gender, modesty, skin tone, undertone, or face geometry from appearance, names, or location.
+- Treat DermalSight outputs as cosmetic attributes, not diagnosis or treatment advice.
+- Do not infer menstrual or hormonal context. Any future use must be optional, user-reported, separately consented, and privacy-reviewed.
+- A merchant assertion or aggregate outcome is not laboratory evidence or a causal claim.
+- Unknown, incomplete, invalid, or untrusted evidence must fail closed to REVIEW or an unavailable response.
+- Never present a model narrative, heuristic, or visual score as a validated forecast.
 
 ## Implementation status
 
-The table below describes the state supported by repository and CI evidence as of 2 November 2026. It intentionally distinguishes code, tests, integration, and production operation.
+Status below reflects repository contracts and code, not production deployment.
 
-| Area | Verified state | Remaining gate |
+| Area | Implemented evidence | Still required |
 |---|---|---|
-| Complementer v2 | Advisory API/domain code and tests exist on draft PR #72; 22 tests passed on the recorded head | Trusted identity/profile hydration, durable TAL persistence, UI integration, end-to-end recommendation journey |
-| Catalog product intelligence | Optional typed metadata validation and version-snapshot integration exist on PR #72; Catalog checks passed | Live product enrichment quality, provenance review, personalised ranking, candidate-bound CAL authorization |
-| TAL | Deterministic in-memory event contract exists | Durable store, authenticated subject binding, consent receipts, replay, retention, export, correction, deletion, audit |
-| NPL | Separate authenticated database-backed service and schema exist | Production PostgreSQL configuration, secret management, deployed readiness, gateway integration and verified subject binding |
-| USI | Canonical domain package and architecture tests exist | Complete trusted profile service/persistence and end-to-end hydration into dependent services |
-| CAL / CaTaCaCi | Deterministic arbitration kernel and initial supporting contracts exist | Complete trusted evidence receipts, production policy governance, replay, and full end-to-end display enforcement |
-| DermalSight | Guarded API, consent/image validation, ONNX adapter and signed-report gate exist | Approved model artifact, representative validation, real model evaluation and deployed readiness |
-| Longitudinal skin forecast | Explicitly unavailable in capability contract | Licensed longitudinal data, separate validated model, calibration, subgroup evaluation, privacy review |
-| Virtual Twin / Try-On | Guarded API/orchestration foundations exist | Validated renderer/model, consent, asset authorization, runtime deployment, image-quality and privacy QA |
-| Marketplace / Commerce | Catalog, service, and browser/BFF code foundations exist; related CI checks passed on reviewed heads | Live identity, durable cart/account, managed databases, payment/webhook and inventory verification, CAL-gated E2E |
-| Living Filters | Product direction defined | Licensed model/runtime assets, segmentation and tracking validation, device QA, offline/CSP/security checks |
-| Production operations | CI workflows provide code-level evidence | Verified deployed environments, health/readiness checks, monitoring, backups/restores, incident and rollback drills |
+| Complementer | Modular advisory API; fragrance, colour, accessories, aesthetic/look completion; consent-gated feedback event; gateway advisory proxy on PR #72 branch | Verified subject binding, canonical USI profile hydration, durable TAL integration, live marketplace product retrieval and end-to-end user flow |
+| USI | Explicit positive-preference alignment domain contract and CAL signal translation | Trusted profile service, durable versioned profile, correction lifecycle, downstream hydration |
+| NPL | Domain rules plus database-backed PostgreSQL-targeted service; candidate-bound signed evidence; optional API Gateway provider integration | Deployed PostgreSQL, backup/restore, trusted identity binding, production key rotation and E2E |
+| TAL | Versioned in-memory deterministic event ledger and Complementer handoff contract | Durable persistence, authenticated subject binding, replay/idempotency, consent receipt, retention, export, correction, deletion, audit |
+| Catalog | Canonical product API, version snapshots, optional typed product-intelligence metadata validation | Production DB and restore evidence, editorial/provenance operations, live personalised ranking |
+| CAL / decision gateway | Deterministic arbitration and Catalog/NPL/USI/cultural evidence integration; only SHOW sets may_display | Independent safety provider, calibrated FCI provider, verified user identity, managed audit, deployed end-to-end display enforcement |
+| Decision service | Authenticated API adapter and signed evidence verification | Trusted live evidence providers, managed audit/replay, identity binding |
+| Cultural Identity | Persistent explicit declaration service and signed candidate-bound evidence contract | Deployed DB, identity binding, key rotation, end-to-end operation |
+| DermalSight | Consent/image validation, ONNX adapter, signed model release gate | Approved model artifact, representative evaluation, validated inference, deployment readiness |
+| Longitudinal skin forecast | Explicitly disabled in capability contract | Licensed repeated-measures dataset, separate temporal model, calibrated ranges, subgroup validation, privacy review |
+| Commerce / marketplace | Backend APIs, merchant/offer/inventory/order/payment foundations, same-origin BFF | Real identity provider, managed database restore, payment/webhook validation, shipping/tax, operations and CAL-gated E2E |
+| Twin / Try-On / Living Filters | Guarded service and orchestration foundations | Consent/asset authorization, validated renderer/tracking models, licensed assets, device/quality QA |
+| Production operations | CI workflows, container builds, readiness and capability endpoints | Verified deployments, monitoring, managed backups/restores, incident/rollback drills and operational sign-off |
 
-### PR #72 verification snapshot
+### PR #72
 
-- PR: [Expand Complementer into Personal Aesthetic Intelligence and product intelligence](https://github.com/cirvannaco-png/Cirvanna-demo/pull/72)
-- State: **open, draft, unmerged**
-- Head at verification: \`7278e59df426ea344f54cdee6a93d557a2f07d93\`
-- Complementer: 22 passed, 0 failed; one non-blocking Starlette/httpx deprecation warning.
-- Catalog, architecture, DermalSight API/model-contract and Docker build, Vision Intelligence, marketplace contract/headless browser, and related service build/check workflows reported success on that head.
-- These are CI results for that commit. They are not a production deployment or a complete integrated user journey.
+The Complementer and Catalog product-intelligence work is tracked in [PR #72](https://github.com/cirvannaco-png/Cirvanna-demo/pull/72). It remains a reviewable draft until all integration and release criteria are met. Check the PR's latest workflow runs for commit-specific evidence; earlier passing runs do not automatically apply to a later commit. No merge or deployment is implied by this README.
 
-Do not change the status table to "production-ready" based only on unit tests or green CI.
+## Release roadmap
 
-## Roadmap and release gates
+1. **Identity and trusted profile hydration:** integrate the real identity provider, bind user subjects, and hydrate Complementer/USI without trusting public client-supplied IDs.
+2. **Canonical temporal learning:** implement durable TAL storage and consent receipts, idempotency, replay, retention, correction, export, deletion, and audit. Keep rejected suggestions soft unless the user explicitly creates a hard exclusion.
+3. **Marketplace decision path:** enrich and retrieve canonical products/offers, preserve exact identifiers and metadata provenance, and authorize all displayed candidates through CAL.
+4. **Fit and safety evidence:** integrate independently validated safety and calibrated FCI providers; publish uncertainty and coverage.
+5. **DermalSight longitudinal research:** acquire licensed repeated-measures data, build a distinct model, validate temporal holdouts and subgroup calibration, and keep sensitive context optional and separately consented.
+6. **Production hardening:** finish threat modelling, service authentication, managed databases, backup/restore, monitoring, load/failure tests, incident response, rollback, and deployed E2E verification.
 
-### 1. Complete trusted profile and feedback integration
+## Contribution rules
 
-- Define a gateway-authenticated subject context and remove reliance on client-asserted identity for cross-service operations.
-- Hydrate Complementer from canonical USI and NPL providers.
-- Connect feedback to canonical TAL persistence—not a new Complementer-owned database.
-- Implement consent receipts, idempotency, correction, retention, export, deletion, and audit.
-- Keep rejections as soft observations unless the user explicitly creates or confirms a hard exclusion.
-- Add adversarial integration tests for cross-user access, replay, duplicate events, revocation, and correction.
-
-### 2. Complete the marketplace decision path
-
-- Retrieve canonical product and offer/variant identifiers from Catalog.
-- Preserve metadata provenance and freshness.
-- Rank only as an advisory retrieval step.
-- Submit every candidate to CAL and display only candidates with an authorized decision.
-- Test unavailable providers, stale metadata, hard negatives, and partial catalog responses.
-
-### 3. Validate DermalSight forecasting as a separate capability
-
-- Acquire licensed longitudinal data and define the target outcomes.
-- Train and evaluate a distinct forecast model.
-- Report calibration, subgroup errors, uncertainty, and temporal holdout performance.
-- Keep optional sensitive context user-entered and separately consented.
-- Do not enable forecasting until independent review and release criteria pass.
-
-### 4. Production hardening
-
-- Complete threat modelling, dependency and secret review, service authentication, and tenant isolation.
-- Verify managed database migrations, backup and restore, and data-retention jobs.
-- Run staging end-to-end tests, load tests, failure recovery, and observability checks.
-- Validate model licensing, deployment integrity, drift monitoring, and rollback.
-- Release behind controlled feature flags only after recorded acceptance evidence.
-
-## Contribution and engineering rules
-
-1. Inspect the current repository, branch, service contracts, and tests before editing.
-2. Identify the canonical domain owner and data authority before adding a new model or store.
-3. Preserve existing behavior and API compatibility unless a reviewed breaking change is intended.
-4. Prefer one complete, testable vertical slice over disconnected feature stubs.
-5. Add tests for normal behavior, boundaries, conflicting constraints, identity isolation, and dependency failure.
-6. Do not fabricate model outputs, metrics, test results, deployment status, or business outcomes.
-7. Do not introduce secrets, unnecessary personal data, or unreviewed dependencies.
-8. Document migrations, rollback, configuration, limitations, and operational impact.
-9. Run the actual checks and report their commit, command, result, and limitations.
+1. Inspect the current branch, code, architecture owner, service contract, and tests before editing.
+2. Prefer one small, complete, testable integration over disconnected feature stubs.
+3. Do not add a duplicate user, product, preference, or audit database when a canonical owner exists.
+4. Preserve API compatibility unless a reviewed breaking change is intended.
+5. Add regression tests for normal, boundary, conflict, identity, consent, and dependency-failure cases.
+6. Do not fabricate model results, metrics, evidence, test results, or deployment status.
+7. Keep secrets and customer data out of Git.
+8. Document configuration, limitations, migration impact, and rollback.
+9. Run actual CI and report its commit SHA and limitations.
 10. Update this README when verified implementation status changes.
 
 ## Architecture references
 
 - [Complementer, Marketplace Product Intelligence and Skin-State Forecasting](docs/architecture/complementer-product-intelligence-skin-forecast.md)
 - [Decision flow](docs/architecture/decision-flow.md)
-- [Architecture decision record: CaTaCaCi decision contract](docs/architecture/adr/ADR-0001-catacaci-decision-contract.md)
-- [Integration staging and source intake](integration-staging/README.md)
-- [Catalog service](services/catalog-service/README.md)
-- [NPL service](services/npl-service/README.md)
-- [Recommendation service](services/recommendation-service/README.md)
-- [DermalSight service](services/dermalsight/README.md)
+- [CaTaCaCi decision contract ADR](docs/architecture/adr/ADR-0001-catacaci-decision-contract.md)
+- [Feature spine readiness](docs/architecture/feature-spine-readiness-2026-10-23.md)
+- [Monorepo governance](docs/architecture/monorepo-governance.md)
+- [Catalog](services/catalog-service/README.md)
+- [Complementer](services/recommendation-service/README.md)
+- [NPL](services/npl-service/README.md)
+- [Cultural Identity](services/cultural-identity-service/README.md)
+- [DermalSight](services/dermalsight/README.md)
+- [API Gateway](services/api-gateway/README.md)
+- [Commerce](services/commerce-service/README.md)
+- [Marketplace BFF](services/marketplace-bff/README.md)
 
 ---
 
-**Final principle:** The README describes the system honestly; executable code and reproducible evidence establish what is actually built. Cirvanna should grow through clear ownership, validated contracts, integrated user journeys, and measured outcomes—not through feature labels that outrun the software.
+**Final principle:** the README describes the system honestly; executable code and reproducible evidence establish what is built. Cirvanna should grow through clear ownership, validated contracts, integrated user journeys, and measured outcomes—not feature labels that outrun the software.

@@ -121,6 +121,23 @@ class DecisionRequest(BaseModel):
         return normalized
 
 
+class ComplementerAdvisoryRequest(BaseModel):
+    """Request-scoped style advisory; this is not a persisted identity profile."""
+    model_config = ConfigDict(extra="forbid")
+    request_id: str = Field(min_length=1, max_length=128)
+    user_id: str = Field(min_length=1, max_length=128)
+    preferences: dict[str, Any] = Field(default_factory=dict, max_length=64)
+    look: dict[str, Any] = Field(default_factory=dict, max_length=32)
+
+    @field_validator("request_id", "user_id")
+    @classmethod
+    def trim_advisory_identifiers(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("identifier must not be blank")
+        return normalized
+
+
 class ReasonOutput(BaseModel):
     code: str
     explanation: str
@@ -421,6 +438,94 @@ def _trusted_internal_base_url(value: str) -> bool:
         return False
 
 
+def _complementer_advisory(
+    payload: ComplementerAdvisoryRequest,
+) -> dict[str, Any]:
+    """Call the stateless Complementer API without granting product-display authority."""
+    base = os.getenv("COMPLEMENTER_SERVICE_URL", "").strip().rstrip("/")
+    token = os.getenv("COMPLEMENTER_SERVICE_TOKEN", "").strip()
+    if not base or len(token.encode("utf-8")) < 32 or not _trusted_internal_base_url(base):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "COMPLEMENTER_PROVIDER_CONFIGURATION_INVALID"},
+        )
+
+    request_body = payload.model_dump(mode="json")
+    try:
+        with httpx.Client(
+            timeout=httpx.Timeout(8.0, connect=2.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            response = client.post(
+                f"{base}/v1/complementer/recommend",
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "Accept": "application/json",
+                },
+                json=request_body,
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail={"code": "COMPLEMENTER_PROVIDER_TIMEOUT"},
+        ) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "COMPLEMENTER_PROVIDER_UNAVAILABLE"},
+        ) from exc
+
+    if response.status_code == 422:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"code": "COMPLEMENTER_REQUEST_REJECTED"},
+        )
+    if response.status_code in {401, 403}:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"code": "COMPLEMENTER_PROVIDER_AUTH_FAILED"},
+        )
+    if response.status_code < 200 or response.status_code >= 300:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "COMPLEMENTER_PROVIDER_UNAVAILABLE"},
+        )
+
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"code": "COMPLEMENTER_INVALID_RESPONSE"},
+        ) from exc
+
+    if (
+        not isinstance(result, dict)
+        or result.get("schema_version") != "2.0"
+        or not isinstance(result.get("contract_version"), str)
+        or result.get("request_id") != payload.request_id
+        or result.get("user_id") != payload.user_id
+        or result.get("status") not in {"ready", "needs_input"}
+        or result.get("persistence") != "stateless_request_only"
+        or not isinstance(result.get("limits"), list)
+        or not all(isinstance(item, str) for item in result.get("limits", []))
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"code": "COMPLEMENTER_SCHEMA_OR_SCOPE_MISMATCH"},
+        )
+
+    return {
+        "schema_version": "1.0",
+        "request_id": payload.request_id,
+        "mode": "advisory_only",
+        "display_authorized": False,
+        "durable_personal_memory": False,
+        "recommendation": result,
+    }
+
+
 def _load_persisted_npl_preferences(
     *, request_id: str, user_id: str, product_id: str, attributes: tuple[str, ...],
 ) -> tuple[NegativePreference, ...]:
@@ -677,6 +782,15 @@ def capabilities() -> dict[str, Any]:
     return {
         "service": SERVICE_NAME,
         "decision_http_api": True,
+        "complementer_advisory_integration_configured": bool(
+            os.getenv("COMPLEMENTER_SERVICE_URL")
+            and len(os.getenv("COMPLEMENTER_SERVICE_TOKEN", "").encode("utf-8")) >= 32
+            and _trusted_internal_base_url(os.getenv("COMPLEMENTER_SERVICE_URL", ""))
+        ),
+        "complementer_product_retrieval": False,
+        "complementer_display_authority": False,
+        "durable_complementer_memory": False,
+
         "catalog_service_integration": True,
         "deterministic_cal_arbitration": True,
         "explicit_negative_preferences": True,
@@ -743,6 +857,16 @@ def readiness() -> dict[str, Any]:
         "safety_policy_available": False,
         "ready": ready,
     }
+
+
+@app.post(
+    "/v1/complementer/recommend",
+    dependencies=[Depends(require_api_token)],
+    tags=["personal aesthetic intelligence"],
+)
+def recommend_complementary_look(payload: ComplementerAdvisoryRequest) -> dict[str, Any]:
+    """Return styling guidance only; product candidates require the separate CAL decision path."""
+    return _complementer_advisory(payload)
 
 
 @app.post(
