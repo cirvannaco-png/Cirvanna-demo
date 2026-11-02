@@ -4,7 +4,7 @@
 
 Cirvanna is an identity-first beauty, fashion, fit, and commerce-intelligence platform. It is designed to help people evaluate whether products and complete looks fit their declared preferences, context, and available evidence before purchase. For merchants, the objective is to improve relevance and measure avoidable returns through controlled pilots—not to promise unverified conversion or return-reduction gains.
 
-> **Engineering status — 2 November 2026:** Cirvanna is an active multi-service codebase with deterministic domain contracts and runnable API foundations. Complementer Personal Aesthetic Intelligence and Catalog product-intelligence validation are implemented on draft PR #72. This change adds an authenticated, request-scoped gateway proxy for Complementer styling advice. The proxy is advisory only; Catalog product facts and final product display remain separate and CAL-governed. TAL durable memory, trusted end-user identity binding, calibrated fit prediction, an independent safety provider, live marketplace ranking through CAL, validated DermalSight inference, and longitudinal skin forecasting are not complete. **Cirvanna is not production-ready.**
+> **Engineering status — 2 November 2026:** Cirvanna is an active multi-service codebase with deterministic domain contracts and runnable API foundations. Complementer Personal Aesthetic Intelligence and Catalog product-intelligence validation are merged in PR #72. PR #74 adds a private identity-learning service, Commerce-verified subject binding (required by default), consent-gated persistent USI profiles, durable TAL event storage, live Catalog/Commerce discovery, signed safety/FCI evidence adapters, and CAL-only product-detail release. These are implemented code paths and regression-tested contracts; the existing PostgreSQL migration, provider credentials/attestations, production OIDC configuration, deployed identity service, backup/restore, and end-to-end deployment verification remain operational gates. No real safety provider or calibrated FCI provider is configured, so discovery intentionally withholds candidates as REVIEW. Validated DermalSight inference and longitudinal skin forecasting also remain incomplete. **Cirvanna is not production-ready.**
 
 ## Contents
 
@@ -139,7 +139,7 @@ The intended product path is:
 6. A product can be shown only when the decision is SHOW. REVIEW and BLOCK are not displayable.
 7. Audit records preserve minimal decision metadata without unnecessary user measurements or image content.
 
-The current API Gateway runs this decision path against canonical Catalog products. It can optionally retrieve persistent NPL and cultural-declaration evidence and verify candidate-bound HMAC signatures. However, its current user_id is caller-supplied and is not bound to a verified identity-provider session. The gateway advertises that limitation and is not certified for public user traffic.
+The API Gateway resolves end-user subjects through Commerce `GET /me` when `CIRVANNA_REQUIRE_VERIFIED_IDENTITY` is enabled (the default), and rejects a request-body subject that does not match. The setting can be disabled only as an explicit local/test-only opt-out for request-scoped contract tests. Verified profile reads/writes and TAL operations use the gateway's private machine credential to reach the identity-learning service; the service itself is not exposed as a public identity API.
 
 Safety policy and calibrated FCI providers are not configured in this build. Consequently, otherwise eligible products normally remain REVIEW. Fixture-only tests can exercise SHOW, but test fixtures are not live provider evidence.
 
@@ -169,7 +169,7 @@ The user_id in this request is an opaque caller-supplied request-scope identifie
 
 The feedback endpoint accepts approval or rejection only when explicit personalisation consent is true. Rejections are soft observations; they do not create NPL hard vetoes. An explicit preference save requires a user-selected value.
 
-The current Complementer API builds a versioned handoff event for CaTaCaCi/TAL. TAL's shared-package implementation is an in-memory deterministic contract ledger, not durable storage. There is no cross-session memory, event replay service, retention job, export/deletion flow, or production consent receipt integration. Do not market this as persistent personal memory.
+Complementer still produces a versioned feedback handoff contract; it does not write directly to a second profile store or automatically train a model. Durable persistence is owned by the identity-learning service and reached through authenticated gateway `/v1/me/*` routes. USI profiles require active `profile_storage` consent. TAL writes require active `personalization` or `style_learning` consent and support idempotent append, append-only same-feature corrections, export, deletion, and expiry purge. A denial or revocation withdraws all active grants for that subject and scope; an older receipt cannot remain active behind a newer withdrawal. These APIs provide durable storage foundations, not proof of a deployed cross-session learning loop or automated personalization improvement.
 
 ## Catalog product intelligence
 
@@ -232,7 +232,7 @@ The actual repository is a multi-service monorepo. Important areas are:
 | Skin-analysis images | DermalSight | Read and decoded in memory; not persisted by the service |
 | Commerce records | Commerce service | Database-backed code and migration foundations; production DB, identity, payment and restore tests remain gates |
 
-Retention, correction, export, and deletion must be implemented at the canonical data owner. Never persist user profiles or feedback inside Complementer as a shortcut.
+Retention, correction, export, and deletion are implemented at the canonical identity-learning data owner and must remain there. Never persist user profiles or feedback inside Complementer as a shortcut. Deployment, backup/restore, retention scheduling, and operational deletion verification remain release gates.
 
 ## Local development
 
@@ -408,11 +408,11 @@ Deploy bounded services independently. Use the build context expected by each Do
 
 Before a shared or production deployment:
 
-1. Provision distinct managed databases and provision secrets in a secret manager.
-2. Apply reviewed migrations; do not rely on automatic schema creation in production.
+1. Provision managed databases according to service ownership. The identity-learning service uses its own `identity_usi_*` and `identity_tal_*` table namespace in the already approved PostgreSQL instance; do not create a duplicate database for it. Provision secrets in a secret manager.
+2. Apply reviewed migrations, including `services/identity-learning-service/migrations/0001_identity_tal.sql`; do not rely on automatic schema creation in production.
 3. Configure private service networking, HTTPS, least-privilege service tokens, and independently rotated signing keys.
 4. Verify /health, /ready, and /capabilities for each service. Liveness is not readiness.
-5. Run authenticated staging smoke tests across gateway, Complementer, Catalog, NPL, Cultural Identity, and CAL.
+5. Run authenticated staging smoke tests across Commerce `/me`, gateway, identity-learning, Catalog, Commerce offers, NPL, Cultural Identity, evidence providers, and CAL. Confirm non-SHOW candidates never leak product or offer details.
 6. Verify audit persistence, PostgreSQL backup/restore, deletion/retention, and concurrency behavior.
 7. Run load, timeout, dependency-failure, alerting, rollback, and security exercises.
 8. Promote features only after evidence from the actual deployed environment is recorded.
@@ -441,12 +441,12 @@ Status below reflects repository contracts and code, not production deployment.
 
 | Area | Implemented evidence | Still required |
 |---|---|---|
-| Complementer | Modular advisory API; fragrance, colour, accessories, aesthetic/look completion; consent-gated feedback event; gateway advisory proxy on PR #72 branch | Verified subject binding, canonical USI profile hydration, durable TAL integration, live marketplace product retrieval and end-to-end user flow |
-| USI | Versioned persistent profile API, explicit positive-preference alignment, consent-gated reads/writes, Commerce /me subject binding and gateway hydration | Production database migration/restore, real Commerce OIDC configuration and deployed E2E |
+| Complementer | Modular stateless advisory API; fragrance, colour, accessories, aesthetic/look completion; consent-gated feedback handoff; gateway advisory proxy | Automatic feedback-to-TAL delivery and validated cross-session recommendation improvement; complete user-facing end-to-end journey |
+| USI | Versioned persistent profile API, explicit positive-preference alignment, profile_storage-consented reads/writes, Commerce /me subject binding and gateway hydration; verified identity required by default | Production PostgreSQL migration/restore, real Commerce OIDC/JWKS configuration and deployed E2E |
 | NPL | Domain rules plus database-backed PostgreSQL-targeted service; candidate-bound signed evidence; optional API Gateway provider integration | Deployed PostgreSQL, backup/restore, trusted identity binding, production key rotation and E2E |
-| TAL | Durable API/schema for consent receipts, idempotent append, correction events, expiry purge, export and deletion; gateway routes bind requests to verified Commerce subjects | Production Postgres provisioning, migration execution, backup/restore evidence, retention schedule, security review and deployed E2E |
+| TAL | Durable API/schema for scoped consent receipts, idempotent event append, append-only same-feature corrections, expiry purge, export and deletion; scope-wide withdrawal revokes all active grants; gateway routes bind requests to verified Commerce subjects | Production PostgreSQL provisioning, migration execution, backup/restore evidence, scheduled retention, security review and deployed E2E |
 | Catalog | Canonical product API, version snapshots, optional typed product-intelligence metadata validation | Production DB and restore evidence, editorial/provenance operations, live personalised ranking |
-| CAL / decision gateway | Deterministic arbitration; live Catalog/Commerce discovery and weighted explicit-preference ranking; signed provider adapters; only CAL SHOW candidates return product/offer details | Real independently validated safety and calibrated FCI providers/report attestations, managed audit, deployed end-to-end display enforcement |
+| CAL / decision gateway | Deterministic arbitration; verified-subject Catalog/Commerce discovery and weighted explicit-preference ranking; signed candidate-bound evidence adapters; only CAL SHOW candidates return product/offer details | Real independently validated safety and calibrated FCI providers/report attestations, managed audit, deployed end-to-end display enforcement |
 | Decision service | Authenticated API adapter and signed evidence verification | Trusted live evidence providers, managed audit/replay, identity binding |
 | Cultural Identity | Persistent explicit declaration service and signed candidate-bound evidence contract | Deployed DB, identity binding, key rotation, end-to-end operation |
 | DermalSight | Consent/image validation, ONNX adapter, signed model release gate | Approved model artifact, representative evaluation, validated inference, deployment readiness |
