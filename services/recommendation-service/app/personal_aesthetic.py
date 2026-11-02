@@ -233,9 +233,8 @@ def compose_personal_aesthetic(payload: dict[str, Any]) -> dict[str, Any]:
         "request_id": payload["request_id"],
         "user_id": payload["user_id"],
         "status": "needs_input" if (
-            baseline["status"] == "needs_input"
-            or colour_intelligence["makeup"]["status"] == "needs_input"
-            or accessories["status"] == "needs_input"
+            baseline["palette"]["status"] == "needs_input"
+            or baseline["fragrance"]["status"] == "needs_input"
             or aesthetic["status"] == "needs_input"
         ) else "ready",
         "fragrance": fragrance,
