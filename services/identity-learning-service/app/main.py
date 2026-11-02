@@ -273,14 +273,32 @@ def put_profile(subject_id: str, payload: ProfilePut, db: Annotated[Session, Dep
     if payload.expected_version is not None and payload.expected_version != current:
         raise HTTPException(409, detail={"code": "USI_PROFILE_VERSION_CONFLICT", "current_version": current})
     preferences = [item.model_dump() for item in payload.preferences]
+    now = utcnow()
     if row is None:
-        row = USIProfileRow(subject_id=subject, profile_version=1, preferences=preferences, updated_at=utcnow())
+        row = USIProfileRow(subject_id=subject, profile_version=1, preferences=preferences, updated_at=now)
         db.add(row)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            latest = db.scalar(select(USIProfileRow.profile_version).where(USIProfileRow.subject_id == subject)) or 0
+            raise HTTPException(409, detail={"code": "USI_PROFILE_VERSION_CONFLICT", "current_version": latest})
     else:
-        row.profile_version += 1
-        row.preferences = preferences
-        row.updated_at = utcnow()
-    db.commit()
+        statement = update(USIProfileRow).where(USIProfileRow.subject_id == subject)
+        if payload.expected_version is not None:
+            statement = statement.where(USIProfileRow.profile_version == payload.expected_version)
+        result = db.execute(statement.values(
+            profile_version=USIProfileRow.profile_version + 1,
+            preferences=preferences,
+            updated_at=now,
+        ))
+        if result.rowcount != 1:
+            db.rollback()
+            latest = db.scalar(select(USIProfileRow.profile_version).where(USIProfileRow.subject_id == subject)) or 0
+            raise HTTPException(409, detail={"code": "USI_PROFILE_VERSION_CONFLICT", "current_version": latest})
+        db.commit()
+        db.expire_all()
+        row = db.get(USIProfileRow, subject)
     return {"subject_id": subject, "profile_version": row.profile_version, "preferences": row.preferences, "updated_at": row.updated_at.isoformat()}
 
 
