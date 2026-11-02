@@ -157,10 +157,7 @@ def _validate_attributes(value: dict[str, Any]) -> dict[str, Any]:
         json.dumps(value, allow_nan=False)
     except (TypeError, ValueError) as exc:
         raise ValueError("Attributes must be finite JSON-compatible values.") from exc
-    try:
-        return validate_product_intelligence_attributes(value)
-    except ValueError:
-        raise
+    return validate_product_intelligence_attributes(value)
 
 
 class ProductCreate(BaseModel):
