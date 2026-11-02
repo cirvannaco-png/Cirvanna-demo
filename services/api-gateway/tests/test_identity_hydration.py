@@ -102,6 +102,58 @@ def test_usi_profile_provider_rejects_subject_scope_mismatch(monkeypatch):
     assert error.value.detail["code"] == "USI_PROFILE_SCOPE_OR_SCHEMA_MISMATCH"
 
 
+def test_commerce_subject_rejects_path_like_identifiers(monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.internal")
+
+    class FakeResponse:
+        status_code = 200
+        def json(self):
+            return {"user_id": "../../another-user"}
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def get(self, *args, **kwargs): return FakeResponse()
+
+    monkeypatch.setattr(main.httpx, "Client", FakeClient)
+    with pytest.raises(main.HTTPException) as error:
+        main._resolve_verified_subject("Bearer commerce-user-token")
+    assert error.value.status_code == 502
+    assert error.value.detail["code"] == "COMMERCE_IDENTITY_SUBJECT_INVALID"
+
+
+def test_usi_profile_rejects_non_boolean_active_values(monkeypatch):
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.internal")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-provider-token-with-at-least-32-bytes")
+
+    class FakeResponse:
+        status_code = 200
+        def json(self):
+            return {
+                "subject_id": "subject-verified-1",
+                "profile_version": 1,
+                "preferences": [{
+                    "preference_id": "p1",
+                    "attribute": "classic",
+                    "weight": 0.8,
+                    "active": "false",
+                }],
+            }
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def get(self, *args, **kwargs): return FakeResponse()
+
+    monkeypatch.setattr(main.httpx, "Client", FakeClient)
+    with pytest.raises(main.HTTPException) as error:
+        main._load_verified_usi_profile("subject-verified-1")
+    assert error.value.status_code == 502
+    assert error.value.detail["code"] == "USI_PROFILE_SCHEMA_INVALID"
+
+
 def test_usi_profile_provider_maps_persisted_preferences(monkeypatch):
     monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.internal")
     monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-provider-token-with-at-least-32-bytes")
