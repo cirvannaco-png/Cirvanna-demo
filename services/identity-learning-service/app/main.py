@@ -253,6 +253,9 @@ def readiness(db: Annotated[Session, Depends(get_db)]):
 @app.get("/v1/profiles/{subject_id}", dependencies=[Depends(require_internal_token)])
 def get_profile(subject_id: str, db: Annotated[Session, Depends(get_db)]):
     subject = subject_or_404(subject_id)
+    active = db.scalar(select(ConsentReceipt).where(ConsentReceipt.subject_id == subject, ConsentReceipt.scope == "profile_storage", ConsentReceipt.granted.is_(True), ConsentReceipt.revoked_at.is_(None)).limit(1))
+    if active is None:
+        raise HTTPException(403, detail={"code": "ACTIVE_PROFILE_STORAGE_CONSENT_REQUIRED"})
     row = db.get(USIProfileRow, subject)
     if row is None:
         return {"subject_id": subject, "profile_version": 0, "preferences": []}
@@ -262,6 +265,9 @@ def get_profile(subject_id: str, db: Annotated[Session, Depends(get_db)]):
 @app.put("/v1/profiles/{subject_id}", dependencies=[Depends(require_internal_token)])
 def put_profile(subject_id: str, payload: ProfilePut, db: Annotated[Session, Depends(get_db)]):
     subject = subject_or_404(subject_id)
+    active = db.scalar(select(ConsentReceipt).where(ConsentReceipt.subject_id == subject, ConsentReceipt.scope == "profile_storage", ConsentReceipt.granted.is_(True), ConsentReceipt.revoked_at.is_(None)).limit(1))
+    if active is None:
+        raise HTTPException(403, detail={"code": "ACTIVE_PROFILE_STORAGE_CONSENT_REQUIRED"})
     row = db.get(USIProfileRow, subject)
     current = row.profile_version if row else 0
     if payload.expected_version is not None and payload.expected_version != current:
@@ -295,6 +301,22 @@ def put_consent(subject_id: str = Query(min_length=1, max_length=128), payload: 
     db.add(row)
     db.commit()
     return {"receipt_id": row.receipt_id, "status": "recorded", "granted": row.granted}
+
+
+@app.post("/v1/tal/consents/{receipt_id}/revoke", dependencies=[Depends(require_internal_token)])
+def revoke_consent(
+    receipt_id: str,
+    subject_id: str = Query(min_length=1, max_length=128),
+    db: Session = Depends(get_db),
+):
+    subject = subject_or_404(subject_id)
+    receipt = db.get(ConsentReceipt, receipt_id)
+    if receipt is None or receipt.subject_id != subject:
+        raise HTTPException(404, detail={"code": "CONSENT_RECEIPT_NOT_FOUND"})
+    if receipt.revoked_at is None:
+        receipt.revoked_at = utcnow()
+        db.commit()
+    return {"receipt_id": receipt_id, "status": "revoked", "revoked_at": receipt.revoked_at.isoformat()}
 
 
 @app.post("/v1/tal/events", dependencies=[Depends(require_internal_token)])
