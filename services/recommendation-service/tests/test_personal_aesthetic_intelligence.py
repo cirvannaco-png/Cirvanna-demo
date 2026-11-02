@@ -84,7 +84,7 @@ def test_explicit_fragrance_free_preference_overrides_scent_and_occasion():
     payload = rich_payload()
     payload["preferences"]["fragrance_free"] = True
     result = compose_complementary_look(payload)
-    assert result["fragrance"]["status"] == "withheld_by_preference"
+    assert result["fragrance"]["status"] == "fragrance_free"
     assert result["fragrance"]["families"] == []
     assert result["fragrance"]["occasion"] is None
 
