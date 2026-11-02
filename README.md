@@ -345,11 +345,22 @@ For every CI report, record the branch, commit SHA, workflow/job, exact test res
 
 ## Deployment
 
-Deploy bounded services independently. Build container images from the repository root when the Dockerfile requires shared packages. Examples:
+Deploy bounded services independently. Use the build context expected by each Dockerfile:
 
-    docker build -f services/api-gateway/Dockerfile -t cirvanna-decision-gateway .
-    docker build -f services/recommendation-service/Dockerfile -t cirvanna-complementer .
-    docker build -f services/catalog-service/Dockerfile -t cirvanna-catalog .
+- API Gateway — build from the repository root because the image copies shared domain packages:
+
+      docker build -f services/api-gateway/Dockerfile -t cirvanna-decision-gateway .
+
+- Complementer — build with the recommendation-service directory as context:
+
+      cd services/recommendation-service
+      docker build -f Dockerfile -t cirvanna-complementer .
+
+- Catalog — build with the catalog-service directory as context:
+
+      cd services/catalog-service
+      docker build -f Dockerfile -t cirvanna-catalog .
+
 
 Before a shared or production deployment:
 

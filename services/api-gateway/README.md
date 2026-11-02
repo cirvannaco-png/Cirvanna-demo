@@ -107,10 +107,14 @@ Non-local service URLs must use HTTPS and must not include embedded URL credenti
 
 ## Container build
 
-Build from the repository root so the image includes the shared packages:
+Build the API Gateway from the repository root so the image includes shared domain packages:
 
     docker build -f services/api-gateway/Dockerfile -t cirvanna-decision-gateway .
-    docker build -f services/recommendation-service/Dockerfile -t cirvanna-complementer .
+
+Build Complementer with its service directory as the Docker context:
+
+    cd services/recommendation-service
+    docker build -f Dockerfile -t cirvanna-complementer .
 
 The gateway image uses the platform PORT when supplied and stores its local audit database under /data. Mount persistent storage for local/staging use; this is not a substitute for managed production audit storage, retention, backup, and recovery.
 
