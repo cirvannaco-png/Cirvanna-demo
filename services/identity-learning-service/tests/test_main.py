@@ -124,6 +124,115 @@ def test_retention_purge_removes_expired_events(client):
     assert purged.json()["purged_events"] == 1
 
 
+def test_scope_revocation_revokes_every_active_grant(client):
+    consent(client, receipt="receipt-style-0001")
+    consent(client, receipt="receipt-style-0002")
+
+    revoked = client.post(
+        "/v1/tal/consents/receipt-style-0001/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert revoked.status_code == 200
+
+    first = client.post(
+        "/v1/tal/events?subject_id=user-verified-1",
+        headers=auth(),
+        json=event_body(),
+    )
+    second = client.post(
+        "/v1/tal/events?subject_id=user-verified-1",
+        headers=auth(),
+        json=event_body(
+            event_id="event-0002",
+            idempotency_key="idem-key-0002",
+            consent_receipt_id="receipt-style-0002",
+        ),
+    )
+    assert first.status_code == 403
+    assert second.status_code == 403
+
+    receipts = client.get(
+        "/v1/tal/consents/user-verified-1", headers=auth()
+    ).json()
+    active = [item for item in receipts if item["scope"] == "style_learning" and item["granted"]]
+    assert len(active) == 2
+    assert all(item["revoked_at"] for item in active)
+
+
+def test_denial_receipt_withdraws_prior_scope_grants(client):
+    consent(client, receipt="receipt-style-granted")
+    denied = client.post(
+        "/v1/tal/consents",
+        params={"subject_id": "user-verified-1"},
+        headers=auth(),
+        json={
+            "receipt_id": "receipt-style-denied",
+            "scope": "style_learning",
+            "consent_version": "2026-11-02",
+            "granted": False,
+        },
+    )
+    assert denied.status_code == 200
+    assert denied.json()["granted"] is False
+
+    event = client.post(
+        "/v1/tal/events?subject_id=user-verified-1",
+        headers=auth(),
+        json=event_body(),
+    )
+    assert event.status_code == 403
+
+
+def test_new_grant_after_withdrawal_does_not_reactivate_old_receipt(client):
+    consent(client, receipt="receipt-style-old")
+    client.post(
+        "/v1/tal/consents/receipt-style-old/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    consent(client, receipt="receipt-style-new")
+
+    old_event = client.post(
+        "/v1/tal/events?subject_id=user-verified-1",
+        headers=auth(),
+        json=event_body(consent_receipt_id="receipt-style-old"),
+    )
+    new_event = client.post(
+        "/v1/tal/events?subject_id=user-verified-1",
+        headers=auth(),
+        json=event_body(
+            event_id="event-new-grant",
+            idempotency_key="idem-new-grant",
+            consent_receipt_id="receipt-style-new",
+        ),
+    )
+    assert old_event.status_code == 403
+    assert new_event.status_code == 200
+
+
+def test_tal_correction_must_target_the_same_feature(client):
+    consent(client)
+    client.post(
+        "/v1/tal/events?subject_id=user-verified-1",
+        headers=auth(),
+        json=event_body(feature_key="colour.accent"),
+    )
+    correction = event_body(
+        event_id="event-0002",
+        idempotency_key="idem-key-0002",
+        event_kind="correction",
+        supersedes_event_id="event-0001",
+        feature_key="fragrance.intensity",
+        value="moderate",
+    )
+    response = client.post(
+        "/v1/tal/events?subject_id=user-verified-1",
+        headers=auth(),
+        json=correction,
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "TAL_CORRECTION_FEATURE_MISMATCH"
+
+
 def test_delete_user_data_removes_profile_consents_and_events(client):
     consent(client, scope="profile_storage", receipt="receipt-profile-0001")
     consent(client)
