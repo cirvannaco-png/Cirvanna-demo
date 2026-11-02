@@ -25,6 +25,8 @@ class FitConfidenceEstimate:
     calibration_version: str | None = None
     evidence_ids: tuple[str, ...] = ()
     interval_level: float = 0.95
+    required_evidence_fields: tuple[str, ...] = ()
+    observed_evidence_fields: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for name in ("estimate_id", "user_id", "candidate_id", "model_version"):
@@ -33,6 +35,14 @@ class FitConfidenceEstimate:
                 raise ValueError(f"{name} must not be empty")
         if not isinstance(self.evidence_ids, tuple):
             raise ValueError("evidence_ids must be a tuple")
+        if not isinstance(self.required_evidence_fields, tuple) or not isinstance(self.observed_evidence_fields, tuple):
+            raise ValueError("evidence field declarations must be tuples")
+        if any(not isinstance(item, str) or not item.strip() for item in self.required_evidence_fields + self.observed_evidence_fields):
+            raise ValueError("evidence field names must be non-empty strings")
+        if len(self.required_evidence_fields) != len(set(self.required_evidence_fields)) or len(self.observed_evidence_fields) != len(set(self.observed_evidence_fields)):
+            raise ValueError("evidence field names must be unique")
+        if not set(self.observed_evidence_fields).issubset(set(self.required_evidence_fields)):
+            raise ValueError("observed evidence fields must be declared as required fields")
         if any(not isinstance(item, str) or not item.strip() for item in self.evidence_ids):
             raise ValueError("evidence IDs must be non-empty strings")
         if len(self.evidence_ids) != len(set(self.evidence_ids)):
