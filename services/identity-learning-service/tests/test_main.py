@@ -66,6 +66,30 @@ def test_usi_profile_requires_consent_and_uses_optimistic_version(client):
     assert conflict.json()["detail"]["code"] == "USI_PROFILE_VERSION_CONFLICT"
 
 
+def test_usi_profile_versions_increment_without_lost_updates(client):
+    consent(client, scope="profile_storage", receipt="receipt-profile-0001")
+    first = client.put(
+        "/v1/profiles/user-verified-1",
+        headers=auth(),
+        json={
+            "expected_version": 0,
+            "preferences": [{"preference_id": "p1", "attribute": "classic", "weight": 0.8}],
+        },
+    )
+    second = client.put(
+        "/v1/profiles/user-verified-1",
+        headers=auth(),
+        json={
+            "preferences": [{"preference_id": "p1", "attribute": "minimal", "weight": 0.9}],
+        },
+    )
+    assert first.status_code == 200
+    assert first.json()["profile_version"] == 1
+    assert second.status_code == 200
+    assert second.json()["profile_version"] == 2
+    assert second.json()["preferences"][0]["attribute"] == "minimal"
+
+
 def test_tal_requires_active_explicit_consent_and_is_idempotent(client):
     denied = client.post("/v1/tal/events?subject_id=user-verified-1", headers=auth(), json=event_body())
     assert denied.status_code == 403
