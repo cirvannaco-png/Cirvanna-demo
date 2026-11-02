@@ -140,7 +140,8 @@ def test_learning_event_requires_explicit_consent():
         raise AssertionError("missing consent must not create a learning event")
 
 
-def test_feedback_api_requires_consent_and_reports_handoff_only():
+def test_feedback_api_requires_consent_and_reports_handoff_only(monkeypatch):
+    monkeypatch.setenv("COMPLEMENTER_SERVICE_TOKEN", TOKEN)
     headers = {"Authorization": f"Bearer {TOKEN}"}
     with TestClient(app) as client:
         body = {
