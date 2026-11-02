@@ -204,14 +204,15 @@ class ReasonOutput(BaseModel):
 
 
 class CandidateDecisionOutput(BaseModel):
+    # Product merchandising fields are omitted unless CAL returns SHOW.
     product_id: str
-    sku: str
-    name: str
-    category: str
+    sku: str | None = None
+    name: str | None = None
+    category: str | None = None
     brand: str | None = None
-    price_minor: int
-    currency: str
-    image_urls: list[str]
+    price_minor: int | None = None
+    currency: str | None = None
+    image_urls: list[str] = Field(default_factory=list)
     catalog_version: int
     verdict: Literal["show", "block", "review"]
     may_display: bool
@@ -1597,18 +1598,23 @@ def evaluate_decisions(
                 detail={"code": "DECISION_AUDIT_UNAVAILABLE", "message": "Decision audit persistence failed; no candidate decision is being released."},
             ) from exc
 
+        display_authorized = verdict == "show" and arbitration.may_display
         candidates.append(CandidateDecisionOutput(
             product_id=product_id,
-            sku=str(product["sku"]),
-            name=str(product["name"]),
-            category=str(product["category"]),
-            brand=product.get("brand"),
-            price_minor=int(product["price_minor"]),
-            currency=str(product["currency"]),
-            image_urls=product.get("image_urls") if isinstance(product.get("image_urls"), list) else [],
+            sku=str(product["sku"]) if display_authorized else None,
+            name=str(product["name"]) if display_authorized else None,
+            category=str(product["category"]) if display_authorized else None,
+            brand=product.get("brand") if display_authorized else None,
+            price_minor=int(product["price_minor"]) if display_authorized else None,
+            currency=str(product["currency"]) if display_authorized else None,
+            image_urls=(
+                product.get("image_urls")
+                if display_authorized and isinstance(product.get("image_urls"), list)
+                else []
+            ),
             catalog_version=int(product["catalog_version"]),
             verdict=verdict,
-            may_display=arbitration.may_display,
+            may_display=display_authorized,
             reasons=reasons,
             policy_version=arbitration.policy_version,
             arbitration_contract_version=arbitration.contract_version,
