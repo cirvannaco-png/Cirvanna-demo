@@ -193,9 +193,10 @@ The actual repository is a multi-service monorepo. Important areas are:
 | Path | Role |
 |---|---|
 | apps/demo-web | Demo and marketplace browser application |
-| services/api-gateway | Catalog retrieval, USI/NPL/EEPL/FCI contracts, CAL arbitration, optional Complementer proxy |
+| services/api-gateway | Catalog and Commerce discovery, verified Commerce subject resolution, USI/TAL proxy, signed safety/FCI adapters, CAL arbitration, Complementer advisory proxy |
 | services/recommendation-service | Complementer advisory API and domain modules |
 | services/catalog-service | Canonical product CRUD, metadata validation, product versions |
+| services/identity-learning-service | Durable USI profiles, consent receipts, TAL event persistence, replay/idempotency, correction, export, deletion and retention |
 | services/npl-service | Persistent NPL preference ledger and signed evidence API |
 | services/cultural-identity-service | Persistent explicit cultural declaration lifecycle and signed evidence |
 | services/decision-service | Authenticated eligibility/decision API adapter over canonical domain packages |
@@ -208,7 +209,7 @@ The actual repository is a multi-service monorepo. Important areas are:
 | services/wardrobe-service | Wardrobe API foundation |
 | services/xari | Conversational discovery and orchestration foundation |
 | services/graph-service, perception-service, sync-service | Supporting service foundations; inspect their READMEs before use |
-| packages/identity-intelligence | CaTaCaCi, USI, EEPL, and cultural identity domain contracts |
+| packages/identity-intelligence | CaTaCaCi, USI, EEPL, TAL event contracts, and cultural identity domain contracts |
 | packages/preferences/npl | Canonical NPL policy and evidence contract |
 | packages/fit-intelligence | Fit-confidence evidence contracts; no calibrated predictor is registered |
 | packages/shared-contracts | Shared contract package |
@@ -225,8 +226,8 @@ The actual repository is a multi-service monorepo. Important areas are:
 | Catalog product records and product metadata | Catalog | SQLAlchemy store and product-version snapshots; production DB operation must be verified per environment |
 | Negative preferences and corrections | NPL service | PostgreSQL-targeted SQLAlchemy ledger and schema; deploy/restore and trusted identity binding remain gates |
 | Cultural declarations and corrections | Cultural Identity service | PostgreSQL-targeted declaration store and schema; deploy/restore and trusted identity binding remain gates |
-| Positive style profile | USI | Domain contract; no complete persistent profile service is certified |
-| Feedback and temporal learning | TAL | In-memory contract ledger; no durable personal-memory service |
+| Positive style profile | USI / identity-learning-service | Versioned persistent profile API; reads/writes require an active profile_storage consent receipt. Gateway hydration is enabled only when Commerce identity verification is required and configured. |
+| Feedback and temporal learning | TAL / identity-learning-service | Durable append-only event store, immutable consent receipts, idempotent append, correction events, export, deletion and expiry purge; production deployment and database restore remain unverified |
 | Decision audit | API Gateway | Minimal local SQLite audit file; not a managed production audit backend |
 | Skin-analysis images | DermalSight | Read and decoded in memory; not persisted by the service |
 | Commerce records | Commerce service | Database-backed code and migration foundations; production DB, identity, payment and restore tests remain gates |
@@ -260,6 +261,16 @@ From services/catalog-service:
 
 For shared environments, set CATALOG_DATABASE_URL to managed PostgreSQL and apply the provided Alembic migration using the documented deployment process. SQLite is for local development and tests.
 
+### USI and TAL persistence service
+
+From services/identity-learning-service:
+
+    python -m pip install -r requirements.txt
+    IDENTITY_DATABASE_URL=sqlite:///./identity-local.db IDENTITY_SERVICE_TOKEN='local-random-token-at-least-32-bytes' IDENTITY_AUTO_CREATE_SCHEMA=true uvicorn app.main:app --host 127.0.0.1 --port 8092
+    python -m pytest -q
+
+In shared environments, point IDENTITY_DATABASE_URL at the existing approved managed Postgres instance (for example the existing Commerce Postgres database). This service owns only the identity_usi_* and identity_tal_* tables; it does not create a second database. Apply migrations/0001_identity_tal.sql before setting IDENTITY_AUTO_CREATE_SCHEMA=false. Never expose this internal service directly to browsers.
+
 ### API Gateway
 
 From services/api-gateway:
@@ -267,6 +278,10 @@ From services/api-gateway:
     python -m pip install -r requirements.txt
     uvicorn app.main:app --host 127.0.0.1 --port 8080
     python -m pytest tests -q
+
+For verified USI/TAL access, configure COMMERCE_API_URL, IDENTITY_SERVICE_URL, IDENTITY_SERVICE_TOKEN, and CIRVANNA_REQUIRE_VERIFIED_IDENTITY=true. Pass the user's signed Commerce bearer in X-End-User-Authorization; the gateway resolves the subject through Commerce /me and never trusts a request body subject alone. The identity service requires explicit profile_storage consent for USI profile reads/writes and style_learning or personalization consent for TAL event writes.
+
+For marketplace discovery, configure CATALOG_SERVICE_URL, CATALOG_API_TOKEN, and COMMERCE_API_URL. POST /v1/discover joins active Catalog products to purchasable Commerce offers, ranks by weighted explicit USI preferences (not a probability), then sends every candidate through CAL. It returns product/offer details only for CAL SHOW candidates; REVIEW/BLOCK candidates are withheld.
 
 For the Complementer proxy, configure COMPLEMENTER_SERVICE_URL=http://127.0.0.1:8090 and the same COMPLEMENTER_SERVICE_TOKEN in the gateway and Complementer processes. Local HTTP is permitted only for loopback hosts; remote internal service URLs must use HTTPS.
 
@@ -326,6 +341,35 @@ The root .env.example is a development template for common platform and Commerce
 | DERMALSIGHT_VALIDATION_SIGNING_KEY | Private report HMAC key, at least 32 bytes |
 
 DermalSight remains not-ready when model assets, manifest, report, signing key, or API token are absent or invalid.
+
+### USI and TAL
+
+| Variable | Purpose |
+|---|---|
+| IDENTITY_DATABASE_URL | Existing approved shared managed Postgres URL; use the same database instance already provisioned for Commerce rather than creating a duplicate |
+| IDENTITY_AUTO_CREATE_SCHEMA | Local/test only; false in deployed environments after reviewed SQL migration |
+| IDENTITY_SERVICE_URL | Private USI/TAL service URL |
+| IDENTITY_SERVICE_TOKEN | Gateway-to-identity service bearer token, at least 32 bytes |
+| IDENTITY_CRON_TOKEN | Separate retention-job token, at least 32 bytes |
+| CIRVANNA_REQUIRE_VERIFIED_IDENTITY | Set true to require Commerce /me subject verification before decision/discovery and profile/TAL operations |
+| COMMERCE_API_URL | Trusted Commerce URL used for /me identity verification and live offers |
+
+USI profile writes and reads require an active profile_storage consent receipt. TAL event writes require active personalization or style_learning consent. Consent receipts are versioned; revocation blocks subsequent writes. Corrections are append-only and refer to the superseded event. Export and deletion are available through authenticated /v1/me routes. The deletion receipt stores only a one-way subject digest and deletion counts.
+
+### Safety and FCI evidence providers
+
+| Variable | Purpose |
+|---|---|
+| SAFETY_SERVICE_URL / SAFETY_SERVICE_TOKEN | Independent product-safety provider endpoint and service credential |
+| SAFETY_EVIDENCE_HMAC_SECRET | Candidate-bound provider response signature key |
+| SAFETY_VALIDATION_HMAC_SECRET | Separate independent-validation attestation signature key |
+| SAFETY_VALIDATION_REPORT_SHA256 | Pinned SHA-256 of the approved safety validation report |
+| FCI_SERVICE_URL / FCI_SERVICE_TOKEN | Calibrated fit-confidence provider endpoint and service credential |
+| FCI_EVIDENCE_HMAC_SECRET | Candidate-bound FCI response signature key |
+| FCI_VALIDATION_HMAC_SECRET | Separate independent-validation attestation signature key |
+| FCI_VALIDATION_REPORT_SHA256 | Pinned SHA-256 of the approved FCI validation report |
+
+Each provider response must be bound to request, verified subject, candidate, and canonical product snapshot. Its validation manifest must be signed by a distinct evaluator, match the pinned report hash/model/scope, and remain within its validity window. Provider adapters and tests are implemented; no real provider, validation report, or signing keys are configured in this repository. Until provisioned and verified, the gateway returns UNKNOWN evidence and CAL must return REVIEW.
 
 ### Commerce and marketplace
 
@@ -398,31 +442,31 @@ Status below reflects repository contracts and code, not production deployment.
 | Area | Implemented evidence | Still required |
 |---|---|---|
 | Complementer | Modular advisory API; fragrance, colour, accessories, aesthetic/look completion; consent-gated feedback event; gateway advisory proxy on PR #72 branch | Verified subject binding, canonical USI profile hydration, durable TAL integration, live marketplace product retrieval and end-to-end user flow |
-| USI | Explicit positive-preference alignment domain contract and CAL signal translation | Trusted profile service, durable versioned profile, correction lifecycle, downstream hydration |
+| USI | Versioned persistent profile API, explicit positive-preference alignment, consent-gated reads/writes, Commerce /me subject binding and gateway hydration | Production database migration/restore, real Commerce OIDC configuration and deployed E2E |
 | NPL | Domain rules plus database-backed PostgreSQL-targeted service; candidate-bound signed evidence; optional API Gateway provider integration | Deployed PostgreSQL, backup/restore, trusted identity binding, production key rotation and E2E |
-| TAL | Versioned in-memory deterministic event ledger and Complementer handoff contract | Durable persistence, authenticated subject binding, replay/idempotency, consent receipt, retention, export, correction, deletion, audit |
+| TAL | Durable API/schema for consent receipts, idempotent append, correction events, expiry purge, export and deletion; gateway routes bind requests to verified Commerce subjects | Production Postgres provisioning, migration execution, backup/restore evidence, retention schedule, security review and deployed E2E |
 | Catalog | Canonical product API, version snapshots, optional typed product-intelligence metadata validation | Production DB and restore evidence, editorial/provenance operations, live personalised ranking |
-| CAL / decision gateway | Deterministic arbitration and Catalog/NPL/USI/cultural evidence integration; only SHOW sets may_display | Independent safety provider, calibrated FCI provider, verified user identity, managed audit, deployed end-to-end display enforcement |
+| CAL / decision gateway | Deterministic arbitration; live Catalog/Commerce discovery and weighted explicit-preference ranking; signed provider adapters; only CAL SHOW candidates return product/offer details | Real independently validated safety and calibrated FCI providers/report attestations, managed audit, deployed end-to-end display enforcement |
 | Decision service | Authenticated API adapter and signed evidence verification | Trusted live evidence providers, managed audit/replay, identity binding |
 | Cultural Identity | Persistent explicit declaration service and signed candidate-bound evidence contract | Deployed DB, identity binding, key rotation, end-to-end operation |
 | DermalSight | Consent/image validation, ONNX adapter, signed model release gate | Approved model artifact, representative evaluation, validated inference, deployment readiness |
 | Longitudinal skin forecast | Explicitly disabled in capability contract | Licensed repeated-measures dataset, separate temporal model, calibrated ranges, subgroup validation, privacy review |
 | Commerce / marketplace | Backend APIs, merchant/offer/inventory/order/payment foundations, same-origin BFF | Real identity provider, managed database restore, payment/webhook validation, shipping/tax, operations and CAL-gated E2E |
 | Twin / Try-On / Living Filters | Guarded service and orchestration foundations | Consent/asset authorization, validated renderer/tracking models, licensed assets, device/quality QA |
-| Production operations | CI workflows, container builds, readiness and capability endpoints | Verified deployments, monitoring, managed backups/restores, incident/rollback drills and operational sign-off |
+| Production operations | CI workflows, container builds, readiness and capability endpoints; identity/TAL and provider release contracts added | Selected Render workspace, production DB/migration/restore proof, managed audit, key rotation, monitoring/alerts, staging smoke tests, rollback drills and operational sign-off |
 
 ### PR #72
 
-The Complementer and Catalog product-intelligence work is tracked in [PR #72](https://github.com/cirvannaco-png/Cirvanna-demo/pull/72). It remains a reviewable draft until all integration and release criteria are met. Check the PR's latest workflow runs for commit-specific evidence; earlier passing runs do not automatically apply to a later commit. No merge or deployment is implied by this README.
+The Complementer and Catalog product-intelligence work was merged through [PR #72](https://github.com/cirvannaco-png/Cirvanna-demo/pull/72). Its merge does not certify production readiness or imply a deployment. Subsequent identity/TAL, marketplace-discovery, and provider-adapter work is being developed on a separate reviewable branch.
 
 ## Release roadmap
 
-1. **Identity and trusted profile hydration:** integrate the real identity provider, bind user subjects, and hydrate Complementer/USI without trusting public client-supplied IDs.
-2. **Canonical temporal learning:** implement durable TAL storage and consent receipts, idempotency, replay, retention, correction, export, deletion, and audit. Keep rejected suggestions soft unless the user explicitly creates a hard exclusion.
-3. **Marketplace decision path:** enrich and retrieve canonical products/offers, preserve exact identifiers and metadata provenance, and authorize all displayed candidates through CAL.
-4. **Fit and safety evidence:** integrate independently validated safety and calibrated FCI providers; publish uncertainty and coverage.
+1. **Identity and trusted profile hydration:** configure and verify Commerce's production OIDC/JWKS issuer, deploy the identity-learning service on the existing approved Postgres instance, run the SQL migration, and complete tenant-isolation tests.
+2. **Canonical temporal learning:** verify consent receipt provenance, retention operations, backup/restore, correction/export/deletion behavior and operational audit in staging. Keep rejected suggestions soft unless the user explicitly creates a hard exclusion.
+3. **Marketplace decision path:** deploy and exercise Catalog/Commerce retrieval, ranking and CAL-gated product/offer release with real service credentials and verified user sessions.
+4. **Fit and safety evidence:** provision independent providers, validate evaluator signatures/report hashes and model scope, then run calibration, subgroup, drift, and temporal holdout review before any SHOW decisions.
 5. **DermalSight longitudinal research:** acquire licensed repeated-measures data, build a distinct model, validate temporal holdouts and subgroup calibration, and keep sensitive context optional and separately consented.
-6. **Production hardening:** finish threat modelling, service authentication, managed databases, backup/restore, monitoring, load/failure tests, incident response, rollback, and deployed E2E verification.
+6. **Production hardening:** select the correct Render workspace, provision/reuse the approved database, apply migrations, verify backup/restore, rotate secrets, configure managed audit and monitoring, run staging smoke/load/failure tests, and prove rollback.
 
 ## Contribution rules
 
