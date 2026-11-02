@@ -11,7 +11,7 @@ def compose_fragrance(preferences: dict[str, Any], look: dict[str, Any]) -> dict
 
     if sensitive:
         return {
-            "status": "withheld_by_preference",
+            "status": "fragrance_free",
             "families": [],
             "scent_profiles": [],
             "occasion": None,
@@ -45,6 +45,8 @@ def compose_fragrance(preferences: dict[str, Any], look: dict[str, Any]) -> dict
             "maximum_minor_units": preferences["fragrance_budget_minor"],
             "currency": preferences.get("fragrance_budget_currency"),
         }
+
+    intensity = preferences.get("fragrance_intensity") or ("light" if look.get("climate") == "hot_humid" else "moderate")
 
     return {
         "status": "ready",
