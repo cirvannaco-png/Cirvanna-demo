@@ -294,11 +294,25 @@ def put_consent(subject_id: str = Query(min_length=1, max_length=128), payload: 
         if existing.subject_id != subject or existing.scope != payload.scope or existing.consent_version != payload.consent_version or existing.granted != payload.granted:
             raise HTTPException(409, detail={"code": "CONSENT_RECEIPT_IMMUTABLE"})
         return {"receipt_id": existing.receipt_id, "status": "replayed", "granted": existing.granted}
+
+    now = utcnow()
+    if not payload.granted:
+        # A withdrawal is scope-wide: no older grant may keep authorizing writes.
+        db.execute(
+            update(ConsentReceipt)
+            .where(
+                ConsentReceipt.subject_id == subject,
+                ConsentReceipt.scope == payload.scope,
+                ConsentReceipt.granted.is_(True),
+                ConsentReceipt.revoked_at.is_(None),
+            )
+            .values(revoked_at=now)
+        )
     row = ConsentReceipt(
         receipt_id=payload.receipt_id, subject_id=subject, scope=payload.scope,
         consent_version=payload.consent_version, granted=payload.granted,
-        granted_at=utcnow() if payload.granted else None,
-        revoked_at=None if payload.granted else utcnow(),
+        granted_at=now if payload.granted else None,
+        revoked_at=None if payload.granted else now,
     )
     db.add(row)
     db.commit()
@@ -315,10 +329,27 @@ def revoke_consent(
     receipt = db.get(ConsentReceipt, receipt_id)
     if receipt is None or receipt.subject_id != subject:
         raise HTTPException(404, detail={"code": "CONSENT_RECEIPT_NOT_FOUND"})
-    if receipt.revoked_at is None:
-        receipt.revoked_at = utcnow()
+    if receipt.granted:
+        # Revoke every active receipt for this scope so parallel grants cannot
+        # silently preserve consent after the user withdraws it.
+        revoked_at = utcnow()
+        db.execute(
+            update(ConsentReceipt)
+            .where(
+                ConsentReceipt.subject_id == subject,
+                ConsentReceipt.scope == receipt.scope,
+                ConsentReceipt.granted.is_(True),
+                ConsentReceipt.revoked_at.is_(None),
+            )
+            .values(revoked_at=revoked_at)
+        )
         db.commit()
-    return {"receipt_id": receipt_id, "status": "revoked", "revoked_at": receipt.revoked_at.isoformat()}
+        db.refresh(receipt)
+    return {
+        "receipt_id": receipt_id,
+        "status": "revoked" if receipt.granted else "already_denied",
+        "revoked_at": receipt.revoked_at.isoformat() if receipt.revoked_at else None,
+    }
 
 
 @app.post("/v1/tal/events", dependencies=[Depends(require_internal_token)])
@@ -344,6 +375,8 @@ def append_event(subject_id: str = Query(min_length=1, max_length=128), payload:
         target = db.get(TALEvent, payload.supersedes_event_id)
         if target is None or target.subject_id != subject:
             raise HTTPException(404, detail={"code": "TAL_CORRECTION_TARGET_NOT_FOUND"})
+        if target.feature_key != payload.feature_key:
+            raise HTTPException(409, detail={"code": "TAL_CORRECTION_FEATURE_MISMATCH"})
     row = TALEvent(
         event_id=payload.event_id, subject_id=subject, consent_receipt_id=payload.consent_receipt_id,
         idempotency_key=payload.idempotency_key, payload_hash=digest, feature_key=payload.feature_key,
