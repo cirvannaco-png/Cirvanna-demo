@@ -136,7 +136,7 @@ The intended product path is:
 3. USI evaluates positive style alignment; NPL evaluates explicit hard exclusions; EEPL checks configured context/eligibility policy; explicit cultural requirements are evaluated by their canonical service.
 4. Fit and independent safety evidence are supplied by trusted providers. Missing or untrusted evidence remains UNKNOWN.
 5. CaTaCaCi/CAL arbitrates the required evidence and returns SHOW, BLOCK, or REVIEW.
-6. A product can be shown only when the decision is SHOW. REVIEW and BLOCK are not displayable.
+6. A product can be shown only when the decision is SHOW. REVIEW and BLOCK are not displayable; the decision endpoint redacts merchandising fields for non-SHOW results, and discovery omits the complete product/offer objects.
 7. Audit records preserve minimal decision metadata without unnecessary user measurements or image content.
 
 The API Gateway resolves end-user subjects through Commerce `GET /me` when `CIRVANNA_REQUIRE_VERIFIED_IDENTITY` is enabled (the default), and rejects a request-body subject that does not match. The setting can be disabled only as an explicit local/test-only opt-out for request-scoped contract tests. Verified profile reads/writes and TAL operations use the gateway's private machine credential to reach the identity-learning service; the service itself is not exposed as a public identity API.
