@@ -1,8 +1,9 @@
-"""Authenticated API boundary for Cirvanna's Complementer advisory agent."""
+"""Authenticated API boundary for Cirvanna Complementer and intelligence contracts."""
 from __future__ import annotations
 
 import hmac
 import os
+from datetime import datetime, timezone
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -10,14 +11,27 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.complementer import compose_complementary_look
+from app.personal_aesthetic import compose_personal_aesthetic
+from app.product_intelligence import evaluate_product_intelligence
+from app.skin_scenario import build_skin_scenario_preview
+from app.preference_feedback import build_preference_feedback_event
+from app.contracts_v2 import (
+    PersonalRecommendationRequest,
+    ProductIntelligenceRequest,
+    SkinScenarioRequest,
+    PreferenceFeedbackRequest,
+)
 
 SERVICE = "cirvanna-complementer-agent"
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 bearer = HTTPBearer(auto_error=False)
 app = FastAPI(
     title="Cirvanna Complementer Agent",
     version=VERSION,
-    description="Preference-led advice for colour, fragrance, earrings and aesthetic composition. Advisory only.",
+    description=(
+        "Preference-led personal aesthetic composition and provenance-aware product "
+        "intelligence contracts. Advice is non-authoritative."
+    ),
 )
 
 
@@ -108,6 +122,22 @@ def readiness() -> dict[str, object]:
     return result
 
 
+@app.get("/capabilities", tags=["operations"])
+def capabilities() -> dict[str, object]:
+    return {
+        "service": SERVICE,
+        "complementer_v1_advisory": True,
+        "personal_aesthetic_v2_contract": True,
+        "product_intelligence_contract": True,
+        "preference_feedback_event_contract": True,
+        "profile_persistence_connected": False,
+        "catalog_integration_connected": False,
+        "skin_forecast_provider_validated": False,
+        "skin_scenario_contract": True,
+        "cal_display_authority": "external_CaTaCaCi_CAL",
+    }
+
+
 @app.post(
     "/v1/complementer/recommend",
     tags=["complementer"],
@@ -115,3 +145,55 @@ def readiness() -> dict[str, object]:
 )
 def recommend(request: RecommendationRequest) -> dict[str, object]:
     return compose_complementary_look(request.model_dump())
+
+
+@app.post(
+    "/v2/complementer/compose",
+    tags=["complementer"],
+    dependencies=[Depends(require_internal_token)],
+)
+def compose_personal_look(request: PersonalRecommendationRequest) -> dict[str, object]:
+    """Coordinate fragrance, colour, jewellery and finishing details without identity replacement."""
+    return compose_personal_aesthetic(request.model_dump())
+
+
+@app.post(
+    "/v1/marketplace/product-intelligence/evaluate",
+    tags=["product-intelligence"],
+    dependencies=[Depends(require_internal_token)],
+)
+def evaluate_product(request: ProductIntelligenceRequest) -> dict[str, object]:
+    """Return dimension-level evidence matches; this is not ranking or display authorization."""
+    return evaluate_product_intelligence(
+        request.product.model_dump(),
+        request.profile.model_dump(),
+        now=datetime.now(timezone.utc),
+    )
+
+
+@app.post(
+    "/v1/skin-state/scenario",
+    tags=["skin-scenario"],
+    dependencies=[Depends(require_internal_token)],
+)
+def skin_scenario(request: SkinScenarioRequest) -> dict[str, object]:
+    """Return a scenario definition only until a validated longitudinal model is configured."""
+    if not request.consent:
+        raise HTTPException(403, detail={"code": "SKIN_SCENARIO_CONSENT_REQUIRED"})
+    try:
+        return build_skin_scenario_preview(request.model_dump())
+    except ValueError as exc:
+        raise HTTPException(422, detail={"code": "INVALID_SKIN_SCENARIO", "message": str(exc)}) from exc
+
+
+@app.post(
+    "/v1/complementer/feedback",
+    tags=["preference-learning"],
+    dependencies=[Depends(require_internal_token)],
+)
+def preference_feedback(request: PreferenceFeedbackRequest) -> dict[str, object]:
+    """Return a feedback event proposal; durable USI/TAL/NPL persistence is not yet connected."""
+    try:
+        return build_preference_feedback_event(request.model_dump())
+    except ValueError as exc:
+        raise HTTPException(422, detail={"code": "INVALID_PREFERENCE_FEEDBACK", "message": str(exc)}) from exc
