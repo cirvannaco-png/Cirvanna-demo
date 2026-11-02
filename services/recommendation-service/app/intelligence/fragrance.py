@@ -17,6 +17,7 @@ def compose_fragrance(preferences: dict[str, Any], look: dict[str, Any]) -> dict
             "occasion": None,
             "longevity_preference": None,
             "budget": None,
+            "intensity": "none",
             "reason": "Your fragrance-free or sensitivity setting takes priority over every style suggestion.",
             "product_claim_boundary": "No allergy-safety or hypoallergenic claim is made.",
         }
