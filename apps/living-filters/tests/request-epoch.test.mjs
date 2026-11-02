@@ -44,3 +44,15 @@ test("hiding the page invalidates pending camera access through the common clean
   assert.match(app, /document\.addEventListener\("visibilitychange",\s*\(\) => \{[\s\S]*?if \(document\.hidden\) stopCamera\(\)/);
   assert.match(app, /function stopCamera\(\) \{[\s\S]*?cameraRequestEpoch\.invalidate\(\)/);
 });
+
+
+test("late video.play completion cannot revive an invalidated camera session", () => {
+  const app = readFileSync(new URL("../src/app.mjs", import.meta.url), "utf8");
+  assert.match(app, /await elements\.video\.play\(\);[\s\S]*?if \(!cameraRequestEpoch\.isCurrent\(requestEpoch\) \|\| cameraStream !== stream\)/);
+  assert.match(app, /if \(!cameraRequestEpoch\.isCurrent\(requestEpoch\) \|\| cameraStream !== stream\)[\s\S]*?showSource\("camera"\)/);
+});
+
+test("unexpected video track termination invokes the common camera cleanup path", () => {
+  const app = readFileSync(new URL("../src/app.mjs", import.meta.url), "utf8");
+  assert.match(app, /track\.addEventListener\("ended",[\s\S]*?if \(cameraStream !== stream\) return;[\s\S]*?stopCamera\(\)/);
+});
