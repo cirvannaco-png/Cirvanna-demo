@@ -1,0 +1,37 @@
+name: Identity and temporal learning checks
+on:
+  pull_request:
+    paths:
+      - "services/identity-learning-service/**"
+      - ".github/workflows/identity-learning-service.yml"
+  push:
+    branches: [main, "feature/**"]
+    paths:
+      - "services/identity-learning-service/**"
+      - ".github/workflows/identity-learning-service.yml"
+permissions:
+  contents: read
+jobs:
+  identity-learning:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    defaults:
+      run:
+        working-directory: services/identity-learning-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/identity-learning-service/requirements.txt
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Check dependency consistency
+        run: python -m pip check
+      - name: Compile service and tests
+        run: python -m compileall -q app tests
+      - name: Run USI and TAL regression tests
+        run: python -m pytest -q
+      - name: Build service container
+        run: docker build -t cirvanna-identity-learning .
