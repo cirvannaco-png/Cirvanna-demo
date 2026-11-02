@@ -427,6 +427,33 @@ async function startCamera() {
     cameraStream = stream;
     elements.video.srcObject = cameraStream;
     await elements.video.play();
+    // A tab hide, navigation or newer user action may invalidate this request
+    // while video.play() is pending. Never let its late completion revive the UI.
+    if (!cameraRequestEpoch.isCurrent(requestEpoch) || cameraStream !== stream) {
+      for (const track of stream.getTracks()) track.stop();
+      if (elements.video.srcObject === stream) {
+        elements.video.pause();
+        elements.video.srcObject = null;
+      }
+      if (cameraStream === stream) cameraStream = null;
+      return;
+    }
+    const videoTracks = stream.getVideoTracks();
+    if (!videoTracks.some((track) => track.readyState === "live")) {
+      for (const track of stream.getTracks()) track.stop();
+      cameraStream = null;
+      elements.video.pause();
+      elements.video.srcObject = null;
+      setStatus("Camera was interrupted before the preview became ready. Try again or choose a photo.");
+      return;
+    }
+    for (const track of videoTracks) {
+      track.addEventListener("ended", () => {
+        if (cameraStream !== stream) return;
+        stopCamera();
+        setStatus("Camera session ended or was interrupted. Choose Use camera to restart.");
+      }, { once: true });
+    }
     releaseUploadedPhoto();
     showSource("camera");
     elements.capture.disabled = !isSourceReady();
