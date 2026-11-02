@@ -1,160 +1,147 @@
 # Cirvanna API Gateway
 
-**Status:** the authenticated decision gateway and request-scoped Complementer advisory proxy are implemented on this feature branch. The gateway is not production-certified.
+**Status:** the gateway now has a verified-Commerce-subject mode, USI profile hydration, consented TAL routes, live Catalog/Commerce discovery, deterministic preference ranking, signed independent safety/FCI provider adapters, and CAL-only product display. Production is still gated on real provider attestations, managed audit storage, and deployed operations verification.
 
 ## Responsibilities
 
-- Authenticate internal API requests using the gateway bearer token.
-- Fetch canonical products from Catalog; never fabricate product records.
-- Compose the existing EEPL, USI, NPL, FCI evidence contract, cultural-declaration evidence, and CaTaCaCi/CAL kernels.
-- Load persistent NPL and cultural-declaration snapshots only when their trusted providers are configured and their candidate-bound HMAC signatures verify.
-- Append minimal decision-audit events before returning a decision.
-- Authorize product display only when the actual CAL verdict is SHOW.
-- Optionally proxy request-scoped Complementer styling advice. This route never returns product candidates and never authorizes display.
+- Authenticate internal API callers with the gateway service bearer token.
+- Resolve end-user subjects through Commerce `GET /me` by default; never treat a request-body user ID as identity. Unverified mode is an explicit local/test-only opt-out.
+- Hydrate positive style preferences from the canonical identity-learning service.
+- Proxy profile, consent, TAL event, export, correction and deletion operations to their canonical owner.
+- Retrieve canonical active Catalog products and currently purchasable Commerce offers.
+- Rank candidates using weighted explicit USI preference matches. This score is an ordering heuristic, not a probability, model confidence, or display authorization.
+- Retrieve and verify candidate-bound signed safety and FCI evidence from separately configured providers.
+- Submit every candidate to CaTaCaCi/CAL. Product and offer details are returned to the marketplace only for CAL SHOW. The lower-level `/v1/decisions` response also redacts SKU, name, category, brand, price, currency and images for BLOCK/REVIEW.
+- Keep Complementer styling guidance advisory-only.
+
+## Authentication model
+
+Every gateway route requires `Authorization: Bearer $CIRVANNA_API_TOKEN` for the calling internal service.
+
+Routes that act on an end user additionally require:
+
+`X-End-User-Authorization: Bearer <Commerce-issued-user-token>`
+
+The gateway sends that user token to Commerce `GET /me` and uses only the verified `user_id` returned by Commerce. A body `user_id` must exactly match that verified subject. The internal gateway token is not an end-user credential.
+
+`CIRVANNA_REQUIRE_VERIFIED_IDENTITY` defaults to `true`. Production must leave it enabled. Setting it to `false` is an explicit local/test-only opt-out for deterministic request-scoped contract tests; `/v1/discover` and all `/v1/me/*` personal-data routes require verified identity regardless.
 
 ## Routes
 
-- GET /health — liveness only.
-- GET /ready — checks gateway authentication, Catalog readiness, audit-store access, and policy configuration. Complementer is optional and does not gate decision readiness.
-- GET /capabilities — reports configured integrations and unavailable capabilities.
-- POST /v1/decisions — evaluates 1–25 active canonical Catalog product IDs.
-- POST /v1/complementer/recommend — forwards explicit preferences and current-look context to the stateless Complementer service and returns styling guidance only.
+- `GET /health` — liveness only.
+- `GET /ready` — checks gateway auth, Catalog, audit-store access, policy configuration, and identity service readiness when verified identity is required.
+- `GET /capabilities` — reports enabled integrations and explicit unavailable capabilities.
+- `POST /v1/decisions` — evaluate 1–25 canonical Catalog product IDs through the decision pipeline; merchandising fields are present only for CAL SHOW, otherwise only the candidate ID and decision evidence are returned.
+- `POST /v1/discover` — live Catalog search + Commerce purchasable-offer retrieval, USI preference ranking, then CAL arbitration. Product and offer details are included only for SHOW candidates.
+- `POST /v1/complementer/recommend` — styling advice only; no product candidates or display authority.
+- `GET /v1/me/style-profile` and `PUT /v1/me/style-profile` — read/update the verified subject's USI profile.
+- `POST /v1/me/consents` and `POST /v1/me/consents/{receipt_id}/revoke` — create and revoke versioned consent receipts.
+- `POST /v1/me/tal/events` — append consented observations or append-only correction events.
+- `GET /v1/me/tal/export` — export profile, consent receipts and temporal events.
+- `DELETE /v1/me/tal/data` — delete the subject's profile, consent receipts and events; retain a one-way deletion receipt.
 
-Both POST routes require Authorization: Bearer $CIRVANNA_API_TOKEN. The gateway uses a separate server-side bearer token for Complementer and a separate Catalog credential. Never expose service credentials in browser code.
+### USI and TAL flow
 
-## Local setup
+The gateway resolves the end-user subject through Commerce `/me`, then calls the identity-learning service using its private service token. The identity service owns prefixed tables in the existing approved Postgres database; it does not create a second database. Profile reads and writes require an active `profile_storage` consent receipt. TAL writes require active `personalization` or `style_learning` consent. Event IDs and per-subject idempotency keys prevent duplicate writes; changed replays return 409. Corrections are append-only and identify the event they supersede. A denial receipt or revocation revokes every active grant for the same subject and consent scope, so parallel older receipts cannot keep authorizing writes. A later grant creates a new receipt; revoked receipts remain revoked. Retention purge, export and deletion are implemented by the canonical identity service.
 
-Use separate processes and virtual environments. Supply credentials through the shell or a local secret store; do not commit them.
+Rejected Complementer suggestions remain soft observations. They do not automatically become NPL hard vetoes.
 
-1. Start Catalog from services/catalog-service. Install its requirements, configure a local Catalog token, and start it on port 8081. SQLite is for local development only.
-2. Start Complementer from services/recommendation-service. Install its requirements, set COMPLEMENTER_SERVICE_TOKEN to a random value of at least 32 bytes, and start it on port 8090.
-3. Start the gateway from services/api-gateway. Install its requirements and configure:
-   - CIRVANNA_API_TOKEN — inbound internal gateway bearer token.
-   - CATALOG_SERVICE_URL and CATALOG_API_TOKEN — Catalog base URL and read credential.
-   - CIRVANNA_AUDIT_DB — durable local SQLite file path for decision audit events.
-   - COMPLEMENTER_SERVICE_URL — trusted Complementer base URL; HTTPS is required except for localhost during development.
-   - COMPLEMENTER_SERVICE_TOKEN — outbound Complementer bearer token, at least 32 bytes.
-4. Start the gateway on port 8080 and verify /health, /ready, and /capabilities.
+## Marketplace discovery and display control
 
-Example commands, run from each service directory:
+`POST /v1/discover` accepts a search query, optional category/currency, context, and explicit constraints. The gateway:
 
-    python -m pip install -r requirements.txt
-    uvicorn app.main:app --host 127.0.0.1 --port 8090
-    python -m pytest tests -q
+1. Queries Catalog `GET /products` for active canonical product records.
+2. Queries Commerce `GET /marketplace/offers` for active offers with available inventory.
+3. Joins offers to Catalog by exact `catalog_product_id`; orphan offers are discarded.
+4. Keeps the lowest-priced purchasable offer per canonical product.
+5. Ranks by weighted explicit USI preference matches, then price and product ID.
+6. Runs the candidate IDs through the same decision pipeline as `/v1/decisions`.
+7. Returns full product and offer details only where the corresponding CAL result is `SHOW` and `may_display=true`. Other candidates are returned only as withheld IDs and decision states.
 
-The gateway and Complementer must run as separate processes for the HTTP proxy integration to be exercised.
+The rank score is not a probability and never overrides CAL. In the current build the safety and FCI providers are not provisioned, so otherwise eligible candidates remain REVIEW and no product details are returned from discovery. This is intentional fail-closed behavior, not a marketplace ranking failure.
 
-## Complementer advisory contract
+## Independent safety and calibrated FCI evidence
 
-POST /v1/complementer/recommend accepts request_id, user_id, preferences, and look. The gateway forwards the complete validated JSON to Complementer's POST /v1/complementer/recommend endpoint with its private service token.
+Provider adapters call a trusted HTTPS `POST /v1/evaluate` endpoint. Each response is bound to the request ID, Commerce-verified subject, candidate ID and SHA-256 of the canonical Catalog product snapshot. Provider evidence uses an HMAC key distinct from the validation-attestation key.
 
-The request's user_id is currently an opaque request-scope identifier supplied by the caller. The gateway does **not** bind it to a verified end-user identity provider. Complementer is stateless and does not load or persist a user profile, so this route must remain internal/staging-only until trusted identity binding exists.
+Each validation manifest must:
+- Carry the pinned `*_VALIDATION_REPORT_SHA256` value.
+- Match the required scope (`product_safety` or `fit_confidence`) and exact model version.
+- Declare a distinct independent evaluator ID and `independent_validation=true`.
+- Carry a valid HMAC attestation from the separately provisioned validation key.
+- Have valid `validated_at` and future `valid_until` timestamps.
 
-The gateway validates the upstream response schema, request/user scope, and stateless persistence declaration. It always wraps the response with:
+FCI additionally requires a calibrated estimate, confidence interval, calibration version, unique evidence IDs, and declared/observed evidence fields. Invalid, expired, mismatched, unsigned, or incomplete provider responses fail closed. Missing providers produce UNKNOWN signals; CAL returns REVIEW. Fixture-only tests do not establish real provider validity.
 
-- mode = advisory_only
-- display_authorized = false
-- durable_personal_memory = false
-
-No product name, SKU, price, offer, stock value, or purchase link is sourced from Complementer. Product candidates must be retrieved from canonical Catalog/Commerce services and evaluated through the separate decision route.
-
-Complementer feedback remains a consent-gated TAL handoff only. This gateway does not forward feedback into NPL and does not create hard exclusions from rejected recommendations.
-
-## Product decision contract
-
-POST /v1/decisions accepts:
-- user_id: caller-supplied request identity; it is not authenticated identity.
-- product_ids: 1–25 unique UUIDs from canonical Catalog.
-- context: optional age, location, occasion, and climate.
-- style_preferences: explicit positive attributes evaluated by USI.
-- negative_preferences: explicit item/attribute hard exclusions.
-- cultural_requirements: explicit user-declared requirements.
-- hard_constraints: explicitly supplied required/forbidden attributes.
-
-The gateway fetches product facts from Catalog. When configured, it loads NPL and cultural declarations from their separate persistent services and verifies the signed evidence for the exact request, user, candidate, and attributes. NPL is never silently treated as empty after a partial configuration or provider failure.
-
-## CAL and safety behavior
-
-Only CAL SHOW sets may_display=true. BLOCK is a hard veto. REVIEW is fail-closed when required evidence is missing, unknown, incomplete, or untrusted.
-
-The independent product-safety provider and trained/calibrated FCI predictor are not configured in this repository build. The gateway therefore produces UNKNOWN safety evidence and an unavailable fit estimate; otherwise eligible candidates normally remain REVIEW. Tests may inject fixture-only providers to exercise SHOW, but such fixtures are not live provider results.
-
-The gateway's local audit store is SQLite. It records request/product IDs, verdicts, reason codes, Catalog version, policy/contract versions, and timestamp; it omits user IDs, measurements, and images. This is not a managed production audit backend.
+The adapter contract is not a substitute for independent scientific or safety evaluation. Operators must obtain and review the actual validation report, pin its SHA-256, provision keys from separate trust domains, and run staging verification before enabling a provider.
 
 ## Configuration
 
 | Variable | Purpose |
 |---|---|
-| CIRVANNA_API_TOKEN | Inbound internal gateway bearer token |
-| CIRVANNA_AUDIT_DB | Persistent local/staging SQLite audit path; not a production managed store |
-| CIRVANNA_POLICY_VERSION | Version stamped onto decision outputs |
-| CIRVANNA_REQUIRED_CONTEXT_FIELDS | Comma-separated EEPL required fields; default location,occasion,climate |
-| CIRVANNA_REQUIRED_PRODUCT_ATTRIBUTES | Catalog fields required for complete candidate metadata; default style,material,color |
-| CIRVANNA_MINIMUM_AGE / CIRVANNA_MAXIMUM_AGE | Optional age boundaries |
-| CIRVANNA_ALLOWED_LOCATIONS / CIRVANNA_ALLOWED_OCCASIONS / CIRVANNA_ALLOWED_CLIMATES | Optional context allowlists |
-| CATALOG_SERVICE_URL | Trusted Catalog API base URL |
-| CATALOG_API_TOKEN | Catalog read credential |
-| COMPLEMENTER_SERVICE_URL | Trusted Complementer API base URL |
-| COMPLEMENTER_SERVICE_TOKEN | Internal Complementer bearer token, at least 32 bytes |
-| NPL_SERVICE_URL | Optional trusted persistent NPL service URL |
-| NPL_SERVICE_TOKEN | NPL bearer token |
-| NPL_EVIDENCE_HMAC_SECRET | Shared HMAC key used to verify NPL evidence |
-| CULTURAL_IDENTITY_SERVICE_URL | Optional trusted cultural declaration service URL |
-| CULTURAL_IDENTITY_SERVICE_TOKEN | Cultural service bearer token |
-| CULTURAL_IDENTITY_HMAC_SECRET | Shared HMAC key used to verify cultural evidence |
+| `CIRVANNA_API_TOKEN` | Inbound internal gateway bearer token |
+| `CIRVANNA_REQUIRE_VERIFIED_IDENTITY` | Defaults to true; set false only for local/test-only request-scoped demo mode |
+| `CIRVANNA_AUDIT_DB` | Local/staging SQLite audit path; not production managed audit |
+| `CIRVANNA_POLICY_VERSION` | Decision policy version |
+| `CIRVANNA_REQUIRED_CONTEXT_FIELDS` | EEPL context requirements |
+| `CIRVANNA_REQUIRED_PRODUCT_ATTRIBUTES` | Required Catalog metadata |
+| `COMMERCE_API_URL` | Trusted Commerce `/me` and offers API base URL |
+| `CATALOG_SERVICE_URL` | Trusted Catalog API base URL |
+| `CATALOG_API_TOKEN` | Catalog read credential |
+| `IDENTITY_SERVICE_URL` | Private USI/TAL service URL |
+| `IDENTITY_SERVICE_TOKEN` | Identity service bearer token, at least 32 bytes |
+| `COMPLEMENTER_SERVICE_URL` | Trusted Complementer API base URL |
+| `COMPLEMENTER_SERVICE_TOKEN` | Complementer service bearer token |
+| `NPL_SERVICE_URL`, `NPL_SERVICE_TOKEN`, `NPL_EVIDENCE_HMAC_SECRET` | Persistent NPL provider and signed evidence |
+| `CULTURAL_IDENTITY_SERVICE_URL`, `CULTURAL_IDENTITY_SERVICE_TOKEN`, `CULTURAL_IDENTITY_HMAC_SECRET` | Explicit cultural declaration provider and signed evidence |
+| `SAFETY_SERVICE_URL`, `SAFETY_SERVICE_TOKEN` | Independent product-safety provider |
+| `SAFETY_EVIDENCE_HMAC_SECRET` | Safety evidence signature key |
+| `SAFETY_VALIDATION_HMAC_SECRET`, `SAFETY_VALIDATION_REPORT_SHA256` | Independent safety attestation key and pinned report hash |
+| `FCI_SERVICE_URL`, `FCI_SERVICE_TOKEN` | Calibrated FCI provider |
+| `FCI_EVIDENCE_HMAC_SECRET` | FCI evidence signature key |
+| `FCI_VALIDATION_HMAC_SECRET`, `FCI_VALIDATION_REPORT_SHA256` | Independent FCI attestation key and pinned report hash |
 
-Non-local service URLs must use HTTPS and must not include embedded URL credentials, query strings, or fragments. NPL and cultural services are optional when completely unconfigured; partial configuration or an invalid provider response fails closed.
+All remote internal service URLs must use HTTPS, contain no embedded credentials/query/fragment, and be configured via secret storage. Use separate, independently rotated secrets for gateway auth, provider evidence signatures, and validation attestations.
+
+## Local setup
+
+Start Catalog on port 8081, Commerce on its configured local port, identity-learning on port 8092, Complementer on port 8090, and the gateway on port 8080. Use a local Commerce HS256 token only for development/tests; production must use provider-issued RS256/JWKS tokens.
+
+From each service directory:
+
+    python -m pip install -r requirements.txt
+    python -m pytest tests -q
+
+For identity-learning local development, use SQLite and `IDENTITY_AUTO_CREATE_SCHEMA=true`. For shared environments, point `IDENTITY_DATABASE_URL` at the existing approved managed Postgres instance and apply `migrations/0001_identity_tal.sql`; production schema auto-creation must remain false.
 
 ## Container build
 
-Build the API Gateway from the repository root so the image includes shared domain packages:
+Build the gateway from the repository root:
 
     docker build -f services/api-gateway/Dockerfile -t cirvanna-decision-gateway .
 
-Build Complementer with its service directory as the Docker context:
+Build Complementer and identity-learning with their own service directories as contexts:
 
-    cd services/recommendation-service
-    docker build -f Dockerfile -t cirvanna-complementer .
-
-The gateway image uses the platform PORT when supplied and stores its local audit database under /data. Mount persistent storage for local/staging use; this is not a substitute for managed production audit storage, retention, backup, and recovery.
+    cd services/recommendation-service && docker build -f Dockerfile -t cirvanna-complementer .
+    cd ../identity-learning-service && docker build -f Dockerfile -t cirvanna-identity-learning .
 
 ## Validation
 
 From the repository root:
 
-    python -m pip install -r services/api-gateway/requirements.txt
-    cd services/api-gateway
-    python -m pytest tests -q
-    cd ../..
-    python -m pip install -r services/recommendation-service/requirements.txt
-    cd services/recommendation-service
-    python -m pytest tests -q
-    cd ../..
     python scripts/validate_architecture.py
     python -m unittest discover -s tests/architecture -v
     python scripts/scan_source_secrets.py
 
-The Decision Gateway workflow runs API integration tests, the container build, architecture validation, the architecture regression suite, and source secret scanning. It also runs when the Complementer service contract changes.
+The Decision Gateway workflow runs gateway HTTP/integration tests, container build, architecture checks and secret scanning. The identity-learning workflow runs its own persistence and consent regression tests plus container build. Check the exact branch commit's CI before merge.
 
-## Security and privacy boundaries
+## Current production blockers
 
-- These bearer tokens are service credentials, not end-user identity.
-- The gateway currently has no verified identity-provider binding for user_id. Do not expose the decision or Complementer endpoints as public user APIs until subject binding and scoped authorization are added.
-- Keep Catalog write credentials out of the gateway; use only the read token.
-- Keep NPL and cultural HMAC keys private and independently rotated.
-- Complementer receives explicit preference/look JSON only and has no image upload route.
-- Feedback requires explicit personalisation consent; a rejection remains a soft TAL observation.
-- Never infer culture, religion, ethnicity, gender, modesty, skin tone, or facial geometry from appearance.
-- No response from Complementer may authorize product display or checkout.
-- Do not log tokens, images, sensitive preference values, or raw upstream error bodies.
+- Real Commerce OIDC/JWKS issuer, audience and production auth settings.
+- Identity-learning deployment on the selected Render workspace, migration execution and PostgreSQL backup/restore verification.
+- Independent safety provider, signed validation report, separate evaluator key and operational approval.
+- Calibrated FCI provider, real calibration dataset/report, subgroup validation and drift monitoring.
+- Managed audit storage, key rotation, monitoring/alerts, staging E2E, load/failure tests, incident response and rollback.
+- Production marketplace offer API security and end-to-end display verification.
 
-## Remaining release blockers
-
-- Bind user_id to a verified end-user principal and enforce tenant isolation across profile and preference providers.
-- Build the canonical USI profile service/persistence and trusted hydration path.
-- Implement durable TAL storage, consent receipts, replay/idempotency, retention, correction, export, deletion, and audit.
-- Connect Complementer marketplace retrieval to canonical Catalog/Commerce records without bypassing CAL.
-- Configure a real product-safety provider and a separately validated, calibrated FCI provider.
-- Replace local SQLite audit with managed durable storage and tested recovery.
-- Run deployed PostgreSQL migration/backup/restore tests, service key rotation, real staging E2E, load/failure tests, observability, and rollback drills.
-- Keep skin-state forecasting disabled until DermalSight has a validated longitudinal dataset/model and calibrated independent validation.
+Do not claim production readiness from unit tests, signed test fixtures, a passing container build, or a configured URL alone.

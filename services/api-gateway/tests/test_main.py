@@ -53,6 +53,8 @@ def request_body(**overrides):
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("CIRVANNA_API_TOKEN", TOKEN)
     monkeypatch.setenv("CIRVANNA_AUDIT_DB", str(tmp_path / "audit.sqlite3"))
+    # Legacy request-scoped profile tests explicitly opt into local/demo mode.
+    monkeypatch.setenv("CIRVANNA_REQUIRE_VERIFIED_IDENTITY", "false")
     monkeypatch.delenv("CATALOG_SERVICE_URL", raising=False)
     monkeypatch.delenv("CATALOG_API_TOKEN", raising=False)
     return TestClient(main.app)
@@ -86,6 +88,18 @@ def pass_safety(product_payload):
         explanation="A test-only independent safety result was injected.",
         source_version="test-fixture-only",
     )
+
+
+def test_decision_requires_verified_identity_when_setting_is_absent(client, monkeypatch):
+    monkeypatch.delenv("CIRVANNA_REQUIRE_VERIFIED_IDENTITY", raising=False)
+    monkeypatch.setattr(main, "fetch_product", lambda _: pytest.fail("must reject before Catalog access"))
+    response = client.post(
+        "/v1/decisions",
+        json=request_body(),
+        headers=auth_headers(),
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "END_USER_BEARER_REQUIRED"
 
 
 def test_decision_endpoint_requires_bearer_authentication(client, monkeypatch):
@@ -237,6 +251,10 @@ def test_missing_safety_and_fit_providers_fail_closed_to_review(client, monkeypa
     decision = response.json()["candidates"][0]
     assert decision["verdict"] == "review"
     assert decision["may_display"] is False
+    assert decision["name"] is None
+    assert decision["sku"] is None
+    assert decision["price_minor"] is None
+    assert decision["image_urls"] == []
     assert any(reason["code"] == "REQUIRED_SIGNAL_UNKNOWN" for reason in decision["reasons"])
     assert "safety" in " ".join(reason["explanation"] for reason in decision["reasons"])
     assert "fit_confidence" in " ".join(reason["explanation"] for reason in decision["reasons"])
@@ -255,6 +273,10 @@ def test_explicit_negative_preference_blocks_candidate(client, monkeypatch):
     decision = response.json()["candidates"][0]
     assert decision["verdict"] == "block"
     assert decision["may_display"] is False
+    assert decision["name"] is None
+    assert decision["brand"] is None
+    assert decision["price_minor"] is None
+    assert decision["image_urls"] == []
     assert any(reason["code"] == "NPL_HARD_NEGATIVE" for reason in decision["reasons"])
 
 
@@ -295,6 +317,9 @@ def test_show_requires_all_required_gates_and_a_calibrated_fit_result(client, mo
     assert decision["may_display"] is True
     assert any(reason["code"] == "ALL_REQUIRED_GATES_PASSED" for reason in decision["reasons"])
     assert decision["catalog_version"] == 3
+    assert decision["name"] == "Test garment"
+    assert decision["price_minor"] == 150000
+    assert decision["image_urls"] == []
 
 
 def test_incomplete_catalog_metadata_cannot_confirm_user_hard_constraint(client, monkeypatch):
