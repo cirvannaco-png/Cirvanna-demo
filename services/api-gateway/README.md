@@ -5,7 +5,7 @@
 ## Responsibilities
 
 - Authenticate internal API callers with the gateway service bearer token.
-- Resolve end-user subjects through Commerce `GET /me` when `CIRVANNA_REQUIRE_VERIFIED_IDENTITY=true`; never treat a request-body user ID as identity.
+- Resolve end-user subjects through Commerce `GET /me` by default; never treat a request-body user ID as identity. Unverified mode is an explicit local/test-only opt-out.
 - Hydrate positive style preferences from the canonical identity-learning service.
 - Proxy profile, consent, TAL event, export, correction and deletion operations to their canonical owner.
 - Retrieve canonical active Catalog products and currently purchasable Commerce offers.
@@ -24,7 +24,7 @@ Routes that act on an end user additionally require:
 
 The gateway sends that user token to Commerce `GET /me` and uses only the verified `user_id` returned by Commerce. A body `user_id` must exactly match that verified subject. The internal gateway token is not an end-user credential.
 
-Enable `CIRVANNA_REQUIRE_VERIFIED_IDENTITY=true` in deployed environments. In development mode, `/v1/decisions` can still accept request-scoped style preferences for deterministic contract tests; `/v1/discover` and all `/v1/me/*` personal-data routes always require verified identity.
+`CIRVANNA_REQUIRE_VERIFIED_IDENTITY` defaults to `true`. Production must leave it enabled. Setting it to `false` is an explicit local/test-only opt-out for deterministic request-scoped contract tests; `/v1/discover` and all `/v1/me/*` personal-data routes require verified identity regardless.
 
 ## Routes
 
@@ -42,7 +42,7 @@ Enable `CIRVANNA_REQUIRE_VERIFIED_IDENTITY=true` in deployed environments. In de
 
 ### USI and TAL flow
 
-The gateway resolves the end-user subject through Commerce `/me`, then calls the identity-learning service using its private service token. The identity service owns prefixed tables in the existing approved Postgres database; it does not create a second database. Profile reads and writes require an active `profile_storage` consent receipt. TAL writes require active `personalization` or `style_learning` consent. Event IDs and per-subject idempotency keys prevent duplicate writes; changed replays return 409. Corrections are append-only and identify the event they supersede. Consent revocation blocks future writes. Retention purge, export and deletion are implemented by the canonical identity service.
+The gateway resolves the end-user subject through Commerce `/me`, then calls the identity-learning service using its private service token. The identity service owns prefixed tables in the existing approved Postgres database; it does not create a second database. Profile reads and writes require an active `profile_storage` consent receipt. TAL writes require active `personalization` or `style_learning` consent. Event IDs and per-subject idempotency keys prevent duplicate writes; changed replays return 409. Corrections are append-only and identify the event they supersede. A denial receipt or revocation revokes every active grant for the same subject and consent scope, so parallel older receipts cannot keep authorizing writes. A later grant creates a new receipt; revoked receipts remain revoked. Retention purge, export and deletion are implemented by the canonical identity service.
 
 Rejected Complementer suggestions remain soft observations. They do not automatically become NPL hard vetoes.
 
@@ -58,7 +58,7 @@ Rejected Complementer suggestions remain soft observations. They do not automati
 6. Runs the candidate IDs through the same decision pipeline as `/v1/decisions`.
 7. Returns full product and offer details only where the corresponding CAL result is `SHOW` and `may_display=true`. Other candidates are returned only as withheld IDs and decision states.
 
-The rank score is not a probability and never overrides CAL. In the current build the safety and FCI providers are not provisioned, so otherwise eligible candidates remain REVIEW and no product details are returned from discovery.
+The rank score is not a probability and never overrides CAL. In the current build the safety and FCI providers are not provisioned, so otherwise eligible candidates remain REVIEW and no product details are returned from discovery. This is intentional fail-closed behavior, not a marketplace ranking failure.
 
 ## Independent safety and calibrated FCI evidence
 
@@ -80,7 +80,7 @@ The adapter contract is not a substitute for independent scientific or safety ev
 | Variable | Purpose |
 |---|---|
 | `CIRVANNA_API_TOKEN` | Inbound internal gateway bearer token |
-| `CIRVANNA_REQUIRE_VERIFIED_IDENTITY` | Set true to require Commerce subject verification |
+| `CIRVANNA_REQUIRE_VERIFIED_IDENTITY` | Defaults to true; set false only for local/test-only request-scoped demo mode |
 | `CIRVANNA_AUDIT_DB` | Local/staging SQLite audit path; not production managed audit |
 | `CIRVANNA_POLICY_VERSION` | Decision policy version |
 | `CIRVANNA_REQUIRED_CONTEXT_FIELDS` | EEPL context requirements |
