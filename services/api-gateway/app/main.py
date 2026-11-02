@@ -896,8 +896,20 @@ def capabilities() -> dict[str, Any]:
         "trained_fit_predictor": False,
         "calibrated_fci_provider": False,
         "independent_safety_policy_provider": False,
-        "persisted_user_profiles": False,
-        "identity_provider_binding": False,
+        "persisted_user_profiles": bool(
+            _verified_identity_required()
+            and os.getenv("IDENTITY_SERVICE_URL")
+            and len(os.getenv("IDENTITY_SERVICE_TOKEN", "").encode("utf-8")) >= 32
+        ),
+        "durable_temporal_learning": bool(
+            os.getenv("IDENTITY_SERVICE_URL")
+            and len(os.getenv("IDENTITY_SERVICE_TOKEN", "").encode("utf-8")) >= 32
+        ),
+        "identity_provider_binding": bool(
+            _verified_identity_required()
+            and os.getenv("COMMERCE_API_URL")
+            and _trusted_internal_base_url(os.getenv("COMMERCE_API_URL", ""))
+        ),
         "production_ready": False,
     }
 
@@ -931,7 +943,22 @@ def readiness() -> dict[str, Any]:
         policy_configured = True
     except (RuntimeError, ValueError):
         policy_configured = False
-    ready = configured and catalog_ready and audit_ready and policy_configured
+    identity_required = _verified_identity_required()
+    identity_ready = False
+    identity_url = os.getenv("IDENTITY_SERVICE_URL", "").strip().rstrip("/")
+    identity_token = os.getenv("IDENTITY_SERVICE_TOKEN", "").strip()
+    if identity_url and _trusted_internal_base_url(identity_url) and len(identity_token.encode("utf-8")) >= 32:
+        try:
+            with httpx.Client(timeout=httpx.Timeout(2.0, connect=1.0), trust_env=False, follow_redirects=False) as client:
+                response = client.get(identity_url + "/ready", headers={"Authorization": "Bearer " + identity_token})
+            identity_ready = response.status_code == 200 and response.json().get("ready") is True
+        except (httpx.HTTPError, ValueError):
+            identity_ready = False
+    commerce_url = os.getenv("COMMERCE_API_URL", "").strip()
+    identity_binding_configured = bool(
+        identity_required and identity_ready and commerce_url and _trusted_internal_base_url(commerce_url)
+    )
+    ready = configured and catalog_ready and audit_ready and policy_configured and (not identity_required or identity_binding_configured)
     return {
         "status": "ready" if ready else "not_ready",
         "service": SERVICE_NAME,
@@ -940,6 +967,8 @@ def readiness() -> dict[str, Any]:
         "catalog_ready": catalog_ready,
         "audit_store_ready": audit_ready,
         "policy_configuration_valid": policy_configured,
+        "identity_provider_binding": identity_binding_configured,
+        "identity_learning_service_ready": identity_ready,
         "fci_available": False,
         "safety_policy_available": False,
         "ready": ready,
