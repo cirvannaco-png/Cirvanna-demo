@@ -121,6 +121,29 @@ class DecisionRequest(BaseModel):
         return normalized
 
 
+
+class DiscoveryRequest(BaseModel):
+    """Live catalog/offer search request; identity is verified separately."""
+    model_config = ConfigDict(extra="forbid")
+    user_id: str = Field(min_length=1, max_length=128)
+    query: str = Field(min_length=2, max_length=160)
+    category: str | None = Field(default=None, max_length=80)
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    limit: int = Field(default=10, ge=1, le=25)
+    context: ContextInput = Field(default_factory=ContextInput)
+    negative_preferences: list[NegativePreferenceInput] = Field(default_factory=list, max_length=100)
+    cultural_requirements: list[CulturalRequirementInput] = Field(default_factory=list, max_length=60)
+    hard_constraints: list[HardConstraintInput] = Field(default_factory=list, max_length=60)
+
+    @field_validator("user_id", "query")
+    @classmethod
+    def normalize_discovery_text(cls, value: str) -> str:
+        normalized = " ".join(value.split()).strip()
+        if not normalized:
+            raise ValueError("value must not be blank")
+        return normalized
+
+
 class ComplementerAdvisoryRequest(BaseModel):
     """Request-scoped style advisory; this is not a persisted identity profile."""
     model_config = ConfigDict(extra="forbid")
@@ -766,6 +789,78 @@ def _load_verified_usi_profile(subject_id: str) -> USIProfile:
         preferences=tuple(preferences),
     )
 
+
+def _discover_catalog_and_offers(payload: DiscoveryRequest) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Join canonical active Catalog products to currently purchasable Commerce offers."""
+    catalog_base = os.getenv("CATALOG_SERVICE_URL", "").strip().rstrip("/")
+    catalog_token = os.getenv("CATALOG_API_TOKEN", "").strip()
+    commerce_base = os.getenv("COMMERCE_API_URL", "").strip().rstrip("/")
+    if not catalog_base or not _trusted_internal_base_url(catalog_base) or len(catalog_token.encode("utf-8")) < 32:
+        raise HTTPException(503, detail={"code": "CATALOG_DISCOVERY_NOT_CONFIGURED"})
+    if not commerce_base or not _trusted_internal_base_url(commerce_base):
+        raise HTTPException(503, detail={"code": "COMMERCE_OFFERS_NOT_CONFIGURED"})
+    params: dict[str, Any] = {"q": payload.query, "limit": payload.limit}
+    if payload.category:
+        params["category"] = payload.category
+    catalog_items: list[dict[str, Any]] = []
+    offer_items: list[dict[str, Any]] = []
+    try:
+        with httpx.Client(timeout=httpx.Timeout(5.0, connect=1.5), trust_env=False, follow_redirects=False) as client:
+            catalog_response = client.get(
+                catalog_base + "/products",
+                params=params,
+                headers={"Authorization": "Bearer " + catalog_token, "Accept": "application/json"},
+            )
+            if catalog_response.status_code != 200:
+                raise HTTPException(503, detail={"code": "CATALOG_DISCOVERY_UNAVAILABLE"})
+            catalog_payload = catalog_response.json()
+            if not isinstance(catalog_payload, dict) or not isinstance(catalog_payload.get("items"), list):
+                raise HTTPException(502, detail={"code": "CATALOG_DISCOVERY_RESPONSE_INVALID"})
+            catalog_items = [x for x in catalog_payload["items"] if isinstance(x, dict) and x.get("status") == "active" and isinstance(x.get("product_id"), str)]
+            offer_params: dict[str, Any] = {"q": payload.query, "limit": payload.limit}
+            if payload.category:
+                offer_params["category"] = payload.category
+            if payload.currency:
+                offer_params["currency"] = payload.currency.upper()
+            offer_response = client.get(commerce_base + "/marketplace/offers", params=offer_params, headers={"Accept": "application/json"})
+            if offer_response.status_code != 200:
+                raise HTTPException(503, detail={"code": "COMMERCE_OFFERS_UNAVAILABLE"})
+            offer_payload = offer_response.json()
+            if not isinstance(offer_payload, dict) or not isinstance(offer_payload.get("items"), list):
+                raise HTTPException(502, detail={"code": "COMMERCE_OFFERS_RESPONSE_INVALID"})
+            offer_items = [x for x in offer_payload["items"] if isinstance(x, dict)]
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(503, detail={"code": "MARKETPLACE_DISCOVERY_UNAVAILABLE"}) from exc
+    catalog_ids = {item["product_id"] for item in catalog_items}
+    joined = [offer for offer in offer_items if offer.get("catalog_product_id") in catalog_ids]
+    return catalog_items, joined
+
+
+def _style_rank_score(product: dict[str, Any], profile: USIProfile) -> float:
+    """Deterministic preference match for ordering only; never a probability or display gate."""
+    active = [item for item in profile.preferences if item.active]
+    if not active:
+        return 0.0
+    values: set[str] = set()
+    def visit(value: Any) -> None:
+        if isinstance(value, str) and value.strip():
+            values.add(value.strip().casefold())
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+        elif isinstance(value, dict):
+            for child in value.values():
+                visit(child)
+    visit(product.get("attributes", {}))
+    visit(product.get("category"))
+    visit(product.get("brand"))
+    total = sum(item.weight for item in active)
+    matched = sum(item.weight for item in active if item.attribute.strip().casefold() in values)
+    return matched / total if total else 0.0
+
+
 def _fit_evidence_fields(estimate: FitConfidenceEstimate) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Return trusted field coverage from the fit provider; none is registered yet."""
     del estimate
@@ -983,6 +1078,79 @@ def readiness() -> dict[str, Any]:
 def recommend_complementary_look(payload: ComplementerAdvisoryRequest) -> dict[str, Any]:
     """Return styling guidance only; product candidates require the separate CAL decision path."""
     return _complementer_advisory(payload)
+
+
+@app.post(
+    "/v1/discover",
+    dependencies=[Depends(require_api_token)],
+    tags=["marketplace discovery"],
+)
+def discover_marketplace(
+    payload: DiscoveryRequest,
+    end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
+) -> dict[str, Any]:
+    """Retrieve live Catalog/Commerce candidates, rank them, then CAL-gate every display."""
+    if not _verified_identity_required():
+        raise HTTPException(503, detail={"code": "VERIFIED_IDENTITY_REQUIRED_FOR_DISCOVERY"})
+    subject = _resolve_verified_subject(end_user_authorization)
+    if not hmac.compare_digest(subject, payload.user_id):
+        raise HTTPException(403, detail={"code": "REQUEST_SUBJECT_MISMATCH"})
+    profile = _load_verified_usi_profile(subject)
+    products, offers = _discover_catalog_and_offers(payload)
+    by_product = {item["product_id"]: item for item in products}
+    best_offer: dict[str, dict[str, Any]] = {}
+    for offer in offers:
+        product_id = offer.get("catalog_product_id")
+        if not isinstance(product_id, str) or product_id not in by_product:
+            continue
+        previous = best_offer.get(product_id)
+        price = offer.get("price_minor")
+        if isinstance(price, bool) or not isinstance(price, int) or price < 0:
+            continue
+        if previous is None or (price, str(offer.get("variant_id", ""))) < (previous["price_minor"], str(previous.get("variant_id", ""))):
+            best_offer[product_id] = offer
+    ranked = sorted(
+        (
+            (product_id, _style_rank_score(by_product[product_id], profile), best_offer[product_id])
+            for product_id in best_offer
+        ),
+        key=lambda item: (-item[1], item[2]["price_minor"], item[0]),
+    )[:payload.limit]
+    if not ranked:
+        return {"request_id": str(uuid.uuid4()), "ranked_candidate_count": 0, "displayable_products": [], "withheld_candidate_ids": [], "display_authority": "CaTaCaCi/CAL"}
+    decision_request = DecisionRequest(
+        user_id=subject,
+        product_ids=[item[0] for item in ranked],
+        context=payload.context,
+        style_preferences=[],
+        negative_preferences=payload.negative_preferences,
+        cultural_requirements=payload.cultural_requirements,
+        hard_constraints=payload.hard_constraints,
+    )
+    decision_response = evaluate_decisions(decision_request, end_user_authorization)
+    decisions = {item.product_id: item for item in decision_response.candidates}
+    displayable = []
+    withheld = []
+    for product_id, score, offer in ranked:
+        decision = decisions.get(product_id)
+        if decision is None or not decision.may_display or decision.verdict != "show":
+            withheld.append({"product_id": product_id, "rank_score": score, "decision": decision.verdict if decision else "review"})
+            continue
+        displayable.append({
+            "product": by_product[product_id],
+            "offer": offer,
+            "rank_score": score,
+            "rank_score_semantics": "weighted explicit-preference match; not probability",
+            "decision": decision.model_dump(),
+        })
+    return {
+        "request_id": decision_response.request_id,
+        "ranked_candidate_count": len(ranked),
+        "displayable_products": displayable,
+        "withheld_candidate_ids": withheld,
+        "display_authority": "CaTaCaCi/CAL",
+        "display_rule": "Only candidates with CAL SHOW are returned with product and offer details.",
+    }
 
 
 @app.post(
