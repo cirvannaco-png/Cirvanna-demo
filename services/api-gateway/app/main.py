@@ -861,10 +861,168 @@ def _style_rank_score(product: dict[str, Any], profile: USIProfile) -> float:
     return matched / total if total else 0.0
 
 
+
+def _canonical_provider_json(payload: dict[str, Any]) -> bytes:
+    try:
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(502, detail={"code": "EVIDENCE_PROVIDER_PAYLOAD_INVALID"}) from exc
+
+
+def _provider_manifest_valid(manifest: Any, *, prefix: str, expected_scope: str, model_version: str, provider_id: str) -> bool:
+    if not isinstance(manifest, dict):
+        return False
+    secret = os.getenv(prefix + "_VALIDATION_HMAC_SECRET", "").strip()
+    expected_hash = os.getenv(prefix + "_VALIDATION_REPORT_SHA256", "").strip().lower()
+    signature = manifest.get("signature")
+    if len(secret.encode("utf-8")) < 32 or not expected_hash or not isinstance(signature, str):
+        return False
+    unsigned = {key: value for key, value in manifest.items() if key != "signature"}
+    expected_signature = hmac.new(secret.encode("utf-8"), _canonical_provider_json(unsigned), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected_signature, signature.lower()):
+        return False
+    if (
+        manifest.get("report_sha256") != expected_hash
+        or manifest.get("scope") != expected_scope
+        or manifest.get("model_version") != model_version
+        or manifest.get("independent_validation") is not True
+        or not isinstance(manifest.get("evaluator_id"), str)
+        or not manifest.get("evaluator_id").strip()
+        or manifest.get("evaluator_id") == provider_id
+    ):
+        return False
+    try:
+        validated_at = datetime.fromisoformat(str(manifest["validated_at"]).replace("Z", "+00:00"))
+        valid_until = datetime.fromisoformat(str(manifest["valid_until"]).replace("Z", "+00:00"))
+        if validated_at.tzinfo is None or valid_until.tzinfo is None:
+            return False
+        now = datetime.now(timezone.utc)
+        return validated_at <= now and valid_until > now
+    except (KeyError, TypeError, ValueError):
+        return False
+
+
+def _verify_provider_signature(payload: dict[str, Any], *, prefix: str, signature_field: str) -> None:
+    secret = os.getenv(prefix + "_EVIDENCE_HMAC_SECRET", "").strip()
+    signature = payload.get(signature_field)
+    if len(secret.encode("utf-8")) < 32 or not isinstance(signature, str):
+        raise HTTPException(503, detail={"code": prefix + "_EVIDENCE_AUTH_NOT_CONFIGURED"})
+    unsigned = {key: value for key, value in payload.items() if key != signature_field}
+    expected = hmac.new(secret.encode("utf-8"), _canonical_provider_json(unsigned), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, signature.lower()):
+        raise HTTPException(502, detail={"code": prefix + "_EVIDENCE_SIGNATURE_INVALID"})
+
+
+def _call_evidence_provider(prefix: str, body: dict[str, Any]) -> dict[str, Any]:
+    base = os.getenv(prefix + "_SERVICE_URL", "").strip().rstrip("/")
+    token = os.getenv(prefix + "_SERVICE_TOKEN", "").strip()
+    if not base or not _trusted_internal_base_url(base) or len(token.encode("utf-8")) < 32:
+        raise HTTPException(503, detail={"code": prefix + "_PROVIDER_NOT_CONFIGURED"})
+    try:
+        with httpx.Client(timeout=httpx.Timeout(5.0, connect=1.5), trust_env=False, follow_redirects=False) as client:
+            response = client.post(
+                base + "/v1/evaluate",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json=body,
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": prefix + "_PROVIDER_UNAVAILABLE"}) from exc
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": prefix + "_PROVIDER_UNAVAILABLE"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": prefix + "_PROVIDER_RESPONSE_INVALID"}) from exc
+    if not isinstance(data, dict):
+        raise HTTPException(502, detail={"code": prefix + "_PROVIDER_RESPONSE_INVALID"})
+    return data
+
+
+def _load_safety_signal(product: dict[str, Any], *, user_id: str, request_id: str) -> DecisionSignal:
+    """Use only independently attested, candidate-bound product-safety evidence."""
+    prefix = "SAFETY"
+    keys = ("SAFETY_SERVICE_URL", "SAFETY_SERVICE_TOKEN", "SAFETY_EVIDENCE_HMAC_SECRET", "SAFETY_VALIDATION_HMAC_SECRET", "SAFETY_VALIDATION_REPORT_SHA256")
+    if not any(os.getenv(key, "").strip() for key in keys):
+        return _safety_signal(product)
+    snapshot_hash = hashlib.sha256(_canonical_provider_json(product)).hexdigest()
+    result = _call_evidence_provider(prefix, {
+        "request_id": request_id, "user_id": user_id, "candidate_id": product["product_id"],
+        "product_snapshot_sha256": snapshot_hash,
+    })
+    _verify_provider_signature(result, prefix=prefix, signature_field="evidence_signature")
+    if (
+        result.get("request_id") != request_id
+        or result.get("user_id") != user_id
+        or result.get("candidate_id") != product["product_id"]
+        or result.get("product_snapshot_sha256") != snapshot_hash
+        or result.get("state") not in {"pass", "block", "unknown"}
+        or not isinstance(result.get("evidence_id"), str)
+        or not isinstance(result.get("model_version"), str)
+        or not _provider_manifest_valid(
+            result.get("validation_manifest"), prefix=prefix,
+            expected_scope="product_safety", model_version=result.get("model_version", ""),
+            provider_id=str(result.get("provider_id", "")),
+        )
+    ):
+        raise HTTPException(502, detail={"code": "SAFETY_PROVIDER_EVIDENCE_UNTRUSTED"})
+    state = {"pass": SignalState.PASS, "block": SignalState.BLOCK, "unknown": SignalState.UNKNOWN}[result["state"]]
+    return DecisionSignal(
+        signal_id=f"safety:{result['evidence_id']}:{product['product_id']}",
+        kind=SignalKind.SAFETY, state=state,
+        reason_code=str(result.get("reason_code", "SAFETY_PROVIDER_UNKNOWN")),
+        explanation=str(result.get("explanation", "Independent product-safety provider supplied no explanation.")),
+        required=True, source_version=f"{result['model_version']}:{result['validation_manifest']['report_sha256']}",
+    )
+
+
+def _load_fci_estimate(user_id: str, product_id: str, request_id: str, product: dict[str, Any]) -> FitConfidenceEstimate:
+    """Load a calibrated, signed, independently validated FCI estimate or remain UNKNOWN."""
+    prefix = "FCI"
+    keys = ("FCI_SERVICE_URL", "FCI_SERVICE_TOKEN", "FCI_EVIDENCE_HMAC_SECRET", "FCI_VALIDATION_HMAC_SECRET", "FCI_VALIDATION_REPORT_SHA256")
+    if not any(os.getenv(key, "").strip() for key in keys):
+        return _fit_estimate(user_id, product_id)
+    snapshot_hash = hashlib.sha256(_canonical_provider_json(product)).hexdigest()
+    result = _call_evidence_provider(prefix, {
+        "request_id": request_id, "user_id": user_id, "candidate_id": product_id,
+        "product_snapshot_sha256": snapshot_hash,
+    })
+    _verify_provider_signature(result, prefix=prefix, signature_field="evidence_signature")
+    model_version = result.get("model_version")
+    if (
+        result.get("request_id") != request_id
+        or result.get("user_id") != user_id
+        or result.get("candidate_id") != product_id
+        or result.get("product_snapshot_sha256") != snapshot_hash
+        or result.get("calibrated") is not True
+        or not isinstance(model_version, str)
+        or not _provider_manifest_valid(
+            result.get("validation_manifest"), prefix=prefix,
+            expected_scope="fit_confidence", model_version=model_version,
+            provider_id=str(result.get("provider_id", "")),
+        )
+        or not isinstance(result.get("evidence_ids"), list)
+        or not isinstance(result.get("required_evidence_fields"), list)
+        or not isinstance(result.get("observed_evidence_fields"), list)
+    ):
+        raise HTTPException(502, detail={"code": "FCI_PROVIDER_EVIDENCE_UNTRUSTED"})
+    try:
+        return FitConfidenceEstimate(
+            estimate_id=str(result["estimate_id"]), user_id=user_id, candidate_id=product_id,
+            model_version=model_version, calibrated=True,
+            confidence=float(result["confidence"]), lower_bound=float(result["lower_bound"]),
+            upper_bound=float(result["upper_bound"]), calibration_version=str(result["calibration_version"]),
+            evidence_ids=tuple(str(x) for x in result["evidence_ids"]),
+            interval_level=float(result.get("interval_level", 0.95)),
+            required_evidence_fields=tuple(str(x) for x in result["required_evidence_fields"]),
+            observed_evidence_fields=tuple(str(x) for x in result["observed_evidence_fields"]),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(502, detail={"code": "FCI_PROVIDER_ESTIMATE_INVALID"}) from exc
+
+
 def _fit_evidence_fields(estimate: FitConfidenceEstimate) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Return trusted field coverage from the fit provider; none is registered yet."""
-    del estimate
-    return (), ()
+    """Return field-level evidence coverage supplied by the signed FCI provider."""
+    return estimate.required_evidence_fields, estimate.observed_evidence_fields
 
 
 def _fit_estimate(user_id: str, product_id: str) -> FitConfidenceEstimate:
@@ -1235,7 +1393,7 @@ def evaluate_decisions(
             requirement_by_id.setdefault(item.requirement_id, item)
         cultural_requirements = tuple(requirement_by_id[key] for key in sorted(requirement_by_id))
         upstream_signals = (
-            _safety_signal(product),
+            _load_safety_signal(product, user_id=payload.user_id, request_id=request_id),
             _legal_signal(payload.context, product),
         ) + _user_constraint_signals(
             payload.user_id, product_id, attributes, complete, payload.hard_constraints,
@@ -1252,7 +1410,7 @@ def evaluate_decisions(
         for item in explicit_negative_preferences:
             preference_by_id.setdefault(item.preference_id, item)
         negative_preferences = tuple(preference_by_id[key] for key in sorted(preference_by_id))
-        estimate = _fit_estimate(payload.user_id, product_id)
+        estimate = _load_fci_estimate(payload.user_id, product_id, request_id, product)
         fit_required_evidence, fit_observed_evidence = _fit_evidence_fields(estimate)
         result = evaluate_candidate(
             request_id=request_id,
