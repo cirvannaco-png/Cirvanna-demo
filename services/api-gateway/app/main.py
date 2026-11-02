@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import sqlite3
 import sys
 import uuid
@@ -773,7 +774,10 @@ def _resolve_verified_subject(end_user_authorization: str | None) -> str:
     except ValueError as exc:
         raise HTTPException(502, detail={"code": "COMMERCE_IDENTITY_RESPONSE_INVALID"}) from exc
     subject = actor.get("user_id") if isinstance(actor, dict) else None
-    if not isinstance(subject, str) or not subject.strip() or len(subject) > 128:
+    if (
+        not isinstance(subject, str)
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}", subject.strip())
+    ):
         raise HTTPException(502, detail={"code": "COMMERCE_IDENTITY_SUBJECT_INVALID"})
     return subject.strip()
 
@@ -804,20 +808,27 @@ def _load_verified_usi_profile(subject_id: str) -> USIProfile:
         not isinstance(data, dict)
         or data.get("subject_id") != subject_id
         or not isinstance(data.get("profile_version"), int)
+        or isinstance(data.get("profile_version"), bool)
+        or data["profile_version"] < 0
         or not isinstance(data.get("preferences"), list)
+        or len(data["preferences"]) > 100
     ):
         raise HTTPException(502, detail={"code": "USI_PROFILE_SCOPE_OR_SCHEMA_MISMATCH"})
     preferences = []
     for item in data["preferences"]:
         if not isinstance(item, dict):
             raise HTTPException(502, detail={"code": "USI_PROFILE_SCHEMA_INVALID"})
+        active = item.get("active", True)
+        weight = item.get("weight", 1.0)
+        if not isinstance(active, bool) or isinstance(weight, bool) or not isinstance(weight, (int, float)):
+            raise HTTPException(502, detail={"code": "USI_PROFILE_SCHEMA_INVALID"})
         try:
             preferences.append(StylePreference(
                 preference_id=item["preference_id"],
                 user_id=subject_id,
                 attribute=item["attribute"],
-                weight=float(item.get("weight", 1.0)),
-                active=bool(item.get("active", True)),
+                weight=float(weight),
+                active=active,
             ))
         except (KeyError, TypeError, ValueError) as exc:
             raise HTTPException(502, detail={"code": "USI_PROFILE_SCHEMA_INVALID"}) from exc
