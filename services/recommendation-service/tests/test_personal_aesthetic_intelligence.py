@@ -159,3 +159,11 @@ def test_feedback_api_requires_consent_and_reports_handoff_only(monkeypatch):
         assert accepted.status_code == 200
         assert accepted.json()["durable_persistence"] == "not_configured"
         assert accepted.json()["learning_event"]["owner"] == "CaTaCaCi/TAL"
+
+
+def test_climate_only_sets_a_fallback_intensity_and_never_overrides_user_choice():
+    payload = rich_payload()
+    payload["preferences"]["fragrance_intensity"] = None
+    assert compose_complementary_look(payload)["fragrance"]["intensity"] == "light"
+    payload["preferences"]["fragrance_intensity"] = "bold"
+    assert compose_complementary_look(payload)["fragrance"]["intensity"] == "bold"
