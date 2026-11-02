@@ -1,75 +1,75 @@
-# Cirvanna Complementer Agent
+# Cirvanna Complementer — Personal Aesthetic Intelligence
 
-**Status:** deterministic advisory v1. API contract and rule composer are implemented; no LLM provider, user-profile store, live catalogue integration or production deployment is configured.
+**Status:** expanded deterministic advisory composer and feedback-event contract implemented in code. Durable profile memory, production gateway hydration, live product retrieval, and skin-state forecasting are not implemented by this service.
 
-Complementer helps a user finish a look by composing four connected directions:
+Complementer coordinates a complete look without treating the user's existing identity as something to replace. The API is an internal advisory boundary; it does not authorize catalogue display or purchase.
 
-- **Colour coordination:** current outfit colours, favourite colours and explicit exclusions; curated colour-harmony options are a fallback, not a rule.
-- **Fragrance direction:** selected scent families and intensity preferences. Fragrance-free or sensitivity settings override every scent suggestion.
-- **Earrings:** selected earring styles and metals take priority; neckline and hairstyle are secondary context. A no-earrings choice is respected.
-- **Aesthetic composition:** a concise finish direction based on the user's chosen aesthetic.
+## Capability domains
+
+- **Fragrance direction:** perfume families, scent profiles, occasion, desired longevity, intensity, and a currency-scoped budget. Longevity is a preference target, not a guarantee about actual wear time. Fragrance-free and user-declared sensitivity settings suppress scent suggestions.
+- **Colour intelligence:** coordinates clothing, makeup, jewellery and accessory colours. Explicit favourites and exclusions take precedence over curated palette pairings. It does not infer skin tone or undertone from images.
+- **Jewellery and accessories:** earrings, necklaces, glasses, metals and user-selected accessory categories. A self-reported face shape is optional; the service does not infer face geometry from images.
+- **Aesthetic direction:** minimalist, elegant, classic, romantic, bold, streetwear, editorial, natural and bohemian directions. A cultural direction requires a user-selected cultural context; appearance, name and location are never used to infer culture.
+- **Look completion:** proposes at most two optional finishing changes and explicitly preserves the chosen silhouette, identity and existing statement pieces.
+- **Explainability:** each domain returns the preference or current-look context that explains why a suggestion was made.
 
 ## API
 
-POST /v1/complementer/recommend
+### `POST /v1/complementer/recommend`
 
-Requires Authorization: Bearer $COMPLEMENTER_SERVICE_TOKEN. The secret must contain at least 32 UTF-8 bytes. GET /health reports liveness; GET /ready reports whether authentication is configured.
+Requires internal bearer authentication using `COMPLEMENTER_SERVICE_TOKEN` (at least 32 UTF-8 bytes). The request includes an opaque user identifier, declared preferences, and current-look context. It returns style directions only; it does not invent product names, SKUs, prices, stock or purchase links.
 
-Example request:
+### `POST /v1/complementer/feedback`
 
-    {
-      "request_id": "req-001",
-      "user_id": "opaque-user-id",
-      "preferences": {
-        "aesthetics": ["minimalist", "classic"],
-        "favorite_colors": ["teal", "cream"],
-        "avoid_colors": ["neon pink"],
-        "favorite_fragrance_families": ["citrus", "woody"],
-        "fragrance_sensitive": false,
-        "fragrance_free": false,
-        "fragrance_intensity": "light",
-        "earrings_preference": "yes",
-        "preferred_earring_shapes": ["huggie"],
-        "preferred_metals": ["gold"]
-      },
-      "look": {
-        "outfit_colors": ["navy"],
-        "neckline": "off_shoulder",
-        "hairstyle": "up",
-        "climate": "hot_humid",
-        "occasion": "evening"
-      }
-    }
+Accepts an approval/rejection observation only when `consent_to_personalization=true`. A user may explicitly ask to save the observed value as a preference. Rejections are represented as **soft preference observations**; they do not create NPL hard vetoes or permanent exclusions.
 
-The response is deterministic and explainable. Missing preferences produce needs_input rather than invented personal preferences. The first implementation is stateless: it does not persist profile data, request bodies, face media or model outputs.
+The endpoint currently returns a versioned event for handoff to the canonical CaTaCaCi/TAL owner. It does **not** persist that event or provide durable cross-session memory. The response reports `durable_persistence=not_configured`; do not present this handoff as completed preference learning.
 
-## Guardrails and ownership
+### Operations
 
-- Use only explicit user preferences and current-look context. Never infer gender, ethnicity, religion, culture, modesty, skin tone or fragrance preference from a face, name or location.
-- Aesthetic guidance is not a judgement about the user's appearance. Users can override every suggestion.
-- Fragrance sensitivity means the service abstains from scent suggestions. It makes no medical or allergy-safety claims.
-- V1 returns style directions only. It does not invent brands, SKUs, prices, stock, product benefits or purchase links.
-- This service is not the product catalogue, recommender-ranking authority, fit predictor, medical module, checkout authority or final display gate. Specific catalog items must be fetched from Catalog and pass the existing CaTaCaCi/CAL display controls before being shown.
-- The trusted application layer must hydrate preferences from the canonical user profile/USI/NPL and explicit cultural-declaration services. Do not trust arbitrary browser-supplied user IDs or exclusions at public ingress.
-- No face image or video is accepted by this endpoint.
+- `GET /health`: liveness only.
+- `GET /ready`: checks the internal service token; it does not claim profile, catalogue or memory readiness.
+- `GET /capabilities`: reports implemented and unavailable capabilities.
 
-## Local development
+## Ownership and integration boundaries
 
-    python -m pip install -r requirements.txt
-    export COMPLEMENTER_SERVICE_TOKEN='replace-with-a-long-random-secret-of-at-least-32-bytes'
-    uvicorn app.main:app --host 127.0.0.1 --port 8080
+- **Complementer:** composes advisory look suggestions from trusted, explicit profile and current-look data.
+- **USI:** interprets positive style preferences. Complementer must not create a second user-style profile.
+- **NPL:** owns hard negative preferences. Complementer cannot weaken or bypass an active exclusion.
+- **CaTaCaCi/CAL:** sole final authority for displaying catalogue candidates. Retrieval and Complementer ranking are not display authorization.
+- **TAL:** owns consented, versioned preference-learning events. This service emits a handoff contract; durable storage and profile hydration remain integration work.
+- **Catalog:** canonical product identity, metadata and version history. Product details, current price and availability must be retrieved from Catalog/Commerce rather than generated by Complementer.
+- **DermalSight:** owns non-diagnostic cosmetic skin-attribute inference. Longitudinal skin-state forecasts are not generated by this service.
 
-Run checks:
+Do not expose the request's `user_id` as a public trust boundary. The gateway must bind the subject to a verified authenticated principal and hydrate preferences server-side. No face image or video is accepted here.
 
-    python -m pip check
-    python -m compileall -q app tests
-    python -m pytest -q
+## Privacy and user control
 
-The service can be built from this directory with docker build -t cirvanna-complementer ..
+- Use only user-entered or explicitly selected context.
+- Do not infer gender, ethnicity, religion, culture, modesty, skin tone, undertone or face shape from a face, name or location.
+- Avoid storing raw face media or sensitive context in this service.
+- Feedback is not accepted for learning without explicit consent.
+- A rejection is reversible and non-binding; an explicit user hard exclusion remains owned by NPL.
+- Users must be able to inspect, correct and delete durable preferences through the canonical identity/profile owner before this is exposed as a persistent-memory feature.
+
+## Validation
+
+From this directory:
+
+```bash
+python -m pip install -r requirements.txt
+python -m pip check
+python -m compileall -q app tests
+python -m pytest -q
+```
+
+Catalog validation is tested separately from `services/catalog-service`. Passing isolated service tests does not prove gateway hydration, persistent memory, end-to-end CAL gating, production deployment or marketplace correctness.
 
 ## Not yet implemented
 
-- User-facing preference editor and Cirvanna UI integration.
-- Trusted server-side profile/USI/NPL/cultural-declaration hydration and authenticated service-to-service wiring.
-- Product retrieval from Catalog, inventory/price provenance, and CAL-gated product cards.
-- Personalization experiments, feedback learning and model-provider integration. None should be represented as live until separately implemented and evaluated.
+- User-facing preference editor and UI integration.
+- Trusted gateway binding and profile/USI/NPL/cultural-declaration hydration.
+- Durable TAL persistence, event replay, user correction/export/deletion lifecycle and cross-session memory.
+- Live Catalog/Commerce retrieval, ranking against evidence-backed product intelligence, and exact candidate-bound CAL display authorization.
+- Validated longitudinal skin-response model, representative data, calibration, and opt-in scenario forecasting.
+- Production deployment, observability, rate limits, threat review and end-to-end staging validation.
