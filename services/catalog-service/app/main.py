@@ -39,6 +39,8 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 from starlette import status
 
+from app.product_intelligence import validate_product_intelligence_attributes
+
 
 SERVICE_NAME = "cirvanna-catalog-service"
 EXPECTED_SCHEMA_REVISION = "20261018_0001"
@@ -155,7 +157,10 @@ def _validate_attributes(value: dict[str, Any]) -> dict[str, Any]:
         json.dumps(value, allow_nan=False)
     except (TypeError, ValueError) as exc:
         raise ValueError("Attributes must be finite JSON-compatible values.") from exc
-    return value
+    try:
+        return validate_product_intelligence_attributes(value)
+    except ValueError:
+        raise
 
 
 class ProductCreate(BaseModel):
