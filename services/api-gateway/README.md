@@ -11,7 +11,7 @@
 - Retrieve canonical active Catalog products and currently purchasable Commerce offers.
 - Rank candidates using weighted explicit USI preference matches. This score is an ordering heuristic, not a probability, model confidence, or display authorization.
 - Retrieve and verify candidate-bound signed safety and FCI evidence from separately configured providers.
-- Submit every candidate to CaTaCaCi/CAL. Product and offer details are returned to the marketplace only for CAL SHOW.
+- Submit every candidate to CaTaCaCi/CAL. Product and offer details are returned to the marketplace only for CAL SHOW. The lower-level `/v1/decisions` response also redacts SKU, name, category, brand, price, currency and images for BLOCK/REVIEW.
 - Keep Complementer styling guidance advisory-only.
 
 ## Authentication model
@@ -31,7 +31,7 @@ The gateway sends that user token to Commerce `GET /me` and uses only the verifi
 - `GET /health` — liveness only.
 - `GET /ready` — checks gateway auth, Catalog, audit-store access, policy configuration, and identity service readiness when verified identity is required.
 - `GET /capabilities` — reports enabled integrations and explicit unavailable capabilities.
-- `POST /v1/decisions` — evaluate 1–25 canonical Catalog product IDs through the decision pipeline.
+- `POST /v1/decisions` — evaluate 1–25 canonical Catalog product IDs through the decision pipeline; merchandising fields are present only for CAL SHOW, otherwise only the candidate ID and decision evidence are returned.
 - `POST /v1/discover` — live Catalog search + Commerce purchasable-offer retrieval, USI preference ranking, then CAL arbitration. Product and offer details are included only for SHOW candidates.
 - `POST /v1/complementer/recommend` — styling advice only; no product candidates or display authority.
 - `GET /v1/me/style-profile` and `PUT /v1/me/style-profile` — read/update the verified subject's USI profile.
