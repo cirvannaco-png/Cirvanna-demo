@@ -364,3 +364,8 @@ For every implementation change:
 ## Final principle
 
 **The README defines the destination; executable code and reproducible evidence establish what has actually been built.** Cirvanna should advance from source intake to clear contracts, then to a tested vertical slice, then to validated capabilities. Architectural ambition matters—but correctness, user trust, and demonstrated behavior matter more.
+
+
+## Complementer and product-intelligence architecture
+
+See [Complementer, Marketplace Product Intelligence and Skin-State Forecasting](docs/architecture/complementer-product-intelligence-skin-forecast.md) for ownership, product metadata, preference-learning semantics and the forecast validation gates. Complementer v2 is advisory code; durable personal memory, live marketplace integration and longitudinal skin-state prediction remain unavailable until their owners and release gates are integrated.
