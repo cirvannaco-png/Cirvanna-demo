@@ -299,3 +299,129 @@ def test_readiness_requires_current_migration_and_auth_config(client, monkeypatc
     not_ready = client.get("/ready")
     assert not_ready.status_code == 503
     assert not_ready.json()["detail"]["ready"] is False
+
+
+def test_product_intelligence_metadata_is_validated_and_versioned(client):
+    metadata = {
+        "schema_version": "1.0",
+        "climate_compatibility": {
+            "compatible_conditions": ["hot_humid", "temperate"],
+            "evidence": {
+                "source_type": "manufacturer_declared",
+                "reference": "merchant-spec-sheet-2026-01",
+                "reviewed_at": "2026-10-31",
+            },
+        },
+        "context_usage": {
+            "intended_contexts": ["daily", "evening"],
+            "evidence": {
+                "source_type": "merchant_catalogued",
+                "reference": "catalog-editorial-record-22",
+                "reviewed_at": "2026-10-31",
+            },
+        },
+        "cultural_usage": {
+            "declared_tags": ["user-selected formal celebration styling"],
+            "editorial_reviewed": True,
+            "evidence": {
+                "source_type": "editorially_reviewed",
+                "reference": "editorial-review-2026-08",
+                "reviewed_at": "2026-10-31",
+            },
+        },
+        "skin_response": {
+            "ingredient_labels": ["glycerin", "squalane"],
+            "cosmetic_intent_tags": ["hydration", "soft finish"],
+            "caution_labels": [],
+            "evidence": {
+                "source_type": "manufacturer_declared",
+                "reference": "ingredient-label-batch-04",
+                "reviewed_at": "2026-10-31",
+            },
+        },
+        "appearance_complement": {
+            "shade_families": ["warm rose", "neutral rose"],
+            "undertone_matches": ["warm", "neutral"],
+            "finishes": ["satin"],
+            "pairing_colors": ["navy", "cream"],
+            "feature_complement_tags": ["soft contrast"],
+            "evidence": {
+                "source_type": "merchant_catalogued",
+                "reference": "shade-review-2026-11",
+                "reviewed_at": "2026-10-31",
+            },
+        },
+        "observed_outcomes": {
+            "metric": "reported_satisfaction",
+            "value": 0.82,
+            "sample_size": 45,
+            "observation_window_days": 180,
+            "evidence": {
+                "source_type": "consented_aggregate",
+                "reference": "aggregate-feedback-report-2026-10",
+                "reviewed_at": "2026-10-31",
+            },
+            "limitations": "Self-reported cosmetic satisfaction; this does not establish causal efficacy.",
+        },
+    }
+    product = create_product(client, attributes={"product_intelligence": metadata, "finish": "satin"})
+    intelligence = product["attributes"]["product_intelligence"]
+    assert intelligence["climate_compatibility"]["compatible_conditions"] == ["hot_humid", "temperate"]
+    assert intelligence["cultural_usage"]["editorial_reviewed"] is True
+    assert intelligence["observed_outcomes"]["sample_size"] == 45
+
+    history = client.get(
+        f"/products/{product['product_id']}/versions", headers=auth_headers()
+    )
+    assert history.status_code == 200
+    assert history.json()[0]["snapshot"]["attributes"]["product_intelligence"]["schema_version"] == "1.0"
+
+
+def test_cultural_product_metadata_requires_editorial_review_evidence(client):
+    invalid = {
+        "schema_version": "1.0",
+        "cultural_usage": {
+            "declared_tags": ["festival styling"],
+            "editorial_reviewed": False,
+            "evidence": {
+                "source_type": "merchant_catalogued",
+                "reference": "unreviewed-merchant-copy",
+                "reviewed_at": "2026-10-31",
+            },
+        },
+    }
+    response = client.post(
+        "/products",
+        headers=auth_headers(),
+        json=product_payload(sku="CULTURE-INVALID-01", attributes={"product_intelligence": invalid}),
+    )
+    assert response.status_code == 422
+
+
+def test_historical_outcomes_require_minimum_aggregate_sample_and_provenance(client):
+    invalid = {
+        "schema_version": "1.0",
+        "observed_outcomes": {
+            "metric": "reported_satisfaction",
+            "value": 0.95,
+            "sample_size": 4,
+            "observation_window_days": 90,
+            "evidence": {
+                "source_type": "consented_aggregate",
+                "reference": "tiny-cohort",
+                "reviewed_at": "2026-10-31",
+            },
+            "limitations": "Small sample is not generalisable and should not be shown as a product success rate.",
+        },
+    }
+    response = client.post(
+        "/products",
+        headers=auth_headers(),
+        json=product_payload(sku="OUTCOME-INVALID-01", attributes={"product_intelligence": invalid}),
+    )
+    assert response.status_code == 422
+
+
+def test_legacy_product_attributes_remain_backward_compatible(client):
+    product = create_product(client, sku="LEGACY-ATTR-001", attributes={"finish": "matte", "shade": "plum"})
+    assert product["attributes"] == {"finish": "matte", "shade": "plum"}

@@ -43,3 +43,20 @@ The API does **not** handle payment credentials, checkout, inventory reservation
 ## Marketplace browser integration
 
 The standalone marketplace page calls `GET /products` with a bearer token. For a separately hosted frontend, configure `CATALOG_CORS_ORIGINS` as a comma-separated allowlist of exact trusted origins, for example `https://shop.example.com`. Do not use `*`; authenticated cross-origin browser requests are intentionally disabled unless this allowlist is configured. The middleware permits only `GET`/preflight and the `Authorization` and `Accept` headers. Restart the service after changing the setting. Keep the catalog token in a server-side integration for production; the demo page holds it only in page memory and is not an appropriate production credential-distribution design.
+
+
+## Product intelligence metadata
+
+The optional `attributes.product_intelligence` namespace is validated by
+`app/product_intelligence.py` before create or update. It supports:
+
+- **Climate compatibility:** supported climate-condition tags with an evidence reference.
+- **Context usage:** intended occasions and use contexts with source provenance.
+- **Cultural usage:** explicit product-context tags only when editorially reviewed. The catalogue describes the product context; it does not infer a buyer's culture.
+- **Skin response metadata:** ingredient-label and non-clinical cosmetic-intent tags with manufacturer, merchant, or cosmetic-test provenance. These are not diagnoses or guarantees of compatibility.
+- **Appearance complement:** shade families, declared undertone matches, finish, pairing colours, and feature-complement tags sourced from merchant cataloguing.
+- **Observed outcomes:** consented aggregate feedback only, with a minimum cohort of 30, a time window, a source reference, and limitations. This is an observed descriptive metric—not a calibrated probability, causal efficacy result, or guarantee of future success.
+
+All metadata is versioned with the existing product record and appears in the product-version snapshot. Legacy product attributes remain valid. No new table or migration is introduced because the canonical product attribute document is already versioned JSON.
+
+The minimum cohort threshold is a disclosure safeguard, not a claim of differential privacy or statistical representativeness. Merchant-supplied evidence and editorial tags still require moderation, provenance checks, and audit before being trusted for user-facing claims. CaTaCaCi/CAL remains the final display authority.

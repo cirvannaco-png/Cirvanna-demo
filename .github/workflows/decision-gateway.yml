@@ -8,6 +8,7 @@ on:
       - "feature/**"
     paths:
       - "services/api-gateway/**"
+      - "services/recommendation-service/**"
       - "services/virtual-try-on/**"
       - "packages/identity-intelligence/**"
       - "packages/preferences/**"
@@ -17,6 +18,7 @@ on:
     branches: [main]
     paths:
       - "services/api-gateway/**"
+      - "services/recommendation-service/**"
       - "packages/identity-intelligence/**"
       - "packages/preferences/**"
       - "packages/fit-intelligence/**"
