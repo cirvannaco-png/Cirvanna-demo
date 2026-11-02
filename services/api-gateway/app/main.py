@@ -740,7 +740,9 @@ def _load_persisted_cultural_requirements(
 
 
 def _verified_identity_required() -> bool:
-    return os.getenv("CIRVANNA_REQUIRE_VERIFIED_IDENTITY", "false").strip().lower() == "true"
+    # Secure by default. Unverified request-scoped profiles are an explicit
+    # local/test-only opt-out and must never be the implicit deployment mode.
+    return os.getenv("CIRVANNA_REQUIRE_VERIFIED_IDENTITY", "true").strip().lower() == "true"
 
 
 def _resolve_verified_subject(end_user_authorization: str | None) -> str:
