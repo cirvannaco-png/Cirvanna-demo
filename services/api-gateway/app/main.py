@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -679,6 +679,93 @@ def _load_persisted_cultural_requirements(
         ) from exc
 
 
+
+def _verified_identity_required() -> bool:
+    return os.getenv("CIRVANNA_REQUIRE_VERIFIED_IDENTITY", "false").strip().lower() == "true"
+
+
+def _resolve_verified_subject(end_user_authorization: str | None) -> str:
+    """Resolve the subject through Commerce's verified-token /me contract."""
+    if not end_user_authorization:
+        raise HTTPException(401, detail={"code": "END_USER_BEARER_REQUIRED"})
+    scheme, _, token = end_user_authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise HTTPException(401, detail={"code": "END_USER_BEARER_INVALID"})
+    base = os.getenv("COMMERCE_API_URL", "").strip().rstrip("/")
+    if not base or not _trusted_internal_base_url(base):
+        raise HTTPException(503, detail={"code": "COMMERCE_IDENTITY_PROVIDER_NOT_CONFIGURED"})
+    try:
+        with httpx.Client(timeout=httpx.Timeout(4.0, connect=1.5), trust_env=False, follow_redirects=False) as client:
+            response = client.get(
+                f"{base}/me",
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "COMMERCE_IDENTITY_PROVIDER_UNAVAILABLE"}) from exc
+    if response.status_code in {401, 403}:
+        raise HTTPException(401, detail={"code": "END_USER_AUTHENTICATION_FAILED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "COMMERCE_IDENTITY_PROVIDER_UNAVAILABLE"})
+    try:
+        actor = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "COMMERCE_IDENTITY_RESPONSE_INVALID"}) from exc
+    subject = actor.get("user_id") if isinstance(actor, dict) else None
+    if not isinstance(subject, str) or not subject.strip() or len(subject) > 128:
+        raise HTTPException(502, detail={"code": "COMMERCE_IDENTITY_SUBJECT_INVALID"})
+    return subject.strip()
+
+
+def _load_verified_usi_profile(subject_id: str) -> USIProfile:
+    """Hydrate only the profile belonging to a Commerce-verified subject."""
+    base = os.getenv("IDENTITY_SERVICE_URL", "").strip().rstrip("/")
+    token = os.getenv("IDENTITY_SERVICE_TOKEN", "").strip()
+    if not base or not _trusted_internal_base_url(base) or len(token.encode("utf-8")) < 32:
+        raise HTTPException(503, detail={"code": "USI_PROFILE_PROVIDER_NOT_CONFIGURED"})
+    try:
+        with httpx.Client(timeout=httpx.Timeout(4.0, connect=1.5), trust_env=False, follow_redirects=False) as client:
+            response = client.get(
+                f"{base}/v1/profiles/{subject_id}",
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "USI_PROFILE_PROVIDER_UNAVAILABLE"}) from exc
+    if response.status_code == 403:
+        raise HTTPException(403, detail={"code": "USI_PROFILE_CONSENT_REQUIRED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "USI_PROFILE_PROVIDER_UNAVAILABLE"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "USI_PROFILE_RESPONSE_INVALID"}) from exc
+    if (
+        not isinstance(data, dict)
+        or data.get("subject_id") != subject_id
+        or not isinstance(data.get("profile_version"), int)
+        or not isinstance(data.get("preferences"), list)
+    ):
+        raise HTTPException(502, detail={"code": "USI_PROFILE_SCOPE_OR_SCHEMA_MISMATCH"})
+    preferences = []
+    for item in data["preferences"]:
+        if not isinstance(item, dict):
+            raise HTTPException(502, detail={"code": "USI_PROFILE_SCHEMA_INVALID"})
+        try:
+            preferences.append(StylePreference(
+                preference_id=item["preference_id"],
+                user_id=subject_id,
+                attribute=item["attribute"],
+                weight=float(item.get("weight", 1.0)),
+                active=bool(item.get("active", True)),
+            ))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(502, detail={"code": "USI_PROFILE_SCHEMA_INVALID"}) from exc
+    return USIProfile(
+        profile_id=f"usi:{subject_id}",
+        user_id=subject_id,
+        version=str(data["profile_version"]),
+        preferences=tuple(preferences),
+    )
+
 def _fit_evidence_fields(estimate: FitConfidenceEstimate) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Return trusted field coverage from the fit provider; none is registered yet."""
     del estimate
@@ -875,29 +962,38 @@ def recommend_complementary_look(payload: ComplementerAdvisoryRequest) -> dict[s
     dependencies=[Depends(require_api_token)],
     tags=["purchase decisions"],
 )
-def evaluate_decisions(payload: DecisionRequest) -> DecisionResponse:
-    """Evaluate up to 25 active catalog products; only CAL SHOW can authorize display."""
+def evaluate_decisions(
+    payload: DecisionRequest,
+    end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
+) -> DecisionResponse:
+    """Evaluate active catalog products; verified USI profile and CAL govern eligibility."""
     request_id = str(uuid.uuid4())
+    if _verified_identity_required():
+        verified_subject = _resolve_verified_subject(end_user_authorization)
+        if not hmac.compare_digest(verified_subject, payload.user_id):
+            raise HTTPException(403, detail={"code": "REQUEST_SUBJECT_MISMATCH"})
+        profile = _load_verified_usi_profile(verified_subject)
+    else:
+        profile = USIProfile(
+            profile_id=f"request-profile:{request_id}",
+            user_id=payload.user_id,
+            version="request-profile-v1",
+            preferences=tuple(
+                StylePreference(
+                    preference_id=f"style-{index}",
+                    user_id=payload.user_id,
+                    attribute=item.attribute,
+                    weight=item.weight,
+                )
+                for index, item in enumerate(payload.style_preferences)
+            ),
+        )
     context = EEPLContext(
         user_id=payload.user_id,
         age_years=payload.context.age_years,
         location=payload.context.location,
         occasion=payload.context.occasion,
         climate=payload.context.climate,
-    )
-    profile = USIProfile(
-        profile_id=f"request-profile:{request_id}",
-        user_id=payload.user_id,
-        version="request-profile-v1",
-        preferences=tuple(
-            StylePreference(
-                preference_id=f"style-{index}",
-                user_id=payload.user_id,
-                attribute=item.attribute,
-                weight=item.weight,
-            )
-            for index, item in enumerate(payload.style_preferences)
-        ),
     )
     explicit_negative_preferences = tuple(
         NegativePreference(
