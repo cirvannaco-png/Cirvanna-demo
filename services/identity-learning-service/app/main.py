@@ -287,6 +287,8 @@ def put_profile(subject_id: str, payload: ProfilePut, db: Annotated[Session, Dep
 @app.post("/v1/tal/consents", dependencies=[Depends(require_internal_token)])
 def put_consent(subject_id: str = Query(min_length=1, max_length=128), payload: ConsentPut = None, db: Session = Depends(get_db)):
     subject = subject_or_404(subject_id)
+    if payload is None:
+        raise HTTPException(422, detail={"code": "CONSENT_RECEIPT_REQUIRED"})
     existing = db.get(ConsentReceipt, payload.receipt_id)
     if existing is not None:
         if existing.subject_id != subject or existing.scope != payload.scope or existing.consent_version != payload.consent_version or existing.granted != payload.granted:
@@ -322,6 +324,8 @@ def revoke_consent(
 @app.post("/v1/tal/events", dependencies=[Depends(require_internal_token)])
 def append_event(subject_id: str = Query(min_length=1, max_length=128), payload: EventPut = None, db: Session = Depends(get_db)):
     subject = subject_or_404(subject_id)
+    if payload is None:
+        raise HTTPException(422, detail={"code": "TAL_EVENT_REQUIRED"})
     consent = db.get(ConsentReceipt, payload.consent_receipt_id)
     if consent is None or consent.subject_id != subject or not consent.granted or consent.revoked_at is not None or consent.scope not in {"personalization", "style_learning"}:
         raise HTTPException(403, detail={"code": "ACTIVE_TAL_CONSENT_REQUIRED"})
