@@ -18,6 +18,7 @@ on:
     branches: [main]
     paths:
       - "services/api-gateway/**"
+      - "services/recommendation-service/**"
       - "packages/identity-intelligence/**"
       - "packages/preferences/**"
       - "packages/fit-intelligence/**"

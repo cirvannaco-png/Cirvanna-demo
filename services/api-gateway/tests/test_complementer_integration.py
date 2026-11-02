@@ -97,8 +97,8 @@ def test_gateway_complementer_proxy_calls_contract_and_remains_advisory(monkeypa
         def __init__(self, *args, **kwargs):
             super().__init__(FakeResponse(200, response_payload), expected_body=body)
 
-    monkeypatch.setattr(main.httpx, "Client", Client)
     with TestClient(main.app) as client:
+        monkeypatch.setattr(main.httpx, "Client", Client)
         response = client.post(
             "/v1/complementer/recommend",
             headers={"Authorization": f"Bearer {GATEWAY_TOKEN}"},
@@ -138,8 +138,8 @@ def test_gateway_rejects_upstream_scope_mismatch(monkeypatch):
         def __init__(self, *args, **kwargs):
             super().__init__(FakeResponse(200, bad_response), expected_body=body)
 
-    monkeypatch.setattr(main.httpx, "Client", Client)
     with TestClient(main.app) as client:
+        monkeypatch.setattr(main.httpx, "Client", Client)
         response = client.post(
             "/v1/complementer/recommend",
             headers={"Authorization": f"Bearer {GATEWAY_TOKEN}"},
@@ -159,8 +159,8 @@ def test_gateway_rejects_upstream_claim_of_persistent_memory(monkeypatch):
         def __init__(self, *args, **kwargs):
             super().__init__(FakeResponse(200, bad_response), expected_body=body)
 
-    monkeypatch.setattr(main.httpx, "Client", Client)
     with TestClient(main.app) as client:
+        monkeypatch.setattr(main.httpx, "Client", Client)
         response = client.post(
             "/v1/complementer/recommend",
             headers={"Authorization": f"Bearer {GATEWAY_TOKEN}"},
