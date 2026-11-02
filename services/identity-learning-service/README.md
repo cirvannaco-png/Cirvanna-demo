@@ -27,9 +27,10 @@ Run tests:
 ## Contracts
 
 - Versioned USI profile upsert with optimistic concurrency (`expected_version`).
-- Immutable consent receipts. Event writes require an active `personalization` or `style_learning` receipt.
+- Versioned consent receipts. A denial or revocation withdraws every active grant for the same subject and scope; a later grant requires a new receipt. Revoked receipts cannot be reused.
+- Event writes require an active `personalization` or `style_learning` receipt; USI profile reads and writes require active `profile_storage` consent.
 - TAL append supports event-ID and per-subject idempotency; changed replay payloads return 409.
-- Corrections are append-only and point to the superseded event.
+- Corrections are append-only, must belong to the same subject and feature, and point to the superseded event.
 - Export returns the subject's profile, consent receipts and event history.
 - Deletion removes profile, consent and event records, retaining only a subject-hash deletion receipt.
 - Retention purges events after their declared expiry.
