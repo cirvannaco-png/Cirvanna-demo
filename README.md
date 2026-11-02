@@ -227,7 +227,7 @@ The actual repository is a multi-service monorepo. Important areas are:
 | Negative preferences and corrections | NPL service | PostgreSQL-targeted SQLAlchemy ledger and schema; deploy/restore and trusted identity binding remain gates |
 | Cultural declarations and corrections | Cultural Identity service | PostgreSQL-targeted declaration store and schema; deploy/restore and trusted identity binding remain gates |
 | Positive style profile | USI / identity-learning-service | Versioned persistent profile API; reads/writes require an active profile_storage consent receipt. Gateway hydration is enabled only when Commerce identity verification is required and configured. |
-| Feedback and temporal learning | TAL / identity-learning-service | Durable append-only event store, immutable consent receipts, idempotent append, correction events, export, deletion and expiry purge; production deployment and database restore remain unverified |
+| Feedback and temporal learning | TAL / identity-learning-service | Durable append-only event store, versioned consent receipts with scope-wide withdrawal, idempotent append, same-feature correction events, export, deletion and expiry purge; production deployment and database restore remain unverified |
 | Decision audit | API Gateway | Minimal local SQLite audit file; not a managed production audit backend |
 | Skin-analysis images | DermalSight | Read and decoded in memory; not persisted by the service |
 | Commerce records | Commerce service | Database-backed code and migration foundations; production DB, identity, payment and restore tests remain gates |
