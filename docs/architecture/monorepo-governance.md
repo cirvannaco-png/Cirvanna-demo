@@ -24,7 +24,7 @@ This repository owns Cirvanna product source: identity intelligence, fit intelli
 - **USI** owns style preference interpretation, separate from fit confidence.
 - **NPL** owns negative-preference capture, persistence, precedence and enforcement.
 - **FCI** owns fit-confidence estimation and calibration.
-- **CFRP V6 / CRFP** are distinct unresolved source labels. CFRP V6 remains quarantined; CRFP has no verified in-repository specification. Neither is a canonical capability. Follow [ADR-0002](adr/ADR-0002-crfp-cfrp-contract-status.md); do not create runtime imports or services from the names alone.
+- **CRFP** has two explicit scopes: Marketplace CRFP for marketplace-specific workflows and system-wide CRFP for reusable capabilities across Cirvanna. They share one canonical name but require separate scope contracts and ownership boundaries. The historical CFRP spelling is a typo retained only in legacy archive provenance. Follow [ADR-0002](adr/ADR-0002-crfp-cfrp-contract-status.md); do not infer production readiness from the naming decision.
 - **Virtual Twin** owns user-specific avatar/body representation and measurements.
 - **Virtual Try-On** owns rendering/simulation orchestration, not preference policy.
 - **DermalSight** owns skin-perception and clinically sensitive data; it does not make unsupported diagnoses.
