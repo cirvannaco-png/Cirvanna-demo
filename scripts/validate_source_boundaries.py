@@ -113,9 +113,13 @@ def scan_source_boundaries(
                 imports = javascript_imports(source)
 
             for line, specifier in imports:
+                relative_file = file_path.relative_to(root)
+                if specifier.startswith("unparseable Python source;"):
+                    errors.append(f"{relative_file}:{line}: {specifier}")
+                    continue
                 if is_quarantined_reference(specifier):
                     errors.append(
-                        f"{file_path.relative_to(root)}:{line}: "
+                        f"{relative_file}:{line}: "
                         f"import from quarantined source is forbidden: {specifier}"
                     )
     return errors
