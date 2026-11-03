@@ -168,13 +168,13 @@
       "note": "Additional Python implementation generation; compare rather than overwrite."
     },
     {
-      "artifact": "CRFP V6.txt",
+      "artifact": "CFRP V6.txt",
       "lineStart": 6188,
       "lineEnd": 7999,
       "targets": [
         "packages/fit-intelligence/crfp"
       ],
-      "note": "Historical source artifact with an acronym typo in its original filename; canonical concept spelling is CRFP. Exact mapping to marketplace or system-wide scope remains unverified."
+      "note": "Historical source artifact whose original filename contains the known CRFP acronym typo; preserved unchanged for provenance. It is not a separate capability. Exact mapping to marketplace or system-wide scope remains unverified."
     },
     {
       "artifact": "EEPL V2.0.txt",
