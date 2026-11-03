@@ -49,6 +49,18 @@ class SourceBoundaryTests(unittest.TestCase):
             self.assertEqual(len(errors), 1)
             self.assertIn("handler.py:1", errors[0])
 
+    def test_detects_relative_python_import_of_candidate_package(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "services" / "gateway"
+            source.mkdir(parents=True)
+            (source / "handler.py").write_text(
+                "from . import candidates\\n", encoding="utf-8"
+            )
+            errors = scan_source_boundaries(root, ["services/gateway"])
+            self.assertEqual(len(errors), 1)
+            self.assertIn("candidates", errors[0])
+
     def test_detects_typescript_candidate_import(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
