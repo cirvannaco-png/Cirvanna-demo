@@ -32,3 +32,8 @@ python scripts/audit_source_lineage.py --allow-unreconciled
 ```
 
 The result reports integrity failures separately from unresolved content mappings. A successful run establishes archive/snapshot/candidate ledger integrity only within the checks above; it is not a production readiness result.
+
+
+## 2026-11-03 CRFP naming correction
+
+References in this lineage record to CFRP V6 describe historical source filenames and candidate changes. The product owner has clarified that CFRP was a typo; the canonical acronym is CRFP, with distinct marketplace and system-wide scopes. The archived candidate's scope mapping remains unverified. Historical source hashes and filenames are preserved for provenance. See [ADR-0003](../architecture/adr/ADR-0003-crfp-marketplace-and-system-scopes.md).

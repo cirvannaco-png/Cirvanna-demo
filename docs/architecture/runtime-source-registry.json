@@ -5,7 +5,8 @@
   "status_definitions": {
     "canonical-source": "Authoritative owner path for the current domain implementation or contract; use subject to capability-specific readiness gates.",
     "implementation-scaffold": "Canonical integration/API location with incomplete provider, persistence, model, or end-to-end behavior; do not advertise as live.",
-    "demo-surface": "Presentation/demo application source; it is not a security or decision authority."
+    "demo-surface": "Presentation/demo application source; it is not a security or decision authority.",
+    "scope-documentation-only": "A documented ownership or contract scope whose runtime implementation is not yet verified; documentation presence does not authorize imports or deployment."
   },
   "canonical_roots": [
     {
@@ -151,6 +152,12 @@
       "owner": "Xari",
       "status": "implementation-scaffold",
       "scope": "Current assistant/orchestration surface; Tari/Xyra are legacy source labels."
+    },
+    {
+      "path": "packages/fit-intelligence/crfp",
+      "owner": "CRFP",
+      "status": "scope-documentation-only",
+      "scope": "Canonical CRFP domain root with two separately documented scopes: marketplace and system-wide. Scope naming and ownership are confirmed; runtime behavior and contracts remain unverified, so documentation status is not production certification."
     }
   ],
   "quarantined_roots": [
@@ -171,18 +178,6 @@
       "status": "archive-and-staging",
       "importable": false,
       "scope": "All source archive, recovered monoliths, manifests, and staging-only material."
-    },
-    {
-      "path": "tests/cfrp_candidate",
-      "status": "candidate-tests",
-      "importable": false,
-      "scope": "Tests for the preserved CFRP V6 candidate only; not canonical runtime tests."
-    },
-    {
-      "path": "packages/fit-intelligence/cfrp",
-      "status": "candidate-marker",
-      "importable": false,
-      "scope": "Status/documentation marker for CFRP V6; no supported runtime API or implementation."
     },
     {
       "path": "**/candidates/**",
@@ -207,6 +202,24 @@
       "status": "unpromoted-candidate-marker",
       "importable": false,
       "scope": "Legacy TypeScript decision-engine intake marker; no second arbitration path."
+    },
+    {
+      "path": "integration-staging/source-candidates/05-cfrp-v6.txt",
+      "status": "archived-source-with-corrected-label",
+      "importable": false,
+      "scope": "Historical source artifact whose CFRP spelling is a known typo for CRFP; do not import until its scope and contract are verified."
+    },
+    {
+      "path": "packages/fit-intelligence/cfrp",
+      "status": "legacy-path-marker",
+      "importable": false,
+      "scope": "Deprecated typo path retained temporarily for compatibility and historical links; canonical documentation lives under packages/fit-intelligence/crfp."
+    },
+    {
+      "path": "tests/cfrp_candidate",
+      "status": "candidate-tests",
+      "importable": false,
+      "scope": "Historical candidate-only tests whose acronym spelling reflects the original typo; not canonical runtime tests."
     }
   ],
   "promotion_policy": "A candidate may be promoted only through a reviewed PR that records provenance, contract comparison, one canonical owner, dependency/license/security/privacy review, tests, migration/rollback where applicable, and registry/documentation updates.",
