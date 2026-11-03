@@ -156,7 +156,7 @@
     {
       "path": "packages/fit-intelligence/crfp",
       "owner": "CRFP",
-      "status": "canonical-source",
+      "status": "scope-documentation-only",
       "scope": "Canonical CRFP domain root with two separately documented scopes: marketplace and system-wide. Scope naming and ownership are confirmed; runtime behavior and contracts remain unverified, so documentation status is not production certification."
     }
   ],
