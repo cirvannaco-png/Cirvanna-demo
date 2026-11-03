@@ -79,7 +79,7 @@ Complementer is advisory. It is not a second profile database, product database,
 ### Fit and purchase confidence
 
 - **FCI — Fit Confidence Intelligence:** intended to estimate suitability from actual product and user evidence.
-- **CRFP / CFRP:** source material uses both names. Resolve their definitions and contracts before choosing a canonical implementation.
+- **CRFP:** one canonical concept with two scopes—Marketplace CRFP for marketplace-specific workflows and system-wide CRFP for reusable capabilities throughout Cirvanna. Keep their contracts and ownership boundaries explicit; CFRP was a typo, not a separate capability.
 - **Purchase-decision support:** communicates evidence and uncertainty; it must not imply certainty where only an estimate exists.
 - **Merchant insights:** aggregate reporting subject to data minimisation, privacy controls, and validated metrics.
 
