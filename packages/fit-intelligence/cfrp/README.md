@@ -1,10 +1,14 @@
-# CFRP V6 — quarantined candidate marker
+# CRFP — canonical scope index
 
-**Lifecycle:** Candidate / not importable as canonical runtime.  
-**Authority:** None. No supported public API, event, schema, scoring authority, veto authority, or deployable service is defined here.
+**Canonical spelling:** CRFP. The former CFRP spelling was a typo, not a separate capability.
 
-This directory is an intake/status marker only. The preserved CFRP V6 source remains under `integration-staging/source-candidates/05-cfrp-v6.txt/`. Do not copy candidate code into this path or import it from application/service code.
+CRFP has two separately owned scopes:
 
-The separately referenced **CRFP** confidence/acceptance concept is not an established implementation and is not an alias for CFRP. The inspected CFRP V6 candidate concerns per-user signal reinforcement, confidence updates/decay, and advisory adjustments. Its persistence adapters are simulated/incomplete; it does not establish durable distributed state or production acceptance semantics.
+- [System-wide CRFP](system/README.md) — the CRFP scope used throughout Cirvanna.
+- [Marketplace CRFP](marketplace/README.md) — the CRFP scope belonging to marketplace workflows.
 
-Use FCI for the current fit-confidence contract and CAL as the sole final SHOW/BLOCK/REVIEW display arbiter. Any proposal to merge, rename, replace, or implement CRFP/CFRP must first satisfy [ADR-0002](../../../docs/architecture/adr/ADR-0002-crfp-cfrp-contract-status.md) and pass the controlled promotion process. Preserve this marker and archive lineage until a superseding ADR records a disposition.
+Keep the scopes distinct in contracts, configuration, telemetry, tests, and ownership. Marketplace integration must consume the system-wide contract where applicable and must not create a conflicting system-wide authority. The precise functional responsibilities, typed interfaces, and authority semantics must be recovered from the authoritative CRFP specifications before runtime implementation is promoted.
+
+The historical source artifact retains its original filename under integration-staging for provenance; its CFRP spelling is a known typo. It is not a second acronym or a reason to maintain a parallel package.
+
+**Current maturity:** Scope ownership is documented; runtime contracts and production implementations are not yet verified. FCI continues to own fit-confidence estimation. CAL remains the sole final SHOW/BLOCK/REVIEW display arbiter.
