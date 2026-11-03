@@ -7,7 +7,7 @@
     "lineCount": 52551,
     "sourceSnapshotCount": 31,
     "runtimeSourcePromoted": false,
-    "note": "Original upload is not copied into this repository. References preserve source lineage for controlled migration."
+    "note": "Original upload is not copied into this repository. References preserve source lineage for controlled migration. The historical CFRP spelling in the source bundle is a typo; canonical acronym is CRFP. CRFP has distinct marketplace and system-wide scopes."
   },
   "modules": [
     {
@@ -67,13 +67,6 @@
       "promotionGate": "Add a reviewed model adapter, held-out calibration and interval-coverage evidence, bias evaluation, and end-to-end fit/return outcome validation."
     },
     {
-      "id": "cfrp",
-      "target": "packages/fit-intelligence/cfrp",
-      "status": "name-and-contract-unresolved",
-      "purpose": "CFRP V6 source candidate. Do not equate CFRP with the separately remembered CRFP label without a contract comparison.",
-      "promotionGate": "Resolve acronym, ownership, interfaces, and overlap with FCI before integration."
-    },
-    {
       "id": "dermalsight",
       "target": "services/dermalsight",
       "status": "runtime-scaffold-model-gated",
@@ -121,6 +114,20 @@
       "status": "api-schema-and-signed-evidence-implemented",
       "purpose": "Persist explicit cultural declarations, versioned confirmation records, hard/soft requirement attributes, auditable retraction events and candidate-bound signed policy snapshots.",
       "promotionGate": "Deploy PostgreSQL and migrations, enforce end-user identity binding at trusted ingress, prove key rotation and signature verification end-to-end, and complete culturally informed catalog governance."
+    },
+    {
+      "id": "crfp-system",
+      "target": "packages/fit-intelligence/crfp/system",
+      "status": "scope-contract-documentation",
+      "purpose": "System-wide CRFP scope. Shared architectural concept and contract consumed across Cirvanna; detailed functional semantics and typed interface remain to be specified from the authoritative CRFP source.",
+      "promotionGate": "Recover and verify the system-wide CRFP specification, define typed inputs/outputs and authority boundaries, then add owner-approved implementation, contract tests, privacy/security review, and consumer integration evidence."
+    },
+    {
+      "id": "crfp-marketplace",
+      "target": "packages/fit-intelligence/crfp/marketplace",
+      "status": "scope-contract-documentation",
+      "purpose": "Marketplace-specific CRFP scope. Applies the CRFP concept within marketplace workflows without being collapsed into the system-wide scope; detailed functional semantics and typed interface remain to be specified from the authoritative CRFP source.",
+      "promotionGate": "Recover and verify the marketplace CRFP specification, define marketplace-owned responsibilities and its interaction with system-wide CRFP, then add typed contracts, contract tests, security/privacy review, and marketplace integration evidence."
     }
   ],
   "sourceSnapshots": [
@@ -161,13 +168,13 @@
       "note": "Additional Python implementation generation; compare rather than overwrite."
     },
     {
-      "artifact": "CFRP V6.txt",
+      "artifact": "CRFP V6.txt",
       "lineStart": 6188,
       "lineEnd": 7999,
       "targets": [
-        "packages/fit-intelligence/cfrp"
+        "packages/fit-intelligence/crfp/system"
       ],
-      "note": "Distinct CFRP name; not reconciled with CRFP."
+      "note": "Historical source artifact with an acronym typo in its original filename; canonical concept spelling is CRFP. Exact scope mapping requires source-owner verification."
     },
     {
       "artifact": "EEPL V2.0.txt",
@@ -413,6 +420,15 @@
         "services/catalog-service"
       ],
       "note": "Root configuration/common-module candidate; source says further parts were still to follow."
+    },
+    {
+      "artifact": "Marketplace CRFP specification (source not yet located)",
+      "lineStart": null,
+      "lineEnd": null,
+      "targets": [
+        "packages/fit-intelligence/crfp/marketplace"
+      ],
+      "note": "Marketplace scope explicitly identified by product owner; authoritative source artifact and implementation remain to be located."
     }
   ]
 }
