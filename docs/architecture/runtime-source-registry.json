@@ -195,7 +195,45 @@
       "status": "experimental",
       "importable": false,
       "scope": "Experimental variants nested under canonical owners."
+    },
+    {
+      "path": "packages/identity-intelligence/cdic",
+      "status": "unpromoted-legacy-candidates",
+      "importable": false,
+      "scope": "Multiple incompatible CDIC generations; compatibility adapter only after comparison with CaTaCaCi/CAL."
+    },
+    {
+      "path": "packages/identity-intelligence/decision-engine",
+      "status": "unpromoted-candidate-marker",
+      "importable": false,
+      "scope": "Legacy TypeScript decision-engine intake marker; no second arbitration path."
     }
   ],
-  "promotion_policy": "A candidate may be promoted only through a reviewed PR that records provenance, contract comparison, one canonical owner, dependency/license/security/privacy review, tests, migration/rollback where applicable, and registry/documentation updates."
+  "promotion_policy": "A candidate may be promoted only through a reviewed PR that records provenance, contract comparison, one canonical owner, dependency/license/security/privacy review, tests, migration/rollback where applicable, and registry/documentation updates.",
+  "scaffold_only_roots": [
+    {
+      "path": "packages/identity-intelligence/cultural-identity",
+      "status": "source-intake-pointer",
+      "importable": false,
+      "scope": "README-only source-target pointer. Executable policy lives under cultural_identity; do not duplicate policy here."
+    },
+    {
+      "path": "services/graph-service",
+      "status": "scaffold-only",
+      "importable": false,
+      "scope": "README-only proposed graph persistence/query boundary; no current production service contract."
+    },
+    {
+      "path": "services/perception-service",
+      "status": "scaffold-only",
+      "importable": false,
+      "scope": "README-only proposed image/model adapter boundary; not a validated inference provider."
+    },
+    {
+      "path": "services/sync-service",
+      "status": "scaffold-only",
+      "importable": false,
+      "scope": "README-only proposed offline-sync boundary; no current production service contract."
+    }
+  ]
 }
