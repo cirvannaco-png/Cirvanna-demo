@@ -1,60 +1,69 @@
-# ADR-0002: CRFP and CFRP remain separate unresolved source labels
+# ADR-0002: CRFP has marketplace and system-wide scopes
 
-- **Status:** Accepted hold — no canonical CRFP/CFRP runtime contract
+- **Status:** Accepted clarification — one canonical name, two bounded scopes
 - **Date:** 2026-11-03
-- **Scope:** Fit-intelligence naming, source promotion, and ownership boundaries
-- **Supersedes:** No prior decision. This ADR refines the unresolved intake note in the monorepo governance document.
-- **Review trigger:** A complete, attributable CRFP specification or implementation is submitted for comparison.
+- **Scope:** CRFP naming, marketplace integration, and system-wide architecture
+- **Supersedes:** The prior ADR-0002 hold that incorrectly treated CFRP and CRFP as separate concepts.
+- **Review trigger:** The two scope contracts are ready for detailed interface and implementation review.
 
 ## Context
 
-The repository contains two different references:
+The earlier `CFRP` spelling was a typo. The canonical name is **CRFP** in both cases. There are two distinct CRFP responsibilities:
 
-- **CFRP V6** is an archived source-candidate bundle at `integration-staging/source-candidates/05-cfrp-v6.txt`. Its inspected implementation models per-user signal reinforcement, confidence updates and decay, advisory adjustments, and an attempt to preserve USI autonomy.
-- **CRFP** appears in prior architecture notes as a confidence/acceptance layer, but the repository does not currently contain an authoritative CRFP specification or a verified implementation that defines its public contract.
+1. **Marketplace CRFP** — the marketplace-scoped CRFP capability, responsible for its own marketplace workflows and product/customer-facing integration.
+2. **System-wide CRFP** — the cross-platform CRFP capability used throughout Cirvanna, with a reusable system-level responsibility rather than ownership of marketplace-only workflows.
 
-The names are not interchangeable merely because their letters are similar. The available evidence does not establish equal purpose, compatible inputs/outputs, equal veto semantics, or a common owner.
+These are not competing names, aliases, or a single component accidentally duplicated. They share a canonical name but must retain explicit scope boundaries. The exact expansions, typed interfaces, state ownership, and detailed behavior must be taken from authoritative product specifications; this ADR does not invent them.
+
+The repository also preserves an earlier source-candidate bundle at `integration-staging/source-candidates/05-cfrp-v6.txt`. The legacy archive path and filename preserve source provenance; the spelling in that historical filename is not a second domain name. The candidate's scope must not be assigned to Marketplace CRFP or system-wide CRFP without evidence.
 
 ## Decision
 
-1. **Do not select a canonical expansion or merge the names.** Keep CRFP and CFRP as distinct unresolved labels until their contracts are compared.
-2. **CFRP V6 remains quarantined historical candidate material.** Its source files, bundle identity, hashes, and lineage records remain preserved. The directory `packages/fit-intelligence/cfrp/` is an intake/status marker only; it is not authorization for a runtime package, service, API, or import.
-3. **CRFP remains an unverified architecture reference.** Do not create a package, service, endpoint, schema, event type, or product claim for it until an authoritative source and owner are supplied.
-4. **Neither name has display, eligibility, fit-acceptance, or veto authority.** CAL remains the sole `SHOW` / `BLOCK` / `REVIEW` display-arbitration authority under ADR-0001. FCI remains the owner of fit-confidence estimation and calibration. NPL and other explicit hard constraints retain their existing precedence.
-5. **No candidate is promoted by renaming.** A rename, folder move, or README change is not a contract comparison and must not be used to bypass the source-promotion gate.
+1. **Use CRFP as the sole canonical spelling** in current documentation, contracts, identifiers, package names, and new code. Do not introduce CFRP as a separate capability.
+2. **Recognize two explicit scopes:** Marketplace CRFP and system-wide CRFP. They may share domain concepts and common contract primitives, but their responsibilities, inputs/outputs, data ownership, authorization, lifecycle, and release gates must be specified separately.
+3. **Keep the system-wide scope reusable and marketplace-independent.** Marketplace CRFP may consume or adapt system-wide CRFP capabilities through a versioned contract; it must not fork or silently redefine the system-wide rules.
+4. **Keep marketplace-specific policy and workflow in the marketplace boundary.** Do not leak marketplace persistence, merchant/payment concerns, or storefront orchestration into the system-wide CRFP domain.
+5. **Do not infer that either scope is production implemented.** The legacy source candidate remains quarantined pending provenance, scope assignment, contract review, dependency/license/security review, and tests.
+6. **Preserve decision authority boundaries.** CRFP may provide its defined evidence or assessment, but it does not create a second final product-display arbiter. CAL remains the sole SHOW/BLOCK/REVIEW display-arbitration authority under ADR-0001. FCI retains fit-confidence estimation and calibration; NPL and other explicit hard constraints retain their existing precedence.
+7. **Do not promote by renaming.** Correcting the typo and defining scope does not make an archived candidate production-ready. Any implementation promotion requires the normal source-promotion gate.
 
-## Evidence from the CFRP V6 candidate
+## Required scope contracts
 
-The inspected candidate includes:
+Before runtime integration, document and test each scope independently:
 
-- a per-user `CFRPInstance` with per-signal confidence and reinforcement counts;
-- reinforcement and time-decay updates with bounded confidence movement;
-- an advisory adjustment based on confidence, recency, and event count;
-- an invariant intended to cap CFRP influence and preserve a minimum USI contribution;
-- a per-user actor queue that serializes work inside one process.
+| Contract dimension | Marketplace CRFP | System-wide CRFP |
+| --- | --- | --- |
+| Primary responsibility | Marketplace-specific CRFP workflows and integration | Reusable CRFP capability across Cirvanna |
+| Consumers | Marketplace BFF / Commerce / marketplace decision flow as specified | Approved cross-system services and product surfaces |
+| Data ownership | Marketplace-owned data only where explicitly required | System-level domain data with explicit owner and tenant/user boundaries |
+| Authorization | Marketplace roles and customer/merchant boundaries | Shared identity, service-to-service authorization, and consent rules |
+| Failure behavior | Marketplace-safe degradation; no bypass of hard constraints or CAL | Explicit typed unavailable/unknown behavior; no bypass of consumer policy gates |
+| Release gate | Marketplace contract and end-to-end storefront evidence | Cross-system contract, compatibility, and consumer integration evidence |
 
-The inspected implementation also declares that persistence clients are simulations. Its lineage batch persistence method is a no-op, and its Redis abstraction is not evidence of a durable distributed state store. Its actor is process-local, not a distributed single-writer mechanism. The candidate therefore does not establish production durability, cross-process consistency, or a validated acceptance contract.
+The table establishes boundaries, not unverified API details. Exact request/response schemas, event names, scoring semantics, persistence model, and version policy remain subject to authoritative specifications.
 
-These observations describe the preserved candidate only. They do not certify its mathematical assumptions or recommend its behavior for live users.
+## Legacy candidate handling
 
-## Required contract-comparison dossier
+The preserved candidate describes per-user signal reinforcement, confidence updates/decay, advisory adjustments, and a process-local actor queue. Its persistence adapters are simulated/incomplete; it does not establish durable distributed state, cross-process consistency, or a validated acceptance contract. This describes the candidate only and does not determine which CRFP scope it belongs to.
 
-A future proposal must provide all of the following before a naming decision:
+Retain its archive and hashes for provenance. Do not import it into either scope until a reviewed dossier maps its behavior to the correct scope and demonstrates compatibility.
 
-1. **Authority and provenance:** source owner, original specification, version, license, complete source bundle, content hashes, and known modifications.
-2. **Purpose and boundary:** a one-sentence responsibility, explicit non-responsibilities, and overlap analysis against FCI, USI, NPL, TAL, EEPL, and CAL.
-3. **Typed contract:** versioned request, response, identifiers, units, null/unknown states, error envelope, reason codes, and compatibility policy.
-4. **State model:** what is stored, ownership/tenant key, retention, deletion, replay, idempotency, concurrency, and migration semantics.
-5. **Scoring semantics:** equations, priors, update rules, confidence interpretation, bounds, calibration claims, decay behavior, and treatment of missing or conflicting evidence.
-6. **Authority semantics:** whether outputs are advisory or binding. The proposal must not create a second display arbiter or weaken hard constraints.
-7. **Trust boundary:** subject verification, consent, candidate/product binding, source freshness/version, signing, authorization, and failure behavior.
-8. **Evaluation:** deterministic unit and property tests, contract tests, adversarial/conflict cases, replay tests, calibration evidence where probabilistic claims are made, and comparison against the existing canonical baseline.
-9. **Operational evidence:** real persistence adapters, backup/restore, observability, performance/failure behavior, and rollback plan if a deployable boundary is proposed.
+## Promotion requirements
 
-The comparison must produce an explicit disposition: merge as one concept, keep separate, rename one with a compatibility window, or reject/defer both. The decision must be recorded in a superseding ADR and reflected in the registry, docs, contracts, tests, and consumer imports in the same reviewed change.
+A proposal for either scope must include:
+
+1. Source owner, authoritative specification, version, license, complete source bundle, hashes, and modifications.
+2. A scope-specific responsibility statement, explicit non-responsibilities, and overlap analysis against FCI, USI, NPL, TAL, EEPL, CAL, Marketplace BFF, Catalog, and Commerce.
+3. Versioned typed requests/responses, identifiers, units, null/unknown states, errors, reason codes, and compatibility policy.
+4. State ownership, tenant/user isolation, consent, retention, deletion, replay, idempotency, concurrency, and migration semantics.
+5. Scoring/assessment equations and evidence semantics where applicable, including uncertainty and calibration claims.
+6. Explicit advisory/binding authority. Neither scope may create a second display arbiter or weaken hard constraints.
+7. Trust boundaries, subject verification, candidate/product binding, source freshness, signing, authorization, and failure behavior.
+8. Unit, property, contract, integration, adversarial, replay, and cross-scope isolation tests.
+9. Operational evidence and rollback plan for any deployable implementation.
 
 ## Consequences
 
-Until that dossier is accepted, contributors must use the existing FCI contract for fit-confidence estimation and CAL for final display arbitration. They must not import CFRP V6 into canonical runtime, emit CRFP/CFRP values to production consumers, or describe either as a live capability.
+Current contributors must use the verified existing contracts and must not claim either CRFP scope is live solely because the name appears in documentation. The two scopes are now recognized architecturally; implementation maturity remains evidence-gated.
 
-The source archive and lineage remain intact. This is a deliberate hold, not a deletion or a claim that the underlying idea has no value.
+The historical source archive remains intact. The old CFRP spelling is treated only as a typo in historical provenance, never as a distinct current concept.
