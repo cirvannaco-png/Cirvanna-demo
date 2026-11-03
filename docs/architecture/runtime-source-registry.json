@@ -1,0 +1,239 @@
+{
+  "version": 1,
+  "repository": "cirvannaco-png/Cirvanna-demo",
+  "meaning": "Canonical source locations and maturity labels only. Registry membership is not production certification.",
+  "status_definitions": {
+    "canonical-source": "Authoritative owner path for the current domain implementation or contract; use subject to capability-specific readiness gates.",
+    "implementation-scaffold": "Canonical integration/API location with incomplete provider, persistence, model, or end-to-end behavior; do not advertise as live.",
+    "demo-surface": "Presentation/demo application source; it is not a security or decision authority."
+  },
+  "canonical_roots": [
+    {
+      "path": "apps/demo-web",
+      "owner": "Presentation",
+      "status": "demo-surface",
+      "scope": "Marketplace/demo UI; public commerce requests must use the supported BFF boundary."
+    },
+    {
+      "path": "packages/identity-intelligence/catacaci",
+      "owner": "CaTaCaCi / CAL",
+      "status": "canonical-source",
+      "scope": "Deterministic SHOW/BLOCK/REVIEW arbitration core."
+    },
+    {
+      "path": "packages/identity-intelligence/eepl",
+      "owner": "EEPL",
+      "status": "canonical-source",
+      "scope": "Eligibility and context gate domain rules."
+    },
+    {
+      "path": "packages/identity-intelligence/cultural_identity",
+      "owner": "Cultural Identity",
+      "status": "canonical-source",
+      "scope": "Explicit user-declared cultural constraints and typed evidence."
+    },
+    {
+      "path": "packages/identity-intelligence/usi",
+      "owner": "USI",
+      "status": "canonical-source",
+      "scope": "Style preference interpretation; separate from fit confidence."
+    },
+    {
+      "path": "packages/preferences/npl",
+      "owner": "NPL",
+      "status": "canonical-source",
+      "scope": "Negative preference capture, precedence, and hard-constraint enforcement."
+    },
+    {
+      "path": "packages/fit-intelligence/fci",
+      "owner": "FCI",
+      "status": "canonical-source",
+      "scope": "Fit-confidence contract and offline calibration evaluation utilities; trained/calibrated live inference is not certified."
+    },
+    {
+      "path": "packages/wardrobe",
+      "owner": "Wardrobe",
+      "status": "canonical-source",
+      "scope": "Wardrobe domain types and rules."
+    },
+    {
+      "path": "packages/shared-contracts",
+      "owner": "Shared contracts",
+      "status": "canonical-source",
+      "scope": "Shared versioned DTOs and schemas without business policy."
+    },
+    {
+      "path": "services/api-gateway",
+      "owner": "API Gateway",
+      "status": "implementation-scaffold",
+      "scope": "Authenticated orchestration and service adapters; production dependencies must be verified."
+    },
+    {
+      "path": "services/catalog-service",
+      "owner": "Catalog",
+      "status": "implementation-scaffold",
+      "scope": "Canonical product identity and metadata API; managed database and restore evidence required."
+    },
+    {
+      "path": "services/commerce-service",
+      "owner": "Commerce",
+      "status": "implementation-scaffold",
+      "scope": "Merchant, offer, inventory, order, checkout and payment APIs; live identity/payment E2E is not certified."
+    },
+    {
+      "path": "services/cultural-identity-service",
+      "owner": "Cultural Identity",
+      "status": "implementation-scaffold",
+      "scope": "Persistent declaration API and signed evidence boundary."
+    },
+    {
+      "path": "services/decision-service",
+      "owner": "Decision service",
+      "status": "implementation-scaffold",
+      "scope": "Internal decision/evidence API; not a second display arbiter."
+    },
+    {
+      "path": "services/dermalsight",
+      "owner": "DermalSight",
+      "status": "implementation-scaffold",
+      "scope": "Non-diagnostic skin-attribute API; inference is gated on approved model and validation evidence."
+    },
+    {
+      "path": "services/identity-learning-service",
+      "owner": "USI/TAL persistence",
+      "status": "implementation-scaffold",
+      "scope": "Internal consent-bound profile and temporal event persistence."
+    },
+    {
+      "path": "services/marketplace-bff",
+      "owner": "Marketplace BFF",
+      "status": "implementation-scaffold",
+      "scope": "Public same-origin marketplace boundary; upstream readiness and security gates apply."
+    },
+    {
+      "path": "services/npl-service",
+      "owner": "NPL",
+      "status": "implementation-scaffold",
+      "scope": "Persistence and signed evidence API for NPL domain rules."
+    },
+    {
+      "path": "services/recommendation-service",
+      "owner": "Complementer",
+      "status": "implementation-scaffold",
+      "scope": "Advisory recommendation API; it cannot authorize display."
+    },
+    {
+      "path": "services/virtual-try-on",
+      "owner": "Virtual Try-On",
+      "status": "implementation-scaffold",
+      "scope": "Rendering/simulation orchestration; validated renderer, consent, and asset authorization required."
+    },
+    {
+      "path": "services/virtual-twin",
+      "owner": "Virtual Twin",
+      "status": "implementation-scaffold",
+      "scope": "User-specific avatar/measurement representation; geometry and generation are not certified."
+    },
+    {
+      "path": "services/vision-intelligence",
+      "owner": "Vision Intelligence",
+      "status": "implementation-scaffold",
+      "scope": "Vision workflow APIs; model/runtime validation is capability-specific."
+    },
+    {
+      "path": "services/wardrobe-service",
+      "owner": "Wardrobe service",
+      "status": "implementation-scaffold",
+      "scope": "Wardrobe API and persistence boundary."
+    },
+    {
+      "path": "services/xari",
+      "owner": "Xari",
+      "status": "implementation-scaffold",
+      "scope": "Current assistant/orchestration surface; Tari/Xyra are legacy source labels."
+    }
+  ],
+  "quarantined_roots": [
+    {
+      "path": "integration-staging/source-intake",
+      "status": "archived",
+      "importable": false,
+      "scope": "Extracted original source and intake provenance."
+    },
+    {
+      "path": "integration-staging/source-candidates",
+      "status": "candidate",
+      "importable": false,
+      "scope": "Recovered candidate implementations; evaluate only in isolation."
+    },
+    {
+      "path": "integration-staging",
+      "status": "archive-and-staging",
+      "importable": false,
+      "scope": "All source archive, recovered monoliths, manifests, and staging-only material."
+    },
+    {
+      "path": "tests/cfrp_candidate",
+      "status": "candidate-tests",
+      "importable": false,
+      "scope": "Tests for the preserved CFRP V6 candidate only; not canonical runtime tests."
+    },
+    {
+      "path": "packages/fit-intelligence/cfrp",
+      "status": "candidate-marker",
+      "importable": false,
+      "scope": "Status/documentation marker for CFRP V6; no supported runtime API or implementation."
+    },
+    {
+      "path": "**/candidates/**",
+      "status": "candidate",
+      "importable": false,
+      "scope": "Candidate variants nested under canonical owners."
+    },
+    {
+      "path": "**/experimental/**",
+      "status": "experimental",
+      "importable": false,
+      "scope": "Experimental variants nested under canonical owners."
+    },
+    {
+      "path": "packages/identity-intelligence/cdic",
+      "status": "unpromoted-legacy-candidates",
+      "importable": false,
+      "scope": "Multiple incompatible CDIC generations; compatibility adapter only after comparison with CaTaCaCi/CAL."
+    },
+    {
+      "path": "packages/identity-intelligence/decision-engine",
+      "status": "unpromoted-candidate-marker",
+      "importable": false,
+      "scope": "Legacy TypeScript decision-engine intake marker; no second arbitration path."
+    }
+  ],
+  "promotion_policy": "A candidate may be promoted only through a reviewed PR that records provenance, contract comparison, one canonical owner, dependency/license/security/privacy review, tests, migration/rollback where applicable, and registry/documentation updates.",
+  "scaffold_only_roots": [
+    {
+      "path": "packages/identity-intelligence/cultural-identity",
+      "status": "source-intake-pointer",
+      "importable": false,
+      "scope": "README-only source-target pointer. Executable policy lives under cultural_identity; do not duplicate policy here."
+    },
+    {
+      "path": "services/graph-service",
+      "status": "scaffold-only",
+      "importable": false,
+      "scope": "README-only proposed graph persistence/query boundary; no current production service contract."
+    },
+    {
+      "path": "services/perception-service",
+      "status": "scaffold-only",
+      "importable": false,
+      "scope": "README-only proposed image/model adapter boundary; not a validated inference provider."
+    },
+    {
+      "path": "services/sync-service",
+      "status": "scaffold-only",
+      "importable": false,
+      "scope": "README-only proposed offline-sync boundary; no current production service contract."
+    }
+  ]
+}

@@ -1,5 +1,7 @@
 # Monorepo governance
 
+> Contributor entry point: [Source of truth and contributor guide](source-of-truth-and-contributor-guide.md). The [runtime source registry](runtime-source-registry.json) defines authoritative source roots and quarantined locations.
+
 ## Repository responsibility
 
 This repository owns Cirvanna product source: identity intelligence, fit intelligence, preference enforcement, cultural identity policy, wardrobe/catalog, virtual visualization, skin intelligence, orchestration and the web demo. The monorepo is the default because these domains share contracts and release coordination. A separate repository requires an explicit decision based on independent ownership, deployment, security boundary or release cadence—not merely a different language or module name.
@@ -22,7 +24,7 @@ This repository owns Cirvanna product source: identity intelligence, fit intelli
 - **USI** owns style preference interpretation, separate from fit confidence.
 - **NPL** owns negative-preference capture, persistence, precedence and enforcement.
 - **FCI** owns fit-confidence estimation and calibration.
-- **CFRP/CRFP** remains unresolved at intake. Keep the uploaded CFRP implementation isolated until its contract is compared with CRFP.
+- **CFRP V6 / CRFP** are distinct unresolved source labels. CFRP V6 remains quarantined; CRFP has no verified in-repository specification. Neither is a canonical capability. Follow [ADR-0002](adr/ADR-0002-crfp-cfrp-contract-status.md); do not create runtime imports or services from the names alone.
 - **Virtual Twin** owns user-specific avatar/body representation and measurements.
 - **Virtual Try-On** owns rendering/simulation orchestration, not preference policy.
 - **DermalSight** owns skin-perception and clinically sensitive data; it does not make unsupported diagnoses.
@@ -42,4 +44,4 @@ This repository owns Cirvanna product source: identity intelligence, fit intelli
 
 ## Source promotion gate
 
-Uploaded code is not promoted into runtime paths until it has one canonical version, complete files, dependency/license review, secret removal, static checks, unit tests, contract tests and integration/acceptance tests. Conflicting generations remain inventoried until reconciled.
+Uploaded code is not promoted into runtime paths until it has one canonical version, complete files, dependency/license review, secret removal, static checks, unit tests, contract tests and integration/acceptance tests. Conflicting generations remain inventoried until reconciled. Run `python scripts/validate_source_boundaries.py` to detect statically identifiable imports from source archives, candidate folders, and experimental paths. The guard is deliberately limited: dynamic filesystem loading, dependency/package indirection, generated code, and runtime behavior still require review.

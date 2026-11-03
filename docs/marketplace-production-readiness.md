@@ -3,6 +3,8 @@
 **Release status: BLOCKED — deployable code and CI coverage are not a substitute for live identity, database, payment and operating evidence.**  
 Last in-repository validation is tracked by the GitHub Actions workflows on the marketplace feature branch. This document is the required promotion record, not a claim that staging or production checks have already been executed.
 
+The machine-readable release ledger is [docs/release/release-gates.json](release/release-gates.json). All twelve required gates currently initialize as `blocked`. Keep the ledger and this runbook aligned; a gate can be changed to `passed` only with reviewable evidence tied to the exact full release commit. Run `python scripts/validate_release_gates.py --require-all-passed` as the final release gate. Ordinary CI only validates code and registry structure; it does not close operational gates.
+
 ## 1. Deployment topology
 
 Use the server-side Marketplace BFF as the only public browser origin:
@@ -76,7 +78,7 @@ The current repository does not certify these end-to-end: **TARI**, **CRFP/CFRP*
 
 ## 6. Promotion decision
 
-Do not merge/deploy to production until all of the following are recorded as passed:
+Do not merge/deploy to production until all of the following are recorded as passed in [the release evidence ledger](release/release-gates.json), with artifacts reviewed against the exact candidate commit:
 
 - [ ] All required GitHub Actions workflows pass for the exact merge candidate commit.
 - [ ] Paid production infrastructure budget/region and service ownership are approved and resources are provisioned.

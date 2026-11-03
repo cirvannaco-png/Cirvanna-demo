@@ -1,0 +1,128 @@
+{
+  "version": 1,
+  "repository": "cirvannaco-png/Cirvanna-demo",
+  "release_status": "blocked",
+  "policy": "No release may be marked ready until every required gate is passed with evidence tied to the exact release commit and reviewed by the accountable role. Automated CI is necessary but is not production certification.",
+  "gates": [
+    {
+      "id": "REL-01",
+      "name": "Exact-candidate CI",
+      "required": true,
+      "status": "blocked",
+      "owner_role": "Release engineer",
+      "acceptance": "All required GitHub Actions workflows pass on the exact proposed release commit; skips and warnings are reviewed and justified.",
+      "evidence_refs": [],
+      "verified_commit": null
+    },
+    {
+      "id": "REL-02",
+      "name": "Approved infrastructure and ownership",
+      "required": true,
+      "status": "blocked",
+      "owner_role": "Platform owner / budget approver",
+      "acceptance": "Approved workspace, region, paid plan/budget, service/database IDs, recovery owner, RPO/RTO, and alert recipient are recorded. No unrelated project's resources are reused.",
+      "evidence_refs": [],
+      "verified_commit": null
+    },
+    {
+      "id": "REL-03",
+      "name": "Managed database migrations and restore",
+      "required": true,
+      "status": "blocked",
+      "owner_role": "Database/reliability owner",
+      "acceptance": "Catalog and Commerce managed PostgreSQL schemas are migrated; identity-learning migration is applied to its approved shared PostgreSQL database; exact schema versions are verified; encrypted backup restores to an isolated clean database and row/constraint/order/payment/inventory invariants pass.",
+      "evidence_refs": [],
+      "verified_commit": null
+    },
+    {
+      "id": "REL-04",
+      "name": "Real OIDC identity and browser session lifecycle",
+      "required": true,
+      "status": "blocked",
+      "owner_role": "Identity/security owner",
+      "acceptance": "A real provider is configured for exact issuer/audience/JWKS and trusted role claims. Browser login, refresh, logout, expiry, key rotation, wrong issuer/audience and role isolation pass with provider-issued tokens. No shopper-pasted JWT flow.",
+      "evidence_refs": [],
+      "verified_commit": null
+    },
+    {
+      "id": "REL-05",
+      "name": "Stripe checkout, webhook, and reconciliation",
+      "required": true,
+      "status": "blocked",
+      "owner_role": "Commerce/payment owner",
+      "acceptance": "Stripe test-mode checkout, currency/amount metadata, idempotency, inventory reservation, failed/expired sessions, duplicate and invalid-signature webhook replay, paid transition, expiry and ambiguous-payment reconciliation pass. Redirect alone is not payment evidence.",
+      "evidence_refs": [],
+      "verified_commit": null
+    },
+    {
+      "id": "REL-06",
+      "name": "Real catalog, merchant, and inventory operations",
+      "required": true,
+      "status": "blocked",
+      "owner_role": "Marketplace operations owner",
+      "acceptance": "Approved merchant applications and human KYC decisions exist; real product/offer/variant/inventory data is reviewed; suspended merchants and unavailable stock cannot appear; concurrent checkout cannot oversell.",
+      "evidence_refs": [],
+      "verified_commit": null
+    },
+    {
+      "id": "REL-07",
+      "name": "CAL display gate and durable decision receipts",
+      "required": true,
+      "status": "blocked",
+      "owner_role": "Decision-platform owner",
+      "acceptance": "Every surfaced candidate passes through the sole CAL authority; only SHOW is released; BLOCK and REVIEW details stay withheld; durable decision receipts are committed before response release and include policy, contract, candidate, and evidence source versions.",
+      "evidence_refs": [],
+      "verified_commit": null
+    },
+    {
+      "id": "REL-08",
+      "name": "Independent safety and calibrated FCI providers",
+      "required": true,
+      "status": "blocked",
+      "owner_role": "Model/evidence validation owner",
+      "acceptance": "Real safety and FCI providers are independently validated with representative evaluation corpora, signed reports, pinned model/report hashes, scope/freshness checks, calibration and subgroup analysis, drift policy, and provider failure tests. Mocked PASS fixtures do not count.",
+      "evidence_refs": [],
+      "verified_commit": null
+    },
+    {
+      "id": "REL-09",
+      "name": "Security, privacy, consent, and deletion",
+      "required": true,
+      "status": "blocked",
+      "owner_role": "Security/privacy owner",
+      "acceptance": "Threat/security review, least-privilege service credentials, HTTPS/private networking, CORS/CSP/rate limits, secret scanning/rotation, log redaction, consent revocation, retention purge, export/deletion, tenant isolation, and privacy verification pass.",
+      "evidence_refs": [],
+      "verified_commit": null
+    },
+    {
+      "id": "REL-10",
+      "name": "Operational readiness and recovery",
+      "required": true,
+      "status": "blocked",
+      "owner_role": "Service operations owner",
+      "acceptance": "Dashboards, logs, latency/error alerts, on-call/contact ownership, support/refund/returns, fulfilment/shipping/tax procedures, incident response, backup schedule, rollback plan, timeout/dependency failure exercises, and incident/rollback drill are approved.",
+      "evidence_refs": [],
+      "verified_commit": null
+    },
+    {
+      "id": "REL-11",
+      "name": "Deployed staging end-to-end evidence",
+      "required": true,
+      "status": "blocked",
+      "owner_role": "QA/release owner",
+      "acceptance": "A real deployed staging journey covers identity, consented profile, discovery, hard constraints, CAL arbitration, checkout, webhook reconciliation, persistence, failure paths and audit. Evidence uses redacted request IDs and identifies the exact candidate commit.",
+      "evidence_refs": [],
+      "verified_commit": null
+    },
+    {
+      "id": "REL-12",
+      "name": "Capability claims and scope sign-off",
+      "required": true,
+      "status": "blocked",
+      "owner_role": "Product owner / risk approver",
+      "acceptance": "Each capability is labelled live, limited, unavailable, or deferred from actual evidence. Product owner signs off launch scope for FCI, safety, NPL/USI, CAL, DermalSight, Virtual Twin, Virtual Try-On, Xari, and all unresolved modules; no unsupported accuracy or production claims remain.",
+      "evidence_refs": [],
+      "verified_commit": null
+    }
+  ]
+}

@@ -7,6 +7,7 @@ on:
       - "architecture/**"
       - "integration/**"
       - "migration/**"
+      - "governance/**"
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -31,6 +32,10 @@ jobs:
         run: python scripts/audit_source_lineage.py --allow-unreconciled
       - name: Verify file-level code-snippet inventory
         run: python scripts/build_code_snippet_inventory.py --check
+      - name: Validate canonical source import boundaries
+        run: python scripts/validate_source_boundaries.py
+      - name: Validate production release gate registry
+        run: python scripts/validate_release_gates.py
       - name: Run architecture tests
         run: python -m unittest discover -s tests/architecture -v
       - name: Audit source for credential patterns

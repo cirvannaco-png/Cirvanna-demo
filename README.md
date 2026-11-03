@@ -470,6 +470,8 @@ The Complementer and Catalog product-intelligence work was merged through [PR #7
 
 ## Contribution rules
 
+Start with the [Source of truth and contributor guide](docs/architecture/source-of-truth-and-contributor-guide.md), the [runtime source registry](docs/architecture/runtime-source-registry.json), and the [CRFP/CFRP status ADR](docs/architecture/adr/ADR-0002-crfp-cfrp-contract-status.md). Canonical source, candidate, experimental, archived, and scaffold paths are deliberately distinct; never promote by copying or renaming alone.
+
 1. Inspect the current branch, code, architecture owner, service contract, and tests before editing.
 2. Prefer one small, complete, testable integration over disconnected feature stubs.
 3. Do not add a duplicate user, product, preference, or audit database when a canonical owner exists.
@@ -480,6 +482,7 @@ The Complementer and Catalog product-intelligence work was merged through [PR #7
 8. Document configuration, limitations, migration impact, and rollback.
 9. Run actual CI and report its commit SHA and limitations.
 10. Update this README when verified implementation status changes.
+11. Run the source-boundary and release-ledger validators; state their limits and do not mark a release gate passed without evidence for the exact commit.
 
 ## Architecture references
 
@@ -488,6 +491,10 @@ The Complementer and Catalog product-intelligence work was merged through [PR #7
 - [CaTaCaCi decision contract ADR](docs/architecture/adr/ADR-0001-catacaci-decision-contract.md)
 - [Feature spine readiness](docs/architecture/feature-spine-readiness-2026-10-23.md)
 - [Monorepo governance](docs/architecture/monorepo-governance.md)
+- [Source of truth and contributor guide](docs/architecture/source-of-truth-and-contributor-guide.md)
+- [Runtime source registry](docs/architecture/runtime-source-registry.json)
+- [CRFP/CFRP contract status ADR](docs/architecture/adr/ADR-0002-crfp-cfrp-contract-status.md)
+- [Production release evidence gates](docs/release/README.md)
 - [Catalog](services/catalog-service/README.md)
 - [Complementer](services/recommendation-service/README.md)
 - [NPL](services/npl-service/README.md)
