@@ -55,7 +55,7 @@ class SourceBoundaryTests(unittest.TestCase):
             source = root / "services" / "gateway"
             source.mkdir(parents=True)
             (source / "handler.py").write_text(
-                "from . import candidates\\n", encoding="utf-8"
+                "from . import candidates\n", encoding="utf-8"
             )
             errors = scan_source_boundaries(root, ["services/gateway"])
             self.assertEqual(len(errors), 1)
