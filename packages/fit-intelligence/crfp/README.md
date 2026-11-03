@@ -2,7 +2,7 @@
 
 **Canonical spelling:** CRFP. The former CFRP spelling was a typo, not a separate capability.
 
-CRFP has two separately owned scopes:
+CRFP has two distinct scopes:
 
 - [System-wide CRFP](system/README.md) — the CRFP scope used throughout Cirvanna.
 - [Marketplace CRFP](marketplace/README.md) — the CRFP scope belonging to marketplace workflows.
