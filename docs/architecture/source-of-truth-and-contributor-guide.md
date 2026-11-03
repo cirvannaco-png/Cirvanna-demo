@@ -56,6 +56,10 @@ The following are not runtime import roots:
 - `integration-staging/recovered-*` and similar recovered monoliths — research references, not deployable services;
 - `packages/**/candidates/` and `packages/**/experimental/` — isolated candidate implementations;
 - `tests/cfrp_candidate/` — candidate-only tests, not production package tests.
+- `packages/identity-intelligence/cdic/` and `packages/identity-intelligence/decision-engine/` — unpromoted legacy/candidate markers; CAL remains the only display arbiter.
+- `packages/identity-intelligence/cultural-identity/` — README-only source-intake pointer; executable cultural policy is under `cultural_identity/`.
+
+The following service directories are README-only proposed boundaries, not currently supported deployable services: `services/graph-service/`, `services/perception-service/`, and `services/sync-service/`. Their presence does not authorize consumers, deployments, or additional policy/data ownership. A future service proposal must meet the monorepo's service-boundary criteria and receive a reviewed contract/ADR before implementation.
 
 Do not rename these directories to make them importable. Do not add the archive to `PYTHONPATH`, TypeScript path aliases, build roots, container contexts, or service runtime images. A canonical implementation must live in its owner path and must have its own source/provenance record.
 
