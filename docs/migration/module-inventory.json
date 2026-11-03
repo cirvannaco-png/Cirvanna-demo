@@ -172,9 +172,9 @@
       "lineStart": 6188,
       "lineEnd": 7999,
       "targets": [
-        "packages/fit-intelligence/crfp/system"
+        "packages/fit-intelligence/crfp"
       ],
-      "note": "Historical source artifact with an acronym typo in its original filename; canonical concept spelling is CRFP. Exact scope mapping requires source-owner verification."
+      "note": "Historical source artifact with an acronym typo in its original filename; canonical concept spelling is CRFP. Exact mapping to marketplace or system-wide scope remains unverified."
     },
     {
       "artifact": "EEPL V2.0.txt",
@@ -420,15 +420,6 @@
         "services/catalog-service"
       ],
       "note": "Root configuration/common-module candidate; source says further parts were still to follow."
-    },
-    {
-      "artifact": "Marketplace CRFP specification (source not yet located)",
-      "lineStart": null,
-      "lineEnd": null,
-      "targets": [
-        "packages/fit-intelligence/crfp/marketplace"
-      ],
-      "note": "Marketplace scope explicitly identified by product owner; authoritative source artifact and implementation remain to be located."
     }
   ]
 }
