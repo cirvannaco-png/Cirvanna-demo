@@ -25,7 +25,7 @@ The product owner clarified that **CFRP was a typo**. The canonical acronym is *
 | Reach | Across Cirvanna domains and system components | Marketplace workflows |
 | Responsibility | Shared CRFP semantics and contract | Marketplace-specific CRFP requirements and integration |
 | Contract | System-wide versioned contract | Marketplace-scoped contract compatible with shared semantics |
-| Ownership | CRFP domain owner | Marketplace owner for marketplace-specific requirements |
+| Ownership | Shared system-wide CRFP ownership; accountable owner to be formally assigned | Marketplace-specific ownership; accountable owner to be formally assigned |
 | Prohibited shortcut | Must not absorb marketplace-only assumptions | Must not fork or override shared system-wide authority |
 
 The table establishes scope boundaries, not unverified business rules. Exact inputs, outputs, algorithms, data ownership, and authority semantics remain specification work.
