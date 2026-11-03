@@ -74,7 +74,7 @@ Retain the exact candidate commit, CI links, migration output, database restore 
 
 ## 5. Cirvanna vision modules that must not be advertised as live
 
-The current repository does not certify these end-to-end: **TARI**, **CRFP/CFRP** (the names/contracts are unresolved and must not be merged by guesswork), trained/calibrated **FCI** fit inference, personalized NPL/USI evaluation on real user data, **CaTaCaCi** arbitration wired into storefront display suppression, **Click It** reconstruction, **Virtual Twin** geometry or real virtual try-on rendering. The deterministic EEPL/NPL/USI/FCI-evidence/CAL contract tests are not proof those production integrations and underlying models exist. Keep each capability visibly unavailable until its own provider, evaluation corpus, policy, authorization, latency/failure and user-consent gates are evidenced.
+The current repository does not certify these end-to-end: **TARI**, **Marketplace CRFP and system-wide CRFP** (their separate scope contracts and production integrations are not yet certified), trained/calibrated **FCI** fit inference, personalized NPL/USI evaluation on real user data, **CaTaCaCi** arbitration wired into storefront display suppression, **Click It** reconstruction, **Virtual Twin** geometry or real virtual try-on rendering. The deterministic EEPL/NPL/USI/FCI-evidence/CAL contract tests are not proof those production integrations and underlying models exist. Keep each capability visibly unavailable until its own provider, evaluation corpus, policy, authorization, latency/failure and user-consent gates are evidenced.
 
 ## 6. Promotion decision
 
