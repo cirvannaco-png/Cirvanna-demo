@@ -60,8 +60,12 @@ def python_imports(source: str, file_path: Path) -> list[tuple[int, str]]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             found.extend((node.lineno, alias.name) for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module:
-            found.append((node.lineno, node.module))
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                found.append((node.lineno, node.module))
+            else:
+                # "from . import candidates" has no node.module; inspect aliases too.
+                found.extend((node.lineno, alias.name) for alias in node.names)
         elif isinstance(node, ast.Call):
             function_name = ""
             if isinstance(node.func, ast.Name):
