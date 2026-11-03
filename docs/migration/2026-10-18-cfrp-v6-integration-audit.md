@@ -49,3 +49,8 @@ Promotion is blocked until the runtime-failure paths and persistence/recovery bl
 ## Evidence and limits
 
 This review was based on GitHub source inspection of the staged CFRP V6 candidate and the catalog service README. No claim is made that local tests, integration tests, load tests, or deployment verification were run as part of this review.
+
+
+## 2026-11-03 naming correction
+
+The earlier CFRP label in this audit was a typo. The canonical acronym is CRFP. The product owner has clarified two distinct scopes: marketplace CRFP and system-wide CRFP. This source-level audit describes a historical source candidate only; it does not establish which CRFP scope that candidate belongs to. See [ADR-0003](../architecture/adr/ADR-0003-crfp-marketplace-and-system-scopes.md). Preserve the original audit and source artifact for provenance; do not treat the typo as a separate capability.
