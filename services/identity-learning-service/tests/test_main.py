@@ -368,7 +368,7 @@ def test_expired_look_it_consent_is_never_verified(client, monkeypatch):
     }
     active = client.post("/internal/v1/consents/verify", headers=auth(), json=verify_payload)
     assert active.status_code == 200, active.text
-    assert active.json()["expires_at"] == expires_at.isoformat()
+    assert main.parse_time(active.json()["expires_at"]) == expires_at
 
     clock["now"] = expires_at + timedelta(seconds=1)
     expired = client.post("/internal/v1/consents/verify", headers=auth(), json=verify_payload)
