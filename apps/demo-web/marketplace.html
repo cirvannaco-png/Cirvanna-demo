@@ -68,7 +68,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
         <form id="lookItForm">
           <div class="ai-controls">
             <input id="lookItImage" class="wide" type="file" accept="image/jpeg,image/png,image/webp" aria-label="Choose a sketch, inspiration image or personal reference" required>
-            <input id="lookItConsentId" class="wide" type="text" maxlength="160" minlength="8" autocomplete="off" placeholder="Active Look It consent record ID" aria-label="Active Look It consent record ID" required>
+            <p class="wide">Cirvanna records a one-search consent receipt for these two purposes and revokes it after the search finishes.</p>
           </div>
           <label class="consent-line"><input id="lookItImageConsent" type="checkbox" required><span>I consent to processing this reference image for Look It. Image processing is ephemeral.</span></label>
           <label class="consent-line"><input id="lookItSearchConsent" type="checkbox" required><span>I separately consent to the PNELLY Look It search purpose. The server verifies the active consent record.</span></label>
@@ -313,7 +313,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     if(!["image/jpeg","image/png","image/webp"].includes(image.type)){setAiStatus("lookItStatus","Use a JPEG, PNG or WEBP image.",true);return}
     if(!$("lookItImageConsent").checked||!$("lookItSearchConsent").checked){setAiStatus("lookItStatus","Both Look It consent controls are required.",true);return}
     const form=new FormData();
-    form.append("consent_id",$("lookItConsentId").value.trim());
+    form.append("consent_id",crypto.randomUUID());
     form.append("consent_image_processing","true");
     form.append("consent_look_it","true");
     form.append("reference_image",image);
