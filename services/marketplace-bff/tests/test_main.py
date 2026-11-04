@@ -269,7 +269,7 @@ def test_portal_pages_and_assets_are_served_from_same_origin(client):
     assert brand.headers["cache-control"] == "no-store"
     assert founder.headers["cache-control"] == "no-store"
     assert "Brand Partner Portal" in brand.text
-    assert "Founder Console" in founder.text
+    assert "Founder Commerce Console" in founder.text
     assert "/merchant/listings" in brand_js.text
     assert "/admin/merchant-decisions" in founder_js.text
     assert "localStorage" not in brand_js.text
