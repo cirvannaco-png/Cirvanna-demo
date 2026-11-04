@@ -1,4 +1,4 @@
-"""Authenticated Tari route planning and marketplace-description search.
+"""Authenticated Xari route planning and marketplace-description search.
 
 The dedicated marketplace-search endpoint executes the private model-backed
 retrieval adapter; candidates still require NPL/cultural constraints and CAL.
@@ -18,28 +18,28 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from xari.routing import ROUTES, plan_route
 
-SERVICE = "cirvanna-tari"
+SERVICE = "cirvanna-xari"
 bearer = HTTPBearer(auto_error=False)
 app = FastAPI(
-    title="Cirvanna Tari API",
+    title="Cirvanna Xari API",
     version="0.1.0",
-    description="Tari route planning and configuration-gated marketplace description search.",
+    description="Xari route planning and configuration-gated marketplace description search.",
 )
 
 def require_api_token(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
 ) -> None:
-    expected = os.getenv("TARI_API_TOKEN", "").strip() or os.getenv("XARI_API_TOKEN", "").strip()
+    expected = os.getenv("XARI_API_TOKEN", "").strip() or os.getenv("TARI_API_TOKEN", "").strip()
     if len(expected.encode("utf-8")) < 32 or credentials is None:
         raise HTTPException(
             status_code=401,
-            detail="Valid Tari bearer authentication is required.",
+            detail="Valid Xari bearer authentication is required.",
             headers={"WWW-Authenticate": "Bearer"},
         )
     if not hmac.compare_digest(credentials.credentials, expected):
         raise HTTPException(
             status_code=401,
-            detail="Invalid Tari bearer token.",
+            detail="Invalid Xari bearer token.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -127,7 +127,7 @@ def health() -> dict[str, str]:
 
 @app.get("/ready", tags=["operations"])
 def readiness() -> dict[str, object]:
-    token = os.getenv("TARI_API_TOKEN", "").strip() or os.getenv("XARI_API_TOKEN", "").strip()
+    token = os.getenv("XARI_API_TOKEN", "").strip() or os.getenv("TARI_API_TOKEN", "").strip()
     token_configured = len(token.encode("utf-8")) >= 32
     search_configured = _marketplace_search_config() is not None
     result = {
@@ -147,8 +147,8 @@ def capabilities() -> dict[str, object]:
     return {
         "service": SERVICE,
         "contract_version": "1.0.0",
-        "canonical_name": "Tari",
-        "legacy_names": ["Xari", "Xyra"],
+        "canonical_name": "Xari",
+        "legacy_names": ["Tari", "Xyra"],
         "execution_enabled": _marketplace_search_config() is not None,
         "marketplace_description_search": {
             "implemented": True,
