@@ -577,6 +577,107 @@ async def search_by_description(payload: TextSearchRequest) -> dict[str, Any]:
     }
 
 
+OUTFIT_COMPONENT_CATEGORIES = {
+    "upper_body", "lower_body", "dress", "outerwear", "footwear", "accessory", "beauty", "full_outfit",
+}
+
+async def _decompose_outfit(image: Image.Image) -> dict[str, Any]:
+    """Use only a trusted, pinned provider whose validation-report hash is configured."""
+    base = _trusted_base("OUTFIT_DECOMPOSITION_API_URL", required=False)
+    token = os.getenv("OUTFIT_DECOMPOSITION_API_TOKEN", "").strip()
+    report_hash = os.getenv("OUTFIT_DECOMPOSITION_VALIDATION_REPORT_SHA256", "").strip().lower()
+    if not base or len(token.encode('utf-8')) < 32 or not SHA256.fullmatch(report_hash):
+        return {"status": "unavailable", "reason": "VALIDATED_OUTFIT_DECOMPOSITION_PROVIDER_NOT_CONFIGURED", "components": []}
+    buffer = io.BytesIO()
+    image.convert('RGB').save(buffer, format='JPEG', quality=92, optimize=True)
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+            response = await client.post(base + "/v1/decompose",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                files={"image": ("look-it-reference.jpg", buffer.getvalue(), "image/jpeg")})
+    except (httpx.TimeoutException, httpx.HTTPError):
+        return {"status": "unavailable", "reason": "OUTFIT_DECOMPOSITION_PROVIDER_UNAVAILABLE", "components": []}
+    if response.status_code != 200:
+        return {"status": "unavailable", "reason": "OUTFIT_DECOMPOSITION_PROVIDER_REJECTED", "components": []}
+    try:
+        payload = response.json()
+    except ValueError:
+        return {"status": "unavailable", "reason": "OUTFIT_DECOMPOSITION_RESPONSE_INVALID", "components": []}
+    model = payload.get("model") if isinstance(payload, dict) else None
+    components = payload.get("components") if isinstance(payload, dict) else None
+    if not (
+        isinstance(payload, dict) and payload.get("status") == "complete"
+        and payload.get("validation_report_sha256") == report_hash
+        and isinstance(model, dict) and isinstance(model.get("id"), str) and model.get("id").strip()
+        and isinstance(model.get("revision"), str) and SHA40.fullmatch(model.get("revision", ""))
+        and isinstance(components, list) and 1 <= len(components) <= 12
+    ):
+        return {"status": "unavailable", "reason": "OUTFIT_DECOMPOSITION_VALIDATION_OR_SCHEMA_FAILED", "components": []}
+    normalized = []
+    for item in components:
+        if not isinstance(item, dict):
+            return {"status": "unavailable", "reason": "OUTFIT_DECOMPOSITION_COMPONENT_INVALID", "components": []}
+        component_id = item.get("component_id")
+        category = item.get("category")
+        description = item.get("description")
+        if not (isinstance(component_id, str) and 1 <= len(component_id.strip()) <= 80
+            and isinstance(category, str) and category.strip().casefold() in OUTFIT_COMPONENT_CATEGORIES
+            and isinstance(description, str) and 3 <= len(description.strip()) <= 500):
+            return {"status": "unavailable", "reason": "OUTFIT_DECOMPOSITION_COMPONENT_INVALID", "components": []}
+        normalized.append({
+            "component_id": component_id.strip(),
+            "category": category.strip().casefold(),
+            "description": " ".join(description.split())[:500],
+        })
+    return {
+        "status": "complete", "model": {"id": model["id"], "revision": model["revision"]},
+        "validation_report_sha256": report_hash, "components": normalized,
+    }
+
+def _merchant_comparison_snapshot(offers: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compare only canonical variants backed by explicit offer observation timestamps."""
+    required = ("canonical_variant_id", "offer_observed_at", "merchant_id", "merchant_name", "price_minor", "currency", "available_stock")
+    if not offers or any(not all(key in offer for key in required) for offer in offers):
+        return {"status": "unavailable", "reason": "CANONICAL_VARIANT_ID_AND_OFFER_OBSERVATION_TIMESTAMP_REQUIRED", "groups": []}
+    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for offer in offers:
+        canonical_variant = offer.get("canonical_variant_id")
+        observed_at = offer.get("offer_observed_at")
+        currency = offer.get("currency")
+        price = offer.get("price_minor")
+        stock = offer.get("available_stock")
+        if not (isinstance(canonical_variant, str) and canonical_variant.strip()
+            and isinstance(currency, str) and re.fullmatch(r"[A-Z]{3}", currency)
+            and isinstance(price, int) and not isinstance(price, bool) and price >= 0
+            and isinstance(stock, int) and not isinstance(stock, bool) and stock > 0
+            and isinstance(offer.get("merchant_id"), str) and isinstance(offer.get("merchant_name"), str)
+            and isinstance(observed_at, str) and observed_at.strip()):
+            return {"status": "unavailable", "reason": "CANONICAL_OFFER_FIELDS_INVALID", "groups": []}
+        groups.setdefault((canonical_variant, currency), []).append({
+            "merchant_id": offer["merchant_id"], "merchant_name": offer["merchant_name"],
+            "price_minor": price, "currency": currency, "available_stock": stock,
+            "offer_observed_at": observed_at,
+        })
+    comparisons = []
+    for (canonical_variant, currency), merchants in groups.items():
+        distinct = {item["merchant_id"] for item in merchants}
+        if len(distinct) >= 2:
+            comparisons.append({"canonical_variant_id": canonical_variant, "currency": currency, "offers": sorted(merchants, key=lambda item: item["price_minor"])})
+    if not comparisons:
+        return {"status": "unavailable", "reason": "NO_MULTI_MERCHANT_CANONICAL_VARIANT_GROUPS", "groups": []}
+    return {"status": "complete", "groups": comparisons, "landed_cost_included": False}
+
+async def _match_decomposed_components(decomposition: dict[str, Any], offers: list[dict[str, Any]], limit: int) -> dict[str, Any]:
+    if decomposition.get("status") != "complete":
+        return decomposition
+    matches = []
+    for component in decomposition["components"]:
+        query = component["description"]
+        vector = _text_embedding("A marketplace garment component matching this description: " + query)
+        candidates = _rank_offers(vector, offers, limit)
+        matches.append({**component, "candidates": candidates, "scores_are_probabilities": False})
+    return {**decomposition, "components": matches}
+
 @app.post("/v1/search/image", dependencies=[Depends(require_worker_auth)], tags=["look-it"])
 async def look_it_image_search(
     consent_image_processing: Annotated[bool, Form()],
@@ -604,6 +705,9 @@ async def look_it_image_search(
         selected = category.strip().casefold()
         offers = [item for item in offers if str(item.get('category', '')).casefold() == selected or str((item.get('product') or {}).get('category', '')).casefold() == selected]
     results = _rank_offers(query_vector, offers, limit)
+    decomposition = await _decompose_outfit(decoded)
+    decomposition = await _match_decomposed_components(decomposition, offers, limit)
+    merchant_comparison = _merchant_comparison_snapshot(offers)
     return {
         'status': 'complete',
         'search_mode': 'look_it_image_to_catalog_text_similarity',
@@ -615,9 +719,9 @@ async def look_it_image_search(
         'model': {'id': MODEL_ID, 'revision': os.getenv('CLIP_MODEL_REVISION')},
         'scores_are_probabilities': False,
         'image_persisted': False,
-        'outfit_decomposition': {'status': 'unavailable', 'reason': 'VALIDATED_OUTFIT_DECOMPOSITION_MODEL_NOT_CONFIGURED', 'components': []},
-        'merchant_comparison': {'status': 'unavailable', 'reason': 'CANONICAL_VARIANT_ID_AND_OFFER_OBSERVATION_TIMESTAMP_REQUIRED'},
-        'warning': 'Image-to-text similarity is not a calibrated probability, garment decomposition, fit estimate or purchase authorization.',
+        'outfit_decomposition': decomposition,
+        'merchant_comparison': merchant_comparison,
+        'warning': 'Image similarity is not a calibrated probability or fit estimate. Components are only returned when a provider matches the configured validation-report hash. Product display still requires CAL SHOW.',
     }
 
 @app.post("/v1/click-it/scan", dependencies=[Depends(require_worker_auth)], tags=["click-it"])
