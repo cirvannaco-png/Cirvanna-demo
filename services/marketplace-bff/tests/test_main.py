@@ -295,8 +295,11 @@ def test_look_it_uses_verified_subject_and_dedicated_pnelly_endpoint(client, mon
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
     monkeypatch.setenv("PNELLY_API_URL", "https://pnelly.example.test")
     monkeypatch.setenv("PNELLY_API_TOKEN", "pnelly-internal-token-at-least-thirty-two-bytes")
+    monkeypatch.setenv("CONSENT_API_URL", "https://identity.example.test")
+    monkeypatch.setenv("CONSENT_API_TOKEN", "consent-internal-token-at-least-thirty-two-bytes")
     fake = FakeAsyncClient([
         FakeResponse({"user_id": "signed-user-77", "role": "customer"}),
+        FakeResponse({"consent_id": "look-consent-1234", "status": "recorded", "granted_scopes": ["image_processing", "look_it"]}),
         FakeResponse({
             "status": "complete",
             "search_mode": "pnelly_look_it_image_to_catalog_text_similarity",
@@ -307,6 +310,7 @@ def test_look_it_uses_verified_subject_and_dedicated_pnelly_endpoint(client, mon
             "outfit_decomposition": {"status": "unavailable", "components": []},
             "merchant_comparison": {"status": "unavailable"},
         }),
+        FakeResponse({"consent_id": "look-consent-1234", "status": "revoked"}),
     ])
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.post(
@@ -325,12 +329,17 @@ def test_look_it_uses_verified_subject_and_dedicated_pnelly_endpoint(client, mon
     assert response.headers["cache-control"] == "no-store, private"
     assert response.json()["display_authorized"] is False
     assert response.json()["decision_status"] == "PENDING_CAL"
-    assert len(fake.calls) == 2
+    assert len(fake.calls) == 4
     assert fake.calls[0][1] == "https://commerce.example.test/me"
-    assert fake.calls[1][1] == "https://pnelly.example.test/v1/marketplace/search/image"
-    assert fake.calls[1][2]["data"]["subject_id"] == "signed-user-77"
-    assert fake.calls[1][2]["data"]["consent_look_it"] == "true"
-    assert fake.calls[1][2]["files"]["image"][1] == b"reference-image-bytes"
+    assert fake.calls[1][1] == "https://identity.example.test/internal/v1/consents/record"
+    assert fake.calls[1][2]["json"]["subject_id"] == "signed-user-77"
+    assert fake.calls[1][2]["json"]["granted_scopes"] == ["image_processing", "look_it"]
+    assert fake.calls[2][1] == "https://pnelly.example.test/v1/marketplace/search/image"
+    assert fake.calls[2][2]["data"]["subject_id"] == "signed-user-77"
+    assert fake.calls[2][2]["data"]["consent_look_it"] == "true"
+    assert fake.calls[2][2]["files"]["image"][1] == b"reference-image-bytes"
+    assert fake.calls[3][1] == "https://identity.example.test/internal/v1/consents/revoke"
+    assert fake.calls[3][2]["json"]["consent_id"] == "look-consent-1234"
     assert "subject_id" not in response.request.content.decode(errors="ignore")
 
 
