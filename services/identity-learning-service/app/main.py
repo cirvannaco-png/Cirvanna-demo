@@ -128,6 +128,7 @@ class ConsentBundle(Base):
     consent_version: Mapped[str] = mapped_column(String(80), nullable=False)
     resource_id: Mapped[str | None] = mapped_column(String(160))
     granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
@@ -168,6 +169,14 @@ class ConsentBundleRecord(StrictModel):
     granted_scopes: list[str] = Field(min_length=1, max_length=10)
     consent_version: str = Field(min_length=1, max_length=80)
     resource_id: str | None = Field(default=None, min_length=3, max_length=160)
+    expires_at: str | None = None
+
+    @field_validator("expires_at")
+    @classmethod
+    def valid_expiry(cls, value):
+        if value is not None and parse_time(value) <= utcnow():
+            raise ValueError("expires_at must be in the future")
+        return value
 
     @field_validator("granted_scopes")
     @classmethod
@@ -254,6 +263,13 @@ def subject_or_404(subject_id: str) -> str:
     return subject
 
 
+def _as_utc(value: datetime) -> datetime:
+    """Normalize DB datetimes (including SQLite's naive test values) to UTC."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _event_hash(payload: EventPut) -> str:
     body = payload.model_dump(mode="json")
     canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
@@ -287,6 +303,9 @@ def record_consent_bundle(payload: ConsentBundleRecord, db: Annotated[Session, D
             and sorted(existing.granted_scopes) == payload.granted_scopes
             and existing.consent_version == payload.consent_version
             and existing.resource_id == payload.resource_id
+            and (
+                _as_utc(existing.expires_at) if existing.expires_at is not None else None
+            ) == (parse_time(payload.expires_at) if payload.expires_at is not None else None)
         )
         if not same:
             raise HTTPException(409, detail={"code": "CONSENT_BUNDLE_IMMUTABLE"})
@@ -300,6 +319,7 @@ def record_consent_bundle(payload: ConsentBundleRecord, db: Annotated[Session, D
         consent_version=payload.consent_version,
         resource_id=payload.resource_id,
         granted_at=utcnow(),
+        expires_at=parse_time(payload.expires_at) if payload.expires_at is not None else None,
     )
     db.add(row)
     try:
@@ -324,6 +344,8 @@ def verify_consent_bundle(payload: ConsentBundleVerify, db: Annotated[Session, D
         raise HTTPException(404, detail={"code": "CONSENT_BUNDLE_NOT_FOUND"})
     if row.revoked_at is not None:
         raise HTTPException(403, detail={"code": "CONSENT_BUNDLE_REVOKED"})
+    if row.expires_at is not None and _as_utc(row.expires_at) <= utcnow():
+        raise HTTPException(403, detail={"code": "CONSENT_BUNDLE_EXPIRED"})
     if not set(payload.required_scopes).issubset(set(row.granted_scopes)):
         raise HTTPException(403, detail={"code": "CONSENT_SCOPE_NOT_GRANTED"})
     if payload.resource_id is not None and row.resource_id != payload.resource_id:
@@ -337,6 +359,7 @@ def verify_consent_bundle(payload: ConsentBundleVerify, db: Annotated[Session, D
         "resource_id": row.resource_id,
         "consent_version": row.consent_version,
         "granted_at": row.granted_at.isoformat(),
+        "expires_at": row.expires_at.isoformat() if row.expires_at else None,
         "revoked_at": None,
     }
 
