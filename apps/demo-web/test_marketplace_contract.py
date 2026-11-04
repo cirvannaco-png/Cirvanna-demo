@@ -41,7 +41,7 @@ class MarketplaceContractTests(unittest.TestCase):
     def test_tari_is_the_marketplace_assistant_and_complementer_is_advisory(self):
         self.assertIn("Tari · Describe it", HTML)
         self.assertIn("Search marketplace with Tari", HTML)
-        self.assertIn("Complementer can provide optional styling advice", HTML)
+        self.assertIn("Complementer is designed as optional styling advice", HTML)
         self.assertIn("price comparisons must use current Commerce offers", HTML)
         self.assertNotIn("Xari · Describe it", HTML)
 
