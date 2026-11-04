@@ -63,7 +63,8 @@ def offer_is_fresh(observed_at: datetime | None) -> bool:
         return False
     if observed_at.tzinfo is None:
         observed_at = observed_at.replace(tzinfo=timezone.utc)
-    return observed_at >= now() - timedelta(seconds=offer_max_age_seconds())
+    current = now()
+    return current - timedelta(seconds=offer_max_age_seconds()) <= observed_at <= current + timedelta(minutes=5)
 
 
 def make_engine(url: str):
@@ -1004,10 +1005,10 @@ def create_variant(listing_id: uuid.UUID, payload: VariantIn,
         raise HTTPException(404, detail={"code": "LISTING_NOT_FOUND"})
     if listing.state != "active":
         raise HTTPException(409, detail={"code": "LISTING_NOT_ACTIVE"})
-    require_canonical = os.getenv(
-        "COMMERCE_REQUIRE_CANONICAL_VARIANT_ID",
-        "true" if os.getenv("COMMERCE_ENVIRONMENT", "").strip().lower() == "production" else "false",
-    ).strip().lower() == "true"
+    require_canonical = (
+        os.getenv("COMMERCE_ENVIRONMENT", "").strip().lower() == "production"
+        or os.getenv("COMMERCE_REQUIRE_CANONICAL_VARIANT_ID", "false").strip().lower() == "true"
+    )
     if require_canonical and not payload.canonical_variant_id:
         raise HTTPException(422, detail={"code": "CANONICAL_VARIANT_ID_REQUIRED"})
     if payload.canonical_variant_id:
