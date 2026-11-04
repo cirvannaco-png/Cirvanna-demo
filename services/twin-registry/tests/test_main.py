@@ -79,29 +79,37 @@ def create_twin(client, mesh_id, **overrides):
 
 
 def register_person(client, **overrides):
-    return register(
-        client,
-        asset_kind="person_reference",
-        storage_object_key="person-reference-key",
-        content_type="image/jpeg",
-        twin_id="twin-123",
-        **overrides,
-    )
+    body = {
+        "owner_subject_id": "customer-123",
+        "tenant_id": "customer-123",
+        "asset_kind": "person_reference",
+        "access_scope": "private",
+        "twin_id": "twin-123",
+        "product_id": None,
+        "storage_object_key": "person-reference-key",
+        "content_type": "image/jpeg",
+        "byte_size": 1024,
+        "sha256": "a" * 64,
+    }
+    body.update(overrides)
+    return client.post("/internal/v1/assets/register", headers=auth(), json=body)
 
 
 def register_garment(client, **overrides):
-    return register(
-        client,
-        owner_subject_id=None,
-        tenant_id="catalog:merchant-1",
-        asset_kind="catalog_garment",
-        access_scope="catalog",
-        twin_id=None,
-        product_id="product-123",
-        storage_object_key="catalog-garment-key",
-        content_type="image/webp",
-        **overrides,
-    )
+    body = {
+        "owner_subject_id": None,
+        "tenant_id": "catalog:merchant-1",
+        "asset_kind": "catalog_garment",
+        "access_scope": "catalog",
+        "twin_id": None,
+        "product_id": "product-123",
+        "storage_object_key": "catalog-garment-key",
+        "content_type": "image/webp",
+        "byte_size": 1024,
+        "sha256": "b" * 64,
+    }
+    body.update(overrides)
+    return client.post("/internal/v1/assets/register", headers=auth(), json=body)
 
 
 def test_internal_registry_requires_machine_auth(client):
