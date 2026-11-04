@@ -76,6 +76,16 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
         </form>
         <div class="ai-status" id="lookItStatus" role="status" aria-live="polite">Look It uses a separate PNELLY endpoint and consent purpose. Outfit decomposition and merchant comparison remain unavailable until their model and canonical offer evidence gates pass.</div>
       </section>
+      <section class="lookit-subpanel" aria-labelledby="complementerTitle">
+        <div class="eyebrow">Optional collaborator · Complementer</div>
+        <h3 id="complementerTitle">Ask for styling guidance</h3>
+        <p>Optional, user-invoked styling advice. Complementer cannot select marketplace products, verify offers, authorize display or guarantee fit.</p>
+        <div class="ai-controls">
+          <input id="complementerPrompt" class="wide" type="text" maxlength="500" placeholder="e.g. Help coordinate a navy linen evening look" aria-label="Describe the look for optional styling advice">
+          <button class="btn wide" id="complementerBtn" type="button">Ask Complementer</button>
+        </div>
+        <div class="ai-status" id="complementerStatus" role="status" aria-live="polite">Complementer is optional and may be unavailable if its provider is not configured.</div>
+      </section>
     </section>
     <section class="ai-panel" aria-labelledby="clickItTitle">
       <div class="eyebrow">Click It · Photograph it</div>
@@ -323,6 +333,21 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       if(message==="VALIDATED_OUTFIT_DECOMPOSITION_MODEL_NOT_CONFIGURED")message="The validated outfit-decomposition model is not configured.";
       setAiStatus("lookItStatus",message+". No demo or fabricated matches were shown.",true);
     }finally{setAiBusy("lookItBtn",false,"Search image with PNELLY Look It")}
+  });
+  $("complementerBtn").addEventListener("click",async()=>{
+    const description=$("complementerPrompt").value.trim();
+    if(description.length<3){setAiStatus("complementerStatus","Describe the look you want styling advice about.",true);return}
+    if(!config.commerceBase||!config.userToken){setAiStatus("complementerStatus","Connect the Commerce API with a signed user JWT first.",true);return}
+    setAiBusy("complementerBtn",true,"Asking…");
+    setAiStatus("complementerStatus","Requesting optional, stateless styling advice…");
+    try{
+      const response=await fetch("/api/vision/complementer",{method:"POST",headers:{Authorization:"Bearer "+config.userToken,"Content-Type":"application/json",Accept:"application/json"},body:JSON.stringify({request_id:"pnelly-style-"+Date.now(),preferences:{},look:{description}})});
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok)throw new Error((data.detail&&data.detail.code)||("Complementer returned HTTP "+response.status+"."));
+      if(data.mode!=="advisory_only"||data.display_authorized!==false||!data.recommendation)throw new Error("Complementer returned an invalid advisory response.");
+      setAiStatus("complementerStatus",JSON.stringify(data.recommendation,null,2));
+    }catch(err){setAiStatus("complementerStatus",(err&&err.message?err.message:"Complementer is unavailable")+". PNELLY search remains usable without it.",true)}
+    finally{setAiBusy("complementerBtn",false,"Ask Complementer")}
   });
   $("clickItForm").addEventListener("submit",async e=>{
     e.preventDefault();
