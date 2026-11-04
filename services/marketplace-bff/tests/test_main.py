@@ -270,8 +270,12 @@ def test_portal_pages_and_assets_are_served_from_same_origin(client):
     assert founder.headers["cache-control"] == "no-store"
     assert "Brand Partner Portal" in brand.text
     assert "Founder Console" in founder.text
-    assert "merchant/listings" in brand_js.text
-    assert "admin/merchant-decisions" in founder_js.text
+    assert "/merchant/listings" in brand_js.text
+    assert "/admin/merchant-decisions" in founder_js.text
+    assert "localStorage" not in brand_js.text
+    assert "sessionStorage" not in brand_js.text
+    assert "localStorage" not in founder_js.text
+    assert "sessionStorage" not in founder_js.text
 
 
 def test_commerce_proxy_allowlist_routes_role_based_operations():
