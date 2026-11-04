@@ -558,3 +558,41 @@ def test_admin_merchant_directory_and_decision_history_are_admin_only(client):
 def test_admin_merchant_directory_rejects_unknown_state_filter(client):
     response = client.get("/admin/merchants?state=all", headers=auth("founder-admin", "admin"))
     assert response.status_code == 422
+
+
+
+def test_merchant_orders_do_not_disclose_other_merchants_order_totals(client, monkeypatch):
+    own = seed_offer(stock=5, price_minor=1000)
+    other_db = TEST_SESSION()
+    other_merchant = main.Merchant(
+        id=str(uuid.uuid4()), owner_user_id="merchant-2", display_name="Other Studio",
+        legal_name="Other Studio Ltd", country_code="KE", contact_email="other@example.test",
+        verification_reference="external-check-2", state="approved", commission_bps=500,
+    )
+    other_listing = main.Listing(
+        id=str(uuid.uuid4()), merchant_id=other_merchant.id, catalog_product_id=str(uuid.uuid4()),
+        product_name="Other Merchant Item", category="Fashion", image_urls=[], state="active",
+    )
+    other_variant = main.Variant(
+        id=str(uuid.uuid4()), listing_id=other_listing.id, sku="OTHER-1", options={"size":"M"},
+        price_minor=9000, currency="KES", on_hand=4, reserved_qty=0, state="active", version=1,
+    )
+    other_db.add_all([other_merchant, other_listing, other_variant])
+    other_db.commit()
+    other_variant_id = other_variant.id
+    other_db.close()
+
+    buyer = auth("multi-seller-buyer")
+    assert client.post("/cart/items", headers=buyer, json={"variant_id": own["variant_id"], "quantity": 2}).status_code == 201
+    assert client.post("/cart/items", headers=buyer, json={"variant_id": other_variant_id, "quantity": 1}).status_code == 201
+    configure_stripe(monkeypatch, session_id="cs_test_multi_seller")
+    checkout = client.post("/checkout", headers={**buyer, "Idempotency-Key":"multi-seller-order-key-01"})
+    assert checkout.status_code == 201
+    seller_view = client.get("/merchant/orders", headers=auth("merchant-1","merchant"))
+    assert seller_view.status_code == 200
+    order = seller_view.json()["items"][0]
+    assert order["merchant_scope"] is True
+    assert len(order["items"]) == 1
+    assert order["items"][0]["variant_id"] == own["variant_id"]
+    assert order["subtotal_minor"] == 2000
+    assert order["commission_minor"] == 60
