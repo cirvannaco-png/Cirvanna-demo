@@ -277,3 +277,56 @@ def test_live_offer_join_excludes_missing_or_archived_catalog_products(monkeypat
     monkeypatch.setattr(main, "_get_json", fake_get_json)
     offers, _ = asyncio.run(main._live_offers())
     assert offers == []
+
+
+
+def test_look_it_has_a_distinct_visual_search_route_and_response_contract(client, monkeypatch):
+    async def offers():
+        return ([{
+            "variant_id": "v-look-1",
+            "product_name": "blue patterned dress",
+            "category": "dress",
+            "product": {"product_id": "p-look-1", "description": "Blue patterned dress"},
+            "search_text": "blue patterned dress",
+        }], False)
+
+    monkeypatch.setattr(main, "_live_offers", offers)
+    monkeypatch.setattr(main, "_image_embedding", lambda _image: [0.4, 0.6])
+    monkeypatch.setattr(main, "_rank_offers", lambda _query, _offers, limit: [{
+        "variant_id": "v-look-1",
+        "product_name": "blue patterned dress",
+        "match_score": 0.41,
+        "match_score_type": "cosine_similarity_not_probability",
+    }][:limit])
+    response = client.post(
+        "/v1/search/image",
+        headers=auth(),
+        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        files={"image": ("inspiration.png", image_bytes(), "image/png")},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["search_mode"] == "look_it_image_to_catalog_text_similarity"
+    assert body["results"][0]["variant_id"] == "v-look-1"
+    assert body["image_persisted"] is False
+    assert body["scores_are_probabilities"] is False
+    assert body["outfit_decomposition"]["status"] == "unavailable"
+    assert body["merchant_comparison"]["status"] == "unavailable"
+
+
+def test_look_it_requires_look_it_specific_consent(client):
+    response = client.post(
+        "/v1/search/image",
+        headers=auth(),
+        data={"consent_image_processing": "true", "consent_look_it": "false"},
+        files={"image": ("inspiration.png", image_bytes(), "image/png")},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "EXPLICIT_LOOK_IT_CONSENT_REQUIRED"
+
+
+def test_look_it_and_click_it_routes_are_distinct(client):
+    routes = {route.path for route in main.app.routes}
+    assert "/v1/search/image" in routes
+    assert "/v1/click-it/scan" in routes
+    assert "/v1/search/image" != "/v1/click-it/scan"
