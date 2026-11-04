@@ -82,3 +82,12 @@ This repository does not issue login sessions or manage the user lifecycle. Conn
 - Configure Stripe test mode and exercise real test payment, expiry, retry, webhook replay and reconciliation. This service currently charges item subtotal only; shipping/tax computation is not implemented.
 - Seller payouts/Connect onboarding, refunds/returns, fulfillment, fraud/rate limits, reconciliation dashboards, retention/deletion and alerting are not implemented.
 - CaTaCaCi eligibility, Click It reconstruction, Virtual Twin and try-on remain explicitly unavailable until real adapters/models are integrated and independently validated.
+
+
+## Canonical variants and offer freshness
+
+Commerce retains its merchant-local `variant_id` and `sku` as source identifiers. It may additionally store `canonical_variant_id`, but only after validating the ID with Catalog's read-scoped `GET /variants/{variant_id}` endpoint and confirming that the returned canonical `product_id` matches the listing's Catalog product. Merchants cannot self-assert a canonical identity.
+
+Production always rejects new variants without a Catalog-verified canonical variant ID; the `COMMERCE_REQUIRE_CANONICAL_VARIANT_ID=true` setting can enforce the same gate in staging. Existing legacy rows remain nullable and are not comparison-eligible.
+
+Each offer has a server-generated `observed_at` timestamp. It is refreshed when the offer is created and when stock changes through merchant inventory updates, checkout reservations, payment settlement, or reservation release. `GET /marketplace/offers` returns `observed_at`, `is_fresh`, `canonical_variant_id`, and `comparison_eligible`. Freshness is controlled by `COMMERCE_OFFER_MAX_AGE_SECONDS` (default 3600 seconds, clamped to 60 seconds–7 days). A missing canonical identity or stale observation makes the individual offer ineligible for comparison. This is only a per-offer precondition: a comparison must still verify that both offers share the exact same canonical variant ID and currency and both have current availability. This timestamp is Commerce's server observation time; it is not proof of a third-party feed timestamp. Shipping/tax and FX remain excluded unless separately sourced.
