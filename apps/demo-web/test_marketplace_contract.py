@@ -38,14 +38,23 @@ class MarketplaceContractTests(unittest.TestCase):
         self.assertIn('disabled title="Virtual try-on adapter is not connected"', HTML)
         self.assertIn('disabled>Checkout unavailable</button>', HTML)
         self.assertIn("No stock is reserved and no order is created.", HTML)
-    def test_tari_is_the_marketplace_assistant_and_complementer_is_advisory(self):
-        self.assertIn("Xari · Describe it", HTML)
-        self.assertIn("Search marketplace with Xari", HTML)
+    def test_pnelly_owns_dermalsight_and_look_it_with_click_it_independent(self):
+        self.assertIn("PNELLY · Describe It", HTML)
+        self.assertIn("Search marketplace with PNELLY", HTML)
+        self.assertIn("DermalSight is PNELLY", HTML)
+        self.assertIn("PNELLY · Look It", HTML)
+        self.assertIn('fetch("/api/vision/look-it"', HTML)
+        self.assertIn('fetch("/api/vision/click-it"', HTML)
+        self.assertIn("Click It remains an independent real-world visual-shopping service", HTML)
         self.assertIn("Complementer is designed as optional styling advice", HTML)
         self.assertIn("price comparisons must use current Commerce offers", HTML)
+        self.assertNotIn("Xari · Describe it", HTML)
         self.assertNotIn("Tari · Describe it", HTML)
-        self.assertNotIn("with Tari", HTML)
-        self.assertNotIn("search with Tari", HTML)
+
+    def test_optional_complementer_is_separate_from_product_display_authority(self):
+        self.assertIn('id="complementerBtn"', HTML)
+        self.assertIn('fetch("/api/vision/complementer"', HTML)
+        self.assertIn('data.display_authorized!==false', HTML)
 
     def test_try_on_remains_visible_but_disabled_until_real_adapters_exist(self):
         self.assertIn("Try on — unavailable", HTML)
