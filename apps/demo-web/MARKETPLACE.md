@@ -40,3 +40,15 @@ pytest -q
 Also verify the API's `/ready` endpoint, CORS behavior, authentication failures, product pagination, image failures, mobile layout, keyboard navigation, and the configured currency/price-unit convention. The UI formats prices using `Intl.NumberFormat` currency fraction-digit rules, so currencies with zero or three decimal places are not forced into a two-decimal display. The API currently validates a three-letter currency code, not a full currency metadata registry; merchant feeds still need a canonical ISO 4217 validation policy.
 
 Do not merge or deploy until the HTML/JavaScript has been checked in a browser and the catalog integration is tested against a non-production environment.
+
+
+## Authenticated service-owned portals
+
+The Brand Partner Portal and Founder Console are served by the Marketplace BFF:
+
+- `/brand-portal` — merchant application, catalog product linking, variants, stock adjustments and seller-scoped orders.
+- `/founder-console` — administrator merchant review, verification-reference capture, decision history and inventory integrity audit.
+
+They use Commerce's existing merchant and admin APIs. The browser holds the signed access token in memory only. Commerce authenticates and authorizes every operation; UI visibility is not an authorization control.
+
+The portal intentionally omits product creation (Catalog owns product identity), image ingestion, analytics not provided by the API, automated KYC, payment execution, virtual try-on and AI/model operations. Commission values are basis points. Variant prices are converted to ISO currency minor units using `Intl.NumberFormat` currency precision.
