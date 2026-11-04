@@ -5,6 +5,7 @@ implement checkout, payments, fit prediction, personalized ranking, or rendering
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
 import json
 import os
@@ -43,7 +44,7 @@ from app.product_intelligence import validate_product_intelligence_attributes
 
 
 SERVICE_NAME = "cirvanna-catalog-service"
-EXPECTED_SCHEMA_REVISION = "20261018_0001"
+EXPECTED_SCHEMA_REVISION = "20261104_0002"
 MAX_PAGE_SIZE = 100
 MAX_IMAGE_URLS = 20
 MAX_ATTRIBUTES = 100
@@ -111,6 +112,26 @@ class ProductVersion(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
 
 
+class ProductVariant(Base):
+    """Catalog-owned immutable purchasable variant identity."""
+    __tablename__ = "catalog_product_variants"
+    __table_args__ = (
+        UniqueConstraint("product_id", "identity_key", name="uq_catalog_variant_product_identity"),
+        Index("ix_catalog_variant_product_status", "product_id", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    product_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("catalog_products.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    attributes: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False)
+    identity_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    variant_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+
+
 def get_db() -> Iterator[Session]:
     db = SessionLocal()
     try:
@@ -160,6 +181,39 @@ def _validate_attributes(value: dict[str, Any]) -> dict[str, Any]:
     return validate_product_intelligence_attributes(value)
 
 
+def _normalize_variant_attributes(value: dict[str, str]) -> dict[str, str]:
+    """Normalize identity-defining option labels/values without fuzzy matching."""
+    if not value or len(value) > 20:
+        raise ValueError("A variant requires 1-20 identity-defining attributes.")
+    normalized: dict[str, str] = {}
+    for raw_key, raw_value in value.items():
+        key = re.sub(r"[\\s-]+", "_", raw_key.strip().casefold())
+        item = raw_value.strip().casefold()
+        if not re.fullmatch(r"[a-z0-9_]{1,64}", key) or not item or len(item) > 120:
+            raise ValueError("Variant attribute keys/values are invalid.")
+        if key in normalized:
+            raise ValueError("Variant attribute keys collide after normalization.")
+        normalized[key] = item
+    return dict(sorted(normalized.items()))
+
+
+def _variant_identity_key(attributes: dict[str, str]) -> str:
+    canonical = json.dumps(attributes, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _variant_json(variant: ProductVariant) -> dict[str, Any]:
+    return {
+        "variant_id": variant.id,
+        "product_id": variant.product_id,
+        "attributes": variant.attributes,
+        "status": variant.status,
+        "variant_version": variant.variant_version,
+        "created_at": variant.created_at,
+        "updated_at": variant.updated_at,
+    }
+
+
 class ProductCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -197,6 +251,16 @@ class ProductCreate(BaseModel):
     @classmethod
     def validate_attrs(cls, value: dict[str, Any]) -> dict[str, Any]:
         return _validate_attributes(value)
+
+
+class CanonicalVariantCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    attributes: dict[str, str] = Field(min_length=1, max_length=20)
+
+    @field_validator("attributes")
+    @classmethod
+    def normalize_attributes(cls, value: dict[str, str]) -> dict[str, str]:
+        return _normalize_variant_attributes(value)
 
 
 class ProductPatch(BaseModel):
@@ -479,6 +543,8 @@ def capabilities() -> dict[str, Any]:
     return {
         "service": SERVICE_NAME,
         "canonical_product_identity": True,
+        "canonical_product_variant_identity": True,
+        "trusted_variant_lookup": True,
         "validated_product_metadata": True,
         "catalog_persistence": True,
         "product_version_history": True,
@@ -669,6 +735,77 @@ def archive_product(
         db.commit()
         db.refresh(product)
     return product
+
+
+@app.post(
+    "/products/{product_id}/variants",
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_catalog_write_token)],
+    tags=["variants"],
+)
+def create_product_variant(
+    product_id: uuid.UUID,
+    payload: CanonicalVariantCreate,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    product = _get_product(db, product_id)
+    if product.status != "active":
+        raise HTTPException(status_code=409, detail={"code": "PRODUCT_NOT_ACTIVE"})
+    identity_key = _variant_identity_key(payload.attributes)
+    variant = ProductVariant(
+        id=str(uuid.uuid4()),
+        product_id=product.id,
+        attributes=payload.attributes,
+        identity_key=identity_key,
+        status="active",
+        variant_version=1,
+    )
+    db.add(variant)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail={"code": "CANONICAL_VARIANT_ALREADY_EXISTS"}) from exc
+    db.refresh(variant)
+    return _variant_json(variant)
+
+
+@app.get(
+    "/products/{product_id}/variants",
+    dependencies=[Depends(require_catalog_read_token)],
+    tags=["variants"],
+)
+def list_product_variants(
+    product_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    product = _get_product(db, product_id)
+    if product.status != "active":
+        raise HTTPException(status_code=404, detail={"code": "PRODUCT_NOT_FOUND"})
+    variants = list(db.scalars(
+        select(ProductVariant)
+        .where(ProductVariant.product_id == product.id, ProductVariant.status == "active")
+        .order_by(ProductVariant.created_at.asc(), ProductVariant.id.asc())
+    ).all())
+    return {"items": [_variant_json(item) for item in variants], "total": len(variants)}
+
+
+@app.get(
+    "/variants/{variant_id}",
+    dependencies=[Depends(require_catalog_read_token)],
+    tags=["variants"],
+)
+def get_canonical_variant(
+    variant_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    variant = db.get(ProductVariant, str(variant_id))
+    if variant is None or variant.status != "active":
+        raise HTTPException(status_code=404, detail={"code": "CANONICAL_VARIANT_NOT_FOUND"})
+    product = db.get(Product, variant.product_id)
+    if product is None or product.status != "active":
+        raise HTTPException(status_code=404, detail={"code": "CANONICAL_VARIANT_NOT_FOUND"})
+    return _variant_json(variant)
 
 
 @app.get(
