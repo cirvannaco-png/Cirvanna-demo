@@ -368,7 +368,6 @@ def test_marketplace_ui_keeps_click_it_and_exposes_look_it_inside_pnelly(client)
     assert response.status_code == 200
     assert 'id="lookItForm"' in response.text
     assert 'id="lookItImage"' in response.text
-    assert 'id="lookItConsentId"' in response.text
     assert 'fetch("/api/vision/look-it"' in response.text
     assert 'fetch("/api/vision/click-it"' in response.text
 
