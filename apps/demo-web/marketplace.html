@@ -264,16 +264,16 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     const query=$("aiQuery").value.trim(),category=$("aiCategory").value;
     if(query.length<3){setAiStatus("aiSearchStatus","Enter a product description of at least 3 characters.",true);return}
     setAiBusy("aiSearchBtn",true,"Searching…");
-    setAiStatus("aiSearchStatus","Searching current marketplace offers with Xari…");
+    setAiStatus("aiSearchStatus","Searching current marketplace offers with Tari…");
     try{
       const body={query,limit:10};if(category)body.category=category;
       const response=await fetch("/api/vision/marketplace-search",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json"},body:JSON.stringify(body)});
       const data=await response.json().catch(()=>({}));
-      if(!response.ok)throw new Error((data.detail&&data.detail.code)||("Xari marketplace search returned HTTP "+response.status+"."));
-      if(data.status!=="complete"||!Array.isArray(data.candidates))throw new Error("Xari returned an invalid search response.");
+      if(!response.ok)throw new Error((data.detail&&data.detail.code)||("Tari marketplace search returned HTTP "+response.status+"."));
+      if(data.status!=="complete"||!Array.isArray(data.candidates))throw new Error("Tari returned an invalid search response.");
       presentAiSearchResult(data,"aiSearchStatus");
     }catch(e){setAiStatus("aiSearchStatus",(e&&e.message?e.message:"Search is unavailable")+". No demo or fabricated results were shown.",true)}
-    finally{setAiBusy("aiSearchBtn",false,"Search marketplace with Xari")}
+    finally{setAiBusy("aiSearchBtn",false,"Search marketplace with Tari")}
   });
   $("clickItForm").addEventListener("submit",async e=>{
     e.preventDefault();
