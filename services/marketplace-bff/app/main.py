@@ -94,8 +94,12 @@ def _internal_service(url_key: str, token_key: str) -> tuple[str, str]:
 
 def _xari_internal_service() -> tuple[str, str]:
     """Prefer Xari environment names while retaining Tari aliases during migration."""
-    url_key = "XARI_API_URL" if os.getenv("XARI_API_URL", "").strip() else "TARI_API_URL"
+    xari_url = os.getenv("XARI_API_URL", "").strip()
+    tari_url = os.getenv("TARI_API_URL", "").strip()
+    url_key = "XARI_API_URL" if xari_url else "TARI_API_URL"
     token = os.getenv("XARI_API_TOKEN", "").strip() or os.getenv("TARI_API_TOKEN", "").strip()
+    if not xari_url and not tari_url:
+        raise HTTPException(status_code=503, detail={"code": "XARI_API_URL_NOT_CONFIGURED"})
     base = _upstream_base(url_key)
     if len(token.encode("utf-8")) < 32:
         raise HTTPException(status_code=503, detail={"code": "XARI_API_TOKEN_NOT_CONFIGURED"})
