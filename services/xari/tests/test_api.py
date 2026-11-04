@@ -86,6 +86,8 @@ def test_tari_token_is_preferred_over_legacy_xari_token(monkeypatch):
     xari_token = "xari-legacy-token-at-least-thirty-two-bytes"
     monkeypatch.setenv("TARI_API_TOKEN", tari_token)
     monkeypatch.setenv("XARI_API_TOKEN", xari_token)
+    monkeypatch.delenv("VISION_INTELLIGENCE_API_URL", raising=False)
+    monkeypatch.delenv("VISION_INTELLIGENCE_API_TOKEN", raising=False)
     wrong = client.post("/v1/marketplace/search", headers={"Authorization": f"Bearer {xari_token}"}, json=PAYLOAD)
     assert wrong.status_code == 401
     right = client.post("/v1/marketplace/search", headers={"Authorization": f"Bearer {tari_token}"}, json=PAYLOAD)
