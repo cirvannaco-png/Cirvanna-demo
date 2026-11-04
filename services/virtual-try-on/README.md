@@ -61,3 +61,11 @@ docker build -f services/virtual-try-on/Dockerfile -t cirvanna-virtual-try-on .
 The dedicated `.github/workflows/virtual-try-on.yml` workflow runs API tests and a Docker image build. The tests validate authentication, explicit consent gating, server-side consent and asset authorization, rejection of external URL/path inputs, provider failure handling, and honest unavailable status. Fixture adapters are used only to test the successful response contract; they are not real models and must never be enabled outside tests.
 
 Still required: authenticated asset-resolution integration, server-side consent integration, actual model inference, image-quality/robustness tests across body types and garment categories, privacy/security review, model/license review, latency/cost benchmarking, rendering artifact validation, deletion tests, and a real end-to-end deployment smoke test. Passing CI validates the contract and container build, not image realism or fit accuracy.
+
+## Marketplace, Xari and optional Complementer entry points
+
+Marketplace product cards are the intended first-class entry point for trying on a selected catalog product before purchase. The card may expose a Try-On action, but it must remain unavailable unless the BFF can authenticate the user, resolve a user-owned Twin and trusted person/product image assets, verify active server-side consent, and confirm this service's /ready and renderer capability checks.
+
+Xari may optionally coordinate the user journey and explain the next step. Complementer may optionally provide styling context (for example, pairing or colour suggestions) when requested. Neither assistant may fabricate a rendered image, override consent/asset authorization, certify fit, or bypass the canonical FCI and CAL boundaries. A generated visual preview is not a guarantee of garment fit, fabric behavior, shade fidelity or purchase suitability.
+
+The current implementation still returns unavailable until the real renderer and secure adapters are integrated. The marketplace must not enable the action merely because a product card or API route exists.

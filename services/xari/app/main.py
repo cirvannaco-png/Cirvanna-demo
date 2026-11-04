@@ -23,13 +23,13 @@ bearer = HTTPBearer(auto_error=False)
 app = FastAPI(
     title="Cirvanna Xari API",
     version="0.1.0",
-    description="Authenticated route planning and configuration-gated marketplace description search.",
+    description="Xari route planning and configuration-gated marketplace description search.",
 )
 
 def require_api_token(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
 ) -> None:
-    expected = os.getenv("XARI_API_TOKEN", "")
+    expected = os.getenv("XARI_API_TOKEN", "").strip() or os.getenv("TARI_API_TOKEN", "").strip()
     if len(expected.encode("utf-8")) < 32 or credentials is None:
         raise HTTPException(
             status_code=401,
@@ -127,7 +127,8 @@ def health() -> dict[str, str]:
 
 @app.get("/ready", tags=["operations"])
 def readiness() -> dict[str, object]:
-    token_configured = len(os.getenv("XARI_API_TOKEN", "").encode("utf-8")) >= 32
+    token = os.getenv("XARI_API_TOKEN", "").strip() or os.getenv("TARI_API_TOKEN", "").strip()
+    token_configured = len(token.encode("utf-8")) >= 32
     search_configured = _marketplace_search_config() is not None
     result = {
         "status": "ready" if token_configured else "not_ready",
