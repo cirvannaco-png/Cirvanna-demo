@@ -19,7 +19,9 @@ This service implements persistent, authenticated commerce APIs. Canonical produ
 
 - GET /marketplace/offers
 - POST /merchants/applications; GET /merchants/me
-- POST /admin/merchants/{merchant_id}/decision
+- GET /admin/merchants; GET /admin/merchant-decisions
+- POST /admin/merchants/{merchant_id}/decision (each transition is appended to the merchant decision audit table)
+- GET /merchant/listings (owner-scoped, including variants and inventory)
 - POST /merchant/listings; POST /merchant/listings/{listing_id}/variants
 - POST /merchant/variants/{variant_id}/inventory-adjustments
 - PUT/GET/DELETE /saved-products
@@ -82,3 +84,21 @@ This repository does not issue login sessions or manage the user lifecycle. Conn
 - Configure Stripe test mode and exercise real test payment, expiry, retry, webhook replay and reconciliation. This service currently charges item subtotal only; shipping/tax computation is not implemented.
 - Seller payouts/Connect onboarding, refunds/returns, fulfillment, fraud/rate limits, reconciliation dashboards, retention/deletion and alerting are not implemented.
 - CaTaCaCi eligibility, Click It reconstruction, Virtual Twin and try-on remain explicitly unavailable until real adapters/models are integrated and independently validated.
+
+
+## Merchant and founder portals
+
+The same-origin Brand Partner Portal and Founder Console are served by the Marketplace BFF at `/brand-portal` and `/founder-console`. They use the existing merchant and administrator role claims; the browser cannot grant roles or approve itself.
+
+- `GET /merchant/listings` returns only the authenticated approved merchant's listings, variants and available inventory.
+- `GET /admin/merchants` provides a paginated, administrator-only merchant directory.
+- `GET /admin/merchant-decisions` reads the application-level append-only decision history.
+- Every merchant decision writes an audit record in the same database transaction as the merchant-state update.
+
+Apply the new migration before deploying the updated service:
+
+```bash
+alembic upgrade head
+```
+
+The readiness revision is now `20261104_0003`; a deployment still on `20261019_0002` must remain not-ready until the migration is applied. Audit rows are append-only through the service API; restrict direct database privileges and export/backup the audit table under the production retention policy.
