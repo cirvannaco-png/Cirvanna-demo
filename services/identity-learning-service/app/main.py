@@ -31,6 +31,7 @@ SERVICE = "cirvanna-identity-learning-service"
 bearer = HTTPBearer(auto_error=False)
 SUBJECT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$")
 SCOPES = {"personalization", "style_learning", "profile_storage"}
+CONSENT_PURPOSES = {"image_processing", "look_it", "click_it", "dermalsight", "virtual_try_on", "body_measurements", "twin_storage", "asset_storage", "asset_reuse", "marketplace_search"}
 
 
 def utcnow() -> datetime:
@@ -118,6 +119,18 @@ class TALDeletionReceipt(Base):
     deleted_event_count: Mapped[int] = mapped_column(Integer, nullable=False)
     deleted_profile: Mapped[bool] = mapped_column(Boolean, nullable=False)
 
+class ConsentBundle(Base):
+    """Purpose-scoped, revocable consent bundle used by image/Twin services."""
+    __tablename__ = "identity_consent_bundles"
+    consent_id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    subject_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    granted_scopes: Mapped[list] = mapped_column(JSON, nullable=False)
+    consent_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    resource_id: Mapped[str | None] = mapped_column(String(160))
+    granted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -147,6 +160,35 @@ class ConsentPut(StrictModel):
     scope: Literal["personalization", "style_learning", "profile_storage"]
     consent_version: str = Field(min_length=1, max_length=80)
     granted: bool
+
+
+class ConsentBundleRecord(StrictModel):
+    consent_id: str = Field(min_length=8, max_length=160)
+    subject_id: str = Field(min_length=3, max_length=128)
+    granted_scopes: list[str] = Field(min_length=1, max_length=10)
+    consent_version: str = Field(min_length=1, max_length=80)
+    resource_id: str | None = Field(default=None, min_length=3, max_length=160)
+
+    @field_validator("granted_scopes")
+    @classmethod
+    def valid_scopes(cls, values):
+        if len(values) != len(set(values)) or not set(values).issubset(CONSENT_PURPOSES):
+            raise ValueError("granted_scopes must be unique known consent purposes")
+        return sorted(values)
+
+
+class ConsentBundleVerify(StrictModel):
+    consent_id: str = Field(min_length=8, max_length=160)
+    subject_id: str = Field(min_length=3, max_length=128)
+    required_scopes: list[str] = Field(min_length=1, max_length=10)
+    resource_id: str | None = Field(default=None, min_length=3, max_length=160)
+
+    @field_validator("required_scopes")
+    @classmethod
+    def valid_required_scopes(cls, values):
+        if len(values) != len(set(values)) or not set(values).issubset(CONSENT_PURPOSES):
+            raise ValueError("required_scopes must be unique known consent purposes")
+        return sorted(values)
 
 
 class EventPut(StrictModel):
@@ -234,6 +276,89 @@ def startup() -> None:
         Base.metadata.create_all(bind=_engine(url))
 
 
+@app.post("/internal/v1/consents/record", dependencies=[Depends(require_internal_token)])
+def record_consent_bundle(payload: ConsentBundleRecord, db: Annotated[Session, Depends(get_db)]):
+    """Persist a single explicit, purpose-scoped consent action for a verified subject."""
+    subject = subject_or_404(payload.subject_id)
+    existing = db.get(ConsentBundle, payload.consent_id)
+    if existing is not None:
+        same = (
+            existing.subject_id == subject
+            and sorted(existing.granted_scopes) == payload.granted_scopes
+            and existing.consent_version == payload.consent_version
+            and existing.resource_id == payload.resource_id
+        )
+        if not same:
+            raise HTTPException(409, detail={"code": "CONSENT_BUNDLE_IMMUTABLE"})
+        if existing.revoked_at is not None:
+            raise HTTPException(409, detail={"code": "CONSENT_BUNDLE_ALREADY_REVOKED"})
+        return {"consent_id": existing.consent_id, "status": "replayed", "granted_scopes": existing.granted_scopes}
+    row = ConsentBundle(
+        consent_id=payload.consent_id,
+        subject_id=subject,
+        granted_scopes=payload.granted_scopes,
+        consent_version=payload.consent_version,
+        resource_id=payload.resource_id,
+        granted_at=utcnow(),
+    )
+    db.add(row)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, detail={"code": "CONSENT_BUNDLE_CONFLICT"})
+    return {
+        "consent_id": row.consent_id,
+        "status": "recorded",
+        "granted_scopes": row.granted_scopes,
+        "granted_at": row.granted_at.isoformat(),
+    }
+
+
+@app.post("/internal/v1/consents/verify", dependencies=[Depends(require_internal_token)])
+def verify_consent_bundle(payload: ConsentBundleVerify, db: Annotated[Session, Depends(get_db)]):
+    """Return an explicit receipt only for the same subject, scopes and resource."""
+    subject = subject_or_404(payload.subject_id)
+    row = db.get(ConsentBundle, payload.consent_id)
+    if row is None or row.subject_id != subject:
+        raise HTTPException(404, detail={"code": "CONSENT_BUNDLE_NOT_FOUND"})
+    if row.revoked_at is not None:
+        raise HTTPException(403, detail={"code": "CONSENT_BUNDLE_REVOKED"})
+    if not set(payload.required_scopes).issubset(set(row.granted_scopes)):
+        raise HTTPException(403, detail={"code": "CONSENT_SCOPE_NOT_GRANTED"})
+    if payload.resource_id is not None and row.resource_id != payload.resource_id:
+        raise HTTPException(403, detail={"code": "CONSENT_RESOURCE_MISMATCH"})
+    return {
+        "verified": True,
+        "active": True,
+        "subject_id": subject,
+        "consent_id": row.consent_id,
+        "granted_scopes": row.granted_scopes,
+        "resource_id": row.resource_id,
+        "consent_version": row.consent_version,
+        "granted_at": row.granted_at.isoformat(),
+        "revoked_at": None,
+    }
+
+
+@app.post("/internal/v1/consents/revoke", dependencies=[Depends(require_internal_token)])
+def revoke_consent_bundle(payload: ConsentBundleVerify, db: Annotated[Session, Depends(get_db)]):
+    """Revoke the named bundle; it can never be replayed as an active grant."""
+    subject = subject_or_404(payload.subject_id)
+    row = db.get(ConsentBundle, payload.consent_id)
+    if row is None or row.subject_id != subject:
+        raise HTTPException(404, detail={"code": "CONSENT_BUNDLE_NOT_FOUND"})
+    if row.revoked_at is None:
+        row.revoked_at = utcnow()
+        db.commit()
+        db.refresh(row)
+    return {
+        "consent_id": row.consent_id,
+        "status": "revoked",
+        "revoked_at": row.revoked_at.isoformat(),
+    }
+
+
 @app.get("/health")
 def health():
     return {"status": "alive", "service": SERVICE}
@@ -244,6 +369,7 @@ def readiness(db: Annotated[Session, Depends(get_db)]):
     try:
         db.execute(select(USIProfileRow.subject_id).limit(1))
         db.execute(select(ConsentReceipt.receipt_id).limit(1))
+        db.execute(select(ConsentBundle.consent_id).limit(1))
         db.execute(select(TALEvent.event_id).limit(1))
         return {"status": "ready", "service": SERVICE, "database": "reachable", "durable_usi": True, "durable_tal": True, "ready": True}
     except SQLAlchemyError:
