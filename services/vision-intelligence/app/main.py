@@ -585,8 +585,13 @@ async def _decompose_outfit(image: Image.Image) -> dict[str, Any]:
     """Use only a trusted, pinned provider whose validation-report hash is configured."""
     base = _trusted_base("OUTFIT_DECOMPOSITION_API_URL", required=False)
     token = os.getenv("OUTFIT_DECOMPOSITION_API_TOKEN", "").strip()
+    model_id = os.getenv("OUTFIT_DECOMPOSITION_MODEL_ID", "").strip()
+    model_revision = os.getenv("OUTFIT_DECOMPOSITION_MODEL_REVISION", "").strip().lower()
     report_hash = os.getenv("OUTFIT_DECOMPOSITION_VALIDATION_REPORT_SHA256", "").strip().lower()
-    if not base or len(token.encode('utf-8')) < 32 or not SHA256.fullmatch(report_hash):
+    if (
+        not base or len(token.encode('utf-8')) < 32 or not model_id
+        or not SHA40.fullmatch(model_revision) or not SHA256.fullmatch(report_hash)
+    ):
         return {"status": "unavailable", "reason": "VALIDATED_OUTFIT_DECOMPOSITION_PROVIDER_NOT_CONFIGURED", "components": []}
     buffer = io.BytesIO()
     image.convert('RGB').save(buffer, format='JPEG', quality=92, optimize=True)
@@ -608,8 +613,8 @@ async def _decompose_outfit(image: Image.Image) -> dict[str, Any]:
     if not (
         isinstance(payload, dict) and payload.get("status") == "complete"
         and payload.get("validation_report_sha256") == report_hash
-        and isinstance(model, dict) and isinstance(model.get("id"), str) and model.get("id").strip()
-        and isinstance(model.get("revision"), str) and SHA40.fullmatch(model.get("revision", ""))
+        and isinstance(model, dict) and model.get("id") == model_id
+        and model.get("revision") == model_revision
         and isinstance(components, list) and 1 <= len(components) <= 12
     ):
         return {"status": "unavailable", "reason": "OUTFIT_DECOMPOSITION_VALIDATION_OR_SCHEMA_FAILED", "components": []}
