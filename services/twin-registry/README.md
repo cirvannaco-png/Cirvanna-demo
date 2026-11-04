@@ -20,7 +20,7 @@ All endpoints except `/health` require the private `TWIN_REGISTRY_API_TOKEN` bea
 - `POST /internal/v1/assets/revoke`: revoke a private asset; revoking the registered mesh also revokes its Twin.
 - `GET /ready`: checks the database tables exist and are reachable.
 
-No API returns storage object keys to browsers. The registry is metadata/authorization only: it does not create 3D meshes, upload bytes, issue object-store credentials, or prove that a model output is physically accurate. The model artifact and validation report hashes are provenance identifiers; production must verify their signatures and trusted pipeline identity before calling the registry.
+No API returns storage object keys to browsers. The registry is metadata/authorization only: it does not create 3D meshes, upload bytes, issue object-store credentials, or prove that a model output is physically accurate. The model artifact and validation report hashes are bound into a canonical HMAC-SHA256 validation attestation. Configure the same independent `TWIN_REGISTRY_VALIDATION_HMAC_SECRET` only in the trusted validation pipeline and this registry. Registry readiness and Twin creation fail closed without it. This proves the attested fields were signed by the trusted pipeline; it does not replace independent model-quality evaluation.
 
 ## Database
 
@@ -28,6 +28,7 @@ Use the existing approved managed PostgreSQL instance with a dedicated table nam
 
 - `TWIN_REGISTRY_DATABASE_URL`: existing managed PostgreSQL URL.
 - `TWIN_REGISTRY_API_TOKEN`: independent high-entropy internal service token (at least 32 bytes).
+- `TWIN_REGISTRY_VALIDATION_HMAC_SECRET`: separate high-entropy attestation secret (at least 32 bytes), accessible only to the trusted mesh-validation pipeline and the registry.
 
 Local tests use SQLite:
 
