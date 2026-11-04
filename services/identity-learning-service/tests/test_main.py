@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -341,6 +343,37 @@ def test_image_consent_bundle_is_recorded_verified_and_revocable(client):
     )
     assert after_revoke.status_code == 403
     assert after_revoke.json()["detail"]["code"] == "CONSENT_BUNDLE_REVOKED"
+
+
+
+
+def test_expired_look_it_consent_is_never_verified(client, monkeypatch):
+    clock = {"now": datetime(2026, 11, 4, 10, 0, tzinfo=timezone.utc)}
+    monkeypatch.setattr(main, "utcnow", lambda: clock["now"])
+    expires_at = clock["now"] + timedelta(minutes=5)
+    payload = {
+        "consent_id": "look-it-expiry-0001",
+        "subject_id": "user-verified-1",
+        "granted_scopes": ["image_processing", "look_it"],
+        "consent_version": "look-it-2026-11-04-v1",
+        "expires_at": expires_at.isoformat(),
+    }
+    recorded = client.post("/internal/v1/consents/record", headers=auth(), json=payload)
+    assert recorded.status_code == 200, recorded.text
+
+    verify_payload = {
+        "consent_id": payload["consent_id"],
+        "subject_id": payload["subject_id"],
+        "required_scopes": ["image_processing", "look_it"],
+    }
+    active = client.post("/internal/v1/consents/verify", headers=auth(), json=verify_payload)
+    assert active.status_code == 200, active.text
+    assert active.json()["expires_at"] == expires_at.isoformat()
+
+    clock["now"] = expires_at + timedelta(seconds=1)
+    expired = client.post("/internal/v1/consents/verify", headers=auth(), json=verify_payload)
+    assert expired.status_code == 403
+    assert expired.json()["detail"]["code"] == "CONSENT_BUNDLE_EXPIRED"
 
 
 def test_consent_bundle_rejects_unknown_and_duplicate_scopes(client):
