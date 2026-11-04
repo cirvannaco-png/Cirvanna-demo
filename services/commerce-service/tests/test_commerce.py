@@ -581,3 +581,16 @@ def test_stale_offer_is_not_comparison_eligible(client, monkeypatch):
     item = client.get("/marketplace/offers").json()["items"][0]
     assert item["is_fresh"] is False
     assert item["comparison_eligible"] is False
+
+def test_inventory_adjustment_refreshes_server_observation_timestamp(client, monkeypatch):
+    seeded = seed_offer()
+    later = main.now() + main.timedelta(minutes=2)
+    monkeypatch.setattr(main, "now", lambda: later)
+    response = client.post(
+        f"/merchant/variants/{seeded['variant_id']}/inventory-adjustments",
+        headers=auth("merchant-1", "merchant"),
+        json={"quantity_delta": 1, "reason": "restock"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["observed_at"]
+    assert response.json()["on_hand"] == 9
