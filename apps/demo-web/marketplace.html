@@ -48,7 +48,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     <section class="ai-panel" aria-labelledby="descriptionSearchTitle">
       <div class="eyebrow">Xari · Describe it</div>
       <h2 id="descriptionSearchTitle">Search by description</h2>
-      <p>Describe a garment or product in everyday language. Xari searches active marketplace offers using the pinned fashion model and current catalog metadata.</p>
+      <p>Describe what you want in everyday language. Xari searches marketplace candidates; product facts, merchant offers, prices and stock must come from Catalog and Commerce, and candidates remain hidden until CAL authorizes display. Complementer is designed as optional styling advice; it must not control product selection, product facts or prices.</p>
       <div class="ai-controls">
         <input id="aiQuery" type="search" maxlength="1000" placeholder="e.g. a modest dark green linen dress for hot weather" aria-label="Describe a product">
         <select id="aiCategory" aria-label="AI search category">
@@ -56,7 +56,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
         </select>
         <button class="btn primary wide" id="aiSearchBtn">Search marketplace with Xari</button>
       </div>
-      <div class="ai-status" id="aiSearchStatus" role="status" aria-live="polite">Description search is available when Xari and the private vision worker are configured. Product details remain hidden until CAL authorizes display.</div>
+      <div class="ai-status" id="aiSearchStatus" role="status" aria-live="polite">Xari description search requires the private vision worker. Candidate matches are not product recommendations until CAL authorizes display; price comparisons must use current Commerce offers, not generated estimates.</div>
     </section>
     <section class="ai-panel" aria-labelledby="clickItTitle">
       <div class="eyebrow">Click It · Photograph it</div>
