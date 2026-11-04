@@ -25,6 +25,9 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
 .ai-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .ai-panel{border:1px solid var(--line);background:var(--panel);padding:16px;min-width:0}
 .ai-panel h2{font:24px/1.1 Georgia,serif;font-weight:400;margin:0 0 8px}
+.lookit-subpanel{border-top:1px solid var(--line);margin-top:16px;padding-top:16px}
+.lookit-subpanel h3{font:20px/1.15 Georgia,serif;font-weight:400;margin:6px 0}
+.lookit-subpanel p{font-size:12px;color:var(--muted);margin:6px 0 12px}
 .ai-panel p{font-size:12px;color:var(--muted);margin:6px 0 12px}
 .ai-controls{display:grid;grid-template-columns:minmax(0,1fr) 140px;gap:8px}
 .ai-controls .wide{grid-column:1/-1}
@@ -46,17 +49,33 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
 <section class="ai-tools" aria-label="AI product discovery">
   <div class="ai-grid">
     <section class="ai-panel" aria-labelledby="descriptionSearchTitle">
-      <div class="eyebrow">Xari · Describe it</div>
+      <div class="eyebrow">PNELLY · Describe It</div>
       <h2 id="descriptionSearchTitle">Search by description</h2>
-      <p>Describe what you want in everyday language. Xari searches marketplace candidates; product facts, merchant offers, prices and stock must come from Catalog and Commerce, and candidates remain hidden until CAL authorizes display. Complementer is designed as optional styling advice; it must not control product selection, product facts or prices.</p>
+      <p>Describe what you want in everyday language. PNELLY searches marketplace candidates; product facts, merchant offers, prices and stock must come from Catalog and Commerce, and candidates remain hidden until CAL authorizes display. Complementer is designed as optional styling advice; it must not control product selection, product facts or prices.</p>
       <div class="ai-controls">
         <input id="aiQuery" type="search" maxlength="1000" placeholder="e.g. a modest dark green linen dress for hot weather" aria-label="Describe a product">
         <select id="aiCategory" aria-label="AI search category">
           <option value="">All categories</option><option value="upper_body">Tops</option><option value="outerwear">Outerwear</option><option value="lower_body">Bottoms</option><option value="dress">Dresses</option><option value="full_outfit">Full outfit</option><option value="beauty">Beauty</option><option value="accessories">Accessories</option>
         </select>
-        <button class="btn primary wide" id="aiSearchBtn">Search marketplace with Xari</button>
+        <button class="btn primary wide" id="aiSearchBtn">Search marketplace with PNELLY</button>
       </div>
-      <div class="ai-status" id="aiSearchStatus" role="status" aria-live="polite">Xari description search requires the private vision worker. Candidate matches are not product recommendations until CAL authorizes display; price comparisons must use current Commerce offers, not generated estimates.</div>
+      <div class="ai-status" id="aiSearchStatus" role="status" aria-live="polite">PNELLY description search requires the private vision worker. Candidate matches are not product recommendations until CAL authorizes display; price comparisons must use current Commerce offers, not generated estimates.</div>
+      <p>DermalSight is PNELLY’s optional, non-diagnostic skin-analysis capability. It requires its own active consent and a validated model release; it is not a medical diagnosis or forecast.</p>
+      <section class="lookit-subpanel" aria-labelledby="lookItTitle">
+        <div class="eyebrow">PNELLY · Look It</div>
+        <h3 id="lookItTitle">Search from a sketch or inspiration</h3>
+        <p>Upload a hand-drawn sketch, saved inspiration image or your own photo. PNELLY searches for visually similar marketplace candidates. This is separate from Click It, which remains an independent real-world visual-shopping service.</p>
+        <form id="lookItForm">
+          <div class="ai-controls">
+            <input id="lookItImage" class="wide" type="file" accept="image/jpeg,image/png,image/webp" aria-label="Choose a sketch, inspiration image or personal reference" required>
+            <input id="lookItConsentId" class="wide" type="text" maxlength="160" minlength="8" autocomplete="off" placeholder="Active Look It consent record ID" aria-label="Active Look It consent record ID" required>
+          </div>
+          <label class="consent-line"><input id="lookItImageConsent" type="checkbox" required><span>I consent to processing this reference image for Look It. Image processing is ephemeral.</span></label>
+          <label class="consent-line"><input id="lookItSearchConsent" type="checkbox" required><span>I separately consent to the PNELLY Look It search purpose. The server verifies the active consent record.</span></label>
+          <button class="btn primary wide" id="lookItBtn" type="submit">Search image with PNELLY Look It</button>
+        </form>
+        <div class="ai-status" id="lookItStatus" role="status" aria-live="polite">Look It uses a separate PNELLY endpoint and consent purpose. Outfit decomposition and merchant comparison remain unavailable until their model and canonical offer evidence gates pass.</div>
+      </section>
     </section>
     <section class="ai-panel" aria-labelledby="clickItTitle">
       <div class="eyebrow">Click It · Photograph it</div>
@@ -264,16 +283,46 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     const query=$("aiQuery").value.trim(),category=$("aiCategory").value;
     if(query.length<3){setAiStatus("aiSearchStatus","Enter a product description of at least 3 characters.",true);return}
     setAiBusy("aiSearchBtn",true,"Searching…");
-    setAiStatus("aiSearchStatus","Searching current marketplace offers with Xari…");
+    setAiStatus("aiSearchStatus","Searching current marketplace offers with PNELLY…");
     try{
       const body={query,limit:10};if(category)body.category=category;
       const response=await fetch("/api/vision/marketplace-search",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json"},body:JSON.stringify(body)});
       const data=await response.json().catch(()=>({}));
-      if(!response.ok)throw new Error((data.detail&&data.detail.code)||("Xari marketplace search returned HTTP "+response.status+"."));
-      if(data.status!=="complete"||!Array.isArray(data.candidates))throw new Error("Xari returned an invalid search response.");
+      if(!response.ok)throw new Error((data.detail&&data.detail.code)||("PNELLY marketplace search returned HTTP "+response.status+"."));
+      if(data.status!=="complete"||!Array.isArray(data.candidates))throw new Error("PNELLY returned an invalid search response.");
       presentAiSearchResult(data,"aiSearchStatus");
     }catch(e){setAiStatus("aiSearchStatus",(e&&e.message?e.message:"Search is unavailable")+". No demo or fabricated results were shown.",true)}
-    finally{setAiBusy("aiSearchBtn",false,"Search marketplace with Xari")}
+    finally{setAiBusy("aiSearchBtn",false,"Search marketplace with PNELLY")}
+  });
+  $("lookItForm").addEventListener("submit",async e=>{
+    e.preventDefault();
+    const image=$("lookItImage").files&&$("lookItImage").files[0];
+    if(!image){setAiStatus("lookItStatus","Choose a sketch, inspiration image or photo.",true);return}
+    if(!config.commerceBase||!config.userToken){setAiStatus("lookItStatus","Connect the Commerce API with a signed user JWT first.",true);return}
+    if(image.size>10*1024*1024){setAiStatus("lookItStatus","Reference image exceeds the 10 MB upload limit.",true);return}
+    if(!["image/jpeg","image/png","image/webp"].includes(image.type)){setAiStatus("lookItStatus","Use a JPEG, PNG or WEBP image.",true);return}
+    if(!$("lookItImageConsent").checked||!$("lookItSearchConsent").checked){setAiStatus("lookItStatus","Both Look It consent controls are required.",true);return}
+    const form=new FormData();
+    form.append("consent_id",$("lookItConsentId").value.trim());
+    form.append("consent_image_processing","true");
+    form.append("consent_look_it","true");
+    form.append("reference_image",image);
+    setAiBusy("lookItBtn",true,"Searching image…");
+    setAiStatus("lookItStatus","Checking your signed identity and active Look It consent before visual search…");
+    try{
+      const response=await fetch("/api/vision/look-it",{method:"POST",headers:{Authorization:"Bearer "+config.userToken,Accept:"application/json"},body:form});
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok)throw new Error((data.detail&&data.detail.code)||("PNELLY Look It returned HTTP "+response.status+"."));
+      if(data.status!=="complete"||!Array.isArray(data.candidates))throw new Error("PNELLY Look It returned an invalid response.");
+      presentAiSearchResult(data,"lookItStatus");
+      const decomposition=data.outfit_decomposition&&data.outfit_decomposition.status;
+      if(decomposition!=="complete")setAiStatus("lookItStatus","Visual search completed with "+(data.candidate_count||0)+" candidate(s). Outfit decomposition remains unavailable until its validated model is integrated; all candidates remain hidden pending CAL SHOW.");
+    }catch(err){
+      let message=err&&err.message?err.message:"PNELLY Look It is unavailable";
+      if(message==="LOOK_IT_CONSENT_PROVIDER_NOT_CONFIGURED")message="The server-side consent provider is not deployed or configured; the image was not sent for model processing.";
+      if(message==="VALIDATED_OUTFIT_DECOMPOSITION_MODEL_NOT_CONFIGURED")message="The validated outfit-decomposition model is not configured.";
+      setAiStatus("lookItStatus",message+". No demo or fabricated matches were shown.",true);
+    }finally{setAiBusy("lookItBtn",false,"Search image with PNELLY Look It")}
   });
   $("clickItForm").addEventListener("submit",async e=>{
     e.preventDefault();
