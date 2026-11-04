@@ -577,6 +577,49 @@ async def search_by_description(payload: TextSearchRequest) -> dict[str, Any]:
     }
 
 
+@app.post("/v1/search/image", dependencies=[Depends(require_worker_auth)], tags=["look-it"])
+async def look_it_image_search(
+    consent_image_processing: Annotated[bool, Form()],
+    consent_look_it: Annotated[bool, Form()],
+    image: Annotated[UploadFile, File()],
+    category: Annotated[str | None, Form()] = None,
+    limit: Annotated[int, Form(ge=1, le=25)] = 10,
+) -> dict[str, Any]:
+    """Search a PNELLY Look It reference; never serves the Click It contract."""
+    if not consent_image_processing or not consent_look_it:
+        await image.close()
+        raise HTTPException(403, detail={"code": "EXPLICIT_LOOK_IT_CONSENT_REQUIRED"})
+    content_type = image.content_type or ''
+    try:
+        data = await image.read(MAX_IMAGE_BYTES + 1)
+    finally:
+        await image.close()
+    decoded = _decode_image(data, content_type)
+    quality = evaluate_image_quality(decoded)
+    if not quality['passed']:
+        raise HTTPException(422, detail={"code": "IMAGE_QUALITY_REJECTED", "quality": quality, "message": "Retake the reference with better light, focus and framing."})
+    query_vector = _image_embedding(decoded)
+    offers, truncated = await _live_offers()
+    if category and category.strip():
+        selected = category.strip().casefold()
+        offers = [item for item in offers if str(item.get('category', '')).casefold() == selected or str((item.get('product') or {}).get('category', '')).casefold() == selected]
+    results = _rank_offers(query_vector, offers, limit)
+    return {
+        'status': 'complete',
+        'search_mode': 'look_it_image_to_catalog_text_similarity',
+        'image_quality': quality,
+        'candidate_count': len(results),
+        'catalog_offer_count': len(offers),
+        'results': results,
+        'catalog_truncated': truncated,
+        'model': {'id': MODEL_ID, 'revision': os.getenv('CLIP_MODEL_REVISION')},
+        'scores_are_probabilities': False,
+        'image_persisted': False,
+        'outfit_decomposition': {'status': 'unavailable', 'reason': 'VALIDATED_OUTFIT_DECOMPOSITION_MODEL_NOT_CONFIGURED', 'components': []},
+        'merchant_comparison': {'status': 'unavailable', 'reason': 'CANONICAL_VARIANT_ID_AND_OFFER_OBSERVATION_TIMESTAMP_REQUIRED'},
+        'warning': 'Image-to-text similarity is not a calibrated probability, garment decomposition, fit estimate or purchase authorization.',
+    }
+
 @app.post("/v1/click-it/scan", dependencies=[Depends(require_worker_auth)], tags=["click-it"])
 async def click_it_scan(
     consent_image_processing: Annotated[bool, Form()],
