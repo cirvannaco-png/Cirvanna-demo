@@ -12,7 +12,7 @@ class FixtureConsentVerifier:
     def __init__(self, result=True):
         self.result = result
 
-    def verify(self, subject_id, consent):
+    def verify(self, subject_id, twin_id, consent):
         return self.result
 
 
@@ -197,3 +197,98 @@ def test_invalid_renderer_output_is_rejected(client, monkeypatch):
     response = client.post("/v1/try-ons", json=payload(), headers=headers())
     assert response.status_code == 502
     assert response.json()["detail"]["code"] == "RENDERER_INVALID_OUTPUT"
+
+
+
+class FakeHTTPResponse:
+    def __init__(self, status_code, body):
+        self.status_code = status_code
+        self._body = body
+
+    def json(self):
+        return self._body
+
+
+class FakeHTTPClient:
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def post(self, url, *, headers, json):
+        self.calls.append({"url": url, "headers": headers, "json": json})
+        return self.responses.pop(0)
+
+
+def test_identity_consent_adapter_binds_virtual_try_on_to_twin_resource(monkeypatch):
+    fake = FakeHTTPClient([FakeHTTPResponse(200, {
+        "verified": True,
+        "active": True,
+        "subject_id": "subject-test-001",
+        "consent_id": "consent-test-0001",
+        "resource_id": "twin-test-001",
+        "granted_scopes": ["image_processing", "virtual_try_on", "asset_reuse"],
+    })])
+    monkeypatch.setattr(main.httpx, "Client", lambda **_kwargs: fake)
+    adapter = main.IdentityConsentVerifier("https://identity.example.test", "i" * 40)
+    assert adapter.verify("subject-test-001", "twin-test-001", main.ConsentInput(
+        consent_id="consent-test-0001",
+        image_processing=True,
+        virtual_try_on=True,
+        retention_policy="ephemeral",
+    )) is True
+    assert fake.calls[0]["url"] == "https://identity.example.test/internal/v1/consents/verify"
+    assert fake.calls[0]["json"]["resource_id"] == "twin-test-001"
+    assert set(fake.calls[0]["json"]["required_scopes"]) == {"image_processing", "virtual_try_on", "asset_reuse"}
+
+
+def test_identity_consent_adapter_rejects_wrong_subject_or_resource(monkeypatch):
+    fake = FakeHTTPClient([FakeHTTPResponse(200, {
+        "verified": True,
+        "active": True,
+        "subject_id": "another-subject",
+        "consent_id": "consent-test-0001",
+        "resource_id": "another-twin",
+        "granted_scopes": ["image_processing", "virtual_try_on", "asset_reuse"],
+    })])
+    monkeypatch.setattr(main.httpx, "Client", lambda **_kwargs: fake)
+    adapter = main.IdentityConsentVerifier("https://identity.example.test", "i" * 40)
+    assert adapter.verify("subject-test-001", "twin-test-001", main.ConsentInput(
+        consent_id="consent-test-0001",
+        image_processing=True,
+        virtual_try_on=True,
+        retention_policy="ephemeral",
+    )) is False
+
+
+def test_twin_registry_asset_adapter_checks_exact_subject_twin_and_assets(monkeypatch):
+    fake = FakeHTTPClient([FakeHTTPResponse(200, {
+        "authorized": True,
+        "active": True,
+        "subject_id": "subject-test-001",
+        "twin_id": "twin-test-001",
+        "product_id": "product-test-001",
+        "person_image_asset_id": "person-asset-001",
+        "garment_image_asset_id": "garment-asset-001",
+    })])
+    monkeypatch.setattr(main.httpx, "Client", lambda **_kwargs: fake)
+    adapter = main.TwinRegistryAssetAuthorizer("https://registry.example.test", "r" * 40)
+    assert adapter.authorize(
+        "subject-test-001", "twin-test-001", "product-test-001", "person-asset-001", "garment-asset-001"
+    ) is True
+    assert fake.calls[0]["url"] == "https://registry.example.test/internal/v1/assets/authorize"
+    assert fake.calls[0]["json"]["product_id"] == "product-test-001"
+
+
+def test_internal_service_configuration_requires_https_and_long_token(monkeypatch):
+    monkeypatch.setenv("CONSENT_API_URL", "http://identity.example.test")
+    monkeypatch.setenv("CONSENT_API_TOKEN", "i" * 40)
+    assert main._trusted_internal_config("CONSENT_API_URL", "CONSENT_API_TOKEN") is None
+    monkeypatch.setenv("CONSENT_API_URL", "https://identity.example.test")
+    monkeypatch.setenv("CONSENT_API_TOKEN", "short")
+    assert main._trusted_internal_config("CONSENT_API_URL", "CONSENT_API_TOKEN") is None
