@@ -150,7 +150,7 @@
       "path": "services/xari",
       "owner": "Xari",
       "status": "implementation-scaffold",
-      "scope": "Current assistant/orchestration surface; Tari/Xyra are legacy source labels."
+      "scope": "Canonical optional assistant/orchestration surface; Tari/Xyra remain legacy source labels."
     }
   ],
   "quarantined_roots": [
