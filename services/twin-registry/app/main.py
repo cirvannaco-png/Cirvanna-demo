@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import re
 import uuid
@@ -157,6 +158,7 @@ class TwinCreate(StrictModel):
     model_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
     model_release_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     validation_report_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    validation_attestation_hmac: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class TwinOwner(StrictModel):
@@ -198,6 +200,25 @@ def require_internal_token(
         raise HTTPException(401, detail={"code": "INTERNAL_AUTH_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
 
 
+def _verify_validation_attestation(payload: TwinCreate) -> None:
+    secret = os.getenv("TWIN_REGISTRY_VALIDATION_HMAC_SECRET", "").strip()
+    if len(secret.encode("utf-8")) < 32:
+        raise HTTPException(503, detail={"code": "TWIN_VALIDATION_ATTESTATION_NOT_CONFIGURED"})
+    body = {
+        "twin_id": payload.twin_id,
+        "subject_id": payload.subject_id,
+        "mesh_asset_id": payload.mesh_asset_id,
+        "model_id": payload.model_id.strip(),
+        "model_revision": payload.model_revision,
+        "model_release_sha256": payload.model_release_sha256,
+        "validation_report_sha256": payload.validation_report_sha256,
+    }
+    canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    expected = hmac.new(secret.encode("utf-8"), canonical.encode("utf-8"), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, payload.validation_attestation_hmac):
+        raise HTTPException(403, detail={"code": "TWIN_VALIDATION_ATTESTATION_INVALID"})
+
+
 def verified_subject(value: str) -> str:
     value = value.strip()
     if not SUBJECT_RE.fullmatch(value):
@@ -222,6 +243,8 @@ def ready(db: Session = Depends(get_db)):
     try:
         db.execute(select(TwinRecord.twin_id).limit(1))
         db.execute(select(AssetRecord.asset_id).limit(1))
+        if len(os.getenv("TWIN_REGISTRY_VALIDATION_HMAC_SECRET", "").encode("utf-8")) < 32:
+            raise HTTPException(503, detail={"code": "TWIN_VALIDATION_ATTESTATION_NOT_CONFIGURED"})
         return {"status": "ready", "service": SERVICE, "database": "reachable", "ready": True}
     except SQLAlchemyError as exc:
         raise HTTPException(503, detail={"code": "TWIN_REGISTRY_SCHEMA_NOT_READY"}) from exc
@@ -265,6 +288,7 @@ def register_asset(payload: AssetRegister, db: Session = Depends(get_db)):
 @app.post("/internal/v1/twins", dependencies=[Depends(require_internal_token)])
 def create_twin(payload: TwinCreate, db: Session = Depends(get_db)):
     subject = verified_subject(payload.subject_id)
+    _verify_validation_attestation(payload)
     existing = db.get(TwinRecord, payload.twin_id)
     if existing is not None:
         same = (
