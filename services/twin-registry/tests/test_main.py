@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app import main
 
 TOKEN = "twin-registry-test-token-that-is-at-least-thirty-two-bytes"
+VALIDATION_SECRET = "twin-validation-attestation-secret-at-least-32-bytes"
 
 
 @pytest.fixture
@@ -13,6 +18,7 @@ def client(tmp_path, monkeypatch):
     url = "sqlite:///" + str(tmp_path / "registry.db")
     monkeypatch.setenv("TWIN_REGISTRY_DATABASE_URL", url)
     monkeypatch.setenv("TWIN_REGISTRY_API_TOKEN", TOKEN)
+    monkeypatch.setenv("TWIN_REGISTRY_VALIDATION_HMAC_SECRET", VALIDATION_SECRET)
     main._engine.cache_clear()
     main._session_factory.cache_clear()
     main.Base.metadata.create_all(bind=main._engine(url))
@@ -56,6 +62,19 @@ def create_twin(client, mesh_id, **overrides):
         "validation_report_sha256": "d" * 64,
     }
     body.update(overrides)
+    attested = {
+        "twin_id": body["twin_id"],
+        "subject_id": body["subject_id"],
+        "mesh_asset_id": body["mesh_asset_id"],
+        "model_id": body["model_id"],
+        "model_revision": body["model_revision"],
+        "model_release_sha256": body["model_release_sha256"],
+        "validation_report_sha256": body["validation_report_sha256"],
+    }
+    canonical = json.dumps(attested, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    body["validation_attestation_hmac"] = hmac.new(
+        VALIDATION_SECRET.encode(), canonical.encode(), hashlib.sha256
+    ).hexdigest()
     return client.post("/internal/v1/twins", headers=auth(), json=body)
 
 
@@ -254,3 +273,29 @@ def test_readiness_is_not_claimed_without_database(client, monkeypatch):
     response = client.get("/ready", headers=auth())
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "TWIN_REGISTRY_DATABASE_NOT_CONFIGURED"
+
+
+
+def test_twin_creation_requires_configured_validation_attestation_secret(client, monkeypatch):
+    mesh = register(client)
+    monkeypatch.delenv("TWIN_REGISTRY_VALIDATION_HMAC_SECRET", raising=False)
+    response = create_twin(client, mesh)
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "TWIN_VALIDATION_ATTESTATION_NOT_CONFIGURED"
+
+
+def test_twin_creation_rejects_invalid_validation_attestation(client):
+    mesh = register(client)
+    body = {
+        "twin_id": "twin-invalid",
+        "subject_id": "customer-123",
+        "mesh_asset_id": mesh,
+        "model_id": "cirvanna-avatar-mesh",
+        "model_revision": "b" * 40,
+        "model_release_sha256": "c" * 64,
+        "validation_report_sha256": "d" * 64,
+        "validation_attestation_hmac": "0" * 64,
+    }
+    response = client.post("/internal/v1/twins", headers=auth(), json=body)
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "TWIN_VALIDATION_ATTESTATION_INVALID"
