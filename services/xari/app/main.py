@@ -233,7 +233,7 @@ def _look_it_consent_config() -> tuple[str, str] | None:
     local = host in {"localhost", "127.0.0.1", "::1"}
     if (not host or parts.username is not None or parts.password is not None
         or parts.query or parts.fragment
-        or (parts.scheme != "https" and not (parts.scheme == "http" and local)):
+        or (parts.scheme != "https" and not (parts.scheme == "http" and local))):
         return None
     return raw, token
 
