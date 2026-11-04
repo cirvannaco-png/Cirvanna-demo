@@ -173,7 +173,8 @@ async def marketplace_description_search(payload: MarketplaceSearchIn) -> dict:
     }
 
 
-@app.post("/api/vision/click-it")
+@app.post("/api/vision/click-it")  # Backward-compatible route alias.
+@app.post("/api/vision/look-it")
 async def marketplace_click_it(
     request: Request,
     consent_id: str = Form(min_length=8, max_length=160),
@@ -184,7 +185,7 @@ async def marketplace_click_it(
     category: str | None = Form(default=None, max_length=80),
     limit: int = Form(default=10, ge=1, le=25),
 ) -> Response:
-    """Bind Click It to a verified Commerce identity and keep all service tokens private.
+    """Bind Look It image discovery to a verified Commerce identity and keep all service tokens private.
 
     The browser may supply consent flags and an opaque consent reference, but the
     Virtual Twin service verifies the durable, active record with the consent
