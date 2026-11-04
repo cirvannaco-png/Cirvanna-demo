@@ -487,6 +487,7 @@ Start with the [Source of truth and contributor guide](docs/architecture/source-
 ## Architecture references
 
 - [Complementer, Marketplace Product Intelligence and Skin-State Forecasting](docs/architecture/complementer-product-intelligence-skin-forecast.md)
+- [Tari-assisted discovery, Complementer collaboration and marketplace Try-On](docs/architecture/adr/ADR-0005-tari-assisted-discovery-marketplace-try-on.md)
 - [Decision flow](docs/architecture/decision-flow.md)
 - [CaTaCaCi decision contract ADR](docs/architecture/adr/ADR-0001-catacaci-decision-contract.md)
 - [Feature spine readiness](docs/architecture/feature-spine-readiness-2026-10-23.md)
