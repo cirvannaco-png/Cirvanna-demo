@@ -141,6 +141,8 @@ class FakeAsyncClient:
 
 
 def test_description_search_fails_closed_without_tari_or_legacy_secret(client, monkeypatch):
+    monkeypatch.delenv("TARI_API_URL", raising=False)
+    monkeypatch.delenv("TARI_API_TOKEN", raising=False)
     monkeypatch.delenv("XARI_API_URL", raising=False)
     monkeypatch.delenv("XARI_API_TOKEN", raising=False)
     response = client.post("/api/vision/marketplace-search", json={"query": "blue linen summer dress"})
