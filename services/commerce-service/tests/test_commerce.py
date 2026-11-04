@@ -481,3 +481,45 @@ def test_current_actor_endpoint_rejects_invalid_token(client):
     response = client.get("/me", headers={"Authorization": "Bearer definitely-not-a-jwt"})
     assert response.status_code == 401
 
+
+
+
+def test_admin_merchant_queue_is_paginated_filtered_and_role_protected(client):
+    first = client.post("/merchants/applications", headers=auth("queue-seller-1", "customer"),
+        json={"display_name": "Queue Studio One", "legal_name": "Queue Studio One Ltd",
+              "country_code": "KE", "contact_email": "one@example.test"})
+    second = client.post("/merchants/applications", headers=auth("queue-seller-2", "customer"),
+        json={"display_name": "Queue Studio Two", "legal_name": "Queue Studio Two Ltd",
+              "country_code": "UG", "contact_email": "two@example.test"})
+    assert first.status_code == second.status_code == 201
+
+    assert client.get("/admin/merchants").status_code == 401
+    assert client.get("/admin/merchants", headers=auth("customer-1", "customer")).status_code == 403
+    assert client.get("/admin/merchants", headers=auth("merchant-1", "merchant")).status_code == 403
+
+    response = client.get("/admin/merchants?state=pending&offset=0&limit=1",
+                          headers=auth("admin-queue", "admin"))
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 2
+    assert len(payload["items"]) == 1
+    assert payload["items"][0]["status"] == "pending"
+    assert "owner_user_id" not in payload["items"][0]
+    assert "verification_reference" not in payload["items"][0]
+
+    second_page = client.get("/admin/merchants?state=pending&offset=1&limit=1",
+                             headers=auth("admin-queue", "admin"))
+    assert second_page.status_code == 200
+    assert second_page.json()["total"] == 2
+    assert second_page.json()["items"][0]["merchant_id"] != payload["items"][0]["merchant_id"]
+
+    approved = client.post(
+        f"/admin/merchants/{first.json()['merchant_id']}/decision",
+        headers=auth("admin-queue", "admin"),
+        json={"decision": "approve", "verification_reference": "external-review-2026-01"},
+    )
+    assert approved.status_code == 200
+    pending_only = client.get("/admin/merchants?state=pending",
+                              headers=auth("admin-queue", "admin"))
+    assert pending_only.status_code == 200
+    assert pending_only.json()["total"] == 1

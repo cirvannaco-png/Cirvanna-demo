@@ -4,11 +4,19 @@ on:
   pull_request:
     paths:
       - "services/commerce-service/**"
+      - "apps/demo-web/founder-console.html"
+      - "apps/demo-web/merchant-portal.html"
+      - "apps/demo-web/test_portal_contract.py"
+      - "apps/demo-web/PORTALS.md"
       - ".github/workflows/commerce-service.yml"
   push:
     branches: [main]
     paths:
       - "services/commerce-service/**"
+      - "apps/demo-web/founder-console.html"
+      - "apps/demo-web/merchant-portal.html"
+      - "apps/demo-web/test_portal_contract.py"
+      - "apps/demo-web/PORTALS.md"
       - ".github/workflows/commerce-service.yml"
 
 permissions:
