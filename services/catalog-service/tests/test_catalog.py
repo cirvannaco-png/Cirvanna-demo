@@ -480,3 +480,29 @@ def test_canonical_variant_routes_require_scoped_catalog_credentials(client):
     )
     assert created.status_code == 201
     assert client.get(f"/variants/{created.json()['variant_id']}").status_code == 401
+
+
+def test_archived_canonical_variant_is_hidden_and_identity_cannot_be_reissued(client):
+    product = create_product(client, sku="VARIANT-ARCHIVE-001")
+    product_id = product["product_id"]
+    created = client.post(
+        f"/products/{product_id}/variants",
+        headers=auth_headers(),
+        json={"attributes": {"size": "medium", "colour": "blue"}},
+    )
+    assert created.status_code == 201
+    variant_id = created.json()["variant_id"]
+
+    archived = client.delete(f"/variants/{variant_id}", headers=auth_headers())
+    assert archived.status_code == 200
+    assert archived.json()["status"] == "archived"
+    assert archived.json()["variant_version"] == 2
+    assert client.get(f"/variants/{variant_id}", headers=auth_headers()).status_code == 404
+    assert client.get(f"/products/{product_id}/variants", headers=auth_headers()).json()["total"] == 0
+
+    duplicate = client.post(
+        f"/products/{product_id}/variants",
+        headers=auth_headers(),
+        json={"attributes": {"size": "medium", "colour": "blue"}},
+    )
+    assert duplicate.status_code == 409
