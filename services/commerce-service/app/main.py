@@ -37,7 +37,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 
 
 SERVICE = "cirvanna-commerce-service"
-EXPECTED_SCHEMA_REVISION = "20261019_0002"
+EXPECTED_SCHEMA_REVISION = "20261104_0003"
 MAX_QTY = 50
 RESERVATION_MINUTES = 60
 SKU_RE = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,79}$")
@@ -48,6 +48,22 @@ EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 def now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def offer_max_age_seconds() -> int:
+    try:
+        configured = int(os.getenv("COMMERCE_OFFER_MAX_AGE_SECONDS", "3600"))
+    except ValueError:
+        configured = 3600
+    return max(60, min(configured, 604800))
+
+
+def offer_is_fresh(observed_at: datetime | None) -> bool:
+    if observed_at is None:
+        return False
+    if observed_at.tzinfo is None:
+        observed_at = observed_at.replace(tzinfo=timezone.utc)
+    return observed_at >= now() - timedelta(seconds=offer_max_age_seconds())
 
 
 def make_engine(url: str):
@@ -103,6 +119,7 @@ class Variant(Base):
     __table_args__ = (
         UniqueConstraint("listing_id", "sku", name="uq_commerce_variant_sku"),
         Index("ix_commerce_variant_listing_state", "listing_id", "state"),
+        Index("ix_commerce_variant_canonical_observed", "canonical_variant_id", "observed_at"),
         CheckConstraint("price_minor >= 0", name="ck_commerce_variant_price_nonnegative"),
         CheckConstraint("on_hand >= 0", name="ck_commerce_variant_on_hand_nonnegative"),
         CheckConstraint("reserved_qty >= 0 AND reserved_qty <= on_hand", name="ck_commerce_variant_reservation_bounds"),
@@ -117,7 +134,9 @@ class Variant(Base):
     reserved_qty: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     state: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    canonical_variant_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now, onupdate=now)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
 
 
 class InventoryMovement(Base):
@@ -379,6 +398,40 @@ class CatalogClient:
         return data
 
 
+
+    def variant(self, variant_id: str, expected_product_id: str) -> dict[str, Any]:
+        base, token = os.getenv("CATALOG_API_URL", "").rstrip("/"), os.getenv("CATALOG_API_TOKEN", "")
+        if not base or not token:
+            raise HTTPException(503, detail={"code": "CATALOG_INTEGRATION_NOT_CONFIGURED"})
+        parsed = urlsplit(base)
+        local_hosts = {"localhost", "127.0.0.1", "::1"}
+        if not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise HTTPException(503, detail={"code": "INVALID_CATALOG_API_URL"})
+        if parsed.scheme != "https" and not (parsed.scheme == "http" and parsed.hostname.lower() in local_hosts):
+            raise HTTPException(503, detail={"code": "CATALOG_API_MUST_USE_HTTPS"})
+        try:
+            response = httpx.get(
+                f"{base}/variants/{variant_id}",
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                timeout=4.0,
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "CATALOG_UNAVAILABLE"}) from exc
+        if response.status_code == 404:
+            raise HTTPException(409, detail={"code": "CANONICAL_VARIANT_NOT_FOUND"})
+        if response.status_code == 401:
+            raise HTTPException(503, detail={"code": "CATALOG_AUTH_FAILED"})
+        if response.status_code != 200:
+            raise HTTPException(503, detail={"code": "CATALOG_VARIANT_LOOKUP_FAILED", "upstream_status": response.status_code})
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "INVALID_CATALOG_VARIANT_RESPONSE"}) from exc
+        if data.get("variant_id") != variant_id or data.get("product_id") != expected_product_id or data.get("status") != "active":
+            raise HTTPException(409, detail={"code": "CANONICAL_VARIANT_MISMATCH_OR_INACTIVE"})
+        return data
+
+
 class StripeGateway:
     def __init__(self):
         self.secret = os.getenv("STRIPE_SECRET_KEY", "")
@@ -487,6 +540,14 @@ class VariantIn(BaseModel):
     price_minor: int = Field(ge=0, le=2_000_000_000)
     currency: str = Field(min_length=3, max_length=3)
     initial_stock: int = Field(ge=0, le=1_000_000)
+    canonical_variant_id: str | None = Field(default=None, min_length=36, max_length=36)
+
+    @field_validator("canonical_variant_id")
+    @classmethod
+    def valid_canonical_variant_id(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return str(uuid.UUID(value))
 
     @field_validator("sku")
     @classmethod
@@ -665,7 +726,7 @@ def release_reservations(db: Session, order: CommerceOrder, final_state: str) ->
     for reservation in rows:
         changed = db.execute(update(Variant).where(Variant.id == reservation.variant_id,
             Variant.reserved_qty >= reservation.quantity).values(
-            reserved_qty=Variant.reserved_qty - reservation.quantity, version=Variant.version + 1, updated_at=now()))
+            reserved_qty=Variant.reserved_qty - reservation.quantity, version=Variant.version + 1, updated_at=now(), observed_at=now()))
         if changed.rowcount != 1:
             raise RuntimeError("Inventory reservation invariant failed")
         reservation.state = "released"
@@ -690,7 +751,7 @@ def settle_paid(db: Session, order: CommerceOrder, amount_total: int, currency: 
         changed = db.execute(update(Variant).where(Variant.id == r.variant_id,
             Variant.reserved_qty >= r.quantity, Variant.on_hand >= r.quantity).values(
             on_hand=Variant.on_hand - r.quantity, reserved_qty=Variant.reserved_qty - r.quantity,
-            version=Variant.version + 1, updated_at=now()))
+            version=Variant.version + 1, updated_at=now(), observed_at=now()))
         if changed.rowcount != 1:
             raise HTTPException(409, detail={"code": "STOCK_SETTLEMENT_CONFLICT"})
         r.state = "consumed"
@@ -943,9 +1004,19 @@ def create_variant(listing_id: uuid.UUID, payload: VariantIn,
         raise HTTPException(404, detail={"code": "LISTING_NOT_FOUND"})
     if listing.state != "active":
         raise HTTPException(409, detail={"code": "LISTING_NOT_ACTIVE"})
+    require_canonical = os.getenv(
+        "COMMERCE_REQUIRE_CANONICAL_VARIANT_ID",
+        "true" if os.getenv("COMMERCE_ENVIRONMENT", "").strip().lower() == "production" else "false",
+    ).strip().lower() == "true"
+    if require_canonical and not payload.canonical_variant_id:
+        raise HTTPException(422, detail={"code": "CANONICAL_VARIANT_ID_REQUIRED"})
+    if payload.canonical_variant_id:
+        CatalogClient().variant(payload.canonical_variant_id, listing.catalog_product_id)
+    observed_at = now()
     variant = Variant(id=str(uuid.uuid4()), listing_id=listing.id, sku=payload.sku, options=payload.options,
         price_minor=payload.price_minor, currency=payload.currency, on_hand=payload.initial_stock,
-        reserved_qty=0, state="active", version=1)
+        reserved_qty=0, state="active", version=1, canonical_variant_id=payload.canonical_variant_id,
+        updated_at=observed_at, observed_at=observed_at)
     db.add(variant)
     if payload.initial_stock:
         db.add(InventoryMovement(id=str(uuid.uuid4()), variant_id=variant.id,
@@ -957,7 +1028,9 @@ def create_variant(listing_id: uuid.UUID, payload: VariantIn,
         raise HTTPException(409, detail={"code": "VARIANT_SKU_CONFLICT"}) from exc
     return {"variant_id": variant.id, "listing_id": listing.id, "sku": variant.sku, "options": variant.options,
         "price_minor": variant.price_minor, "currency": variant.currency, "on_hand": variant.on_hand,
-        "reserved_qty": variant.reserved_qty, "available_stock": variant.on_hand - variant.reserved_qty, "version": variant.version}
+        "reserved_qty": variant.reserved_qty, "available_stock": variant.on_hand - variant.reserved_qty,
+        "canonical_variant_id": variant.canonical_variant_id, "observed_at": variant.observed_at.isoformat(),
+        "version": variant.version}
 
 
 @app.post("/merchant/variants/{variant_id}/inventory-adjustments")
@@ -973,7 +1046,7 @@ def adjust_inventory(variant_id: uuid.UUID, payload: InventoryAdjustment,
     result = db.execute(update(Variant).where(Variant.id == variant.id,
         Variant.on_hand + payload.quantity_delta >= Variant.reserved_qty,
         Variant.on_hand + payload.quantity_delta >= 0).values(
-        on_hand=Variant.on_hand + payload.quantity_delta, version=Variant.version + 1, updated_at=now()))
+        on_hand=Variant.on_hand + payload.quantity_delta, version=Variant.version + 1, updated_at=now(), observed_at=now()))
     if result.rowcount != 1:
         db.rollback()
         raise HTTPException(409, detail={"code": "INVENTORY_BELOW_RESERVED_OR_NEGATIVE"})
@@ -1005,7 +1078,12 @@ def list_offers(db: Annotated[Session, Depends(get_db)], q: str | None = Query(N
     return {"items": [{"variant_id": v.id, "listing_id": l.id, "merchant_id": m.id, "merchant_name": m.display_name,
         "catalog_product_id": l.catalog_product_id, "product_name": l.product_name, "category": l.category,
         "image_urls": l.image_urls, "sku": v.sku, "options": v.options, "price_minor": v.price_minor, "currency": v.currency,
-        "available_stock": v.on_hand - v.reserved_qty} for v, l, m in rows], "total": total, "offset": offset, "limit": limit}
+        "available_stock": v.on_hand - v.reserved_qty, "canonical_variant_id": v.canonical_variant_id,
+        "observed_at": v.observed_at.isoformat() if v.observed_at else None,
+        "is_fresh": offer_is_fresh(v.observed_at),
+        "comparison_eligible": bool(v.canonical_variant_id and offer_is_fresh(v.observed_at))}
+        for v, l, m in rows], "total": total, "offset": offset, "limit": limit,
+        "offer_max_age_seconds": offer_max_age_seconds()}
 
 
 @app.put("/saved-products/{catalog_product_id}", status_code=201)
@@ -1124,7 +1202,7 @@ def checkout(actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Sess
         for ci, v, listing, merchant in rows:
             changed = db.execute(update(Variant).where(Variant.id == v.id, Variant.state == "active",
                 Variant.on_hand - Variant.reserved_qty >= ci.quantity).values(
-                reserved_qty=Variant.reserved_qty + ci.quantity, version=Variant.version + 1, updated_at=now()))
+                reserved_qty=Variant.reserved_qty + ci.quantity, version=Variant.version + 1, updated_at=now(), observed_at=now()))
             if changed.rowcount != 1:
                 raise HTTPException(409, detail={"code": "INSUFFICIENT_AVAILABLE_STOCK", "variant_id": v.id})
             line = v.price_minor * ci.quantity
