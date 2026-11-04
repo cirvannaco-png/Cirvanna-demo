@@ -425,3 +425,58 @@ def test_historical_outcomes_require_minimum_aggregate_sample_and_provenance(cli
 def test_legacy_product_attributes_remain_backward_compatible(client):
     product = create_product(client, sku="LEGACY-ATTR-001", attributes={"finish": "matte", "shade": "plum"})
     assert product["attributes"] == {"finish": "matte", "shade": "plum"}
+
+def test_canonical_variants_are_catalog_owned_normalized_and_immutable(client):
+    product = create_product(client, sku="VARIANT-PRODUCT-001")
+    product_id = product["product_id"]
+
+    created = client.post(
+        f"/products/{product_id}/variants",
+        headers=auth_headers(),
+        json={"attributes": {" Size ": " Medium ", "Colour": " BLUE "}},
+    )
+    assert created.status_code == 201, created.text
+    variant = created.json()
+    assert variant["product_id"] == product_id
+    assert variant["attributes"] == {"colour": "blue", "size": "medium"}
+    assert len(variant["variant_id"]) == 36
+
+    duplicate = client.post(
+        f"/products/{product_id}/variants",
+        headers=auth_headers(),
+        json={"attributes": {"colour": "Blue", "size": "MEDIUM"}},
+    )
+    assert duplicate.status_code == 409
+    assert duplicate.json()["detail"]["code"] == "CANONICAL_VARIANT_ALREADY_EXISTS"
+
+    distinct = client.post(
+        f"/products/{product_id}/variants",
+        headers=auth_headers(),
+        json={"attributes": {"colour": "blue", "size": "large"}},
+    )
+    assert distinct.status_code == 201
+    assert distinct.json()["variant_id"] != variant["variant_id"]
+
+    fetched = client.get(f"/variants/{variant['variant_id']}", headers=auth_headers())
+    assert fetched.status_code == 200
+    assert fetched.json()["variant_id"] == variant["variant_id"]
+
+    listed = client.get(f"/products/{product_id}/variants", headers=auth_headers())
+    assert listed.status_code == 200
+    assert listed.json()["total"] == 2
+
+
+def test_canonical_variant_routes_require_scoped_catalog_credentials(client):
+    product = create_product(client, sku="VARIANT-AUTH-001")
+    product_id = product["product_id"]
+    assert client.post(
+        f"/products/{product_id}/variants",
+        json={"attributes": {"size": "small"}},
+    ).status_code == 401
+    created = client.post(
+        f"/products/{product_id}/variants",
+        headers=auth_headers(),
+        json={"attributes": {"size": "small"}},
+    )
+    assert created.status_code == 201
+    assert client.get(f"/variants/{created.json()['variant_id']}").status_code == 401
