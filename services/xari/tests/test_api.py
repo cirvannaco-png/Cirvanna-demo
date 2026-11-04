@@ -80,3 +80,20 @@ def test_capabilities_report_search_contract_without_claiming_cal_display(monkey
     assert data["marketplace_description_search"]["implemented"] is True
     assert data["marketplace_description_search"]["configured"] is False
     assert data["marketplace_description_search"]["cal_authorization_required_before_display"] is True
+
+def test_tari_token_is_preferred_over_legacy_xari_token(monkeypatch):
+    tari_token = "tari-test-token-at-least-thirty-two-bytes"
+    xari_token = "xari-legacy-token-at-least-thirty-two-bytes"
+    monkeypatch.setenv("TARI_API_TOKEN", tari_token)
+    monkeypatch.setenv("XARI_API_TOKEN", xari_token)
+    wrong = client.post("/v1/marketplace/search", headers={"Authorization": f"Bearer {xari_token}"}, json=PAYLOAD)
+    assert wrong.status_code == 401
+    right = client.post("/v1/marketplace/search", headers={"Authorization": f"Bearer {tari_token}"}, json=PAYLOAD)
+    assert right.status_code == 503
+    assert right.json()["detail"]["code"] == "MARKETPLACE_SEARCH_NOT_CONFIGURED"
+
+def test_capabilities_name_tari_as_canonical_and_keep_xari_as_legacy(monkeypatch):
+    monkeypatch.setenv("TARI_API_TOKEN", "tari-test-token-at-least-thirty-two-bytes")
+    data = client.get("/capabilities").json()
+    assert data["canonical_name"] == "Tari"
+    assert data["legacy_names"] == ["Xari", "Xyra"]
