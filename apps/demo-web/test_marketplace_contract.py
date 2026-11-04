@@ -44,6 +44,8 @@ class MarketplaceContractTests(unittest.TestCase):
         self.assertIn("Complementer is designed as optional styling advice", HTML)
         self.assertIn("price comparisons must use current Commerce offers", HTML)
         self.assertNotIn("Xari · Describe it", HTML)
+        self.assertNotIn("with Xari", HTML)
+        self.assertNotIn("search with Xari", HTML)
 
     def test_try_on_remains_visible_but_disabled_until_real_adapters_exist(self):
         self.assertIn("Try on — unavailable", HTML)
