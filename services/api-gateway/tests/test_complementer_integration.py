@@ -122,8 +122,10 @@ def test_gateway_complementer_proxy_calls_contract_and_remains_advisory(monkeypa
 
 def test_gateway_fails_closed_when_complementer_is_not_configured(monkeypatch):
     monkeypatch.setenv("CIRVANNA_API_TOKEN", GATEWAY_TOKEN)
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
     monkeypatch.delenv("COMPLEMENTER_SERVICE_URL", raising=False)
     monkeypatch.delenv("COMPLEMENTER_SERVICE_TOKEN", raising=False)
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda _header: advisory_request()["user_id"])
     with TestClient(main.app) as client:
         response = client.post(
             "/v1/complementer/recommend",
