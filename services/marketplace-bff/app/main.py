@@ -92,6 +92,15 @@ def _internal_service(url_key: str, token_key: str) -> tuple[str, str]:
         raise HTTPException(status_code=503, detail={"code": f"{token_key}_NOT_CONFIGURED"})
     return base, token
 
+def _tari_internal_service() -> tuple[str, str]:
+    """Prefer Tari environment names while retaining the deployed Xari aliases."""
+    url_key = "TARI_API_URL" if os.getenv("TARI_API_URL", "").strip() else "XARI_API_URL"
+    token = os.getenv("TARI_API_TOKEN", "").strip() or os.getenv("XARI_API_TOKEN", "").strip()
+    base = _upstream_base(url_key)
+    if len(token.encode("utf-8")) < 32:
+        raise HTTPException(status_code=503, detail={"code": "TARI_API_TOKEN_NOT_CONFIGURED"})
+    return base, token
+
 
 class MarketplaceSearchIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -142,8 +151,8 @@ async def _safe_json_post(
 
 @app.post("/api/vision/marketplace-search")
 async def marketplace_description_search(payload: MarketplaceSearchIn) -> dict:
-    """Search marketplace candidates by description without exposing Xari credentials."""
-    base, token = _internal_service("XARI_API_URL", "XARI_API_TOKEN")
+    """Search marketplace candidates by description without exposing Tari credentials."""
+    base, token = _tari_internal_service()
     request_body = {"query": payload.normalized_query, "limit": payload.limit}
     if payload.category and payload.category.strip():
         request_body["category"] = payload.category.strip()
