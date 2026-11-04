@@ -35,7 +35,7 @@ The implemented route boundary is:
 
 Look It requires server-verified `image_processing` and `look_it` consent scopes. The endpoint is distinct from Click It. Candidate search is not product-display authorization, match probability or fit evidence. NPL, explicit cultural requirements and CAL SHOW remain mandatory before product/offer details are shown.
 
-The present Look It retrieval reuses low-level image embedding, active Commerce offers and Catalog enrichment. It does **not** yet perform validated outfit decomposition. Decomposition must remain explicitly unavailable until a licensed, pinned, evaluated decomposition model and component-level retrieval contract are supplied. The provider response model ID and full revision must exactly match `OUTFIT_DECOMPOSITION_MODEL_ID` and `OUTFIT_DECOMPOSITION_MODEL_REVISION`; the validation-report SHA-256 must match its configured pin.
+The present Look It retrieval reuses low-level image embedding, active Commerce offers and Catalog enrichment. It includes an optional outfit-decomposition adapter, but no approved provider is currently provisioned. The adapter returns unavailable unless a trusted provider is configured with an exact model ID, exact full 40-character model revision, and matching validation-report SHA-256. The provider release must also pass source/license review, independent evaluation and operational security review before deployment. The provider response model ID and full revision must exactly match `OUTFIT_DECOMPOSITION_MODEL_ID` and `OUTFIT_DECOMPOSITION_MODEL_REVISION`; the validation-report SHA-256 must match its configured pin.
 
 ### 3. Click It remains an independent service and its API contract is preserved
 
