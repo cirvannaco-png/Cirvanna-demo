@@ -92,17 +92,21 @@ def _internal_service(url_key: str, token_key: str) -> tuple[str, str]:
         raise HTTPException(status_code=503, detail={"code": f"{token_key}_NOT_CONFIGURED"})
     return base, token
 
-def _xari_internal_service() -> tuple[str, str]:
-    """Prefer Xari environment names while retaining Tari aliases during migration."""
-    xari_url = os.getenv("XARI_API_URL", "").strip()
-    tari_url = os.getenv("TARI_API_URL", "").strip()
-    url_key = "XARI_API_URL" if xari_url else "TARI_API_URL"
-    token = os.getenv("XARI_API_TOKEN", "").strip() or os.getenv("TARI_API_TOKEN", "").strip()
-    if not xari_url and not tari_url:
-        raise HTTPException(status_code=503, detail={"code": "XARI_API_URL_NOT_CONFIGURED"})
+def _pnelly_internal_service() -> tuple[str, str]:
+    """Prefer PNELLY credentials; retain Xari/Tari names only as migration aliases."""
+    candidates = [
+        ("PNELLY_API_URL", "PNELLY_API_TOKEN"),
+        ("XARI_API_URL", "XARI_API_TOKEN"),
+        ("TARI_API_URL", "TARI_API_TOKEN"),
+    ]
+    selected = next(((url_key, token_key) for url_key, token_key in candidates if os.getenv(url_key, "").strip()), None)
+    if selected is None:
+        raise HTTPException(status_code=503, detail={"code": "PNELLY_API_URL_NOT_CONFIGURED"})
+    url_key, token_key = selected
     base = _upstream_base(url_key)
+    token = os.getenv(token_key, "").strip()
     if len(token.encode("utf-8")) < 32:
-        raise HTTPException(status_code=503, detail={"code": "XARI_API_TOKEN_NOT_CONFIGURED"})
+        raise HTTPException(status_code=503, detail={"code": "PNELLY_API_TOKEN_NOT_CONFIGURED"})
     return base, token
 
 
@@ -156,7 +160,7 @@ async def _safe_json_post(
 @app.post("/api/vision/marketplace-search")
 async def marketplace_description_search(payload: MarketplaceSearchIn) -> dict:
     """Search marketplace candidates by description without exposing Xari credentials."""
-    base, token = _xari_internal_service()
+    base, token = _pnelly_internal_service()
     request_body = {"query": payload.normalized_query, "limit": payload.limit}
     if payload.category and payload.category.strip():
         request_body["category"] = payload.category.strip()
@@ -172,6 +176,85 @@ async def marketplace_description_search(payload: MarketplaceSearchIn) -> dict:
         "scores_are_probabilities": False,
     }
 
+
+@app.post("/api/vision/look-it")
+async def marketplace_look_it(
+    request: Request,
+    consent_id: str = Form(min_length=8, max_length=160),
+    consent_image_processing: bool = Form(),
+    consent_look_it: bool = Form(),
+    reference_image: UploadFile = File(...),
+    category: str | None = Form(default=None, max_length=80),
+    limit: int = Form(default=10, ge=1, le=25),
+) -> Response:
+    """PNELLY Look It visual discovery; this route never calls the Click It service."""
+    authorization = request.headers.get("authorization", "")
+    scheme, _, user_token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not user_token.strip():
+        raise HTTPException(401, detail={"code": "USER_BEARER_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
+    if not consent_image_processing or not consent_look_it:
+        raise HTTPException(400, detail={"code": "EXPLICIT_LOOK_IT_CONSENT_REQUIRED"})
+    content_type = reference_image.content_type or ""
+    if content_type not in {"image/jpeg", "image/png", "image/webp"}:
+        await reference_image.close()
+        raise HTTPException(415, detail={"code": "UNSUPPORTED_LOOK_IT_IMAGE_TYPE"})
+    if reference_image.size is not None and reference_image.size > MAX_VISION_IMAGE_BYTES:
+        await reference_image.close()
+        raise HTTPException(413, detail={"code": "LOOK_IT_IMAGE_SIZE_LIMIT_EXCEEDED"})
+    try:
+        content = await reference_image.read(MAX_VISION_IMAGE_BYTES + 1)
+    finally:
+        await reference_image.close()
+    if not content:
+        raise HTTPException(400, detail={"code": "EMPTY_LOOK_IT_IMAGE"})
+    if len(content) > MAX_VISION_IMAGE_BYTES:
+        raise HTTPException(413, detail={"code": "LOOK_IT_IMAGE_SIZE_LIMIT_EXCEEDED", "maximum_bytes": MAX_VISION_IMAGE_BYTES})
+    commerce_base = _upstream_base("COMMERCE_API_URL")
+    pnelly_base, pnelly_token = _pnelly_internal_service()
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+            identity = await client.get(commerce_base + "/me", headers={"Authorization": "Bearer " + user_token, "Accept": "application/json"})
+            if identity.status_code in {401, 403}:
+                raise HTTPException(401, detail={"code": "USER_AUTHENTICATION_FAILED"})
+            if identity.status_code != 200:
+                raise HTTPException(503, detail={"code": "USER_IDENTITY_UNAVAILABLE"})
+            try:
+                actor = identity.json()
+            except ValueError as exc:
+                raise HTTPException(502, detail={"code": "INVALID_USER_IDENTITY_RESPONSE"}) from exc
+            subject_id = actor.get("user_id") if isinstance(actor, dict) else None
+            if not isinstance(subject_id, str) or not subject_id.strip():
+                raise HTTPException(502, detail={"code": "INVALID_USER_IDENTITY_RESPONSE"})
+            fields = {
+                "subject_id": subject_id, "consent_id": consent_id.strip(),
+                "consent_image_processing": "true", "consent_look_it": "true", "limit": str(limit),
+            }
+            if category and category.strip():
+                fields["category"] = category.strip()
+            upstream = await client.post(pnelly_base + "/v1/marketplace/search/image",
+                headers={"Authorization": "Bearer " + pnelly_token, "Accept": "application/json"},
+                data=fields, files={"image": (reference_image.filename or "look-it-reference", content, content_type)})
+    except HTTPException:
+        raise
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "LOOK_IT_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "LOOK_IT_UNAVAILABLE"}) from exc
+    try:
+        data = upstream.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "LOOK_IT_INVALID_RESPONSE"}) from exc
+    if upstream.status_code == 200:
+        if not isinstance(data, dict) or data.get("status") != "complete" or not isinstance(data.get("candidates"), list):
+            raise HTTPException(502, detail={"code": "LOOK_IT_INVALID_RESPONSE"})
+        return JSONResponse(content=data, headers={"Cache-Control": "no-store, private"})
+    detail = data.get("detail", {}) if isinstance(data, dict) else {}
+    code = detail.get("code") if isinstance(detail, dict) and isinstance(detail.get("code"), str) else "LOOK_IT_REQUEST_FAILED"
+    if upstream.status_code in {400, 403, 413, 415, 422}:
+        raise HTTPException(upstream.status_code, detail={"code": code})
+    if upstream.status_code in {502, 503, 504}:
+        raise HTTPException(503 if upstream.status_code == 503 else upstream.status_code, detail={"code": code})
+    raise HTTPException(502, detail={"code": "LOOK_IT_FAILED"})
 
 @app.post("/api/vision/click-it")
 async def marketplace_click_it(
