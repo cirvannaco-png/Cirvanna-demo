@@ -168,7 +168,6 @@ def test_twin_authorization_is_owner_scoped_and_revocable(client):
 def test_asset_authorization_binds_person_to_owned_twin_and_garment_to_product(client):
     mesh = register(client)
     assert create_twin(client, mesh).status_code == 200
-    person = register_person(client).result().get("asset_id") if False else None
     person_response = register_person(client)
     assert person_response.status_code == 200
     person_id = person_response.json()["asset_id"]
