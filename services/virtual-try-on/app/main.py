@@ -11,6 +11,9 @@ import hmac
 import os
 import re
 import uuid
+from urllib.parse import urlsplit
+
+import httpx
 from datetime import datetime, timezone
 from typing import Annotated, Literal, Protocol
 
@@ -92,7 +95,7 @@ class CapabilityResponse(BaseModel):
 class ConsentVerifier(Protocol):
     """Verify the consent record server-side; never trust request booleans alone."""
 
-    def verify(self, subject_id: str, consent: ConsentInput) -> bool:
+    def verify(self, subject_id: str, twin_id: str, consent: ConsentInput) -> bool:
         ...
 
 
@@ -121,10 +124,135 @@ class Renderer(Protocol):
         ...
 
 
-# All three integrations are intentionally disabled until real implementations
+class IdentityConsentVerifier:
+    """Live identity-service adapter; consent is checked for the exact Twin resource."""
+
+    def __init__(self, base_url: str, token: str):
+        self.base_url = base_url
+        self.token = token
+
+    def verify(self, subject_id: str, twin_id: str, consent: ConsentInput) -> bool:
+        try:
+            with httpx.Client(timeout=httpx.Timeout(4.0, connect=1.5), trust_env=False, follow_redirects=False) as client:
+                response = client.post(
+                    self.base_url + "/internal/v1/consents/verify",
+                    headers={"Authorization": "Bearer " + self.token, "Accept": "application/json"},
+                    json={
+                        "subject_id": subject_id,
+                        "consent_id": consent.consent_id,
+                        "required_scopes": ["image_processing", "virtual_try_on", "asset_reuse"],
+                        "resource_id": twin_id,
+                    },
+                )
+        except httpx.TimeoutException as exc:
+            raise RuntimeError("consent verification timed out") from exc
+        except httpx.HTTPError as exc:
+            raise RuntimeError("consent verification unavailable") from exc
+        if response.status_code in {401, 403, 404}:
+            return False
+        if response.status_code != 200:
+            raise RuntimeError("consent verification unavailable")
+        try:
+            receipt = response.json()
+        except ValueError as exc:
+            raise RuntimeError("consent verifier returned invalid JSON") from exc
+        scopes = receipt.get("granted_scopes") if isinstance(receipt, dict) else None
+        return bool(
+            isinstance(receipt, dict)
+            and receipt.get("verified") is True
+            and receipt.get("active") is True
+            and receipt.get("subject_id") == subject_id
+            and receipt.get("consent_id") == consent.consent_id
+            and receipt.get("resource_id") == twin_id
+            and isinstance(scopes, list)
+            and {"image_processing", "virtual_try_on", "asset_reuse"}.issubset(set(scopes))
+        )
+
+
+class TwinRegistryAssetAuthorizer:
+    """Live registry adapter for subject/Twin/person/garment ownership checks."""
+
+    def __init__(self, base_url: str, token: str):
+        self.base_url = base_url
+        self.token = token
+
+    def authorize(
+        self,
+        subject_id: str,
+        twin_id: str,
+        product_id: str,
+        person_image_asset_id: str,
+        garment_image_asset_id: str,
+    ) -> bool:
+        try:
+            with httpx.Client(timeout=httpx.Timeout(4.0, connect=1.5), trust_env=False, follow_redirects=False) as client:
+                response = client.post(
+                    self.base_url + "/internal/v1/assets/authorize",
+                    headers={"Authorization": "Bearer " + self.token, "Accept": "application/json"},
+                    json={
+                        "subject_id": subject_id,
+                        "twin_id": twin_id,
+                        "product_id": product_id,
+                        "person_image_asset_id": person_image_asset_id,
+                        "garment_image_asset_id": garment_image_asset_id,
+                    },
+                )
+        except httpx.TimeoutException as exc:
+            raise RuntimeError("asset authorization timed out") from exc
+        except httpx.HTTPError as exc:
+            raise RuntimeError("asset authorization unavailable") from exc
+        if response.status_code in {401, 403, 404}:
+            return False
+        if response.status_code != 200:
+            raise RuntimeError("asset authorization unavailable")
+        try:
+            receipt = response.json()
+        except ValueError as exc:
+            raise RuntimeError("asset authorizer returned invalid JSON") from exc
+        return bool(
+            isinstance(receipt, dict)
+            and receipt.get("authorized") is True
+            and receipt.get("active") is True
+            and receipt.get("subject_id") == subject_id
+            and receipt.get("twin_id") == twin_id
+            and receipt.get("product_id") == product_id
+            and receipt.get("person_image_asset_id") == person_image_asset_id
+            and receipt.get("garment_image_asset_id") == garment_image_asset_id
+        )
+
+
+def _trusted_internal_config(url_key: str, token_key: str) -> tuple[str, str] | None:
+    raw = os.getenv(url_key, "").strip().rstrip("/")
+    token = os.getenv(token_key, "").strip()
+    if not raw or len(token.encode("utf-8")) < 32:
+        return None
+    parsed = urlsplit(raw)
+    host = (parsed.hostname or "").lower()
+    local = host in {"localhost", "127.0.0.1", "::1"}
+    if (
+        not host or parsed.username is not None or parsed.password is not None
+        or parsed.query or parsed.fragment
+        or (parsed.scheme != "https" and not (parsed.scheme == "http" and local))
+    ):
+        return None
+    return raw, token
+
+
+def _configured_consent_verifier() -> ConsentVerifier | None:
+    config = _trusted_internal_config("CONSENT_API_URL", "CONSENT_API_TOKEN")
+    return IdentityConsentVerifier(*config) if config else None
+
+
+def _configured_asset_authorizer() -> AssetAuthorizer | None:
+    config = _trusted_internal_config("TWIN_REGISTRY_API_URL", "TWIN_REGISTRY_API_TOKEN")
+    return TwinRegistryAssetAuthorizer(*config) if config else None
+
+
+# Only real remote identity/registry adapters are configured from trusted service URLs.
+# The renderer remains disabled until a secure object-store adapter and GPU model are deployed.
 # and independent integration tests exist. Environment flags cannot enable them.
-CONSENT_VERIFIER: ConsentVerifier | None = None
-ASSET_AUTHORIZER: AssetAuthorizer | None = None
+CONSENT_VERIFIER: ConsentVerifier | None = _configured_consent_verifier()
+ASSET_AUTHORIZER: AssetAuthorizer | None = _configured_asset_authorizer()
 RENDERER: Renderer | None = None
 
 app = FastAPI(
@@ -239,7 +367,7 @@ def create_try_on(
             },
         )
     try:
-        consent_is_valid = consent_verifier.verify(payload.subject_id, payload.consent)
+        consent_is_valid = consent_verifier.verify(payload.subject_id, payload.twin_id, payload.consent)
     except Exception as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

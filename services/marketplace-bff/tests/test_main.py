@@ -147,7 +147,7 @@ def test_description_search_fails_closed_without_xari_or_legacy_secret(client, m
     monkeypatch.delenv("XARI_API_TOKEN", raising=False)
     response = client.post("/api/vision/marketplace-search", json={"query": "blue linen summer dress"})
     assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "XARI_API_URL_NOT_CONFIGURED"
+    assert response.json()["detail"]["code"] == "PNELLY_API_URL_NOT_CONFIGURED"
 
 
 def test_description_search_forwards_to_legacy_tari_alias_and_keeps_candidates_pending_cal(client, monkeypatch):
@@ -274,3 +274,190 @@ def test_description_search_prefers_xari_environment_names(client, monkeypatch):
     assert response.status_code == 200, response.text
     assert fake.calls[0][1] == "https://xari.example.test/v1/marketplace/search"
     assert fake.calls[0][2]["headers"]["Authorization"] == "Bearer xari-internal-token-at-least-thirty-two-bytes"
+
+
+
+def test_look_it_requires_signed_user_token_before_any_upstream_call(client):
+    response = client.post(
+        "/api/vision/look-it",
+        data={
+            "consent_id": "look-consent-1234",
+            "consent_image_processing": "true",
+            "consent_look_it": "true",
+        },
+        files={"reference_image": ("sketch.png", b"not-used", "image/png")},
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "USER_BEARER_REQUIRED"
+
+
+def test_look_it_uses_verified_subject_and_dedicated_pnelly_endpoint(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("PNELLY_API_URL", "https://pnelly.example.test")
+    monkeypatch.setenv("PNELLY_API_TOKEN", "pnelly-internal-token-at-least-thirty-two-bytes")
+    monkeypatch.setenv("CONSENT_API_URL", "https://identity.example.test")
+    monkeypatch.setenv("CONSENT_API_TOKEN", "consent-internal-token-at-least-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-77", "role": "customer"}),
+        FakeResponse({"consent_id": "look-consent-1234", "status": "recorded", "granted_scopes": ["image_processing", "look_it"]}),
+        FakeResponse({
+            "status": "complete",
+            "search_mode": "pnelly_look_it_image_to_catalog_text_similarity",
+            "candidate_count": 1,
+            "candidates": [{"variant_id": "variant-look-1", "product_name": "blue dress"}],
+            "display_authorized": False,
+            "decision_status": "PENDING_CAL",
+            "outfit_decomposition": {"status": "unavailable", "components": []},
+            "merchant_comparison": {"status": "unavailable"},
+        }),
+        FakeResponse({"consent_id": "look-consent-1234", "status": "revoked"}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/vision/look-it",
+        headers={"Authorization": "Bearer signed-user-token"},
+        data={
+            "consent_id": "look-consent-1234",
+            "consent_image_processing": "true",
+            "consent_look_it": "true",
+            "category": "dress",
+            "limit": "5",
+        },
+        files={"reference_image": ("sketch.png", b"reference-image-bytes", "image/png")},
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.json()["display_authorized"] is False
+    assert response.json()["decision_status"] == "PENDING_CAL"
+    assert len(fake.calls) == 4
+    assert fake.calls[0][1] == "https://commerce.example.test/me"
+    assert fake.calls[1][1] == "https://identity.example.test/internal/v1/consents/record"
+    assert fake.calls[1][2]["json"]["subject_id"] == "signed-user-77"
+    assert fake.calls[1][2]["json"]["granted_scopes"] == ["image_processing", "look_it"]
+    assert fake.calls[1][2]["json"]["expires_at"].endswith("+00:00")
+    assert fake.calls[2][1] == "https://pnelly.example.test/v1/marketplace/search/image"
+    assert fake.calls[2][2]["data"]["subject_id"] == "signed-user-77"
+    assert fake.calls[2][2]["data"]["consent_look_it"] == "true"
+    assert fake.calls[2][2]["files"]["image"][1] == b"reference-image-bytes"
+    assert fake.calls[3][1] == "https://identity.example.test/internal/v1/consents/revoke"
+    assert fake.calls[3][2]["json"]["consent_id"] == "look-consent-1234"
+    assert "subject_id" not in response.request.content.decode(errors="ignore")
+
+
+def test_pnelly_configuration_is_preferred_over_legacy_xari_aliases(client, monkeypatch):
+    monkeypatch.setenv("PNELLY_API_URL", "https://pnelly.example.test")
+    monkeypatch.setenv("PNELLY_API_TOKEN", "pnelly-internal-token-at-least-thirty-two-bytes")
+    monkeypatch.setenv("XARI_API_URL", "https://legacy-xari.example.test")
+    monkeypatch.setenv("XARI_API_TOKEN", "legacy-xari-token-at-least-thirty-two-bytes")
+    fake = FakeAsyncClient([FakeResponse({
+        "status": "complete",
+        "query": "linen shirt",
+        "candidate_count": 0,
+        "candidates": [],
+        "display_authorized": False,
+        "decision_status": "PENDING_CAL",
+        "scores_are_probabilities": False,
+    })])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post("/api/vision/marketplace-search", json={"query": "linen shirt"})
+    assert response.status_code == 200, response.text
+    assert fake.calls[0][1] == "https://pnelly.example.test/v1/marketplace/search"
+
+
+def test_marketplace_ui_keeps_click_it_and_exposes_look_it_inside_pnelly(client):
+    response = client.get("/")
+    assert response.status_code == 200
+    assert 'id="lookItForm"' in response.text
+    assert 'id="lookItImage"' in response.text
+    assert 'fetch("/api/vision/look-it"' in response.text
+    assert 'fetch("/api/vision/click-it"' in response.text
+
+
+
+def test_complementer_is_optional_and_requires_a_signed_user_session(client):
+    response = client.post(
+        "/api/vision/complementer",
+        json={"request_id": "pnelly-look-001", "preferences": {}, "look": {"description": "navy linen outfit"}},
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "USER_BEARER_REQUIRED"
+
+
+def test_complementer_bff_binds_advisory_to_verified_subject_and_keeps_it_advisory(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("API_GATEWAY_URL", "https://gateway.example.test")
+    monkeypatch.setenv("CIRVANNA_API_TOKEN", "gateway-internal-token-at-least-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "verified-style-user", "role": "customer"}),
+        FakeResponse({
+            "schema_version": "1.0",
+            "mode": "advisory_only",
+            "display_authorized": False,
+            "durable_personal_memory": False,
+            "recommendation": {"request_id": "pnelly-look-002", "status": "ready", "limits": ["Advice only"]},
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/vision/complementer",
+        headers={"Authorization": "Bearer signed-customer-token"},
+        json={
+            "request_id": "pnelly-look-002",
+            "preferences": {"aesthetics": ["minimal"]},
+            "look": {"description": "navy linen outfit"},
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.json()["mode"] == "advisory_only"
+    assert response.json()["display_authorized"] is False
+    assert response.json()["durable_personal_memory"] is False
+    assert fake.calls[0][1] == "https://commerce.example.test/me"
+    assert fake.calls[1][1] == "https://gateway.example.test/v1/complementer/recommend"
+    assert fake.calls[1][2]["json"]["user_id"] == "verified-style-user"
+    assert fake.calls[1][2]["headers"]["X-End-User-Authorization"] == "Bearer signed-customer-token"
+
+
+def test_complementer_bff_rejects_gateway_claim_of_product_display_authority(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("API_GATEWAY_URL", "https://gateway.example.test")
+    monkeypatch.setenv("CIRVANNA_API_TOKEN", "gateway-internal-token-at-least-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "verified-style-user"}),
+        FakeResponse({
+            "schema_version": "1.0",
+            "mode": "advisory_only",
+            "display_authorized": True,
+            "durable_personal_memory": False,
+            "recommendation": {},
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/vision/complementer",
+        headers={"Authorization": "Bearer signed-customer-token"},
+        json={"request_id": "pnelly-look-003", "preferences": {}, "look": {}},
+    )
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "COMPLEMENTER_SCOPE_INVALID"
+
+
+
+def test_look_it_fails_closed_when_durable_consent_service_is_not_configured(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("PNELLY_API_URL", "https://pnelly.example.test")
+    monkeypatch.setenv("PNELLY_API_TOKEN", "pnelly-internal-token-at-least-thirty-two-bytes")
+    monkeypatch.delenv("CONSENT_API_URL", raising=False)
+    monkeypatch.delenv("CONSENT_API_TOKEN", raising=False)
+    response = client.post(
+        "/api/vision/look-it",
+        headers={"Authorization": "Bearer signed-customer-token"},
+        data={
+            "consent_id": "look-consent-4567",
+            "consent_image_processing": "true",
+            "consent_look_it": "true",
+        },
+        files={"reference_image": ("sketch.png", b"reference-bytes", "image/png")},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "CONSENT_API_URL_NOT_CONFIGURED"

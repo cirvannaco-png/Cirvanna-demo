@@ -1,3 +1,5 @@
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -269,3 +271,160 @@ def test_delete_user_data_removes_profile_consents_and_events(client):
     assert deleted.json()["deleted_events"] == 1
     assert client.get("/v1/tal/export/user-verified-1", headers=auth()).json()["profile"] is None
     assert client.get("/v1/tal/consents/user-verified-1", headers=auth()).json() == []
+
+
+
+def test_image_consent_bundle_is_recorded_verified_and_revocable(client):
+    payload = {
+        "consent_id": "look-it-consent-0001",
+        "subject_id": "user-verified-1",
+        "granted_scopes": ["image_processing", "look_it"],
+        "consent_version": "2026-11-04",
+    }
+    recorded = client.post("/internal/v1/consents/record", headers=auth(), json=payload)
+    assert recorded.status_code == 200, recorded.text
+    assert recorded.json()["granted_scopes"] == ["image_processing", "look_it"]
+
+    verified = client.post(
+        "/internal/v1/consents/verify",
+        headers=auth(),
+        json={
+            "consent_id": "look-it-consent-0001",
+            "subject_id": "user-verified-1",
+            "required_scopes": ["image_processing", "look_it"],
+        },
+    )
+    assert verified.status_code == 200, verified.text
+    assert verified.json()["verified"] is True
+    assert verified.json()["active"] is True
+    assert verified.json()["subject_id"] == "user-verified-1"
+
+    wrong_subject = client.post(
+        "/internal/v1/consents/verify",
+        headers=auth(),
+        json={
+            "consent_id": "look-it-consent-0001",
+            "subject_id": "different-user",
+            "required_scopes": ["look_it"],
+        },
+    )
+    assert wrong_subject.status_code == 404
+
+    missing_scope = client.post(
+        "/internal/v1/consents/verify",
+        headers=auth(),
+        json={
+            "consent_id": "look-it-consent-0001",
+            "subject_id": "user-verified-1",
+            "required_scopes": ["click_it"],
+        },
+    )
+    assert missing_scope.status_code == 403
+    assert missing_scope.json()["detail"]["code"] == "CONSENT_SCOPE_NOT_GRANTED"
+
+    revoked = client.post(
+        "/internal/v1/consents/revoke",
+        headers=auth(),
+        json={
+            "consent_id": "look-it-consent-0001",
+            "subject_id": "user-verified-1",
+            "required_scopes": ["look_it"],
+        },
+    )
+    assert revoked.status_code == 200
+    after_revoke = client.post(
+        "/internal/v1/consents/verify",
+        headers=auth(),
+        json={
+            "consent_id": "look-it-consent-0001",
+            "subject_id": "user-verified-1",
+            "required_scopes": ["look_it"],
+        },
+    )
+    assert after_revoke.status_code == 403
+    assert after_revoke.json()["detail"]["code"] == "CONSENT_BUNDLE_REVOKED"
+
+
+
+
+def test_expired_look_it_consent_is_never_verified(client, monkeypatch):
+    clock = {"now": datetime(2026, 11, 4, 10, 0, tzinfo=timezone.utc)}
+    monkeypatch.setattr(main, "utcnow", lambda: clock["now"])
+    expires_at = clock["now"] + timedelta(minutes=5)
+    payload = {
+        "consent_id": "look-it-expiry-0001",
+        "subject_id": "user-verified-1",
+        "granted_scopes": ["image_processing", "look_it"],
+        "consent_version": "look-it-2026-11-04-v1",
+        "expires_at": expires_at.isoformat(),
+    }
+    recorded = client.post("/internal/v1/consents/record", headers=auth(), json=payload)
+    assert recorded.status_code == 200, recorded.text
+
+    verify_payload = {
+        "consent_id": payload["consent_id"],
+        "subject_id": payload["subject_id"],
+        "required_scopes": ["image_processing", "look_it"],
+    }
+    active = client.post("/internal/v1/consents/verify", headers=auth(), json=verify_payload)
+    assert active.status_code == 200, active.text
+    assert main.parse_time(active.json()["expires_at"]) == expires_at
+
+    clock["now"] = expires_at + timedelta(seconds=1)
+    expired = client.post("/internal/v1/consents/verify", headers=auth(), json=verify_payload)
+    assert expired.status_code == 403
+    assert expired.json()["detail"]["code"] == "CONSENT_BUNDLE_EXPIRED"
+
+
+def test_consent_bundle_rejects_unknown_and_duplicate_scopes(client):
+    unknown = client.post(
+        "/internal/v1/consents/record",
+        headers=auth(),
+        json={
+            "consent_id": "invalid-consent-0001",
+            "subject_id": "user-verified-1",
+            "granted_scopes": ["image_processing", "person_identification"],
+            "consent_version": "2026-11-04",
+        },
+    )
+    duplicate = client.post(
+        "/internal/v1/consents/record",
+        headers=auth(),
+        json={
+            "consent_id": "duplicate-consent-0001",
+            "subject_id": "user-verified-1",
+            "granted_scopes": ["look_it", "look_it"],
+            "consent_version": "2026-11-04",
+        },
+    )
+    assert unknown.status_code == 422
+    assert duplicate.status_code == 422
+
+
+def test_consent_bundle_cannot_be_reused_after_revocation(client):
+    payload = {
+        "consent_id": "single-use-consent-0001",
+        "subject_id": "user-verified-1",
+        "granted_scopes": ["image_processing", "look_it"],
+        "consent_version": "2026-11-04",
+    }
+    assert client.post("/internal/v1/consents/record", headers=auth(), json=payload).status_code == 200
+    assert client.post(
+        "/internal/v1/consents/revoke",
+        headers=auth(),
+        json={"consent_id": payload["consent_id"], "subject_id": payload["subject_id"], "required_scopes": ["look_it"]},
+    ).status_code == 200
+    replay = client.post("/internal/v1/consents/record", headers=auth(), json=payload)
+    assert replay.status_code == 409
+    assert replay.json()["detail"]["code"] == "CONSENT_BUNDLE_ALREADY_REVOKED"
+
+
+def test_consent_bundle_internal_routes_require_machine_auth(client):
+    payload = {
+        "consent_id": "look-it-consent-0002",
+        "subject_id": "user-verified-1",
+        "granted_scopes": ["image_processing", "look_it"],
+        "consent_version": "2026-11-04",
+    }
+    response = client.post("/internal/v1/consents/record", json=payload)
+    assert response.status_code == 401

@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from fastapi.testclient import TestClient
 
-from xari.routing import plan_route
+from xari.routing import CONSENT_KEYS, ROUTES, plan_route
 from app.main import app
 
 client = TestClient(app)
@@ -51,8 +51,9 @@ def test_unknown_intents_and_consent_fields_are_rejected():
 def test_health_is_liveness_and_capabilities_are_honest():
     assert client.get("/health").json()["status"] == "alive"
     data = client.get("/capabilities").json()
-    assert data["canonical_name"] == "Xari"
-    assert data["legacy_names"] == ["Tari", "Xyra"]
+    assert data["canonical_name"] == "PNELLY"
+    assert data["legacy_names"] == ["Xari", "Tari", "Xyra"]
+    assert data["dermalsight"]["parent_capability"] == "PNELLY"
     assert data["execution_enabled"] is False
 
 def test_unknown_consent_field_is_a_client_error_not_a_server_error(monkeypatch):
@@ -78,3 +79,16 @@ def test_routes_require_auth_and_do_not_claim_success(monkeypatch):
     assert response.json()["execution_supported"] is False
     assert response.json()["status"] == "unavailable"
     assert "not execute" in response.json()["detail"]
+
+
+def test_pnelly_look_it_requires_its_own_consent_scope():
+    plan = plan_route("look_it", {}, environment={})
+    assert plan.status == "blocked"
+    assert set(plan.missing_consents) == {"image_processing", "look_it"}
+
+
+def test_click_it_is_not_a_pnelly_routed_capability():
+    assert "click_it" not in ROUTES
+    assert "click_it" not in CONSENT_KEYS
+    assert "look_it" in ROUTES
+    assert "look_it" in CONSENT_KEYS

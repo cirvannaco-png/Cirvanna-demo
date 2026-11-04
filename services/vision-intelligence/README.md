@@ -62,3 +62,14 @@ The current deterministic gate is intentionally conservative and is **not a vali
 For pose inference, reject if a pose/world-landmark group is absent, fewer than 33 landmarks are returned, or any critical shoulder/hip/ankle landmark visibility is below 0.45. This is a visibility gate, not a guarantee that the person is fully framed or that body geometry is accurate.
 
 These numeric thresholds are versioned heuristics chosen to block obvious failures; they must be re-tuned on a consented, labeled capture set before production. Current Click It does not have a validated semantic “this is a product” classifier or a calibrated no-match threshold. It therefore cannot honestly guarantee rejection of every irrelevant scene or reliable SKU identification. It returns candidate-only results, never display authorization. Before any UI is allowed to surface candidates, CAL must receive the ranking evidence and may abstain; do not interpret cosine scores as probabilities.
+
+
+## PNELLY Look It outfit decomposition provider gate
+
+The optional decomposition adapter remains unavailable unless all of the following are configured with a trusted provider:
+
+- `OUTFIT_DECOMPOSITION_API_URL` (trusted HTTPS endpoint) and `OUTFIT_DECOMPOSITION_API_TOKEN` (32+ bytes).
+- `OUTFIT_DECOMPOSITION_MODEL_ID` and exact, full 40-character `OUTFIT_DECOMPOSITION_MODEL_REVISION` approved for release.
+- `OUTFIT_DECOMPOSITION_VALIDATION_REPORT_SHA256` matching the provider's validation report.
+
+The response model ID and revision must exactly match the configured pin; a merely well-formed revision is not accepted. The deployed release must separately retain its source/license review, evaluation report and provider security approval. Missing or mismatched evidence returns `status=unavailable`; it does not silently fall back to an unpinned model.

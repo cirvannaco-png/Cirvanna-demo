@@ -277,3 +277,241 @@ def test_live_offer_join_excludes_missing_or_archived_catalog_products(monkeypat
     monkeypatch.setattr(main, "_get_json", fake_get_json)
     offers, _ = asyncio.run(main._live_offers())
     assert offers == []
+
+
+
+def test_look_it_has_a_distinct_visual_search_route_and_response_contract(client, monkeypatch):
+    async def offers():
+        return ([{
+            "variant_id": "v-look-1",
+            "product_name": "blue patterned dress",
+            "category": "dress",
+            "product": {"product_id": "p-look-1", "description": "Blue patterned dress"},
+            "search_text": "blue patterned dress",
+        }], False)
+
+    monkeypatch.setattr(main, "_live_offers", offers)
+    monkeypatch.setattr(main, "_image_embedding", lambda _image: [0.4, 0.6])
+    monkeypatch.setattr(main, "_rank_offers", lambda _query, _offers, limit: [{
+        "variant_id": "v-look-1",
+        "product_name": "blue patterned dress",
+        "match_score": 0.41,
+        "match_score_type": "cosine_similarity_not_probability",
+    }][:limit])
+    response = client.post(
+        "/v1/search/image",
+        headers=auth(),
+        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        files={"image": ("inspiration.png", image_bytes(), "image/png")},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["search_mode"] == "look_it_image_to_catalog_text_similarity"
+    assert body["results"][0]["variant_id"] == "v-look-1"
+    assert body["image_persisted"] is False
+    assert body["scores_are_probabilities"] is False
+    assert body["outfit_decomposition"]["status"] == "unavailable"
+    assert body["merchant_comparison"]["status"] == "unavailable"
+
+
+def test_look_it_requires_look_it_specific_consent(client):
+    response = client.post(
+        "/v1/search/image",
+        headers=auth(),
+        data={"consent_image_processing": "true", "consent_look_it": "false"},
+        files={"image": ("inspiration.png", image_bytes(), "image/png")},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "EXPLICIT_LOOK_IT_CONSENT_REQUIRED"
+
+
+def test_look_it_and_click_it_routes_are_distinct(client):
+    routes = {route.path for route in main.app.routes}
+    assert "/v1/search/image" in routes
+    assert "/v1/click-it/scan" in routes
+    assert "/v1/search/image" != "/v1/click-it/scan"
+
+
+
+def test_outfit_decomposition_fails_closed_without_a_validated_provider(monkeypatch):
+    monkeypatch.delenv("OUTFIT_DECOMPOSITION_API_URL", raising=False)
+    monkeypatch.delenv("OUTFIT_DECOMPOSITION_API_TOKEN", raising=False)
+    monkeypatch.delenv("OUTFIT_DECOMPOSITION_MODEL_ID", raising=False)
+    monkeypatch.delenv("OUTFIT_DECOMPOSITION_MODEL_REVISION", raising=False)
+    monkeypatch.delenv("OUTFIT_DECOMPOSITION_VALIDATION_REPORT_SHA256", raising=False)
+    result = asyncio.run(main._decompose_outfit(Image.new("RGB", (256, 256), "white")))
+    assert result["status"] == "unavailable"
+    assert result["reason"] == "VALIDATED_OUTFIT_DECOMPOSITION_PROVIDER_NOT_CONFIGURED"
+    assert result["components"] == []
+
+
+
+def test_outfit_decomposition_requires_exact_approved_model_id_revision_and_report(monkeypatch):
+    model_id = "cirvanna/outfit-decomposer"
+    revision = "b" * 40
+    report_hash = "a" * 64
+    monkeypatch.setenv("OUTFIT_DECOMPOSITION_API_URL", "https://decomposition.example.test")
+    monkeypatch.setenv("OUTFIT_DECOMPOSITION_API_TOKEN", "decomposition-token-that-is-at-least-thirty-two-bytes")
+    monkeypatch.setenv("OUTFIT_DECOMPOSITION_MODEL_ID", model_id)
+    monkeypatch.setenv("OUTFIT_DECOMPOSITION_MODEL_REVISION", revision)
+    monkeypatch.setenv("OUTFIT_DECOMPOSITION_VALIDATION_REPORT_SHA256", report_hash)
+    monkeypatch.setattr(main, "_trusted_base", lambda _name, required=False: "https://decomposition.example.test")
+
+    class FakeResponse:
+        status_code = 200
+        def json(self):
+            return {
+                "status": "complete",
+                "model": {"id": model_id, "revision": revision},
+                "validation_report_sha256": report_hash,
+                "components": [{
+                    "component_id": "upper-1",
+                    "category": "upper_body",
+                    "description": "Blue linen shirt with a relaxed collar",
+                }],
+            }
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *_args):
+            return False
+        async def post(self, url, *, headers, files):
+            assert url == "https://decomposition.example.test/v1/decompose"
+            assert headers["Authorization"].startswith("Bearer ")
+            assert files["image"][2] == "image/jpeg"
+            return FakeResponse()
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **_kwargs: FakeClient())
+    result = asyncio.run(main._decompose_outfit(Image.new("RGB", (256, 256), "white")))
+    assert result["status"] == "complete"
+    assert result["model"] == {"id": model_id, "revision": revision}
+    assert result["components"][0]["category"] == "upper_body"
+
+
+def test_outfit_decomposition_rejects_valid_but_unapproved_provider_revision(monkeypatch):
+    model_id = "cirvanna/outfit-decomposer"
+    approved_revision = "b" * 40
+    report_hash = "a" * 64
+    monkeypatch.setenv("OUTFIT_DECOMPOSITION_API_URL", "https://decomposition.example.test")
+    monkeypatch.setenv("OUTFIT_DECOMPOSITION_API_TOKEN", "decomposition-token-that-is-at-least-thirty-two-bytes")
+    monkeypatch.setenv("OUTFIT_DECOMPOSITION_MODEL_ID", model_id)
+    monkeypatch.setenv("OUTFIT_DECOMPOSITION_MODEL_REVISION", approved_revision)
+    monkeypatch.setenv("OUTFIT_DECOMPOSITION_VALIDATION_REPORT_SHA256", report_hash)
+    monkeypatch.setattr(main, "_trusted_base", lambda _name, required=False: "https://decomposition.example.test")
+
+    class FakeResponse:
+        status_code = 200
+        def json(self):
+            return {
+                "status": "complete",
+                "model": {"id": model_id, "revision": "c" * 40},
+                "validation_report_sha256": report_hash,
+                "components": [{
+                    "component_id": "upper-1",
+                    "category": "upper_body",
+                    "description": "Blue linen shirt with a relaxed collar",
+                }],
+            }
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *_args):
+            return False
+        async def post(self, *_args, **_kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **_kwargs: FakeClient())
+    result = asyncio.run(main._decompose_outfit(Image.new("RGB", (256, 256), "white")))
+    assert result["status"] == "unavailable"
+    assert result["reason"] == "OUTFIT_DECOMPOSITION_VALIDATION_OR_SCHEMA_FAILED"
+    assert result["components"] == []
+
+
+def test_merchant_comparison_requires_canonical_variant_and_observation_time():
+    current_payload = [{
+        "variant_id": "merchant-local-variant-1",
+        "merchant_id": "merchant-1",
+        "merchant_name": "Merchant One",
+        "price_minor": 1000,
+        "currency": "KES",
+        "available_stock": 3,
+    }]
+    blocked = main._merchant_comparison_snapshot(current_payload)
+    assert blocked["status"] == "unavailable"
+    assert blocked["reason"] == "CANONICAL_VARIANT_ID_AND_OFFER_OBSERVATION_TIMESTAMP_REQUIRED"
+
+
+def test_merchant_comparison_groups_only_same_canonical_variant_and_currency():
+    offers = [
+        {
+            "canonical_variant_id": "canonical-variant-a",
+            "offer_observed_at": "2026-11-04T10:00:00Z",
+            "merchant_id": "merchant-1",
+            "merchant_name": "Merchant One",
+            "price_minor": 1200,
+            "currency": "KES",
+            "available_stock": 2,
+        },
+        {
+            "canonical_variant_id": "canonical-variant-a",
+            "offer_observed_at": "2026-11-04T10:00:05Z",
+            "merchant_id": "merchant-2",
+            "merchant_name": "Merchant Two",
+            "price_minor": 1000,
+            "currency": "KES",
+            "available_stock": 4,
+        },
+        {
+            "canonical_variant_id": "canonical-variant-a",
+            "offer_observed_at": "2026-11-04T10:00:05Z",
+            "merchant_id": "merchant-3",
+            "merchant_name": "Merchant Three",
+            "price_minor": 900,
+            "currency": "USD",
+            "available_stock": 1,
+        },
+    ]
+    result = main._merchant_comparison_snapshot(offers)
+    assert result["status"] == "complete"
+    assert len(result["groups"]) == 1
+    assert result["groups"][0]["currency"] == "KES"
+    assert [item["price_minor"] for item in result["groups"][0]["offers"]] == [1000, 1200]
+    assert result["landed_cost_included"] is False
+
+
+def test_look_it_wires_decomposition_and_comparison_gates(client, monkeypatch):
+    async def offers():
+        return ([{
+            "variant_id": "v-look-1",
+            "product_name": "blue patterned dress",
+            "category": "dress",
+            "product": {"product_id": "p-look-1", "description": "Blue patterned dress"},
+            "search_text": "blue patterned dress",
+        }], False)
+
+    monkeypatch.setattr(main, "_live_offers", offers)
+    monkeypatch.setattr(main, "_image_embedding", lambda _image: [0.4, 0.6])
+    monkeypatch.setattr(main, "_rank_offers", lambda _query, _offers, limit: [{"variant_id": "v-look-1"}][:limit])
+    async def decomposition(_image):
+        return {"status": "complete", "model": {"id": "outfit-model", "revision": "a" * 40},
+                "validation_report_sha256": "b" * 64,
+                "components": [{"component_id": "component-1", "category": "dress", "description": "blue patterned dress"}]}
+    async def component_matches(value, _offers, _limit):
+        value["components"][0]["candidates"] = [{"variant_id": "v-look-1"}]
+        return value
+    monkeypatch.setattr(main, "_decompose_outfit", decomposition)
+    monkeypatch.setattr(main, "_match_decomposed_components", component_matches)
+    monkeypatch.setattr(main, "_merchant_comparison_snapshot", lambda _offers: {"status": "unavailable", "reason": "CANONICAL_VARIANT_ID_AND_OFFER_OBSERVATION_TIMESTAMP_REQUIRED"})
+    response = client.post(
+        "/v1/search/image",
+        headers=auth(),
+        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        files={"image": ("inspiration.png", image_bytes(), "image/png")},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["outfit_decomposition"]["status"] == "complete"
+    assert body["outfit_decomposition"]["components"][0]["candidates"][0]["variant_id"] == "v-look-1"
+    assert body["merchant_comparison"]["status"] == "unavailable"
