@@ -362,3 +362,72 @@ def test_marketplace_ui_keeps_click_it_and_exposes_look_it_inside_pnelly(client)
     assert 'id="lookItConsentId"' in response.text
     assert 'fetch("/api/vision/look-it"' in response.text
     assert 'fetch("/api/vision/click-it"' in response.text
+
+
+
+def test_complementer_is_optional_and_requires_a_signed_user_session(client):
+    response = client.post(
+        "/api/vision/complementer",
+        json={"request_id": "pnelly-look-001", "preferences": {}, "look": {"description": "navy linen outfit"}},
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "USER_BEARER_REQUIRED"
+
+
+def test_complementer_bff_binds_advisory_to_verified_subject_and_keeps_it_advisory(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("API_GATEWAY_URL", "https://gateway.example.test")
+    monkeypatch.setenv("CIRVANNA_API_TOKEN", "gateway-internal-token-at-least-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "verified-style-user", "role": "customer"}),
+        FakeResponse({
+            "schema_version": "1.0",
+            "mode": "advisory_only",
+            "display_authorized": False,
+            "durable_personal_memory": False,
+            "recommendation": {"request_id": "pnelly-look-002", "status": "ready", "limits": ["Advice only"]},
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/vision/complementer",
+        headers={"Authorization": "Bearer signed-customer-token"},
+        json={
+            "request_id": "pnelly-look-002",
+            "preferences": {"aesthetics": ["minimal"]},
+            "look": {"description": "navy linen outfit"},
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.json()["mode"] == "advisory_only"
+    assert response.json()["display_authorized"] is False
+    assert response.json()["durable_personal_memory"] is False
+    assert fake.calls[0][1] == "https://commerce.example.test/me"
+    assert fake.calls[1][1] == "https://gateway.example.test/v1/complementer/recommend"
+    assert fake.calls[1][2]["json"]["user_id"] == "verified-style-user"
+    assert fake.calls[1][2]["headers"]["X-End-User-Authorization"] == "Bearer signed-customer-token"
+
+
+def test_complementer_bff_rejects_gateway_claim_of_product_display_authority(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("API_GATEWAY_URL", "https://gateway.example.test")
+    monkeypatch.setenv("CIRVANNA_API_TOKEN", "gateway-internal-token-at-least-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "verified-style-user"}),
+        FakeResponse({
+            "schema_version": "1.0",
+            "mode": "advisory_only",
+            "display_authorized": True,
+            "durable_personal_memory": False,
+            "recommendation": {},
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/vision/complementer",
+        headers={"Authorization": "Bearer signed-customer-token"},
+        json={"request_id": "pnelly-look-003", "preferences": {}, "look": {}},
+    )
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "COMPLEMENTER_SCOPE_INVALID"
