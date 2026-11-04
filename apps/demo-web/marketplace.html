@@ -61,14 +61,14 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     <section class="ai-panel" aria-labelledby="clickItTitle">
       <div class="eyebrow">Look It · Upload a reference</div>
       <h2 id="clickItTitle">Find the outfit or item in your image</h2>
-      <p>Upload a sketch, saved image or photo. Click It checks image quality, scans it and searches active marketplace offers. A verified account and active server-side consent record are required.</p>
+      <p>Upload a hand-drawn sketch, a saved/downloaded reference image, or a photo you take. Look It checks image quality, scans it and searches active marketplace offers. A verified account and active server-side consent record are required.</p>
       <form id="clickItForm">
         <div class="ai-controls">
-          <input id="clickItImage" class="wide" type="file" accept="image/jpeg,image/png,image/webp" aria-label="Upload a hand-drawn sketch, saved image or photo" required>
+          <input id="clickItImage" class="wide" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" aria-label="Upload a hand-drawn sketch, saved/downloaded reference image or photo" required>
           <input id="clickItConsentId" class="wide" type="text" maxlength="160" minlength="8" autocomplete="off" placeholder="Consent record ID issued by Cirvanna" aria-label="Active Cirvanna consent record ID" required>
         </div>
         <label class="consent-line"><input id="clickItImageConsent" type="checkbox" required><span>I consent to process this image to find visually similar marketplace products. It is not used to identify people, and the search adapter must not retain the original image.</span></label>
-        <label class="consent-line"><input id="clickItSearchConsent" type="checkbox" required><span>I agree to use Click It for this product search. I understand an active consent record is also verified by the server.</span></label>
+        <label class="consent-line"><input id="clickItSearchConsent" type="checkbox" required><span>I agree to use PNELLY Look It for this image search. I understand an active consent record is also verified by the server.</span></label>
         <button class="btn primary wide" id="clickItBtn" type="submit">Look for this outfit</button>
       </form>
       <div class="ai-status" id="clickItStatus" role="status" aria-live="polite">Use the Connect catalog button to connect a signed Commerce user session first. Photos and results are not saved by this scanner.</div>
@@ -278,8 +278,8 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
   $("clickItForm").addEventListener("submit",async e=>{
     e.preventDefault();
     const image=$("clickItImage").files&&$("clickItImage").files[0];
-    if(!image){setAiStatus("clickItStatus","Take or choose a product photo.",true);return}
-    if(!config.commerceBase||!config.userToken){setAiStatus("clickItStatus","Connect the Commerce API with a signed user JWT in Connect catalog before using Click It.",true);return}
+    if(!image){setAiStatus("clickItStatus","Upload a sketch, saved image or photo.",true);return}
+    if(!config.commerceBase||!config.userToken){setAiStatus("clickItStatus","Connect the Commerce API with a signed user JWT in Connect catalog before using Look It.",true);return}
     if(image.size>10*1024*1024){setAiStatus("clickItStatus","Photo exceeds the 10 MB upload limit. Choose a smaller image.",true);return}
     if(!["image/jpeg","image/png","image/webp"].includes(image.type)){setAiStatus("clickItStatus","Use a JPEG, PNG or WEBP photo.",true);return}
     if(!$("clickItImageConsent").checked||!$("clickItSearchConsent").checked){setAiStatus("clickItStatus","Both explicit consent checkboxes are required.",true);return}
@@ -291,7 +291,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       const response=await fetch("/api/vision/look-it",{method:"POST",headers:{Authorization:"Bearer "+config.userToken,Accept:"application/json"},body:form});
       const data=await response.json().catch(()=>({}));
       if(!response.ok)throw new Error((data.detail&&data.detail.code)||("Look It returned HTTP "+response.status+"."));
-      if(data.status!=="complete"||!Array.isArray(data.candidates))throw new Error("Click It returned an invalid scan response.");
+      if(data.status!=="complete"||!Array.isArray(data.candidates))throw new Error("Look It returned an invalid scan response.");
       presentAiSearchResult(data,"clickItStatus");
     }catch(err){
       let message=err&&err.message?err.message:"Look It is unavailable";
@@ -299,7 +299,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       if(message==="VISION_INFERENCE_NOT_CONFIGURED")message="The private vision worker or its pinned model assets are not configured. No result was fabricated.";
       if(message==="TWIN_REGISTRY_NOT_CONFIGURED")message="Twin personalization is not configured; a basic marketplace scan should not require a Twin.";
       setAiStatus("clickItStatus",message+". No demo or fabricated matches were shown.",true);
-    }finally{setAiBusy("clickItBtn",false,"Scan photo and search marketplace")}
+    }finally{setAiBusy("clickItBtn",false,"Look for this outfit")}
   });
 
   updateCounts();load();
