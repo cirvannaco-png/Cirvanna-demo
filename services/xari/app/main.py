@@ -1,4 +1,4 @@
-"""Authenticated Xari route planning and marketplace-description search.
+"""Authenticated Tari route planning and marketplace-description search.
 
 The dedicated marketplace-search endpoint executes the private model-backed
 retrieval adapter; candidates still require NPL/cultural constraints and CAL.
@@ -18,12 +18,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from xari.routing import ROUTES, plan_route
 
-SERVICE = "cirvanna-xari"
+SERVICE = "cirvanna-tari"
 bearer = HTTPBearer(auto_error=False)
 app = FastAPI(
-    title="Cirvanna Xari API",
+    title="Cirvanna Tari API",
     version="0.1.0",
-    description="Authenticated route planning and configuration-gated marketplace description search.",
+    description="Tari route planning and configuration-gated marketplace description search.",
 )
 
 def require_api_token(
