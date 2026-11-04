@@ -120,6 +120,12 @@ class MarketplaceSearchIn(BaseModel):
     def normalized_query(self) -> str:
         return " ".join(self.query.split()).strip()
 
+class ComplementerRequestIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: str = Field(min_length=3, max_length=128)
+    preferences: dict = Field(default_factory=dict, max_length=64)
+    look: dict = Field(default_factory=dict, max_length=32)
+
 
 async def _safe_json_post(
     base: str,
@@ -255,6 +261,55 @@ async def marketplace_look_it(
     if upstream.status_code in {502, 503, 504}:
         raise HTTPException(503 if upstream.status_code == 503 else upstream.status_code, detail={"code": code})
     raise HTTPException(502, detail={"code": "LOOK_IT_FAILED"})
+
+@app.post("/api/vision/complementer")
+async def marketplace_complementer(request: Request, payload: ComplementerRequestIn) -> Response:
+    """Optional styling advice; bind both gateway and end-user identities."""
+    authorization = request.headers.get("authorization", "")
+    scheme, _, user_token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not user_token.strip():
+        raise HTTPException(401, detail={"code": "USER_BEARER_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
+    commerce_base = _upstream_base("COMMERCE_API_URL")
+    gateway_base, gateway_token = _internal_service("API_GATEWAY_URL", "CIRVANNA_API_TOKEN")
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+            identity = await client.get(commerce_base + "/me", headers={"Authorization": "Bearer " + user_token, "Accept": "application/json"})
+            if identity.status_code in {401, 403}:
+                raise HTTPException(401, detail={"code": "USER_AUTHENTICATION_FAILED"})
+            if identity.status_code != 200:
+                raise HTTPException(503, detail={"code": "USER_IDENTITY_UNAVAILABLE"})
+            try:
+                actor = identity.json()
+            except ValueError as exc:
+                raise HTTPException(502, detail={"code": "INVALID_USER_IDENTITY_RESPONSE"}) from exc
+            subject_id = actor.get("user_id") if isinstance(actor, dict) else None
+            if not isinstance(subject_id, str) or not subject_id.strip():
+                raise HTTPException(502, detail={"code": "INVALID_USER_IDENTITY_RESPONSE"})
+            advisory = {"request_id": payload.request_id, "user_id": subject_id, "preferences": payload.preferences, "look": payload.look}
+            response = await client.post(gateway_base + "/v1/complementer/recommend",
+                headers={"Authorization": "Bearer " + gateway_token, "X-End-User-Authorization": "Bearer " + user_token, "Accept": "application/json"},
+                json=advisory)
+    except HTTPException:
+        raise
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "COMPLEMENTER_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "COMPLEMENTER_UNAVAILABLE"}) from exc
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "COMPLEMENTER_INVALID_RESPONSE"}) from exc
+    if response.status_code == 200:
+        if not isinstance(data, dict) or data.get("mode") != "advisory_only" or data.get("display_authorized") is not False or data.get("durable_personal_memory") is not False:
+            raise HTTPException(502, detail={"code": "COMPLEMENTER_SCOPE_INVALID"})
+        return JSONResponse(content=data, headers={"Cache-Control": "no-store, private"})
+    detail = data.get("detail", {}) if isinstance(data, dict) else {}
+    code = detail.get("code") if isinstance(detail, dict) and isinstance(detail.get("code"), str) else "COMPLEMENTER_REQUEST_FAILED"
+    if response.status_code in {400, 401, 403, 422}:
+        raise HTTPException(response.status_code, detail={"code": code})
+    if response.status_code in {502, 503, 504}:
+        raise HTTPException(503 if response.status_code == 503 else response.status_code, detail={"code": code})
+    raise HTTPException(502, detail={"code": "COMPLEMENTER_FAILED"})
 
 @app.post("/api/vision/click-it")
 async def marketplace_click_it(
