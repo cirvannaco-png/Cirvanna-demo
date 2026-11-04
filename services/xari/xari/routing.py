@@ -1,4 +1,4 @@
-"""Canonical, consent-aware Xari capability routing.
+"""Canonical, consent-aware Tari capability routing.
 
 Tari and Xyra are legacy source names. This module routes only to fixed,
 server-configured capabilities; it never accepts a client-provided URL or
@@ -75,7 +75,7 @@ def plan_route(
 ) -> RoutePlan:
     """Create a route plan without returning secrets or executing an upstream."""
     if intent not in ROUTES:
-        raise ValueError("unsupported Xari intent")
+        raise ValueError("unsupported Tari intent")
     if not isinstance(consents, Mapping):
         raise ValueError("consents must be a mapping")
     if any(key not in CONSENT_KEYS for key in consents):
