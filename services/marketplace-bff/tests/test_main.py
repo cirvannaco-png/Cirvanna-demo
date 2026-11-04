@@ -140,15 +140,15 @@ class FakeAsyncClient:
         return self.responses.pop(0)
 
 
-def test_description_search_fails_closed_without_xari_secret(client, monkeypatch):
+def test_description_search_fails_closed_without_tari_or_legacy_secret(client, monkeypatch):
     monkeypatch.delenv("XARI_API_URL", raising=False)
     monkeypatch.delenv("XARI_API_TOKEN", raising=False)
     response = client.post("/api/vision/marketplace-search", json={"query": "blue linen summer dress"})
     assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "XARI_API_URL_NOT_CONFIGURED"
+    assert response.json()["detail"]["code"] == "TARI_API_URL_NOT_CONFIGURED"
 
 
-def test_description_search_forwards_to_xari_and_keeps_candidates_pending_cal(client, monkeypatch):
+def test_description_search_forwards_to_legacy_xari_alias_and_keeps_candidates_pending_cal(client, monkeypatch):
     monkeypatch.setenv("XARI_API_URL", "https://xari.example.test")
     monkeypatch.setenv("XARI_API_TOKEN", "xari-internal-token-at-least-thirty-two-bytes")
     fake = FakeAsyncClient([FakeResponse({
@@ -238,7 +238,7 @@ def test_click_it_rejects_unsupported_image_before_calling_services(client, monk
     assert response.status_code == 415
     assert response.json()["detail"]["code"] == "UNSUPPORTED_PRODUCT_IMAGE_TYPE"
 
-def test_marketplace_ui_has_xari_description_search_and_mobile_click_it_capture(client):
+def test_marketplace_ui_has_tari_description_search_and_mobile_click_it_capture(client):
     response = client.get("/")
     assert response.status_code == 200
     assert 'id="aiQuery"' in response.text
@@ -252,3 +252,23 @@ def test_marketplace_ui_has_xari_description_search_and_mobile_click_it_capture(
     assert 'fetch("/api/vision/click-it"' in response.text
     assert "display_authorized===true" in response.text
     assert "PENDING_CAL" in response.text
+
+def test_description_search_prefers_tari_environment_names(client, monkeypatch):
+    monkeypatch.setenv("TARI_API_URL", "https://tari.example.test")
+    monkeypatch.setenv("TARI_API_TOKEN", "tari-internal-token-at-least-thirty-two-bytes")
+    monkeypatch.setenv("XARI_API_URL", "https://legacy-xari.example.test")
+    monkeypatch.setenv("XARI_API_TOKEN", "legacy-xari-token-at-least-thirty-two-bytes")
+    fake = FakeAsyncClient([FakeResponse({
+        "status": "complete",
+        "query": "linen shirt",
+        "candidate_count": 1,
+        "candidates": [{"variant_id": "offer-1", "product_name": "linen shirt"}],
+        "display_authorized": False,
+        "decision_status": "PENDING_CAL",
+        "scores_are_probabilities": False,
+    })])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post("/api/vision/marketplace-search", json={"query": "linen shirt"})
+    assert response.status_code == 200, response.text
+    assert fake.calls[0][1] == "https://tari.example.test/v1/marketplace/search"
+    assert fake.calls[0][2]["headers"]["Authorization"] == "Bearer tari-internal-token-at-least-thirty-two-bytes"
