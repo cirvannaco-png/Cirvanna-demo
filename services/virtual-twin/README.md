@@ -46,3 +46,9 @@ Failure payloads use stable opaque codes and do not forward bearer secrets, full
 3. Put the service behind a trusted user-authenticated backend. Do not rely on form booleans or a client-submitted identity for proof.
 4. Connect the returned candidate set to the real CAL decision gateway and verify NPL/cultural hard vetoes before UI display.
 5. Run labeled image-quality and retrieval tests plus a consented full-body evaluation covering body/skin-tone variation, pose/occlusion and garment types. Confirm retention, redaction, alerting and incident response.
+
+## Optional Xari and Complementer assistance
+
+Xari may be offered as an optional conversational guide from the Virtual Twin experience. Complementer may be invoked through Xari, or surfaced as an explicit optional styling action, for advisory look coordination. Both remain outside this service's ownership: the Twin service owns its consent-gated representation and authorization; Complementer owns styling advice; Catalog/Commerce own product truth; FCI owns calibrated fit evidence; CAL owns display authorization.
+
+The present pose-skeleton response is not a persistent full Twin. Do not present it as a saved avatar or enable marketplace Try-On until a user-scoped Twin registry, persistent asset authorization and the separate Virtual Try-On renderer are operational.
