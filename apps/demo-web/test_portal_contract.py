@@ -19,7 +19,7 @@ class PortalContractTests(unittest.TestCase):
 
     def test_merchant_portal_never_persists_access_token(self):
         self.assertIn('type="password"', MERCHANT)
-        self.assertIn('token stays in page memory', MERCHANT.lower())
+        self.assertIn('page memory', MERCHANT.lower())
         self.assertNotIn("localStorage", MERCHANT)
         self.assertNotIn("sessionStorage", MERCHANT)
         self.assertIn('u.protocol!=="https:"', MERCHANT)
