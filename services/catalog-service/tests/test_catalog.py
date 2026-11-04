@@ -282,7 +282,7 @@ def test_readiness_requires_current_migration_and_auth_config(client, monkeypatc
         ))
         connection.execute(
             text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
-            {"revision": "20261018_0001"},
+            {"revision": "20261104_0002"},
         )
 
     ready = client.get("/ready")
@@ -291,7 +291,7 @@ def test_readiness_requires_current_migration_and_auth_config(client, monkeypatc
     assert ready.json()["schema_present"] is True
     assert ready.json()["migrations_required"] is True
     assert ready.json()["migrations_applied"] is True
-    assert ready.json()["schema_revision"] == "20261018_0001"
+    assert ready.json()["schema_revision"] == "20261104_0002"
     assert ready.json()["authentication_configured"] is True
     assert ready.json()["ready"] is True
 
