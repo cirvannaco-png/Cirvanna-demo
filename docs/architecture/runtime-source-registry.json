@@ -148,9 +148,9 @@
     },
     {
       "path": "services/xari",
-      "owner": "Tari",
+      "owner": "Xari",
       "status": "implementation-scaffold",
-      "scope": "Canonical optional assistant/orchestration surface; Xari/Xyra remain compatibility labels during migration."
+      "scope": "Canonical optional assistant/orchestration surface; Tari/Xyra remain legacy source labels."
     }
   ],
   "quarantined_roots": [
