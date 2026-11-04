@@ -1056,7 +1056,8 @@ def adjust_inventory(variant_id: uuid.UUID, payload: InventoryAdjustment,
     db.commit()
     db.refresh(variant)
     return {"variant_id": variant.id, "on_hand": variant.on_hand, "reserved_qty": variant.reserved_qty,
-        "available_stock": variant.on_hand - variant.reserved_qty, "version": variant.version}
+        "available_stock": variant.on_hand - variant.reserved_qty, "canonical_variant_id": variant.canonical_variant_id,
+        "observed_at": variant.observed_at.isoformat() if variant.observed_at else None, "version": variant.version}
 
 
 @app.get("/marketplace/offers")
