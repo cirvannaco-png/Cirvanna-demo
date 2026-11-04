@@ -1,0 +1,31 @@
+name: Twin registry checks
+
+on:
+  pull_request:
+    paths:
+      - "services/twin-registry/**"
+      - ".github/workflows/twin-registry.yml"
+  push:
+    branches: [main]
+    paths:
+      - "services/twin-registry/**"
+      - ".github/workflows/twin-registry.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  twin-registry:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/twin-registry
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/twin-registry/requirements.txt
+      - run: python -m pip install -r requirements.txt
+      - run: python -m pytest -q
