@@ -274,3 +274,91 @@ def test_description_search_prefers_xari_environment_names(client, monkeypatch):
     assert response.status_code == 200, response.text
     assert fake.calls[0][1] == "https://xari.example.test/v1/marketplace/search"
     assert fake.calls[0][2]["headers"]["Authorization"] == "Bearer xari-internal-token-at-least-thirty-two-bytes"
+
+
+
+def test_look_it_requires_signed_user_token_before_any_upstream_call(client):
+    response = client.post(
+        "/api/vision/look-it",
+        data={
+            "consent_id": "look-consent-1234",
+            "consent_image_processing": "true",
+            "consent_look_it": "true",
+        },
+        files={"reference_image": ("sketch.png", b"not-used", "image/png")},
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "USER_BEARER_REQUIRED"
+
+
+def test_look_it_uses_verified_subject_and_dedicated_pnelly_endpoint(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("PNELLY_API_URL", "https://pnelly.example.test")
+    monkeypatch.setenv("PNELLY_API_TOKEN", "pnelly-internal-token-at-least-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-77", "role": "customer"}),
+        FakeResponse({
+            "status": "complete",
+            "search_mode": "pnelly_look_it_image_to_catalog_text_similarity",
+            "candidate_count": 1,
+            "candidates": [{"variant_id": "variant-look-1", "product_name": "blue dress"}],
+            "display_authorized": False,
+            "decision_status": "PENDING_CAL",
+            "outfit_decomposition": {"status": "unavailable", "components": []},
+            "merchant_comparison": {"status": "unavailable"},
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/vision/look-it",
+        headers={"Authorization": "Bearer signed-user-token"},
+        data={
+            "consent_id": "look-consent-1234",
+            "consent_image_processing": "true",
+            "consent_look_it": "true",
+            "category": "dress",
+            "limit": "5",
+        },
+        files={"reference_image": ("sketch.png", b"reference-image-bytes", "image/png")},
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.json()["display_authorized"] is False
+    assert response.json()["decision_status"] == "PENDING_CAL"
+    assert len(fake.calls) == 2
+    assert fake.calls[0][1] == "https://commerce.example.test/me"
+    assert fake.calls[1][1] == "https://pnelly.example.test/v1/marketplace/search/image"
+    assert fake.calls[1][2]["data"]["subject_id"] == "signed-user-77"
+    assert fake.calls[1][2]["data"]["consent_look_it"] == "true"
+    assert fake.calls[1][2]["files"]["image"][1] == b"reference-image-bytes"
+    assert "subject_id" not in response.request.content.decode(errors="ignore")
+
+
+def test_pnelly_configuration_is_preferred_over_legacy_xari_aliases(client, monkeypatch):
+    monkeypatch.setenv("PNELLY_API_URL", "https://pnelly.example.test")
+    monkeypatch.setenv("PNELLY_API_TOKEN", "pnelly-internal-token-at-least-thirty-two-bytes")
+    monkeypatch.setenv("XARI_API_URL", "https://legacy-xari.example.test")
+    monkeypatch.setenv("XARI_API_TOKEN", "legacy-xari-token-at-least-thirty-two-bytes")
+    fake = FakeAsyncClient([FakeResponse({
+        "status": "complete",
+        "query": "linen shirt",
+        "candidate_count": 0,
+        "candidates": [],
+        "display_authorized": False,
+        "decision_status": "PENDING_CAL",
+        "scores_are_probabilities": False,
+    })])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post("/api/vision/marketplace-search", json={"query": "linen shirt"})
+    assert response.status_code == 200, response.text
+    assert fake.calls[0][1] == "https://pnelly.example.test/v1/marketplace/search"
+
+
+def test_marketplace_ui_keeps_click_it_and_exposes_look_it_inside_pnelly(client):
+    response = client.get("/")
+    assert response.status_code == 200
+    assert 'id="lookItForm"' in response.text
+    assert 'id="lookItImage"' in response.text
+    assert 'id="lookItConsentId"' in response.text
+    assert 'fetch("/api/vision/look-it"' in response.text
+    assert 'fetch("/api/vision/click-it"' in response.text
