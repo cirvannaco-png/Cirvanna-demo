@@ -334,6 +334,7 @@ def test_look_it_uses_verified_subject_and_dedicated_pnelly_endpoint(client, mon
     assert fake.calls[1][1] == "https://identity.example.test/internal/v1/consents/record"
     assert fake.calls[1][2]["json"]["subject_id"] == "signed-user-77"
     assert fake.calls[1][2]["json"]["granted_scopes"] == ["image_processing", "look_it"]
+    assert fake.calls[1][2]["json"]["expires_at"].endswith("+00:00")
     assert fake.calls[2][1] == "https://pnelly.example.test/v1/marketplace/search/image"
     assert fake.calls[2][2]["data"]["subject_id"] == "signed-user-77"
     assert fake.calls[2][2]["data"]["consent_look_it"] == "true"
