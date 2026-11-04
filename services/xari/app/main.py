@@ -29,17 +29,17 @@ app = FastAPI(
 def require_api_token(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
 ) -> None:
-    expected = os.getenv("XARI_API_TOKEN", "")
+    expected = os.getenv("TARI_API_TOKEN", "").strip() or os.getenv("XARI_API_TOKEN", "").strip()
     if len(expected.encode("utf-8")) < 32 or credentials is None:
         raise HTTPException(
             status_code=401,
-            detail="Valid Xari bearer authentication is required.",
+            detail="Valid Tari bearer authentication is required.",
             headers={"WWW-Authenticate": "Bearer"},
         )
     if not hmac.compare_digest(credentials.credentials, expected):
         raise HTTPException(
             status_code=401,
-            detail="Invalid Xari bearer token.",
+            detail="Invalid Tari bearer token.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -127,7 +127,8 @@ def health() -> dict[str, str]:
 
 @app.get("/ready", tags=["operations"])
 def readiness() -> dict[str, object]:
-    token_configured = len(os.getenv("XARI_API_TOKEN", "").encode("utf-8")) >= 32
+    token = os.getenv("TARI_API_TOKEN", "").strip() or os.getenv("XARI_API_TOKEN", "").strip()
+    token_configured = len(token.encode("utf-8")) >= 32
     search_configured = _marketplace_search_config() is not None
     result = {
         "status": "ready" if token_configured else "not_ready",
@@ -146,8 +147,8 @@ def capabilities() -> dict[str, object]:
     return {
         "service": SERVICE,
         "contract_version": "1.0.0",
-        "canonical_name": "Xari",
-        "legacy_names": ["Tari", "Xyra"],
+        "canonical_name": "Tari",
+        "legacy_names": ["Xari", "Xyra"],
         "execution_enabled": _marketplace_search_config() is not None,
         "marketplace_description_search": {
             "implemented": True,
