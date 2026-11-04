@@ -39,7 +39,7 @@ All endpoints except `/health` require internal bearer authentication. Retention
 
 ## Production gates
 
-Before deployment: provision the service on the selected existing Render workspace; configure its database URL to the already approved Postgres instance; apply `migrations/0001_identity_tal.sql` and `migrations/0002_consent_bundles.sql`; set independently rotated service and cron tokens; verify database backup/restore and deletion behavior; then enable gateway hydration. No production credentials or live identity-provider assertion are embedded here.
+Before deployment: provision the service on the selected existing Render workspace; configure its database URL to the already approved Postgres instance; apply `migrations/0001_identity_tal.sql`, `migrations/0002_consent_bundles.sql` and `migrations/0003_consent_expiry.sql`; set independently rotated service and cron tokens; verify database backup/restore and deletion behavior; then enable gateway hydration. No production credentials or live identity-provider assertion are embedded here.
 
 
 ## Purpose-scoped image and Twin consent
@@ -49,8 +49,8 @@ The internal consent bundle API supports `image_processing`, `look_it`,
 `twin_storage`, `asset_storage`, `asset_reuse`, and
 `marketplace_search` scopes.
 
-- `POST /internal/v1/consents/record`: record immutable consent against a verified subject, purpose set, consent version and optional resource.
-- `POST /internal/v1/consents/verify`: verify exact subject, requested purpose set and optional resource; returns active state and granted scopes.
+- `POST /internal/v1/consents/record`: record immutable consent against a verified subject, purpose set, consent version and optional resource. Optional `expires_at` is timezone-aware and enforced server-side.
+- `POST /internal/v1/consents/verify`: verify exact subject, requested purpose set and optional resource; expired or revoked bundles are rejected. Look It grants expire after five minutes even if request cleanup is interrupted.
 - `POST /internal/v1/consents/revoke`: revoke the complete bundle; later verification fails and the same ID cannot be re-granted.
 
 For PNELLY Look It, Marketplace BFF derives subject from the signed Commerce session,
