@@ -178,7 +178,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
         ))
         connection.execute(
             text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
-            {"revision": "20261019_0002"},
+            {"revision": "20261104_0003"},
         )
 
     ready = client.get("/ready")
@@ -191,7 +191,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
     assert payload["payment_configured"] is True
     assert payload["migrations_required"] is True
     assert payload["migrations_applied"] is True
-    assert payload["schema_revision"] == "20261019_0002"
+    assert payload["schema_revision"] == "20261104_0003"
     assert payload["ready"] is True
 
 
@@ -523,3 +523,74 @@ def test_admin_merchant_queue_is_paginated_filtered_and_role_protected(client):
                               headers=auth("admin-queue", "admin"))
     assert pending_only.status_code == 200
     assert pending_only.json()["total"] == 1
+
+def test_offer_response_exposes_observation_and_fails_comparison_without_catalog_identity(client):
+    seed_offer()
+    response = client.get("/marketplace/offers")
+    assert response.status_code == 200
+    item = response.json()["items"][0]
+    assert item["canonical_variant_id"] is None
+    assert item["observed_at"]
+    assert item["is_fresh"] is True
+    assert item["comparison_eligible"] is False
+    assert response.json()["offer_max_age_seconds"] == 3600
+
+
+def test_production_variant_creation_requires_catalog_identity(client, monkeypatch):
+    seeded = seed_offer()
+    monkeypatch.setenv("COMMERCE_REQUIRE_CANONICAL_VARIANT_ID", "true")
+    response = client.post(
+        f"/merchant/listings/{seeded['listing_id']}/variants",
+        headers=auth("merchant-1", "merchant"),
+        json={"sku": "LINEN-M", "options": {"size": "M"}, "price_minor": 250,
+              "currency": "KES", "initial_stock": 5},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "CANONICAL_VARIANT_ID_REQUIRED"
+
+
+def test_variant_creation_verifies_catalog_variant_product_binding(client, monkeypatch):
+    seeded = seed_offer()
+    monkeypatch.setenv("COMMERCE_REQUIRE_CANONICAL_VARIANT_ID", "true")
+    monkeypatch.setenv("CATALOG_API_URL", "https://catalog.example.test")
+    monkeypatch.setenv("CATALOG_API_TOKEN", "catalog-read-token")
+
+    canonical_id = str(uuid.uuid4())
+    monkeypatch.setattr(
+        main.CatalogClient, "variant",
+        lambda self, variant_id, expected_product_id: {
+            "variant_id": canonical_id, "product_id": expected_product_id, "status": "active"
+        },
+    )
+    response = client.post(
+        f"/merchant/listings/{seeded['listing_id']}/variants",
+        headers=auth("merchant-1", "merchant"),
+        json={"sku": "LINEN-M", "options": {"size": "M"}, "price_minor": 250,
+              "currency": "KES", "initial_stock": 5, "canonical_variant_id": canonical_id},
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["canonical_variant_id"] == canonical_id
+    assert response.json()["observed_at"]
+
+
+def test_stale_offer_is_not_comparison_eligible(client, monkeypatch):
+    seed_offer()
+    monkeypatch.setenv("COMMERCE_OFFER_MAX_AGE_SECONDS", "60")
+    original_now = main.now
+    monkeypatch.setattr(main, "now", lambda: original_now() + main.timedelta(hours=2))
+    item = client.get("/marketplace/offers").json()["items"][0]
+    assert item["is_fresh"] is False
+    assert item["comparison_eligible"] is False
+
+def test_inventory_adjustment_refreshes_server_observation_timestamp(client, monkeypatch):
+    seeded = seed_offer()
+    later = main.now() + main.timedelta(minutes=2)
+    monkeypatch.setattr(main, "now", lambda: later)
+    response = client.post(
+        f"/merchant/variants/{seeded['variant_id']}/inventory-adjustments",
+        headers=auth("merchant-1", "merchant"),
+        json={"quantity_delta": 1, "reason": "restock"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["observed_at"]
+    assert response.json()["on_hand"] == 9
