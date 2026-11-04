@@ -240,7 +240,7 @@ def get_db() -> Iterator[Session]:
 def require_internal_token(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
 ) -> None:
-    expected = os.getenv("IDENTITY_SERVICE_TOKEN", "").strip()
+    expected = os.getenv("IDENTITY_SERVICE_TOKEN", "").strip() or os.getenv("CONSENT_API_TOKEN", "").strip()
     if len(expected.encode("utf-8")) < 32:
         raise HTTPException(503, detail={"code": "IDENTITY_SERVICE_TOKEN_NOT_CONFIGURED"})
     if credentials is None or not hmac.compare_digest(credentials.credentials, expected):
