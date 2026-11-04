@@ -60,3 +60,18 @@ The optional `attributes.product_intelligence` namespace is validated by
 All metadata is versioned with the existing product record and appears in the product-version snapshot. Legacy product attributes remain valid. No new table or migration is introduced because the canonical product attribute document is already versioned JSON.
 
 The minimum cohort threshold is a disclosure safeguard, not a claim of differential privacy or statistical representativeness. Merchant-supplied evidence and editorial tags still require moderation, provenance checks, and audit before being trusted for user-facing claims. CaTaCaCi/CAL remains the final display authority.
+
+
+## Canonical product variants
+
+Catalog is the canonical owner of purchasable variant identity. Create a variant with the write-scoped credential:
+
+`POST /products/{product_id}/variants`
+
+```json
+{"attributes":{"size":"medium","colour":"blue"}}
+```
+
+Catalog normalizes option keys and values, derives a deterministic identity key within the product, and issues an immutable UUID. Repeated equivalent option sets conflict rather than creating duplicate identities. Read-only internal services use `GET /variants/{variant_id}` to verify that an ID exists, is active, and belongs to an active canonical product. Merchant-local SKUs and Commerce variant IDs remain separate provenance fields; Commerce must validate the canonical ID with this endpoint rather than accepting merchant assertions.
+
+Variant-defining attributes are immutable. A materially different option set is a different canonical variant; corrections require a governed deactivation/replacement process rather than mutating the identity in place. This endpoint does not establish offer price, stock, or freshness—Commerce remains authoritative for those facts.
