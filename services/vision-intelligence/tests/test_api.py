@@ -343,6 +343,90 @@ def test_outfit_decomposition_fails_closed_without_a_validated_provider(monkeypa
     assert result["components"] == []
 
 
+
+def test_outfit_decomposition_requires_exact_approved_model_id_revision_and_report(monkeypatch):
+    model_id = "cirvanna/outfit-decomposer"
+    revision = "b" * 40
+    report_hash = "a" * 64
+    monkeypatch.setenv("OUTFIT_DECOMPOSITION_API_URL", "https://decomposition.example.test")
+    monkeypatch.setenv("OUTFIT_DECOMPOSITION_API_TOKEN", "decomposition-token-that-is-at-least-thirty-two-bytes")
+    monkeypatch.setenv("OUTFIT_DECOMPOSITION_MODEL_ID", model_id)
+    monkeypatch.setenv("OUTFIT_DECOMPOSITION_MODEL_REVISION", revision)
+    monkeypatch.setenv("OUTFIT_DECOMPOSITION_VALIDATION_REPORT_SHA256", report_hash)
+    monkeypatch.setattr(main, "_trusted_base", lambda _name, required=False: "https://decomposition.example.test")
+
+    class FakeResponse:
+        status_code = 200
+        def json(self):
+            return {
+                "status": "complete",
+                "model": {"id": model_id, "revision": revision},
+                "validation_report_sha256": report_hash,
+                "components": [{
+                    "component_id": "upper-1",
+                    "category": "upper_body",
+                    "description": "Blue linen shirt with a relaxed collar",
+                }],
+            }
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *_args):
+            return False
+        async def post(self, url, *, headers, files):
+            assert url == "https://decomposition.example.test/v1/decompose"
+            assert headers["Authorization"].startswith("Bearer ")
+            assert files["image"][2] == "image/jpeg"
+            return FakeResponse()
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **_kwargs: FakeClient())
+    result = asyncio.run(main._decompose_outfit(Image.new("RGB", (256, 256), "white")))
+    assert result["status"] == "complete"
+    assert result["model"] == {"id": model_id, "revision": revision}
+    assert result["components"][0]["category"] == "upper_body"
+
+
+def test_outfit_decomposition_rejects_valid_but_unapproved_provider_revision(monkeypatch):
+    model_id = "cirvanna/outfit-decomposer"
+    approved_revision = "b" * 40
+    report_hash = "a" * 64
+    monkeypatch.setenv("OUTFIT_DECOMPOSITION_API_URL", "https://decomposition.example.test")
+    monkeypatch.setenv("OUTFIT_DECOMPOSITION_API_TOKEN", "decomposition-token-that-is-at-least-thirty-two-bytes")
+    monkeypatch.setenv("OUTFIT_DECOMPOSITION_MODEL_ID", model_id)
+    monkeypatch.setenv("OUTFIT_DECOMPOSITION_MODEL_REVISION", approved_revision)
+    monkeypatch.setenv("OUTFIT_DECOMPOSITION_VALIDATION_REPORT_SHA256", report_hash)
+    monkeypatch.setattr(main, "_trusted_base", lambda _name, required=False: "https://decomposition.example.test")
+
+    class FakeResponse:
+        status_code = 200
+        def json(self):
+            return {
+                "status": "complete",
+                "model": {"id": model_id, "revision": "c" * 40},
+                "validation_report_sha256": report_hash,
+                "components": [{
+                    "component_id": "upper-1",
+                    "category": "upper_body",
+                    "description": "Blue linen shirt with a relaxed collar",
+                }],
+            }
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *_args):
+            return False
+        async def post(self, *_args, **_kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **_kwargs: FakeClient())
+    result = asyncio.run(main._decompose_outfit(Image.new("RGB", (256, 256), "white")))
+    assert result["status"] == "unavailable"
+    assert result["reason"] == "OUTFIT_DECOMPOSITION_VALIDATION_OR_SCHEMA_FAILED"
+    assert result["components"] == []
+
+
 def test_merchant_comparison_requires_canonical_variant_and_observation_time():
     current_payload = [{
         "variant_id": "merchant-local-variant-1",
