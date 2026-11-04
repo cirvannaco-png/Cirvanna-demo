@@ -46,17 +46,17 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
 <section class="ai-tools" aria-label="AI product discovery">
   <div class="ai-grid">
     <section class="ai-panel" aria-labelledby="descriptionSearchTitle">
-      <div class="eyebrow">Tari · Describe it</div>
+      <div class="eyebrow">Xari · Describe it</div>
       <h2 id="descriptionSearchTitle">Search by description</h2>
-      <p>Describe what you want in everyday language. Tari searches marketplace candidates; product facts, merchant offers, prices and stock must come from Catalog and Commerce, and candidates remain hidden until CAL authorizes display. Complementer is designed as optional styling advice; it must not control product selection, product facts or prices.</p>
+      <p>Describe what you want in everyday language. Xari searches marketplace candidates; product facts, merchant offers, prices and stock must come from Catalog and Commerce, and candidates remain hidden until CAL authorizes display. Complementer is designed as optional styling advice; it must not control product selection, product facts or prices.</p>
       <div class="ai-controls">
         <input id="aiQuery" type="search" maxlength="1000" placeholder="e.g. a modest dark green linen dress for hot weather" aria-label="Describe a product">
         <select id="aiCategory" aria-label="AI search category">
           <option value="">All categories</option><option value="upper_body">Tops</option><option value="outerwear">Outerwear</option><option value="lower_body">Bottoms</option><option value="dress">Dresses</option><option value="full_outfit">Full outfit</option><option value="beauty">Beauty</option><option value="accessories">Accessories</option>
         </select>
-        <button class="btn primary wide" id="aiSearchBtn">Search marketplace with Tari</button>
+        <button class="btn primary wide" id="aiSearchBtn">Search marketplace with Xari</button>
       </div>
-      <div class="ai-status" id="aiSearchStatus" role="status" aria-live="polite">Tari description search requires the private vision worker. Candidate matches are not product recommendations until CAL authorizes display; price comparisons must use current Commerce offers, not generated estimates.</div>
+      <div class="ai-status" id="aiSearchStatus" role="status" aria-live="polite">Xari description search requires the private vision worker. Candidate matches are not product recommendations until CAL authorizes display; price comparisons must use current Commerce offers, not generated estimates.</div>
     </section>
     <section class="ai-panel" aria-labelledby="clickItTitle">
       <div class="eyebrow">Click It · Photograph it</div>
@@ -264,13 +264,13 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     const query=$("aiQuery").value.trim(),category=$("aiCategory").value;
     if(query.length<3){setAiStatus("aiSearchStatus","Enter a product description of at least 3 characters.",true);return}
     setAiBusy("aiSearchBtn",true,"Searching…");
-    setAiStatus("aiSearchStatus","Searching current marketplace offers with Tari…");
+    setAiStatus("aiSearchStatus","Searching current marketplace offers with Xari…");
     try{
       const body={query,limit:10};if(category)body.category=category;
       const response=await fetch("/api/vision/marketplace-search",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json"},body:JSON.stringify(body)});
       const data=await response.json().catch(()=>({}));
-      if(!response.ok)throw new Error((data.detail&&data.detail.code)||("Tari marketplace search returned HTTP "+response.status+"."));
-      if(data.status!=="complete"||!Array.isArray(data.candidates))throw new Error("Tari returned an invalid search response.");
+      if(!response.ok)throw new Error((data.detail&&data.detail.code)||("Xari marketplace search returned HTTP "+response.status+"."));
+      if(data.status!=="complete"||!Array.isArray(data.candidates))throw new Error("Xari returned an invalid search response.");
       presentAiSearchResult(data,"aiSearchStatus");
     }catch(e){setAiStatus("aiSearchStatus",(e&&e.message?e.message:"Search is unavailable")+". No demo or fabricated results were shown.",true)}
     finally{setAiBusy("aiSearchBtn",false,"Search marketplace with Tari")}
