@@ -40,4 +40,4 @@ Xari may invoke Complementer only when the user requests styling help or when an
 
 For marketplace discovery, candidate retrieval is not display authorization. Before products are shown, the result must pass NPL and explicit cultural requirements and receive CAL SHOW. Merchant, stock, currency and price values must be fetched from current Catalog/Commerce records. Price comparisons must group offers by canonical product/variant and currency, include the merchant and observation time, and must not compare unlike currencies or imply landed cost when shipping/tax is unknown.
 
-Xari is also an optional entry point from Virtual Twin and Virtual Try-On. Those services retain their own consent, identity, asset-ownership and model-readiness boundaries; Tari cannot bypass them.
+Xari is also an optional entry point from Virtual Twin and Virtual Try-On. Those services retain their own consent, identity, asset-ownership and model-readiness boundaries; Xari cannot bypass them.
