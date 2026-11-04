@@ -188,7 +188,7 @@ def _normalize_variant_attributes(value: dict[str, str]) -> dict[str, str]:
     normalized: dict[str, str] = {}
     for raw_key, raw_value in value.items():
         key = re.sub(r"[\s-]+", "_", raw_key.strip().casefold())
-        item = re.sub(r"\\s+", " ", raw_value.strip().casefold())
+        item = re.sub(r"\s+", " ", raw_value.strip().casefold())
         if not re.fullmatch(r"[a-z0-9_]{1,64}", key) or not item or len(item) > 120:
             raise ValueError("Variant attribute keys/values are invalid.")
         if key in normalized:
