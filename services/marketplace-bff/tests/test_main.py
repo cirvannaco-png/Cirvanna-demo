@@ -147,7 +147,7 @@ def test_description_search_fails_closed_without_xari_or_legacy_secret(client, m
     monkeypatch.delenv("XARI_API_TOKEN", raising=False)
     response = client.post("/api/vision/marketplace-search", json={"query": "blue linen summer dress"})
     assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "XARI_API_URL_NOT_CONFIGURED"
+    assert response.json()["detail"]["code"] == "PNELLY_API_URL_NOT_CONFIGURED"
 
 
 def test_description_search_forwards_to_legacy_tari_alias_and_keeps_candidates_pending_cal(client, monkeypatch):
