@@ -336,6 +336,8 @@ def test_look_it_and_click_it_routes_are_distinct(client):
 def test_outfit_decomposition_fails_closed_without_a_validated_provider(monkeypatch):
     monkeypatch.delenv("OUTFIT_DECOMPOSITION_API_URL", raising=False)
     monkeypatch.delenv("OUTFIT_DECOMPOSITION_API_TOKEN", raising=False)
+    monkeypatch.delenv("OUTFIT_DECOMPOSITION_MODEL_ID", raising=False)
+    monkeypatch.delenv("OUTFIT_DECOMPOSITION_MODEL_REVISION", raising=False)
     monkeypatch.delenv("OUTFIT_DECOMPOSITION_VALIDATION_REPORT_SHA256", raising=False)
     result = asyncio.run(main._decompose_outfit(Image.new("RGB", (256, 256), "white")))
     assert result["status"] == "unavailable"
