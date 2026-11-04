@@ -832,6 +832,46 @@ def merchant_me(actor: Annotated[Actor, Depends(require_actor)], db: Annotated[S
     return merchant_json(merchant)
 
 
+
+@app.get("/admin/merchants")
+def list_merchants(
+    actor: Annotated[Actor, Depends(require_actor)],
+    db: Annotated[Session, Depends(get_db)],
+    state: Literal["pending", "approved", "rejected", "suspended"] | None = Query(None),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+):
+    """Return a paginated merchant review queue to authenticated administrators."""
+    if actor.role != "admin":
+        raise HTTPException(403, detail={"code": "ADMIN_REQUIRED"})
+    stmt = select(Merchant)
+    count_stmt = select(func.count()).select_from(Merchant)
+    if state is not None:
+        stmt = stmt.where(Merchant.state == state)
+        count_stmt = count_stmt.where(Merchant.state == state)
+    total = int(db.scalar(count_stmt) or 0)
+    rows = list(db.scalars(
+        stmt.order_by(Merchant.created_at.desc(), Merchant.id).offset(offset).limit(limit)
+    ).all())
+    # Do not expose owner_user_id or internal verification references in the queue.
+    return {
+        "items": [{
+            "merchant_id": merchant.id,
+            "display_name": merchant.display_name,
+            "legal_name": merchant.legal_name,
+            "country_code": merchant.country_code,
+            "contact_email": merchant.contact_email,
+            "status": merchant.state,
+            "commission_bps": merchant.commission_bps,
+            "decision_note": merchant.decision_note,
+            "created_at": merchant.created_at.isoformat() if merchant.created_at else None,
+        } for merchant in rows],
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+    }
+
+
 @app.post("/admin/merchants/{merchant_id}/decision")
 def decide_merchant(merchant_id: uuid.UUID, payload: MerchantDecision,
     actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Session, Depends(get_db)]):

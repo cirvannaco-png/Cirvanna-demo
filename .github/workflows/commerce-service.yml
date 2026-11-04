@@ -4,11 +4,19 @@ on:
   pull_request:
     paths:
       - "services/commerce-service/**"
+      - "apps/demo-web/founder-console.html"
+      - "apps/demo-web/merchant-portal.html"
+      - "apps/demo-web/test_portal_contract.py"
+      - "apps/demo-web/PORTALS.md"
       - ".github/workflows/commerce-service.yml"
   push:
     branches: [main]
     paths:
       - "services/commerce-service/**"
+      - "apps/demo-web/founder-console.html"
+      - "apps/demo-web/merchant-portal.html"
+      - "apps/demo-web/test_portal_contract.py"
+      - "apps/demo-web/PORTALS.md"
       - ".github/workflows/commerce-service.yml"
 
 permissions:
@@ -37,6 +45,9 @@ jobs:
         run: alembic upgrade head
       - name: Validate model schema compilation
         run: python -m compileall -q app migrations
+      - name: Run portal contract tests
+        working-directory: .
+        run: python -m unittest discover -s apps/demo-web -p 'test_portal_contract.py'
       - name: Run commerce API tests
         env:
           COMMERCE_DATABASE_URL: sqlite:///./migration-ci.db

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0b0c10">
+<title>Cirvanna | Brand Partner Portal</title>
+<style>
+:root{color-scheme:dark;--bg:#0b0c10;--panel:#14161d;--card:#1b1e27;--line:#30333d;--gold:#c9a84c;--text:#f1eee7;--muted:#a5a8b1;--bad:#ef7777;--good:#79c99a}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 Inter,system-ui,sans-serif}header,main{max-width:1120px;margin:auto;padding:22px}header{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line)}.wordmark{font:600 20px Georgia,serif;letter-spacing:.14em}.wordmark span{color:var(--gold)}.eyebrow{font-size:11px;letter-spacing:.15em;text-transform:uppercase;color:var(--gold)}h1,h2{font-family:Georgia,serif;font-weight:400}h1{font-size:clamp(32px,6vw,54px);margin:8px 0}h2{font-size:25px;margin:0 0 14px}.muted{color:var(--muted)}.panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:22px;margin:18px 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}.field{display:flex;flex-direction:column;gap:6px;margin:10px 0}label{font-size:12px;color:var(--muted)}input,select,textarea{width:100%;padding:12px;border:1px solid var(--line);border-radius:8px;background:#0e1015;color:var(--text);font:inherit}button{border:1px solid var(--line);border-radius:8px;background:var(--card);color:var(--text);padding:10px 14px;cursor:pointer;font:inherit}button.primary{background:var(--gold);border-color:var(--gold);color:#17140c;font-weight:650}button:disabled{opacity:.45;cursor:not-allowed}.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}.status{border-left:3px solid var(--gold);background:#191a20;padding:12px;margin:14px 0;white-space:pre-wrap;overflow-wrap:anywhere}.status.error{border-color:var(--bad);color:var(--bad)}.status.good{border-color:var(--good)}.hidden{display:none!important}.kpi{font:26px ui-monospace,monospace}.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;font-size:13px}th,td{text-align:left;padding:10px;border-bottom:1px solid var(--line)}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#0e1015;padding:12px;border-radius:8px;color:var(--muted)}.pill{display:inline-block;padding:3px 9px;border:1px solid var(--line);border-radius:20px;color:var(--gold);font-size:11px}.hint{font-size:12px;color:var(--muted)}@media(max-width:600px){header{align-items:flex-start;gap:12px;flex-direction:column}main{padding:16px}.panel{padding:16px}}
+</style>
+</head>
+<body>
+<header><div><div class="wordmark">CIRVANNA<span>.</span></div><div class="eyebrow">Brand partner workspace</div></div><span class="pill">Commerce-backed</span></header>
+<main>
+<section><div class="eyebrow">Your business, within Cirvanna</div><h1>Partner portal</h1><p class="muted">Manage your merchant application, listings, variants, inventory and order activity through Cirvanna Commerce.</p></section>
+<section class="panel" id="connectPanel">
+<h2>Connect your account</h2>
+<p class="hint">Use an access token issued by Cirvanna's trusted identity provider with the appropriate customer or merchant role. This page does not issue credentials.</p>
+<div class="grid">
+<div class="field"><label for="apiBase">Commerce API base URL</label><input id="apiBase" type="url" placeholder="https://commerce.example.com"></div>
+<div class="field"><label for="accessToken">Signed access token</label><input id="accessToken" type="password" autocomplete="off" placeholder="Bearer token"></div>
+</div>
+<div class="actions"><button class="primary" id="connectBtn">Verify and connect</button><button id="clearBtn">Clear session</button></div>
+<div class="status" id="connectionStatus" role="status" aria-live="polite">Not connected. Credentials remain in page memory and are cleared when this page is closed or refreshed.</div>
+</section>
+<section id="applicationPanel" class="panel hidden">
+<h2>Apply as a merchant</h2><p class="hint">Applications are reviewed by Cirvanna. Approval and merchant-role issuance are separate controls; applying does not grant listing access.</p>
+<form id="applicationForm">
+<div class="grid">
+<div class="field"><label for="displayName">Trading / display name</label><input id="displayName" required minlength="2" maxlength="120"></div>
+<div class="field"><label for="legalName">Registered legal name</label><input id="legalName" required minlength="2" maxlength="180"></div>
+<div class="field"><label for="countryCode">Country code (ISO 3166-1 alpha-2)</label><input id="countryCode" required minlength="2" maxlength="2" value="KE"></div>
+<div class="field"><label for="contactEmail">Business contact email</label><input id="contactEmail" type="email" required maxlength="254"></div>
+</div><button class="primary" type="submit">Submit merchant application</button>
+</form>
+</section>
+<section id="merchantStatusPanel" class="panel hidden"><div class="eyebrow">Merchant application</div><h2 id="merchantName">—</h2><div class="kpi" id="merchantStatus">—</div><p class="muted" id="merchantNote"></p></section>
+<section id="sellerWorkspace" class="hidden">
+<div class="grid">
+<section class="panel"><h2>Create a listing</h2><p class="hint">Listings reference an existing canonical Catalog product. Product creation and image uploads are not part of this portal.</p>
+<form id="listingForm"><div class="field"><label for="catalogProductId">Canonical Catalog product UUID</label><input id="catalogProductId" required minlength="36" maxlength="36" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"></div><button class="primary">Create listing</button></form>
+<div class="field"><label for="listingId">Listing ID (filled after creation; retain it for variants)</label><input id="listingId" placeholder="Listing UUID"></div></section>
+<section class="panel"><h2>Add a variant</h2><p class="hint">Price is expressed in the currency's minor unit (for KES, cents).</p>
+<form id="variantForm"><div class="field"><label for="sku">SKU</label><input id="sku" required maxlength="80"></div><div class="field"><label for="options">Options (JSON object)</label><input id="options" required value='{"size":"M","color":"black"}'></div>
+<div class="grid"><div class="field"><label for="priceMinor">Price in minor units</label><input id="priceMinor" type="number" min="0" step="1" required></div><div class="field"><label for="currency">Currency</label><input id="currency" value="KES" minlength="3" maxlength="3" required></div><div class="field"><label for="stock">Initial stock</label><input id="stock" type="number" min="0" step="1" value="0" required></div></div><button class="primary">Create variant</button></form></section>
+<section class="panel"><h2>Adjust inventory</h2><form id="inventoryForm"><div class="field"><label for="variantId">Your variant UUID</label><input id="variantId" required></div><div class="grid"><div class="field"><label for="delta">Quantity change (+/-)</label><input id="delta" type="number" step="1" required></div><div class="field"><label for="reason">Reason</label><input id="reason" minlength="3" maxlength="160" required placeholder="Cycle count correction"></div></div><button class="primary">Record inventory adjustment</button></form></section>
+<section class="panel"><h2>Merchant orders</h2><p class="hint">Order details are limited to items belonging to your approved merchant account.</p><button id="refreshOrders">Refresh orders</button><pre id="ordersOutput">Connect as an approved merchant to load order activity.</pre></section>
+</div>
+</section>
+<section class="panel"><h2>Service response</h2><pre id="resultOutput">No request made.</pre></section>
+</main>
+<script>
+(()=>{
+const $=id=>document.getElementById(id);let base="",token="",actor=null,merchant=null;
+function status(message,error=false){$("connectionStatus").textContent=message;$("connectionStatus").className="status"+(error?" error":"")}
+function show(id,visible){$(id).classList.toggle("hidden",!visible)}
+function safeBase(raw){let u;try{u=new URL(raw)}catch{throw Error("Enter a valid absolute API URL.")}const local=["localhost","127.0.0.1","::1"].includes(u.hostname.toLowerCase());if(u.username||u.password||u.search||u.hash)throw Error("API URL must not contain credentials, query parameters or fragments.");if(u.protocol!=="https:"&&!(u.protocol==="http:"&&local))throw Error("Bearer tokens require HTTPS. HTTP is allowed only for localhost development.");return u.origin+u.pathname.replace(/\/$/,"")}
+async function api(path,options={}){const response=await fetch(base+path,{...options,headers:{Accept:"application/json",...(options.body?{"Content-Type":"application/json"}:{}),Authorization:"Bearer "+token,...options.headers}});let data=null;if(response.status!==204){data=await response.json().catch(()=>null)}if(!response.ok){const code=data?.detail?.code||data?.detail||("HTTP "+response.status);throw Error(typeof code==="string"?code:JSON.stringify(code))}return data}
+function output(data){$("resultOutput").textContent=JSON.stringify(data,null,2)}
+function reset(){base="";token="";actor=null;merchant=null;$("apiBase").value="";$("accessToken").value="";show("applicationPanel",false);show("merchantStatusPanel",false);show("sellerWorkspace",false);status("Session cleared.")}
+$("clearBtn").addEventListener("click",reset);
+$("connectBtn").addEventListener("click",async()=>{try{base=safeBase($("apiBase").value.trim());token=$("accessToken").value.trim();if(!token)throw Error("Enter a signed access token.");actor=await api("/me");if(!actor?.user_id||!["customer","merchant","admin"].includes(actor.role))throw Error("Identity provider returned an unsupported actor.");status("Authenticated as "+actor.role+". Loading merchant application…");try{merchant=await api("/merchants/me")}catch(e){if(String(e.message).includes("MERCHANT_APPLICATION_NOT_FOUND"))merchant=null;else throw e}show("applicationPanel",!merchant);show("merchantStatusPanel",!!merchant);show("sellerWorkspace",!!merchant&&merchant.status==="approved"&&actor.role==="merchant");if(merchant){$("merchantName").textContent=merchant.display_name;$("merchantStatus").textContent=merchant.status.toUpperCase();$("merchantNote").textContent=merchant.decision_note||"Application record loaded from Cirvanna Commerce."}status(merchant?"Merchant record loaded. Seller tools are enabled only for an approved merchant-role token.":"Identity verified. Submit a merchant application to begin.");output({actor,merchant})}catch(e){status(e.message||"Could not connect.",true);show("sellerWorkspace",false);show("applicationPanel",false);show("merchantStatusPanel",false)}});
+$("applicationForm").addEventListener("submit",async e=>{e.preventDefault();try{const data=await api("/merchants/applications",{method:"POST",body:JSON.stringify({display_name:$("displayName").value.trim(),legal_name:$("legalName").value.trim(),country_code:$("countryCode").value.trim().toUpperCase(),contact_email:$("contactEmail").value.trim()})});merchant=data;show("applicationPanel",false);show("merchantStatusPanel",true);$("merchantName").textContent=data.display_name;$("merchantStatus").textContent=data.status.toUpperCase();$("merchantNote").textContent="Your application is pending review. Merchant role issuance is handled separately by the trusted identity provider.";status("Application submitted successfully.");output(data)}catch(err){status(err.message,true)}});
+$("listingForm").addEventListener("submit",async e=>{e.preventDefault();try{const data=await api("/merchant/listings",{method:"POST",body:JSON.stringify({catalog_product_id:$("catalogProductId").value.trim()})});$("listingId").value=data.listing_id;output(data);status("Listing created from canonical Catalog metadata. Add one or more variants next.")}catch(err){status(err.message,true)}});
+$("variantForm").addEventListener("submit",async e=>{e.preventDefault();try{const listingId=$("listingId").value.trim();if(!listingId)throw Error("Create a listing or enter its listing UUID first.");let options;try{options=JSON.parse($("options").value)}catch{throw Error("Options must be a valid JSON object.")}if(!options||Array.isArray(options)||typeof options!=="object")throw Error("Options must be a JSON object.");const data=await api("/merchant/listings/"+encodeURIComponent(listingId)+"/variants",{method:"POST",body:JSON.stringify({sku:$("sku").value.trim(),options,price_minor:Number($("priceMinor").value),currency:$("currency").value.trim().toUpperCase(),initial_stock:Number($("stock").value)})});$("variantId").value=data.variant_id;output(data);status("Variant created. Record stock changes through the inventory adjustment form.")}catch(err){status(err.message,true)}});
+$("inventoryForm").addEventListener("submit",async e=>{e.preventDefault();try{const id=$("variantId").value.trim();const data=await api("/merchant/variants/"+encodeURIComponent(id)+"/inventory-adjustments",{method:"POST",body:JSON.stringify({quantity_delta:Number($("delta").value),reason:$("reason").value.trim()})});output(data);status("Inventory movement recorded by Commerce.")}catch(err){status(err.message,true)}});
+$("refreshOrders").addEventListener("click",async()=>{try{const data=await api("/merchant/orders?offset=0&limit=50");$("ordersOutput").textContent=JSON.stringify(data,null,2);status("Merchant orders refreshed.")}catch(err){$("ordersOutput").textContent=err.message;status(err.message,true)}});
+})();
+</script>
+</body></html>
