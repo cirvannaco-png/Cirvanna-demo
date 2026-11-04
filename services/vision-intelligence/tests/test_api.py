@@ -330,3 +330,102 @@ def test_look_it_and_click_it_routes_are_distinct(client):
     assert "/v1/search/image" in routes
     assert "/v1/click-it/scan" in routes
     assert "/v1/search/image" != "/v1/click-it/scan"
+
+
+
+def test_outfit_decomposition_fails_closed_without_a_validated_provider(monkeypatch):
+    monkeypatch.delenv("OUTFIT_DECOMPOSITION_API_URL", raising=False)
+    monkeypatch.delenv("OUTFIT_DECOMPOSITION_API_TOKEN", raising=False)
+    monkeypatch.delenv("OUTFIT_DECOMPOSITION_VALIDATION_REPORT_SHA256", raising=False)
+    result = asyncio.run(main._decompose_outfit(Image.new("RGB", (256, 256), "white")))
+    assert result["status"] == "unavailable"
+    assert result["reason"] == "VALIDATED_OUTFIT_DECOMPOSITION_PROVIDER_NOT_CONFIGURED"
+    assert result["components"] == []
+
+
+def test_merchant_comparison_requires_canonical_variant_and_observation_time():
+    current_payload = [{
+        "variant_id": "merchant-local-variant-1",
+        "merchant_id": "merchant-1",
+        "merchant_name": "Merchant One",
+        "price_minor": 1000,
+        "currency": "KES",
+        "available_stock": 3,
+    }]
+    blocked = main._merchant_comparison_snapshot(current_payload)
+    assert blocked["status"] == "unavailable"
+    assert blocked["reason"] == "CANONICAL_VARIANT_ID_AND_OFFER_OBSERVATION_TIMESTAMP_REQUIRED"
+
+
+def test_merchant_comparison_groups_only_same_canonical_variant_and_currency():
+    offers = [
+        {
+            "canonical_variant_id": "canonical-variant-a",
+            "offer_observed_at": "2026-11-04T10:00:00Z",
+            "merchant_id": "merchant-1",
+            "merchant_name": "Merchant One",
+            "price_minor": 1200,
+            "currency": "KES",
+            "available_stock": 2,
+        },
+        {
+            "canonical_variant_id": "canonical-variant-a",
+            "offer_observed_at": "2026-11-04T10:00:05Z",
+            "merchant_id": "merchant-2",
+            "merchant_name": "Merchant Two",
+            "price_minor": 1000,
+            "currency": "KES",
+            "available_stock": 4,
+        },
+        {
+            "canonical_variant_id": "canonical-variant-a",
+            "offer_observed_at": "2026-11-04T10:00:05Z",
+            "merchant_id": "merchant-3",
+            "merchant_name": "Merchant Three",
+            "price_minor": 900,
+            "currency": "USD",
+            "available_stock": 1,
+        },
+    ]
+    result = main._merchant_comparison_snapshot(offers)
+    assert result["status"] == "complete"
+    assert len(result["groups"]) == 1
+    assert result["groups"][0]["currency"] == "KES"
+    assert [item["price_minor"] for item in result["groups"][0]["offers"]] == [1000, 1200]
+    assert result["landed_cost_included"] is False
+
+
+def test_look_it_wires_decomposition_and_comparison_gates(client, monkeypatch):
+    async def offers():
+        return ([{
+            "variant_id": "v-look-1",
+            "product_name": "blue patterned dress",
+            "category": "dress",
+            "product": {"product_id": "p-look-1", "description": "Blue patterned dress"},
+            "search_text": "blue patterned dress",
+        }], False)
+
+    monkeypatch.setattr(main, "_live_offers", offers)
+    monkeypatch.setattr(main, "_image_embedding", lambda _image: [0.4, 0.6])
+    monkeypatch.setattr(main, "_rank_offers", lambda _query, _offers, limit: [{"variant_id": "v-look-1"}][:limit])
+    async def decomposition(_image):
+        return {"status": "complete", "model": {"id": "outfit-model", "revision": "a" * 40},
+                "validation_report_sha256": "b" * 64,
+                "components": [{"component_id": "component-1", "category": "dress", "description": "blue patterned dress"}]}
+    async def component_matches(value, _offers, _limit):
+        value["components"][0]["candidates"] = [{"variant_id": "v-look-1"}]
+        return value
+    monkeypatch.setattr(main, "_decompose_outfit", decomposition)
+    monkeypatch.setattr(main, "_match_decomposed_components", component_matches)
+    monkeypatch.setattr(main, "_merchant_comparison_snapshot", lambda _offers: {"status": "unavailable", "reason": "CANONICAL_VARIANT_ID_AND_OFFER_OBSERVATION_TIMESTAMP_REQUIRED"})
+    response = client.post(
+        "/v1/search/image",
+        headers=auth(),
+        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        files={"image": ("inspiration.png", image_bytes(), "image/png")},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["outfit_decomposition"]["status"] == "complete"
+    assert body["outfit_decomposition"]["components"][0]["candidates"][0]["variant_id"] == "v-look-1"
+    assert body["merchant_comparison"]["status"] == "unavailable"
