@@ -217,6 +217,10 @@ async def marketplace_look_it(
         raise HTTPException(413, detail={"code": "LOOK_IT_IMAGE_SIZE_LIMIT_EXCEEDED", "maximum_bytes": MAX_VISION_IMAGE_BYTES})
     commerce_base = _upstream_base("COMMERCE_API_URL")
     pnelly_base, pnelly_token = _pnelly_internal_service()
+    consent_base, consent_token = _internal_service("CONSENT_API_URL", "CONSENT_API_TOKEN")
+    subject_id = None
+    consent_recorded = False
+    consent_revocation_failed = False
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
             identity = await client.get(commerce_base + "/me", headers={"Authorization": "Bearer " + user_token, "Accept": "application/json"})
@@ -231,21 +235,61 @@ async def marketplace_look_it(
             subject_id = actor.get("user_id") if isinstance(actor, dict) else None
             if not isinstance(subject_id, str) or not subject_id.strip():
                 raise HTTPException(502, detail={"code": "INVALID_USER_IDENTITY_RESPONSE"})
+            consent_payload = {
+                "consent_id": consent_id.strip(),
+                "subject_id": subject_id,
+                "granted_scopes": ["image_processing", "look_it"],
+                "consent_version": "look-it-2026-11-04-v1",
+            }
+            consent_response = await client.post(
+                consent_base + "/internal/v1/consents/record",
+                headers={"Authorization": "Bearer " + consent_token, "Accept": "application/json"},
+                json=consent_payload,
+            )
+            if consent_response.status_code != 200:
+                code = "LOOK_IT_CONSENT_RECORD_FAILED"
+                try:
+                    body = consent_response.json()
+                    candidate = body.get("detail", {}).get("code") if isinstance(body, dict) else None
+                    if isinstance(candidate, str):
+                        code = candidate
+                except (ValueError, AttributeError):
+                    pass
+                raise HTTPException(503, detail={"code": code})
+            consent_recorded = True
             fields = {
                 "subject_id": subject_id, "consent_id": consent_id.strip(),
                 "consent_image_processing": "true", "consent_look_it": "true", "limit": str(limit),
             }
             if category and category.strip():
                 fields["category"] = category.strip()
-            upstream = await client.post(pnelly_base + "/v1/marketplace/search/image",
-                headers={"Authorization": "Bearer " + pnelly_token, "Accept": "application/json"},
-                data=fields, files={"image": (reference_image.filename or "look-it-reference", content, content_type)})
+            try:
+                upstream = await client.post(pnelly_base + "/v1/marketplace/search/image",
+                    headers={"Authorization": "Bearer " + pnelly_token, "Accept": "application/json"},
+                    data=fields, files={"image": (reference_image.filename or "look-it-reference", content, content_type)})
+            finally:
+                if consent_recorded:
+                    try:
+                        revoked = await client.post(
+                            consent_base + "/internal/v1/consents/revoke",
+                            headers={"Authorization": "Bearer " + consent_token, "Accept": "application/json"},
+                            json={
+                                "consent_id": consent_id.strip(),
+                                "subject_id": subject_id,
+                                "required_scopes": ["image_processing", "look_it"],
+                            },
+                        )
+                        consent_revocation_failed = revoked.status_code != 200
+                    except httpx.HTTPError:
+                        consent_revocation_failed = True
     except HTTPException:
         raise
     except httpx.TimeoutException as exc:
         raise HTTPException(504, detail={"code": "LOOK_IT_TIMEOUT"}) from exc
     except httpx.HTTPError as exc:
         raise HTTPException(503, detail={"code": "LOOK_IT_UNAVAILABLE"}) from exc
+    if consent_revocation_failed:
+        raise HTTPException(503, detail={"code": "LOOK_IT_CONSENT_REVOCATION_FAILED"})
     try:
         data = upstream.json()
     except ValueError as exc:
