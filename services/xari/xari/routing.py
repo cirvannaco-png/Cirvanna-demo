@@ -1,8 +1,7 @@
-"""Canonical, consent-aware Xari capability routing.
+"""Canonical, consent-aware PNELLY capability routing.
 
-Tari and Xyra are legacy source names. This module routes only to fixed,
-server-configured capabilities; it never accepts a client-provided URL or
-claims that a capability executed. Execution adapters remain a separate gate.
+DermalSight is a PNELLY sub-capability. Click It is an independent service
+and is intentionally excluded from PNELLY route ownership.
 """
 from __future__ import annotations
 
@@ -25,14 +24,14 @@ ROUTES: dict[str, CapabilityRoute] = {
     "assistant_chat": CapabilityRoute("assistant_chat", "chat", "XARI_CHAT_API_URL", ()),
     "skin_analysis": CapabilityRoute("skin_analysis", "skin_analysis", "DERMALSIGHT_API_URL", ("image_processing",)),
     "marketplace_search": CapabilityRoute("marketplace_search", "marketplace_search", "MARKETPLACE_BFF_URL", ()),
+    "look_it": CapabilityRoute("look_it", "look_it", "VISION_INTELLIGENCE_API_URL", ("image_processing", "look_it")),
     "virtual_try_on": CapabilityRoute("virtual_try_on", "virtual_try_on", "VIRTUAL_TRY_ON_API_URL", ("image_processing", "virtual_try_on")),
     "virtual_twin": CapabilityRoute("virtual_twin", "virtual_twin", "VIRTUAL_TWIN_API_URL", ("image_processing", "body_measurements")),
     "wardrobe": CapabilityRoute("wardrobe", "wardrobe", "WARDROBE_API_URL", ("wardrobe_access",)),
-    "click_it": CapabilityRoute("click_it", "click_it", "VIRTUAL_TWIN_API_URL", ("image_processing", "click_it")),
 }
 CONSENT_KEYS = frozenset({
     "image_processing", "virtual_try_on", "body_measurements",
-    "wardrobe_access", "click_it",
+    "wardrobe_access", "look_it",
 })
 OPAQUE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,159}$")
 
