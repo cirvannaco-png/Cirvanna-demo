@@ -439,3 +439,24 @@ def test_complementer_bff_rejects_gateway_claim_of_product_display_authority(cli
     )
     assert response.status_code == 502
     assert response.json()["detail"]["code"] == "COMPLEMENTER_SCOPE_INVALID"
+
+
+
+def test_look_it_fails_closed_when_durable_consent_service_is_not_configured(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("PNELLY_API_URL", "https://pnelly.example.test")
+    monkeypatch.setenv("PNELLY_API_TOKEN", "pnelly-internal-token-at-least-thirty-two-bytes")
+    monkeypatch.delenv("CONSENT_API_URL", raising=False)
+    monkeypatch.delenv("CONSENT_API_TOKEN", raising=False)
+    response = client.post(
+        "/api/vision/look-it",
+        headers={"Authorization": "Bearer signed-customer-token"},
+        data={
+            "consent_id": "look-consent-4567",
+            "consent_image_processing": "true",
+            "consent_look_it": "true",
+        },
+        files={"reference_image": ("sketch.png", b"reference-bytes", "image/png")},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "CONSENT_API_URL_NOT_CONFIGURED"
