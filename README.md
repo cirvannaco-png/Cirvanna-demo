@@ -91,7 +91,7 @@ Complementer is advisory. It is not a second profile database, product database,
 - **Wardrobe:** intended digitisation and outfit-combination experiences.
 - **Experience Lab and moodboards:** intended spaces to explore, save, and compare looks.
 - **RadianceScore:** requires a defined construct, validation, calibration, and safe user-facing interpretation before it is treated as a reliable score.
-- **Xari:** canonical, optional conversational beauty and product-discovery assistant across Marketplace, Virtual Twin and Virtual Try-On. Complementer is an optional styling collaborator invoked through Xari; neither assistant can override Catalog/Commerce product truth, NPL, FCI or CAL.
+- **PNELLY:** canonical conversational beauty and product-discovery assistant across Marketplace, Virtual Twin and Virtual Try-On. DermalSight is an optional non-diagnostic capability within PNELLY. Look It is PNELLY’s conversational image search; Click It remains an independent real-world visual-shopping service. Complementer is an optional styling collaborator invoked through PNELLY; neither assistant can override Catalog/Commerce truth, NPL, FCI or CAL.
 
 ### Marketplace and commerce
 
@@ -207,7 +207,7 @@ The actual repository is a multi-service monorepo. Important areas are:
 | services/virtual-twin | Guarded Twin and Click It APIs |
 | services/virtual-try-on | Consent-gated try-on orchestration; renderer is not enabled |
 | services/wardrobe-service | Wardrobe API foundation |
-| services/xari | Xari conversational discovery and orchestration foundation |
+| services/xari | PNELLY conversational discovery and orchestration foundation (legacy source path retained) |
 | services/graph-service, perception-service, sync-service | Supporting service foundations; inspect their READMEs before use |
 | packages/identity-intelligence | CaTaCaCi, USI, EEPL, TAL event contracts, and cultural identity domain contracts |
 | packages/preferences/npl | Canonical NPL policy and evidence contract |
@@ -291,7 +291,7 @@ For the Complementer proxy, configure COMPLEMENTER_SERVICE_URL=http://127.0.0.1:
 - Cultural Identity: from services/cultural-identity-service install requirements.txt and run python -m pytest -q. Set CULTURAL_IDENTITY_DATABASE_URL to PostgreSQL outside test mode.
 - Decision service: from services/decision-service install requirements.txt and run python -m pytest -q. Its signed evidence keys must be independently provisioned.
 - DermalSight: from services/dermalsight install requirements-dev.txt and run pytest -q. Actual inference is unavailable until a verified ONNX model and signed validation report are provided.
-- Commerce, marketplace BFF, Vision Intelligence, Twin, Try-On, Wardrobe, and Xari: follow the service-specific README and workflow. Do not assume a model/adapter is available because the API code exists.
+- Commerce, marketplace BFF, Vision Intelligence, Twin, Try-On, Wardrobe, and PNELLY: follow the service-specific README and workflow. Do not assume a model/adapter is available because the API code exists.
 
 ## Configuration
 
@@ -487,7 +487,8 @@ Start with the [Source of truth and contributor guide](docs/architecture/source-
 ## Architecture references
 
 - [Complementer, Marketplace Product Intelligence and Skin-State Forecasting](docs/architecture/complementer-product-intelligence-skin-forecast.md)
-- [Xari-assisted discovery, Complementer collaboration and marketplace Try-On](docs/architecture/adr/ADR-0005-xari-assisted-discovery-marketplace-try-on.md)
+- [PNELLY, DermalSight, Look It and Click It boundaries](docs/architecture/adr/ADR-0006-pnelly-dermalsight-look-it-click-it-boundaries.md)
+- [Historical Xari-assisted discovery and marketplace Try-On decision](docs/architecture/adr/ADR-0005-xari-assisted-discovery-marketplace-try-on.md)
 - [Decision flow](docs/architecture/decision-flow.md)
 - [CaTaCaCi decision contract ADR](docs/architecture/adr/ADR-0001-catacaci-decision-contract.md)
 - [Feature spine readiness](docs/architecture/feature-spine-readiness-2026-10-23.md)
