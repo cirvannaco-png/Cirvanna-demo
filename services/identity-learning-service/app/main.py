@@ -359,7 +359,7 @@ def verify_consent_bundle(payload: ConsentBundleVerify, db: Annotated[Session, D
         "resource_id": row.resource_id,
         "consent_version": row.consent_version,
         "granted_at": row.granted_at.isoformat(),
-        "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+        "expires_at": _as_utc(row.expires_at).isoformat() if row.expires_at else None,
         "revoked_at": None,
     }
 
