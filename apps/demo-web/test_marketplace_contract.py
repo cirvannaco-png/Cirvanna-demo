@@ -39,13 +39,13 @@ class MarketplaceContractTests(unittest.TestCase):
         self.assertIn('disabled>Checkout unavailable</button>', HTML)
         self.assertIn("No stock is reserved and no order is created.", HTML)
     def test_tari_is_the_marketplace_assistant_and_complementer_is_advisory(self):
-        self.assertIn("Tari · Describe it", HTML)
-        self.assertIn("Search marketplace with Tari", HTML)
+        self.assertIn("Xari · Describe it", HTML)
+        self.assertIn("Search marketplace with Xari", HTML)
         self.assertIn("Complementer is designed as optional styling advice", HTML)
         self.assertIn("price comparisons must use current Commerce offers", HTML)
-        self.assertNotIn("Xari · Describe it", HTML)
-        self.assertNotIn("with Xari", HTML)
-        self.assertNotIn("search with Xari", HTML)
+        self.assertNotIn("Tari · Describe it", HTML)
+        self.assertNotIn("with Tari", HTML)
+        self.assertNotIn("search with Tari", HTML)
 
     def test_try_on_remains_visible_but_disabled_until_real_adapters_exist(self):
         self.assertIn("Try on — unavailable", HTML)
