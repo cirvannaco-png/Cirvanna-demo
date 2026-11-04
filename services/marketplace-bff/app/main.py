@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -240,6 +241,7 @@ async def marketplace_look_it(
                 "subject_id": subject_id,
                 "granted_scopes": ["image_processing", "look_it"],
                 "consent_version": "look-it-2026-11-04-v1",
+                "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
             }
             consent_response = await client.post(
                 consent_base + "/internal/v1/consents/record",
