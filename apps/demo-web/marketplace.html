@@ -46,30 +46,30 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
 <section class="ai-tools" aria-label="AI product discovery">
   <div class="ai-grid">
     <section class="ai-panel" aria-labelledby="descriptionSearchTitle">
-      <div class="eyebrow">Xari · Describe it</div>
+      <div class="eyebrow">PNELLY · Describe it</div>
       <h2 id="descriptionSearchTitle">Search by description</h2>
-      <p>Describe what you want in everyday language. Xari searches marketplace candidates; product facts, merchant offers, prices and stock must come from Catalog and Commerce, and candidates remain hidden until CAL authorizes display. Complementer is designed as optional styling advice; it must not control product selection, product facts or prices.</p>
+      <p>Describe what you want in everyday language. PNELLY searches marketplace candidates; product facts, merchant offers, prices and stock must come from Catalog and Commerce, and candidates remain hidden until CAL authorizes display. Complementer is designed as optional styling advice; it must not control product selection, product facts or prices.</p>
       <div class="ai-controls">
         <input id="aiQuery" type="search" maxlength="1000" placeholder="e.g. a modest dark green linen dress for hot weather" aria-label="Describe a product">
         <select id="aiCategory" aria-label="AI search category">
           <option value="">All categories</option><option value="upper_body">Tops</option><option value="outerwear">Outerwear</option><option value="lower_body">Bottoms</option><option value="dress">Dresses</option><option value="full_outfit">Full outfit</option><option value="beauty">Beauty</option><option value="accessories">Accessories</option>
         </select>
-        <button class="btn primary wide" id="aiSearchBtn">Search marketplace with Xari</button>
+        <button class="btn primary wide" id="aiSearchBtn">Search marketplace with PNELLY</button>
       </div>
-      <div class="ai-status" id="aiSearchStatus" role="status" aria-live="polite">Xari description search requires the private vision worker. Candidate matches are not product recommendations until CAL authorizes display; price comparisons must use current Commerce offers, not generated estimates.</div>
+      <div class="ai-status" id="aiSearchStatus" role="status" aria-live="polite">PNELLY description search requires the private vision worker. Candidate matches are not product recommendations until CAL authorizes display; price comparisons must use current Commerce offers, not generated estimates.</div>
     </section>
     <section class="ai-panel" aria-labelledby="clickItTitle">
-      <div class="eyebrow">Click It · Photograph it</div>
-      <h2 id="clickItTitle">Find a product from a photo</h2>
-      <p>Take or choose a product photo. Click It checks image quality, scans it and searches active marketplace offers. A verified account and active server-side consent record are required.</p>
+      <div class="eyebrow">Look It · Upload a reference</div>
+      <h2 id="clickItTitle">Find the outfit or item in your image</h2>
+      <p>Upload a sketch, saved image or photo. Click It checks image quality, scans it and searches active marketplace offers. A verified account and active server-side consent record are required.</p>
       <form id="clickItForm">
         <div class="ai-controls">
-          <input id="clickItImage" class="wide" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" aria-label="Take or choose a product image" required>
+          <input id="clickItImage" class="wide" type="file" accept="image/jpeg,image/png,image/webp" aria-label="Upload a hand-drawn sketch, saved image or photo" required>
           <input id="clickItConsentId" class="wide" type="text" maxlength="160" minlength="8" autocomplete="off" placeholder="Consent record ID issued by Cirvanna" aria-label="Active Cirvanna consent record ID" required>
         </div>
-        <label class="consent-line"><input id="clickItImageConsent" type="checkbox" required><span>I consent to processing this photo to search marketplace products. The image is processed ephemerally.</span></label>
+        <label class="consent-line"><input id="clickItImageConsent" type="checkbox" required><span>I consent to process this image to find visually similar marketplace products. It is not used to identify people, and the search adapter must not retain the original image.</span></label>
         <label class="consent-line"><input id="clickItSearchConsent" type="checkbox" required><span>I agree to use Click It for this product search. I understand an active consent record is also verified by the server.</span></label>
-        <button class="btn primary wide" id="clickItBtn" type="submit">Scan photo and search marketplace</button>
+        <button class="btn primary wide" id="clickItBtn" type="submit">Look for this outfit</button>
       </form>
       <div class="ai-status" id="clickItStatus" role="status" aria-live="polite">Use the Connect catalog button to connect a signed Commerce user session first. Photos and results are not saved by this scanner.</div>
     </section>
@@ -264,16 +264,16 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     const query=$("aiQuery").value.trim(),category=$("aiCategory").value;
     if(query.length<3){setAiStatus("aiSearchStatus","Enter a product description of at least 3 characters.",true);return}
     setAiBusy("aiSearchBtn",true,"Searching…");
-    setAiStatus("aiSearchStatus","Searching current marketplace offers with Xari…");
+    setAiStatus("aiSearchStatus","Searching current marketplace offers with PNELLY…");
     try{
       const body={query,limit:10};if(category)body.category=category;
       const response=await fetch("/api/vision/marketplace-search",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json"},body:JSON.stringify(body)});
       const data=await response.json().catch(()=>({}));
-      if(!response.ok)throw new Error((data.detail&&data.detail.code)||("Xari marketplace search returned HTTP "+response.status+"."));
-      if(data.status!=="complete"||!Array.isArray(data.candidates))throw new Error("Xari returned an invalid search response.");
+      if(!response.ok)throw new Error((data.detail&&data.detail.code)||("PNELLY marketplace search returned HTTP "+response.status+"."));
+      if(data.status!=="complete"||!Array.isArray(data.candidates))throw new Error("PNELLY returned an invalid search response.");
       presentAiSearchResult(data,"aiSearchStatus");
     }catch(e){setAiStatus("aiSearchStatus",(e&&e.message?e.message:"Search is unavailable")+". No demo or fabricated results were shown.",true)}
-    finally{setAiBusy("aiSearchBtn",false,"Search marketplace with Xari")}
+    finally{setAiBusy("aiSearchBtn",false,"Search marketplace with PNELLY")}
   });
   $("clickItForm").addEventListener("submit",async e=>{
     e.preventDefault();
@@ -288,13 +288,13 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     form.append("consent_image_processing","true");form.append("consent_click_it","true");form.append("product_image",image);
     setAiBusy("clickItBtn",true,"Scanning…");setAiStatus("clickItStatus","Checking your signed account, consent record and image quality, then searching live marketplace offers…");
     try{
-      const response=await fetch("/api/vision/click-it",{method:"POST",headers:{Authorization:"Bearer "+config.userToken,Accept:"application/json"},body:form});
+      const response=await fetch("/api/vision/look-it",{method:"POST",headers:{Authorization:"Bearer "+config.userToken,Accept:"application/json"},body:form});
       const data=await response.json().catch(()=>({}));
-      if(!response.ok)throw new Error((data.detail&&data.detail.code)||("Click It returned HTTP "+response.status+"."));
+      if(!response.ok)throw new Error((data.detail&&data.detail.code)||("Look It returned HTTP "+response.status+"."));
       if(data.status!=="complete"||!Array.isArray(data.candidates))throw new Error("Click It returned an invalid scan response.");
       presentAiSearchResult(data,"clickItStatus");
     }catch(err){
-      let message=err&&err.message?err.message:"Click It is unavailable";
+      let message=err&&err.message?err.message:"Look It is unavailable";
       if(message==="CONSENT_PROVIDER_NOT_CONFIGURED")message="The server-side consent provider is not deployed/configured yet. Your photo was not sent for model processing.";
       if(message==="VISION_INFERENCE_NOT_CONFIGURED")message="The private vision worker or its pinned model assets are not configured. No result was fabricated.";
       if(message==="TWIN_REGISTRY_NOT_CONFIGURED")message="Twin personalization is not configured; a basic marketplace scan should not require a Twin.";
