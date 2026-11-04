@@ -45,7 +45,7 @@ class MarketplaceContractTests(unittest.TestCase):
         self.assertIn("PNELLY · Look It", HTML)
         self.assertIn('fetch("/api/vision/look-it"', HTML)
         self.assertIn('fetch("/api/vision/click-it"', HTML)
-        self.assertIn("Click It remains an independent real-world visual-shopping service", HTML)
+        self.assertIn("Click It, which remains an independent real-world visual-shopping service", HTML)
         self.assertIn("Complementer is designed as optional styling advice", HTML)
         self.assertIn("price comparisons must use current Commerce offers", HTML)
         self.assertNotIn("Xari · Describe it", HTML)
