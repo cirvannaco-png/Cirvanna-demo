@@ -178,7 +178,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
         ))
         connection.execute(
             text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
-            {"revision": "20261019_0002"},
+            {"revision": "20261104_0003"},
         )
 
     ready = client.get("/ready")
