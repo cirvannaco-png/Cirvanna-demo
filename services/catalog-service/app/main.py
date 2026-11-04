@@ -188,7 +188,7 @@ def _normalize_variant_attributes(value: dict[str, str]) -> dict[str, str]:
     normalized: dict[str, str] = {}
     for raw_key, raw_value in value.items():
         key = re.sub(r"[\s-]+", "_", raw_key.strip().casefold())
-        item = raw_value.strip().casefold()
+        item = re.sub(r"\\s+", " ", raw_value.strip().casefold())
         if not re.fullmatch(r"[a-z0-9_]{1,64}", key) or not item or len(item) > 120:
             raise ValueError("Variant attribute keys/values are invalid.")
         if key in normalized:
@@ -805,6 +805,27 @@ def get_canonical_variant(
     product = db.get(Product, variant.product_id)
     if product is None or product.status != "active":
         raise HTTPException(status_code=404, detail={"code": "CANONICAL_VARIANT_NOT_FOUND"})
+    return _variant_json(variant)
+
+
+@app.delete(
+    "/variants/{variant_id}",
+    dependencies=[Depends(require_catalog_write_token)],
+    tags=["variants"],
+)
+def archive_canonical_variant(
+    variant_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict[str, Any]:
+    variant = db.get(ProductVariant, str(variant_id))
+    if variant is None:
+        raise HTTPException(status_code=404, detail={"code": "CANONICAL_VARIANT_NOT_FOUND"})
+    if variant.status != "archived":
+        variant.status = "archived"
+        variant.variant_version += 1
+        variant.updated_at = _now()
+        db.commit()
+        db.refresh(variant)
     return _variant_json(variant)
 
 
