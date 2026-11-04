@@ -4,13 +4,13 @@ on:
   pull_request:
     paths:
       - "services/marketplace-bff/**"
-      - "apps/demo-web/marketplace.html"
+      - "apps/demo-web/**"
       - ".github/workflows/marketplace-bff.yml"
   push:
     branches: [main]
     paths:
       - "services/marketplace-bff/**"
-      - "apps/demo-web/marketplace.html"
+      - "apps/demo-web/**"
       - ".github/workflows/marketplace-bff.yml"
 
 permissions:
@@ -32,3 +32,7 @@ jobs:
         run: python -m pytest -q
       - name: Compile BFF Python
         run: python -m compileall -q services/marketplace-bff/app
+      - name: Validate portal JavaScript
+        run: |
+          node --check apps/demo-web/assets/brand-portal.js
+          node --check apps/demo-web/assets/founder-console.js

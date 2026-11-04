@@ -57,14 +57,19 @@ def test_public_offers_are_proxied_without_exposing_catalog_credentials(client, 
     assert "catalog-server-only-test-token" not in response.text
 
 
-def test_account_proxy_requires_bearer_and_blocks_admin_routes(client, monkeypatch):
+def test_account_proxy_requires_bearer_and_forwards_admin_route_to_commerce(client, monkeypatch):
     configure_upstreams(monkeypatch)
-    calls = []
-    monkeypatch.setattr(main.httpx, "request", lambda *args, **kwargs: calls.append(args) or FakeResponse({}))
+    seen = {}
+    monkeypatch.setattr(main.httpx, "request", lambda method, url, **kwargs: seen.update(method=method, url=url, **kwargs) or FakeResponse({"ok": True}))
     assert client.get("/api/commerce/cart").status_code == 401
-    denied = client.get("/api/commerce/admin/inventory/audit", headers={"Authorization": "Bearer customer-token"})
-    assert denied.status_code == 404
-    assert calls == []
+    response = client.get("/api/commerce/admin/inventory/audit", headers={"Authorization": "Bearer signed-admin-token"})
+    assert response.status_code == 200
+    assert seen["url"] == "https://commerce.example.test/admin/inventory/audit"
+    assert seen["headers"]["Authorization"] == "Bearer signed-admin-token"
+    assert response.headers["cache-control"] == "no-store, private"
+    for route in ("/api/commerce/internal/expire-reservations", "/api/commerce/webhooks/stripe"):
+        assert client.post(route, headers={"Authorization": "Bearer signed-admin-token"}).status_code == 404
+    assert "cookie" not in seen["headers"]
 
 
 def test_account_proxy_forwards_only_allowlisted_headers_and_bearer(client, monkeypatch):
@@ -252,3 +257,42 @@ def test_marketplace_ui_has_xari_description_search_and_mobile_click_it_capture(
     assert 'fetch("/api/vision/click-it"' in response.text
     assert "display_authorized===true" in response.text
     assert "PENDING_CAL" in response.text
+
+
+def test_portal_pages_and_assets_are_served_from_same_origin(client):
+    brand = client.get("/brand-portal")
+    founder = client.get("/founder-console")
+    css = client.get("/assets/portal.css")
+    brand_js = client.get("/assets/brand-portal.js")
+    founder_js = client.get("/assets/founder-console.js")
+    assert brand.status_code == founder.status_code == css.status_code == 200
+    assert brand.headers["cache-control"] == "no-store"
+    assert founder.headers["cache-control"] == "no-store"
+    assert "Brand Partner Portal" in brand.text
+    assert "Founder Commerce Console" in founder.text
+    assert "/merchant/listings" in brand_js.text
+    assert "/admin/merchant-decisions" in founder_js.text
+    assert "localStorage" not in brand_js.text
+    assert "sessionStorage" not in brand_js.text
+    assert "localStorage" not in founder_js.text
+    assert "sessionStorage" not in founder_js.text
+
+
+def test_commerce_proxy_allowlist_routes_role_based_operations():
+    allowed = [
+        ("GET", "me"), ("POST", "merchants/applications"), ("GET", "merchants/me"),
+        ("GET", "merchant/listings"), ("GET", "merchant/orders"), ("POST", "merchant/listings"),
+        ("POST", "merchant/listings/123e4567-e89b-12d3-a456-426614174000/variants"),
+        ("POST", "merchant/variants/123e4567-e89b-12d3-a456-426614174000/inventory-adjustments"),
+        ("GET", "admin/merchants"), ("GET", "admin/merchant-decisions"),
+        ("GET", "admin/inventory/audit"),
+        ("POST", "admin/merchants/123e4567-e89b-12d3-a456-426614174000/decision"),
+    ]
+    for method, path in allowed:
+        assert main._authorized_commerce_path(method, path), (method, path)
+    blocked = [
+        ("POST", "admin/merchants"), ("POST", "webhooks/stripe"), ("POST", "internal/expire-reservations"),
+        ("GET", "merchant/listings/not-a-uuid/variants"), ("DELETE", "admin/merchant-decisions"),
+    ]
+    for method, path in blocked:
+        assert not main._authorized_commerce_path(method, path), (method, path)
