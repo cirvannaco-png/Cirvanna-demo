@@ -58,12 +58,12 @@ def receipt(**overrides):
 
 
 def configure(monkeypatch):
-    monkeypatch.setenv("PRIVACY_POLICY_API_URL", "https://privacy.example.test")
-    monkeypatch.setenv("PRIVACY_POLICY_API_TOKEN", "privacy-policy-test-token-at-least-32-bytes")
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_URL", "https://privacy.example.test")
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_TOKEN", "privacy-policy-test-token-at-least-32-bytes")
 
 
 def test_unknown_photographed_people_status_fails_closed_without_policy_call(monkeypatch):
-    monkeypatch.delenv("PRIVACY_POLICY_API_URL", raising=False)
+    monkeypatch.delenv("PRIVACY_GOVERNANCE_API_URL", raising=False)
     with pytest.raises(HTTPException) as error:
         asyncio.run(privacy_policy.authorize_click_it_policy("subject-1", "unknown"))
     assert error.value.status_code == 403
@@ -71,8 +71,8 @@ def test_unknown_photographed_people_status_fails_closed_without_policy_call(mon
 
 
 def test_missing_policy_registry_fails_closed(monkeypatch):
-    monkeypatch.delenv("PRIVACY_POLICY_API_URL", raising=False)
-    monkeypatch.delenv("PRIVACY_POLICY_API_TOKEN", raising=False)
+    monkeypatch.delenv("PRIVACY_GOVERNANCE_API_URL", raising=False)
+    monkeypatch.delenv("PRIVACY_GOVERNANCE_API_TOKEN", raising=False)
     with pytest.raises(HTTPException) as error:
         asyncio.run(privacy_policy.authorize_click_it_policy("subject-1", "adults_only"))
     assert error.value.status_code == 503
