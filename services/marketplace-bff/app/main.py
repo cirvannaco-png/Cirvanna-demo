@@ -718,7 +718,7 @@ def readiness() -> dict:
         commerce_ready = _upstream_ready(commerce_base)
     except HTTPException:
         commerce_ready = False
-    ready = catalog_configured and commerce_configured and catalog_ready and commerce_ready
+    ready = catalog_configured and commerce_configured and catalog_ready and commerce_ready and privacy_governance_configured and privacy_governance_ready
     result = {
         "status": "ready" if ready else "not_ready",
         "service": SERVICE,
