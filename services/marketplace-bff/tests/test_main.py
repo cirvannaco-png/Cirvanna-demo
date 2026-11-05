@@ -802,3 +802,23 @@ def test_consent_revocation_rejects_missing_user_auth_before_upstream(client, mo
     assert response.status_code == 401
     assert not calls
 
+
+
+def test_click_it_refuses_to_bind_a_minor_photo_to_any_virtual_twin(client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: calls.append(kwargs))
+    response = client.post(
+        "/api/privacy/consents",
+        headers={"Authorization": "Bearer signed-parent-token"},
+        json={
+            "consent_image_processing": True,
+            "consent_click_it": True,
+            "photographed_people_status": "contains_minor",
+            "consent_version": "click-it-privacy-v1",
+            "twin_id": "twin-123",
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "CHILD_TWIN_PERSONALIZATION_DISABLED"
+    assert not calls
+
