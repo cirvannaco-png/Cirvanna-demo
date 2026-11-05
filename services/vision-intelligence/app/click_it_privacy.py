@@ -91,9 +91,9 @@ def mask_face_regions(image: Image.Image, boxes: Iterable[tuple[int, int, int, i
 def anonymize_click_it_image(image: Image.Image) -> tuple[Image.Image, int]:
     """Detect and blur all faces before any Click It embedding or downstream call."""
     try:
+        detector = _face_detector()
         import mediapipe as mp
 
-        detector = _face_detector()
         rgb = np.asarray(image.convert("RGB"), dtype=np.uint8)
         result = detector.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb))
         detections = getattr(result, "detections", None)
