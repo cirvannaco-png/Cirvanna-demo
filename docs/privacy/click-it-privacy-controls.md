@@ -88,9 +88,15 @@ The rights service must:
 
 The BFF deliberately returns an error rather than claiming success when the rights service is unavailable or does not confirm quarantine. The service must have edge rate limits, abuse controls and monitoring before public enablement.
 
+After submission, the requester receives an opaque request ID and private status token. The public status endpoint is `GET /api/privacy/image-requests/{request_id}`, with the token supplied in the `X-Privacy-Request-Token` header. The BFF forwards the token to the rights service for validation and returns only a minimal status receipt. The token is a bearer secret and must not be placed in a URL, analytics event or application log.
+
 Click It scans are ephemeral and do not retain an original image object. A removal request therefore applies to a retained/shared Cirvanna asset, not a transient scan that no longer exists. The UI asks for a Cirvanna asset/share reference to distinguish those cases.
 
-## 6. Release blockers
+## 7. Consent-provider and verification dependency
+
+The repository currently contains adapter contracts, not a deployed consent-verification provider or image-rights backend. The consent provider must issue and verify the purpose-bound photographed-person attestation scopes and prove guardian authority when requested by the policy receipt. A consent checkbox alone is not sufficient. The privacy-rights provider must independently verify requester authority, quarantine urgent reports, issue the opaque status token, implement abuse controls and propagate approved deletion across stored copies and derivatives. Until both services exist and pass live integration tests, Click It child-context processing and public rights requests remain unavailable.
+
+## 8. Release blockers
 
 Do not merge or deploy this feature until:
 - the exact face-detector asset, licence, provenance, SHA-256 pin and runtime are reviewed;
