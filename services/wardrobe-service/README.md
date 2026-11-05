@@ -26,3 +26,18 @@ All routes are internal. The trusted ingress must bind the caller's authenticate
     python -m pytest -q
 
 Production promotion requires real PostgreSQL migration/restore tests, concurrent version/conflict tests, live object-store deletion worker and retry/DLQ validation, audit delivery, and ingress identity-binding tests.
+
+
+## Wardrobe learning integration
+
+Internal endpoint POST /v1/feedback records a clear user interaction against an active wardrobe item. The trusted BFF must resolve the end-user using Commerce /me and bind owner_user_id to that verified subject. The browser must not supply a trusted subject ID directly.
+
+- like, wear and modify are advisory positive signals persisted through purpose-scoped USI/TAL events; they do not directly create a hard preference.
+- dislike is delivered to NPL as a learned rejection. NPL's existing three-unique-event threshold governs when it becomes a hard veto.
+- avoid is a user-declared NPL exclusion and is therefore an immediate hard veto while active.
+- A negative target must be the item itself or an attribute actually present on the owned wardrobe item. Unknown material or style claims cannot be learned from an ungrounded label.
+- The API requires an active style_learning or personalization receipt from Identity Learning. Revocation and denial are respected on each write. Feedback events are event-ID idempotent, payload immutable, and user scoped.
+- The Wardrobe service does not import the quarantined CFRP V6 candidate or emit the unverified CRFP concept. See ADR-0002 and issue #76; neither is authorized in runtime.
+- Configure IDENTITY_SERVICE_URL, IDENTITY_SERVICE_TOKEN, NPL_SERVICE_URL, and NPL_SERVICE_TOKEN in the service secret manager. Missing providers or consent fail closed.
+
+Apply migrations/0002_wardrobe_learning_events.sql after 0001_initial.sql. This table is an audit mirror; USI/TAL and NPL remain the authoritative stores.
