@@ -167,7 +167,7 @@ def test_discovery_uses_verified_wardrobe_and_suppresses_owned_catalog_product(c
         preferences=(StylePreference(preference_id="p1", user_id="subject-verified-1", attribute="minimal"),),
     )
     monkeypatch.setattr(main, "_resolve_verified_subject", lambda _token: "subject-verified-1")
-    monkeypatch.setattr(main, "_load_verified_usi_profile", lambda _subject: profile)
+    monkeypatch.setattr(main, "_load_verified_usi_profile", lambda _subject, **_kwargs: profile)
     monkeypatch.setattr(main, "_load_verified_wardrobe", lambda _subject: [{
         "owner_user_id": "subject-verified-1",
         "item_id": "closet-1",
