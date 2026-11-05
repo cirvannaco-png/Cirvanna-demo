@@ -256,6 +256,7 @@ def test_marketplace_ui_has_xari_description_search_and_mobile_click_it_capture(
     assert 'id="clickItSearchConsent"' in response.text
     assert 'id="clickItPeopleStatus"' in response.text
     assert 'id="clickItGuardianVerificationRef"' in response.text
+    assert 'id="clickItRevokeConsentBtn"' in response.text
     assert 'fetch("/api/privacy/consents"' in response.text
     assert 'id="clickItCaptureJurisdiction"' in response.text
     assert 'id="imageRightsForm"' in response.text
@@ -739,5 +740,52 @@ def test_click_it_consent_requires_signed_account_and_both_explicit_acceptances(
         },
     )
     assert response.status_code == 403
+    assert not calls
+
+
+
+def test_readiness_reports_click_it_privacy_provider_separately(client, monkeypatch):
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_URL", "https://privacy.example.test")
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_TOKEN", "privacy-governance-internal-token-at-least-32-bytes")
+    monkeypatch.setattr(main, "_upstream_ready", lambda base: base == "https://privacy.example.test")
+    monkeypatch.setattr(main, "_upstream_base", lambda key: {
+        "CATALOG_API_URL": "https://catalog.example.test",
+        "COMMERCE_API_URL": "https://commerce.example.test",
+        "PRIVACY_GOVERNANCE_API_URL": "https://privacy.example.test",
+    }[key])
+    response = client.get("/ready")
+    assert response.status_code == 503  # catalog/Commerce are intentionally not ready in this test
+    assert response.json()["detail"]["privacy_governance_configured"] is True
+    assert response.json()["detail"]["privacy_governance_ready"] is True
+
+
+def test_consent_revocation_is_subject_bound_to_verified_commerce_session(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_URL", "https://privacy.example.test")
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_TOKEN", "privacy-governance-internal-token-at-least-32-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-customer-42"}),
+        FakeResponse({"consent_id": "e340b1e2-7c6b-4cc2-9c0b-16dbf2e2a227", "active": False, "revoked": True}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/privacy/consents/e340b1e2-7c6b-4cc2-9c0b-16dbf2e2a227/revoke",
+        headers={"Authorization": "Bearer signed-shopper-token"},
+        json={"reason_code": "user_request"},
+    )
+    assert response.status_code == 200
+    assert response.json()["revoked"] is True
+    assert fake.calls[1][1] == "https://privacy.example.test/internal/v1/consents/e340b1e2-7c6b-4cc2-9c0b-16dbf2e2a227/revoke"
+    assert fake.calls[1][2]["json"]["subject_id"] == "signed-customer-42"
+
+
+def test_consent_revocation_rejects_missing_user_auth_before_upstream(client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: calls.append(kwargs))
+    response = client.post(
+        "/api/privacy/consents/e340b1e2-7c6b-4cc2-9c0b-16dbf2e2a227/revoke",
+        json={"reason_code": "user_request"},
+    )
+    assert response.status_code == 401
     assert not calls
 
