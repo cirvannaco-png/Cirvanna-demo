@@ -114,6 +114,14 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     <button class="btn primary wide" id="imageRightsBtn" type="submit">Submit privacy request</button>
   </form>
   <div class="ai-status" id="imageRightsStatus" role="status" aria-live="polite">Urgent reports involving children or unmasked faces are accepted only when the rights service confirms quarantine. Your request is not considered submitted until a receipt is shown.</div>
+  <form id="imageRightsStatusForm">
+    <div class="ai-controls">
+      <input id="rightsStatusRequestId" class="wide" type="text" minlength="8" maxlength="160" pattern="[A-Za-z0-9_-]+" placeholder="Privacy request ID" aria-label="Privacy request ID" required>
+      <input id="rightsStatusToken" class="wide" type="password" minlength="24" maxlength="512" autocomplete="off" placeholder="Private status token" aria-label="Private privacy request status token" required>
+    </div>
+    <button class="btn wide" id="imageRightsStatusBtn" type="submit">Check request status</button>
+  </form>
+  <div class="ai-status" id="imageRightsTrackingStatus" role="status" aria-live="polite">Keep your private status token safe. Anyone with it may be able to view the request status.</div>
 </section>
 
 <div class="status" id="status" role="status">Connect a catalog API to load live products. Demo products are shown until a connection is configured.</div>
@@ -367,11 +375,33 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       if(!data.request_id)throw new Error("The privacy service returned no request receipt.");
       const urgent=["unmasked_face","possible_minor","nonconsensual"].includes(payload.reason_code);
       if(urgent&&!data.quarantined)throw new Error("Quarantine was not confirmed. Please use the official privacy contact route.");
-      setAiStatus("imageRightsStatus","Request received: "+data.request_id+". Status: "+data.status+"."+(data.quarantined?" The image has been quarantined while reviewed.":""));
+      $("rightsStatusRequestId").value=data.request_id;
+      $("rightsStatusToken").value=data.status_token||"";
+      setAiStatus("imageRightsStatus","Request received: "+data.request_id+". Status: "+data.status+"."+(data.quarantined?" The image has been quarantined while reviewed.":"")+" Use the private token below to track it.");
     }catch(err){
       setAiStatus("imageRightsStatus",(err&&err.message?err.message:"Privacy service unavailable")+". No submission is confirmed.",true);
     }finally{
       setAiBusy("imageRightsBtn",false,"Submit privacy request");
+    }
+  });
+
+  $("imageRightsStatusForm").addEventListener("submit",async e=>{
+    e.preventDefault();
+    const requestId=$("rightsStatusRequestId").value.trim();
+    const statusToken=$("rightsStatusToken").value.trim();
+    setAiBusy("imageRightsStatusBtn",true,"Checking…");
+    try{
+      const response=await fetch("/api/privacy/image-requests/"+encodeURIComponent(requestId),{
+        method:"GET",
+        headers:{"X-Privacy-Request-Token":statusToken,Accept:"application/json"}
+      });
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok)throw new Error((data.detail&&data.detail.code)||("Request status returned HTTP "+response.status+"."));
+      setAiStatus("imageRightsTrackingStatus","Request "+data.request_id+": "+data.status+"."+(data.quarantined?" The image remains quarantined.":"")+" Updated "+data.updated_at+".");
+    }catch(err){
+      setAiStatus("imageRightsTrackingStatus",(err&&err.message?err.message:"Status unavailable")+".",true);
+    }finally{
+      setAiBusy("imageRightsStatusBtn",false,"Check request status");
     }
   });
 
