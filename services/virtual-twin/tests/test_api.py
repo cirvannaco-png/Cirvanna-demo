@@ -196,7 +196,7 @@ def test_click_it_requires_explicit_consent(monkeypatch):
 def test_click_it_requires_authentication():
     response = client.post(
         "/click-it",
-        data={**identity_fields(), "twin_id": "twin-123", "consent_image_processing": "true", "consent_click_it": "true"},
+        data={**identity_fields(), "twin_id": "twin-123", "consent_image_processing": "true", "consent_click_it": "true", "photographed_people_status": "adults_only"},
         files={"product_image": ("product.jpg", b"image", "image/jpeg")},
     )
     assert response.status_code == 401
@@ -207,7 +207,7 @@ def test_click_it_rejects_unsupported_media_type(monkeypatch):
     response = client.post(
         "/click-it",
         headers=auth(),
-        data={**identity_fields(), "twin_id": "twin-123", "consent_image_processing": "true", "consent_click_it": "true"},
+        data={**identity_fields(), "twin_id": "twin-123", "consent_image_processing": "true", "consent_click_it": "true", "photographed_people_status": "adults_only"},
         files={"product_image": ("product.bin", b"not-image", "application/octet-stream")},
     )
     assert response.status_code == 415
@@ -220,7 +220,7 @@ def test_click_it_rejects_oversized_product_image(monkeypatch):
     response = client.post(
         "/click-it",
         headers=auth(),
-        data={**identity_fields(), "twin_id": "twin-123", "consent_image_processing": "true", "consent_click_it": "true"},
+        data={**identity_fields(), "twin_id": "twin-123", "consent_image_processing": "true", "consent_click_it": "true", "photographed_people_status": "adults_only"},
         files={"product_image": ("product.jpg", b"four", "image/jpeg")},
     )
     assert response.status_code == 413
@@ -232,7 +232,7 @@ def test_click_it_stays_unavailable_without_worker(monkeypatch):
     response = client.post(
         "/click-it",
         headers=auth(),
-        data={**identity_fields(), "twin_id": "twin-123", "consent_image_processing": "true", "consent_click_it": "true"},
+        data={**identity_fields(), "twin_id": "twin-123", "consent_image_processing": "true", "consent_click_it": "true", "photographed_people_status": "adults_only"},
         files={"product_image": ("product.jpg", b"photo", "image/jpeg")},
     )
     assert response.status_code == 503
@@ -246,7 +246,7 @@ def test_click_it_requires_verified_consent_before_worker(monkeypatch):
     response = client.post(
         "/click-it",
         headers=auth(),
-        data={**identity_fields(), "twin_id": "twin-123", "consent_image_processing": "true", "consent_click_it": "true"},
+        data={**identity_fields(), "twin_id": "twin-123", "consent_image_processing": "true", "consent_click_it": "true", "photographed_people_status": "adults_only"},
         files={"product_image": ("product.jpg", b"photo", "image/jpeg")},
     )
     assert response.status_code == 503
@@ -260,6 +260,14 @@ def test_click_it_success_returns_candidates_but_never_claims_display_authorizat
 
     async def verify(*_args, **_kwargs):
         return None
+    async def policy(*_args, **_kwargs):
+        return {
+            "policy_version": "test-policy-v1",
+            "policy_sha256": "a" * 64,
+            "applicable_jurisdictions": ["test-jurisdiction"],
+            "guardian_consent_required": False,
+            "public_sharing_allowed": False,
+        }
 
     async def authorize(*_args, **_kwargs):
         return None
@@ -273,12 +281,13 @@ def test_click_it_success_returns_candidates_but_never_claims_display_authorizat
         }
 
     monkeypatch.setattr(main, "_verify_consent", verify)
+    monkeypatch.setattr(main, "authorize_click_it_policy", policy)
     monkeypatch.setattr(main, "_authorize_twin", authorize)
     monkeypatch.setattr(main, "_run_vision", run)
     response = client.post(
         "/click-it",
         headers=auth(),
-        data={**identity_fields(), "twin_id": "twin-123", "consent_image_processing": "true", "consent_click_it": "true"},
+        data={**identity_fields(), "twin_id": "twin-123", "consent_image_processing": "true", "consent_click_it": "true", "photographed_people_status": "adults_only"},
         files={"product_image": ("product.jpg", b"photo", "image/jpeg")},
     )
     assert response.status_code == 200
@@ -288,3 +297,83 @@ def test_click_it_success_returns_candidates_but_never_claims_display_authorizat
     assert body["display_authorized"] is False
     assert body["decision_status"] == "PENDING_CAL"
     assert body["image_persisted"] is False
+
+
+def test_click_it_defaults_unknown_people_status_to_blocked(monkeypatch):
+    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", TOKEN)
+    response = client.post(
+        "/click-it",
+        headers=auth(),
+        data={**identity_fields(), "consent_image_processing": "true", "consent_click_it": "true"},
+        files={"product_image": ("product.jpg", b"photo", "image/jpeg")},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "CHILD_SAFETY_STATUS_UNCONFIRMED"
+
+
+def test_click_it_does_not_personalize_photos_containing_minors(monkeypatch):
+    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", TOKEN)
+    response = client.post(
+        "/click-it",
+        headers=auth(),
+        data={
+            **identity_fields(),
+            "twin_id": "twin-123",
+            "consent_image_processing": "true",
+            "consent_click_it": "true",
+            "photographed_people_status": "contains_minor",
+        },
+        files={"product_image": ("child.jpg", b"photo", "image/jpeg")},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "CHILD_TWIN_PERSONALIZATION_DISABLED"
+
+
+def test_click_it_minor_requires_guardian_authority_when_policy_requires_it(monkeypatch):
+    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", TOKEN)
+    mock_internal_config(monkeypatch)
+    consent_calls = []
+
+    async def verify(*args, **kwargs):
+        consent_calls.append((args, kwargs))
+
+    async def policy(*_args, **_kwargs):
+        return {
+            "policy_version": "test-policy-v1",
+            "policy_sha256": "b" * 64,
+            "applicable_jurisdictions": ["test-jurisdiction-a", "test-jurisdiction-b"],
+            "guardian_consent_required": True,
+            "public_sharing_allowed": False,
+        }
+
+    async def run(*_args, **_kwargs):
+        return {
+            "status": "complete",
+            "results": [{"variant_id": "offer-1"}],
+            "image_persisted": False,
+        }
+
+    monkeypatch.setattr(main, "_verify_consent", verify)
+    monkeypatch.setattr(main, "authorize_click_it_policy", policy)
+    monkeypatch.setattr(main, "_run_vision", run)
+    response = client.post(
+        "/click-it",
+        headers=auth(),
+        data={
+            **identity_fields(),
+            "consent_image_processing": "true",
+            "consent_click_it": "true",
+            "photographed_people_status": "contains_minor",
+        },
+        files={"product_image": ("child.jpg", b"photo", "image/jpeg")},
+    )
+    assert response.status_code == 200, response.text
+    assert len(consent_calls) == 2
+    assert "guardian_authorized" in consent_calls[1][0][2]
+    assert consent_calls[1][1]["require_guardian_authority"] is True
+    body = response.json()
+    assert body["personalization_available"] is False
+    assert body["child_safety"]["face_reveal_allowed"] is False
+    assert body["child_safety"]["behavioural_profiling_allowed"] is False
+    assert body["child_safety"]["facial_identity_analysis_allowed"] is False
+    assert body["child_safety"]["public_sharing_allowed"] is False

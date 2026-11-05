@@ -15,7 +15,7 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 import httpx
-from fastapi import Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import Body, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -55,6 +55,8 @@ async def security_headers(request: Request, call_next):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
     response.headers.setdefault("X-Frame-Options", "DENY")
+    if request.url.path == "/api/vision/click-it" or request.url.path.startswith("/api/privacy/image-requests"):
+        response.headers["Cache-Control"] = "no-store, private"
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
     return response
 
@@ -108,6 +110,15 @@ def _xari_internal_service() -> tuple[str, str]:
     if len(token.encode("utf-8")) < 32:
         raise HTTPException(status_code=503, detail={"code": "XARI_API_TOKEN_NOT_CONFIGURED"})
     return base, token
+
+
+class ImageRightsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    asset_reference: str = Field(min_length=8, max_length=160, pattern=r"^[A-Za-z0-9_-]+$")
+    request_type: Literal["report", "removal"]
+    reason_code: Literal["unmasked_face", "possible_minor", "nonconsensual", "privacy_concern", "other"]
+    requester_relationship: Literal["photographed_person", "parent_guardian", "authorized_representative", "other"]
+    jurisdiction_hint: str | None = Field(default=None, max_length=100)
 
 
 class MarketplaceSearchIn(BaseModel):
@@ -541,6 +552,8 @@ async def marketplace_click_it(
     consent_image_processing: bool = Form(),
     consent_click_it: bool = Form(),
     product_image: UploadFile = File(...),
+    photographed_people_status: str = Form(default="unknown"),
+    capture_jurisdiction_hint: str | None = Form(default=None, max_length=100),
     twin_id: str | None = Form(default=None, min_length=3, max_length=128),
     category: str | None = Form(default=None, max_length=80),
     limit: int = Form(default=10, ge=1, le=25),
@@ -601,6 +614,8 @@ async def marketplace_click_it(
                 "consent_id": consent_id.strip(),
                 "consent_image_processing": "true",
                 "consent_click_it": "true",
+                "photographed_people_status": photographed_people_status,
+                "capture_jurisdiction_hint": capture_jurisdiction_hint or "",
                 "limit": str(limit),
             }
             if twin_id and twin_id.strip():
@@ -759,6 +774,107 @@ def _authorized_commerce_path(method: str, path: str) -> bool:
     if len(parts) == 2 and parts[0] == "orders" and UUID_RE.fullmatch(parts[1]):
         return method == "GET"
     return False
+
+
+@app.post("/api/privacy/image-requests")
+async def submit_image_rights_request(payload: ImageRightsRequest) -> Response:
+    """Public privacy-rights intake; the rights service verifies authority and manages quarantine."""
+    base, token = _internal_service("PRIVACY_RIGHTS_API_URL", "PRIVACY_RIGHTS_API_TOKEN")
+    request_body = payload.model_dump(exclude_none=True)
+    request_body["jurisdiction_hint_is_unverified"] = True
+    request_body["requester_authentication"] = "verification_required"
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(12.0, connect=2.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            upstream = await client.post(
+                base + "/internal/v1/image-rights/requests",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json=request_body,
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "IMAGE_RIGHTS_INTAKE_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "IMAGE_RIGHTS_SERVICE_UNAVAILABLE"}) from exc
+    if upstream.status_code not in {200, 202}:
+        raise HTTPException(503, detail={"code": "IMAGE_RIGHTS_INTAKE_REJECTED"})
+    try:
+        receipt = upstream.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "IMAGE_RIGHTS_RESPONSE_INVALID"}) from exc
+    urgent = payload.reason_code in {"unmasked_face", "possible_minor", "nonconsensual"}
+    valid = (
+        isinstance(receipt, dict)
+        and isinstance(receipt.get("request_id"), str)
+        and bool(receipt.get("request_id").strip())
+        and receipt.get("status") in {"accepted", "under_review", "quarantined"}
+        and (not urgent or receipt.get("quarantined") is True)
+    )
+    if not valid:
+        code = "IMAGE_RIGHTS_QUARANTINE_NOT_CONFIRMED" if urgent else "IMAGE_RIGHTS_RESPONSE_INVALID"
+        raise HTTPException(503, detail={"code": code})
+    safe_receipt = {
+        "request_id": receipt["request_id"],
+        "status": receipt["status"],
+        "quarantined": receipt.get("quarantined") is True,
+        "status_token": receipt.get("status_token") if isinstance(receipt.get("status_token"), str) else None,
+    }
+    return JSONResponse(status_code=202, content=safe_receipt, headers={"Cache-Control": "no-store, private"})
+
+
+@app.get("/api/privacy/image-requests/{request_id}")
+async def get_image_rights_request_status(
+    request_id: str,
+    status_token: str = Header(alias="X-Privacy-Request-Token", min_length=24, max_length=512),
+) -> Response:
+    """Let a photographed person track their request without an uploader account."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{8,160}", request_id):
+        raise HTTPException(404, detail={"code": "IMAGE_RIGHTS_REQUEST_NOT_FOUND"})
+    base, token = _internal_service("PRIVACY_RIGHTS_API_URL", "PRIVACY_RIGHTS_API_TOKEN")
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(8.0, connect=2.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            upstream = await client.get(
+                base + "/internal/v1/image-rights/requests/" + request_id,
+                headers={
+                    "Authorization": "Bearer " + token,
+                    "X-Requester-Status-Token": status_token,
+                    "Accept": "application/json",
+                },
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "IMAGE_RIGHTS_STATUS_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "IMAGE_RIGHTS_SERVICE_UNAVAILABLE"}) from exc
+    if upstream.status_code in {401, 403, 404}:
+        raise HTTPException(404, detail={"code": "IMAGE_RIGHTS_REQUEST_NOT_FOUND"})
+    if upstream.status_code != 200:
+        raise HTTPException(503, detail={"code": "IMAGE_RIGHTS_STATUS_UNAVAILABLE"})
+    try:
+        receipt = upstream.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "IMAGE_RIGHTS_STATUS_INVALID"}) from exc
+    valid = (
+        isinstance(receipt, dict)
+        and receipt.get("request_id") == request_id
+        and receipt.get("status") in {"accepted", "quarantined", "under_review", "completed", "rejected", "escalated"}
+        and isinstance(receipt.get("updated_at"), str)
+    )
+    if not valid:
+        raise HTTPException(502, detail={"code": "IMAGE_RIGHTS_STATUS_INVALID"})
+    safe = {
+        "request_id": request_id,
+        "status": receipt["status"],
+        "quarantined": receipt.get("quarantined") is True,
+        "updated_at": receipt["updated_at"],
+        "resolution_code": receipt.get("resolution_code") if isinstance(receipt.get("resolution_code"), str) else None,
+    }
+    return JSONResponse(content=safe, headers={"Cache-Control": "no-store, private"})
 
 
 @app.api_route("/api/commerce/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
