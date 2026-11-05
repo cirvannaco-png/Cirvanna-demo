@@ -50,6 +50,10 @@ CREATE TABLE IF NOT EXISTS privacy_image_rights_cases (
   status VARCHAR(24) NOT NULL,
   quarantined BOOLEAN NOT NULL DEFAULT FALSE,
   status_token_digest VARCHAR(64) NOT NULL,
+  applicable_jurisdictions JSON NOT NULL DEFAULT '[]',
+  triage_due_at TIMESTAMPTZ NOT NULL,
+  legal_response_due_at TIMESTAMPTZ,
+  deadline_basis VARCHAR(48) NOT NULL,
   resolution_code VARCHAR(64),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
