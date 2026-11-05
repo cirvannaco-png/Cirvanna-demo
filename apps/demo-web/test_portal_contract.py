@@ -52,6 +52,9 @@ class PortalContractTests(unittest.TestCase):
         self.assertIn('data-action="compare"', MARKETPLACE)
         self.assertIn('/marketplace/compare', MARKETPLACE)
         self.assertIn("Like-for-like comparison", MARKETPLACE)
+        self.assertIn("item.item_display_price_minor", MARKETPLACE)
+        self.assertIn("item.fulfillment_charge_minor", MARKETPLACE)
+        self.assertIn("item.tax&&item.tax.added_to_total_minor", MARKETPLACE)
         self.assertIn('body:JSON.stringify(checkoutPayload)', MARKETPLACE)
 
     def test_founder_console_uses_server_side_admin_authorization(self):
