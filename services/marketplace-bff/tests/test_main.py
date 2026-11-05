@@ -507,3 +507,68 @@ def test_wardrobe_consent_listing_allows_closet_browse_when_learning_provider_ab
     assert response.json()["learning_configured"] is False
     assert response.json()["items"] == []
     assert len(fake.calls) == 1
+
+
+def test_tari_daily_looks_uses_verified_wardrobe_and_gateway_subject(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+
+    active_item = {
+        "owner_user_id": "signed-user-42",
+        "item_id": "shirt-001",
+        "display_name": "Blue linen shirt",
+        "category": "tops",
+        "attributes": ["blue", "linen"],
+        "status": "active",
+        "image_asset_id": "private-asset-must-not-be-forwarded",
+    }
+    recommendation = {
+        "look_count": 3,
+        "looks": [
+            {"role": role, "status": "needs_input", "item_ids": [], "items": [],
+             "missing": ["a top and a bottom, or a one-piece outfit"],
+             "virtual_twin_preview": {"status": "unavailable"}}
+            for role in ("everyday", "elevated", "explore")
+        ],
+    }
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"owner_user_id": "signed-user-42", "items": [active_item]}),
+        FakeResponse({
+            "schema_version": "1.0",
+            "request_id": "will-be-uuid",
+            "mode": "tari_wardrobe_daily_looks",
+            "recommendation": recommendation,
+        }),
+    ])
+
+    # The BFF generates the request ID; mirror it in the fake upstream result.
+    original_post = fake.post
+
+    async def post_with_request_echo(url, **kwargs):
+        if url == "https://decision.example.test/v1/tari/daily-looks":
+            fake.responses[0]._payload["request_id"] = kwargs["json"]["request_id"]
+        return await original_post(url, **kwargs)
+
+    fake.post = post_with_request_echo
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/daily-looks",
+        headers={"Authorization": "Bearer signed-session"},
+        json={"occasion": "work", "climate": "hot_dry", "timezone": "Africa/Nairobi"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store, private"
+    call = fake.calls[2]
+    assert call[1] == "https://decision.example.test/v1/tari/daily-looks"
+    assert call[2]["headers"]["X-End-User-Authorization"] == "Bearer signed-session"
+    sent_items = call[2]["json"]["wardrobe_items"]
+    assert sent_items[0]["owner_user_id"] == "signed-user-42"
+    assert "image_asset_id" not in sent_items[0]
+    assert call[2]["json"]["occasion"] == "work"
+    assert call[2]["json"]["climate"] == "hot_dry"
+    assert call[2]["json"]["local_date"]
+    assert "DECISION_GATEWAY_TOKEN" not in response.text
