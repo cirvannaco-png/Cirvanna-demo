@@ -376,6 +376,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       if(message==="CONSENT_NOT_VERIFIED")message="The required purpose-specific or guardian consent is not active. The photograph was not processed.";
       if(message==="PRIVACY_POLICY_BLOCKED"||message==="PRIVACY_POLICY_REGISTRY_UNAVAILABLE"||message==="JURISDICTION_RESOLVER_PROVIDER_NOT_CONFIGURED")message="The jurisdiction-aware privacy check is unavailable or did not pass. The photograph was not processed.";
       if(message==="CLICK_IT_PRIVACY_DETECTOR_NOT_READY")message="Face masking is not ready. The unmasked photograph was not sent for product matching.";
+      if(message==="CLICK_IT_PRIVACY_DETECTION_UNCERTAIN"||message==="CLICK_IT_PRIVACY_DETECTION_FAILED"||message==="CLICK_IT_PRIVACY_INVALID_DETECTION")message="Cirvanna could not confidently detect and mask every face. The photograph was not processed or sent for product matching.";
       setAiStatus("clickItStatus",message+". No demo or fabricated matches were shown.",true);
     }finally{setAiBusy("clickItBtn",false,"Scan photo and search marketplace")}
   });
