@@ -874,6 +874,7 @@ def test_market_aware_checkout_revalidates_quotes_and_charges_localized_total(cl
     assert order["destination_country_code"] == "KE"
     assert len(order["charges"]) == 2
     stripe_data = seen["data"]
+    assert not any(key.startswith("shipping_address_collection") for key in stripe_data)
     charged_total = sum(
         int(stripe_data[f"line_items[{index}][price_data][unit_amount]"])
         * int(stripe_data[f"line_items[{index}][quantity]"])
