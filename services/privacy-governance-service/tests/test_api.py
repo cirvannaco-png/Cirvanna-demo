@@ -227,8 +227,9 @@ def test_consent_grant_is_purpose_bound_and_verifiable(client):
 
 
 
-def test_adult_photograph_requires_explicit_permission_attestation(client):
-    payload = grant_payload("adults_only")
+@pytest.mark.parametrize("status", ["adults_only", "contains_minor"])
+def test_visible_people_require_explicit_permission_attestation(client, status):
+    payload = grant_payload(status)
     payload["photographed_people_consent_confirmed"] = False
     response = client.post("/internal/v1/consents/grant", headers=internal(), json=payload)
     assert response.status_code == 403
