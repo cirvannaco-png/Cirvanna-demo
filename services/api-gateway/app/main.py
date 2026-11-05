@@ -922,8 +922,12 @@ def _load_consent_aware_wardrobe_likes(subject_id: str) -> dict[str, float]:
     """
     base = os.getenv("IDENTITY_SERVICE_URL", "").strip().rstrip("/")
     token = os.getenv("IDENTITY_SERVICE_TOKEN", "").strip()
+    if not base and not token:
+        # No granted learning receipt can exist without the provider; wardrobe-only
+        # suggestions remain available but receive no historical learning bonus.
+        return {}
     if not base or not _trusted_internal_base_url(base) or len(token.encode("utf-8")) < 32:
-        raise HTTPException(503, detail={"code": "WARDROBE_LEARNING_PROVIDER_NOT_CONFIGURED"})
+        raise HTTPException(503, detail={"code": "WARDROBE_LEARNING_PROVIDER_CONFIGURATION_INVALID"})
     try:
         with httpx.Client(
             timeout=httpx.Timeout(4.0, connect=1.5),
