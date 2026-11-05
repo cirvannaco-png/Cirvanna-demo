@@ -1726,7 +1726,8 @@ def create_variant(listing_id: uuid.UUID, payload: VariantIn,
     variant = Variant(id=str(uuid.uuid4()), listing_id=listing.id, sku=payload.sku, options=payload.options,
         price_minor=payload.price_minor, currency=payload.currency, on_hand=payload.initial_stock,
         reserved_qty=0, state="active", version=1, canonical_variant_id=payload.canonical_variant_id,
-        updated_at=observed_at, observed_at=observed_at)
+        updated_at=observed_at, observed_at=observed_at,
+        source_price_minor=payload.source_price_minor, source_currency=payload.source_currency)
     db.add(variant)
     if payload.initial_stock:
         db.add(InventoryMovement(id=str(uuid.uuid4()), variant_id=variant.id,
@@ -1737,8 +1738,10 @@ def create_variant(listing_id: uuid.UUID, payload: VariantIn,
         db.rollback()
         raise HTTPException(409, detail={"code": "VARIANT_SKU_CONFLICT"}) from exc
     return {"variant_id": variant.id, "listing_id": listing.id, "sku": variant.sku, "options": variant.options,
-        "price_minor": variant.price_minor, "currency": variant.currency, "on_hand": variant.on_hand,
-        "reserved_qty": variant.reserved_qty, "available_stock": variant.on_hand - variant.reserved_qty,
+        "price_minor": variant.price_minor, "currency": variant.currency,
+        "source_price_minor": variant.source_price_minor, "source_currency": variant.source_currency,
+        "on_hand": variant.on_hand, "reserved_qty": variant.reserved_qty,
+        "available_stock": variant.on_hand - variant.reserved_qty,
         "canonical_variant_id": variant.canonical_variant_id, "observed_at": variant.observed_at.isoformat(),
         "version": variant.version}
 
