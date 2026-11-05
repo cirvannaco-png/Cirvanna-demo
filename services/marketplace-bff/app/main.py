@@ -935,6 +935,7 @@ async def submit_image_rights_request(payload: ImageRightsRequest) -> Response:
     """Public privacy-rights intake; the rights service verifies authority and manages quarantine."""
     base, token = _internal_service("PRIVACY_GOVERNANCE_API_URL", "PRIVACY_GOVERNANCE_API_TOKEN")
     request_body = payload.model_dump(exclude_none=True)
+    request_body["jurisdiction_hint_is_unverified"] = True
     request_body["requester_authentication"] = "verification_required"
     try:
         async with httpx.AsyncClient(
