@@ -16,7 +16,7 @@ TOKEN = "vision-worker-test-token-longer-than-thirty-two-bytes"
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setenv("VISION_WORKER_TOKEN", TOKEN)
-    with TestClient(main.app) as test_client:
+    monkeypatch.setattr(main, "detector_configuration", lambda: (True, "test_configured"))\n    monkeypatch.setattr(main, "anonymize_click_it_image", lambda image: (image.copy(), 0))\n    with TestClient(main.app) as test_client:
         yield test_client
 
 
