@@ -15,11 +15,11 @@ POLICY_VERSION = "tari-daily-looks-v1"
 ROLES = ("everyday", "elevated", "explore")
 
 _CATEGORY_ALIASES = {
-    "top": "top", "tops": "top", "shirt": "top", "shirts": "top",
-    "t-shirt": "top", "tshirts": "top", "tee": "top", "tees": "top",
+    "top": "top", "tops": "top", "upper_body": "top", "shirt": "top", "shirts": "top",
+    "t-shirt": "top", "tshirts": "top", "t_shirts": "top", "tee": "top", "tees": "top",
     "blouse": "top", "blouses": "top", "sweater": "top", "sweaters": "top",
     "knitwear": "top", "hoodie": "top", "hoodies": "top",
-    "bottom": "bottom", "bottoms": "bottom", "trouser": "bottom",
+    "bottom": "bottom", "bottoms": "bottom", "lower_body": "bottom", "trouser": "bottom",
     "trousers": "bottom", "pants": "bottom", "jeans": "bottom",
     "skirt": "bottom", "skirts": "bottom", "shorts": "bottom",
     "leggings": "bottom",
@@ -78,7 +78,7 @@ def _score(
     score = sum(3 for term in _ROLE_TERMS[role] if term in text)
     # USI attributes are explicit preference strings; they are matching hints,
     # never inferred traits or hard exclusions.
-    score += sum(2 for signal in style_signals if signal and signal in text)
+    score += sum(2 for signal in style_signals if signal and signal.split(":", 1)[-1] in text)
     return score
 
 
