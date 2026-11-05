@@ -44,6 +44,7 @@ Build the container from repository root:
 - `POST /api/privacy/consents` resolves the signed Commerce bearer through `GET /me`, derives the subject server-side, and issues a new purpose-bound consent receipt. Browser-supplied subject IDs are never trusted.
 - `POST /api/privacy/consents/{consent_id}/revoke` revokes only a consent receipt belonging to the authenticated Commerce subject.
 - `POST /api/privacy/image-requests` and the private status route use the same internal service. No uploader login is required for photographed-person reporting.
+- The private status route returns the platform triage target and, only when fully resolved against current signed policy bundles, a separate legal response deadline. An unresolved legal deadline is explicitly labelled.
 - Click It submits the photo only after the BFF returns a persisted consent receipt. The people-status declaration is purpose-bound; a guardian reference is checked by a separate trusted provider and never accepted as proof by itself.
 - The BFF readiness response reports `click_it_privacy_ready` separately from basic marketplace readiness.
 
