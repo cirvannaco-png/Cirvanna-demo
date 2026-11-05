@@ -1772,32 +1772,276 @@ def adjust_inventory(variant_id: uuid.UUID, payload: InventoryAdjustment,
         "observed_at": variant.observed_at.isoformat() if variant.observed_at else None, "version": variant.version}
 
 
+
+def _comparison_unavailable(code: str, **context: Any) -> dict[str, Any]:
+    return {"status": "unavailable", "reason_code": code, "context": context, "comparison": None}
+
+
+@app.post("/marketplace/compare")
+def compare_offers(
+    payload: OfferComparisonIn,
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Compare only exact same-variant offers with complete, fresh destination costs."""
+    selected: list[dict[str, Any]] = []
+    for variant_id in payload.variant_ids:
+        joined = variant_triplet(db, variant_id)
+        if not joined:
+            return _comparison_unavailable("OFFER_NOT_FOUND", variant_id=variant_id)
+        variant, listing, merchant = joined
+        if variant.state != "active" or listing.state != "active" or merchant.state != "approved":
+            return _comparison_unavailable("OFFER_NOT_ACTIVE", variant_id=variant.id)
+        available = variant.on_hand - variant.reserved_qty
+        if available <= 0:
+            return _comparison_unavailable("OFFER_OUT_OF_STOCK", variant_id=variant.id)
+        if not variant.canonical_variant_id:
+            return _comparison_unavailable("CANONICAL_VARIANT_ID_MISSING", variant_id=variant.id)
+        if not offer_is_fresh(variant.observed_at):
+            return _comparison_unavailable("OFFER_OBSERVATION_STALE", variant_id=variant.id)
+        market = _market_is_active(db, merchant.id, payload.destination_country_code)
+        if market is None:
+            return _comparison_unavailable("MERCHANT_NOT_ACTIVE_IN_DESTINATION_MARKET", variant_id=variant.id)
+
+        fulfillment_rows = list(db.scalars(select(OfferFulfillmentQuote).where(
+            OfferFulfillmentQuote.variant_id == variant.id,
+            OfferFulfillmentQuote.destination_country_code == payload.destination_country_code,
+            OfferFulfillmentQuote.destination_key == payload.destination_key,
+            OfferFulfillmentQuote.fulfillment_mode == payload.fulfillment_mode,
+        ).order_by(OfferFulfillmentQuote.observed_at.desc(), OfferFulfillmentQuote.id.desc()).limit(10)).all())
+        fulfillment = next((q for q in fulfillment_rows if quote_is_current(q.observed_at, q.expires_at)), None)
+        if fulfillment is None:
+            return _comparison_unavailable("FULFILLMENT_QUOTE_MISSING_OR_STALE", variant_id=variant.id)
+        if fulfillment.status != "confirmed" or fulfillment.amount_minor is None:
+            return _comparison_unavailable("FULFILLMENT_QUOTE_NOT_CONFIRMED", variant_id=variant.id)
+
+        tax_rows = list(db.scalars(select(OfferTaxQuote).where(
+            OfferTaxQuote.variant_id == variant.id,
+            OfferTaxQuote.destination_country_code == payload.destination_country_code,
+        ).order_by(OfferTaxQuote.observed_at.desc(), OfferTaxQuote.id.desc()).limit(10)).all())
+        tax = next((q for q in tax_rows if quote_is_current(q.observed_at, q.expires_at)), None)
+        if tax is None:
+            return _comparison_unavailable("TAX_QUOTE_MISSING_OR_STALE", variant_id=variant.id)
+        if tax.status != "confirmed" or not tax.authoritative or tax.amount_minor is None:
+            return _comparison_unavailable("TAX_QUOTE_NOT_AUTHORITATIVE", variant_id=variant.id)
+
+        payment = _market_payment_capability(
+            db, merchant.id, payload.destination_country_code, variant.currency, payload.payment_method
+        )
+        if payment is None:
+            return _comparison_unavailable("PAYMENT_PROVIDER_NOT_SUPPORTED_FOR_MARKET_OR_CURRENCY", variant_id=variant.id)
+
+        item_display_minor, item_fx = _convert_minor_amount(
+            db, variant_id=variant.id, amount_minor=variant.price_minor,
+            source_currency=variant.currency, target_currency=payload.display_currency,
+        )
+        if item_display_minor is None:
+            return _comparison_unavailable("ITEM_PRICE_FX_QUOTE_MISSING_OR_STALE", variant_id=variant.id)
+        fulfillment_display_minor, fulfillment_fx = _convert_minor_amount(
+            db, variant_id=variant.id, amount_minor=fulfillment.amount_minor,
+            source_currency=fulfillment.currency, target_currency=payload.display_currency,
+        )
+        if fulfillment_display_minor is None:
+            return _comparison_unavailable("FULFILLMENT_FX_QUOTE_MISSING_OR_STALE", variant_id=variant.id)
+        tax_display_minor, tax_fx = _convert_minor_amount(
+            db, variant_id=variant.id, amount_minor=tax.amount_minor,
+            source_currency=tax.currency, target_currency=payload.display_currency,
+        )
+        if tax_display_minor is None:
+            return _comparison_unavailable("TAX_FX_QUOTE_MISSING_OR_STALE", variant_id=variant.id)
+
+        # Inclusive tax is already in the offer price; adding it again would double count.
+        payable_tax_minor = 0 if tax.basis == "inclusive" else tax_display_minor
+        total_minor = item_display_minor + fulfillment_display_minor + payable_tax_minor
+        selected.append({
+            "variant": variant,
+            "listing": listing,
+            "merchant": merchant,
+            "available_stock": available,
+            "market": market,
+            "fulfillment": fulfillment,
+            "tax": tax,
+            "payment": payment,
+            "item_display_minor": item_display_minor,
+            "item_fx": item_fx,
+            "fulfillment_display_minor": fulfillment_display_minor,
+            "fulfillment_fx": fulfillment_fx,
+            "tax_display_minor": tax_display_minor,
+            "tax_fx": tax_fx,
+            "payable_tax_minor": payable_tax_minor,
+            "total_minor": total_minor,
+        })
+
+    if selected[0]["variant"].canonical_variant_id != selected[1]["variant"].canonical_variant_id:
+        return _comparison_unavailable("CANONICAL_VARIANT_MISMATCH")
+    if selected[0]["tax"].basis != selected[1]["tax"].basis:
+        return _comparison_unavailable("TAX_BASIS_MISMATCH")
+    if selected[0]["tax"].tax_category != selected[1]["tax"].tax_category:
+        return _comparison_unavailable("TAX_CATEGORY_MISMATCH")
+    if selected[0]["tax"].jurisdiction != selected[1]["tax"].jurisdiction:
+        return _comparison_unavailable("TAX_JURISDICTION_MISMATCH")
+    if any(item["market"].market_country_code != payload.destination_country_code for item in selected):
+        return _comparison_unavailable("DESTINATION_MARKET_MISMATCH")
+
+    lines = []
+    for item in selected:
+        variant = item["variant"]
+        listing = item["listing"]
+        merchant = item["merchant"]
+        lines.append({
+            "variant_id": variant.id,
+            "merchant_id": merchant.id,
+            "merchant_name": merchant.display_name,
+            "merchant_local_sku": variant.sku,
+            "canonical_product_id": listing.catalog_product_id,
+            "canonical_variant_id": variant.canonical_variant_id,
+            "brand_home_country_code": merchant.brand_home_country_code,
+            "legal_country_code": merchant.legal_country_code or merchant.country_code,
+            "offer_price_minor": variant.price_minor,
+            "offer_currency": variant.currency,
+            "source_price_minor": variant.source_price_minor,
+            "source_currency": variant.source_currency,
+            "available_stock": item["available_stock"],
+            "offer_observed_at": variant.observed_at.isoformat(),
+            "item_display_price_minor": item["item_display_minor"],
+            "fulfillment_mode": item["fulfillment"].fulfillment_mode,
+            "fulfillment_charge_minor": item["fulfillment_display_minor"],
+            "fulfillment_quote": {
+                "quote_id": item["fulfillment"].id,
+                "provider": item["fulfillment"].provider,
+                "provider_quote_id": item["fulfillment"].provider_quote_id,
+                "observed_at": item["fulfillment"].observed_at.isoformat(),
+                "expires_at": item["fulfillment"].expires_at.isoformat(),
+                "status": item["fulfillment"].status,
+            },
+            "tax": {
+                "tax_category": item["tax"].tax_category,
+                "basis": item["tax"].basis,
+                "jurisdiction": item["tax"].jurisdiction,
+                "amount_minor": item["tax_display_minor"],
+                "added_to_total_minor": item["payable_tax_minor"],
+                "included_in_item_price": item["tax"].basis == "inclusive",
+                "authoritative": item["tax"].authoritative,
+                "provider": item["tax"].provider,
+                "rule_version": item["tax"].rule_version,
+                "observed_at": item["tax"].observed_at.isoformat(),
+                "expires_at": item["tax"].expires_at.isoformat(),
+            },
+            "payment_provider": item["payment"].provider,
+            "payment_methods": item["payment"].payment_methods,
+            "fx_quotes": {
+                "item": item["item_fx"],
+                "fulfillment": item["fulfillment_fx"],
+                "tax": item["tax_fx"],
+            },
+            "landed_total_minor": item["total_minor"],
+        })
+    ranked = sorted(lines, key=lambda item: (item["landed_total_minor"], item["merchant_id"], item["variant_id"]))
+    cheapest = ranked[0]
+    return {
+        "status": "comparable",
+        "display_currency": payload.display_currency,
+        "currency_minor_units": _currency_minor_units(payload.display_currency),
+        "destination_country_code": payload.destination_country_code,
+        "destination_key": payload.destination_key,
+        "fulfillment_mode": payload.fulfillment_mode,
+        "canonical_variant_id": selected[0]["variant"].canonical_variant_id,
+        "tax_basis": selected[0]["tax"].basis,
+        "tax_category": selected[0]["tax"].tax_category,
+        "cheapest_variant_id": cheapest["variant_id"],
+        "comparison_semantics": "confirmed item price + selected destination fulfilment charge + authoritative tax where exclusive; inclusive tax is not double counted",
+        "offers": ranked,
+        "comparison_observed_at": now().isoformat(),
+    }
+
+
 @app.get("/marketplace/offers")
-def list_offers(db: Annotated[Session, Depends(get_db)], q: str | None = Query(None, max_length=160),
-    category: str | None = Query(None, max_length=80), currency: str | None = Query(None, min_length=3, max_length=3),
-    offset: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=100)):
+def list_offers(
+    db: Annotated[Session, Depends(get_db)],
+    q: str | None = Query(None, max_length=160),
+    category: str | None = Query(None, max_length=80),
+    currency: str | None = Query(None, min_length=3, max_length=3),
+    market_country_code: str | None = Query(None, min_length=2, max_length=2),
+    display_currency: str | None = Query(None, min_length=3, max_length=3),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+):
     stmt = select(Variant, Listing, Merchant).join(Listing, Variant.listing_id == Listing.id).join(Merchant, Listing.merchant_id == Merchant.id).where(
-        Variant.state == "active", Listing.state == "active", Merchant.state == "approved", Variant.on_hand > Variant.reserved_qty)
+        Variant.state == "active", Listing.state == "active", Merchant.state == "approved",
+        Variant.on_hand > Variant.reserved_qty,
+    )
+    market_code = _valid_country(market_country_code) if market_country_code else None
+    requested_display_currency = _valid_currency(display_currency) if display_currency else None
+    if requested_display_currency and not market_code:
+        raise HTTPException(422, detail={"code": "DISPLAY_CURRENCY_REQUIRES_MARKET"})
+    if market_code:
+        stmt = stmt.join(MerchantOperatingMarket, MerchantOperatingMarket.merchant_id == Merchant.id).where(
+            MerchantOperatingMarket.market_country_code == market_code,
+            MerchantOperatingMarket.state == "active",
+        )
     if q and q.strip():
         stmt = stmt.where(func.lower(Listing.product_name).like(f"%{q.strip().lower()}%"))
     if category:
         stmt = stmt.where(func.lower(Listing.category) == category.strip().lower())
     if currency:
-        curr = currency.strip().upper()
-        if not CODE3_RE.fullmatch(curr):
-            raise HTTPException(422, detail={"code": "INVALID_CURRENCY"})
+        curr = _valid_currency(currency)
         stmt = stmt.where(Variant.currency == curr)
     total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
     rows = db.execute(stmt.order_by(Listing.created_at.desc(), Variant.id).offset(offset).limit(limit)).all()
-    return {"items": [{"variant_id": v.id, "listing_id": l.id, "merchant_id": m.id, "merchant_name": m.display_name,
-        "catalog_product_id": l.catalog_product_id, "product_name": l.product_name, "category": l.category,
-        "image_urls": l.image_urls, "sku": v.sku, "options": v.options, "price_minor": v.price_minor, "currency": v.currency,
-        "available_stock": v.on_hand - v.reserved_qty, "canonical_variant_id": v.canonical_variant_id,
-        "observed_at": v.observed_at.isoformat() if v.observed_at else None,
-        "is_fresh": offer_is_fresh(v.observed_at),
-        "comparison_eligible": bool(v.canonical_variant_id and offer_is_fresh(v.observed_at))}
-        for v, l, m in rows], "total": total, "offset": offset, "limit": limit,
-        "offer_max_age_seconds": offer_max_age_seconds()}
+    items = []
+    for variant, listing, merchant in rows:
+        market = None
+        if market_code:
+            market = db.scalar(select(MerchantOperatingMarket).where(
+                MerchantOperatingMarket.merchant_id == merchant.id,
+                MerchantOperatingMarket.market_country_code == market_code,
+                MerchantOperatingMarket.state == "active",
+            ))
+        target_currency = requested_display_currency or (market.display_currency if market else None)
+        localized_minor = None
+        localization_status = "not_requested"
+        localization_fx = None
+        locale = None
+        if target_currency:
+            locale = market.locale if market else None
+            localized_minor, localization_fx = _convert_minor_amount(
+                db, variant_id=variant.id, amount_minor=variant.price_minor,
+                source_currency=variant.currency, target_currency=target_currency,
+            )
+            localization_status = "localized" if localized_minor is not None else "conversion_unavailable"
+        items.append({
+            "variant_id": variant.id,
+            "listing_id": listing.id,
+            "merchant_id": merchant.id,
+            "merchant_name": merchant.display_name,
+            "brand_home_country_code": merchant.brand_home_country_code,
+            "legal_country_code": merchant.legal_country_code or merchant.country_code,
+            "catalog_product_id": listing.catalog_product_id,
+            "product_name": listing.product_name,
+            "category": listing.category,
+            "image_urls": listing.image_urls,
+            "sku": variant.sku,
+            "options": variant.options,
+            "price_minor": variant.price_minor,
+            "currency": variant.currency,
+            "source_price_minor": variant.source_price_minor,
+            "source_currency": variant.source_currency,
+            "display_price_minor": localized_minor,
+            "display_currency": target_currency,
+            "display_locale": locale,
+            "display_price_status": localization_status,
+            "display_fx_quote": localization_fx,
+            "market_country_code": market_code,
+            "available_stock": variant.on_hand - variant.reserved_qty,
+            "canonical_variant_id": variant.canonical_variant_id,
+            "observed_at": variant.observed_at.isoformat() if variant.observed_at else None,
+            "is_fresh": offer_is_fresh(variant.observed_at),
+            "comparison_eligible": bool(variant.canonical_variant_id and offer_is_fresh(variant.observed_at)),
+        })
+    return {
+        "items": items, "total": total, "offset": offset, "limit": limit,
+        "offer_max_age_seconds": offer_max_age_seconds(),
+    }
+
 
 
 @app.put("/saved-products/{catalog_product_id}", status_code=201)
