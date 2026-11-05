@@ -411,3 +411,42 @@ def test_wardrobe_page_exposes_feedback_and_consent_controls(client):
     assert "Avoid" in response.text
     assert "/api/wardrobe/recommendations" in response.text
     assert "profile_storage" in response.text
+
+
+def test_wardrobe_consent_listing_is_subject_scoped(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse([{
+            "receipt_id": "receipt-style-123",
+            "scope": "style_learning",
+            "granted": True,
+            "revoked_at": None,
+        }]),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get("/api/wardrobe/consents", headers={"Authorization": "Bearer signed-session"})
+    assert response.status_code == 200
+    assert response.json()["subject_id"] == "signed-user-42"
+    assert response.json()["items"][0]["receipt_id"] == "receipt-style-123"
+    assert fake.calls[1][1] == "https://identity.example.test/v1/tal/consents/signed-user-42"
+
+
+def test_wardrobe_consent_revocation_is_subject_scoped(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"status": "revoked", "receipt_id": "receipt-style-123"}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/consents/receipt-style-123/revoke",
+        headers={"Authorization": "Bearer signed-session"},
+    )
+    assert response.status_code == 200
+    assert fake.calls[1][1] == "https://identity.example.test/v1/tal/consents/receipt-style-123/revoke"
+    assert fake.calls[1][2]["params"]["subject_id"] == "signed-user-42"
