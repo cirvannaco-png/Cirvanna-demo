@@ -697,7 +697,7 @@ def _market_compare_seed(client, monkeypatch):
         )
         payment = main.MarketPaymentCapability(
             id=str(uuid.uuid4()), merchant_id=merchant["merchant_id"], market_country_code="KE",
-            provider="test-payments", state="active", transaction_currencies=[currency],
+            provider="stripe", state="active", transaction_currencies=[currency],
             settlement_currencies=["KES"], payment_methods=["card"], provider_reference="test-ref",
             observed_at=main.now(), expires_at=main.now()+timedelta(hours=1),
         )
@@ -805,3 +805,96 @@ def test_offers_return_display_currency_only_with_market_and_fresh_fx(client, mo
     assert items[b["variant_id"]]["display_price_status"] == "localized"
     assert items[b["variant_id"]]["display_currency"] == "KES"
     assert client.get("/marketplace/offers", params={"display_currency":"KES"}).status_code == 422
+
+
+def test_market_aware_checkout_revalidates_quotes_and_charges_localized_total(client, monkeypatch):
+    merchant, _ = _market_compare_seed(client, monkeypatch)
+    variant_id = merchant["variant_id"]
+    buyer_id = "buyer-market-checkout"
+    db = TEST_SESSION()
+    cart = main.Cart(id=str(uuid.uuid4()), user_id=buyer_id, version=1)
+    db.add(cart)
+    db.flush()
+    db.add(main.CartItem(
+        id=str(uuid.uuid4()), cart_id=cart.id, variant_id=variant_id, quantity=2,
+    ))
+    db.commit()
+    db.close()
+
+    configure_stripe(monkeypatch, session_id="cs_test_market_checkout")
+    seen = {}
+    def fake_post(url, **kwargs):
+        seen.update(kwargs)
+        return FakeResponse({
+            "id": "cs_test_market_checkout",
+            "url": "https://checkout.stripe.test/cs_test_market_checkout",
+            "status": "open",
+        })
+    monkeypatch.setattr(main.httpx, "post", fake_post)
+
+    response = client.post(
+        "/checkout",
+        headers={**auth(buyer_id), "Idempotency-Key": "market-checkout-0001"},
+        json={
+            "destination_country_code": "KE",
+            "destination_key": "Nakuru/Subukia",
+            "fulfillment_mode": "courier_delivery",
+            "display_currency": "KES",
+            "payment_method": "card",
+        },
+    )
+    assert response.status_code == 201, response.text
+    order = response.json()["order"]
+    assert order["currency"] == "KES"
+    assert order["subtotal_minor"] == 3600
+    assert order["fulfillment_total_minor"] == 500
+    assert order["tax_total_minor"] == 360
+    assert order["total_minor"] == 4460
+    assert order["destination_country_code"] == "KE"
+    assert len(order["charges"]) == 2
+    assert sum(
+        int(value.split("]")[0].split("[")[-1])
+        for key, value in seen["data"].items()
+        if key.endswith("[unit_amount]")
+    ) > 0
+    assert any("Fulfilment" in key or "Courier Delivery" in value for key, value in seen["data"].items())
+
+    db = TEST_SESSION()
+    persisted = db.get(main.CommerceOrder, order["order_id"])
+    assert persisted is not None and persisted.total_minor == 4460
+    main.settle_paid(db, persisted, 4460, "KES")
+    assert persisted.state == "paid"
+    db.close()
+
+    changed_context = client.post(
+        "/checkout",
+        headers={**auth(buyer_id), "Idempotency-Key": "market-checkout-0001"},
+        json={
+            "destination_country_code": "KE",
+            "destination_key": "Nakuru/Other",
+            "fulfillment_mode": "courier_delivery",
+            "display_currency": "KES",
+            "payment_method": "card",
+        },
+    )
+    assert changed_context.status_code == 409
+    assert changed_context.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_CHECKOUT_CONTEXT"
+
+
+def test_active_market_cannot_bypass_checkout_context(client, monkeypatch):
+    merchant, _ = _market_compare_seed(client, monkeypatch)
+    buyer_id = "buyer-market-bypass"
+    db = TEST_SESSION()
+    cart = main.Cart(id=str(uuid.uuid4()), user_id=buyer_id, version=1)
+    db.add(cart)
+    db.flush()
+    db.add(main.CartItem(id=str(uuid.uuid4()), cart_id=cart.id, variant_id=merchant["variant_id"], quantity=1))
+    db.commit()
+    db.close()
+    configure_stripe(monkeypatch)
+    response = client.post(
+        "/checkout",
+        headers={**auth(buyer_id), "Idempotency-Key": "market-checkout-0002"},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "MARKET_CHECKOUT_CONTEXT_REQUIRED"
