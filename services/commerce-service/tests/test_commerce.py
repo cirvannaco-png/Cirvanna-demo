@@ -1002,3 +1002,29 @@ def test_fulfillment_quote_ingestion_requires_explicit_charge_basis(client, monk
     )
     assert response.status_code == 201, response.text
     assert response.json()["charge_basis"] == "per_quote"
+
+
+def test_merchant_and_admin_can_review_operating_market_declarations(client):
+    seller = auth("market-seller", "merchant")
+    application = client.post("/merchants/applications", headers=seller, json={
+        "display_name": "Global Studio", "legal_name": "Global Studio Ltd",
+        "country_code": "KE", "brand_home_country_code": "IN",
+        "legal_country_code": "KE", "operating_markets": ["KE", "IN"],
+        "contact_email": "markets@example.test",
+    })
+    assert application.status_code == 201, application.text
+    merchant_id = application.json()["merchant_id"]
+    own = client.get("/merchants/me/markets", headers=seller)
+    assert own.status_code == 200
+    assert [item["market_country_code"] for item in own.json()["items"]] == ["IN", "KE"]
+    assert all(item["state"] == "pending" for item in own.json()["items"])
+
+    another_seller = client.get("/merchants/me/markets", headers=auth("different-seller", "merchant"))
+    assert another_seller.status_code == 404
+
+    denied = client.get(f"/admin/merchants/{merchant_id}/markets", headers=seller)
+    assert denied.status_code == 403
+    admin = client.get(f"/admin/merchants/{merchant_id}/markets", headers=auth("market-admin", "admin"))
+    assert admin.status_code == 200
+    assert admin.json()["merchant_id"] == merchant_id
+    assert len(admin.json()["items"]) == 2
