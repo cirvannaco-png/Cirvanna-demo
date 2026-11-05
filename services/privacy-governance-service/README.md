@@ -61,6 +61,7 @@ Provider response schemas are enforced in the code. Test mocks do not constitute
 - `PRIVACY_RIGHTS_REVIEW_TOKEN`: separate reviewer token, at least 32 bytes.
 - `PRIVACY_RIGHTS_TRIAGE_HOURS`: platform internal triage target between 1 and 24 hours; not a substitute for jurisdiction-specific statutory response deadlines.
 - `PRIVACY_POLICY_BUNDLE_PUBLIC_KEY_PEM`: Ed25519 public key in PEM form.
+- `VISION_PRIVACY_ATTESTATION_API_URL/TOKEN`: trusted Vision provider that verifies a signed masking attestation for the exact asset and public publication target.
 - `RIGHTS_AUTHORITY_VERIFICATION_API_URL/TOKEN`: trusted provider that independently verifies a photographed person's, parent/guardian's or authorized representative's authority for the specific image-rights case.
 - Provider URL/token pairs listed above.
 
