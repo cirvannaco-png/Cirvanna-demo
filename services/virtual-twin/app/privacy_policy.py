@@ -103,6 +103,10 @@ async def authorize_click_it_policy(subject_id: str, photographed_people_status:
         isinstance(receipt, dict)
         and receipt.get("decision") == "PASS"
         and receipt.get("current") is True
+        and receipt.get("jurisdiction_resolution_complete") is True
+        and receipt.get("policy_conflicts_resolved") is True
+        and receipt.get("lawful_basis_authorized") is True
+        and receipt.get("cross_border_transfers_authorized") is True
         and isinstance(version, str) and bool(version.strip())
         and isinstance(digest, str) and bool(_SHA256.fullmatch(digest))
         and isinstance(jurisdictions, list) and bool(jurisdictions)
