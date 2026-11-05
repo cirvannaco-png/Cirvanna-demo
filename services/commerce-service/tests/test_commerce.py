@@ -674,6 +674,7 @@ def _market_compare_seed(client, monkeypatch):
     from decimal import Decimal
     merchant_a = seed_offer(price_minor=1800)
     merchant_b = seed_offer(price_minor=10, owner_user_id="merchant-2")
+    assert merchant_a["merchant_id"] != merchant_b["merchant_id"]
     canonical_id = str(uuid.uuid4())
     db = TEST_SESSION()
     variant_a = db.get(main.Variant, merchant_a["variant_id"])
