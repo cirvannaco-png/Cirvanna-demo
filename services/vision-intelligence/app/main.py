@@ -595,12 +595,16 @@ async def click_it_scan(
     consent_image_processing: Annotated[bool, Form()],
     consent_click_it: Annotated[bool, Form()],
     image: Annotated[UploadFile, File()],
+    photographed_people_status: Annotated[str, Form()] = "unknown",
     category: Annotated[str | None, Form()] = None,
     limit: Annotated[int, Form(ge=1, le=25)] = 10,
 ) -> dict[str, Any]:
     if not consent_image_processing or not consent_click_it:
         await image.close()
         raise HTTPException(403, detail={"code": "EXPLICIT_CLICK_IT_CONSENT_REQUIRED"})
+    if photographed_people_status not in {"no_people", "adults_only", "contains_minor"}:
+        await image.close()
+        raise HTTPException(403, detail={"code": "CHILD_SAFETY_STATUS_UNCONFIRMED"})
     content_type = image.content_type or ""
     try:
         data = await image.read(MAX_IMAGE_BYTES + 1)
@@ -618,6 +622,11 @@ async def click_it_scan(
         )
     privacy_safe_image, faces_masked = anonymize_click_it_image(decoded)
     decoded.close()  # Drop the unmasked decoded image before any downstream model work.
+    # A caller who declares people in frame must receive a positive face detection
+    # and masking result. Zero detections are not treated as proof of a safe image.
+    if photographed_people_status in {"adults_only", "contains_minor"} and faces_masked < 1:
+        privacy_safe_image.close()
+        raise HTTPException(503, detail={"code": "CLICK_IT_PRIVACY_DETECTION_UNCERTAIN"})
     quality = evaluate_image_quality(privacy_safe_image)
     if not quality["passed"]:
         raise HTTPException(
