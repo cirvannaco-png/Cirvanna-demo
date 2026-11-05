@@ -13,6 +13,10 @@ depends_on = None
 
 
 def upgrade() -> None:
+    op.add_column(
+        "commerce_offer_fulfillment_quotes",
+        sa.Column("charge_basis", sa.String(16), nullable=False, server_default="per_unit"),
+    )
     op.add_column("commerce_merchant_operating_markets", sa.Column("tax_provider", sa.String(100), nullable=True))
     op.add_column("commerce_merchant_operating_markets", sa.Column("tax_provider_reference", sa.String(180), nullable=True))
     op.add_column("commerce_merchant_operating_markets", sa.Column("tax_capability_observed_at", sa.DateTime(timezone=True), nullable=True))
@@ -40,6 +44,7 @@ def upgrade() -> None:
         sa.Column("merchant_id", sa.String(36), sa.ForeignKey("commerce_merchants.id"), nullable=False),
         sa.Column("variant_id", sa.String(36), nullable=False),
         sa.Column("charge_type", sa.String(16), nullable=False),
+        sa.Column("charge_basis", sa.String(16), nullable=False, server_default="per_unit"),
         sa.Column("description", sa.String(180), nullable=False),
         sa.Column("amount_minor", sa.Integer(), nullable=False),
         sa.Column("currency", sa.String(3), nullable=False),
@@ -52,12 +57,14 @@ def upgrade() -> None:
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.CheckConstraint("amount_minor >= 0", name="ck_commerce_order_charge_amount_nonnegative"),
         sa.CheckConstraint("charge_type IN ('fulfilment','tax')", name="ck_commerce_order_charge_type"),
+        sa.CheckConstraint("charge_basis IN ('per_unit','per_quote')", name="ck_commerce_order_charge_basis"),
     )
     op.create_index("ix_commerce_order_charges_order_id", "commerce_order_charges", ["order_id"])
     op.create_index("ix_commerce_order_charges_merchant_id", "commerce_order_charges", ["merchant_id"])
 
 
 def downgrade() -> None:
+    op.drop_column("commerce_offer_fulfillment_quotes", "charge_basis")
     op.drop_column("commerce_merchant_operating_markets", "fulfillment_capability_expires_at")
     op.drop_column("commerce_merchant_operating_markets", "fulfillment_capability_observed_at")
     op.drop_column("commerce_merchant_operating_markets", "fulfillment_provider_reference")
