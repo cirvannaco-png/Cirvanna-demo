@@ -97,3 +97,104 @@ def test_readiness_does_not_accept_sqlite_without_test_override(client,monkeypat
     result=client.get("/ready")
     assert result.status_code==503
     assert result.json()["detail"]["ready"] is False
+
+
+def test_feedback_requires_an_active_wardrobe_item(client, monkeypatch):
+    called = []
+    monkeypatch.setattr(main, "deliver_learning_event", lambda **kwargs: called.append(kwargs))
+    response = client.post("/v1/feedback", headers=auth(), json={
+        "owner_user_id": "user-1",
+        "item_id": "missing-item",
+        "event_id": "feedback-event-001",
+        "signal": "like",
+        "consent_receipt_id": "receipt-style-001",
+        "observed_at": "2026-11-05T03:00:00Z",
+    })
+    assert response.status_code == 404
+    assert called == []
+
+
+def test_feedback_is_committed_to_tal_and_npl_with_explicit_consent(client, monkeypatch):
+    create(client)
+    transition(client)
+    delivered = []
+    def fake_delivery(**kwargs):
+        delivered.append(kwargs)
+        return {"tal_event_id": kwargs["event_id"], "tal_status": "recorded", "npl": {"hard_veto": False}}
+    monkeypatch.setattr(main, "deliver_learning_event", fake_delivery)
+    response = client.post("/v1/feedback", headers=auth(), json={
+        "owner_user_id": "user-1",
+        "item_id": "item-001",
+        "event_id": "feedback-event-001",
+        "signal": "dislike",
+        "consent_receipt_id": "receipt-style-001",
+        "target_type": "attribute",
+        "target_value": "blue",
+        "observed_at": "2026-11-05T03:00:00Z",
+    })
+    assert response.status_code == 201, response.text
+    assert response.json()["delivery_state"] == "delivered"
+    assert delivered[0]["owner_user_id"] == "user-1"
+    assert delivered[0]["target_value"] == "blue"
+    from app.store import WardrobeFeedbackEventRow
+    with main.Session(main.store().engine) as session:
+        row = session.get(WardrobeFeedbackEventRow, ("user-1", "feedback-event-001"))
+        assert row is not None and row.delivery_state == "delivered"
+
+
+def test_feedback_replay_is_idempotent_and_changed_replay_conflicts(client, monkeypatch):
+    create(client)
+    transition(client)
+    calls = []
+    monkeypatch.setattr(main, "deliver_learning_event", lambda **kwargs: calls.append(kwargs) or {"tal_status": "recorded"})
+    body = {
+        "owner_user_id": "user-1",
+        "item_id": "item-001",
+        "event_id": "feedback-event-002",
+        "signal": "like",
+        "consent_receipt_id": "receipt-style-001",
+        "observed_at": "2026-11-05T03:00:00Z",
+    }
+    first = client.post("/v1/feedback", headers=auth(), json=body)
+    replay = client.post("/v1/feedback", headers=auth(), json=body)
+    conflict = client.post("/v1/feedback", headers=auth(), json={**body, "signal": "wear"})
+    assert first.status_code == 201 and replay.status_code == 201
+    assert replay.json()["status"] == "replayed"
+    assert conflict.status_code == 409
+    assert len(calls) == 1
+
+
+def test_negative_attribute_feedback_must_match_owned_item(client, monkeypatch):
+    create(client)
+    transition(client)
+    called = []
+    monkeypatch.setattr(main, "deliver_learning_event", lambda **kwargs: called.append(kwargs))
+    response = client.post("/v1/feedback", headers=auth(), json={
+        "owner_user_id": "user-1",
+        "item_id": "item-001",
+        "event_id": "feedback-event-003",
+        "signal": "avoid",
+        "consent_receipt_id": "receipt-style-001",
+        "target_type": "attribute",
+        "target_value": "leather",
+        "observed_at": "2026-11-05T03:00:00Z",
+    })
+    assert response.status_code == 422
+    assert called == []
+
+
+def test_feedback_audit_is_user_scoped(client, monkeypatch):
+    create(client)
+    transition(client)
+    monkeypatch.setattr(main, "deliver_learning_event", lambda **kwargs: {"tal_status": "recorded"})
+    body = {
+        "owner_user_id": "user-1", "item_id": "item-001",
+        "event_id": "feedback-event-004", "signal": "like",
+        "consent_receipt_id": "receipt-style-001",
+        "observed_at": "2026-11-05T03:00:00Z",
+    }
+    assert client.post("/v1/feedback", headers=auth(), json=body).status_code == 201
+    own = client.get("/v1/feedback", headers=auth(), params={"owner_user_id": "user-1"})
+    other = client.get("/v1/feedback", headers=auth(), params={"owner_user_id": "user-2"})
+    assert len(own.json()["items"]) == 1
+    assert other.json()["items"] == []

@@ -274,3 +274,236 @@ def test_description_search_prefers_xari_environment_names(client, monkeypatch):
     assert response.status_code == 200, response.text
     assert fake.calls[0][1] == "https://xari.example.test/v1/marketplace/search"
     assert fake.calls[0][2]["headers"]["Authorization"] == "Bearer xari-internal-token-at-least-thirty-two-bytes"
+
+
+def test_wardrobe_items_are_bound_to_verified_commerce_subject(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({
+            "owner_user_id": "signed-user-42",
+            "items": [{"owner_user_id": "signed-user-42", "item_id": "closet-1", "status": "active"}],
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get("/api/wardrobe/items", headers={"Authorization": "Bearer signed-session"})
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.json()["items"][0]["item_id"] == "closet-1"
+    assert fake.calls[0][1] == "https://commerce.example.test/me"
+    assert fake.calls[1][1] == "https://wardrobe.example.test/v1/items"
+    assert fake.calls[1][2]["params"]["owner_user_id"] == "signed-user-42"
+    assert fake.calls[1][2]["headers"]["Authorization"] == "Bearer wardrobe-internal-token-more-than-thirty-two-bytes"
+
+
+def test_wardrobe_bff_rejects_cross_subject_upstream_data(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({
+            "owner_user_id": "signed-user-42",
+            "items": [{"owner_user_id": "another-user", "item_id": "foreign-item", "status": "active"}],
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get("/api/wardrobe/items", headers={"Authorization": "Bearer signed-session"})
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "WARDROBE_SCOPE_OR_SCHEMA_MISMATCH"
+
+
+def test_wardrobe_feedback_forwards_only_verified_subject_to_service(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"status": "recorded", "event_id": "feedback-event-123", "delivery_state": "delivered"}, status_code=201),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/feedback",
+        headers={"Authorization": "Bearer signed-session"},
+        json={
+            "item_id": "closet-1",
+            "event_id": "feedback-event-123",
+            "signal": "dislike",
+            "consent_receipt_id": "receipt-style-123",
+            "target_type": "attribute",
+            "target_value": "blue",
+        },
+    )
+    assert response.status_code == 200, response.text
+    forwarded = fake.calls[1][2]["json"]
+    assert forwarded["owner_user_id"] == "signed-user-42"
+    assert forwarded["observed_at"].endswith("Z")
+    assert "owner_user_id" not in response.request.content.decode(errors="ignore")
+    assert fake.calls[1][2]["headers"]["Authorization"] == "Bearer wardrobe-internal-token-more-than-thirty-two-bytes"
+
+
+def test_wardrobe_consent_receipt_is_created_server_side_and_subject_scoped(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"status": "recorded", "granted": True}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/consents",
+        headers={"Authorization": "Bearer signed-session"},
+        json={"scope": "style_learning", "granted": True},
+    )
+    assert response.status_code == 200
+    assert response.json()["subject_id"] == "signed-user-42"
+    assert len(response.json()["receipt_id"]) == 36
+    assert fake.calls[1][1] == "https://identity.example.test/v1/tal/consents"
+    assert fake.calls[1][2]["params"]["subject_id"] == "signed-user-42"
+    assert fake.calls[1][2]["json"]["scope"] == "style_learning"
+
+
+def test_wardrobe_recommendations_forward_verified_token_to_cal_decision_gateway(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({
+            "request_id": "req-1",
+            "ranked_candidate_count": 0,
+            "displayable_products": [],
+            "withheld_candidate_ids": [],
+            "display_authority": "CaTaCaCi/CAL",
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/recommendations",
+        headers={"Authorization": "Bearer signed-session"},
+        json={
+            "query": "light layer for my blue shirt",
+            "location": "Subukia",
+            "occasion": "everyday",
+            "climate": "warm",
+            "currency": "KES",
+        },
+    )
+    assert response.status_code == 200, response.text
+    sent = fake.calls[1][2]
+    assert fake.calls[1][1] == "https://decision.example.test/v1/discover"
+    assert sent["headers"]["X-End-User-Authorization"] == "Bearer signed-session"
+    assert sent["json"]["user_id"] == "signed-user-42"
+    assert sent["json"]["use_wardrobe_context"] is True
+    assert sent["json"]["context"]["location_source"] == "user_declared"
+    assert sent["json"]["context"]["climate_source"] == "user_declared"
+    assert "Authorization" not in response.text
+
+
+def test_wardrobe_page_exposes_feedback_and_consent_controls(client):
+    response = client.get("/wardrobe")
+    assert response.status_code == 200
+    assert "Enable style learning" in response.text
+    assert "Dislike" in response.text
+    assert "Avoid" in response.text
+    assert "/api/wardrobe/recommendations" in response.text
+    assert "profile_storage" in response.text
+
+
+def test_wardrobe_consent_listing_is_subject_scoped(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse([{
+            "receipt_id": "receipt-style-123",
+            "scope": "style_learning",
+            "granted": True,
+            "revoked_at": None,
+        }]),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get("/api/wardrobe/consents", headers={"Authorization": "Bearer signed-session"})
+    assert response.status_code == 200
+    assert response.json()["subject_id"] == "signed-user-42"
+    assert response.json()["items"][0]["receipt_id"] == "receipt-style-123"
+    assert fake.calls[1][1] == "https://identity.example.test/v1/tal/consents/signed-user-42"
+
+
+def test_wardrobe_consent_revocation_is_subject_scoped(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"status": "revoked", "receipt_id": "receipt-style-123"}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/consents/receipt-style-123/revoke",
+        headers={"Authorization": "Bearer signed-session"},
+    )
+    assert response.status_code == 200
+    assert fake.calls[1][1] == "https://identity.example.test/v1/tal/consents/receipt-style-123/revoke"
+    assert fake.calls[1][2]["params"]["subject_id"] == "signed-user-42"
+
+
+def test_wardrobe_manual_item_creation_binds_verified_owner_and_activates(client, monkeypatch):
+    from uuid import UUID
+    identifiers = iter([
+        UUID("33333333-3333-4333-8333-333333333333"),
+        UUID("44444444-4444-4444-8444-444444444444"),
+    ])
+    monkeypatch.setattr(main.uuid, "uuid4", lambda: next(identifiers))
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"item": {
+            "owner_user_id": "signed-user-42", "item_id": "33333333-3333-4333-8333-333333333333",
+            "version": 1, "status": "draft",
+        }}, status_code=201),
+        FakeResponse({"item": {
+            "owner_user_id": "signed-user-42", "item_id": "33333333-3333-4333-8333-333333333333",
+            "version": 2, "status": "active",
+        }}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/items",
+        headers={"Authorization": "Bearer signed-session"},
+        json={
+            "display_name": "Blue linen shirt",
+            "category": "tops",
+            "attributes": ["blue", "linen", "relaxed"],
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["item"]["status"] == "active"
+    created = fake.calls[1][2]["json"]
+    transition = fake.calls[2][2]["json"]
+    assert created["owner_user_id"] == "signed-user-42"
+    assert created["image_asset_id"] is None
+    assert created["image_storage_consent"] is False
+    assert transition["owner_user_id"] == "signed-user-42"
+    assert transition["target_status"] == "active"
+
+
+def test_wardrobe_consent_listing_allows_closet_browse_when_learning_provider_absent(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.delenv("IDENTITY_SERVICE_URL", raising=False)
+    monkeypatch.delenv("IDENTITY_SERVICE_TOKEN", raising=False)
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get("/api/wardrobe/consents", headers={"Authorization": "Bearer signed-session"})
+    assert response.status_code == 200
+    assert response.json()["learning_configured"] is False
+    assert response.json()["items"] == []
+    assert len(fake.calls) == 1

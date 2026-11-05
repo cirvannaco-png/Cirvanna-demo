@@ -2,7 +2,7 @@
 from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from sqlalchemy import Boolean, DateTime, ForeignKeyConstraint, Index, Integer, JSON, String, UniqueConstraint, create_engine, func, select, or_
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKeyConstraint, Index, Integer, JSON, String, UniqueConstraint, create_engine, func, select, or_
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
@@ -59,6 +59,33 @@ class WorkerHeartbeatRow(Base):
     __tablename__ = "wardrobe_worker_heartbeats"
     worker_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+
+class WardrobeFeedbackEventRow(Base):
+    """Local audit mirror of a user-authorized learning event; source of truth remains USI/TAL and NPL."""
+    __tablename__ = "wardrobe_learning_events"
+    __table_args__ = (
+        UniqueConstraint("owner_user_id", "event_id", name="uq_wardrobe_learning_owner_event"),
+        CheckConstraint("signal IN ('like','dislike','avoid','modify','wear')", name="ck_wardrobe_learning_signal"),
+        CheckConstraint("delivery_state IN ('delivered','failed')", name="ck_wardrobe_learning_delivery_state"),
+        Index("ix_wardrobe_learning_owner_observed", "owner_user_id", "observed_at"),
+    )
+    owner_user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    event_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    item_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    item_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    signal: Mapped[str] = mapped_column(String(16), nullable=False)
+    target_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    target_value: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    consent_receipt_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    delivery_state: Mapped[str] = mapped_column(String(16), nullable=False)
+    delivery_result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.current_timestamp())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
 
 class WardrobeNotFound(Exception):
     pass
