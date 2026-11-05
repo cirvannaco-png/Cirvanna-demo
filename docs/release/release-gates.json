@@ -123,6 +123,16 @@
       "acceptance": "Each capability is labelled live, limited, unavailable, or deferred from actual evidence. Product owner signs off launch scope for FCI, safety, NPL/USI, CAL, DermalSight, Virtual Twin, Virtual Try-On, Xari, and all unresolved modules; no unsupported accuracy or production claims remain.",
       "evidence_refs": [],
       "verified_commit": null
+    },
+    {
+      "id": "REL-13",
+      "name": "Click It privacy governance and photographed-person rights",
+      "required": true,
+      "status": "blocked",
+      "owner_role": "Privacy/legal owner and platform security owner",
+      "acceptance": "The Privacy Governance Service is deployed on approved PostgreSQL; Ed25519-signed policies have current legal approval for every applicable jurisdiction; trusted jurisdiction resolution covers controller/processor establishments, capture, processing, storage and transfers; consent grants and guardian authority are verified by live identity providers; content lifecycle confirms urgent quarantine/unpublish and complete deletion propagation across source, derivatives, replicas, cache, CDN, merchant surfaces and shared links; public intake is rate-limited; requester status, deadlines, escalation, audit, retention, backup/restore and end-to-end privacy tests pass on the deployed environment.",
+      "evidence_refs": [],
+      "verified_commit": null
     }
   ]
 }
