@@ -252,7 +252,6 @@ class RightsRequestIn(StrictModel):
 
 class RightsReviewIn(StrictModel):
     decision: Literal["approve", "reject", "escalate"]
-    authority_verified: bool
     verification_reference: str = Field(min_length=8, max_length=160)
     resolution_code: str = Field(min_length=3, max_length=64)
 
@@ -429,8 +428,9 @@ def ready(db: Session = Depends(session_for_request)) -> dict:
     internal_ready = len(os.getenv("PRIVACY_GOVERNANCE_INTERNAL_TOKEN", "").encode()) >= 32
     signing_ready = bool(os.getenv("PRIVACY_POLICY_BUNDLE_PUBLIC_KEY_PEM"))
     review_ready = len(os.getenv("PRIVACY_RIGHTS_REVIEW_TOKEN", "").encode()) >= 32
+    rights_authority_ready = bool(os.getenv("RIGHTS_AUTHORITY_VERIFICATION_API_URL")) and bool(os.getenv("RIGHTS_AUTHORITY_VERIFICATION_API_TOKEN"))
     return {
-        "status": "ready" if all([database_ready, resolver_ready, content_ready, internal_ready, signing_ready, review_ready]) else "not_ready",
+        "status": "ready" if all([database_ready, resolver_ready, content_ready, internal_ready, signing_ready, review_ready, rights_authority_ready]) else "not_ready",
         "service": SERVICE,
         "database_ready": database_ready,
         "jurisdiction_resolver_configured": resolver_ready,
@@ -439,7 +439,8 @@ def ready(db: Session = Depends(session_for_request)) -> dict:
         "internal_auth_configured": internal_ready,
         "policy_signing_key_configured": signing_ready,
         "rights_review_auth_configured": review_ready,
-        "ready": all([database_ready, resolver_ready, content_ready, internal_ready, signing_ready, review_ready]),
+        "requester_authority_provider_configured": rights_authority_ready,
+        "ready": all([database_ready, resolver_ready, content_ready, internal_ready, signing_ready, review_ready, rights_authority_ready]),
     }
 
 
@@ -662,12 +663,24 @@ async def evaluate_click_it_policy(payload: JurisdictionEvaluateIn, db: Session 
         resolver_payload,
     )
     jurisdictions = resolution.get("applicable_jurisdictions")
+    required_context_lists = (
+        "controller_establishments",
+        "processor_establishments",
+        "processing_locations",
+        "storage_locations",
+        "transfer_paths",
+    )
+    context_locations_complete = all(
+        isinstance(resolution.get(name), list) and (name == "transfer_paths" or bool(resolution.get(name)))
+        for name in required_context_lists
+    )
     resolution_complete = (
         resolution.get("jurisdiction_resolution_complete") is True
         and isinstance(jurisdictions, list)
         and bool(jurisdictions)
         and all(isinstance(value, str) and JURISDICTION_RE.fullmatch(value.upper()) for value in jurisdictions)
         and resolution.get("policy_conflicts_resolved") is True
+        and context_locations_complete
     )
     if not resolution_complete:
         return {
@@ -894,7 +907,24 @@ async def review_image_rights_request(
         db.commit()
         return {"request_id": request_id, "status": row.status, "quarantined": row.quarantined}
     if payload.decision == "approve":
-        if payload.authority_verified is not True:
+        authority = await post_trusted(
+            "RIGHTS_AUTHORITY_VERIFICATION",
+            "/internal/v1/image-rights/authority/verify",
+            {
+                "request_id": request_id,
+                "asset_id": row.asset_id,
+                "requester_relationship": row.requester_relationship,
+                "verification_reference": payload.verification_reference,
+            },
+        )
+        if not (
+            authority.get("verified") is True
+            and authority.get("active") is True
+            and authority.get("request_id") == request_id
+            and authority.get("asset_id") == row.asset_id
+            and authority.get("requester_relationship") == row.requester_relationship
+            and authority.get("authority_confirmed") is True
+        ):
             raise HTTPException(403, detail={"code": "REQUESTER_AUTHORITY_NOT_VERIFIED"})
         deletion = await post_trusted(
             "CONTENT_LIFECYCLE",
@@ -919,6 +949,7 @@ async def review_image_rights_request(
             "propagation_complete": True,
             "deleted_surfaces": sorted(REQUIRED_REMOVAL_SURFACES),
             "authority_verified": True,
+            "verification_reference_digest": hashlib.sha256(payload.verification_reference.encode()).hexdigest(),
         })
         db.commit()
         return {"request_id": request_id, "status": row.status, "quarantined": row.quarantined, "deletion_propagated": True}
@@ -936,7 +967,7 @@ async def review_image_rights_request(
     row.updated_at = utcnow()
     audit(db, "image_rights_case_rejected", "image_rights_case", request_id, "privacy_reviewer", {
         "resolution_code": payload.resolution_code,
-        "authority_verified": payload.authority_verified,
+        "verification_reference_digest": hashlib.sha256(payload.verification_reference.encode()).hexdigest(),
     })
     db.commit()
     return {"request_id": request_id, "status": row.status, "quarantined": row.quarantined}
