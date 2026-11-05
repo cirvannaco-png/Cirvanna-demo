@@ -269,7 +269,7 @@ def build_daily_looks(
             optional = max(
                 optional_candidates,
                 key=lambda x: (
-                    _score([x], role, signals),
+                    _score([x], role, signals, feedback, occasion, climate),
                     _stable_tie(user_id, local_date, role, [x["item_id"]]),
                 ),
             )
