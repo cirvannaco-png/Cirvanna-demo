@@ -131,6 +131,11 @@ class ClickItConsentGrant(BaseModel):
     guardian_verification_reference: str | None = Field(default=None, min_length=12, max_length=200)
 
 
+class ClickItConsentRevoke(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason_code: Literal["user_request", "guardian_request", "account_closure"] = "user_request"
+
+
 class MarketplaceSearchIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     query: str = Field(min_length=3, max_length=1000)
@@ -866,6 +871,52 @@ async def create_click_it_consent(payload: ClickItConsentGrant, request: Request
         "consent_version": receipt.get("consent_version"),
     }
     return JSONResponse(content=safe, headers={"Cache-Control": "no-store, private"})
+
+
+@app.post("/api/privacy/consents/{consent_id}/revoke")
+async def revoke_click_it_consent(consent_id: str, payload: ClickItConsentRevoke, request: Request) -> Response:
+    authorization = request.headers.get("authorization", "")
+    scheme, _, user_token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not user_token.strip():
+        raise HTTPException(401, detail={"code": "USER_BEARER_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
+    if not re.fullmatch(r"[0-9a-fA-F-]{36}", consent_id):
+        raise HTTPException(404, detail={"code": "CONSENT_NOT_FOUND"})
+    commerce_base = _upstream_base("COMMERCE_API_URL")
+    privacy_base, privacy_token = _internal_service("PRIVACY_GOVERNANCE_API_URL", "PRIVACY_GOVERNANCE_API_TOKEN")
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(8.0, connect=2.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            identity = await client.get(
+                commerce_base + "/me",
+                headers={"Authorization": "Bearer " + user_token, "Accept": "application/json"},
+            )
+            if identity.status_code in {401, 403}:
+                raise HTTPException(401, detail={"code": "USER_AUTHENTICATION_FAILED"})
+            if identity.status_code != 200:
+                raise HTTPException(503, detail={"code": "USER_IDENTITY_UNAVAILABLE"})
+            actor = identity.json()
+            subject_id = actor.get("user_id") if isinstance(actor, dict) else None
+            if not isinstance(subject_id, str) or not subject_id.strip():
+                raise HTTPException(502, detail={"code": "INVALID_USER_IDENTITY_RESPONSE"})
+            upstream = await client.post(
+                privacy_base + "/internal/v1/consents/" + consent_id + "/revoke",
+                headers={"Authorization": "Bearer " + privacy_token, "Accept": "application/json"},
+                json={"subject_id": subject_id, "reason_code": payload.reason_code},
+            )
+    except HTTPException:
+        raise
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "CONSENT_REVOCATION_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "PRIVACY_GOVERNANCE_UNAVAILABLE"}) from exc
+    if upstream.status_code in {401, 403, 404}:
+        raise HTTPException(404, detail={"code": "CONSENT_NOT_FOUND"})
+    if upstream.status_code != 200:
+        raise HTTPException(503, detail={"code": "CONSENT_REVOCATION_UNAVAILABLE"})
+    return JSONResponse(content={"consent_id": consent_id, "active": False, "revoked": True}, headers={"Cache-Control": "no-store, private"})
 
 
 @app.post("/api/privacy/image-requests")
