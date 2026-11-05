@@ -42,7 +42,7 @@ Never fabricate wardrobe items, SKUs, merchant offers, stock, prices, product li
 2. Verify current purpose-specific consent and revocation state for wardrobe, personalization, Twin imagery and rendering.
 3. Hydrate positive preferences from USI only when active profile-storage consent permits; accept only the allowlisted non-sensitive fashion namespaces for ranking. Apply persisted NPL hard vetoes to each owned wardrobe item before composition. Consented TAL observations may inform future profiles through their canonical owner; this first slice does not write learning events. Complementer must not own a duplicate profile.
 4. Retrieve the current owner-scoped wardrobe; exclude deleted, unavailable, unverified or unauthorized assets.
-5. Resolve only explicit context: user-declared occasion, supplied schedule, climate/weather provider if enabled, and user-selected radius/budget.
+5. Resolve only explicit context: user-declared occasion and climate in the first slice; any future schedule or weather integration must be separately enabled and sourced. Radius/budget belong to separate marketplace discovery.
 6. Compose Tari's three roles with Complementer, invoked through the existing Xari orchestration or the authorized daily-look application flow. Prefer existing wardrobe items; use marketplace candidates only to fill a clearly identified gap.
 7. Retrieve product facts from Catalog/Commerce. Every candidate passes required NPL, context, safety, fit-evidence and CAL checks. Only CAL SHOW may be displayed; BLOCK, REVIEW, missing evidence and pending decisions stay hidden.
 8. Generate a Twin preview only through the separately authorized Twin/Try-On path after verifying Twin ownership, asset authorization, active server-side consent and renderer readiness.
@@ -58,7 +58,7 @@ Personalization learning requires a current, explicit, revocable consent receipt
 
 ## Failure behavior and release gates
 
-Fail closed for identity, consent, NPL, CAL, asset ownership and renderer authorization. If weather, context, wardrobe, Twin or renderer data is unavailable, degrade only the affected part and disclose it. Never claim a Twin preview was generated unless a real renderer returns a verified artifact.
+Fail closed for identity, consent, NPL, CAL, asset ownership and renderer authorization. If context, wardrobe, Twin or renderer data is unavailable, degrade only the affected part and disclose it. If the persistent NPL provider is unavailable, do not release looks from an item-bearing wardrobe snapshot. Never claim a Twin preview was generated unless a real renderer returns a verified artifact.
 
 Production release requires verified BFF identity binding and cross-tenant tests; deployed wardrobe persistence and deletion lifecycle; end-to-end USI/NPL/TAL hydration and consent/revocation; CAL for every product candidate; persistent Twin ownership and real renderer readiness; accessibility, latency, rate-limit and privacy tests; and measured cohort evidence.
 
