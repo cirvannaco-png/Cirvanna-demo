@@ -520,11 +520,14 @@ def test_public_offers_forwards_market_and_display_currency(client, monkeypatch)
 
     monkeypatch.setattr(main.httpx, "get", fake_get)
     response = client.get(
-        "/api/commerce/marketplace/offers?market_country_code=KE&display_currency=KES"
+        "/api/commerce/marketplace/offers?market_country_code=KE&display_currency=KES&destination_key=Nakuru%2FSubukia&fulfillment_mode=courier_delivery&radius_km=75"
     )
     assert response.status_code == 200
     assert seen["params"]["market_country_code"] == "KE"
     assert seen["params"]["display_currency"] == "KES"
+    assert seen["params"]["destination_key"] == "Nakuru/Subukia"
+    assert seen["params"]["fulfillment_mode"] == "courier_delivery"
+    assert seen["params"]["radius_km"] == 75.0
     assert "Authorization" not in seen["headers"]
 
 
