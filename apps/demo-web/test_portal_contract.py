@@ -45,6 +45,11 @@ class PortalContractTests(unittest.TestCase):
             self.assertIn(required, MARKETPLACE)
         self.assertIn('moneyMinor(p.display_price_minor,p.display_currency)', MARKETPLACE)
         self.assertIn('moneyMinor(fq.display_conversion_status==="localized"?fq.display_amount_minor:fq.amount_minor', MARKETPLACE)
+        self.assertIn("destination_country_code:marketCountry", MARKETPLACE)
+        self.assertIn("destination_key:destinationKey", MARKETPLACE)
+        self.assertIn("fulfillment_mode:fulfillmentMode", MARKETPLACE)
+        self.assertIn("display_currency:displayCurrency", MARKETPLACE)
+        self.assertIn('body:JSON.stringify(checkoutPayload)', MARKETPLACE)
 
     def test_founder_console_uses_server_side_admin_authorization(self):
         self.assertIn('actor.role!=="admin"', FOUNDER)
