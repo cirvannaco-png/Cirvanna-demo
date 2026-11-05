@@ -1585,7 +1585,8 @@ def discover_marketplace(
     subject = _resolve_verified_subject(end_user_authorization)
     if not hmac.compare_digest(subject, payload.user_id):
         raise HTTPException(403, detail={"code": "REQUEST_SUBJECT_MISMATCH"})
-    profile = _load_verified_usi_profile(subject, allow_without_consent=payload.use_wardrobe_context)
+    profile = (_load_verified_usi_profile(subject, allow_without_consent=True)
+               if payload.use_wardrobe_context else _load_verified_usi_profile(subject))
     wardrobe_items: list[dict[str, Any]] = []
     if payload.use_wardrobe_context:
         # The NPL ledger is mandatory for wardrobe-driven recommendations. A missing
@@ -1739,7 +1740,8 @@ def evaluate_decisions(
         verified_subject = _resolve_verified_subject(end_user_authorization)
         if not hmac.compare_digest(verified_subject, payload.user_id):
             raise HTTPException(403, detail={"code": "REQUEST_SUBJECT_MISMATCH"})
-        profile = _load_verified_usi_profile(verified_subject, allow_without_consent=payload.use_wardrobe_context)
+        profile = (_load_verified_usi_profile(verified_subject, allow_without_consent=True)
+                   if payload.use_wardrobe_context else _load_verified_usi_profile(verified_subject))
     else:
         profile = USIProfile(
             profile_id=f"request-profile:{request_id}",
