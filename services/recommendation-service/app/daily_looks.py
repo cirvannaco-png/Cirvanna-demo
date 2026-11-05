@@ -141,6 +141,61 @@ def _score(
     return score
 
 
+
+def _explain_selection(
+    items: list[dict[str, Any]],
+    role: str,
+    occasion: str | None,
+    climate: str | None,
+    style_signals: tuple[str, ...],
+    feedback_signals: tuple[str, ...],
+) -> str:
+    """Explain only the explicit context and item metadata that matched."""
+    text = " ".join(_item_text(item) for item in items)
+    parts = [{
+        "everyday": "A practical combination assembled from active items in your wardrobe.",
+        "elevated": "A more polished combination assembled from active items in your wardrobe.",
+        "explore": "A distinct alternative assembled from active items in your wardrobe.",
+    }[role]]
+
+    occasion_terms = _context_terms(occasion, _OCCASION_TERMS)
+    occasion_matches = [term for term in occasion_terms if term in text]
+    if occasion and occasion_matches:
+        parts.append(
+            f"Matched your declared occasion ({occasion}) through wardrobe tags: "
+            + ", ".join(occasion_matches[:4]) + "."
+        )
+
+    climate_key = _normalise(climate or "").replace(" ", "_")
+    climate_rules = _CLIMATE_TERMS.get(climate_key, {"positive": (), "negative": ()})
+    climate_matches = [term for term in climate_rules["positive"] if term in text]
+    if climate and climate_matches:
+        parts.append(
+            f"Matched your declared climate ({climate.replace('_', ' ')}) through wardrobe tags: "
+            + ", ".join(climate_matches[:4]) + "."
+        )
+
+    saved_matches = [
+        signal.split(":", 1)[-1]
+        for signal in style_signals
+        if signal and signal.split(":", 1)[-1] in text
+    ]
+    if saved_matches:
+        parts.append("Reflects your saved style preferences: " + ", ".join(saved_matches[:4]) + ".")
+
+    feedback_matches = [
+        signal.split(":", 1)[-1]
+        for signal in feedback_signals
+        if signal and signal.split(":", 1)[-1] in text
+    ]
+    if feedback_matches:
+        parts.append(
+            "Reflects attributes from your consented like/wear feedback: "
+            + ", ".join(feedback_matches[:4]) + "."
+        )
+
+    return " ".join(parts)
+
 def build_daily_looks(
     *,
     request_id: str,
@@ -283,11 +338,9 @@ def build_daily_looks(
             "item_ids": [x["item_id"] for x in chosen],
             "items": chosen,
             "missing": [],
-            "reason": {
-                "everyday": "A practical combination assembled from active wardrobe items.",
-                "elevated": "A more polished combination assembled from active wardrobe items and declared context.",
-                "explore": "A distinct alternative assembled from active wardrobe items; no new purchases are required.",
-            }[role],
+            "reason": _explain_selection(
+                chosen, role, occasion, climate, signals, feedback
+            ),
             "context": context,
             "virtual_twin_preview": {
                 "status": "unavailable",
