@@ -37,6 +37,8 @@ The client must choose one of:
 
 Missing or unknown status blocks processing. This declaration is not facial age estimation and must not be presented as an independently verified fact.
 
+When people are declared visible, the uploader must explicitly attest that they have permission to submit the photograph and, where required, parent/guardian authority. For `adults_only`, the consent service refuses to grant the adult photographed-person attestation scope unless `photographed_people_consent_confirmed=true`. This is an uploader attestation, not independent proof that every photographed adult consented; it must never be described as verified consent from those people.
+
 For a declared minor, the jurisdiction policy registry decides whether guardian consent is legally required. When required, the consent service must return an active receipt containing the `guardian_authorized` scope and `guardian_authority_verified=true`. A checkbox alone is not guardian verification. The policy registry may apply a stricter platform rule than the legal minimum.
 
 For minor-containing images:
