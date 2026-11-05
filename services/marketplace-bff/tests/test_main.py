@@ -259,6 +259,8 @@ def test_marketplace_ui_has_xari_description_search_and_mobile_click_it_capture(
     assert 'id="clickItSearchConsent"' in response.text
     assert 'id="clickItPeopleStatus"' in response.text
     assert 'id="clickItGuardianVerificationRef"' in response.text
+    assert 'id="clickItPeopleConsent"' in response.text
+    assert 'photographed_people_consent_confirmed:$("clickItPeopleConsent").checked' in response.text
     assert 'id="clickItRevokeConsentBtn"' in response.text
     assert 'const twinResourceAllowed=photographedPeopleStatus!=="contains_minor"' in response.text
     assert 'if(twinId&&twinResourceAllowed)consentPayload.twin_id=twinId' in response.text
@@ -684,6 +686,7 @@ def test_click_it_consent_is_created_from_verified_commerce_subject(client, monk
             "consent_image_processing": True,
             "consent_click_it": True,
             "photographed_people_status": "adults_only",
+            "photographed_people_consent_confirmed": True,
             "consent_version": "click-it-privacy-v1",
             "twin_id": "twin-123",
         },
@@ -720,6 +723,7 @@ def test_click_it_consent_can_only_grant_guardian_scope_via_external_reference(c
             "consent_image_processing": True,
             "consent_click_it": True,
             "photographed_people_status": "contains_minor",
+            "photographed_people_consent_confirmed": True,
             "consent_version": "click-it-privacy-v1",
             "guardian_verification_reference": "verified-guardian-case-123",
         },
@@ -738,6 +742,7 @@ def test_click_it_consent_requires_signed_account_and_both_explicit_acceptances(
             "consent_image_processing": True,
             "consent_click_it": True,
             "photographed_people_status": "adults_only",
+            "photographed_people_consent_confirmed": True,
             "consent_version": "click-it-privacy-v1",
         },
     )
@@ -750,6 +755,7 @@ def test_click_it_consent_requires_signed_account_and_both_explicit_acceptances(
             "consent_image_processing": True,
             "consent_click_it": False,
             "photographed_people_status": "adults_only",
+            "photographed_people_consent_confirmed": True,
             "consent_version": "click-it-privacy-v1",
         },
     )
