@@ -469,7 +469,7 @@ def test_wardrobe_manual_item_creation_binds_verified_owner_and_activates(client
             "version": 1, "status": "draft",
         }}, status_code=201),
         FakeResponse({"item": {
-            "owner_user_id": "signed-user-42", "item_id": "generated-item-id",
+            "owner_user_id": "signed-user-42", "item_id": "33333333-3333-4333-8333-333333333333",
             "version": 2, "status": "active",
         }}),
     ])
