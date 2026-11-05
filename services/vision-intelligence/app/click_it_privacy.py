@@ -17,6 +17,7 @@ from fastapi import HTTPException
 from PIL import Image, ImageFilter
 
 FACE_DETECTION_CONFIDENCE = 0.70
+FACE_DETECTOR_CANDIDATE_THRESHOLD = 0.10
 FACE_BLUR_RADIUS = 18
 FACE_PADDING_FRACTION = 0.22
 SHA256_LENGTH = 64
@@ -57,7 +58,7 @@ def _face_detector():
             options = vision.FaceDetectorOptions(
                 base_options=python.BaseOptions(model_asset_path=os.environ["CLICK_IT_FACE_DETECTOR_MODEL_PATH"]),
                 running_mode=vision.RunningMode.IMAGE,
-                min_detection_confidence=FACE_DETECTION_CONFIDENCE,
+                min_detection_confidence=FACE_DETECTOR_CANDIDATE_THRESHOLD,
             )
             _DETECTOR = vision.FaceDetector.create_from_options(options)
         except Exception as exc:
