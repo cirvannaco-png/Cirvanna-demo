@@ -619,14 +619,16 @@ class StripeGateway:
             "client_reference_id": order.id, "expires_at": str(int(order.expires_at.timestamp())),
             "metadata[order_id]": order.id, "metadata[order_number]": order.order_number,
         }
-        allowed_countries = [order.destination_country_code] if order.destination_country_code else self.countries
-        for i, country in enumerate(allowed_countries):
-            params[f"shipping_address_collection[allowed_countries][{i}]"] = country
         if order.destination_country_code:
+            # Market-aware destination is a provider-quoted zone key. Do not let
+            # Stripe collect a second, potentially different address after the quote.
             params["metadata[destination_country_code]"] = order.destination_country_code
             params["metadata[destination_key]"] = (order.destination_key or "")[:180]
             params["metadata[fulfillment_mode]"] = order.fulfillment_mode or ""
             params["metadata[display_currency]"] = order.currency
+        else:
+            for i, country in enumerate(self.countries):
+                params[f"shipping_address_collection[allowed_countries][{i}]"] = country
         if email:
             params["customer_email"] = email
         for i, item in enumerate(items):
