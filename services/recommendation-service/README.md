@@ -74,7 +74,7 @@ Catalog validation is tested separately from `services/catalog-service`. Passing
 ## Not yet implemented
 
 - Complementer domain-specific preference editor and full styling UI; the first Tari three-look UI is exposed through the authenticated Wardrobe page.
-- Trusted gateway binding and profile/USI/NPL/cultural-declaration hydration.
+- The trusted gateway, not this service, owns end-user binding and USI/NPL hydration. The first Tari flow is wired through that gateway; this service accepts only its authenticated, owner-verified wardrobe snapshot. Durable profile memory and user-facing correction/export/deletion remain owned by the Identity Learning service.
 - Durable TAL persistence, event replay, user correction/export/deletion lifecycle and cross-session memory.
 - Live Catalog/Commerce retrieval, ranking against evidence-backed product intelligence, and exact candidate-bound CAL display authorization.
 - Validated longitudinal skin-response model, representative data, calibration, and opt-in scenario forecasting.
