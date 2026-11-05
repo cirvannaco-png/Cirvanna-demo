@@ -553,8 +553,16 @@ async def click_it(
             raise HTTPException(413, detail={"code": "PRODUCT_IMAGE_SIZE_LIMIT_EXCEEDED", "maximum_bytes": MAX_IMAGE_BYTES})
         if _internal_config("VISION_INTELLIGENCE_API_URL", "VISION_INTELLIGENCE_API_TOKEN") is None:
             raise HTTPException(503, detail={"code": "VISION_INFERENCE_NOT_CONFIGURED"})
+        declaration_scope = {
+            "no_people": "photographed_no_people_attestation",
+            "adults_only": "photographed_people_adult_attestation",
+            "contains_minor": "photographed_people_minor_attestation",
+        }[photographed_people_status]
         await _verify_consent(
-            subject_id, consent_id, ["image_processing", "click_it"], resource_id=twin_id
+            subject_id,
+            consent_id,
+            ["image_processing", "click_it", declaration_scope],
+            resource_id=twin_id,
         )
         privacy_policy = await authorize_click_it_policy(subject_id, photographed_people_status)
         if photographed_people_status == "contains_minor" and privacy_policy["guardian_consent_required"]:
