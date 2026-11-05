@@ -740,8 +740,26 @@ def _market_compare_seed(client, monkeypatch):
     return merchant_a, merchant_b
 
 
+def _make_offer_currency_kes(merchant):
+    db = TEST_SESSION()
+    variant = db.get(main.Variant, merchant["variant_id"])
+    variant.currency = "KES"
+    variant.price_minor = 1900
+    payment = db.query(main.MarketPaymentCapability).filter_by(merchant_id=merchant["merchant_id"]).one()
+    payment.transaction_currencies = ["KES"]
+    fulfillment = db.query(main.OfferFulfillmentQuote).filter_by(variant_id=variant.id).one()
+    fulfillment.currency = "KES"
+    fulfillment.amount_minor = 200
+    tax = db.query(main.OfferTaxQuote).filter_by(variant_id=variant.id).one()
+    tax.currency = "KES"
+    tax.amount_minor = 120
+    db.commit()
+    db.close()
+
+
 def test_compare_offers_requires_complete_like_for_like_landed_cost(client, monkeypatch):
     a, b = _market_compare_seed(client, monkeypatch)
+    _make_offer_currency_kes(b)
     response = client.post("/marketplace/compare", json={
         "variant_ids":[a["variant_id"],b["variant_id"]],
         "destination_country_code":"KE",
@@ -762,6 +780,7 @@ def test_compare_offers_requires_complete_like_for_like_landed_cost(client, monk
 
 def test_compare_offers_rejects_canonical_variant_mismatch(client, monkeypatch):
     a, b = _market_compare_seed(client, monkeypatch)
+    _make_offer_currency_kes(b)
     db = TEST_SESSION()
     db.get(main.Variant, b["variant_id"]).canonical_variant_id = str(uuid.uuid4())
     db.commit()
@@ -774,13 +793,12 @@ def test_compare_offers_rejects_canonical_variant_mismatch(client, monkeypatch):
     assert response.json()["reason_code"] == "CANONICAL_VARIANT_MISMATCH"
 
 
-def test_compare_offers_requires_authoritative_tax_and_fresh_fx(client, monkeypatch):
+def test_compare_offers_requires_authoritative_tax(client, monkeypatch):
     a, b = _market_compare_seed(client, monkeypatch)
+    _make_offer_currency_kes(b)
     db = TEST_SESSION()
     tax = db.query(main.OfferTaxQuote).filter_by(variant_id=b["variant_id"]).one()
     tax.authoritative = False
-    fx = db.query(main.OfferFXQuote).filter_by(variant_id=b["variant_id"]).one()
-    fx.expires_at = main.now() - main.timedelta(minutes=1)
     db.commit()
     db.close()
     response = client.post("/marketplace/compare", json={
@@ -788,7 +806,7 @@ def test_compare_offers_requires_authoritative_tax_and_fresh_fx(client, monkeypa
         "destination_country_code":"KE","destination_key":"Nakuru/Subukia",
         "fulfillment_mode":"courier_delivery","display_currency":"KES",
     })
-    assert response.json()["reason_code"] in {"TAX_QUOTE_NOT_AUTHORITATIVE","ITEM_PRICE_FX_QUOTE_MISSING_OR_STALE"}
+    assert response.json()["reason_code"] == "TAX_QUOTE_NOT_AUTHORITATIVE"
 
 
 def test_quote_ingestion_requires_internal_market_context_token(client, monkeypatch):
@@ -822,6 +840,7 @@ def test_offers_return_display_currency_only_with_market_and_fresh_fx(client, mo
 
 def test_market_aware_checkout_revalidates_quotes_and_charges_localized_total(client, monkeypatch):
     merchant, peer = _market_compare_seed(client, monkeypatch)
+    _make_offer_currency_kes(peer)
     comparison = client.post("/marketplace/compare", json={
         "variant_ids": [merchant["variant_id"], peer["variant_id"]],
         "destination_country_code": "KE", "destination_key": "Nakuru/Subukia",
@@ -1028,3 +1047,15 @@ def test_merchant_and_admin_can_review_operating_market_declarations(client):
     assert admin.status_code == 200
     assert admin.json()["merchant_id"] == merchant_id
     assert len(admin.json()["items"]) == 2
+
+
+def test_compare_offers_rejects_currency_mismatch_even_when_fx_exists(client, monkeypatch):
+    a, b = _market_compare_seed(client, monkeypatch)
+    response = client.post("/marketplace/compare", json={
+        "variant_ids": [a["variant_id"], b["variant_id"]],
+        "destination_country_code": "KE", "destination_key": "Nakuru/Subukia",
+        "fulfillment_mode": "courier_delivery", "display_currency": "KES", "payment_method": "card",
+    })
+    assert response.status_code == 200
+    assert response.json()["status"] == "unavailable"
+    assert response.json()["reason_code"] == "OFFER_CURRENCY_MISMATCH"
