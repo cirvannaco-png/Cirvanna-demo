@@ -2078,7 +2078,7 @@ def compare_offers(
             return _comparison_unavailable("OFFER_CURRENCY_MISMATCH", variant_id=variant.id)
 
         payment = _market_payment_capability(
-            db, merchant.id, payload.destination_country_code, variant.currency, payload.payment_method
+            db, merchant.id, payload.destination_country_code, payload.display_currency, payload.payment_method
         )
         if payment is None:
             return _comparison_unavailable("PAYMENT_PROVIDER_NOT_SUPPORTED_FOR_MARKET_OR_CURRENCY", variant_id=variant.id)
