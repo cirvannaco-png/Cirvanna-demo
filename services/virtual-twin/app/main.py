@@ -16,6 +16,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from starlette.responses import JSONResponse
+from app.privacy_policy import authorize_click_it_policy
 from starlette import status
 
 SERVICE_NAME = "cirvanna-virtual-twin"
@@ -157,6 +158,7 @@ async def _verify_consent(
     consent_id: str,
     required_scopes: list[str],
     resource_id: str | None = None,
+    require_guardian_authority: bool = False,
 ) -> None:
     """Verify durable, revocable user consent with the configured identity service."""
     config = _internal_config("CONSENT_API_URL", "CONSENT_API_TOKEN")
@@ -201,6 +203,7 @@ async def _verify_consent(
         and isinstance(scopes, list)
         and set(required_scopes).issubset(set(scopes))
         and (resource_id is None or receipt.get("resource_id") == resource_id)
+        and (not require_guardian_authority or receipt.get("guardian_authority_verified") is True)
     )
     if not valid:
         raise HTTPException(403, detail={"code": "CONSENT_NOT_VERIFIED"})
@@ -527,6 +530,7 @@ async def click_it(
     consent_image_processing: Annotated[bool, Form()],
     consent_click_it: Annotated[bool, Form()],
     product_image: Annotated[UploadFile, File()],
+    photographed_people_status: Annotated[str, Form()] = "unknown",
     twin_id: Annotated[str | None, Form(min_length=3, max_length=128)] = None,
     category: Annotated[str | None, Form(max_length=80)] = None,
     limit: Annotated[int, Form(ge=1, le=25)] = 10,
@@ -539,6 +543,10 @@ async def click_it(
     try:
         if not consent_image_processing or not consent_click_it:
             raise HTTPException(400, detail={"code": "EXPLICIT_CLICK_IT_CONSENT_REQUIRED"})
+        if photographed_people_status not in {"no_people", "adults_only", "contains_minor"}:
+            raise HTTPException(403, detail={"code": "CHILD_SAFETY_STATUS_UNCONFIRMED"})
+        if photographed_people_status == "contains_minor" and twin_id:
+            raise HTTPException(403, detail={"code": "CHILD_TWIN_PERSONALIZATION_DISABLED"})
         if product_image.content_type not in {"image/jpeg", "image/png", "image/webp"}:
             raise HTTPException(415, detail={"code": "UNSUPPORTED_PRODUCT_IMAGE_TYPE"})
         if product_image.size is not None and product_image.size > MAX_IMAGE_BYTES:
@@ -548,6 +556,14 @@ async def click_it(
         await _verify_consent(
             subject_id, consent_id, ["image_processing", "click_it"], resource_id=twin_id
         )
+        privacy_policy = await authorize_click_it_policy(subject_id, photographed_people_status)
+        if photographed_people_status == "contains_minor" and privacy_policy["guardian_consent_required"]:
+            await _verify_consent(
+                subject_id,
+                consent_id,
+                ["image_processing", "click_it", "guardian_authorized"],
+                require_guardian_authority=True,
+            )
         if twin_id:
             await _authorize_twin(subject_id, twin_id)
         content = await product_image.read(MAX_IMAGE_BYTES + 1)
@@ -578,7 +594,19 @@ async def click_it(
         result["decision_status"] = "PENDING_CAL"
         result["decision_notice"] = "Candidates require the canonical CAL decision, NPL hard veto and cultural-identity checks before display or purchase."
         result["twin_id"] = twin_id
-        result["personalization_available"] = bool(twin_id)
+        result["personalization_available"] = bool(twin_id) and photographed_people_status != "contains_minor"
+        result["privacy_policy"] = {
+            "policy_version": privacy_policy["policy_version"],
+            "policy_sha256": privacy_policy["policy_sha256"],
+            "applicable_jurisdictions": privacy_policy["applicable_jurisdictions"],
+        }
+        result["child_safety"] = {
+            "photographed_people_status": photographed_people_status,
+            "face_reveal_allowed": False,
+            "behavioural_profiling_allowed": False,
+            "facial_identity_analysis_allowed": False,
+            "public_sharing_allowed": False if photographed_people_status == "contains_minor" else privacy_policy["public_sharing_allowed"],
+        }
         return JSONResponse(content=result, headers={"Cache-Control": "no-store, private"})
     finally:
         await product_image.close()
