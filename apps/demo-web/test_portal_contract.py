@@ -16,6 +16,13 @@ class PortalContractTests(unittest.TestCase):
         self.assertIn("catalog_product_id", MERCHANT)
         self.assertIn("price_minor", MERCHANT)
         self.assertIn("quantity_delta", MERCHANT)
+        self.assertIn("brand_home_country_code", MERCHANT)
+        self.assertIn("legal_country_code", MERCHANT)
+        self.assertIn("operating_markets", MERCHANT)
+        self.assertIn('"/merchant/markets"', MERCHANT)
+        self.assertIn("source_price_minor", MERCHANT)
+        self.assertIn("source_currency", MERCHANT)
+        self.assertIn("offer / transaction currency", MERCHANT.lower())
 
     def test_merchant_portal_never_persists_access_token(self):
         self.assertIn('type="password"', MERCHANT)
@@ -23,6 +30,7 @@ class PortalContractTests(unittest.TestCase):
         self.assertNotIn("localStorage", MERCHANT)
         self.assertNotIn("sessionStorage", MERCHANT)
         self.assertIn('u.protocol!=="https:"', MERCHANT)
+        self.assertIn("provider-sourced FX quotes", MERCHANT)
 
     def test_founder_console_uses_server_side_admin_authorization(self):
         self.assertIn('actor.role!=="admin"', FOUNDER)
