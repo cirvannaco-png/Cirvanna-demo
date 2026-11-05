@@ -56,6 +56,7 @@ def grant_payload(status="adults_only", guardian_reference=None):
         "consent_image_processing": True,
         "consent_click_it": True,
         "photographed_people_status": status,
+        "photographed_people_consent_confirmed": status != "no_people",
         "consent_version": "click-it-privacy-v1",
     }
     if guardian_reference:
@@ -222,6 +223,16 @@ def test_consent_grant_is_purpose_bound_and_verifiable(client):
     assert verify.status_code == 200
     assert verify.json()["verified"] is True
     assert verify.json()["guardian_authority_verified"] is False
+
+
+
+
+def test_adult_photograph_requires_explicit_permission_attestation(client):
+    payload = grant_payload("adults_only")
+    payload["photographed_people_consent_confirmed"] = False
+    response = client.post("/internal/v1/consents/grant", headers=internal(), json=payload)
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "PHOTOGRAPHED_PEOPLE_CONSENT_REQUIRED"
 
 
 def test_consent_requires_both_explicit_click_it_acceptances(client):
