@@ -38,7 +38,8 @@ The status token is a bearer secret. The BFF exposes it only once on submission 
 - `CONTENT_LIFECYCLE_API_URL/TOKEN`: resolves Cirvanna asset references and implements synchronous quarantine/unpublish, deletion propagation and unquarantine contracts. The service returns no urgent acknowledgement unless quarantine and unpublish are confirmed.
 - `GUARDIAN_VERIFICATION_API_URL/TOKEN`: validates an opaque verification reference and returns a purpose-bound, active guardian-authority receipt. A missing provider means guardian-authorized consent cannot be issued.
 - `PRIVACY_POLICY_BUNDLE_PUBLIC_KEY_PEM`: counsel-controlled Ed25519 public key. No default/private key or legal bundle is committed.
-- Human privacy reviewer: independent authorization for requester verification, approval, rejection and escalation.
+- `RIGHTS_AUTHORITY_VERIFICATION_API_URL/TOKEN`: independently verifies the photographed person's or representative's authority for a specific request before removal can be approved.
+- Human privacy reviewer: independent authorization for approval, rejection and escalation. The reviewer cannot assert requester authority by setting a boolean; a provider receipt is mandatory.
 
 Provider response schemas are enforced in the code. Test mocks do not constitute deployed-provider proof.
 
