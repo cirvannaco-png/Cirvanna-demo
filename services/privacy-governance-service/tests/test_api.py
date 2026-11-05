@@ -393,8 +393,13 @@ def test_rights_request_requires_asset_registry_and_urgent_quarantine_ack(client
     assert result["status"] == "quarantined"
     assert result["quarantined"] is True
     assert len(result["status_token"]) >= 24
-    assert len(calls) == 2
-    assert calls[1][1].endswith("/quarantine")
+    assert len(calls) == 3
+    assert calls[0][0] == "CONTENT_LIFECYCLE"
+    assert calls[0][1].endswith("/resolve")
+    assert calls[1][0] == "JURISDICTION_RESOLVER"
+    assert calls[1][1].endswith("/jurisdictions/resolve")
+    assert calls[2][0] == "CONTENT_LIFECYCLE"
+    assert calls[2][1].endswith("/quarantine")
 
 
 def test_urgent_rights_report_is_not_acknowledged_without_unpublish_confirmation(client, monkeypatch):
