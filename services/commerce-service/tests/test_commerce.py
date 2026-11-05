@@ -1059,3 +1059,17 @@ def test_compare_offers_rejects_currency_mismatch_even_when_fx_exists(client, mo
     assert response.status_code == 200
     assert response.json()["status"] == "unavailable"
     assert response.json()["reason_code"] == "OFFER_CURRENCY_MISMATCH"
+
+
+def test_offer_display_price_fails_closed_when_fx_quote_is_stale(client, monkeypatch):
+    _, b = _market_compare_seed(client, monkeypatch)
+    db = TEST_SESSION()
+    fx = db.query(main.OfferFXQuote).filter_by(variant_id=b["variant_id"]).one()
+    fx.expires_at = main.now() - main.timedelta(minutes=1)
+    db.commit()
+    db.close()
+    response = client.get("/marketplace/offers", params={"market_country_code": "KE", "display_currency": "KES"})
+    assert response.status_code == 200
+    item = next(value for value in response.json()["items"] if value["variant_id"] == b["variant_id"])
+    assert item["display_price_status"] == "conversion_unavailable"
+    assert item["display_price_minor"] is None
