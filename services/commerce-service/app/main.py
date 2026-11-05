@@ -987,6 +987,7 @@ class OfferComparisonIn(BaseModel):
     fulfillment_mode: Literal["shipping", "courier_delivery", "merchant_delivery", "collection", "local_transport"]
     display_currency: str = Field(min_length=3, max_length=3)
     payment_method: str | None = Field(default=None, min_length=2, max_length=50)
+    radius_km: Decimal = Field(default=Decimal("30"), ge=Decimal("1"), le=Decimal("500"))
 
     @field_validator("variant_ids")
     @classmethod
@@ -2063,6 +2064,10 @@ def compare_offers(
             return _comparison_unavailable("FULFILLMENT_QUOTE_MISSING_OR_STALE", variant_id=variant.id)
         if fulfillment.status != "confirmed" or fulfillment.amount_minor is None:
             return _comparison_unavailable("FULFILLMENT_QUOTE_NOT_CONFIRMED", variant_id=variant.id)
+        if fulfillment.distance_km is None:
+            return _comparison_unavailable("FULFILLMENT_DISTANCE_MISSING", variant_id=variant.id)
+        if fulfillment.distance_km > payload.radius_km:
+            return _comparison_unavailable("FULFILLMENT_QUOTE_OUTSIDE_RADIUS", variant_id=variant.id)
 
         tax_rows = list(db.scalars(select(OfferTaxQuote).where(
             OfferTaxQuote.variant_id == variant.id,
@@ -2198,6 +2203,7 @@ def compare_offers(
         "destination_country_code": payload.destination_country_code,
         "destination_key": payload.destination_key,
         "fulfillment_mode": payload.fulfillment_mode,
+        "radius_km": str(payload.radius_km),
         "canonical_variant_id": selected[0]["variant"].canonical_variant_id,
         "tax_basis": selected[0]["tax"].basis,
         "tax_category": selected[0]["tax"].tax_category,
