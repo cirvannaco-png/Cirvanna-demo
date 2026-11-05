@@ -59,7 +59,6 @@ Provider response schemas are enforced in the code. Test mocks do not constitute
 - `PRIVACY_GOVERNANCE_INTERNAL_TOKEN`: service-to-service bearer token, at least 32 bytes.
 - `PRIVACY_POLICY_PUBLISH_TOKEN`: separate policy publisher token, at least 32 bytes.
 - `PRIVACY_RIGHTS_REVIEW_TOKEN`: separate reviewer token, at least 32 bytes.
-- `VISION_PRIVACY_ATTESTATION_API_URL/TOKEN`: trusted Vision attestation provider required for public media publication checks.
 - `PRIVACY_RIGHTS_TRIAGE_HOURS`: platform internal triage target between 1 and 24 hours; not a substitute for jurisdiction-specific statutory response deadlines.
 - `PRIVACY_POLICY_BUNDLE_PUBLIC_KEY_PEM`: Ed25519 public key in PEM form.
 - `VISION_PRIVACY_ATTESTATION_API_URL/TOKEN`: trusted Vision provider that verifies a signed masking attestation for the exact asset and public publication target.
