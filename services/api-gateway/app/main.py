@@ -627,6 +627,19 @@ def _complementer_advisory(
     }
 
 
+def _tari_npl_provider_configured() -> bool:
+    """Tari must not recommend wardrobe pieces when its hard-exclusion owner is unavailable."""
+    base = os.getenv("NPL_SERVICE_URL", "").strip()
+    token = os.getenv("NPL_SERVICE_TOKEN", "").strip()
+    secret = os.getenv("NPL_EVIDENCE_HMAC_SECRET", "").strip()
+    return bool(
+        base
+        and _trusted_internal_base_url(base)
+        and len(token.encode("utf-8")) >= 32
+        and len(secret.encode("utf-8")) >= 32
+    )
+
+
 def _filter_npl_blocked_wardrobe_items(
     *, request_id: str, user_id: str, wardrobe_items: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], int]:
@@ -1643,6 +1656,8 @@ def capabilities() -> dict[str, Any]:
             and _trusted_internal_base_url(os.getenv("COMPLEMENTER_SERVICE_URL", ""))
         ),
         "tari_daily_look_roles": ["everyday", "elevated", "explore"],
+        "tari_requires_persistent_npl": True,
+        "tari_npl_provider_configured": _tari_npl_provider_configured(),
         "tari_virtual_twin_preview_enabled": False,
         "complementer_product_retrieval": False,
         "complementer_display_authority": False,
@@ -1792,6 +1807,8 @@ def compose_tari_daily_looks(
         for preference in profile.preferences
         if preference.active and preference.attribute.strip().casefold().startswith(allowed_prefixes)
     ]
+    if payload.wardrobe_items and not _tari_npl_provider_configured():
+        raise HTTPException(503, detail={"code": "TARI_NPL_PROVIDER_NOT_CONFIGURED"})
     eligible_items, npl_excluded_count = _filter_npl_blocked_wardrobe_items(
         request_id=payload.request_id,
         user_id=subject,
