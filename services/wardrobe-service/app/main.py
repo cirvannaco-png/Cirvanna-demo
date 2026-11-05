@@ -1,17 +1,20 @@
 """Authenticated Wardrobe API; user scope must be bound by trusted internal ingress."""
 from __future__ import annotations
-import hmac, os, sys
+import hashlib, hmac, json, os, sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Literal
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import inspect, text
+from sqlalchemy.orm import Session
 
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/"packages"))
 from wardrobe import WardrobeItem, WardrobeItemStatus
-from app.store import Base, WardrobeConflict, WardrobeNotFound, WardrobeStore, WardrobeDeletionQueue, engine_for_url
+from app.store import Base, WardrobeConflict, WardrobeNotFound, WardrobeStore, WardrobeDeletionQueue, WardrobeFeedbackEventRow, engine_for_url
+from app.learning import LearningIntegrationError, deliver_learning_event
 
 SERVICE="cirvanna-wardrobe-service"
 bearer=HTTPBearer(auto_error=False)
@@ -29,6 +32,18 @@ class CreateItem(StrictModel):
     catalog_product_id:str|None=Field(default=None,max_length=128)
     image_asset_id:str|None=Field(default=None,max_length=160)
     image_storage_consent:bool=False
+
+
+class FeedbackCreate(StrictModel):
+    """Explicit user interaction. The BFF must bind owner_user_id to Commerce /me."""
+    owner_user_id: str = Field(min_length=1, max_length=128)
+    item_id: str = Field(min_length=3, max_length=128)
+    event_id: str = Field(min_length=8, max_length=128)
+    signal: Literal["like", "dislike", "avoid", "modify", "wear"]
+    consent_receipt_id: str = Field(min_length=8, max_length=128)
+    target_type: Literal["item", "attribute"] | None = None
+    target_value: str | None = Field(default=None, min_length=1, max_length=180)
+    observed_at: str = Field(min_length=20, max_length=64)
 
 class TransitionItem(StrictModel):
     owner_user_id:str=Field(min_length=1,max_length=128)
@@ -75,7 +90,7 @@ def ready()->dict[str,object]:
         engine=engine_for_url(url)
         with engine.connect() as conn: conn.execute(text("SELECT 1"))
         tables=set(inspect(engine).get_table_names())
-        schema_ready={"wardrobe_items","wardrobe_asset_deletion_outbox"}.issubset(tables)
+        schema_ready={"wardrobe_items","wardrobe_asset_deletion_outbox","wardrobe_learning_events"}.issubset(tables)
         db_ready=schema_ready
     except Exception as exc: db_error=type(exc).__name__
     worker_enabled=os.getenv("WARDROBE_ASSET_DELETION_READY","").lower()=="true"
@@ -114,6 +129,157 @@ def create_item(payload:CreateItem)->dict[str,object]:
     except (WardrobeConflict,PermissionError,ValueError) as exc: domain_error(exc)
     except HTTPException: raise
     except Exception as exc: raise HTTPException(503,detail={"code":"WARDROBE_STORE_UNAVAILABLE"}) from exc
+
+
+@app.post("/v1/feedback", status_code=201, dependencies=[Depends(require_internal_token)], tags=["wardrobe intelligence"])
+def record_feedback(payload: FeedbackCreate) -> dict[str, object]:
+    """Commit an explicit wardrobe signal through the consented USI/TAL and NPL contracts."""
+    owner = payload.owner_user_id.strip()
+    try:
+        wardrobe = store()
+        item = wardrobe.get(owner, payload.item_id.strip())
+        if item.status is not WardrobeItemStatus.ACTIVE:
+            raise HTTPException(409, detail={"code": "WARDROBE_ITEM_NOT_ACTIVE"})
+
+        target_type = payload.target_type
+        target_value = payload.target_value.strip() if payload.target_value else None
+        if payload.signal in {"dislike", "avoid"}:
+            if target_type is None:
+                target_type, target_value = "item", item.item_id
+            if target_type == "item":
+                if target_value not in {None, item.item_id}:
+                    raise HTTPException(422, detail={"code": "FEEDBACK_TARGET_NOT_IN_WARDROBE_ITEM"})
+                target_value = item.item_id
+            else:
+                allowed = {value.strip().casefold() for value in item.attributes}
+                allowed.add(item.category.strip().casefold())
+                if target_value is None or target_value.casefold() not in allowed:
+                    raise HTTPException(422, detail={"code": "FEEDBACK_ATTRIBUTE_NOT_PRESENT_ON_ITEM"})
+        elif target_type is not None or target_value is not None:
+            raise HTTPException(422, detail={"code": "TARGET_ONLY_VALID_FOR_NEGATIVE_FEEDBACK"})
+
+        try:
+            observed = datetime.fromisoformat(payload.observed_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise HTTPException(422, detail={"code": "INVALID_FEEDBACK_TIMESTAMP"}) from exc
+        if observed.tzinfo is None:
+            raise HTTPException(422, detail={"code": "FEEDBACK_TIMESTAMP_REQUIRES_TIMEZONE"})
+        observed = observed.astimezone(timezone.utc)
+
+        document = {
+            "owner_user_id": owner,
+            "item_id": item.item_id,
+            "item_version": item.version,
+            "event_id": payload.event_id.strip(),
+            "signal": payload.signal,
+            "target_type": target_type,
+            "target_value": target_value,
+            "consent_receipt_id": payload.consent_receipt_id.strip(),
+            "observed_at": observed.isoformat(),
+        }
+        digest = hashlib.sha256(json.dumps(
+            document, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")).hexdigest()
+
+        with Session(wardrobe.engine) as session:
+            existing = session.get(WardrobeFeedbackEventRow, (owner, payload.event_id.strip()))
+            if existing is not None:
+                if existing.payload_hash != digest:
+                    raise HTTPException(409, detail={"code": "WARDROBE_FEEDBACK_EVENT_CONFLICT"})
+                if existing.delivery_state == "delivered":
+                    return {
+                        "status": "replayed",
+                        "event_id": existing.event_id,
+                        "delivery_state": "delivered",
+                        "learning": existing.delivery_result,
+                    }
+
+        learning_result = deliver_learning_event(
+            owner_user_id=owner,
+            item_id=item.item_id,
+            item_version=item.version,
+            display_name=item.display_name,
+            category=item.category,
+            attributes=list(item.attributes),
+            event_id=payload.event_id.strip(),
+            signal=payload.signal,
+            target_type=target_type,
+            target_value=target_value,
+            consent_receipt_id=payload.consent_receipt_id.strip(),
+            observed_at=observed,
+        )
+
+        with Session(wardrobe.engine) as session, session.begin():
+            existing = session.get(WardrobeFeedbackEventRow, (owner, payload.event_id.strip()))
+            if existing is None:
+                session.add(WardrobeFeedbackEventRow(
+                    owner_user_id=owner,
+                    event_id=payload.event_id.strip(),
+                    item_id=item.item_id,
+                    item_version=item.version,
+                    signal=payload.signal,
+                    target_type=target_type,
+                    target_value=target_value,
+                    consent_receipt_id=payload.consent_receipt_id.strip(),
+                    payload_hash=digest,
+                    delivery_state="delivered",
+                    delivery_result=learning_result,
+                    error_code=None,
+                    observed_at=observed,
+                ))
+            elif existing.payload_hash != digest:
+                raise HTTPException(409, detail={"code": "WARDROBE_FEEDBACK_EVENT_CONFLICT"})
+            else:
+                existing.delivery_state = "delivered"
+                existing.delivery_result = learning_result
+                existing.error_code = None
+
+        return {
+            "status": "recorded",
+            "event_id": payload.event_id,
+            "delivery_state": "delivered",
+            "learning": learning_result,
+        }
+    except HTTPException:
+        raise
+    except (WardrobeNotFound, WardrobeConflict, PermissionError, ValueError) as exc:
+        domain_error(exc)
+    except LearningIntegrationError as exc:
+        raise HTTPException(exc.status_code, detail={"code": exc.code}) from exc
+    except Exception as exc:
+        raise HTTPException(503, detail={"code": "WARDROBE_LEARNING_UNAVAILABLE"}) from exc
+
+
+@app.get("/v1/feedback", dependencies=[Depends(require_internal_token)], tags=["wardrobe intelligence"])
+def list_feedback(
+    owner_user_id: Annotated[str, Query(min_length=1, max_length=128)],
+    limit: int = Query(default=50, ge=1, le=100),
+) -> dict[str, object]:
+    """Return an owner's own feedback audit trail only."""
+    try:
+        with Session(store().engine) as session:
+            rows = session.query(WardrobeFeedbackEventRow).filter(
+                WardrobeFeedbackEventRow.owner_user_id == owner_user_id.strip()
+            ).order_by(WardrobeFeedbackEventRow.observed_at.desc()).limit(limit).all()
+            return {
+                "owner_user_id": owner_user_id.strip(),
+                "items": [{
+                    "event_id": row.event_id,
+                    "item_id": row.item_id,
+                    "item_version": row.item_version,
+                    "signal": row.signal,
+                    "target_type": row.target_type,
+                    "target_value": row.target_value,
+                    "consent_receipt_id": row.consent_receipt_id,
+                    "delivery_state": row.delivery_state,
+                    "observed_at": row.observed_at.isoformat(),
+                    "learning": row.delivery_result,
+                } for row in rows],
+            }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503, detail={"code": "WARDROBE_FEEDBACK_STORE_UNAVAILABLE"}) from exc
 
 @app.post("/v1/items/{item_id}/transition",dependencies=[Depends(require_internal_token)],tags=["wardrobe"])
 def transition(item_id:str,payload:TransitionItem)->dict[str,object]:
