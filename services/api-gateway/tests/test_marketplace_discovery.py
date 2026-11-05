@@ -60,7 +60,7 @@ def test_discovery_returns_only_products_authorized_by_cal(client, monkeypatch):
         preferences=(StylePreference(preference_id="p1", user_id="subject-verified-1", attribute="minimal"),),
     )
     monkeypatch.setattr(main, "_resolve_verified_subject", lambda _token: "subject-verified-1")
-    monkeypatch.setattr(main, "_load_verified_usi_profile", lambda _subject: profile)
+    monkeypatch.setattr(main, "_load_verified_usi_profile", lambda _subject, **_kwargs: profile)
     monkeypatch.setattr(main, "_discover_catalog_and_offers", lambda _payload: (products, offers))
     show = main.CandidateDecisionOutput(
         product_id=P1, sku="SKU-1", name="Minimal shirt", category="shirt", brand="Cirvanna",
@@ -219,7 +219,7 @@ def test_wardrobe_discovery_fails_closed_without_npl_configuration(client, monke
     monkeypatch.delenv("NPL_SERVICE_TOKEN", raising=False)
     monkeypatch.delenv("NPL_EVIDENCE_HMAC_SECRET", raising=False)
     monkeypatch.setattr(main, "_resolve_verified_subject", lambda _token: "subject-verified-1")
-    monkeypatch.setattr(main, "_load_verified_usi_profile", lambda _subject: object())
+    monkeypatch.setattr(main, "_load_verified_usi_profile", lambda _subject, **_kwargs: object())
     response = client.post("/v1/discover", headers=auth(), json={**payload(), "use_wardrobe_context": True})
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "NPL_PROVIDER_REQUIRED_FOR_WARDROBE_DISCOVERY"
