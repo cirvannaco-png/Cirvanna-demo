@@ -101,8 +101,9 @@ def anonymize_click_it_image(image: Image.Image) -> tuple[Image.Image, int]:
             raise HTTPException(503, detail={"code": "CLICK_IT_PRIVACY_DETECTION_UNCERTAIN"})
         boxes: list[tuple[int, int, int, int]] = []
         for detection in detections:
-            confidence = max((float(score) for score in (getattr(detection, "categories", None) or [])
-                              for score in [getattr(score, "score", 0.0)]), default=0.0)
+            categories = getattr(detection, "categories", None) or []
+            scores = [float(getattr(category, "score", 0.0)) for category in categories]
+            confidence = max(scores, default=0.0)
             bounding_box = getattr(detection, "bounding_box", None)
             if confidence < FACE_DETECTION_CONFIDENCE or bounding_box is None:
                 raise HTTPException(503, detail={"code": "CLICK_IT_PRIVACY_DETECTION_UNCERTAIN"})
