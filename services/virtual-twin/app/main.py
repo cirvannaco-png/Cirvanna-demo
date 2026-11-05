@@ -531,6 +531,7 @@ async def click_it(
     consent_click_it: Annotated[bool, Form()],
     product_image: Annotated[UploadFile, File()],
     photographed_people_status: Annotated[str, Form()] = "unknown",
+    capture_jurisdiction_hint: Annotated[str | None, Form(max_length=100)] = None,
     twin_id: Annotated[str | None, Form(min_length=3, max_length=128)] = None,
     category: Annotated[str | None, Form(max_length=80)] = None,
     limit: Annotated[int, Form(ge=1, le=25)] = 10,
@@ -564,7 +565,7 @@ async def click_it(
             ["image_processing", "click_it", declaration_scope],
             resource_id=twin_id,
         )
-        privacy_policy = await authorize_click_it_policy(subject_id, photographed_people_status)
+        privacy_policy = await authorize_click_it_policy(subject_id, photographed_people_status, capture_jurisdiction_hint)
         if photographed_people_status == "contains_minor" and privacy_policy["guardian_consent_required"]:
             await _verify_consent(
                 subject_id,
