@@ -5,6 +5,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 MERCHANT = (ROOT / "apps/demo-web/merchant-portal.html").read_text(encoding="utf-8")
 FOUNDER = (ROOT / "apps/demo-web/founder-console.html").read_text(encoding="utf-8")
+MARKETPLACE = (ROOT / "apps/demo-web/marketplace.html").read_text(encoding="utf-8")
 
 
 class PortalContractTests(unittest.TestCase):
@@ -35,6 +36,15 @@ class PortalContractTests(unittest.TestCase):
         self.assertNotIn("sessionStorage", MERCHANT)
         self.assertIn('u.protocol!=="https:"', MERCHANT)
         self.assertIn("provider-sourced FX quotes", MERCHANT)
+
+    def test_marketplace_exposes_30km_default_and_user_adjustable_local_radius(self):
+        for required in ('id="marketCountry"', 'id="destinationKey"', 'id="fulfillmentMode"',
+                         'id="radiusKm"', '<option value="30" selected>30 km radius</option>',
+                         '<option value="50">50 km radius</option>', 'radius_km',
+                         'fulfillment_quote', 'display_price_minor'):
+            self.assertIn(required, MARKETPLACE)
+        self.assertIn('moneyMinor(p.display_price_minor,p.display_currency)', MARKETPLACE)
+        self.assertIn('moneyMinor(fq.display_conversion_status==="localized"?fq.display_amount_minor:fq.amount_minor', MARKETPLACE)
 
     def test_founder_console_uses_server_side_admin_authorization(self):
         self.assertIn('actor.role!=="admin"', FOUNDER)
