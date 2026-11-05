@@ -88,6 +88,7 @@ def test_current_multi_jurisdiction_policy_receipt_is_required_and_returned(monk
     assert result["guardian_consent_required"] is True
     body = fake.calls[0][1]["json"]
     assert body["photographed_people_status"] == "contains_minor"
+    assert body["capture_jurisdiction_hint_is_unverified"] is True
     assert body["requested_retention_seconds"] == 0
     assert body["jurisdiction_resolution"]["do_not_trust_client_country_claims"] is True
     assert "facial_recognition" in body["prohibited_processing"]
