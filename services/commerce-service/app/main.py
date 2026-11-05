@@ -2239,15 +2239,93 @@ def remove_cart_item(variant_id: uuid.UUID, actor: Annotated[Actor, Depends(requ
     return cart_json(db, cart)
 
 
+def _resolve_market_checkout_line(
+    db: Session, variant: Variant, listing: Listing, merchant: Merchant,
+    payload: CheckoutRequest, gateway: StripeGateway,
+) -> dict[str, Any]:
+    market = _market_is_active(db, merchant.id, payload.destination_country_code or "")
+    if market is None:
+        raise HTTPException(409, detail={"code": "MERCHANT_NOT_ACTIVE_IN_DESTINATION_MARKET", "merchant_id": merchant.id})
+    if payload.destination_country_code not in gateway.countries:
+        raise HTTPException(409, detail={"code": "PAYMENT_PROVIDER_DESTINATION_NOT_SUPPORTED"})
+    payment = _market_payment_capability(
+        db, merchant.id, payload.destination_country_code or "",
+        payload.display_currency or "", payload.payment_method,
+    )
+    if payment is None or payment.provider.strip().lower() != gateway.provider:
+        raise HTTPException(409, detail={"code": "PAYMENT_PROVIDER_NOT_READY_FOR_CHECKOUT_CURRENCY"})
+    fulfillment_rows = list(db.scalars(select(OfferFulfillmentQuote).where(
+        OfferFulfillmentQuote.variant_id == variant.id,
+        OfferFulfillmentQuote.destination_country_code == payload.destination_country_code,
+        OfferFulfillmentQuote.destination_key == payload.destination_key,
+        OfferFulfillmentQuote.fulfillment_mode == payload.fulfillment_mode,
+    ).order_by(OfferFulfillmentQuote.observed_at.desc(), OfferFulfillmentQuote.id.desc()).limit(10)).all())
+    fulfillment = next((q for q in fulfillment_rows if quote_is_current(q.observed_at, q.expires_at)), None)
+    if fulfillment is None or fulfillment.status != "confirmed" or fulfillment.amount_minor is None:
+        raise HTTPException(409, detail={"code": "FULFILLMENT_QUOTE_MISSING_STALE_OR_UNCONFIRMED", "variant_id": variant.id})
+    tax_rows = list(db.scalars(select(OfferTaxQuote).where(
+        OfferTaxQuote.variant_id == variant.id,
+        OfferTaxQuote.destination_country_code == payload.destination_country_code,
+    ).order_by(OfferTaxQuote.observed_at.desc(), OfferTaxQuote.id.desc()).limit(10)).all())
+    tax = next((q for q in tax_rows if quote_is_current(q.observed_at, q.expires_at)), None)
+    if tax is None or tax.status != "confirmed" or not tax.authoritative or tax.amount_minor is None:
+        raise HTTPException(409, detail={"code": "AUTHORITATIVE_TAX_QUOTE_MISSING_STALE_OR_UNCONFIRMED", "variant_id": variant.id})
+    item_minor, item_fx = _convert_minor_amount(
+        db, variant_id=variant.id, amount_minor=variant.price_minor,
+        source_currency=variant.currency, target_currency=payload.display_currency or "",
+    )
+    fulfillment_minor, fulfillment_fx = _convert_minor_amount(
+        db, variant_id=variant.id, amount_minor=fulfillment.amount_minor,
+        source_currency=fulfillment.currency, target_currency=payload.display_currency or "",
+    )
+    tax_minor, tax_fx = _convert_minor_amount(
+        db, variant_id=variant.id, amount_minor=tax.amount_minor,
+        source_currency=tax.currency, target_currency=payload.display_currency or "",
+    )
+    if item_minor is None:
+        raise HTTPException(409, detail={"code": "ITEM_PRICE_FX_QUOTE_MISSING_OR_STALE", "variant_id": variant.id})
+    if fulfillment_minor is None:
+        raise HTTPException(409, detail={"code": "FULFILLMENT_FX_QUOTE_MISSING_OR_STALE", "variant_id": variant.id})
+    if tax_minor is None:
+        raise HTTPException(409, detail={"code": "TAX_FX_QUOTE_MISSING_OR_STALE", "variant_id": variant.id})
+    return {
+        "market": market, "payment": payment, "fulfillment": fulfillment, "tax": tax,
+        "item_display_minor": item_minor, "item_fx": item_fx,
+        "fulfillment_display_minor": fulfillment_minor, "fulfillment_fx": fulfillment_fx,
+        "tax_display_minor": tax_minor, "tax_fx": tax_fx,
+        "payable_tax_minor": 0 if tax.basis == "inclusive" else tax_minor,
+    }
+
+
 @app.post("/checkout", status_code=201)
-def checkout(actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Session, Depends(get_db)],
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=255)]):
+def checkout(
+    actor: Annotated[Actor, Depends(require_actor)],
+    db: Annotated[Session, Depends(get_db)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=255)],
+    payload: CheckoutRequest | None = Body(default=None),
+):
     gateway = StripeGateway()
     if not gateway.ready:
         raise HTTPException(503, detail={"code": "PAYMENT_PROVIDER_NOT_CONFIGURED"})
-    existing = db.scalar(select(CommerceOrder).where(CommerceOrder.buyer_user_id == actor.user_id, CommerceOrder.idempotency_key == idempotency_key))
+    market_context = payload if payload is not None and payload.market_aware else None
+    context_hash = None
+    if market_context is not None:
+        context_hash = hashlib.sha256(json.dumps({
+            "destination_country_code": market_context.destination_country_code,
+            "destination_key": market_context.destination_key,
+            "fulfillment_mode": market_context.fulfillment_mode,
+            "display_currency": market_context.display_currency,
+            "payment_method": market_context.payment_method,
+        }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    existing = db.scalar(select(CommerceOrder).where(
+        CommerceOrder.buyer_user_id == actor.user_id,
+        CommerceOrder.idempotency_key == idempotency_key,
+    ))
     if existing:
+        if existing.checkout_context_hash != context_hash:
+            raise HTTPException(409, detail={"code": "IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_CHECKOUT_CONTEXT"})
         return persist_stripe_session(db, existing.id, actor.email, gateway)
+
     cart = ensure_cart(db, actor.user_id)
     rows = db.execute(select(CartItem, Variant, Listing, Merchant)
         .join(Variant, CartItem.variant_id == Variant.id).join(Listing, Variant.listing_id == Listing.id)
@@ -2258,17 +2336,68 @@ def checkout(actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Sess
         raise HTTPException(422, detail={"code": "INVALID_CART_ITEMS"})
     if any(v.state != "active" or l.state != "active" or m.state != "approved" for _, v, l, m in rows):
         raise HTTPException(409, detail={"code": "CART_CONTAINS_UNAVAILABLE_OFFERS"})
-    currencies = {v.currency for _, v, _, _ in rows}
-    if len(currencies) != 1:
-        raise HTTPException(422, detail={"code": "MIXED_CURRENCY_CART"})
-    currency = next(iter(currencies))
-    subtotal = sum(v.price_minor * ci.quantity for ci, v, _, _ in rows)
-    if subtotal <= 0:
+
+    market_costs: dict[str, dict[str, Any]] = {}
+    quote_snapshot: dict[str, Any] | None = None
+    if market_context is None:
+        for _, variant, _, merchant in rows:
+            active_market = db.scalar(select(MerchantOperatingMarket.id).where(
+                MerchantOperatingMarket.merchant_id == merchant.id,
+                MerchantOperatingMarket.state == "active",
+            ))
+            if active_market:
+                raise HTTPException(409, detail={"code": "MARKET_CHECKOUT_CONTEXT_REQUIRED"})
+        currencies = {v.currency for _, v, _, _ in rows}
+        if len(currencies) != 1:
+            raise HTTPException(422, detail={"code": "MIXED_CURRENCY_CART"})
+        currency = next(iter(currencies))
+        item_subtotal = sum(v.price_minor * ci.quantity for ci, v, _, _ in rows)
+        fulfillment_total = 0
+        tax_total = 0
+        total = item_subtotal
+    else:
+        if market_context.destination_country_code not in gateway.countries:
+            raise HTTPException(409, detail={"code": "PAYMENT_PROVIDER_DESTINATION_NOT_SUPPORTED"})
+        currency = market_context.display_currency or ""
+        for _, variant, listing, merchant in rows:
+            market_costs[variant.id] = _resolve_market_checkout_line(
+                db, variant, listing, merchant, market_context, gateway,
+            )
+        item_subtotal = sum(market_costs[v.id]["item_display_minor"] * ci.quantity for ci, v, _, _ in rows)
+        fulfillment_total = sum(market_costs[v.id]["fulfillment_display_minor"] * ci.quantity for ci, v, _, _ in rows)
+        tax_total = sum(market_costs[v.id]["payable_tax_minor"] * ci.quantity for ci, v, _, _ in rows)
+        total = item_subtotal + fulfillment_total + tax_total
+        quote_snapshot = {
+            "destination_country_code": market_context.destination_country_code,
+            "destination_key": market_context.destination_key,
+            "fulfillment_mode": market_context.fulfillment_mode,
+            "display_currency": currency,
+            "payment_method": market_context.payment_method,
+            "items": [{
+                "variant_id": v.id,
+                "item_fx": market_costs[v.id]["item_fx"],
+                "fulfillment_quote_id": market_costs[v.id]["fulfillment"].id,
+                "fulfillment_fx": market_costs[v.id]["fulfillment_fx"],
+                "tax_quote_id": market_costs[v.id]["tax"].id,
+                "tax_fx": market_costs[v.id]["tax_fx"],
+                "tax_basis": market_costs[v.id]["tax"].basis,
+                "tax_authoritative": market_costs[v.id]["tax"].authoritative,
+            } for _, v, _, _ in rows],
+        }
+    if total <= 0:
         raise HTTPException(422, detail={"code": "INVALID_ORDER_TOTAL"})
     expiry = now() + timedelta(minutes=RESERVATION_MINUTES)
-    order = CommerceOrder(id=str(uuid.uuid4()), order_number=f"CV-{now():%Y%m%d}-{uuid.uuid4().hex[:10].upper()}",
+    order = CommerceOrder(
+        id=str(uuid.uuid4()), order_number=f"CV-{now():%Y%m%d}-{uuid.uuid4().hex[:10].upper()}",
         buyer_user_id=actor.user_id, state="pending_payment", payment_state="pending", currency=currency,
-        subtotal_minor=subtotal, commission_minor=0, idempotency_key=idempotency_key, expires_at=expiry)
+        subtotal_minor=item_subtotal, fulfillment_total_minor=fulfillment_total,
+        tax_total_minor=tax_total, total_minor=total,
+        destination_country_code=market_context.destination_country_code if market_context else None,
+        destination_key=market_context.destination_key if market_context else None,
+        fulfillment_mode=market_context.fulfillment_mode if market_context else None,
+        checkout_context_hash=context_hash, market_quote_snapshot=quote_snapshot,
+        commission_minor=0, idempotency_key=idempotency_key, expires_at=expiry,
+    )
     try:
         for ci, v, listing, merchant in rows:
             changed = db.execute(update(Variant).where(Variant.id == v.id, Variant.state == "active",
@@ -2276,13 +2405,48 @@ def checkout(actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Sess
                 reserved_qty=Variant.reserved_qty + ci.quantity, version=Variant.version + 1, updated_at=now(), observed_at=now()))
             if changed.rowcount != 1:
                 raise HTTPException(409, detail={"code": "INSUFFICIENT_AVAILABLE_STOCK", "variant_id": v.id})
-            line = v.price_minor * ci.quantity
+            cost = market_costs.get(v.id)
+            unit_price = cost["item_display_minor"] if cost else v.price_minor
+            line = unit_price * ci.quantity
             commission = line * merchant.commission_bps // 10000
             order.commission_minor += commission
-            db.add(OrderItem(id=str(uuid.uuid4()), order_id=order.id, merchant_id=merchant.id,
+            db.add(OrderItem(
+                id=str(uuid.uuid4()), order_id=order.id, merchant_id=merchant.id,
                 variant_id=v.id, catalog_product_id=listing.catalog_product_id, product_name=listing.product_name,
-                sku=v.sku, options=v.options, quantity=ci.quantity, unit_price_minor=v.price_minor,
-                line_total_minor=line, commission_bps=merchant.commission_bps, commission_minor=commission))
+                sku=v.sku, options=v.options, quantity=ci.quantity, unit_price_minor=unit_price,
+                line_total_minor=line,
+                source_unit_price_minor=v.price_minor if cost else None,
+                source_currency=v.currency if cost else None,
+                fx_quote_id=(cost["item_fx"]["quote_id"] if cost and cost["item_fx"] else None),
+                commission_bps=merchant.commission_bps, commission_minor=commission,
+            ))
+            if cost:
+                fulfillment = cost["fulfillment"]
+                fulfillment_source = fulfillment.amount_minor * ci.quantity
+                fulfillment_amount = cost["fulfillment_display_minor"] * ci.quantity
+                if fulfillment_amount > 0:
+                    db.add(OrderCharge(
+                        id=str(uuid.uuid4()), order_id=order.id, merchant_id=merchant.id, variant_id=v.id,
+                        charge_type="fulfilment", description=f"{market_context.fulfillment_mode.replace('_', ' ').title()} – {merchant.display_name}",
+                        amount_minor=fulfillment_amount, currency=currency,
+                        source_amount_minor=fulfillment_source, source_currency=fulfillment.currency,
+                        fx_quote_id=(cost["fulfillment_fx"]["quote_id"] if cost["fulfillment_fx"] else None),
+                        provider=fulfillment.provider, provider_quote_id=fulfillment.provider_quote_id,
+                        observed_at=fulfillment.observed_at, expires_at=fulfillment.expires_at,
+                    ))
+                tax = cost["tax"]
+                tax_source = tax.amount_minor * ci.quantity
+                tax_amount = cost["payable_tax_minor"] * ci.quantity
+                if tax_amount > 0:
+                    db.add(OrderCharge(
+                        id=str(uuid.uuid4()), order_id=order.id, merchant_id=merchant.id, variant_id=v.id,
+                        charge_type="tax", description=f"Tax – {merchant.display_name}",
+                        amount_minor=tax_amount, currency=currency,
+                        source_amount_minor=tax_source, source_currency=tax.currency,
+                        fx_quote_id=(cost["tax_fx"]["quote_id"] if cost["tax_fx"] else None),
+                        provider=tax.provider, provider_quote_id=tax.provider_quote_id,
+                        observed_at=tax.observed_at, expires_at=tax.expires_at,
+                    ))
             db.add(StockReservation(id=str(uuid.uuid4()), order_id=order.id, variant_id=v.id, quantity=ci.quantity,
                 state="reserved", expires_at=expiry))
             db.add(InventoryMovement(id=str(uuid.uuid4()), variant_id=v.id, actor_user_id="system:checkout",
@@ -2295,8 +2459,13 @@ def checkout(actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Sess
         raise
     except IntegrityError as exc:
         db.rollback()
-        existing = db.scalar(select(CommerceOrder).where(CommerceOrder.buyer_user_id == actor.user_id, CommerceOrder.idempotency_key == idempotency_key))
+        existing = db.scalar(select(CommerceOrder).where(
+            CommerceOrder.buyer_user_id == actor.user_id,
+            CommerceOrder.idempotency_key == idempotency_key,
+        ))
         if existing:
+            if existing.checkout_context_hash != context_hash:
+                raise HTTPException(409, detail={"code": "IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_CHECKOUT_CONTEXT"})
             return persist_stripe_session(db, existing.id, actor.email, gateway)
         raise HTTPException(409, detail={"code": "ORDER_CONFLICT_RETRY_SAME_IDEMPOTENCY_KEY"}) from exc
     return persist_stripe_session(db, order.id, actor.email, gateway)
