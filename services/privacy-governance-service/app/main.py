@@ -453,7 +453,7 @@ def ready(db: Session = Depends(session_for_request)) -> dict:
         "rights_review_auth_configured": review_ready,
         "requester_authority_provider_configured": rights_authority_ready,
         "vision_privacy_attestation_configured": vision_attestation_ready,
-        "ready": all([database_ready, resolver_ready, content_ready, internal_ready, signing_ready, review_ready, rights_authority_ready]),
+        "ready": all([database_ready, resolver_ready, content_ready, internal_ready, signing_ready, review_ready, rights_authority_ready, vision_attestation_ready]),
     }
 
 
