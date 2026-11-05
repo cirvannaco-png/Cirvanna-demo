@@ -89,7 +89,7 @@ def test_click_it_rejects_low_quality_before_loading_model(client, monkeypatch):
     response = client.post(
         "/v1/click-it/scan",
         headers=auth(),
-        data={"consent_image_processing": "true", "consent_click_it": "true"},
+        data={"consent_image_processing": "true", "consent_click_it": "true", "photographed_people_status": "no_people"},
         files={"image": ("dark.png", stream.getvalue(), "image/png")},
     )
     assert response.status_code == 422
@@ -139,7 +139,7 @@ def test_click_it_returns_ranked_live_marketplace_results_without_persisting_ima
     response = client.post(
         "/v1/click-it/scan",
         headers=auth(),
-        data={"consent_image_processing": "true", "consent_click_it": "true"},
+        data={"consent_image_processing": "true", "consent_click_it": "true", "photographed_people_status": "no_people"},
         files={"image": ("product.png", image_bytes(), "image/png")},
     )
     assert response.status_code == 200
@@ -313,7 +313,7 @@ def test_click_it_masks_before_quality_embedding_and_catalog_access(client, monk
     response = client.post(
         "/v1/click-it/scan",
         headers=auth(),
-        data={"consent_image_processing": "true", "consent_click_it": "true"},
+        data={"consent_image_processing": "true", "consent_click_it": "true", "photographed_people_status": "no_people"},
         files={"image": ("product.png", image_bytes(), "image/png")},
     )
     assert response.status_code == 200, response.text
@@ -336,8 +336,42 @@ def test_click_it_detector_failure_blocks_embedding_and_catalog(client, monkeypa
     response = client.post(
         "/v1/click-it/scan",
         headers=auth(),
-        data={"consent_image_processing": "true", "consent_click_it": "true"},
+        data={"consent_image_processing": "true", "consent_click_it": "true", "photographed_people_status": "no_people"},
         files={"image": ("product.png", image_bytes(), "image/png")},
     )
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "CLICK_IT_PRIVACY_DETECTION_UNCERTAIN"
+
+
+def test_declared_people_with_zero_detected_faces_fails_closed(client, monkeypatch):
+    from PIL import Image
+
+    monkeypatch.setattr(main, "detector_configuration", lambda: (True, "configured"))
+    monkeypatch.setattr(main, "anonymize_click_it_image", lambda image: (image.copy(), 0))
+    monkeypatch.setattr(main, "_image_embedding", lambda *_: pytest.fail("unmasked image reached embedding"))
+    monkeypatch.setattr(main, "_live_offers", lambda: pytest.fail("catalog must not be queried"))
+    response = client.post(
+        "/v1/click-it/scan",
+        headers=auth(),
+        data={
+            "consent_image_processing": "true",
+            "consent_click_it": "true",
+            "photographed_people_status": "contains_minor",
+        },
+        files={"image": ("product.png", image_bytes(), "image/png")},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "CLICK_IT_PRIVACY_DETECTION_UNCERTAIN"
+
+
+def test_click_it_rejects_unknown_people_status_before_image_processing(client, monkeypatch):
+    monkeypatch.setattr(main, "anonymize_click_it_image", lambda *_: pytest.fail("unknown status reached masking"))
+    response = client.post(
+        "/v1/click-it/scan",
+        headers=auth(),
+        data={"consent_image_processing": "true", "consent_click_it": "true"},
+        files={"image": ("product.png", image_bytes(), "image/png")},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "CHILD_SAFETY_STATUS_UNCONFIRMED"
+
