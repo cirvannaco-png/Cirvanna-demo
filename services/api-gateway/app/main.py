@@ -913,6 +913,101 @@ def _load_verified_wardrobe(subject_id: str) -> list[dict[str, Any]]:
     return items
 
 
+
+def _load_consent_aware_wardrobe_likes(subject_id: str) -> dict[str, float]:
+    """Use only current-consent, unexpired like/wear TAL events for positive ranking.
+
+    Revoked or missing style-learning consent means historical events are not
+    used. NPL remains the separate owner of negative preference enforcement.
+    """
+    base = os.getenv("IDENTITY_SERVICE_URL", "").strip().rstrip("/")
+    token = os.getenv("IDENTITY_SERVICE_TOKEN", "").strip()
+    if not base or not _trusted_internal_base_url(base) or len(token.encode("utf-8")) < 32:
+        raise HTTPException(503, detail={"code": "WARDROBE_LEARNING_PROVIDER_NOT_CONFIGURED"})
+    try:
+        with httpx.Client(
+            timeout=httpx.Timeout(4.0, connect=1.5),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            response = client.get(
+                base + f"/v1/tal/export/{subject_id}",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "WARDROBE_LEARNING_PROVIDER_UNAVAILABLE"}) from exc
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "WARDROBE_LEARNING_PROVIDER_UNAVAILABLE"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "WARDROBE_LEARNING_RESPONSE_INVALID"}) from exc
+    if (
+        not isinstance(data, dict)
+        or data.get("subject_id") != subject_id
+        or not isinstance(data.get("consent_receipts"), list)
+        or not isinstance(data.get("events"), list)
+    ):
+        raise HTTPException(502, detail={"code": "WARDROBE_LEARNING_SCOPE_OR_SCHEMA_MISMATCH"})
+
+    now = datetime.now(timezone.utc)
+    active_receipts: set[str] = set()
+    for receipt in data["consent_receipts"]:
+        if not isinstance(receipt, dict):
+            continue
+        if (
+            receipt.get("scope") in {"style_learning", "personalization"}
+            and receipt.get("granted") is True
+            and receipt.get("revoked_at") is None
+            and isinstance(receipt.get("receipt_id"), str)
+        ):
+            active_receipts.add(receipt["receipt_id"])
+    if not active_receipts:
+        return {}
+
+    counts: dict[str, int] = {}
+    # Bound work and output; one noisy event stream cannot dominate the rank.
+    for event in data["events"][-500:]:
+        if not isinstance(event, dict):
+            continue
+        if (
+            event.get("event_kind") != "observation"
+            or event.get("feature_key") not in {"wardrobe.feedback.like", "wardrobe.feedback.wear"}
+            or event.get("consent_receipt_id") not in active_receipts
+            or not isinstance(event.get("value"), str)
+        ):
+            continue
+        try:
+            observed = datetime.fromisoformat(str(event.get("observed_at", "")).replace("Z", "+00:00"))
+            if observed.tzinfo is None:
+                continue
+            observed = observed.astimezone(timezone.utc)
+            expires_raw = event.get("expires_at")
+            if expires_raw:
+                expires = datetime.fromisoformat(str(expires_raw).replace("Z", "+00:00"))
+                if expires.tzinfo is None or expires.astimezone(timezone.utc) <= now:
+                    continue
+            if observed > now + timedelta(minutes=5) or observed < now - timedelta(days=180):
+                continue
+            value = json.loads(event["value"])
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(value, dict):
+            continue
+        attributes = value.get("attributes")
+        if isinstance(attributes, list):
+            for raw in attributes:
+                if isinstance(raw, str) and raw.strip():
+                    key = raw.strip().casefold()
+                    counts[key] = min(5, counts.get(key, 0) + 1)
+        category = value.get("category")
+        if isinstance(category, str) and category.strip():
+            key = category.strip().casefold()
+            counts[key] = min(5, counts.get(key, 0) + 1)
+    return {key: min(0.15, count * 0.03) for key, count in counts.items()}
+
+
+
 def _wardrobe_feature_values(item: dict[str, Any]) -> set[str]:
     values = {
         str(item.get("category", "")).strip().casefold(),
@@ -938,7 +1033,10 @@ def _product_feature_values(product: dict[str, Any]) -> set[str]:
     return values
 
 
-def _wardrobe_match(product: dict[str, Any], wardrobe_items: list[dict[str, Any]]) -> dict[str, Any]:
+def _wardrobe_match(
+    product: dict[str, Any], wardrobe_items: list[dict[str, Any]],
+    positive_feedback: dict[str, float] | None = None,
+) -> dict[str, Any]:
     """Return transparent exact-tag overlaps; this is a ranking hint, not a probability."""
     product_values = _product_feature_values(product)
     matched: list[tuple[str, list[str]]] = []
@@ -948,11 +1046,18 @@ def _wardrobe_match(product: dict[str, Any], wardrobe_items: list[dict[str, Any]
             matched.append((item["item_id"], overlap))
     matched.sort(key=lambda value: value[0])
     attributes = sorted({tag for _, tags in matched for tag in tags})
-    score = min(0.25, 0.05 * len(attributes))
+    closet_score = min(0.25, 0.05 * len(attributes))
+    learned = positive_feedback or {}
+    learned_hits = sorted(tag for tag in product_values if tag in learned)
+    learned_score = min(0.15, sum(max(0.0, min(0.15, float(learned[tag]))) for tag in learned_hits))
+    score = min(0.40, closet_score + learned_score)
     return {
         "score": score,
+        "closet_attribute_score": closet_score,
+        "consented_positive_feedback_score": learned_score,
         "owned_item_ids": [item_id for item_id, _ in matched],
         "matched_attributes": attributes,
+        "positive_feedback_attributes": learned_hits,
     }
 
 
@@ -1588,6 +1693,7 @@ def discover_marketplace(
     profile = (_load_verified_usi_profile(subject, allow_without_consent=True)
                if payload.use_wardrobe_context else _load_verified_usi_profile(subject))
     wardrobe_items: list[dict[str, Any]] = []
+    positive_wardrobe_feedback: dict[str, float] = {}
     if payload.use_wardrobe_context:
         # The NPL ledger is mandatory for wardrobe-driven recommendations. A missing
         # or partial configuration must not silently degrade into preference-blind output.
@@ -1599,6 +1705,7 @@ def discover_marketplace(
         if not all(npl_values):
             raise HTTPException(503, detail={"code": "NPL_PROVIDER_REQUIRED_FOR_WARDROBE_DISCOVERY"})
         wardrobe_items = _load_verified_wardrobe(subject)
+        positive_wardrobe_feedback = _load_consent_aware_wardrobe_likes(subject)
     eepl_context, context_evidence = _fresh_context_for_eepl(
         payload.context, strict=payload.use_wardrobe_context
     )
@@ -1647,8 +1754,10 @@ def discover_marketplace(
         if payload.use_wardrobe_context and payload.exclude_owned_products and product_id in owned_product_ids:
             withheld_reasons[product_id] = "ALREADY_IN_WARDROBE"
             continue
-        wardrobe_match = _wardrobe_match(product, wardrobe_items) if payload.use_wardrobe_context else {
-            "score": 0.0, "owned_item_ids": [], "matched_attributes": [],
+        wardrobe_match = _wardrobe_match(product, wardrobe_items, positive_wardrobe_feedback) if payload.use_wardrobe_context else {
+            "score": 0.0, "closet_attribute_score": 0.0,
+            "consented_positive_feedback_score": 0.0,
+            "owned_item_ids": [], "matched_attributes": [], "positive_feedback_attributes": [],
         }
         usi_score = _style_rank_score(product, profile)
         total_score = usi_score + wardrobe_match["score"]
