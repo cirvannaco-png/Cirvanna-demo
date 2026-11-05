@@ -336,6 +336,32 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     catch (error) { status("learningStatus",error.message,"error"); }
   });
 
+  const sendLookFeedback = async (look, signal) => {
+    if (!styleReceipt) {
+      status("tariStatus", "Grant style-learning consent before recording look feedback.", "error");
+      return;
+    }
+    const lookItems = Array.isArray(look.items) ? look.items : [];
+    if (!lookItems.length || lookItems.some(item => !item || typeof item.item_id !== "string")) {
+      status("tariStatus", "This look has no valid wardrobe items to record.", "error");
+      return;
+    }
+    try {
+      for (const item of lookItems) {
+        await api("/api/wardrobe/feedback", {method:"POST", body:JSON.stringify({
+          item_id:item.item_id,
+          event_id:crypto.randomUUID(),
+          signal,
+          consent_receipt_id:styleReceipt
+        })});
+      }
+      status("tariStatus", signal === "wear"
+        ? "Marked " + look.role + " as worn. Your consented feedback can inform future suggestions."
+        : "Recorded that " + look.role + " was not your style. This is a soft observation, not an immediate permanent exclusion.", "good");
+    } catch (error) {
+      status("tariStatus", error.message, "error");
+    }
+  };
   const renderTariLooks = data => {
     const root = $("tariLooks");
     root.replaceChildren();
@@ -359,6 +385,20 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
       }
       card.append(text("p", look.reason || "", "tari-note"));
       card.append(text("p", "Virtual Twin preview: unavailable until your persistent Twin and a validated renderer are connected.", "tari-note"));
+      if (look.status === "ready") {
+        const actions = document.createElement("div");
+        actions.className = "actions";
+        for (const [signal, label] of [["wear", "Mark this look worn"], ["dislike", "Not my style"]]) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "btn";
+          button.textContent = label;
+          button.disabled = !styleReceipt;
+          button.addEventListener("click", () => sendLookFeedback(look, signal));
+          actions.append(button);
+        }
+        card.append(actions);
+      }
       root.append(card);
     }
   };
