@@ -215,6 +215,7 @@ class OfferFulfillmentQuote(Base):
         UniqueConstraint("variant_id", "provider", "provider_quote_id", name="uq_commerce_fulfillment_provider_quote"),
         Index("ix_commerce_fulfillment_lookup", "variant_id", "destination_country_code", "destination_key", "fulfillment_mode", "expires_at"),
         CheckConstraint("status IN ('estimate','confirmed','unavailable')", name="ck_commerce_fulfillment_status"),
+        CheckConstraint("charge_basis IN ('per_unit','per_quote')", name="ck_commerce_fulfillment_charge_basis"),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     variant_id: Mapped[str] = mapped_column(ForeignKey("commerce_variants.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -364,6 +365,7 @@ class OrderCharge(Base):
     __table_args__ = (
         CheckConstraint("amount_minor >= 0", name="ck_commerce_order_charge_amount_nonnegative"),
         CheckConstraint("charge_type IN ('fulfilment','tax')", name="ck_commerce_order_charge_type"),
+        CheckConstraint("charge_basis IN ('per_unit','per_quote')", name="ck_commerce_order_charge_basis"),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     order_id: Mapped[str] = mapped_column(ForeignKey("commerce_orders.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -2534,7 +2536,17 @@ def checkout(
                 db, variant, listing, merchant, market_context, gateway,
             )
         item_subtotal = sum(market_costs[v.id]["item_display_minor"] * ci.quantity for ci, v, _, _ in rows)
-        fulfillment_total = sum(market_costs[v.id]["fulfillment_display_minor"] * ci.quantity for ci, v, _, _ in rows)
+        fulfillment_total = 0
+        counted_fulfillment_quotes: set[tuple[str, str, str]] = set()
+        for ci, variant, _, merchant in rows:
+            fulfillment_quote = market_costs[variant.id]["fulfillment"]
+            if fulfillment_quote.charge_basis == "per_unit":
+                fulfillment_total += market_costs[variant.id]["fulfillment_display_minor"] * ci.quantity
+            else:
+                quote_key = (merchant.id, fulfillment_quote.provider, fulfillment_quote.provider_quote_id)
+                if quote_key not in counted_fulfillment_quotes:
+                    fulfillment_total += market_costs[variant.id]["fulfillment_display_minor"]
+                    counted_fulfillment_quotes.add(quote_key)
         tax_total = sum(market_costs[v.id]["payable_tax_minor"] * ci.quantity for ci, v, _, _ in rows)
         total = item_subtotal + fulfillment_total + tax_total
         quote_snapshot = {
@@ -2550,6 +2562,7 @@ def checkout(
                 "item_fx": market_costs[v.id]["item_fx"],
                 "fulfillment": {
                     "quote_id": market_costs[v.id]["fulfillment"].id,
+                    "charge_basis": market_costs[v.id]["fulfillment"].charge_basis,
                     "provider": market_costs[v.id]["fulfillment"].provider,
                     "provider_quote_id": market_costs[v.id]["fulfillment"].provider_quote_id,
                     "amount_minor": market_costs[v.id]["fulfillment"].amount_minor,
@@ -2609,6 +2622,7 @@ def checkout(
         checkout_context_hash=context_hash, market_quote_snapshot=quote_snapshot,
         commission_minor=0, idempotency_key=idempotency_key, expires_at=expiry,
     )
+    charged_fulfillment_quotes: set[tuple[str, str, str]] = set()
     try:
         for ci, v, listing, merchant in rows:
             changed = db.execute(update(Variant).where(Variant.id == v.id, Variant.state == "active",
@@ -2633,25 +2647,35 @@ def checkout(
             ))
             if cost:
                 fulfillment = cost["fulfillment"]
-                fulfillment_source = fulfillment.amount_minor * ci.quantity
-                fulfillment_amount = cost["fulfillment_display_minor"] * ci.quantity
-                if fulfillment_amount > 0:
+                fulfillment_key = (merchant.id, fulfillment.provider, fulfillment.provider_quote_id)
+                if fulfillment.charge_basis == "per_unit":
+                    fulfillment_source = fulfillment.amount_minor * ci.quantity
+                    fulfillment_amount = cost["fulfillment_display_minor"] * ci.quantity
+                    should_add_fulfillment_charge = True
+                else:
+                    fulfillment_source = fulfillment.amount_minor
+                    fulfillment_amount = cost["fulfillment_display_minor"]
+                    should_add_fulfillment_charge = fulfillment_key not in charged_fulfillment_quotes
+                if fulfillment_amount > 0 and should_add_fulfillment_charge:
                     db.add(OrderCharge(
                         id=str(uuid.uuid4()), order_id=order.id, merchant_id=merchant.id, variant_id=v.id,
-                        charge_type="fulfilment", description=f"{market_context.fulfillment_mode.replace('_', ' ').title()} – {merchant.display_name}",
+                        charge_type="fulfilment", charge_basis=fulfillment.charge_basis,
+                        description=f"{market_context.fulfillment_mode.replace('_', ' ').title()} – {merchant.display_name}",
                         amount_minor=fulfillment_amount, currency=currency,
                         source_amount_minor=fulfillment_source, source_currency=fulfillment.currency,
                         fx_quote_id=(cost["fulfillment_fx"]["quote_id"] if cost["fulfillment_fx"] else None),
                         provider=fulfillment.provider, provider_quote_id=fulfillment.provider_quote_id,
                         observed_at=fulfillment.observed_at, expires_at=fulfillment.expires_at,
                     ))
+                if fulfillment.charge_basis == "per_quote":
+                    charged_fulfillment_quotes.add(fulfillment_key)
                 tax = cost["tax"]
                 tax_source = tax.amount_minor * ci.quantity
                 tax_amount = cost["payable_tax_minor"] * ci.quantity
                 if tax_amount > 0:
                     db.add(OrderCharge(
                         id=str(uuid.uuid4()), order_id=order.id, merchant_id=merchant.id, variant_id=v.id,
-                        charge_type="tax", description=f"Tax – {merchant.display_name}",
+                        charge_type="tax", charge_basis="per_unit", description=f"Tax – {merchant.display_name}",
                         amount_minor=tax_amount, currency=currency,
                         source_amount_minor=tax_source, source_currency=tax.currency,
                         fx_quote_id=(cost["tax_fx"]["quote_id"] if cost["tax_fx"] else None),
