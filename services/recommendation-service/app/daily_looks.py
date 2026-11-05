@@ -71,13 +71,67 @@ def _stable_tie(user_id: str, local_date: str, role: str, ids: Iterable[str]) ->
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+_OCCASION_TERMS = {
+    "everyday": ("casual", "daily", "comfortable", "relaxed"),
+    "work": ("work", "office", "tailored", "smart", "formal", "structured"),
+    "meeting": ("meeting", "work", "office", "tailored", "smart", "formal"),
+    "office": ("office", "work", "tailored", "smart", "formal", "structured"),
+    "evening": ("evening", "elegant", "formal", "dress", "statement"),
+    "date": ("date", "elegant", "evening", "romantic"),
+    "formal": ("formal", "tailored", "suit", "dress", "blazer"),
+    "travel": ("travel", "comfortable", "relaxed", "cotton", "linen"),
+    "sport": ("sport", "active", "performance", "breathable", "sneaker"),
+    "special occasion": ("formal", "elegant", "statement", "dress", "tailored"),
+}
+_CLIMATE_TERMS = {
+    "hot_humid": {
+        "positive": ("breathable", "linen", "cotton", "lightweight", "airy", "light"),
+        "negative": ("wool", "fleece", "heavy", "thick", "thermal"),
+    },
+    "hot_dry": {
+        "positive": ("breathable", "linen", "cotton", "lightweight", "airy", "light"),
+        "negative": ("wool", "fleece", "heavy", "thick", "thermal"),
+    },
+    "cool": {
+        "positive": ("wool", "knit", "sweater", "fleece", "jacket", "coat", "layered"),
+        "negative": ("sleeveless", "shorts", "linen", "lightweight"),
+    },
+    "temperate": {"positive": (), "negative": ()},
+}
+
+
+def _context_terms(value: str | None, mapping: dict[str, tuple[str, ...]]) -> tuple[str, ...]:
+    if not isinstance(value, str) or not value.strip():
+        return ()
+    normalized = _normalise(value)
+    for key, terms in mapping.items():
+        if normalized == key or key in normalized:
+            return terms
+    return ()
+
+
 def _score(
-    items: list[dict[str, Any]], role: str, style_signals: tuple[str, ...],
+    items: list[dict[str, Any]],
+    role: str,
+    style_signals: tuple[str, ...],
+    occasion: str | None = None,
+    climate: str | None = None,
 ) -> int:
     text = " ".join(_item_text(item) for item in items)
     score = sum(3 for term in _ROLE_TERMS[role] if term in text)
-    # USI attributes are explicit preference strings; they are matching hints,
-    # never inferred traits or hard exclusions.
+
+    # Only explicit occasion/climate values and item metadata are used. These
+    # are transparent ranking hints, not weather forecasts or fit predictions.
+    occasion_terms = _context_terms(occasion, _OCCASION_TERMS)
+    score += sum(5 for term in occasion_terms if term in text)
+
+    climate_key = _normalise(climate or "").replace(" ", "_")
+    climate_rules = _CLIMATE_TERMS.get(climate_key, {"positive": (), "negative": ()})
+    score += sum(3 for term in climate_rules["positive"] if term in text)
+    score -= sum(3 for term in climate_rules["negative"] if term in text)
+
+    # USI attributes are explicit positive fashion preference strings; they
+    # are ranking hints only and never inferred traits or hard exclusions.
     score += sum(2 for signal in style_signals if signal and signal.split(":", 1)[-1] in text)
     return score
 
@@ -179,7 +233,7 @@ def build_daily_looks(
         candidate = max(
             available,
             key=lambda group: (
-                _score(group, role, signals),
+                _score(group, role, signals, occasion, climate),
                 -sum(len(set(x["item_id"] for x in group) & selected_item_ids) for _ in (0,)),
                 _stable_tie(user_id, local_date, role, (x["item_id"] for x in group)),
             ),
@@ -198,7 +252,7 @@ def build_daily_looks(
                 optional_candidates.append(max(
                     pool,
                     key=lambda x: (
-                        _score([x], role, signals),
+                        _score([x], role, signals, occasion, climate),
                         _stable_tie(user_id, local_date, role, [x["item_id"]]),
                     ),
                 ))
