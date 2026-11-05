@@ -2168,11 +2168,9 @@ def list_offers(
     for variant, listing, merchant in rows:
         market = None
         if market_code:
-            market = db.scalar(select(MerchantOperatingMarket).where(
-                MerchantOperatingMarket.merchant_id == merchant.id,
-                MerchantOperatingMarket.market_country_code == market_code,
-                MerchantOperatingMarket.state == "active",
-            ))
+            market = _market_is_active(db, merchant.id, market_code)
+            if market is None:
+                continue
         target_currency = requested_display_currency or (market.display_currency if market else None)
         localized_minor = None
         localization_status = "not_requested"
