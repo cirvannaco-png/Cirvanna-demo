@@ -742,6 +742,9 @@ def public_offers(
     currency: str | None = Query(default=None, min_length=3, max_length=3),
     market_country_code: str | None = Query(default=None, min_length=2, max_length=2),
     display_currency: str | None = Query(default=None, min_length=3, max_length=3),
+    destination_key: str | None = Query(default=None, min_length=3, max_length=180),
+    fulfillment_mode: Literal["shipping", "courier_delivery", "merchant_delivery", "collection", "local_transport"] | None = Query(default=None),
+    radius_km: float = Query(default=30.0, ge=1.0, le=500.0),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=MAX_PAGE_SIZE),
 ) -> dict:
@@ -758,6 +761,12 @@ def public_offers(
         params["market_country_code"] = market_country_code.strip().upper()
     if display_currency and display_currency.strip():
         params["display_currency"] = display_currency.strip().upper()
+    if destination_key and destination_key.strip():
+        params["destination_key"] = destination_key.strip()
+    if fulfillment_mode:
+        params["fulfillment_mode"] = fulfillment_mode
+    if destination_key:
+        params["radius_km"] = radius_km
     try:
         response = httpx.get(
             base + "/marketplace/offers",
