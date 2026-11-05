@@ -38,6 +38,15 @@ Build the container from repository root:
 
     docker build -f services/marketplace-bff/Dockerfile -t cirvanna-marketplace-bff .
 
+## Click It privacy-governance integration
+
+- `PRIVACY_GOVERNANCE_API_URL` and `PRIVACY_GOVERNANCE_API_TOKEN` point to the internal Privacy Governance Service. The token must match `PRIVACY_GOVERNANCE_INTERNAL_TOKEN` on that service.
+- `POST /api/privacy/consents` resolves the signed Commerce bearer through `GET /me`, derives the subject server-side, and issues a new purpose-bound consent receipt. Browser-supplied subject IDs are never trusted.
+- `POST /api/privacy/consents/{consent_id}/revoke` revokes only a consent receipt belonging to the authenticated Commerce subject.
+- `POST /api/privacy/image-requests` and the private status route use the same internal service. No uploader login is required for photographed-person reporting.
+- Click It submits the photo only after the BFF returns a persisted consent receipt. The people-status declaration is purpose-bound; a guardian reference is checked by a separate trusted provider and never accepted as proof by itself.
+- The BFF readiness response reports `click_it_privacy_ready` separately from basic marketplace readiness.
+
 ## Production release gates not solved by the BFF
 
 Click It stays unavailable until the actual consent-verification service and pinned Vision Intelligence model assets are deployed/configured; an HTML checkbox is not accepted as proof of durable consent. Candidate products remain hidden unless the response is authorized for display by the real CAL decision gateway.
