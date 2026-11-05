@@ -2537,16 +2537,21 @@ def checkout(
             )
         item_subtotal = sum(market_costs[v.id]["item_display_minor"] * ci.quantity for ci, v, _, _ in rows)
         fulfillment_total = 0
-        counted_fulfillment_quotes: set[tuple[str, str, str]] = set()
+        counted_fulfillment_quotes: dict[tuple[str, str, str], tuple[int, str, int]] = {}
         for ci, variant, _, merchant in rows:
             fulfillment_quote = market_costs[variant.id]["fulfillment"]
+            display_amount = market_costs[variant.id]["fulfillment_display_minor"]
             if fulfillment_quote.charge_basis == "per_unit":
-                fulfillment_total += market_costs[variant.id]["fulfillment_display_minor"] * ci.quantity
+                fulfillment_total += display_amount * ci.quantity
             else:
                 quote_key = (merchant.id, fulfillment_quote.provider, fulfillment_quote.provider_quote_id)
-                if quote_key not in counted_fulfillment_quotes:
-                    fulfillment_total += market_costs[variant.id]["fulfillment_display_minor"]
-                    counted_fulfillment_quotes.add(quote_key)
+                quote_value = (fulfillment_quote.amount_minor, fulfillment_quote.currency, display_amount)
+                previous = counted_fulfillment_quotes.get(quote_key)
+                if previous is not None and previous != quote_value:
+                    raise HTTPException(409, detail={"code": "FULFILLMENT_QUOTE_INCONSISTENT_FOR_CART"})
+                if previous is None:
+                    fulfillment_total += display_amount
+                    counted_fulfillment_quotes[quote_key] = quote_value
         tax_total = sum(market_costs[v.id]["payable_tax_minor"] * ci.quantity for ci, v, _, _ in rows)
         total = item_subtotal + fulfillment_total + tax_total
         quote_snapshot = {
