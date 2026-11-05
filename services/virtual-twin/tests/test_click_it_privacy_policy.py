@@ -98,6 +98,10 @@ def test_current_multi_jurisdiction_policy_receipt_is_required_and_returned(monk
     "changes",
     [
         {"current": False},
+        {"jurisdiction_resolution_complete": False},
+        {"policy_conflicts_resolved": False},
+        {"lawful_basis_authorized": False},
+        {"cross_border_transfers_authorized": False},
         {"applicable_jurisdictions": []},
         {"policy_sha256": "not-a-digest"},
         {"facial_recognition_allowed": True},
