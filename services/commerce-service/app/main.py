@@ -221,6 +221,7 @@ class OfferFulfillmentQuote(Base):
     destination_country_code: Mapped[str] = mapped_column(String(2), nullable=False)
     destination_key: Mapped[str] = mapped_column(String(180), nullable=False)
     fulfillment_mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    charge_basis: Mapped[str] = mapped_column(String(16), nullable=False, default="per_unit")
     amount_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
@@ -369,6 +370,7 @@ class OrderCharge(Base):
     merchant_id: Mapped[str] = mapped_column(ForeignKey("commerce_merchants.id"), nullable=False, index=True)
     variant_id: Mapped[str] = mapped_column(String(36), nullable=False)
     charge_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    charge_basis: Mapped[str] = mapped_column(String(16), nullable=False, default="per_unit")
     description: Mapped[str] = mapped_column(String(180), nullable=False)
     amount_minor: Mapped[int] = mapped_column(Integer, nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
@@ -892,6 +894,7 @@ class FulfillmentQuoteIn(BaseModel):
     destination_country_code: str = Field(min_length=2, max_length=2)
     destination_key: str = Field(min_length=3, max_length=180)
     fulfillment_mode: Literal["shipping", "courier_delivery", "merchant_delivery", "collection", "local_transport"]
+    charge_basis: Literal["per_unit", "per_quote"]
     amount_minor: int | None = Field(default=None, ge=0, le=2_000_000_000)
     currency: str = Field(min_length=3, max_length=3)
     status: Literal["estimate", "confirmed", "unavailable"]
@@ -1282,7 +1285,7 @@ def order_json(db: Session, order: CommerceOrder, include_url: bool = False) -> 
             "commission_minor": i.commission_minor,
         } for i in lines],
         "charges": [{
-            "charge_type": charge.charge_type, "description": charge.description,
+            "charge_type": charge.charge_type, "charge_basis": charge.charge_basis, "description": charge.description,
             "amount_minor": charge.amount_minor, "currency": charge.currency,
             "source_amount_minor": charge.source_amount_minor, "source_currency": charge.source_currency,
             "fx_quote_id": charge.fx_quote_id, "provider": charge.provider,
@@ -1788,7 +1791,7 @@ def ingest_fulfillment_quote(
         destination_country_code=payload.destination_country_code,
         destination_key=payload.destination_key.strip(), fulfillment_mode=payload.fulfillment_mode,
         amount_minor=payload.amount_minor, currency=payload.currency, status=payload.status,
-        distance_km=payload.distance_km, provider=payload.provider,
+        charge_basis=payload.charge_basis, distance_km=payload.distance_km, provider=payload.provider,
         provider_quote_id=payload.provider_quote_id, observed_at=payload.observed_at,
         expires_at=payload.expires_at,
     )
@@ -1797,7 +1800,7 @@ def ingest_fulfillment_quote(
     return {"quote_id": row.id, "variant_id": variant.id, "destination_country_code": row.destination_country_code,
         "destination_key": row.destination_key, "fulfillment_mode": row.fulfillment_mode,
         "amount_minor": row.amount_minor, "currency": row.currency, "status": row.status,
-        "provider": row.provider, "observed_at": row.observed_at.isoformat(), "expires_at": row.expires_at.isoformat()}
+        "charge_basis": row.charge_basis, "provider": row.provider, "observed_at": row.observed_at.isoformat(), "expires_at": row.expires_at.isoformat()}
 
 
 @app.post("/internal/market-context/variants/{variant_id}/tax-quotes", status_code=201)
@@ -2097,6 +2100,7 @@ def compare_offers(
             "offer_observed_at": variant.observed_at.isoformat(),
             "item_display_price_minor": item["item_display_minor"],
             "fulfillment_mode": item["fulfillment"].fulfillment_mode,
+            "fulfillment_charge_basis": item["fulfillment"].charge_basis,
             "fulfillment_charge_minor": item["fulfillment_display_minor"],
             "fulfillment_quote": {
                 "quote_id": item["fulfillment"].id,
@@ -2297,6 +2301,7 @@ def list_offers(
                 "provider_quote_id": fulfillment_quote.provider_quote_id,
                 "amount_minor": fulfillment_quote.amount_minor,
                 "currency": fulfillment_quote.currency,
+                "charge_basis": fulfillment_quote.charge_basis,
                 "display_amount_minor": transport_display_minor,
                 "display_currency": target_currency or fulfillment_quote.currency,
                 "display_conversion_status": transport_display_status,
