@@ -717,6 +717,7 @@ def _market_compare_seed(client, monkeypatch):
             id=str(uuid.uuid4()), variant_id=variant.id, destination_country_code="KE",
             destination_key="Nakuru/Subukia", fulfillment_mode="courier_delivery",
             amount_minor=fulfillment_minor, currency=currency, status="confirmed",
+            distance_km=Decimal("10") if merchant is merchant_a else Decimal("40"),
             provider="test-courier", provider_quote_id=str(uuid.uuid4()),
             observed_at=main.now(), expires_at=main.now()+timedelta(hours=1),
         )
@@ -917,3 +918,24 @@ def test_active_market_cannot_bypass_checkout_context(client, monkeypatch):
     )
     assert response.status_code == 409
     assert response.json()["detail"]["code"] == "MARKET_CHECKOUT_CONTEXT_REQUIRED"
+
+
+def test_marketplace_offers_default_to_30km_and_allow_user_radius_expansion(client, monkeypatch):
+    a, b = _market_compare_seed(client, monkeypatch)
+    base = "/marketplace/offers?market_country_code=KE&destination_key=Nakuru%2FSubukia&fulfillment_mode=courier_delivery"
+    default_response = client.get(base)
+    assert default_response.status_code == 200, default_response.text
+    default_data = default_response.json()
+    assert default_data["total"] == 1
+    assert default_data["items"][0]["merchant_id"] == a["merchant_id"]
+    quote = default_data["items"][0]["fulfillment_quote"]
+    assert quote["distance_km"] == "10.000000"
+    assert quote["display_amount_minor"] == 250
+
+    expanded_response = client.get(base + "&radius_km=50")
+    assert expanded_response.status_code == 200, expanded_response.text
+    expanded_data = expanded_response.json()
+    assert expanded_data["total"] == 2
+    usd_offer = next(item for item in expanded_data["items"] if item["merchant_id"] == b["merchant_id"])
+    assert usd_offer["fulfillment_quote"]["distance_km"] == "40.000000"
+    assert usd_offer["fulfillment_quote"]["display_conversion_status"] == "localized"
