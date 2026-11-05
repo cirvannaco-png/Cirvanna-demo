@@ -348,7 +348,7 @@ async def create_wardrobe_item(request: Request, payload: CreateWardrobeItemIn =
                 raise HTTPException(502, detail={"code": "WARDROBE_ITEM_ACTIVATION_RESPONSE_INVALID"}) from exc
             if not isinstance(result, dict) or result.get("owner_user_id") != owner or result.get("status") != "active":
                 raise HTTPException(502, detail={"code": "WARDROBE_ITEM_ACTIVATION_SCOPE_MISMATCH"})
-            return _private_json_response({"item": result})
+            return JSONResponse(content={"item": result}, status_code=201, headers={"Cache-Control": "no-store, private"})
     except HTTPException:
         raise
     except httpx.TimeoutException as exc:
