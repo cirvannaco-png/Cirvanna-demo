@@ -6,6 +6,7 @@ on:
       - "services/marketplace-bff/**"
       - "apps/demo-web/marketplace.html"
       - "apps/demo-web/wardrobe.html"
+      - "apps/demo-web/merchant-portal.html"
       - ".github/workflows/marketplace-bff.yml"
   push:
     branches: [main]
