@@ -211,6 +211,7 @@ def test_click_it_uses_verified_commerce_subject_and_returns_only_pending_candid
             "consent_id": "consent-record-1234",
             "consent_image_processing": "true",
             "consent_click_it": "true",
+            "photographed_people_status": "adults_only",
         },
         files={"product_image": ("dress.png", b"validated-photo-bytes", "image/png")},
     )
@@ -222,6 +223,7 @@ def test_click_it_uses_verified_commerce_subject_and_returns_only_pending_candid
     assert fake.calls[0][1] == "https://commerce.example.test/me"
     assert fake.calls[1][1] == "https://virtual-twin.example.test/click-it"
     assert fake.calls[1][2]["data"]["subject_id"] == "signed-user-42"
+    assert fake.calls[1][2]["data"]["photographed_people_status"] == "adults_only"
     assert "subject_id" not in response.request.content.decode(errors="ignore")
     assert fake.calls[1][2]["files"]["product_image"][1] == b"validated-photo-bytes"
 
@@ -250,6 +252,9 @@ def test_marketplace_ui_has_xari_description_search_and_mobile_click_it_capture(
     assert 'id="clickItConsentId"' in response.text
     assert 'id="clickItImageConsent"' in response.text
     assert 'id="clickItSearchConsent"' in response.text
+    assert 'id="clickItPeopleStatus"' in response.text
+    assert 'id="imageRightsForm"' in response.text
+    assert 'fetch("/api/privacy/image-requests"' in response.text
     assert 'fetch("/api/vision/marketplace-search"' in response.text
     assert 'fetch("/api/vision/click-it"' in response.text
     assert "display_authorized===true" in response.text
@@ -507,3 +512,75 @@ def test_wardrobe_consent_listing_allows_closet_browse_when_learning_provider_ab
     assert response.json()["learning_configured"] is False
     assert response.json()["items"] == []
     assert len(fake.calls) == 1
+
+
+def test_image_rights_request_can_be_submitted_without_uploader_login_and_quarantines_urgent_report(client, monkeypatch):
+    monkeypatch.setenv("PRIVACY_RIGHTS_API_URL", "https://privacy-rights.example.test")
+    monkeypatch.setenv("PRIVACY_RIGHTS_API_TOKEN", "privacy-rights-internal-token-at-least-32-bytes")
+    fake = FakeAsyncClient([FakeResponse({
+        "request_id": "rights-request-0001",
+        "status": "quarantined",
+        "quarantined": True,
+        "status_token": "opaque-status-token",
+    }, status_code=202)])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post("/api/privacy/image-requests", json={
+        "asset_reference": "cirvanna-share-1234",
+        "request_type": "report",
+        "reason_code": "possible_minor",
+        "requester_relationship": "parent_guardian",
+        "jurisdiction_hint": "Example Region",
+    })
+    assert response.status_code == 202
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.json()["quarantined"] is True
+    assert fake.calls[0][1].endswith("/internal/v1/image-rights/requests")
+    payload = fake.calls[0][2]["json"]
+    assert payload["jurisdiction_hint_is_unverified"] is True
+    assert payload["asset_reference"] == "cirvanna-share-1234"
+    assert "image_bytes" not in payload
+    assert "identity_document" not in payload
+
+
+def test_image_rights_urgent_report_is_not_accepted_without_quarantine_confirmation(client, monkeypatch):
+    monkeypatch.setenv("PRIVACY_RIGHTS_API_URL", "https://privacy-rights.example.test")
+    monkeypatch.setenv("PRIVACY_RIGHTS_API_TOKEN", "privacy-rights-internal-token-at-least-32-bytes")
+    fake = FakeAsyncClient([FakeResponse({
+        "request_id": "rights-request-0002",
+        "status": "accepted",
+        "quarantined": False,
+    }, status_code=202)])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post("/api/privacy/image-requests", json={
+        "asset_reference": "cirvanna-share-5678",
+        "request_type": "removal",
+        "reason_code": "unmasked_face",
+        "requester_relationship": "photographed_person",
+    })
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "IMAGE_RIGHTS_QUARANTINE_NOT_CONFIRMED"
+
+
+def test_image_rights_intake_fails_closed_when_provider_is_not_configured(client, monkeypatch):
+    monkeypatch.delenv("PRIVACY_RIGHTS_API_URL", raising=False)
+    monkeypatch.delenv("PRIVACY_RIGHTS_API_TOKEN", raising=False)
+    response = client.post("/api/privacy/image-requests", json={
+        "asset_reference": "cirvanna-share-9012",
+        "request_type": "removal",
+        "reason_code": "privacy_concern",
+        "requester_relationship": "photographed_person",
+    })
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "PRIVACY_RIGHTS_API_URL_NOT_CONFIGURED"
+
+
+def test_image_rights_intake_rejects_arbitrary_urls_and_unknown_fields(client):
+    response = client.post("/api/privacy/image-requests", json={
+        "asset_reference": "https://attacker.example/image.jpg",
+        "request_type": "removal",
+        "reason_code": "privacy_concern",
+        "requester_relationship": "photographed_person",
+        "image_bytes": "should-not-be-accepted",
+    })
+    assert response.status_code == 422
+
