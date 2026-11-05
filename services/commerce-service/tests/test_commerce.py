@@ -709,7 +709,7 @@ def _market_compare_seed(client, monkeypatch):
         )
         payment = main.MarketPaymentCapability(
             id=str(uuid.uuid4()), merchant_id=merchant["merchant_id"], market_country_code="KE",
-            provider="stripe", state="active", transaction_currencies=[currency],
+            provider="stripe", state="active", transaction_currencies=([currency] if currency == "KES" else [currency, "KES"]),
             settlement_currencies=["KES"], payment_methods=["card"], provider_reference="test-ref",
             observed_at=main.now(), expires_at=main.now()+timedelta(hours=1),
         )
