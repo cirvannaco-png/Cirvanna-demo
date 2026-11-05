@@ -274,3 +274,9 @@ def test_wardrobe_positive_tal_features_ignore_revoked_consent_and_nonpositive_e
     monkeypatch.setattr(main.httpx,"Client",FakeClient)
     result=main._load_consent_aware_wardrobe_likes("subject-1")
     assert result == {"blue":0.03,"linen":0.03}
+
+
+def test_wardrobe_learning_without_identity_provider_has_no_personalization_bonus(monkeypatch):
+    monkeypatch.delenv("IDENTITY_SERVICE_URL", raising=False)
+    monkeypatch.delenv("IDENTITY_SERVICE_TOKEN", raising=False)
+    assert main._load_consent_aware_wardrobe_likes("subject-1") == {}
