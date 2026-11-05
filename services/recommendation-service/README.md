@@ -19,6 +19,12 @@ Complementer coordinates a complete look without treating the user's existing id
 
 Requires internal bearer authentication using `COMPLEMENTER_SERVICE_TOKEN` (at least 32 UTF-8 bytes). The request includes an opaque user identifier, declared preferences, and current-look context. It returns style directions only; it does not invent product names, SKUs, prices, stock or purchase links.
 
+### `POST /v1/tari/daily-looks`
+
+Requires the same internal bearer token. This endpoint accepts a trusted gateway-supplied, owner-verified active wardrobe snapshot and returns exactly three role slots: `everyday`, `elevated`, and `explore`. It emits only canonical wardrobe item IDs and minimum item text metadata. It never fabricates products or repeats a base outfit to fill a missing slot; insufficient closet coverage returns `needs_input` for the unavailable role. USI signals are optional positive ranking hints. NPL exclusions are applied by the decision gateway before the snapshot reaches this service.
+
+Twin preview is deliberately returned as unavailable until a persistent user-scoped Twin, server-side consent/asset authorization and a validated renderer are integrated. This endpoint does not claim a visual preview, calibrated fit or persistent learning.
+
 ### `POST /v1/complementer/feedback`
 
 Accepts an approval/rejection observation only when `consent_to_personalization=true`. A user may explicitly ask to save the observed value as a preference. Rejections are represented as **soft preference observations**; they do not create NPL hard vetoes or permanent exclusions.
@@ -67,7 +73,7 @@ Catalog validation is tested separately from `services/catalog-service`. Passing
 
 ## Not yet implemented
 
-- User-facing preference editor and UI integration.
+- Complementer domain-specific preference editor and full styling UI; the first Tari three-look UI is exposed through the authenticated Wardrobe page.
 - Trusted gateway binding and profile/USI/NPL/cultural-declaration hydration.
 - Durable TAL persistence, event replay, user correction/export/deletion lifecycle and cross-session memory.
 - Live Catalog/Commerce retrieval, ranking against evidence-backed product intelligence, and exact candidate-bound CAL display authorization.
