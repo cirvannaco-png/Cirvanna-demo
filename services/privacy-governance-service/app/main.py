@@ -261,6 +261,12 @@ class RightsReviewIn(StrictModel):
     resolution_code: str = Field(min_length=3, max_length=64)
 
 
+class AssetPublicationGateIn(StrictModel):
+    asset_id: str = Field(min_length=3, max_length=160)
+    masking_attestation_id: str = Field(min_length=12, max_length=160)
+    target_surface: Literal["public_profile", "community_feed", "marketplace", "merchant_surface", "shared_link"]
+
+
 class JurisdictionEvaluateIn(StrictModel):
     subject_id: str = Field(min_length=1, max_length=128)
     service: Literal["cirvanna-click-it"]
