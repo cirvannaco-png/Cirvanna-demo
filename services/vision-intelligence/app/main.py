@@ -21,8 +21,10 @@ import httpx
 import numpy as np
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.responses import JSONResponse
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field
+from app.click_it_privacy import anonymize_click_it_image, detector_configuration
 from starlette import status
 from urllib.parse import urlsplit
 
@@ -594,7 +596,16 @@ async def click_it_scan(
     finally:
         await image.close()
     decoded = _decode_image(data, content_type)
-    quality = evaluate_image_quality(decoded)
+    # The original image is never used for quality scoring, embedding, or retrieval.
+    # Privacy detection and masking must complete first.
+    privacy_ready, privacy_reason = detector_configuration()
+    if not privacy_ready:
+        raise HTTPException(
+            503,
+            detail={"code": "CLICK_IT_PRIVACY_DETECTOR_NOT_READY", "reason": privacy_reason},
+        )
+    privacy_safe_image, faces_masked = anonymize_click_it_image(decoded)
+    quality = evaluate_image_quality(privacy_safe_image)
     if not quality["passed"]:
         raise HTTPException(
             422,
@@ -604,7 +615,7 @@ async def click_it_scan(
                 "message": "Retake the photo with better lighting, focus, contrast, and the product clearly in frame.",
             },
         )
-    query_vector = _image_embedding(decoded)
+    query_vector = _image_embedding(privacy_safe_image)
     offers, truncated = await _live_offers()
     if category and category.strip():
         selected = category.strip().casefold()
@@ -614,11 +625,17 @@ async def click_it_scan(
             or str((item.get("product") or {}).get("category", "")).casefold() == selected
         ]
     results = _rank_offers(query_vector, offers, limit)
-    return {
+    return JSONResponse(content={
         "status": "complete",
         "scan_id": str(uuid.uuid4()),
         "search_mode": "image_to_catalog_text_similarity",
         "image_quality": quality,
+        "privacy": {
+            "face_detection": "completed",
+            "faces_masked": faces_masked,
+            "face_recognition": False,
+            "original_image_persisted": False,
+        },
         "candidate_count": len(results),
         "catalog_offer_count": len(offers),
         "results": results,
@@ -627,7 +644,7 @@ async def click_it_scan(
         "scores_are_probabilities": False,
         "warning": "Scores rank the live catalog but are not calibrated match probabilities; visually verify the result before buying.",
         "image_persisted": False,
-    }
+    }, headers={"Cache-Control": "no-store, private"})
 
 
 @app.post("/v1/twin/infer", dependencies=[Depends(require_worker_auth)], tags=["virtual-twin"])
