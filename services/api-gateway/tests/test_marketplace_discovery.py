@@ -280,3 +280,20 @@ def test_wardrobe_learning_without_identity_provider_has_no_personalization_bonu
     monkeypatch.delenv("IDENTITY_SERVICE_URL", raising=False)
     monkeypatch.delenv("IDENTITY_SERVICE_TOKEN", raising=False)
     assert main._load_consent_aware_wardrobe_likes("subject-1") == {}
+
+
+def test_wardrobe_discovery_can_use_closet_without_identity_profile_provider(monkeypatch):
+    monkeypatch.delenv("IDENTITY_SERVICE_URL", raising=False)
+    monkeypatch.delenv("IDENTITY_SERVICE_TOKEN", raising=False)
+    profile = main._load_verified_usi_profile("verified-subject-1", allow_without_consent=True)
+    assert profile.user_id == "verified-subject-1"
+    assert profile.preferences == ()
+    assert profile.version == "profile-storage-provider-not-configured"
+
+
+def test_standard_discovery_still_requires_usi_profile_provider(monkeypatch):
+    monkeypatch.delenv("IDENTITY_SERVICE_URL", raising=False)
+    monkeypatch.delenv("IDENTITY_SERVICE_TOKEN", raising=False)
+    with pytest.raises(main.HTTPException) as error:
+        main._load_verified_usi_profile("verified-subject-1")
+    assert error.value.status_code == 503
