@@ -12,7 +12,7 @@ It accepts no uploaded image, face crop, biometric template or identity document
 ## Service contracts
 
 ### Consent
-- `POST /internal/v1/consents/grant`: called by the authenticated Marketplace BFF after it resolves the subject through Commerce `/me` and confirms the user explicitly selected both Click It consent controls.
+- `POST /internal/v1/consents/grant`: called by the authenticated Marketplace BFF after it resolves the subject through Commerce `/me` and confirms the user explicitly selected both Click It consent controls. When people are declared visible, the uploader must also explicitly attest to having permission to submit the photograph; this is recorded as a purpose-specific scope and is not represented as independent verification of every photographed person's consent.
 - `POST /internal/v1/consents/verify`: verifies active scope, subject and optional resource binding for Virtual Twin.
 - `POST /internal/v1/consents/{consent_id}/revoke`: revokes a subject-owned consent record.
 - For a declared minor, guardian scope is added only when the external guardian-verification provider returns an active, purpose-matched authority receipt. Merely checking a box or typing a reference is not proof.
