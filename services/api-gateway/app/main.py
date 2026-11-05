@@ -43,7 +43,7 @@ from cultural_identity import (  # noqa: E402
 )
 from eepl import ContextField, EEPLContext, EEPLPolicy  # noqa: E402
 from fci import FitConfidenceEstimate  # noqa: E402
-from npl import NegativePreference, PreferenceSource, TargetType, canonical_npl_evidence_payload  # noqa: E402
+from npl import NegativePreference, PreferenceSource, TargetType, canonical_npl_evidence_payload, evaluate as evaluate_npl  # noqa: E402
 from usi import StylePreference, USIProfile  # noqa: E402
 from app.comparison import compare_like_for_like_offers  # noqa: E402
 
@@ -625,6 +625,33 @@ def _complementer_advisory(
         "durable_personal_memory": False,
         "recommendation": result,
     }
+
+
+def _filter_npl_blocked_wardrobe_items(
+    *, request_id: str, user_id: str, wardrobe_items: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    """Apply the persistent NPL hard-veto kernel to each owner-scoped closet item."""
+    if not wardrobe_items:
+        return [], 0
+
+    def evaluate_item(item: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        attributes = tuple(
+            [str(item.get("display_name", "")), str(item.get("category", ""))]
+            + [value for value in item.get("attributes", []) if isinstance(value, str)]
+        )
+        preferences = _load_persisted_npl_preferences(
+            request_id=request_id,
+            user_id=user_id,
+            product_id=item["item_id"],
+            attributes=attributes,
+        )
+        decision = evaluate_npl(user_id, item["item_id"], attributes, preferences)
+        return item, decision.blocked
+
+    with ThreadPoolExecutor(max_workers=min(5, len(wardrobe_items))) as executor:
+        evaluated = list(executor.map(evaluate_item, wardrobe_items))
+    allowed = [item for item, blocked in evaluated if not blocked]
+    return allowed, len(evaluated) - len(allowed)
 
 
 def _tari_daily_looks(payload: TariDailyLooksRequest, style_signals: list[str]) -> dict[str, Any]:
@@ -1750,9 +1777,23 @@ def compose_tari_daily_looks(
             raise HTTPException(403, detail={"code": "WARDROBE_SUBJECT_MISMATCH"})
         if item.get("status") != "active":
             raise HTTPException(422, detail={"code": "WARDROBE_SNAPSHOT_MUST_BE_ACTIVE_ONLY"})
+    # Only positive, non-sensitive fashion preference namespaces may guide ranking.
     profile = _load_verified_usi_profile(subject, allow_without_consent=True)
-    style_signals = [preference.attribute for preference in profile.preferences if preference.active]
-    return _tari_daily_looks(payload, style_signals)
+    allowed_prefixes = ("style:", "color:", "colour:", "silhouette:", "material:", "pattern:")
+    style_signals = [
+        preference.attribute.strip()
+        for preference in profile.preferences
+        if preference.active and preference.attribute.strip().casefold().startswith(allowed_prefixes)
+    ]
+    eligible_items, npl_excluded_count = _filter_npl_blocked_wardrobe_items(
+        request_id=payload.request_id,
+        user_id=subject,
+        wardrobe_items=payload.wardrobe_items,
+    )
+    safe_payload = payload.model_copy(update={"wardrobe_items": eligible_items})
+    result = _tari_daily_looks(safe_payload, style_signals)
+    result["npl_excluded_wardrobe_item_count"] = npl_excluded_count
+    return result
 
 
 @app.get("/v1/me/style-profile", dependencies=[Depends(require_api_token)], tags=["identity and learning"])
