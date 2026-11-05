@@ -25,6 +25,15 @@ input,select{width:100%;min-width:0;padding:11px;background:#101018;border:1px s
 footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);font-size:11px;margin-top:30px}
 @media(max-width:800px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.nav{align-items:flex-start;flex-direction:column}}
 @media(max-width:520px){.shell{padding:0 13px}.grid{grid-template-columns:1fr}.panel{padding:14px}.nav .row{width:100%}.nav .tag{white-space:normal}}
+
+.tari-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-top:14px}
+.tari-card{min-width:0;border:1px solid var(--line);background:#12121a;padding:14px;border-radius:4px}
+.tari-card h3{font:22px Georgia,serif;font-weight:400;margin:5px 0 10px;text-transform:capitalize}
+.tari-piece{border-top:1px solid var(--line);padding:9px 0}
+.tari-piece strong{display:block;font-size:13px}
+.tari-piece span{display:block;font-size:11px;color:var(--muted)}
+.tari-note{font-size:12px;color:var(--muted);margin-top:10px}
+@media(max-width:800px){.tari-grid{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -72,6 +81,22 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
 <div class="field"><label for="itemAttributes">Attributes (comma-separated)</label><input id="itemAttributes" maxlength="500" placeholder="blue, linen, relaxed, casual"></div>
 <div class="field"><label>&nbsp;</label><button class="btn primary" type="submit" id="addItem">Add to wardrobe</button></div>
 </form>
+</section>
+
+
+<section class="panel hidden" id="tariPanel">
+<div class="eyebrow">Tari · daily look intelligence</div>
+<h2>Three ways to wear what you own</h2>
+<p class="small">Tari creates an Everyday, Elevated and Explore look from your active wardrobe. Occasion and climate are optional context you choose to provide. It will flag missing wardrobe coverage instead of inventing pieces or pushing unnecessary purchases.</p>
+<form id="tariForm">
+<div class="grid">
+<div class="field"><label for="tariOccasion">Today's occasion (optional)</label><select id="tariOccasion"><option value="">Not specified</option><option value="everyday">Everyday</option><option value="work">Work</option><option value="meeting">Meeting</option><option value="evening">Evening</option><option value="formal">Formal</option><option value="travel">Travel</option><option value="special occasion">Special occasion</option></select></div>
+<div class="field"><label for="tariClimate">Climate (optional)</label><select id="tariClimate"><option value="">Not specified</option><option value="hot_humid">Hot and humid</option><option value="hot_dry">Hot and dry</option><option value="temperate">Temperate</option><option value="cool">Cool</option></select></div>
+<div class="field"><label>&nbsp;</label><button class="btn primary" type="submit" id="generateTari">Generate today's three looks</button></div>
+</div>
+</form>
+<div class="status" id="tariStatus" role="status">Connect your session to generate looks from your active wardrobe.</div>
+<div class="tari-grid" id="tariLooks" aria-live="polite"></div>
 </section>
 
 <section class="panel hidden" id="recommendPanel">
@@ -187,6 +212,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     $("learningPanel").classList.remove("hidden");
     $("closetPanel").classList.remove("hidden");
     $("recommendPanel").classList.remove("hidden");
+    $("tariPanel").classList.remove("hidden");
     $("connectPanel").classList.add("hidden");
     status("connectionStatus", "Authenticated.", "good");
   };
@@ -309,6 +335,57 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     try { await revokeConsent("profile_storage"); }
     catch (error) { status("learningStatus",error.message,"error"); }
   });
+
+  const renderTariLooks = data => {
+    const root = $("tariLooks");
+    root.replaceChildren();
+    const recommendation = data.recommendation || {};
+    for (const look of recommendation.looks || []) {
+      const card = document.createElement("article");
+      card.className = "tari-card";
+      card.append(text("div", look.status === "ready" ? "Ready from your wardrobe" : "More wardrobe items needed", "eyebrow"));
+      card.append(text("h3", look.role));
+      if (look.status === "ready") {
+        for (const item of (look.items || [])) {
+          const piece = document.createElement("div");
+          piece.className = "tari-piece";
+          piece.append(text("strong", item.display_name));
+          piece.append(text("span", item.category));
+          if ((item.attributes || []).length) piece.append(text("span", item.attributes.join(" · ")));
+          card.append(piece);
+        }
+      } else {
+        card.append(text("p", "To complete this look, add: " + (look.missing || []).join(", "), "tari-note"));
+      }
+      card.append(text("p", look.reason || "", "tari-note"));
+      card.append(text("p", "Virtual Twin preview: unavailable until your persistent Twin and a validated renderer are connected.", "tari-note"));
+      root.append(card);
+    }
+  };
+  $("tariForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    $("generateTari").disabled = true;
+    status("tariStatus", "Building three distinct looks from your active wardrobe…");
+    try {
+      const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      const data = await api("/api/wardrobe/daily-looks", {
+        method: "POST",
+        body: JSON.stringify({
+          occasion: $("tariOccasion").value || null,
+          climate: $("tariClimate").value || null,
+          timezone
+        })
+      });
+      renderTariLooks(data);
+      const ready = data.recommendation?.ready_count || 0;
+      status("tariStatus", ready + " of 3 looks can be assembled from your current active wardrobe. No virtual try-on image was generated.", ready === 3 ? "good" : "");
+    } catch (error) {
+      status("tariStatus", error.message, "error");
+    } finally {
+      $("generateTari").disabled = false;
+    }
+  });
+
   $("recommendForm").addEventListener("submit", async event => {
     event.preventDefault();
     $("recommend").disabled = true;
