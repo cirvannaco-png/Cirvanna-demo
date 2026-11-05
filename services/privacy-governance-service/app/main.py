@@ -440,8 +440,9 @@ def ready(db: Session = Depends(session_for_request)) -> dict:
     signing_ready = bool(os.getenv("PRIVACY_POLICY_BUNDLE_PUBLIC_KEY_PEM"))
     review_ready = len(os.getenv("PRIVACY_RIGHTS_REVIEW_TOKEN", "").encode()) >= 32
     rights_authority_ready = bool(os.getenv("RIGHTS_AUTHORITY_VERIFICATION_API_URL")) and bool(os.getenv("RIGHTS_AUTHORITY_VERIFICATION_API_TOKEN"))
+    vision_attestation_ready = bool(os.getenv("VISION_PRIVACY_ATTESTATION_API_URL")) and bool(os.getenv("VISION_PRIVACY_ATTESTATION_API_TOKEN"))
     return {
-        "status": "ready" if all([database_ready, resolver_ready, content_ready, internal_ready, signing_ready, review_ready, rights_authority_ready]) else "not_ready",
+        "status": "ready" if all([database_ready, resolver_ready, content_ready, internal_ready, signing_ready, review_ready, rights_authority_ready, vision_attestation_ready]) else "not_ready",
         "service": SERVICE,
         "database_ready": database_ready,
         "jurisdiction_resolver_configured": resolver_ready,
@@ -451,6 +452,7 @@ def ready(db: Session = Depends(session_for_request)) -> dict:
         "policy_signing_key_configured": signing_ready,
         "rights_review_auth_configured": review_ready,
         "requester_authority_provider_configured": rights_authority_ready,
+        "vision_privacy_attestation_configured": vision_attestation_ready,
         "ready": all([database_ready, resolver_ready, content_ready, internal_ready, signing_ready, review_ready, rights_authority_ready]),
     }
 
