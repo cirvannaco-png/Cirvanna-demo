@@ -2174,9 +2174,16 @@ def list_offers(
             OfferFulfillmentQuote.expires_at > current,
         ).exists())
     if market_code:
+        market_now = now()
         stmt = stmt.join(MerchantOperatingMarket, MerchantOperatingMarket.merchant_id == Merchant.id).where(
             MerchantOperatingMarket.market_country_code == market_code,
             MerchantOperatingMarket.state == "active",
+            MerchantOperatingMarket.tax_capability_observed_at >= market_now - timedelta(seconds=offer_max_age_seconds()),
+            MerchantOperatingMarket.tax_capability_observed_at <= market_now + timedelta(minutes=5),
+            MerchantOperatingMarket.tax_capability_expires_at > market_now,
+            MerchantOperatingMarket.fulfillment_capability_observed_at >= market_now - timedelta(seconds=offer_max_age_seconds()),
+            MerchantOperatingMarket.fulfillment_capability_observed_at <= market_now + timedelta(minutes=5),
+            MerchantOperatingMarket.fulfillment_capability_expires_at > market_now,
         )
     if q and q.strip():
         stmt = stmt.where(func.lower(Listing.product_name).like(f"%{q.strip().lower()}%"))
@@ -2213,7 +2220,17 @@ def list_offers(
         localized_minor = None
         localization_status = "not_requested"
         localization_fx = None
+        transport_display_minor = None
+        transport_fx = None
+        transport_display_status = "not_requested"
         locale = None
+        if fulfillment_quote is not None:
+            transport_display_minor, transport_fx = _convert_minor_amount(
+                db, variant_id=variant.id, amount_minor=fulfillment_quote.amount_minor,
+                source_currency=fulfillment_quote.currency,
+                target_currency=target_currency or fulfillment_quote.currency,
+            )
+            transport_display_status = "localized" if transport_display_minor is not None else "conversion_unavailable"
         if target_currency:
             locale = market.locale if market else None
             localized_minor, localization_fx = _convert_minor_amount(
@@ -2253,11 +2270,10 @@ def list_offers(
                 "provider_quote_id": fulfillment_quote.provider_quote_id,
                 "amount_minor": fulfillment_quote.amount_minor,
                 "currency": fulfillment_quote.currency,
-                "display_amount_minor": _convert_minor_amount(
-                    db, variant_id=variant.id, amount_minor=fulfillment_quote.amount_minor,
-                    source_currency=fulfillment_quote.currency, target_currency=target_currency or fulfillment_quote.currency,
-                )[0],
+                "display_amount_minor": transport_display_minor,
                 "display_currency": target_currency or fulfillment_quote.currency,
+                "display_conversion_status": transport_display_status,
+                "display_fx_quote": transport_fx,
                 "distance_km": str(fulfillment_quote.distance_km),
                 "observed_at": fulfillment_quote.observed_at.isoformat(),
                 "expires_at": fulfillment_quote.expires_at.isoformat(),
