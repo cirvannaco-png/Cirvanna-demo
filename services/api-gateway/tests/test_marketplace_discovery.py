@@ -176,6 +176,7 @@ def test_discovery_uses_verified_wardrobe_and_suppresses_owned_catalog_product(c
         "catalog_product_id": P1,
         "status": "active",
     }])
+    monkeypatch.setattr(main, "_load_consent_aware_wardrobe_likes", lambda _subject: {})
     monkeypatch.setattr(main, "_discover_catalog_and_offers", lambda _payload: (products, offers))
     captured = {}
     show = main.CandidateDecisionOutput(
@@ -223,3 +224,53 @@ def test_wardrobe_discovery_fails_closed_without_npl_configuration(client, monke
     response = client.post("/v1/discover", headers=auth(), json={**payload(), "use_wardrobe_context": True})
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "NPL_PROVIDER_REQUIRED_FOR_WARDROBE_DISCOVERY"
+
+
+def test_wardrobe_match_adds_bounded_consent_feedback_bonus():
+    product = {
+        "category": "shirt",
+        "attributes": {"color": "blue", "material": "cotton", "style": "minimal"},
+    }
+    wardrobe = [{
+        "item_id": "owned-1",
+        "category": "tops",
+        "attributes": ["blue", "cotton"],
+    }]
+    no_feedback = main._wardrobe_match(product, wardrobe, {})
+    positive = main._wardrobe_match(product, wardrobe, {"minimal": 0.15, "blue": 0.15})
+    assert positive["score"] > no_feedback["score"]
+    assert positive["consented_positive_feedback_score"] == 0.15
+    assert positive["positive_feedback_attributes"] == ["blue", "minimal"]
+    assert positive["score"] <= 0.40
+
+
+def test_wardrobe_positive_tal_features_ignore_revoked_consent_and_nonpositive_events(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    class FakeResponse:
+        status_code = 200
+        def json(self):
+            return {
+                "subject_id": "subject-1",
+                "consent_receipts": [
+                    {"receipt_id": "revoked", "scope": "style_learning", "granted": True, "revoked_at": now.isoformat()},
+                    {"receipt_id": "active", "scope": "style_learning", "granted": True, "revoked_at": None},
+                ],
+                "events": [
+                    {"event_id":"like-1","event_kind":"observation","feature_key":"wardrobe.feedback.like","consent_receipt_id":"revoked","observed_at":now.isoformat(),"expires_at":(now+timedelta(days=1)).isoformat(),"value":'{"attributes":["blue"]}'},
+                    {"event_id":"like-2","event_kind":"observation","feature_key":"wardrobe.feedback.like","consent_receipt_id":"active","observed_at":now.isoformat(),"expires_at":(now+timedelta(days=1)).isoformat(),"value":'{"attributes":["linen","blue"]}'},
+                    {"event_id":"dislike-1","event_kind":"observation","feature_key":"wardrobe.feedback.dislike","consent_receipt_id":"active","observed_at":now.isoformat(),"expires_at":(now+timedelta(days=1)).isoformat(),"value":'{"attributes":["leather"]}'},
+                    {"event_id":"expired","event_kind":"observation","feature_key":"wardrobe.feedback.wear","consent_receipt_id":"active","observed_at":now.isoformat(),"expires_at":(now-timedelta(days=1)).isoformat(),"value":'{"attributes":["wool"]}'},
+                ],
+            }
+    class FakeClient:
+        def __init__(self, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self,*args): return False
+        def get(self,*args,**kwargs): return FakeResponse()
+    monkeypatch.setenv("IDENTITY_SERVICE_URL","https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN","identity-internal-token-more-than-thirty-two-bytes")
+    monkeypatch.setattr(main.httpx,"Client",FakeClient)
+    result=main._load_consent_aware_wardrobe_likes("subject-1")
+    assert result == {"blue":0.03,"linen":0.03}
