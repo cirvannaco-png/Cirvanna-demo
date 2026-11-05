@@ -412,6 +412,8 @@ def test_wardrobe_page_exposes_feedback_and_consent_controls(client):
     assert "/api/wardrobe/recommendations" in response.text
     assert "Tari · daily look intelligence" in response.text
     assert "/api/wardrobe/daily-looks" in response.text
+    assert "Mark this look worn" in response.text
+    assert "Not my style" in response.text
     assert "profile_storage" in response.text
 
 
