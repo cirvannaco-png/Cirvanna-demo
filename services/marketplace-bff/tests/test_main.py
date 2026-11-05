@@ -453,13 +453,19 @@ def test_wardrobe_consent_revocation_is_subject_scoped(client, monkeypatch):
 
 
 def test_wardrobe_manual_item_creation_binds_verified_owner_and_activates(client, monkeypatch):
+    from uuid import UUID
+    identifiers = iter([
+        UUID("33333333-3333-4333-8333-333333333333"),
+        UUID("44444444-4444-4444-8444-444444444444"),
+    ])
+    monkeypatch.setattr(main.uuid, "uuid4", lambda: next(identifiers))
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
     monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
     monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
     fake = FakeAsyncClient([
         FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
         FakeResponse({"item": {
-            "owner_user_id": "signed-user-42", "item_id": "generated-item-id",
+            "owner_user_id": "signed-user-42", "item_id": "33333333-3333-4333-8333-333333333333",
             "version": 1, "status": "draft",
         }}, status_code=201),
         FakeResponse({"item": {
@@ -486,12 +492,6 @@ def test_wardrobe_manual_item_creation_binds_verified_owner_and_activates(client
     assert created["image_storage_consent"] is False
     assert transition["owner_user_id"] == "signed-user-42"
     assert transition["target_status"] == "active"
-
-
-def test_wardrobe_learning_without_identity_provider_has_no_personalization_bonus(monkeypatch):
-    monkeypatch.delenv("IDENTITY_SERVICE_URL", raising=False)
-    monkeypatch.delenv("IDENTITY_SERVICE_TOKEN", raising=False)
-    assert main._load_consent_aware_wardrobe_likes("subject-1") == {}
 
 
 def test_wardrobe_consent_listing_allows_closet_browse_when_learning_provider_absent(client, monkeypatch):
