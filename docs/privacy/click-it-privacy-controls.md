@@ -65,6 +65,14 @@ No country, age threshold, legal basis, retention period, transfer rule or guard
 
 The policy registry must be maintained through legal review. A new jurisdiction cannot be enabled solely because its country code is recognized.
 
+## 4A. Public media publication safety gate
+
+The Privacy Governance Service exposes `POST /internal/v1/privacy/assets/publication/evaluate`. Public profiles, community feeds, Marketplace media, merchant surfaces and shared links must call this gate before every publish, restore, syndication or share activation. The gate accepts only opaque asset and masking-attestation references; it never accepts an image.
+
+It requires a trusted Vision attestation tied to the exact asset and target surface. The attestation must confirm that all detected faces were masked before publication, zero unmasked faces remain, every detected face region was processed, and no face recognition, face embeddings or age estimation occurred. Missing, stale, mismatched or incomplete evidence blocks publication.
+
+This deliberately masks all detected faces on public assets rather than trying to distinguish children from adults by appearance. It does not identify people or estimate age. This policy is more conservative than a child-only gate and must be disclosed in the product's media-publication terms. The repository contains the gate contract; every actual public publishing path still needs to integrate it and pass end-to-end tests before the platform can claim global protection.
+
 ## 5. Photographed-person report and removal workflow
 
 The public BFF intake is:
