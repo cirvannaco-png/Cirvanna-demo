@@ -178,6 +178,35 @@ async def marketplace_description_search(payload: MarketplaceSearchIn) -> dict:
 
 
 
+class WardrobeFeedbackIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    item_id: str = Field(min_length=3, max_length=128)
+    event_id: str = Field(min_length=8, max_length=128)
+    signal: Literal["like", "dislike", "avoid", "modify", "wear"]
+    consent_receipt_id: str = Field(min_length=8, max_length=128)
+    target_type: Literal["item", "attribute"] | None = None
+    target_value: str | None = Field(default=None, min_length=1, max_length=180)
+
+
+class WardrobeConsentIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    scope: Literal["style_learning", "personalization", "profile_storage"]
+    granted: bool = True
+
+
+class WardrobeRecommendationIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    query: str = Field(min_length=2, max_length=160)
+    category: str | None = Field(default=None, max_length=80)
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    limit: int = Field(default=10, ge=1, le=25)
+    occasion: str | None = Field(default=None, max_length=120)
+    location: str | None = Field(default=None, max_length=120)
+    climate: str | None = Field(default=None, max_length=120)
+    exclude_owned_products: bool = True
+
+
+
 async def _verified_commerce_subject(client: httpx.AsyncClient, request: Request) -> tuple[str, str]:
     authorization = request.headers.get("authorization", "")
     scheme, _, user_token = authorization.partition(" ")
@@ -535,34 +564,6 @@ async def marketplace_click_it(
     if response.status_code in {502, 503}:
         raise HTTPException(503 if response.status_code == 503 else 502, detail=safe)
     raise HTTPException(502, detail={"code": "CLICK_IT_FAILED"})
-
-
-class WardrobeFeedbackIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    item_id: str = Field(min_length=3, max_length=128)
-    event_id: str = Field(min_length=8, max_length=128)
-    signal: Literal["like", "dislike", "avoid", "modify", "wear"]
-    consent_receipt_id: str = Field(min_length=8, max_length=128)
-    target_type: Literal["item", "attribute"] | None = None
-    target_value: str | None = Field(default=None, min_length=1, max_length=180)
-
-
-class WardrobeConsentIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    scope: Literal["style_learning", "personalization", "profile_storage"]
-    granted: bool = True
-
-
-class WardrobeRecommendationIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    query: str = Field(min_length=2, max_length=160)
-    category: str | None = Field(default=None, max_length=80)
-    currency: str | None = Field(default=None, min_length=3, max_length=3)
-    limit: int = Field(default=10, ge=1, le=25)
-    occasion: str | None = Field(default=None, max_length=120)
-    location: str | None = Field(default=None, max_length=120)
-    climate: str | None = Field(default=None, max_length=120)
-    exclude_owned_products: bool = True
 
 
 def _page_html() -> str:
