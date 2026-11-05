@@ -126,6 +126,7 @@ class ClickItConsentGrant(BaseModel):
     consent_image_processing: bool
     consent_click_it: bool
     photographed_people_status: Literal["no_people", "adults_only", "contains_minor"]
+    photographed_people_consent_confirmed: bool = False
     consent_version: str = Field(min_length=1, max_length=80)
     twin_id: str | None = Field(default=None, min_length=3, max_length=160)
     guardian_verification_reference: str | None = Field(default=None, min_length=12, max_length=200)
@@ -845,6 +846,7 @@ async def create_click_it_consent(payload: ClickItConsentGrant, request: Request
                 "consent_image_processing": payload.consent_image_processing,
                 "consent_click_it": payload.consent_click_it,
                 "photographed_people_status": payload.photographed_people_status,
+                "photographed_people_consent_confirmed": payload.photographed_people_consent_confirmed,
                 "consent_version": payload.consent_version,
             }
             if payload.twin_id:
