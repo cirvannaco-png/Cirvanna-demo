@@ -256,13 +256,29 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     }
     if(e.target.id==="checkoutBtn"){
       if(mode!=="commerce"||!config.commerceBase||!config.userToken)return;
+      const marketCountry=$("marketCountry").value.trim().toUpperCase();
+      const destinationKey=$("destinationKey").value.trim();
+      const fulfillmentMode=$("fulfillmentMode").value;
+      const displayCurrency=$("displayCurrency").value.trim().toUpperCase()||(items.find(item=>item.display_currency)?.display_currency||"");
+      const checkoutPayload={confirm:true};
+      if(marketCountry&&destinationKey){
+        if(!displayCurrency){alert("Choose a display currency before market-aware checkout.");return}
+        Object.assign(checkoutPayload,{
+          destination_country_code:marketCountry,
+          destination_key:destinationKey,
+          fulfillment_mode:fulfillmentMode,
+          display_currency:displayCurrency,
+          payment_method:"card"
+        });
+      }
       let key="";
       try{
-        const storageKey="cirvanna-checkout:"+config.commerceBase+":"+cartVersion;
+        const contextKey=[marketCountry,destinationKey,fulfillmentMode,displayCurrency].join("|");
+        const storageKey="cirvanna-checkout:"+config.commerceBase+":"+cartVersion+":"+contextKey;
         key=sessionStorage.getItem(storageKey)||"";
         if(!key){key=crypto.randomUUID();sessionStorage.setItem(storageKey,key)}
       }catch{key=key||crypto.randomUUID()}
-      fetch(config.commerceBase+"/checkout",{method:"POST",headers:{Authorization:"Bearer "+config.userToken,"Idempotency-Key":key,Accept:"application/json"}})
+      fetch(config.commerceBase+"/checkout",{method:"POST",headers:{Authorization:"Bearer "+config.userToken,"Idempotency-Key":key,Accept:"application/json","Content-Type":"application/json"},body:JSON.stringify(checkoutPayload)})
         .then(async response=>{let data;try{data=await response.json()}catch{throw new Error("Checkout API returned invalid JSON.")}if(!response.ok)throw new Error((data.detail&&data.detail.code)||"Checkout API returned HTTP "+response.status+".");let target;try{target=new URL(data.checkout_url||(data.order&&data.order.checkout_url))}catch{throw new Error("Checkout provider did not return a valid URL.")}if(target.protocol!=="https:"||target.hostname!=="checkout.stripe.com")throw new Error("Payment provider returned a URL outside the trusted Stripe Checkout host.");return target.href})
         .then(url=>{setStatus("Hosted checkout session created; opening Stripe Checkout…");window.location.assign(url)})
         .catch(err=>{setStatus((err.message||"Checkout could not start")+" Checkout is not confirmed paid.",true);alert(err.message||"Checkout could not start.")});
