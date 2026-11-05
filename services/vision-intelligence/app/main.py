@@ -621,57 +621,64 @@ async def click_it_scan(
     # Privacy detection and masking must complete first.
     privacy_ready, privacy_reason = detector_configuration()
     if not privacy_ready:
+        decoded.close()
         raise HTTPException(
             503,
             detail={"code": "CLICK_IT_PRIVACY_DETECTOR_NOT_READY", "reason": privacy_reason},
         )
-    privacy_safe_image, faces_masked = anonymize_click_it_image(decoded)
-    decoded.close()  # Drop the unmasked decoded image before any downstream model work.
+    try:
+        privacy_safe_image, faces_masked = anonymize_click_it_image(decoded)
+    finally:
+        decoded.close()  # Drop the unmasked decoded image even when masking fails.
     # A caller who declares people in frame must receive a positive face detection
     # and masking result. Zero detections are not treated as proof of a safe image.
     if photographed_people_status in {"adults_only", "contains_minor"} and faces_masked < 1:
         privacy_safe_image.close()
         raise HTTPException(503, detail={"code": "CLICK_IT_PRIVACY_DETECTION_UNCERTAIN"})
-    quality = evaluate_image_quality(privacy_safe_image)
-    if not quality["passed"]:
-        raise HTTPException(
-            422,
-            detail={
-                "code": "IMAGE_QUALITY_REJECTED",
-                "quality": quality,
-                "message": "Retake the photo with better lighting, focus, contrast, and the product clearly in frame.",
+    try:
+        quality = evaluate_image_quality(privacy_safe_image)
+        if not quality["passed"]:
+            raise HTTPException(
+                422,
+                detail={
+                    "code": "IMAGE_QUALITY_REJECTED",
+                    "quality": quality,
+                    "message": "Retake the photo with better lighting, focus, contrast, and the product clearly in frame.",
+                },
+            )
+        query_vector = _image_embedding(privacy_safe_image)
+        offers, truncated = await _live_offers()
+        if category and category.strip():
+            selected = category.strip().casefold()
+            offers = [
+                item for item in offers
+                if str(item.get("category", "")).casefold() == selected
+                or str((item.get("product") or {}).get("category", "")).casefold() == selected
+            ]
+        results = _rank_offers(query_vector, offers, limit)
+        response_payload = {
+            "status": "complete",
+            "scan_id": str(uuid.uuid4()),
+            "search_mode": "image_to_catalog_text_similarity",
+            "image_quality": quality,
+            "privacy": {
+                "face_detection": "completed",
+                "faces_masked": faces_masked,
+                "face_recognition": False,
+                "original_image_persisted": False,
             },
-        )
-    query_vector = _image_embedding(privacy_safe_image)
-    offers, truncated = await _live_offers()
-    if category and category.strip():
-        selected = category.strip().casefold()
-        offers = [
-            item for item in offers
-            if str(item.get("category", "")).casefold() == selected
-            or str((item.get("product") or {}).get("category", "")).casefold() == selected
-        ]
-    results = _rank_offers(query_vector, offers, limit)
-    return JSONResponse(content={
-        "status": "complete",
-        "scan_id": str(uuid.uuid4()),
-        "search_mode": "image_to_catalog_text_similarity",
-        "image_quality": quality,
-        "privacy": {
-            "face_detection": "completed",
-            "faces_masked": faces_masked,
-            "face_recognition": False,
-            "original_image_persisted": False,
-        },
-        "candidate_count": len(results),
-        "catalog_offer_count": len(offers),
-        "results": results,
-        "catalog_truncated": truncated,
-        "model": {"id": MODEL_ID, "revision": os.getenv("CLIP_MODEL_REVISION")},
-        "scores_are_probabilities": False,
-        "warning": "Scores rank the live catalog but are not calibrated match probabilities; visually verify the result before buying.",
-        "image_persisted": False,
-    }, headers={"Cache-Control": "no-store, private"})
+            "candidate_count": len(results),
+            "catalog_offer_count": len(offers),
+            "results": results,
+            "catalog_truncated": truncated,
+            "model": {"id": MODEL_ID, "revision": os.getenv("CLIP_MODEL_REVISION")},
+            "scores_are_probabilities": False,
+            "warning": "Scores rank the live catalog but are not calibrated match probabilities; visually verify the result before buying.",
+            "image_persisted": False,
+        }
+    finally:
+        privacy_safe_image.close()  # Release the masked working image on success and every failure path.
+    return JSONResponse(content=response_payload, headers={"Cache-Control": "no-store, private"})
 
 
 @app.post("/v1/twin/infer", dependencies=[Depends(require_worker_auth)], tags=["virtual-twin"])
