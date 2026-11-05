@@ -116,6 +116,7 @@ def test_feedback_requires_an_active_wardrobe_item(client, monkeypatch):
 
 def test_feedback_is_committed_to_tal_and_npl_with_explicit_consent(client, monkeypatch):
     create(client)
+    transition(client)
     delivered = []
     def fake_delivery(**kwargs):
         delivered.append(kwargs)
@@ -143,6 +144,7 @@ def test_feedback_is_committed_to_tal_and_npl_with_explicit_consent(client, monk
 
 def test_feedback_replay_is_idempotent_and_changed_replay_conflicts(client, monkeypatch):
     create(client)
+    transition(client)
     calls = []
     monkeypatch.setattr(main, "deliver_learning_event", lambda **kwargs: calls.append(kwargs) or {"tal_status": "recorded"})
     body = {
@@ -164,6 +166,7 @@ def test_feedback_replay_is_idempotent_and_changed_replay_conflicts(client, monk
 
 def test_negative_attribute_feedback_must_match_owned_item(client, monkeypatch):
     create(client)
+    transition(client)
     called = []
     monkeypatch.setattr(main, "deliver_learning_event", lambda **kwargs: called.append(kwargs))
     response = client.post("/v1/feedback", headers=auth(), json={
@@ -182,6 +185,7 @@ def test_negative_attribute_feedback_must_match_owned_item(client, monkeypatch):
 
 def test_feedback_audit_is_user_scoped(client, monkeypatch):
     create(client)
+    transition(client)
     monkeypatch.setattr(main, "deliver_learning_event", lambda **kwargs: {"tal_status": "recorded"})
     body = {
         "owner_user_id": "user-1", "item_id": "item-001",
