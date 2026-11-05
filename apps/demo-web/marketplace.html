@@ -335,6 +335,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     if(image.size>10*1024*1024){setAiStatus("clickItStatus","Photo exceeds the 10 MB upload limit. Choose a smaller image.",true);return}
     if(!["image/jpeg","image/png","image/webp"].includes(image.type)){setAiStatus("clickItStatus","Use a JPEG, PNG or WEBP photo.",true);return}
     if(!$("clickItImageConsent").checked||!$("clickItSearchConsent").checked){setAiStatus("clickItStatus","Both explicit consent checkboxes are required.",true);return}
+    if($("clickItPeopleStatus").value==="unknown"){setAiStatus("clickItStatus","Unknown photographed-person status blocks processing. Confirm that no people, adults only, or a child is visible.",true);return}
     const form=new FormData();
     form.append("consent_id",$("clickItConsentId").value.trim());
     form.append("consent_image_processing","true");form.append("consent_click_it","true");form.append("photographed_people_status", $("clickItPeopleStatus").value);
@@ -369,6 +370,10 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       if(message==="CONSENT_PROVIDER_NOT_CONFIGURED")message="The server-side consent provider is not deployed/configured yet. Your photo was not sent for model processing.";
       if(message==="VISION_INFERENCE_NOT_CONFIGURED")message="The private vision worker or its pinned model assets are not configured. No result was fabricated.";
       if(message==="TWIN_REGISTRY_NOT_CONFIGURED")message="Twin personalization is not configured; a basic marketplace scan should not require a Twin.";
+      if(message==="GUARDIAN_VERIFICATION_PROVIDER_NOT_CONFIGURED"||message==="GUARDIAN_AUTHORITY_NOT_VERIFIED")message="Guardian authority could not be verified. The photograph was not processed.";
+      if(message==="CONSENT_NOT_VERIFIED")message="The required purpose-specific or guardian consent is not active. The photograph was not processed.";
+      if(message==="PRIVACY_POLICY_BLOCKED"||message==="PRIVACY_POLICY_REGISTRY_UNAVAILABLE"||message==="JURISDICTION_RESOLVER_PROVIDER_NOT_CONFIGURED")message="The jurisdiction-aware privacy check is unavailable or did not pass. The photograph was not processed.";
+      if(message==="CLICK_IT_PRIVACY_DETECTOR_NOT_READY")message="Face masking is not ready. The unmasked photograph was not sent for product matching.";
       setAiStatus("clickItStatus",message+". No demo or fabricated matches were shown.",true);
     }finally{setAiBusy("clickItBtn",false,"Scan photo and search marketplace")}
   });
