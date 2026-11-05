@@ -48,11 +48,11 @@ def test_public_offers_are_proxied_without_exposing_catalog_credentials(client, 
         return FakeResponse({"items": [{"variant_id": "v1"}], "total": 1, "offset": 0, "limit": 20})
 
     monkeypatch.setattr(main.httpx, "get", fake_get)
-    response = client.get("/api/commerce/marketplace/offers?q=linen&category=Fashion&offset=20&limit=10")
+    response = client.get("/api/commerce/marketplace/offers?q=linen&category=Fashion&market_country_code=KE&display_currency=KES&offset=20&limit=10")
     assert response.status_code == 200
     assert response.json()["total"] == 1
     assert seen["url"] == "https://commerce.example.test/marketplace/offers"
-    assert seen["params"] == {"offset": 20, "limit": 10, "q": "linen", "category": "Fashion"}
+    assert seen["params"] == {"offset": 20, "limit": 10, "q": "linen", "category": "Fashion", "market_country_code": "KE", "display_currency": "KES"}
     assert "Authorization" not in seen["headers"]
     assert "catalog-server-only-test-token" not in response.text
 
@@ -274,3 +274,44 @@ def test_description_search_prefers_xari_environment_names(client, monkeypatch):
     assert response.status_code == 200, response.text
     assert fake.calls[0][1] == "https://xari.example.test/v1/marketplace/search"
     assert fake.calls[0][2]["headers"]["Authorization"] == "Bearer xari-internal-token-at-least-thirty-two-bytes"
+
+
+def test_offer_comparison_proxy_preserves_unavailable_reason_without_claiming_cost(client, monkeypatch):
+    configure_upstreams(monkeypatch)
+    seen = {}
+    def fake_post(url, **kwargs):
+        seen["url"] = url
+        seen.update(kwargs)
+        return FakeResponse({"status": "unavailable", "reason_code": "TAX_QUOTE_NOT_AUTHORITATIVE", "comparison": None})
+    monkeypatch.setattr(main.httpx, "post", fake_post)
+    response = client.post("/api/commerce/marketplace/compare", json={
+        "variant_ids": [
+            "11111111-1111-4111-8111-111111111111",
+            "22222222-2222-4222-8222-222222222222",
+        ],
+        "destination_country_code": "KE",
+        "destination_key": "Nakuru/Subukia",
+        "fulfillment_mode": "courier_delivery",
+        "display_currency": "KES",
+        "payment_method": "card",
+    })
+    assert response.status_code == 200
+    assert response.json()["status"] == "unavailable"
+    assert response.json()["reason_code"] == "TAX_QUOTE_NOT_AUTHORITATIVE"
+    assert seen["url"] == "https://commerce.example.test/marketplace/compare"
+    assert seen["json"]["display_currency"] == "KES"
+
+
+def test_offer_comparison_rejects_invalid_variant_identity_before_upstream(client, monkeypatch):
+    configure_upstreams(monkeypatch)
+    calls = []
+    monkeypatch.setattr(main.httpx, "post", lambda *args, **kwargs: calls.append(args))
+    response = client.post("/api/commerce/marketplace/compare", json={
+        "variant_ids": ["not-a-uuid", "also-not-a-uuid"],
+        "destination_country_code": "KE",
+        "destination_key": "Nakuru",
+        "fulfillment_mode": "collection",
+        "display_currency": "KES",
+    })
+    assert response.status_code == 422
+    assert calls == []
