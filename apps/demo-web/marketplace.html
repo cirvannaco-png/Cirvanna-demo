@@ -78,6 +78,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
             <option value="contains_minor">A child or minor is visible</option>
           </select>
         </label>
+        <label class="consent-line wide"><input id="clickItPeopleConsent" type="checkbox"><span>If any people are visible, I confirm I have permission to submit the photo and, where required, parent/guardian authority for a minor. Cirvanna independently verifies guardian authority when policy requires it.</span></label>
         <p class="wide">If a child is visible, guardian authorization may be required by the applicable privacy rules. Child images are never eligible for face reveal, public sharing or behavioural profiling.</p>
         <input id="clickItGuardianVerificationRef" class="wide" type="text" minlength="12" maxlength="200" autocomplete="off" placeholder="Guardian verification reference (only if issued by Cirvanna)" aria-label="Guardian verification reference, optional">
         <p class="wide">A guardian reference is checked with Cirvanna’s verification provider. Entering a reference does not itself prove guardianship; processing remains blocked unless the provider verifies it when required.</p>
@@ -336,6 +337,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     if(!["image/jpeg","image/png","image/webp"].includes(image.type)){setAiStatus("clickItStatus","Use a JPEG, PNG or WEBP photo.",true);return}
     if(!$("clickItImageConsent").checked||!$("clickItSearchConsent").checked){setAiStatus("clickItStatus","Both explicit consent checkboxes are required.",true);return}
     if($("clickItPeopleStatus").value==="unknown"){setAiStatus("clickItStatus","Unknown photographed-person status blocks processing. Confirm that no people, adults only, or a child is visible.",true);return}
+    if($("clickItPeopleStatus").value!=="no_people"&&!$("clickItPeopleConsent").checked){setAiStatus("clickItStatus","Confirm that you have permission to submit the photo when people are visible. Guardian authority is verified separately when required.",true);return}
     const form=new FormData();
     const photographedPeopleStatus=$("clickItPeopleStatus").value;
     const twinId=config.twinId||"";
@@ -350,6 +352,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
         consent_image_processing:true,
         consent_click_it:true,
         photographed_people_status:$("clickItPeopleStatus").value,
+        photographed_people_consent_confirmed:$("clickItPeopleConsent").checked,
         consent_version:"click-it-privacy-v1"
       };
       if(twinId&&twinResourceAllowed)consentPayload.twin_id=twinId;
