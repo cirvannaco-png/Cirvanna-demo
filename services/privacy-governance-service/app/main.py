@@ -874,6 +874,57 @@ async def resolve_asset_reference(asset_reference: str) -> dict:
     return resolved
 
 
+@app.post("/internal/v1/privacy/assets/publication/evaluate", dependencies=[Depends(require_internal)])
+async def evaluate_asset_publication(payload: AssetPublicationGateIn) -> dict:
+    """Block public exposure unless a trusted Vision service attests every face is masked."""
+    if not ASSET_ID_RE.fullmatch(payload.asset_id):
+        raise HTTPException(422, detail={"code": "INVALID_ASSET_ID"})
+    receipt = await post_trusted(
+        "VISION_PRIVACY_ATTESTATION",
+        "/internal/v1/privacy/mask-attestations/verify",
+        {
+            "asset_id": payload.asset_id,
+            "attestation_id": payload.masking_attestation_id,
+            "target_surface": payload.target_surface,
+            "purpose": "public_media_publication",
+            "require_all_detected_faces_masked": True,
+            "prohibit_face_recognition": True,
+            "prohibit_face_embeddings": True,
+            "prohibit_age_estimation": True,
+        },
+    )
+    digest = receipt.get("masking_model_sha256")
+    valid = (
+        receipt.get("verified") is True
+        and receipt.get("active") is True
+        and receipt.get("asset_id") == payload.asset_id
+        and receipt.get("attestation_id") == payload.masking_attestation_id
+        and receipt.get("all_detected_faces_masked") is True
+        and receipt.get("unmasked_face_count") == 0
+        and receipt.get("masking_applied_before_publication") is True
+        and receipt.get("face_recognition_performed") is False
+        and receipt.get("face_embeddings_created") is False
+        and receipt.get("age_estimation_performed") is False
+        and receipt.get("all_face_regions_processed") is True
+        and isinstance(digest, str)
+        and bool(re.fullmatch(r"[0-9a-f]{64}", digest))
+    )
+    if not valid:
+        raise HTTPException(403, detail={"code": "PUBLICATION_PRIVACY_ATTESTATION_NOT_VALID"})
+    return {
+        "decision": "PASS",
+        "asset_id": payload.asset_id,
+        "target_surface": payload.target_surface,
+        "all_detected_faces_masked": True,
+        "unmasked_face_count": 0,
+        "face_recognition_performed": False,
+        "face_embeddings_created": False,
+        "age_estimation_performed": False,
+        "masking_model_sha256": digest,
+        "public_unmasked_face_exposure_allowed": False,
+    }
+
+
 @app.post("/internal/v1/image-rights/requests", dependencies=[Depends(require_internal)])
 async def create_image_rights_request(payload: RightsRequestIn, db: Session = Depends(session_for_request)) -> dict:
     resolved = await resolve_asset_reference(payload.asset_reference)
