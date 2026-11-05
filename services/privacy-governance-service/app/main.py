@@ -780,6 +780,11 @@ async def evaluate_click_it_policy(payload: JurisdictionEvaluateIn, db: Session 
 async def rights_deadline_context(asset_id: str, db: Session, created_at: datetime) -> dict:
     """Use the strictest current signed jurisdiction deadline; otherwise set only platform triage SLA."""
     try:
+        triage_hours = int(os.getenv("PRIVACY_RIGHTS_TRIAGE_HOURS", "4"))
+    except ValueError:
+        triage_hours = 4
+    triage_hours = max(1, min(triage_hours, 24))
+    try:
         resolution = await post_trusted(
             "JURISDICTION_RESOLVER",
             "/internal/v1/privacy/image-rights/jurisdictions/resolve",
@@ -841,13 +846,8 @@ async def rights_deadline_context(asset_id: str, db: Session, created_at: dateti
             "applicable_jurisdictions": normalized,
             "legal_response_due_at": created_at + timedelta(hours=legal_hours),
             "deadline_basis": "resolved_signed_jurisdiction_policy",
-            "triage_hours": int(os.getenv("PRIVACY_RIGHTS_TRIAGE_HOURS", "4")),
+            "triage_hours": triage_hours,
         }
-    try:
-        triage_hours = int(os.getenv("PRIVACY_RIGHTS_TRIAGE_HOURS", "4"))
-    except ValueError:
-        triage_hours = 4
-    triage_hours = max(1, min(triage_hours, 24))
     return {
         "applicable_jurisdictions": [],
         "legal_response_due_at": None,
@@ -881,6 +881,9 @@ async def create_image_rights_request(payload: RightsRequestIn, db: Session = De
         raise HTTPException(429, detail={"code": "IMAGE_RIGHTS_ASSET_RATE_LIMITED"})
     request_id = str(uuid.uuid4())
     status_token = secrets.token_urlsafe(36)
+    created_at = utcnow()
+    deadline_context = await rights_deadline_context(asset_id, db, created_at)
+    triage_due_at = created_at + timedelta(hours=deadline_context["triage_hours"])
     status_digest = hashlib.sha256(status_token.encode("utf-8")).hexdigest()
     urgent = payload.reason_code in URGENT_REASONS
     row = ImageRightsCase(
@@ -894,8 +897,12 @@ async def create_image_rights_request(payload: RightsRequestIn, db: Session = De
         status="quarantine_pending" if urgent else "under_review",
         quarantined=False,
         status_token_digest=status_digest,
-        created_at=utcnow(),
-        updated_at=utcnow(),
+        applicable_jurisdictions=deadline_context["applicable_jurisdictions"],
+        triage_due_at=triage_due_at,
+        legal_response_due_at=deadline_context["legal_response_due_at"],
+        deadline_basis=deadline_context["deadline_basis"],
+        created_at=created_at,
+        updated_at=created_at,
     )
     db.add(row)
     audit(db, "image_rights_request_created", "image_rights_case", request_id, "anonymous_reporter", {
@@ -956,6 +963,10 @@ def image_rights_status(
         "status": row.status,
         "quarantined": row.quarantined,
         "updated_at": row.updated_at.isoformat(),
+        "triage_due_at": row.triage_due_at.isoformat(),
+        "legal_response_due_at": row.legal_response_due_at.isoformat() if row.legal_response_due_at else None,
+        "deadline_basis": row.deadline_basis,
+        "applicable_jurisdictions": row.applicable_jurisdictions,
         "resolution_code": row.resolution_code,
     }
 
@@ -977,6 +988,9 @@ def image_rights_queue(db: Session = Depends(session_for_request)) -> dict:
                 "quarantined": row.quarantined,
                 "created_at": row.created_at.isoformat(),
                 "updated_at": row.updated_at.isoformat(),
+                "triage_due_at": row.triage_due_at.isoformat(),
+                "legal_response_due_at": row.legal_response_due_at.isoformat() if row.legal_response_due_at else None,
+                "deadline_basis": row.deadline_basis,
             }
             for row in rows
         ]
