@@ -466,7 +466,7 @@ def ready(db: Session = Depends(session_for_request)) -> dict:
 async def grant_consent(payload: ConsentGrantIn, db: Session = Depends(session_for_request)) -> dict:
     if not payload.consent_image_processing or not payload.consent_click_it:
         raise HTTPException(403, detail={"code": "EXPLICIT_CLICK_IT_CONSENT_REQUIRED"})
-    if payload.photographed_people_status == "adults_only" and not payload.photographed_people_consent_confirmed:
+    if payload.photographed_people_status != "no_people" and not payload.photographed_people_consent_confirmed:
         raise HTTPException(403, detail={"code": "PHOTOGRAPHED_PEOPLE_CONSENT_REQUIRED"})
     scopes = ["image_processing", "click_it", DECLARATION_SCOPES[payload.photographed_people_status]]
     guardian_verified = False
