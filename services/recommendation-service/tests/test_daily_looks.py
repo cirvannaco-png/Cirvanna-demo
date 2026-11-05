@@ -132,3 +132,19 @@ def test_capabilities_report_preview_is_not_enabled():
     assert data["tari_daily_look_orchestration"] is True
     assert data["tari_daily_look_roles"] == ["everyday", "elevated", "explore"]
     assert data["virtual_twin_preview_enabled"] is False
+
+
+def test_category_values_used_by_wardrobe_ui_are_recognized():
+    items = [
+        {"item_id": "top-101", "owner_user_id": "user-123", "display_name": "Linen shirt", "category": "tops", "attributes": [], "status": "active"},
+        {"item_id": "bottom-101", "owner_user_id": "user-123", "display_name": "Linen trousers", "category": "lower_body", "attributes": [], "status": "active"},
+    ]
+    result = build_daily_looks(
+        request_id="daily-ui-category",
+        user_id="user-123",
+        wardrobe_items=items,
+        local_date="2026-11-05",
+    )
+    assert result["ready_count"] == 1
+    assert result["looks"][0]["item_ids"]
+    assert "bottom-101" in result["looks"][0]["item_ids"]
