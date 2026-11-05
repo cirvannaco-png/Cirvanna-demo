@@ -110,6 +110,7 @@ def test_health_and_readiness_do_not_claim_missing_provider_readiness(client):
     assert ready.json()["ready"] is False
     assert ready.json()["jurisdiction_resolver_configured"] is False
     assert ready.json()["content_lifecycle_configured"] is False
+    assert ready.json()["vision_privacy_attestation_configured"] is False
 
 
 def test_publication_gate_requires_signed_mask_attestation_for_every_public_surface(client, monkeypatch):
