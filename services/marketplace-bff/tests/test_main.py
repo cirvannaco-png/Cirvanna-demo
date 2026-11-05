@@ -526,7 +526,7 @@ def test_image_rights_request_can_be_submitted_without_uploader_login_and_quaran
         "request_id": "rights-request-0001",
         "status": "quarantined",
         "quarantined": True,
-        "status_token": "opaque-status-token",
+        "status_token": "opaque-request-status-token-0001",
     }, status_code=202)])
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.post("/api/privacy/image-requests", json={
@@ -539,6 +539,7 @@ def test_image_rights_request_can_be_submitted_without_uploader_login_and_quaran
     assert response.status_code == 202
     assert response.headers["cache-control"] == "no-store, private"
     assert response.json()["quarantined"] is True
+    assert len(response.json()["status_token"]) >= 24
     assert fake.calls[0][1].endswith("/internal/v1/image-rights/requests")
     payload = fake.calls[0][2]["json"]
     assert payload["jurisdiction_hint_is_unverified"] is True
