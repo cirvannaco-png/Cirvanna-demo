@@ -7,6 +7,7 @@ on:
       - "services/commerce-service/**"
       - "services/decision-service/**"
       - "services/marketplace-bff/**"
+      - "services/privacy-governance-service/**"
       - ".github/workflows/container-image-builds.yml"
   push:
     branches: [main]
@@ -15,6 +16,7 @@ on:
       - "services/commerce-service/**"
       - "services/decision-service/**"
       - "services/marketplace-bff/**"
+      - "services/privacy-governance-service/**"
       - ".github/workflows/container-image-builds.yml"
   workflow_dispatch:
 
@@ -35,3 +37,5 @@ jobs:
         run: docker build -f services/decision-service/Dockerfile -t cirvanna-decision:ci .
       - name: Build Marketplace BFF image
         run: docker build -f services/marketplace-bff/Dockerfile -t cirvanna-marketplace-bff:ci .
+      - name: Build Privacy Governance service image
+        run: docker build -f services/privacy-governance-service/Dockerfile -t cirvanna-privacy-governance:ci services/privacy-governance-service
