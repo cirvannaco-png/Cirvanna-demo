@@ -337,10 +337,12 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     if(!$("clickItImageConsent").checked||!$("clickItSearchConsent").checked){setAiStatus("clickItStatus","Both explicit consent checkboxes are required.",true);return}
     if($("clickItPeopleStatus").value==="unknown"){setAiStatus("clickItStatus","Unknown photographed-person status blocks processing. Confirm that no people, adults only, or a child is visible.",true);return}
     const form=new FormData();
-    form.append("consent_id",$("clickItConsentId").value.trim());
-    form.append("consent_image_processing","true");form.append("consent_click_it","true");form.append("photographed_people_status", $("clickItPeopleStatus").value);
+    const photographedPeopleStatus=$("clickItPeopleStatus").value;
+    const twinId=config.twinId||"";
+    const twinResourceAllowed=photographedPeopleStatus!=="contains_minor";
+    form.append("consent_image_processing","true");form.append("consent_click_it","true");form.append("photographed_people_status",photographedPeopleStatus);
     const captureJurisdiction=$("clickItCaptureJurisdiction").value.trim();if(captureJurisdiction)form.append("capture_jurisdiction_hint",captureJurisdiction);
-    const twinId=config.twinId||"";if(twinId)form.append("twin_id",twinId);
+    if(twinId&&twinResourceAllowed)form.append("twin_id",twinId);
     form.append("product_image",image);
     setAiBusy("clickItBtn",true,"Scanning…");setAiStatus("clickItStatus","Checking your signed account, consent record and image quality, then searching live marketplace offers…");
     try{
@@ -350,6 +352,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
         photographed_people_status:$("clickItPeopleStatus").value,
         consent_version:"click-it-privacy-v1"
       };
+      if(twinId&&twinResourceAllowed)consentPayload.twin_id=twinId;
       const guardianReference=$("clickItGuardianVerificationRef").value.trim();
       if(guardianReference)consentPayload.guardian_verification_reference=guardianReference;
       const consentResponse=await fetch("/api/privacy/consents",{
