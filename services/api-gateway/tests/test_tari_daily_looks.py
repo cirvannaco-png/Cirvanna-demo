@@ -65,9 +65,10 @@ def test_tari_gateway_checks_subject_and_uses_only_active_usi_profile(monkeypatc
         observed["allow_without_consent"] = allow_without_consent
         return profile
 
-    def compose(payload, style_signals):
+    def compose(payload, style_signals, feedback_signals):
         observed["payload"] = payload
         observed["style_signals"] = style_signals
+        observed["feedback_signals"] = feedback_signals
         return {
             "schema_version": "1.0",
             "request_id": payload.request_id,
@@ -80,6 +81,7 @@ def test_tari_gateway_checks_subject_and_uses_only_active_usi_profile(monkeypatc
 
     monkeypatch.setattr(main, "_load_verified_usi_profile", load_profile)
     monkeypatch.setattr(main, "_load_persisted_npl_preferences", lambda **_kwargs: ())
+    monkeypatch.setattr(main, "_load_consent_aware_wardrobe_likes", lambda _subject: {"teal": 0.12, "linen": 0.06})
     monkeypatch.setattr(main, "_tari_daily_looks", compose)
     client = TestClient(main.app)
     response = client.post(
@@ -91,6 +93,7 @@ def test_tari_gateway_checks_subject_and_uses_only_active_usi_profile(monkeypatc
     assert observed["profile_subject"] == "signed-user-42"
     assert observed["allow_without_consent"] is True
     assert observed["style_signals"] == ["color:teal", "silhouette:relaxed"]
+    assert observed["feedback_signals"] == ["feedback:teal", "feedback:linen"]
     assert response.json()["mode"] == "tari_wardrobe_daily_looks"
 
 
