@@ -137,7 +137,7 @@ def test_feedback_is_committed_to_tal_and_npl_with_explicit_consent(client, monk
     assert delivered[0]["owner_user_id"] == "user-1"
     assert delivered[0]["target_value"] == "blue"
     from app.store import WardrobeFeedbackEventRow
-    with main.Session(store().engine) as session:
+    with main.Session(main.store().engine) as session:
         row = session.get(WardrobeFeedbackEventRow, ("user-1", "feedback-event-001"))
         assert row is not None and row.delivery_state == "delivered"
 
