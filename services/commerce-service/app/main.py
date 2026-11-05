@@ -1416,6 +1416,279 @@ def trusted_catalog_image_urls(product: dict[str, Any]) -> list[str]:
     return safe
 
 
+
+@app.get("/merchant/markets")
+def list_merchant_markets(
+    actor: Annotated[Actor, Depends(require_actor)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    merchant = approved_merchant(db, actor)
+    rows = list(db.scalars(select(MerchantOperatingMarket).where(
+        MerchantOperatingMarket.merchant_id == merchant.id
+    ).order_by(MerchantOperatingMarket.market_country_code)).all())
+    return {"items": [{
+        "market_country_code": row.market_country_code,
+        "state": row.state,
+        "display_currency": row.display_currency,
+        "locale": row.locale,
+        "activated_at": row.activated_at.isoformat() if row.activated_at else None,
+    } for row in rows]}
+
+
+@app.post("/merchant/markets", status_code=201)
+def declare_merchant_market(
+    payload: MarketDeclaration,
+    actor: Annotated[Actor, Depends(require_actor)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    merchant = approved_merchant(db, actor)
+    row = db.scalar(select(MerchantOperatingMarket).where(
+        MerchantOperatingMarket.merchant_id == merchant.id,
+        MerchantOperatingMarket.market_country_code == payload.market_country_code,
+    ))
+    if row is None:
+        row = MerchantOperatingMarket(
+            id=str(uuid.uuid4()), merchant_id=merchant.id,
+            market_country_code=payload.market_country_code, state="pending",
+            display_currency=payload.display_currency, locale=payload.locale,
+        )
+        db.add(row)
+    else:
+        row.display_currency = payload.display_currency
+        row.locale = payload.locale
+        # A merchant may not activate a market or reverse a block.
+        if row.state == "active":
+            row.state = "pending"
+            row.activated_by = None
+            row.activated_at = None
+    db.commit()
+    db.refresh(row)
+    return {
+        "market_country_code": row.market_country_code,
+        "state": row.state,
+        "display_currency": row.display_currency,
+        "locale": row.locale,
+        "activation_authority": "admin",
+    }
+
+
+@app.put("/admin/merchants/{merchant_id}/markets/{market_country_code}")
+def set_merchant_market_state(
+    merchant_id: uuid.UUID,
+    market_country_code: str,
+    payload: MarketActivation,
+    actor: Annotated[Actor, Depends(require_actor)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    if actor.role != "admin":
+        raise HTTPException(403, detail={"code": "ADMIN_REQUIRED"})
+    market_code = _valid_country(market_country_code)
+    merchant = db.get(Merchant, str(merchant_id))
+    if merchant is None:
+        raise HTTPException(404, detail={"code": "MERCHANT_NOT_FOUND"})
+    market = db.scalar(select(MerchantOperatingMarket).where(
+        MerchantOperatingMarket.merchant_id == merchant.id,
+        MerchantOperatingMarket.market_country_code == market_code,
+    ))
+    if market is None:
+        raise HTTPException(404, detail={"code": "MERCHANT_MARKET_NOT_DECLARED"})
+    if payload.state == "active":
+        if merchant.state != "approved":
+            raise HTTPException(409, detail={"code": "MERCHANT_NOT_APPROVED"})
+        display_currency = payload.display_currency or market.display_currency
+        if not display_currency:
+            raise HTTPException(409, detail={"code": "MARKET_DISPLAY_CURRENCY_REQUIRED"})
+        capable = list(db.scalars(select(MarketPaymentCapability).where(
+            MarketPaymentCapability.merchant_id == merchant.id,
+            MarketPaymentCapability.market_country_code == market_code,
+            MarketPaymentCapability.state == "active",
+        )).all())
+        if not any(
+            quote_is_current(item.observed_at, item.expires_at)
+            and display_currency in item.transaction_currencies
+            for item in capable
+        ):
+            raise HTTPException(409, detail={"code": "MARKET_PAYMENT_CAPABILITY_NOT_READY"})
+        market.display_currency = display_currency
+        market.locale = payload.locale or market.locale
+        market.activated_by = actor.user_id
+        market.activated_at = now()
+    else:
+        market.activated_by = None
+        market.activated_at = None
+    market.state = payload.state
+    market.updated_at = now()
+    db.commit()
+    return {
+        "merchant_id": merchant.id,
+        "market_country_code": market.market_country_code,
+        "state": market.state,
+        "display_currency": market.display_currency,
+        "locale": market.locale,
+        "activated_at": market.activated_at.isoformat() if market.activated_at else None,
+    }
+
+
+def _validate_quote_variant(db: Session, variant_id: str) -> Variant:
+    variant = db.get(Variant, variant_id)
+    if variant is None or variant.state != "active":
+        raise HTTPException(404, detail={"code": "ACTIVE_VARIANT_NOT_FOUND"})
+    return variant
+
+
+@app.post("/internal/market-context/variants/{variant_id}/fx-quotes", status_code=201)
+def ingest_fx_quote(
+    variant_id: uuid.UUID,
+    payload: FXQuoteIn,
+    db: Annotated[Session, Depends(get_db)],
+    token: Annotated[str | None, Header(alias="X-Commerce-Market-Context-Token")] = None,
+):
+    _require_market_context_token(token)
+    variant = _validate_quote_variant(db, str(variant_id))
+    if not quote_is_current(payload.observed_at, payload.expires_at):
+        raise HTTPException(422, detail={"code": "FX_QUOTE_NOT_CURRENT"})
+    existing = db.scalar(select(OfferFXQuote).where(
+        OfferFXQuote.variant_id == variant.id,
+        OfferFXQuote.provider == payload.provider,
+        OfferFXQuote.provider_quote_id == payload.provider_quote_id,
+    ))
+    if existing:
+        raise HTTPException(409, detail={"code": "FX_QUOTE_ALREADY_RECORDED"})
+    row = OfferFXQuote(
+        id=str(uuid.uuid4()), variant_id=variant.id,
+        base_currency=payload.base_currency, quote_currency=payload.quote_currency,
+        rate=payload.rate, provider=payload.provider, provider_quote_id=payload.provider_quote_id,
+        rounding_rule=payload.rounding_rule, spread_bps=payload.spread_bps,
+        observed_at=payload.observed_at, expires_at=payload.expires_at,
+    )
+    db.add(row)
+    db.commit()
+    return {
+        "quote_id": row.id, "variant_id": variant.id,
+        "base_currency": row.base_currency, "quote_currency": row.quote_currency,
+        "rate": str(row.rate), "provider": row.provider,
+        "provider_quote_id": row.provider_quote_id,
+        "observed_at": row.observed_at.isoformat(), "expires_at": row.expires_at.isoformat(),
+    }
+
+
+@app.post("/internal/market-context/variants/{variant_id}/fulfillment-quotes", status_code=201)
+def ingest_fulfillment_quote(
+    variant_id: uuid.UUID,
+    payload: FulfillmentQuoteIn,
+    db: Annotated[Session, Depends(get_db)],
+    token: Annotated[str | None, Header(alias="X-Commerce-Market-Context-Token")] = None,
+):
+    _require_market_context_token(token)
+    variant = _validate_quote_variant(db, str(variant_id))
+    if not quote_is_current(payload.observed_at, payload.expires_at):
+        raise HTTPException(422, detail={"code": "FULFILLMENT_QUOTE_NOT_CURRENT"})
+    existing = db.scalar(select(OfferFulfillmentQuote).where(
+        OfferFulfillmentQuote.variant_id == variant.id,
+        OfferFulfillmentQuote.provider == payload.provider,
+        OfferFulfillmentQuote.provider_quote_id == payload.provider_quote_id,
+    ))
+    if existing:
+        raise HTTPException(409, detail={"code": "FULFILLMENT_QUOTE_ALREADY_RECORDED"})
+    row = OfferFulfillmentQuote(
+        id=str(uuid.uuid4()), variant_id=variant.id,
+        destination_country_code=payload.destination_country_code,
+        destination_key=payload.destination_key.strip(), fulfillment_mode=payload.fulfillment_mode,
+        amount_minor=payload.amount_minor, currency=payload.currency, status=payload.status,
+        distance_km=payload.distance_km, provider=payload.provider,
+        provider_quote_id=payload.provider_quote_id, observed_at=payload.observed_at,
+        expires_at=payload.expires_at,
+    )
+    db.add(row)
+    db.commit()
+    return {"quote_id": row.id, "variant_id": variant.id, "destination_country_code": row.destination_country_code,
+        "destination_key": row.destination_key, "fulfillment_mode": row.fulfillment_mode,
+        "amount_minor": row.amount_minor, "currency": row.currency, "status": row.status,
+        "provider": row.provider, "observed_at": row.observed_at.isoformat(), "expires_at": row.expires_at.isoformat()}
+
+
+@app.post("/internal/market-context/variants/{variant_id}/tax-quotes", status_code=201)
+def ingest_tax_quote(
+    variant_id: uuid.UUID,
+    payload: TaxQuoteIn,
+    db: Annotated[Session, Depends(get_db)],
+    token: Annotated[str | None, Header(alias="X-Commerce-Market-Context-Token")] = None,
+):
+    _require_market_context_token(token)
+    variant = _validate_quote_variant(db, str(variant_id))
+    if not quote_is_current(payload.observed_at, payload.expires_at):
+        raise HTTPException(422, detail={"code": "TAX_QUOTE_NOT_CURRENT"})
+    existing = db.scalar(select(OfferTaxQuote).where(
+        OfferTaxQuote.variant_id == variant.id,
+        OfferTaxQuote.provider == payload.provider,
+        OfferTaxQuote.provider_quote_id == payload.provider_quote_id,
+    ))
+    if existing:
+        raise HTTPException(409, detail={"code": "TAX_QUOTE_ALREADY_RECORDED"})
+    row = OfferTaxQuote(
+        id=str(uuid.uuid4()), variant_id=variant.id,
+        destination_country_code=payload.destination_country_code,
+        jurisdiction=payload.jurisdiction.strip(), tax_category=payload.tax_category.strip(),
+        basis=payload.basis, amount_minor=payload.amount_minor, currency=payload.currency,
+        status=payload.status, authoritative=payload.authoritative, provider=payload.provider,
+        provider_quote_id=payload.provider_quote_id, rule_version=payload.rule_version,
+        observed_at=payload.observed_at, expires_at=payload.expires_at,
+    )
+    db.add(row)
+    db.commit()
+    return {"quote_id": row.id, "variant_id": variant.id, "destination_country_code": row.destination_country_code,
+        "jurisdiction": row.jurisdiction, "tax_category": row.tax_category, "basis": row.basis,
+        "amount_minor": row.amount_minor, "currency": row.currency, "status": row.status,
+        "authoritative": row.authoritative, "provider": row.provider,
+        "observed_at": row.observed_at.isoformat(), "expires_at": row.expires_at.isoformat()}
+
+
+@app.put("/internal/market-context/merchants/{merchant_id}/payment-capabilities")
+def upsert_market_payment_capability(
+    merchant_id: uuid.UUID,
+    payload: PaymentCapabilityIn,
+    db: Annotated[Session, Depends(get_db)],
+    token: Annotated[str | None, Header(alias="X-Commerce-Market-Context-Token")] = None,
+):
+    _require_market_context_token(token)
+    merchant = db.get(Merchant, str(merchant_id))
+    if merchant is None:
+        raise HTTPException(404, detail={"code": "MERCHANT_NOT_FOUND"})
+    market = db.scalar(select(MerchantOperatingMarket).where(
+        MerchantOperatingMarket.merchant_id == merchant.id,
+        MerchantOperatingMarket.market_country_code == payload.market_country_code,
+    ))
+    if market is None:
+        raise HTTPException(404, detail={"code": "MERCHANT_MARKET_NOT_DECLARED"})
+    if not quote_is_current(payload.observed_at, payload.expires_at):
+        raise HTTPException(422, detail={"code": "PAYMENT_CAPABILITY_NOT_CURRENT"})
+    row = db.scalar(select(MarketPaymentCapability).where(
+        MarketPaymentCapability.merchant_id == merchant.id,
+        MarketPaymentCapability.market_country_code == payload.market_country_code,
+        MarketPaymentCapability.provider == payload.provider,
+    ))
+    if row is None:
+        row = MarketPaymentCapability(
+            id=str(uuid.uuid4()), merchant_id=merchant.id,
+            market_country_code=payload.market_country_code, provider=payload.provider,
+            state=payload.state,
+        )
+        db.add(row)
+    row.state = payload.state
+    row.transaction_currencies = payload.transaction_currencies
+    row.settlement_currencies = payload.settlement_currencies
+    row.payment_methods = payload.payment_methods
+    row.provider_reference = payload.provider_reference
+    row.observed_at = payload.observed_at
+    row.expires_at = payload.expires_at
+    db.commit()
+    return {"capability_id": row.id, "merchant_id": merchant.id, "market_country_code": row.market_country_code,
+        "provider": row.provider, "state": row.state, "transaction_currencies": row.transaction_currencies,
+        "settlement_currencies": row.settlement_currencies, "payment_methods": row.payment_methods,
+        "observed_at": row.observed_at.isoformat(), "expires_at": row.expires_at.isoformat()}
+
+
+
 @app.post("/merchant/listings", status_code=201)
 def create_listing(payload: ListingIn, actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Session, Depends(get_db)]):
     merchant = approved_merchant(db, actor)
