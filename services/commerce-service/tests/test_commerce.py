@@ -663,7 +663,15 @@ def test_market_declarations_are_pending_until_admin_activation(client):
     denied = client.put(
         f"/admin/merchants/{seeded['merchant_id']}/markets/UG",
         headers=auth("admin-1", "admin"),
-        json={"state":"active","display_currency":"UGX","locale":"en-UG"},
+        json={
+            "state":"active","display_currency":"UGX","locale":"en-UG",
+            "tax_provider":"test-tax","tax_provider_reference":"tax-market-ref",
+            "tax_capability_observed_at":main.now().isoformat(),
+            "tax_capability_expires_at":(main.now()+main.timedelta(hours=1)).isoformat(),
+            "fulfillment_provider":"test-fulfillment","fulfillment_provider_reference":"fulfillment-market-ref",
+            "fulfillment_capability_observed_at":main.now().isoformat(),
+            "fulfillment_capability_expires_at":(main.now()+main.timedelta(hours=1)).isoformat(),
+        },
     )
     assert denied.status_code == 409
     assert denied.json()["detail"]["code"] == "MARKET_PAYMENT_CAPABILITY_NOT_READY"
@@ -694,6 +702,10 @@ def _market_compare_seed(client, monkeypatch):
             id=str(uuid.uuid4()), merchant_id=merchant["merchant_id"], market_country_code="KE",
             state="active", display_currency="KES", locale="en-KE", activated_by="admin",
             activated_at=main.now(),
+            tax_provider="test-tax", tax_provider_reference="tax-ref",
+            tax_capability_observed_at=main.now(), tax_capability_expires_at=main.now()+timedelta(hours=1),
+            fulfillment_provider="test-fulfillment", fulfillment_provider_reference="fulfillment-ref",
+            fulfillment_capability_observed_at=main.now(), fulfillment_capability_expires_at=main.now()+timedelta(hours=1),
         )
         payment = main.MarketPaymentCapability(
             id=str(uuid.uuid4()), merchant_id=merchant["merchant_id"], market_country_code="KE",
