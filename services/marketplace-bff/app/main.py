@@ -10,6 +10,7 @@ import os
 import re
 import uuid
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
@@ -212,6 +213,22 @@ class WardrobeRecommendationIn(BaseModel):
     location: str | None = Field(default=None, max_length=120)
     climate: str | None = Field(default=None, max_length=120)
     exclude_owned_products: bool = True
+
+
+class DailyLooksIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    occasion: str | None = Field(default=None, max_length=120)
+    climate: str | None = Field(default=None, max_length=80)
+    timezone: str = Field(default="UTC", min_length=1, max_length=80)
+
+    @field_validator("timezone")
+    @classmethod
+    def valid_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError("timezone must be a valid IANA timezone") from exc
+        return value
 
 
 
@@ -532,6 +549,120 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
         raise HTTPException(502, detail={"code": "WARDROBE_RECOMMENDATIONS_RESPONSE_INVALID"})
     return _private_json_response(data)
 
+
+
+@app.post("/api/wardrobe/daily-looks")
+async def wardrobe_daily_looks(request: Request, payload: DailyLooksIn = Body(default=DailyLooksIn())) -> Response:
+    """Build Tari's three daily looks using only the verified user's active wardrobe."""
+    request_id = str(uuid.uuid4())
+    local_date = datetime.now(ZoneInfo(payload.timezone)).date().isoformat()
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(14.0, connect=2.0),
+        trust_env=False,
+        follow_redirects=False,
+    ) as client:
+        subject, user_token = await _verified_commerce_subject(client, request)
+        wardrobe_base, wardrobe_token = _wardrobe_service()
+        try:
+            wardrobe_response = await client.get(
+                wardrobe_base + "/v1/items",
+                params={"owner_user_id": subject, "include_archived": "false"},
+                headers={"Authorization": "Bearer " + wardrobe_token, "Accept": "application/json"},
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "TARI_WARDROBE_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "TARI_WARDROBE_UNAVAILABLE"}) from exc
+        if wardrobe_response.status_code != 200:
+            raise HTTPException(503, detail={"code": "TARI_WARDROBE_UNAVAILABLE"})
+        try:
+            wardrobe_data = wardrobe_response.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "TARI_WARDROBE_RESPONSE_INVALID"}) from exc
+        if (
+            not isinstance(wardrobe_data, dict)
+            or wardrobe_data.get("owner_user_id") != subject
+            or not isinstance(wardrobe_data.get("items"), list)
+            or any(not isinstance(item, dict) or item.get("owner_user_id") != subject
+                   for item in wardrobe_data.get("items", []))
+        ):
+            raise HTTPException(502, detail={"code": "TARI_WARDROBE_SCOPE_MISMATCH"})
+
+        active_items = []
+        for item in wardrobe_data["items"]:
+            if item.get("status") != "active":
+                continue
+            if (
+                not isinstance(item.get("item_id"), str)
+                or not isinstance(item.get("display_name"), str)
+                or not isinstance(item.get("category"), str)
+                or not isinstance(item.get("attributes", []), list)
+                or any(not isinstance(value, str) for value in item.get("attributes", []))
+            ):
+                raise HTTPException(502, detail={"code": "TARI_WARDROBE_ITEM_SCHEMA_INVALID"})
+            # Send only the minimum text metadata. Image asset identifiers and bytes
+            # never leave the wardrobe service for outfit composition.
+            active_items.append({
+                "item_id": item["item_id"],
+                "owner_user_id": subject,
+                "display_name": item["display_name"],
+                "category": item["category"],
+                "attributes": item.get("attributes", []),
+                "status": "active",
+            })
+        if len(active_items) > 150:
+            raise HTTPException(413, detail={"code": "TARI_WARDROBE_TOO_LARGE"})
+
+        gateway_base, gateway_token = _decision_gateway()
+        body = {
+            "request_id": request_id,
+            "user_id": subject,
+            "local_date": local_date,
+            "occasion": payload.occasion.strip() if payload.occasion and payload.occasion.strip() else None,
+            "climate": payload.climate.strip() if payload.climate and payload.climate.strip() else None,
+            "wardrobe_items": active_items,
+        }
+        try:
+            response = await client.post(
+                gateway_base + "/v1/tari/daily-looks",
+                headers={
+                    "Authorization": "Bearer " + gateway_token,
+                    "X-End-User-Authorization": "Bearer " + user_token,
+                    "Accept": "application/json",
+                },
+                json=body,
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "TARI_RECOMMENDATION_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "TARI_RECOMMENDATION_UNAVAILABLE"}) from exc
+
+    if response.status_code in {401, 403, 422}:
+        try:
+            detail = response.json().get("detail", {})
+            code = detail.get("code") if isinstance(detail, dict) else None
+        except ValueError:
+            code = None
+        raise HTTPException(response.status_code, detail={"code": code or "TARI_RECOMMENDATION_REJECTED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "TARI_RECOMMENDATION_UNAVAILABLE"})
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "TARI_RECOMMENDATION_RESPONSE_INVALID"}) from exc
+    recommendation = result.get("recommendation") if isinstance(result, dict) else None
+    roles = ["everyday", "elevated", "explore"]
+    looks = recommendation.get("looks") if isinstance(recommendation, dict) else None
+    if (
+        not isinstance(result, dict)
+        or result.get("mode") != "tari_wardrobe_daily_looks"
+        or not isinstance(recommendation, dict)
+        or recommendation.get("look_count") != 3
+        or not isinstance(looks, list)
+        or [look.get("role") if isinstance(look, dict) else None for look in looks] != roles
+    ):
+        raise HTTPException(502, detail={"code": "TARI_RECOMMENDATION_SCHEMA_INVALID"})
+    return _private_json_response(result)
 
 
 @app.post("/api/vision/click-it")
