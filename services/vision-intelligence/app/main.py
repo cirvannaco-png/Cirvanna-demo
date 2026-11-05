@@ -508,8 +508,9 @@ def readiness() -> dict[str, Any]:
     catalog_configured = bool(os.getenv("CATALOG_API_URL", "").strip()) and bool(
         os.getenv("CATALOG_API_TOKEN", "").strip() or os.getenv("CATALOG_READ_TOKEN", "").strip()
     )
+    privacy_detector_configured, privacy_detector_reason = detector_configuration()
     models_loaded = _CLIP_MODEL is not None and _CLIP_PROCESSOR is not None and _POSE_LANDMARKER is not None
-    configured = clip_configured and pose_configured and token_configured and commerce_configured and catalog_configured
+    configured = clip_configured and pose_configured and token_configured and commerce_configured and catalog_configured and privacy_detector_configured
     ready = configured and models_loaded
     result = {
         "status": "ready" if ready else "not_ready",
@@ -529,6 +530,10 @@ def readiness() -> dict[str, Any]:
         "pose_model_startup_error": _MODEL_LOAD_ERRORS.get("pose"),
         "marketplace_services_configured": commerce_configured and catalog_configured,
         "worker_auth_configured": token_configured,
+        "privacy_face_detector_configured": privacy_detector_configured,
+        "privacy_face_detector_reason": privacy_detector_reason,
+        "face_recognition": False,
+        "age_estimation": False,
         "input_persistence": False,
         "product_image_fetching": False,
         "results_are_live_active_offers": True,
