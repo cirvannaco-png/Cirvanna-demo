@@ -39,6 +39,14 @@ app = FastAPI(
 bearer = HTTPBearer(auto_error=False)
 
 
+@app.middleware("http")
+async def click_it_no_store(request, call_next):
+    response = await call_next(request)
+    if request.url.path == "/click-it":
+        response.headers["Cache-Control"] = "no-store, private"
+    return response
+
+
 class TwinResponse(BaseModel):
     status: str
     code: str
@@ -595,6 +603,7 @@ async def click_it(
             content,
             product_image.content_type or "application/octet-stream",
         )
+        del content  # Release the original upload bytes after the downstream response.
         # Keep candidates separate from policy-authorized display items. In
         # particular, this endpoint does not bypass NPL or cultural requirements.
         candidates = result.pop("results", [])
