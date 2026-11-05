@@ -87,6 +87,7 @@ The rights service must:
 - preserve only the minimum audit record needed to evidence the request and outcome, with a defined retention schedule.
 
 The BFF deliberately returns an error rather than claiming success when the rights service is unavailable or does not confirm quarantine. The service must have edge rate limits, abuse controls and monitoring before public enablement.
+The rights service records a platform triage target separately from any legal response deadline. A statutory deadline is returned only when all applicable jurisdictions have been resolved and every jurisdiction has a current signed policy bundle. When jurisdiction resolution or policy coverage is incomplete, the status reports that the legal deadline is unresolved and exposes only the internal platform triage target; it never substitutes a platform target for a legal obligation.
 
 After submission, the requester receives an opaque request ID and private status token. The public status endpoint is `GET /api/privacy/image-requests/{request_id}`, with the token supplied in the `X-Privacy-Request-Token` header. The BFF forwards the token to the rights service for validation and returns only a minimal status receipt. The token is a bearer secret and must not be placed in a URL, analytics event or application log.
 
