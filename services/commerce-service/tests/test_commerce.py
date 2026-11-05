@@ -178,7 +178,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
         ))
         connection.execute(
             text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
-            {"revision": "20261104_0003"},
+            {"revision": "20261105_0004"},
         )
 
     ready = client.get("/ready")
@@ -191,7 +191,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
     assert payload["payment_configured"] is True
     assert payload["migrations_required"] is True
     assert payload["migrations_applied"] is True
-    assert payload["schema_revision"] == "20261104_0003"
+    assert payload["schema_revision"] == "20261105_0004"
     assert payload["ready"] is True
 
 
@@ -594,3 +594,212 @@ def test_inventory_adjustment_refreshes_server_observation_timestamp(client, mon
     assert response.status_code == 200, response.text
     assert response.json()["observed_at"]
     assert response.json()["on_hand"] == 9
+
+
+def test_merchant_application_distinguishes_brand_home_legal_and_operating_markets(client):
+    response = client.post("/merchants/applications", headers=auth("brand-owner"), json={
+        "display_name": "Origin Studio",
+        "legal_name": "Origin Studio Limited",
+        "country_code": "KE",
+        "brand_home_country_code": "IN",
+        "legal_country_code": "KE",
+        "operating_markets": ["KE", "UG"],
+        "contact_email": "brand@example.test",
+    })
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["brand_home_country_code"] == "IN"
+    assert body["legal_country_code"] == "KE"
+    assert body["country_code"] == "KE"
+    from app.main import MerchantOperatingMarket
+    db = TEST_SESSION()
+    markets = list(db.query(MerchantOperatingMarket).filter_by(merchant_id=body["merchant_id"]).order_by(MerchantOperatingMarket.market_country_code))
+    db.close()
+    assert [(x.market_country_code, x.state) for x in markets] == [("KE", "pending"), ("UG", "pending")]
+
+
+def test_legacy_merchant_country_backfill_contract_is_not_home_country(client):
+    response = client.post("/merchants/applications", headers=auth("legacy-owner"), json={
+        "display_name": "Legacy Shop",
+        "legal_name": "Legacy Shop Ltd",
+        "country_code": "KE",
+        "contact_email": "legacy@example.test",
+    })
+    assert response.status_code == 201
+    assert response.json()["legal_country_code"] == "KE"
+    assert response.json()["brand_home_country_code"] is None
+
+
+def test_variant_separates_source_price_from_offer_transaction_price(client):
+    seeded = seed_offer()
+    response = client.post(
+        f"/merchant/listings/{seeded['listing_id']}/variants",
+        headers=auth("merchant-1", "merchant"),
+        json={
+            "sku": "SOURCE-1",
+            "options": {"size": "M"},
+            "price_minor": 1200,
+            "currency": "KES",
+            "source_price_minor": 900,
+            "source_currency": "USD",
+            "initial_stock": 4,
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["price_minor"] == 1200 and body["currency"] == "KES"
+    assert body["source_price_minor"] == 900 and body["source_currency"] == "USD"
+
+
+def test_market_declarations_are_pending_until_admin_activation(client):
+    seeded = seed_offer()
+    declared = client.post(
+        "/merchant/markets",
+        headers=auth("merchant-1", "merchant"),
+        json={"market_country_code":"UG","display_currency":"UGX","locale":"en-UG"},
+    )
+    assert declared.status_code == 201, declared.text
+    assert declared.json()["state"] == "pending"
+    denied = client.put(
+        f"/admin/merchants/{seeded['merchant_id']}/markets/UG",
+        headers=auth("admin-1", "admin"),
+        json={"state":"active","display_currency":"UGX","locale":"en-UG"},
+    )
+    assert denied.status_code == 409
+    assert denied.json()["detail"]["code"] == "MARKET_PAYMENT_CAPABILITY_NOT_READY"
+
+
+def _market_compare_seed(client, monkeypatch):
+    from datetime import timedelta
+    from decimal import Decimal
+    merchant_a = seed_offer(price_minor=1800)
+    merchant_b = seed_offer(price_minor=10)
+    canonical_id = str(uuid.uuid4())
+    db = TEST_SESSION()
+    variant_a = db.get(main.Variant, merchant_a["variant_id"])
+    variant_b = db.get(main.Variant, merchant_b["variant_id"])
+    variant_a.canonical_variant_id = canonical_id
+    variant_b.canonical_variant_id = canonical_id
+    variant_b.currency = "USD"
+    variant_b.price_minor = 12
+    variant_a.observed_at = main.now()
+    variant_b.observed_at = main.now()
+    variant_a.source_price_minor, variant_a.source_currency = 1500, "INR"
+    for merchant, variant, currency, fulfillment_minor, tax_minor in [
+        (merchant_a, variant_a, "KES", 250, 180),
+        (merchant_b, variant_b, "USD", 2, 1),
+    ]:
+        market = main.MerchantOperatingMarket(
+            id=str(uuid.uuid4()), merchant_id=merchant["merchant_id"], market_country_code="KE",
+            state="active", display_currency="KES", locale="en-KE", activated_by="admin",
+            activated_at=main.now(),
+        )
+        payment = main.MarketPaymentCapability(
+            id=str(uuid.uuid4()), merchant_id=merchant["merchant_id"], market_country_code="KE",
+            provider="test-payments", state="active", transaction_currencies=[currency],
+            settlement_currencies=["KES"], payment_methods=["card"], provider_reference="test-ref",
+            observed_at=main.now(), expires_at=main.now()+timedelta(hours=1),
+        )
+        fulfillment = main.OfferFulfillmentQuote(
+            id=str(uuid.uuid4()), variant_id=variant.id, destination_country_code="KE",
+            destination_key="Nakuru/Subukia", fulfillment_mode="courier_delivery",
+            amount_minor=fulfillment_minor, currency=currency, status="confirmed",
+            provider="test-courier", provider_quote_id=str(uuid.uuid4()),
+            observed_at=main.now(), expires_at=main.now()+timedelta(hours=1),
+        )
+        tax = main.OfferTaxQuote(
+            id=str(uuid.uuid4()), variant_id=variant.id, destination_country_code="KE",
+            jurisdiction="KE-Nakuru", tax_category="apparel", basis="exclusive",
+            amount_minor=tax_minor, currency=currency, status="confirmed", authoritative=True,
+            provider="test-tax", provider_quote_id=str(uuid.uuid4()), rule_version="test-1",
+            observed_at=main.now(), expires_at=main.now()+timedelta(hours=1),
+        )
+        db.add_all([market, payment, fulfillment, tax])
+    db.add(main.OfferFXQuote(
+        id=str(uuid.uuid4()), variant_id=variant_b.id, base_currency="USD", quote_currency="KES",
+        rate=Decimal("130.000000000000"), provider="test-fx", provider_quote_id=str(uuid.uuid4()),
+        rounding_rule="HALF_UP", spread_bps=0, observed_at=main.now(),
+        expires_at=main.now()+timedelta(hours=1),
+    ))
+    db.commit()
+    db.close()
+    return merchant_a, merchant_b
+
+
+def test_compare_offers_requires_complete_like_for_like_landed_cost(client, monkeypatch):
+    a, b = _market_compare_seed(client, monkeypatch)
+    response = client.post("/marketplace/compare", json={
+        "variant_ids":[a["variant_id"],b["variant_id"]],
+        "destination_country_code":"KE",
+        "destination_key":"Nakuru/Subukia",
+        "fulfillment_mode":"courier_delivery",
+        "display_currency":"KES",
+        "payment_method":"card",
+    })
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["status"] == "comparable", result
+    assert result["display_currency"] == "KES"
+    assert result["offers"][0]["landed_total_minor"] <= result["offers"][1]["landed_total_minor"]
+    assert result["offers"][1]["fx_quotes"]["item"]["provider"] == "test-fx"
+    assert result["offers"][0]["tax"]["basis"] == "exclusive"
+
+
+def test_compare_offers_rejects_canonical_variant_mismatch(client, monkeypatch):
+    a, b = _market_compare_seed(client, monkeypatch)
+    db = TEST_SESSION()
+    db.get(main.Variant, b["variant_id"]).canonical_variant_id = str(uuid.uuid4())
+    db.commit()
+    db.close()
+    response = client.post("/marketplace/compare", json={
+        "variant_ids":[a["variant_id"],b["variant_id"]],
+        "destination_country_code":"KE","destination_key":"Nakuru/Subukia",
+        "fulfillment_mode":"courier_delivery","display_currency":"KES",
+    })
+    assert response.json()["reason_code"] == "CANONICAL_VARIANT_MISMATCH"
+
+
+def test_compare_offers_requires_authoritative_tax_and_fresh_fx(client, monkeypatch):
+    a, b = _market_compare_seed(client, monkeypatch)
+    db = TEST_SESSION()
+    tax = db.query(main.OfferTaxQuote).filter_by(variant_id=b["variant_id"]).one()
+    tax.authoritative = False
+    fx = db.query(main.OfferFXQuote).filter_by(variant_id=b["variant_id"]).one()
+    fx.expires_at = main.now() - main.timedelta(minutes=1)
+    db.commit()
+    db.close()
+    response = client.post("/marketplace/compare", json={
+        "variant_ids":[a["variant_id"],b["variant_id"]],
+        "destination_country_code":"KE","destination_key":"Nakuru/Subukia",
+        "fulfillment_mode":"courier_delivery","display_currency":"KES",
+    })
+    assert response.json()["reason_code"] in {"TAX_QUOTE_NOT_AUTHORITATIVE","ITEM_PRICE_FX_QUOTE_MISSING_OR_STALE"}
+
+
+def test_quote_ingestion_requires_internal_market_context_token(client, monkeypatch):
+    seeded = seed_offer()
+    response = client.post(
+        f"/internal/market-context/variants/{seeded['variant_id']}/fx-quotes",
+        json={
+            "provider":"test-fx","provider_quote_id":"quote-1","base_currency":"USD",
+            "quote_currency":"KES","rate":"130.25","observed_at":main.now().isoformat(),
+            "expires_at":(main.now()+main.timedelta(hours=1)).isoformat(),
+        },
+    )
+    assert response.status_code == 401
+
+
+def test_currency_precision_handles_zero_two_and_three_decimal_currencies():
+    assert main._currency_minor_units("JPY") == 0
+    assert main._currency_minor_units("KES") == 2
+    assert main._currency_minor_units("KWD") == 3
+
+
+def test_offers_return_display_currency_only_with_market_and_fresh_fx(client, monkeypatch):
+    a, b = _market_compare_seed(client, monkeypatch)
+    response = client.get("/marketplace/offers", params={"market_country_code":"KE","display_currency":"KES"})
+    assert response.status_code == 200
+    items = {item["variant_id"]: item for item in response.json()["items"]}
+    assert items[b["variant_id"]]["display_price_status"] == "localized"
+    assert items[b["variant_id"]]["display_currency"] == "KES"
+    assert client.get("/marketplace/offers", params={"display_currency":"KES"}).status_code == 422
