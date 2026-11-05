@@ -121,6 +121,16 @@ class ImageRightsRequest(BaseModel):
     jurisdiction_hint: str | None = Field(default=None, max_length=100)
 
 
+class ClickItConsentGrant(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    consent_image_processing: bool
+    consent_click_it: bool
+    photographed_people_status: Literal["no_people", "adults_only", "contains_minor"]
+    consent_version: str = Field(min_length=1, max_length=80)
+    twin_id: str | None = Field(default=None, min_length=3, max_length=160)
+    guardian_verification_reference: str | None = Field(default=None, min_length=12, max_length=200)
+
+
 class MarketplaceSearchIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     query: str = Field(min_length=3, max_length=1000)
@@ -776,12 +786,93 @@ def _authorized_commerce_path(method: str, path: str) -> bool:
     return False
 
 
+@app.post("/api/privacy/consents")
+async def create_click_it_consent(payload: ClickItConsentGrant, request: Request) -> Response:
+    """Create purpose-bound consent only for the verified Commerce subject."""
+    authorization = request.headers.get("authorization", "")
+    scheme, _, user_token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not user_token.strip():
+        raise HTTPException(401, detail={"code": "USER_BEARER_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
+    if not payload.consent_image_processing or not payload.consent_click_it:
+        raise HTTPException(403, detail={"code": "EXPLICIT_CLICK_IT_CONSENT_REQUIRED"})
+    commerce_base = _upstream_base("COMMERCE_API_URL")
+    privacy_base, privacy_token = _internal_service("PRIVACY_GOVERNANCE_API_URL", "PRIVACY_GOVERNANCE_API_TOKEN")
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(8.0, connect=2.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            identity = await client.get(
+                commerce_base + "/me",
+                headers={"Authorization": "Bearer " + user_token, "Accept": "application/json"},
+            )
+            if identity.status_code in {401, 403}:
+                raise HTTPException(401, detail={"code": "USER_AUTHENTICATION_FAILED"})
+            if identity.status_code != 200:
+                raise HTTPException(503, detail={"code": "USER_IDENTITY_UNAVAILABLE"})
+            actor = identity.json()
+            subject_id = actor.get("user_id") if isinstance(actor, dict) else None
+            if not isinstance(subject_id, str) or not subject_id.strip():
+                raise HTTPException(502, detail={"code": "INVALID_USER_IDENTITY_RESPONSE"})
+            grant_body = {
+                "subject_id": subject_id,
+                "consent_image_processing": payload.consent_image_processing,
+                "consent_click_it": payload.consent_click_it,
+                "photographed_people_status": payload.photographed_people_status,
+                "consent_version": payload.consent_version,
+            }
+            if payload.twin_id:
+                grant_body["resource_id"] = payload.twin_id
+            if payload.guardian_verification_reference:
+                grant_body["guardian_verification_reference"] = payload.guardian_verification_reference
+            upstream = await client.post(
+                privacy_base + "/internal/v1/consents/grant",
+                headers={"Authorization": "Bearer " + privacy_token, "Accept": "application/json"},
+                json=grant_body,
+            )
+    except HTTPException:
+        raise
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "CONSENT_CREATION_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "PRIVACY_GOVERNANCE_UNAVAILABLE"}) from exc
+    if upstream.status_code != 200:
+        try:
+            detail = upstream.json().get("detail", {})
+        except ValueError:
+            detail = {}
+        code = detail.get("code") if isinstance(detail, dict) else None
+        if upstream.status_code in {400, 403, 409, 422}:
+            raise HTTPException(upstream.status_code, detail={"code": code if isinstance(code, str) else "CONSENT_CREATION_REJECTED"})
+        raise HTTPException(503, detail={"code": code if isinstance(code, str) else "CONSENT_CREATION_UNAVAILABLE"})
+    try:
+        receipt = upstream.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "CONSENT_CREATION_INVALID_RESPONSE"}) from exc
+    if not (
+        isinstance(receipt, dict)
+        and isinstance(receipt.get("consent_id"), str)
+        and receipt.get("active") is True
+        and isinstance(receipt.get("granted_scopes"), list)
+    ):
+        raise HTTPException(502, detail={"code": "CONSENT_CREATION_INVALID_RESPONSE"})
+    safe = {
+        "consent_id": receipt["consent_id"],
+        "active": True,
+        "granted_scopes": receipt["granted_scopes"],
+        "photographed_people_status": receipt.get("photographed_people_status"),
+        "guardian_authority_verified": receipt.get("guardian_authority_verified") is True,
+        "consent_version": receipt.get("consent_version"),
+    }
+    return JSONResponse(content=safe, headers={"Cache-Control": "no-store, private"})
+
+
 @app.post("/api/privacy/image-requests")
 async def submit_image_rights_request(payload: ImageRightsRequest) -> Response:
     """Public privacy-rights intake; the rights service verifies authority and manages quarantine."""
-    base, token = _internal_service("PRIVACY_RIGHTS_API_URL", "PRIVACY_RIGHTS_API_TOKEN")
+    base, token = _internal_service("PRIVACY_GOVERNANCE_API_URL", "PRIVACY_GOVERNANCE_API_TOKEN")
     request_body = payload.model_dump(exclude_none=True)
-    request_body["jurisdiction_hint_is_unverified"] = True
     request_body["requester_authentication"] = "verification_required"
     try:
         async with httpx.AsyncClient(
@@ -809,7 +900,9 @@ async def submit_image_rights_request(payload: ImageRightsRequest) -> Response:
         isinstance(receipt, dict)
         and isinstance(receipt.get("request_id"), str)
         and bool(receipt.get("request_id").strip())
-        and receipt.get("status") in {"accepted", "under_review", "quarantined"}
+        and receipt.get("status") in {"under_review", "quarantined"}
+        and isinstance(receipt.get("status_token"), str)
+        and 24 <= len(receipt.get("status_token")) <= 512
         and (not urgent or receipt.get("quarantined") is True)
     )
     if not valid:
@@ -819,7 +912,7 @@ async def submit_image_rights_request(payload: ImageRightsRequest) -> Response:
         "request_id": receipt["request_id"],
         "status": receipt["status"],
         "quarantined": receipt.get("quarantined") is True,
-        "status_token": receipt.get("status_token") if isinstance(receipt.get("status_token"), str) else None,
+        "status_token": receipt["status_token"],
     }
     return JSONResponse(status_code=202, content=safe_receipt, headers={"Cache-Control": "no-store, private"})
 
