@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Cirvanna — Wardrobe</title>
+<style>
+:root{--ink:#101018;--panel:#171722;--panel2:#20202c;--cream:#f0ebe2;--muted:#aaa5b1;--gold:#c4924a;--line:#34313c;--danger:#e7a4a4;--good:#8bc8a3}
+*{box-sizing:border-box}body{margin:0;background:var(--ink);color:var(--cream);font:15px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,sans-serif}
+button,input,select{font:inherit}button{cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}.shell{max-width:1120px;margin:auto;padding:0 20px}
+header{border-bottom:1px solid var(--line)}.nav{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:17px 0}.brand{font:28px Georgia,serif;letter-spacing:.08em}.brand span{color:var(--gold)}.eyebrow{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+.tag{border:1px solid var(--line);border-radius:30px;padding:6px 11px;color:var(--gold);font-size:11px}
+.hero{padding:34px 0 24px}.hero h1{font:clamp(36px,6vw,58px)/1 Georgia,serif;font-weight:400;margin:10px 0}.hero p{color:var(--muted);max-width:650px}
+.panel{background:var(--panel);border:1px solid var(--line);padding:18px;margin:16px 0;border-radius:4px}.panel h2{font:26px Georgia,serif;font-weight:400;margin:0 0 7px}.muted{color:var(--muted)}.small{font-size:12px;color:var(--muted)}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.field{display:flex;flex-direction:column;gap:5px;margin:8px 0}.field label{font-size:11px;color:var(--muted)}
+input,select{width:100%;min-width:0;padding:11px;background:#101018;border:1px solid var(--line);color:var(--cream);border-radius:3px}
+.row{display:flex;gap:9px;flex-wrap:wrap;align-items:center}.btn{border:1px solid var(--line);background:transparent;color:var(--cream);padding:9px 13px;border-radius:3px}.btn.primary{background:var(--gold);border-color:var(--gold);color:#17120a;font-weight:700}.btn.subtle{color:var(--muted)}.btn.danger{border-color:#704b4b;color:var(--danger)}
+.status{padding:10px 12px;margin:10px 0;background:#12121a;border-left:2px solid var(--gold);font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere}.status.error{border-color:var(--danger);color:var(--danger)}.status.good{border-color:var(--good);color:var(--good)}
+.item{background:var(--panel2);border:1px solid #302d38;padding:14px;display:flex;flex-direction:column;gap:9px;min-width:0}.item h3{font:20px Georgia,serif;font-weight:400;margin:0}.item .attrs{font-size:12px;color:var(--muted);min-height:32px}.item .actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:auto}.item .actions .btn{font-size:11px;padding:7px 9px}
+.rec-card{border-top:1px solid var(--line);padding:13px 0}.rec-card h3{font:20px Georgia,serif;margin:0 0 4px;font-weight:400}.rec-card p{font-size:12px;color:var(--muted);margin:4px 0}
+.empty{border:1px dashed var(--line);padding:24px;text-align:center;color:var(--muted);grid-column:1/-1}
+.hidden{display:none!important}.consent{display:flex;gap:12px;align-items:flex-start;border-top:1px solid var(--line);padding:12px 0}.consent>div{flex:1}.consent strong{font-size:13px}
+footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);font-size:11px;margin-top:30px}
+@media(max-width:800px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.nav{align-items:flex-start;flex-direction:column}}
+@media(max-width:520px){.shell{padding:0 13px}.grid{grid-template-columns:1fr}.panel{padding:14px}.nav .row{width:100%}.nav .tag{white-space:normal}}
+</style>
+</head>
+<body>
+<header><div class="shell nav"><div><div class="brand">CIRVANNA<span>.</span></div><div class="eyebrow">Your personal wardrobe</div></div><div class="row"><span class="tag">PNELLY · Wardrobe companion</span><a class="btn subtle" href="/">Marketplace</a></div></div></header>
+<main class="shell">
+<section class="hero">
+<div class="eyebrow">Closet intelligence · your choices remain yours</div>
+<h1>Know what you own.<br><span style="color:var(--gold)">Wear it with intent.</span></h1>
+<p>Your wardrobe is the starting point. The companion looks at your active items, finds combinations and useful additions, and learns only from the feedback you deliberately give it.</p>
+</section>
+
+<section class="panel" id="connectPanel">
+<h2>Connect your session</h2>
+<p class="small">Development preview only: paste a signed Commerce user token. It stays in this page's memory and is not written to browser storage. Production must use Cirvanna's normal sign-in/session flow.</p>
+<div class="grid">
+<div class="field" style="grid-column:span 2"><label for="token">Commerce session token</label><input id="token" type="password" autocomplete="off" placeholder="Bearer token (without the word Bearer)"></div>
+<div class="field"><label>&nbsp;</label><button class="btn primary" id="connect">Verify session</button></div>
+</div>
+<div class="status" id="connectionStatus" role="status">Not connected.</div>
+</section>
+
+<section class="panel hidden" id="learningPanel">
+<h2>Learning permissions</h2>
+<p class="small">Two separate permissions have different purposes. Style learning stores likes, dislikes and corrections as temporal events. Profile storage allows the assistant to hydrate and maintain your reusable USI style profile. Neither permission enables camera surveillance.</p>
+<div class="consent">
+<div><strong>Style learning</strong><div class="small" id="styleConsentState">Not enabled. Feedback will be disabled.</div></div>
+<div class="row"><button class="btn primary" id="enableStyle">Enable</button><button class="btn danger" id="revokeStyle" disabled>Revoke</button></div>
+</div>
+<div class="consent">
+<div><strong>Style profile storage</strong><div class="small" id="profileConsentState">Optional. Wardrobe suggestions can still use your items without this permission.</div></div>
+<div class="row"><button class="btn primary" id="enableProfile">Enable</button><button class="btn danger" id="revokeProfile" disabled>Revoke</button></div>
+</div>
+<div class="status" id="learningStatus" role="status">Connect your session to manage permissions.</div>
+</section>
+
+<section class="panel hidden" id="closetPanel">
+<div class="row" style="justify-content:space-between"><div><div class="eyebrow">Your active pieces</div><h2>Wardrobe</h2></div><button class="btn" id="refresh">Refresh wardrobe</button></div>
+<p class="small">Feedback is explicit. A dislike is learned through NPL's three-distinct-rejection threshold. “Avoid” records a declared exclusion immediately. You can later change your mind through the supported preference correction flow.</p>
+<div class="grid" id="items"><div class="empty">Your wardrobe is empty or has not been loaded.</div></div>
+<div class="status" id="feedbackStatus" role="status">Enable style learning before recording feedback.</div>
+</section>
+
+<section class="panel hidden" id="recommendPanel">
+<div class="eyebrow">Outfit and wardrobe discovery</div><h2>What goes with what you own?</h2>
+<p class="small">PNELLY uses the closet's declared categories and attributes, plus your consented style signals. Product facts, offer prices and stock come from Catalog and Commerce. Only CAL-authorized products are returned.</p>
+<form id="recommendForm">
+<div class="grid">
+<div class="field"><label for="query">What are you looking for?</label><input id="query" required minlength="2" maxlength="160" value="clothing that complements my existing wardrobe" placeholder="e.g. a light layer to go with my blue cotton shirt"></div>
+<div class="field"><label for="category">Category</label><select id="category"><option value="">Any category</option><option value="tops">Tops</option><option value="outerwear">Outerwear</option><option value="lower_body">Bottoms</option><option value="dress">Dresses</option><option value="accessories">Accessories</option></select></div>
+<div class="field"><label for="currency">Offer currency</label><input id="currency" value="KES" maxlength="3"></div>
+<div class="field"><label for="location">Location (optional, declared)</label><input id="location" maxlength="120" placeholder="e.g. Subukia"></div>
+<div class="field"><label for="occasion">Occasion (optional)</label><input id="occasion" maxlength="120" placeholder="e.g. everyday, formal"></div>
+<div class="field"><label for="climate">Climate (optional, declared)</label><input id="climate" maxlength="120" placeholder="e.g. warm, cool, humid"></div>
+</div>
+<label class="small"><input id="excludeOwned" type="checkbox" checked style="width:auto;min-width:auto"> Exclude exact Catalog products already in my wardrobe</label>
+<div class="row" style="margin-top:12px"><button class="btn primary" type="submit" id="recommend">Recommend with PNELLY</button></div>
+</form>
+<div class="status" id="recommendStatus" role="status">Recommendations use the EEPL context gate, NPL exclusions and CaTaCaCi/CAL display authorization.</div>
+<div id="recommendations"></div>
+</section>
+</main>
+<footer><div class="shell">Working prototype. The PNELLY product name remains subject to the existing clearance gate. Outfit relevance is not fit confidence. A visual preview is not a fit guarantee. Learning can be revoked; retention and deletion remain governed by the Identity Learning service.</div></footer>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  let token = "";
+  let styleReceipt = null;
+  let profileReceipt = null;
+  let items = [];
+  const api = async (path, options = {}) => {
+    const response = await fetch(path, {
+      ...options,
+      headers: {
+        Accept: "application/json",
+        ...(options.body ? {"Content-Type": "application/json"} : {}),
+        ...(token ? {Authorization: "Bearer " + token} : {}),
+        ...(options.headers || {})
+      },
+      cache: "no-store"
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const code = data?.detail?.code || data?.detail || ("HTTP " + response.status);
+      throw new Error(typeof code === "string" ? code : JSON.stringify(code));
+    }
+    return data;
+  };
+  const status = (id, message, kind = "") => {
+    $(id).textContent = message;
+    $(id).className = "status" + (kind ? " " + kind : "");
+  };
+  const text = (tag, value, className) => {
+    const node = document.createElement(tag);
+    node.textContent = value == null ? "" : String(value);
+    if (className) node.className = className;
+    return node;
+  };
+  const renderItems = () => {
+    const root = $("items");
+    root.replaceChildren();
+    if (!items.length) {
+      root.append(text("div", "No active items yet. Add clothing to your wardrobe before asking for outfit suggestions.", "empty"));
+      return;
+    }
+    for (const item of items) {
+      const card = document.createElement("article");
+      card.className = "item";
+      card.append(text("div", String(item.category || "Wardrobe item").toUpperCase(), "eyebrow"));
+      card.append(text("h3", item.display_name));
+      card.append(text("div", (item.attributes || []).join(" · ") || "No attributes recorded.", "attrs"));
+      if (item.catalog_product_id) card.append(text("div", "Catalog item linked", "small"));
+      const actions = document.createElement("div");
+      actions.className = "actions";
+      for (const [signal,label,kind] of [
+        ["like","Like",""],
+        ["dislike","Dislike",""],
+        ["avoid","Avoid","danger"],
+        ["wear","Wore this",""],
+      ]) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "btn " + kind;
+        button.textContent = label;
+        button.disabled = !styleReceipt;
+        button.addEventListener("click", () => sendFeedback(item, signal));
+        actions.append(button);
+      }
+      card.append(actions);
+      root.append(card);
+    }
+  };
+  const loadWardrobe = async () => {
+    const data = await api("/api/wardrobe/items");
+    items = data.items || [];
+    renderItems();
+    status("feedbackStatus", items.length + " active wardrobe items loaded. Feedback is " + (styleReceipt ? "enabled." : "disabled until style-learning consent is granted."));
+  };
+  const connect = async () => {
+    token = $("token").value.trim();
+    if (!token) throw new Error("Enter a signed Commerce token.");
+    // Identity is verified server-side by the BFF on every personal-data request.
+    await loadWardrobe();
+    $("learningPanel").classList.remove("hidden");
+    $("closetPanel").classList.remove("hidden");
+    $("recommendPanel").classList.remove("hidden");
+    $("connectPanel").classList.add("hidden");
+    status("connectionStatus", "Authenticated.", "good");
+  };
+  const createConsent = async scope => {
+    const data = await api("/api/wardrobe/consents", {method:"POST", body:JSON.stringify({scope,granted:true})});
+    if (scope === "style_learning") styleReceipt = data.receipt_id;
+    if (scope === "profile_storage") profileReceipt = data.receipt_id;
+    renderItems();
+    updateConsentState();
+    status("learningStatus", scope + " consent recorded.", "good");
+  };
+  const revokeConsent = async scope => {
+    const receipt = scope === "style_learning" ? styleReceipt : profileReceipt;
+    if (!receipt) return;
+    await api("/api/wardrobe/consents/" + encodeURIComponent(receipt) + "/revoke", {method:"POST"});
+    if (scope === "style_learning") styleReceipt = null;
+    if (scope === "profile_storage") profileReceipt = null;
+    renderItems();
+    updateConsentState();
+    status("learningStatus", scope + " consent revoked. New learning writes are blocked.", "good");
+  };
+  const updateConsentState = () => {
+    $("styleConsentState").textContent = styleReceipt ? "Enabled for this session. Feedback will be written to USI/TAL and relevant negatives to NPL." : "Not enabled. Feedback is disabled.";
+    $("profileConsentState").textContent = profileReceipt ? "Enabled for persistent USI profile reads and writes." : "Not enabled. Wardrobe suggestions can still use your active items.";
+    $("enableStyle").disabled = !!styleReceipt;
+    $("revokeStyle").disabled = !styleReceipt;
+    $("enableProfile").disabled = !!profileReceipt;
+    $("revokeProfile").disabled = !profileReceipt;
+    renderItems();
+  };
+  const sendFeedback = async (item, signal) => {
+    if (!styleReceipt) {
+      status("feedbackStatus", "Grant style-learning consent before recording feedback.", "error");
+      return;
+    }
+    try {
+      const data = await api("/api/wardrobe/feedback", {method:"POST", body:JSON.stringify({
+        item_id:item.item_id,
+        event_id:crypto.randomUUID(),
+        signal,
+        consent_receipt_id:styleReceipt
+      })});
+      const detail = data.learning?.npl?.hard_veto === true ? " The NPL hard-veto is active." : "";
+      status("feedbackStatus", "Saved " + signal + " feedback for " + item.display_name + "." + detail, "good");
+    } catch (error) {
+      status("feedbackStatus", error.message, "error");
+    }
+  };
+  const currencyPrice = (minor, currency) => {
+    if (typeof minor !== "number" || !currency) return "Price unavailable";
+    try {
+      const options = new Intl.NumberFormat(undefined,{style:"currency",currency}).resolvedOptions();
+      return new Intl.NumberFormat(undefined,{style:"currency",currency}).format(minor / Math.pow(10,options.maximumFractionDigits));
+    } catch { return minor + " " + currency; }
+  };
+  const renderRecommendations = data => {
+    const root = $("recommendations");
+    root.replaceChildren();
+    const products = data.displayable_products || [];
+    if (!products.length) {
+      root.append(text("div","No products passed the current display gates. Try another description or add the missing declared context.","empty"));
+      return;
+    }
+    for (const entry of products) {
+      const product = entry.product || {};
+      const offer = entry.offer || {};
+      const card = document.createElement("article");
+      card.className = "rec-card";
+      card.append(text("h3", product.name || "Product"));
+      card.append(text("p", (product.brand || "Brand not listed") + " · " + (product.category || "Category not listed")));
+      card.append(text("p", currencyPrice(offer.price_minor,offer.currency) + " · " + (offer.available_stock ?? "Unknown") + " available"));
+      const matched = entry.wardrobe_compatibility?.matched_attributes || [];
+      if (matched.length) card.append(text("p","Works with your wardrobe attributes: " + matched.join(", ")));
+      const reasons = (entry.decision?.reasons || []).map(x => x.explanation).filter(Boolean);
+      if (reasons.length) card.append(text("p",reasons.join(" · ")));
+      root.append(card);
+    }
+  };
+  $("connect").addEventListener("click", async () => {
+    try { await connect(); }
+    catch (error) { status("connectionStatus",error.message,"error"); }
+  });
+  $("refresh").addEventListener("click", async () => {
+    try { await loadWardrobe(); }
+    catch (error) { status("feedbackStatus",error.message,"error"); }
+  });
+  $("enableStyle").addEventListener("click", async () => {
+    try { await createConsent("style_learning"); }
+    catch (error) { status("learningStatus",error.message,"error"); }
+  });
+  $("revokeStyle").addEventListener("click", async () => {
+    try { await revokeConsent("style_learning"); }
+    catch (error) { status("learningStatus",error.message,"error"); }
+  });
+  $("enableProfile").addEventListener("click", async () => {
+    try { await createConsent("profile_storage"); }
+    catch (error) { status("learningStatus",error.message,"error"); }
+  });
+  $("revokeProfile").addEventListener("click", async () => {
+    try { await revokeConsent("profile_storage"); }
+    catch (error) { status("learningStatus",error.message,"error"); }
+  });
+  $("recommendForm").addEventListener("submit", async event => {
+    event.preventDefault();
+    $("recommend").disabled = true;
+    status("recommendStatus","Retrieving your wardrobe-aware recommendations…");
+    try {
+      const data = await api("/api/wardrobe/recommendations", {method:"POST", body:JSON.stringify({
+        query:$("query").value.trim(),
+        category:$("category").value || null,
+        currency:$("currency").value.trim().toUpperCase() || null,
+        location:$("location").value.trim() || null,
+        occasion:$("occasion").value.trim() || null,
+        climate:$("climate").value.trim() || null,
+        exclude_owned_products:$("excludeOwned").checked
+      })});
+      renderRecommendations(data);
+      status("recommendStatus", "Evaluated " + (data.ranked_candidate_count || 0) + " candidates. Only CAL SHOW products are displayed. EEPL context and Wardrobe signals are shown in the decision metadata.", "good");
+    } catch (error) {
+      status("recommendStatus",error.message,"error");
+    } finally {
+      $("recommend").disabled = false;
+    }
+  });
+  updateConsentState();
+})();
+</script>
+</body></html>
