@@ -240,6 +240,7 @@ def test_click_it_rejects_unsupported_image_before_calling_services(client, monk
             "consent_id": "consent-record-1234",
             "consent_image_processing": "true",
             "consent_click_it": "true",
+            "photographed_people_status": "no_people",
         },
         files={"product_image": ("payload.bin", b"x", "application/octet-stream")},
     )
