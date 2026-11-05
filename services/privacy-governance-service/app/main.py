@@ -239,6 +239,7 @@ class RightsRequestIn(StrictModel):
     reason_code: Literal["unmasked_face", "possible_minor", "nonconsensual", "privacy_concern", "other"]
     requester_relationship: Literal["photographed_person", "parent_guardian", "authorized_representative", "other"]
     jurisdiction_hint: str | None = Field(default=None, max_length=100)
+    jurisdiction_hint_is_unverified: Literal[True] = True
     requester_authentication: Literal["verification_required"] = "verification_required"
 
     @field_validator("asset_reference")
