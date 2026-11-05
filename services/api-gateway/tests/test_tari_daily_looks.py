@@ -1,0 +1,123 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+from fastapi.testclient import TestClient
+
+from app import main
+
+
+GATEWAY_TOKEN = "integration-gateway-token"
+END_USER = "Bearer signed-user-session"
+
+
+def request_body():
+    return {
+        "request_id": "tari-daily-001",
+        "user_id": "signed-user-42",
+        "local_date": "2026-11-05",
+        "occasion": "work",
+        "climate": "hot_dry",
+        "wardrobe_items": [
+            {
+                "item_id": "shirt-001",
+                "owner_user_id": "signed-user-42",
+                "display_name": "Linen shirt",
+                "category": "tops",
+                "attributes": ["blue", "linen"],
+                "status": "active",
+            }
+        ],
+    }
+
+
+def test_tari_gateway_requires_internal_and_verified_end_user_authentication(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_API_TOKEN", GATEWAY_TOKEN)
+    client = TestClient(main.app)
+    assert client.post("/v1/tari/daily-looks", json=request_body()).status_code == 401
+
+    response = client.post(
+        "/v1/tari/daily-looks",
+        headers={"Authorization": f"Bearer {GATEWAY_TOKEN}"},
+        json=request_body(),
+    )
+    assert response.status_code == 401
+
+
+def test_tari_gateway_checks_subject_and_uses_only_active_usi_profile(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_API_TOKEN", GATEWAY_TOKEN)
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda _header: "signed-user-42")
+    profile = SimpleNamespace(preferences=[
+        SimpleNamespace(attribute="color:teal", active=True),
+        SimpleNamespace(attribute="style:editorial", active=False),
+        SimpleNamespace(attribute="silhouette:relaxed", active=True),
+    ])
+    observed = {}
+
+    def load_profile(subject, *, allow_without_consent):
+        observed["profile_subject"] = subject
+        observed["allow_without_consent"] = allow_without_consent
+        return profile
+
+    def compose(payload, style_signals):
+        observed["payload"] = payload
+        observed["style_signals"] = style_signals
+        return {
+            "schema_version": "1.0",
+            "request_id": payload.request_id,
+            "mode": "tari_wardrobe_daily_looks",
+            "recommendation": {
+                "look_count": 3,
+                "looks": [{"role": role, "item_ids": ["shirt-001"]} for role in ("everyday", "elevated", "explore")],
+            },
+        }
+
+    monkeypatch.setattr(main, "_load_verified_usi_profile", load_profile)
+    monkeypatch.setattr(main, "_tari_daily_looks", compose)
+    client = TestClient(main.app)
+    response = client.post(
+        "/v1/tari/daily-looks",
+        headers={"Authorization": f"Bearer {GATEWAY_TOKEN}", "X-End-User-Authorization": END_USER},
+        json=request_body(),
+    )
+    assert response.status_code == 200, response.text
+    assert observed["profile_subject"] == "signed-user-42"
+    assert observed["allow_without_consent"] is True
+    assert observed["style_signals"] == ["color:teal", "silhouette:relaxed"]
+    assert response.json()["mode"] == "tari_wardrobe_daily_looks"
+
+
+def test_tari_gateway_rejects_subject_or_wardrobe_scope_mismatch(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_API_TOKEN", GATEWAY_TOKEN)
+    client = TestClient(main.app)
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda _header: "signed-user-42")
+    headers = {
+        "Authorization": f"Bearer {GATEWAY_TOKEN}",
+        "X-End-User-Authorization": END_USER,
+    }
+
+    body = request_body()
+    body["user_id"] = "another-user"
+    response = client.post("/v1/tari/daily-looks", headers=headers, json=body)
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "REQUEST_SUBJECT_MISMATCH"
+
+    body = request_body()
+    body["wardrobe_items"][0]["owner_user_id"] = "another-user"
+    response = client.post("/v1/tari/daily-looks", headers=headers, json=body)
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "WARDROBE_SUBJECT_MISMATCH"
+
+
+def test_tari_gateway_rejects_non_active_wardrobe_snapshot(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_API_TOKEN", GATEWAY_TOKEN)
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda _header: "signed-user-42")
+    client = TestClient(main.app)
+    body = request_body()
+    body["wardrobe_items"][0]["status"] = "archived"
+    response = client.post(
+        "/v1/tari/daily-looks",
+        headers={"Authorization": f"Bearer {GATEWAY_TOKEN}", "X-End-User-Authorization": END_USER},
+        json=body,
+    )
+    assert response.status_code == 422
