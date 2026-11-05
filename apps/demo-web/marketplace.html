@@ -69,6 +69,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
         </div>
         <label class="consent-line"><input id="clickItImageConsent" type="checkbox" required><span>I consent to processing this photo to search marketplace products. The image is processed ephemerally.</span></label>
         <label class="consent-line"><input id="clickItSearchConsent" type="checkbox" required><span>I agree to use Click It for this product search. I understand an active consent record is also verified by the server.</span></label>
+        <input id="clickItCaptureJurisdiction" class="wide" type="text" maxlength="100" autocomplete="country-name" placeholder="Country or region where the photo was taken (optional)" aria-label="Capture country or region, optional">
         <label class="consent-line wide" for="clickItPeopleStatus"><span>Who is visible in the photograph?</span>
           <select id="clickItPeopleStatus" class="wide" required>
             <option value="unknown" selected>Not sure — do not process until confirmed</option>
@@ -325,7 +326,8 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     if(!$("clickItImageConsent").checked||!$("clickItSearchConsent").checked){setAiStatus("clickItStatus","Both explicit consent checkboxes are required.",true);return}
     const form=new FormData();
     form.append("consent_id",$("clickItConsentId").value.trim());
-    form.append("consent_image_processing","true");form.append("consent_click_it","true");form.append("photographed_people_status", $("clickItPeopleStatus").value);form.append("product_image",image);
+    form.append("consent_image_processing","true");form.append("consent_click_it","true");form.append("photographed_people_status", $("clickItPeopleStatus").value);
+    const captureJurisdiction=$("clickItCaptureJurisdiction").value.trim();if(captureJurisdiction)form.append("capture_jurisdiction_hint",captureJurisdiction);form.append("product_image",image);
     setAiBusy("clickItBtn",true,"Scanning…");setAiStatus("clickItStatus","Checking your signed account, consent record and image quality, then searching live marketplace offers…");
     try{
       const response=await fetch("/api/vision/click-it",{method:"POST",headers:{Authorization:"Bearer "+config.userToken,Accept:"application/json"},body:form});
