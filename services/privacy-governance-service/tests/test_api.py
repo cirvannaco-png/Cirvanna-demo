@@ -63,7 +63,7 @@ def grant_payload(status="adults_only", guardian_reference=None):
     return payload
 
 
-def policy_bundle(private_key, jurisdiction, **overrides):
+def policy_bundle(signer, jurisdiction, **overrides):
     now = datetime.now(timezone.utc)
     data = {
         "jurisdiction": jurisdiction,
@@ -88,19 +88,19 @@ def policy_bundle(private_key, jurisdiction, **overrides):
     }
     data.update(overrides)
     model = main.PolicyBundleIn.model_validate(data)
-    signature = private_key.sign(main._canonical_policy_payload(model))
+    signature = signer.sign(main._canonical_policy_payload(model))
     data["signature_base64"] = base64.b64encode(signature).decode()
     return data
 
 
 def configure_policy_key(monkeypatch):
-    private_key = Ed25519PrivateKey.generate()
-    public_key = private_key.public_key().public_bytes(
+    signer = Ed25519PrivateKey.generate()
+    public_key = signer.public_key().public_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     ).decode()
     monkeypatch.setenv("PRIVACY_POLICY_BUNDLE_PUBLIC_KEY_PEM", public_key)
-    return private_key
+    return signer
 
 
 def test_health_and_readiness_do_not_claim_missing_provider_readiness(client):
@@ -225,8 +225,8 @@ def test_consent_verification_binds_subject_and_resource(client):
 
 
 def test_policy_publisher_requires_a_valid_ed25519_signature(client, monkeypatch):
-    private_key = configure_policy_key(monkeypatch)
-    payload = policy_bundle(private_key, "JUR-A")
+    signer = configure_policy_key(monkeypatch)
+    payload = policy_bundle(signer, "JUR-A")
     response = client.post("/internal/v1/privacy/policies", headers=publisher(), json=payload)
     assert response.status_code == 200, response.text
     assert response.json()["signature_verified"] is True
@@ -239,8 +239,8 @@ def test_policy_publisher_requires_a_valid_ed25519_signature(client, monkeypatch
 
 
 def test_unsafe_policy_bundle_cannot_be_published(client, monkeypatch):
-    private_key = configure_policy_key(monkeypatch)
-    payload = policy_bundle(private_key, "JUR-A", facial_recognition_allowed=True)
+    signer = configure_policy_key(monkeypatch)
+    payload = policy_bundle(signer, "JUR-A", facial_recognition_allowed=True)
     response = client.post("/internal/v1/privacy/policies", headers=publisher(), json=payload)
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "UNSAFE_PRIVACY_POLICY_CANNOT_BE_PUBLISHED"
@@ -279,9 +279,9 @@ def test_unknown_or_incomplete_jurisdiction_resolution_blocks_click_it(client, m
 
 
 def test_multi_jurisdiction_uses_stricter_guardian_policy(client, monkeypatch):
-    private_key = configure_policy_key(monkeypatch)
+    signer = configure_policy_key(monkeypatch)
     for code, guardian in [("JUR-A", False), ("JUR-B", True)]:
-        payload = policy_bundle(private_key, code, guardian_consent_required_for_minor=guardian)
+        payload = policy_bundle(signer, code, guardian_consent_required_for_minor=guardian)
         response = client.post("/internal/v1/privacy/policies", headers=publisher(), json=payload)
         assert response.status_code == 200, response.text
 
@@ -330,8 +330,8 @@ def test_multi_jurisdiction_uses_stricter_guardian_policy(client, monkeypatch):
 
 
 def test_policy_missing_for_one_overlapping_jurisdiction_blocks(client, monkeypatch):
-    private_key = configure_policy_key(monkeypatch)
-    payload = policy_bundle(private_key, "JUR-A")
+    signer = configure_policy_key(monkeypatch)
+    payload = policy_bundle(signer, "JUR-A")
     assert client.post("/internal/v1/privacy/policies", headers=publisher(), json=payload).status_code == 200
 
     async def resolver(*_args, **_kwargs):
