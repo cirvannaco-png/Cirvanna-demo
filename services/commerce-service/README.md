@@ -91,3 +91,33 @@ Commerce retains its merchant-local `variant_id` and `sku` as source identifiers
 Production always rejects new variants without a Catalog-verified canonical variant ID; the `COMMERCE_REQUIRE_CANONICAL_VARIANT_ID=true` setting can enforce the same gate in staging. Existing legacy rows remain nullable and are not comparison-eligible.
 
 Each offer has a server-generated `observed_at` timestamp. It is refreshed when the offer is created and when stock changes through merchant inventory updates, checkout reservations, payment settlement, or reservation release. `GET /marketplace/offers` returns `observed_at`, `is_fresh`, `canonical_variant_id`, and `comparison_eligible`. Freshness is controlled by `COMMERCE_OFFER_MAX_AGE_SECONDS` (default 3600 seconds, clamped to 60 seconds–7 days). A missing canonical identity or stale observation makes the individual offer ineligible for comparison. This is only a per-offer precondition: a comparison must still verify that both offers share the exact same canonical variant ID and currency and both have current availability. This timestamp is Commerce's server observation time; it is not proof of a third-party feed timestamp. Shipping/tax and FX remain excluded unless separately sourced.
+
+
+## Multi-market offer context (migration 20261105_0004)
+
+- Brand home/origin country and legal entity country are independent fields. The existing merchant country_code is preserved as a legacy legal-country alias. Existing merchants are backfilled to legal_country_code only; brand_home_country_code remains unknown until declared.
+- Operating markets are explicit and begin in pending state. Only an administrator can activate one. Activation requires an approved merchant and a current active payment capability with currencies, settlement currencies and methods.
+- Variant price_minor/currency remains the payable offer amount and transaction currency. source_price_minor/source_currency are optional product/source provenance and never overwrite the offer price.
+- FX, fulfilment, tax and market payment capabilities are versioned provider records with provider IDs, provenance, observation time and expiry. Only the secret-protected internal market-context API can write these records. Sellers cannot self-assert exchange rates, authoritative tax, or payment readiness.
+- POST /marketplace/compare returns comparable only for exact matching canonical variant IDs, fresh in-stock offers, approved merchants active in the destination market, exact destination and fulfilment mode, confirmed destination-bound fulfilment quotes, fresh authoritative tax with matching jurisdiction/category/basis, valid FX for every currency conversion, and current payment capability for each transaction currency.
+- Inclusive tax is already in the item price and is not added a second time. Missing/stale/incomparable facts return a stable unavailable reason; an incomplete amount is never labelled a landed price.
+- GET /marketplace/offers accepts market_country_code and display_currency. It returns a localized display_price_minor only when the source transaction currency already matches or a fresh FX quote exists. The original offer amount/currency remains intact.
+
+Configure COMMERCE_MARKET_CONTEXT_TOKEN (at least 32 bytes) only for trusted quote-provider ingress. Never expose it to the merchant browser.
+
+This change adds quote ingestion and comparison contracts; it does not bundle an FX provider, tax engine, courier aggregator, KYC/payment onboarding provider or market-specific checkout orchestration. Production market activation requires reviewed provider integrations and independent evaluation. Checkout remains the existing item-subtotal Stripe flow until a separate market-aware checkout release revalidates item, fulfilment, tax and payment quotes at payment-session creation.
+
+
+## Multi-market offer context (migration 20261105_0004)
+
+- Brand home/origin country and legal entity country are independent fields. The existing merchant country_code is preserved as a legacy legal-country alias. Existing merchants are backfilled to legal_country_code only; brand_home_country_code remains unknown until declared.
+- Operating markets are explicit and begin in pending state. Only an administrator can activate one. Activation requires an approved merchant and a current active payment capability with currencies, settlement currencies and methods.
+- Variant price_minor/currency remains the payable offer amount and transaction currency. source_price_minor/source_currency are optional product/source provenance and never overwrite the offer price.
+- FX, fulfilment, tax and market payment capabilities are versioned provider records with provider IDs, provenance, observation time and expiry. Only the secret-protected internal market-context API can write these records. Sellers cannot self-assert exchange rates, authoritative tax, or payment readiness.
+- POST /marketplace/compare returns comparable only for exact matching canonical variant IDs, fresh in-stock offers, approved merchants active in the destination market, exact destination and fulfilment mode, confirmed destination-bound fulfilment quotes, fresh authoritative tax with matching jurisdiction/category/basis, valid FX for every currency conversion, and current payment capability for each transaction currency.
+- Inclusive tax is already in the item price and is not added a second time. Missing/stale/incomparable facts return a stable unavailable reason; an incomplete amount is never labelled a landed price.
+- GET /marketplace/offers accepts market_country_code and display_currency. It returns a localized display_price_minor only when the source transaction currency already matches or a fresh FX quote exists. The original offer amount/currency remains intact.
+
+Configure COMMERCE_MARKET_CONTEXT_TOKEN (at least 32 bytes) only for trusted quote-provider ingress. Never expose it to the merchant browser.
+
+This change adds quote ingestion and comparison contracts; it does not bundle an FX provider, tax engine, courier aggregator, KYC/payment onboarding provider or market-specific checkout orchestration. Production market activation requires reviewed provider integrations and independent evaluation. Checkout remains the existing item-subtotal Stripe flow until a separate market-aware checkout release revalidates item, fulfilment, tax and payment quotes at payment-session creation.
