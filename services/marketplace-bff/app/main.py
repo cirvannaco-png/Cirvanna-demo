@@ -260,6 +260,29 @@ async def wardrobe_items(request: Request) -> Response:
     return _private_json_response(data)
 
 
+
+@app.get("/api/wardrobe/consents")
+async def wardrobe_list_consents(request: Request) -> Response:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        base, token = _identity_learning_service()
+        try:
+            response = await client.get(
+                base + f"/v1/tal/consents/{subject}",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "IDENTITY_CONSENT_UNAVAILABLE"}) from exc
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "IDENTITY_CONSENT_UNAVAILABLE"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "IDENTITY_CONSENT_RESPONSE_INVALID"}) from exc
+    if not isinstance(data, list) or any(not isinstance(item, dict) for item in data):
+        raise HTTPException(502, detail={"code": "IDENTITY_CONSENT_RESPONSE_INVALID"})
+    return _private_json_response({"subject_id": subject, "items": data})
+
 @app.post("/api/wardrobe/consents")
 async def wardrobe_create_consent(payload: WardrobeConsentIn, request: Request) -> Response:
     async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
