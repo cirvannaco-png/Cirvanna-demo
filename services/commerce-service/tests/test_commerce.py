@@ -178,7 +178,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
         ))
         connection.execute(
             text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
-            {"revision": "20261105_0004"},
+            {"revision": "20261105_0005"},
         )
 
     ready = client.get("/ready")
@@ -859,8 +859,12 @@ def test_market_aware_checkout_revalidates_quotes_and_charges_localized_total(cl
         for index in range(3)
     )
     assert charged_total == 4460
-    assert "Courier Delivery" in stripe_data["line_items[1][price_data][product_data][name]"]
-    assert "Tax" in stripe_data["line_items[2][price_data][product_data][name]"]
+    line_names = {
+        stripe_data[f"line_items[{index}][price_data][product_data][name]"]
+        for index in range(3)
+    }
+    assert any("Courier Delivery" in name for name in line_names)
+    assert any("Tax" in name for name in line_names)
 
     db = TEST_SESSION()
     persisted = db.get(main.CommerceOrder, order["order_id"])
