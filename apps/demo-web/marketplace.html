@@ -339,7 +339,9 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     const form=new FormData();
     form.append("consent_id",$("clickItConsentId").value.trim());
     form.append("consent_image_processing","true");form.append("consent_click_it","true");form.append("photographed_people_status", $("clickItPeopleStatus").value);
-    const captureJurisdiction=$("clickItCaptureJurisdiction").value.trim();if(captureJurisdiction)form.append("capture_jurisdiction_hint",captureJurisdiction);form.append("product_image",image);
+    const captureJurisdiction=$("clickItCaptureJurisdiction").value.trim();if(captureJurisdiction)form.append("capture_jurisdiction_hint",captureJurisdiction);
+    const twinId=config.twinId||"";if(twinId)form.append("twin_id",twinId);
+    form.append("product_image",image);
     setAiBusy("clickItBtn",true,"Scanning…");setAiStatus("clickItStatus","Checking your signed account, consent record and image quality, then searching live marketplace offers…");
     try{
       const consentPayload={
