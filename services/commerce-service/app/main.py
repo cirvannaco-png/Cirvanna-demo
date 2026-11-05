@@ -1240,7 +1240,7 @@ def persist_stripe_session(db: Session, order_id: str, email: str | None, gatewa
     if order.state != "pending_payment":
         raise HTTPException(409, detail={"code": "ORDER_NOT_PAYABLE", "state": order.state})
     lines = list(db.scalars(select(OrderItem).where(OrderItem.order_id == order.id).order_by(OrderItem.id)).all())
-    charges = list(db.scalars(select(OrderCharge).where(OrderCharge.order_id == order.id).order_by(OrderCharge.id)).all())
+    charges = list(db.scalars(select(OrderCharge).where(OrderCharge.order_id == order.id).order_by(OrderCharge.charge_type, OrderCharge.id)).all())
     try:
         session = gateway.create_session(order, lines, charges, email)
     except RuntimeError as exc:
