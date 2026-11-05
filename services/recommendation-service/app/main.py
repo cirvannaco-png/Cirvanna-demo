@@ -168,6 +168,7 @@ class TariDailyLooksRequest(StrictModel):
     climate: str | None = Field(default=None, max_length=80)
     wardrobe_items: list[WardrobeItemForDailyLook] = Field(max_length=150)
     style_signals: list[str] = Field(default_factory=list, max_length=40)
+    feedback_signals: list[str] = Field(default_factory=list, max_length=40)
 
     @field_validator("request_id", "user_id")
     @classmethod
@@ -294,6 +295,7 @@ def tari_daily_looks(request: TariDailyLooksRequest) -> dict[str, object]:
             occasion=request.occasion,
             climate=request.climate,
             style_signals=request.style_signals,
+            feedback_signals=request.feedback_signals,
         )
     except PermissionError as exc:
         raise HTTPException(403, detail={"code": "WARDROBE_SUBJECT_MISMATCH"}) from exc
