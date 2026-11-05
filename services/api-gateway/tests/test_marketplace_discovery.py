@@ -104,3 +104,122 @@ def test_rank_score_is_weighted_explicit_match_not_probability():
     )
     score = main._style_rank_score(product(P1, "Minimal linen", {"style": "minimal"}), profile)
     assert score == pytest.approx(0.75)
+
+
+def test_wardrobe_match_uses_only_exact_declared_item_attributes():
+    item = {
+        "item_id": "closet-1",
+        "category": "tops",
+        "attributes": ["blue", "cotton", "minimal"],
+    }
+    candidate = product(P1, "Blue linen shirt", {"color": "blue", "material": "linen", "style": "minimal"})
+    result = main._wardrobe_match(candidate, [item])
+    assert result["owned_item_ids"] == ["closet-1"]
+    assert result["matched_attributes"] == ["blue", "minimal"]
+    assert result["score"] == pytest.approx(0.10)
+
+
+def test_eepl_context_handoff_rejects_missing_or_stale_provenance():
+    from datetime import datetime, timedelta, timezone
+    now = datetime.now(timezone.utc)
+    stale = (now - timedelta(hours=8)).isoformat()
+    context = main.ContextInput(
+        location="Subukia",
+        occasion="everyday",
+        climate="warm",
+        location_source="user_declared",
+        location_observed_at=now.isoformat(),
+        occasion_source="user_declared",
+        occasion_observed_at=now.isoformat(),
+        climate_source="weather_provider",
+        climate_observed_at=stale,
+    )
+    normalized, evidence = main._fresh_context_for_eepl(context, strict=True)
+    assert normalized.location == "Subukia"
+    assert normalized.occasion == "everyday"
+    assert normalized.climate is None
+    assert evidence["location"]["status"] == "current"
+    assert evidence["occasion"]["status"] == "current"
+    assert evidence["climate"]["status"] == "stale_or_future"
+
+
+def test_eepl_wardrobe_context_requires_explicit_timestamp_and_source():
+    context = main.ContextInput(location="Nairobi", occasion="formal", climate="warm")
+    normalized, evidence = main._fresh_context_for_eepl(context, strict=True)
+    assert normalized.location is None
+    assert normalized.occasion is None
+    assert normalized.climate is None
+    assert all(item["status"] == "missing_value_or_provenance" for item in evidence.values())
+
+
+def test_discovery_uses_verified_wardrobe_and_suppresses_owned_catalog_product(client, monkeypatch):
+    from usi import USIProfile, StylePreference
+    monkeypatch.setenv("NPL_SERVICE_URL", "https://npl.example.test")
+    monkeypatch.setenv("NPL_SERVICE_TOKEN", "npl-internal-token-more-than-thirty-two-bytes")
+    monkeypatch.setenv("NPL_EVIDENCE_HMAC_SECRET", "npl-evidence-secret-more-than-thirty-two-bytes")
+    products = [
+        product(P1, "Blue linen shirt", {"color": "blue", "material": "linen", "style": "minimal"}),
+        product(P2, "Classic cotton shirt", {"color": "white", "material": "cotton", "style": "classic"}),
+    ]
+    offers = [offer(P1, "v1", 10000), offer(P2, "v2", 9000)]
+    profile = USIProfile(
+        profile_id="profile-1", user_id="subject-verified-1", version="2",
+        preferences=(StylePreference(preference_id="p1", user_id="subject-verified-1", attribute="minimal"),),
+    )
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda _token: "subject-verified-1")
+    monkeypatch.setattr(main, "_load_verified_usi_profile", lambda _subject: profile)
+    monkeypatch.setattr(main, "_load_verified_wardrobe", lambda _subject: [{
+        "owner_user_id": "subject-verified-1",
+        "item_id": "closet-1",
+        "category": "tops",
+        "attributes": ["blue", "minimal"],
+        "catalog_product_id": P1,
+        "status": "active",
+    }])
+    monkeypatch.setattr(main, "_discover_catalog_and_offers", lambda _payload: (products, offers))
+    captured = {}
+    show = main.CandidateDecisionOutput(
+        product_id=P2, sku="SKU-2", name="Classic cotton shirt", category="shirt", brand="Cirvanna",
+        price_minor=9000, currency="KES", image_urls=[], catalog_version=1, verdict="show",
+        may_display=True, reasons=[], policy_version="policy-1", arbitration_contract_version="1",
+        decision_pipeline_contract_version="1",
+    )
+    def decisions(request, _authorization):
+        captured["context"] = request.context
+        return main.DecisionResponse(schema_version="1.0", request_id="req-wardrobe", created_at="2026-11-05T00:00:00Z", candidates=[show])
+    monkeypatch.setattr(main, "evaluate_decisions", decisions)
+    request = {
+        **payload(),
+        "use_wardrobe_context": True,
+        "context": {
+            "age_years": 25,
+            "location": "Subukia",
+            "location_source": "user_declared",
+            "location_observed_at": "2026-11-05T03:00:00Z",
+            "occasion": "everyday",
+            "occasion_source": "user_declared",
+            "occasion_observed_at": "2026-11-05T03:00:00Z",
+            "climate": "warm",
+            "climate_source": "user_declared",
+            "climate_observed_at": "2026-11-05T03:00:00Z",
+        },
+    }
+    response = client.post("/v1/discover", headers=auth(), json=request)
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert [x["product"]["product_id"] for x in data["displayable_products"]] == [P2]
+    assert data["withheld_candidate_ids"][0]["reason_code"] == "ALREADY_IN_WARDROBE"
+    assert data["displayable_products"][0]["wardrobe_compatibility"]["matched_owned_item_ids"] == []
+    assert captured["context"].location == "Subukia"
+    assert data["wardrobe_context"]["active_item_count"] == 1
+
+
+def test_wardrobe_discovery_fails_closed_without_npl_configuration(client, monkeypatch):
+    monkeypatch.delenv("NPL_SERVICE_URL", raising=False)
+    monkeypatch.delenv("NPL_SERVICE_TOKEN", raising=False)
+    monkeypatch.delenv("NPL_EVIDENCE_HMAC_SECRET", raising=False)
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda _token: "subject-verified-1")
+    monkeypatch.setattr(main, "_load_verified_usi_profile", lambda _subject: object())
+    response = client.post("/v1/discover", headers=auth(), json={**payload(), "use_wardrobe_context": True})
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "NPL_PROVIDER_REQUIRED_FOR_WARDROBE_DISCOVERY"
