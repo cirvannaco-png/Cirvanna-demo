@@ -42,6 +42,14 @@ SUPPORTED_MIME = {"image/jpeg", "image/png", "image/webp"}
 bearer = HTTPBearer(auto_error=False)
 app = FastAPI(title="Cirvanna Vision Intelligence", version="0.1.0")
 
+
+@app.middleware("http")
+async def click_it_no_store(request, call_next):
+    response = await call_next(request)
+    if request.url.path == "/v1/click-it/scan":
+        response.headers["Cache-Control"] = "no-store, private"
+    return response
+
 _CLIP_MODEL = None
 _CLIP_PROCESSOR = None
 _POSE_LANDMARKER = None
@@ -599,6 +607,7 @@ async def click_it_scan(
     finally:
         await image.close()
     decoded = _decode_image(data, content_type)
+    del data  # Discard the original upload byte buffer after decoding.
     # The original image is never used for quality scoring, embedding, or retrieval.
     # Privacy detection and masking must complete first.
     privacy_ready, privacy_reason = detector_configuration()
