@@ -1024,6 +1024,7 @@ async def get_image_rights_request_status(
         and (receipt.get("legal_response_due_at") is None or isinstance(receipt.get("legal_response_due_at"), str))
         and receipt.get("deadline_basis") in {
             "resolved_signed_jurisdiction_policy",
+            "jurisdiction_policy_missing_platform_triage",
             "jurisdiction_unresolved_platform_triage",
         }
         and isinstance(receipt.get("applicable_jurisdictions"), list)
