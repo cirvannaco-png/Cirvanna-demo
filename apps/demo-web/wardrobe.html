@@ -177,6 +177,9 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     await loadWardrobe();
     const consentData = await api("/api/wardrobe/consents");
     const activeReceipts = (consentData.items || []).filter(x => x && x.granted === true && !x.revoked_at);
+    if (consentData.learning_configured === false) {
+      status("learningStatus", "Identity Learning is not configured yet. You can still manage your closet and request wardrobe-aware recommendations; feedback learning is unavailable until the service is connected.");
+    }
     activeReceipts.sort((a,b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
     styleReceipt = activeReceipts.find(x => x.scope === "style_learning" || x.scope === "personalization")?.receipt_id || null;
     profileReceipt = activeReceipts.find(x => x.scope === "profile_storage")?.receipt_id || null;
