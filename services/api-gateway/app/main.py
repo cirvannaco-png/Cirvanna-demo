@@ -102,6 +102,7 @@ class DecisionRequest(BaseModel):
     user_id: str = Field(min_length=1, max_length=128)
     product_ids: list[str] = Field(min_length=1, max_length=25)
     context: ContextInput = Field(default_factory=ContextInput)
+    use_wardrobe_context: bool = False
     style_preferences: list[StylePreferenceInput] = Field(default_factory=list, max_length=40)
     negative_preferences: list[NegativePreferenceInput] = Field(default_factory=list, max_length=100)
     cultural_requirements: list[CulturalRequirementInput] = Field(default_factory=list, max_length=60)
@@ -791,8 +792,12 @@ def _resolve_verified_subject(end_user_authorization: str | None) -> str:
     return subject.strip()
 
 
-def _load_verified_usi_profile(subject_id: str) -> USIProfile:
-    """Hydrate only the profile belonging to a Commerce-verified subject."""
+def _load_verified_usi_profile(subject_id: str, *, allow_without_consent: bool = False) -> USIProfile:
+    """Hydrate only the profile belonging to a Commerce-verified subject.
+
+    Wardrobe discovery may proceed with an empty profile when the user has not
+    granted profile_storage. This does not read or persist profile data.
+    """
     base = os.getenv("IDENTITY_SERVICE_URL", "").strip().rstrip("/")
     token = os.getenv("IDENTITY_SERVICE_TOKEN", "").strip()
     if not base or not _trusted_internal_base_url(base) or len(token.encode("utf-8")) < 32:
@@ -806,6 +811,13 @@ def _load_verified_usi_profile(subject_id: str) -> USIProfile:
     except httpx.HTTPError as exc:
         raise HTTPException(503, detail={"code": "USI_PROFILE_PROVIDER_UNAVAILABLE"}) from exc
     if response.status_code == 403:
+        if allow_without_consent:
+            return USIProfile(
+                profile_id=f"usi-empty:{subject_id}",
+                user_id=subject_id,
+                version="profile-storage-consent-not-granted",
+                preferences=(),
+            )
         raise HTTPException(403, detail={"code": "USI_PROFILE_CONSENT_REQUIRED"})
     if response.status_code != 200:
         raise HTTPException(503, detail={"code": "USI_PROFILE_PROVIDER_UNAVAILABLE"})
@@ -1573,7 +1585,7 @@ def discover_marketplace(
     subject = _resolve_verified_subject(end_user_authorization)
     if not hmac.compare_digest(subject, payload.user_id):
         raise HTTPException(403, detail={"code": "REQUEST_SUBJECT_MISMATCH"})
-    profile = _load_verified_usi_profile(subject)
+    profile = _load_verified_usi_profile(subject, allow_without_consent=payload.use_wardrobe_context)
     wardrobe_items: list[dict[str, Any]] = []
     if payload.use_wardrobe_context:
         # The NPL ledger is mandatory for wardrobe-driven recommendations. A missing
@@ -1665,6 +1677,7 @@ def discover_marketplace(
         user_id=subject,
         product_ids=[item[0] for item in ranked],
         context=eepl_context,
+        use_wardrobe_context=payload.use_wardrobe_context,
         style_preferences=[],
         negative_preferences=payload.negative_preferences,
         cultural_requirements=payload.cultural_requirements,
@@ -1726,7 +1739,7 @@ def evaluate_decisions(
         verified_subject = _resolve_verified_subject(end_user_authorization)
         if not hmac.compare_digest(verified_subject, payload.user_id):
             raise HTTPException(403, detail={"code": "REQUEST_SUBJECT_MISMATCH"})
-        profile = _load_verified_usi_profile(verified_subject)
+        profile = _load_verified_usi_profile(verified_subject, allow_without_consent=payload.use_wardrobe_context)
     else:
         profile = USIProfile(
             profile_id=f"request-profile:{request_id}",
