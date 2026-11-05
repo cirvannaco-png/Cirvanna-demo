@@ -604,20 +604,37 @@ class MerchantApplication(BaseModel):
     model_config = ConfigDict(extra="forbid")
     display_name: str = Field(min_length=2, max_length=120)
     legal_name: str = Field(min_length=2, max_length=180)
-    country_code: str = Field(min_length=2, max_length=2)
+    # country_code remains the legacy legal-country alias for older clients.
+    country_code: str | None = Field(default=None, min_length=2, max_length=2)
+    brand_home_country_code: str | None = Field(default=None, min_length=2, max_length=2)
+    legal_country_code: str | None = Field(default=None, min_length=2, max_length=2)
+    operating_markets: list[str] = Field(default_factory=list, max_length=30)
     contact_email: str = Field(min_length=5, max_length=254)
+
     @field_validator("display_name", "legal_name", "contact_email", mode="before")
     @classmethod
     def trim(cls, v: Any) -> Any:
         return v.strip() if isinstance(v, str) else v
 
-    @field_validator("country_code")
+    @field_validator("country_code", "brand_home_country_code", "legal_country_code")
     @classmethod
-    def country(cls, v: str) -> str:
+    def country(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
         v = v.strip().upper()
         if not COUNTRY_RE.fullmatch(v):
             raise ValueError("country code must be two letters")
         return v
+
+    @field_validator("operating_markets")
+    @classmethod
+    def countries(cls, values: list[str]) -> list[str]:
+        output = [value.strip().upper() for value in values]
+        if any(not COUNTRY_RE.fullmatch(value) for value in output):
+            raise ValueError("operating markets must use two-letter country codes")
+        if len(output) != len(set(output)):
+            raise ValueError("operating markets must not contain duplicates")
+        return output
 
     @field_validator("contact_email")
     @classmethod
@@ -625,6 +642,12 @@ class MerchantApplication(BaseModel):
         if not EMAIL_RE.fullmatch(v):
             raise ValueError("valid contact email required")
         return v.lower()
+
+    @model_validator(mode="after")
+    def legal_country_required(self):
+        if self.legal_country_code is None and self.country_code is None:
+            raise ValueError("legal_country_code is required (or legacy country_code)")
+        return self
 
 
 class MerchantDecision(BaseModel):
@@ -654,6 +677,18 @@ class VariantIn(BaseModel):
     currency: str = Field(min_length=3, max_length=3)
     initial_stock: int = Field(ge=0, le=1_000_000)
     canonical_variant_id: str | None = Field(default=None, min_length=36, max_length=36)
+    source_price_minor: int | None = Field(default=None, ge=0, le=2_000_000_000)
+    source_currency: str | None = Field(default=None, min_length=3, max_length=3)
+
+    @model_validator(mode="after")
+    def source_price_pair(self):
+        if (self.source_price_minor is None) != (self.source_currency is None):
+            raise ValueError("source_price_minor and source_currency must be supplied together")
+        if self.source_currency is not None:
+            self.source_currency = self.source_currency.strip().upper()
+            if not CODE3_RE.fullmatch(self.source_currency):
+                raise ValueError("source_currency must be three letters")
+        return self
 
     @field_validator("canonical_variant_id")
     @classmethod
@@ -690,6 +725,179 @@ class VariantIn(BaseModel):
                 raise ValueError("duplicate normalized option name")
             out[key] = value
         return out
+
+
+MARKET_MODES = {"shipping", "courier_delivery", "merchant_delivery", "collection", "local_transport"}
+
+
+def _valid_country(value: str) -> str:
+    value = value.strip().upper()
+    if not COUNTRY_RE.fullmatch(value):
+        raise ValueError("country code must be two letters")
+    return value
+
+
+def _valid_currency(value: str) -> str:
+    value = value.strip().upper()
+    if not CODE3_RE.fullmatch(value):
+        raise ValueError("currency must be three letters")
+    return value
+
+
+class MarketDeclaration(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    market_country_code: str = Field(min_length=2, max_length=2)
+    display_currency: str | None = Field(default=None, min_length=3, max_length=3)
+    locale: str | None = Field(default=None, min_length=2, max_length=35)
+
+    _country = field_validator("market_country_code")(_valid_country)
+    _currency = field_validator("display_currency")(_valid_currency)
+
+
+class MarketActivation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    state: Literal["active", "blocked", "pending"]
+    display_currency: str | None = Field(default=None, min_length=3, max_length=3)
+    locale: str | None = Field(default=None, min_length=2, max_length=35)
+
+    _currency = field_validator("display_currency")(_valid_currency)
+
+
+class FXQuoteIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    provider: str = Field(min_length=2, max_length=100)
+    provider_quote_id: str = Field(min_length=3, max_length=180)
+    base_currency: str = Field(min_length=3, max_length=3)
+    quote_currency: str = Field(min_length=3, max_length=3)
+    rate: Decimal = Field(gt=0, le=Decimal("1000000"))
+    rounding_rule: Literal["HALF_UP"] = "HALF_UP"
+    spread_bps: int = Field(default=0, ge=0, le=5000)
+    observed_at: datetime
+    expires_at: datetime
+
+    _base = field_validator("base_currency")(_valid_currency)
+    _quote = field_validator("quote_currency")(_valid_currency)
+
+    @model_validator(mode="after")
+    def quote_window(self):
+        if self.base_currency == self.quote_currency:
+            raise ValueError("FX quote currencies must differ")
+        if self.observed_at.tzinfo is None or self.expires_at.tzinfo is None:
+            raise ValueError("FX timestamps must include timezone")
+        if self.expires_at <= self.observed_at:
+            raise ValueError("FX quote expiry must follow observation")
+        return self
+
+
+class FulfillmentQuoteIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    provider: str = Field(min_length=2, max_length=100)
+    provider_quote_id: str = Field(min_length=3, max_length=180)
+    destination_country_code: str = Field(min_length=2, max_length=2)
+    destination_key: str = Field(min_length=3, max_length=180)
+    fulfillment_mode: Literal["shipping", "courier_delivery", "merchant_delivery", "collection", "local_transport"]
+    amount_minor: int | None = Field(default=None, ge=0, le=2_000_000_000)
+    currency: str = Field(min_length=3, max_length=3)
+    status: Literal["estimate", "confirmed", "unavailable"]
+    distance_km: Decimal | None = Field(default=None, ge=0, le=Decimal("100000"))
+    observed_at: datetime
+    expires_at: datetime
+
+    _country = field_validator("destination_country_code")(_valid_country)
+    _currency = field_validator("currency")(_valid_currency)
+
+    @model_validator(mode="after")
+    def validate_fulfillment_quote(self):
+        if self.status == "unavailable" and self.amount_minor is not None:
+            raise ValueError("unavailable fulfilment quotes cannot include an amount")
+        if self.status != "unavailable" and self.amount_minor is None:
+            raise ValueError("estimated or confirmed fulfilment quotes require an amount")
+        if self.observed_at.tzinfo is None or self.expires_at.tzinfo is None or self.expires_at <= self.observed_at:
+            raise ValueError("fulfilment quote timestamps must be valid and ordered")
+        return self
+
+
+class TaxQuoteIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    provider: str = Field(min_length=2, max_length=100)
+    provider_quote_id: str = Field(min_length=3, max_length=180)
+    destination_country_code: str = Field(min_length=2, max_length=2)
+    jurisdiction: str = Field(min_length=2, max_length=100)
+    tax_category: str = Field(min_length=2, max_length=80)
+    basis: Literal["inclusive", "exclusive"]
+    amount_minor: int | None = Field(default=None, ge=0, le=2_000_000_000)
+    currency: str = Field(min_length=3, max_length=3)
+    status: Literal["estimate", "confirmed", "unavailable"]
+    authoritative: bool = False
+    rule_version: str | None = Field(default=None, max_length=80)
+    observed_at: datetime
+    expires_at: datetime
+
+    _country = field_validator("destination_country_code")(_valid_country)
+    _currency = field_validator("currency")(_valid_currency)
+
+    @model_validator(mode="after")
+    def validate_tax_quote(self):
+        if self.status == "unavailable" and self.amount_minor is not None:
+            raise ValueError("unavailable tax quotes cannot include an amount")
+        if self.status != "unavailable" and self.amount_minor is None:
+            raise ValueError("tax amount required unless unavailable")
+        if self.authoritative and (self.status != "confirmed" or not self.provider):
+            raise ValueError("authoritative tax requires a confirmed provider quote")
+        if self.observed_at.tzinfo is None or self.expires_at.tzinfo is None or self.expires_at <= self.observed_at:
+            raise ValueError("tax quote timestamps must be valid and ordered")
+        return self
+
+
+class PaymentCapabilityIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    market_country_code: str = Field(min_length=2, max_length=2)
+    provider: str = Field(min_length=2, max_length=100)
+    state: Literal["pending", "active", "blocked"]
+    transaction_currencies: list[str] = Field(min_length=1, max_length=20)
+    settlement_currencies: list[str] = Field(min_length=1, max_length=20)
+    payment_methods: list[str] = Field(min_length=1, max_length=30)
+    provider_reference: str | None = Field(default=None, max_length=180)
+    observed_at: datetime
+    expires_at: datetime
+
+    _country = field_validator("market_country_code")(_valid_country)
+
+    @field_validator("transaction_currencies", "settlement_currencies")
+    @classmethod
+    def currency_list(cls, values: list[str]) -> list[str]:
+        output = [_valid_currency(value) for value in values]
+        if len(output) != len(set(output)):
+            raise ValueError("payment currencies must be unique")
+        return output
+
+    @model_validator(mode="after")
+    def valid_window(self):
+        if self.observed_at.tzinfo is None or self.expires_at.tzinfo is None or self.expires_at <= self.observed_at:
+            raise ValueError("payment capability timestamps must be valid and ordered")
+        return self
+
+
+class OfferComparisonIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    variant_ids: list[str] = Field(min_length=2, max_length=2)
+    destination_country_code: str = Field(min_length=2, max_length=2)
+    destination_key: str = Field(min_length=3, max_length=180)
+    fulfillment_mode: Literal["shipping", "courier_delivery", "merchant_delivery", "collection", "local_transport"]
+    display_currency: str = Field(min_length=3, max_length=3)
+    payment_method: str | None = Field(default=None, min_length=2, max_length=50)
+
+    @field_validator("variant_ids")
+    @classmethod
+    def uuids(cls, values: list[str]) -> list[str]:
+        output = [str(uuid.UUID(value)) for value in values]
+        if len(set(output)) != 2:
+            raise ValueError("two distinct variant IDs are required")
+        return output
+
+    _country = field_validator("destination_country_code")(_valid_country)
+    _currency = field_validator("display_currency")(_valid_currency)
+
 
 
 class CartItemIn(BaseModel):
