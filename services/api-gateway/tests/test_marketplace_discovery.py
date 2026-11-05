@@ -297,3 +297,87 @@ def test_standard_discovery_still_requires_usi_profile_provider(monkeypatch):
     with pytest.raises(main.HTTPException) as error:
         main._load_verified_usi_profile("verified-subject-1")
     assert error.value.status_code == 503
+
+
+def test_eepl_context_handoff_exercises_block_review_and_pass_verdicts():
+    from eepl import ContextField, EEPLContext, EEPLPolicy, GateVerdict, evaluate
+
+    policy = EEPLPolicy(
+        policy_id="wardrobe-recommendation-context",
+        minimum_age=18,
+        allowed_locations=("Nakuru", "Nairobi"),
+        allowed_occasions=("everyday", "formal"),
+        allowed_climates=("warm", "cool"),
+        required_context=(ContextField.LOCATION, ContextField.OCCASION, ContextField.CLIMATE),
+    )
+
+    blocked = evaluate(
+        policy,
+        EEPLContext(
+            user_id="subject-1", age_years=25, location="Nakuru",
+            occasion="everyday", climate="cold",
+        ),
+        "candidate-blocked",
+    )
+    assert blocked.verdict is GateVerdict.BLOCK
+    assert "EEPL_CLIMATE_NOT_ALLOWED" in blocked.reason_codes
+
+    review = evaluate(
+        policy,
+        EEPLContext(
+            user_id="subject-1", age_years=25, location="Nakuru",
+            occasion=None, climate="warm",
+        ),
+        "candidate-review",
+    )
+    assert review.verdict is GateVerdict.REVIEW
+    assert "EEPL_REQUIRED_CONTEXT_MISSING_OCCASION" in review.reason_codes
+
+    passed = evaluate(
+        policy,
+        EEPLContext(
+            user_id="subject-1", age_years=25, location="Nakuru",
+            occasion="everyday", climate="warm",
+        ),
+        "candidate-pass",
+    )
+    assert passed.verdict is GateVerdict.PASS
+    assert passed.reason_codes == ("EEPL_POLICY_PASSED",)
+
+
+def test_stale_wardrobe_context_is_downgraded_to_eepl_review_not_inferred():
+    from datetime import datetime, timedelta, timezone
+    from eepl import ContextField, EEPLContext, EEPLPolicy, GateVerdict, evaluate
+
+    now = datetime.now(timezone.utc)
+    stale_context = main.ContextInput(
+        location="Nakuru",
+        occasion="everyday",
+        climate="warm",
+        location_source="user_declared",
+        location_observed_at=(now - timedelta(days=3)).isoformat(),
+        occasion_source="user_declared",
+        occasion_observed_at=now.isoformat(),
+        climate_source="user_declared",
+        climate_observed_at=now.isoformat(),
+    )
+    normalized, evidence = main._fresh_context_for_eepl(stale_context, strict=True)
+    assert normalized.location is None
+    assert evidence["location"]["status"] == "stale_or_future"
+
+    result = evaluate(
+        EEPLPolicy(
+            policy_id="wardrobe-context-required",
+            allowed_locations=("Nakuru",),
+            required_context=(ContextField.LOCATION,),
+        ),
+        EEPLContext(
+            user_id="subject-1",
+            location=normalized.location,
+            occasion=normalized.occasion,
+            climate=normalized.climate,
+        ),
+        "candidate-review",
+    )
+    assert result.verdict is GateVerdict.REVIEW
+    assert "EEPL_REQUIRED_CONTEXT_MISSING_LOCATION" in result.reason_codes
