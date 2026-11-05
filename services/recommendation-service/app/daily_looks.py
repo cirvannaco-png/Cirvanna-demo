@@ -145,6 +145,7 @@ def build_daily_looks(
     occasion: str | None = None,
     climate: str | None = None,
     style_signals: Iterable[str] = (),
+    feedback_signals: Iterable[str] = (),
 ) -> dict[str, Any]:
     """Build exactly three distinct look roles from verified wardrobe records."""
     if not request_id.strip() or not user_id.strip():
@@ -200,6 +201,8 @@ def build_daily_looks(
             break
 
     signals = tuple(_normalise(value) for value in style_signals if isinstance(value, str) and value.strip())[:40]
+    feedback = tuple(_normalise(value) for value in feedback_signals if isinstance(value, str) and value.strip())[:40]
+    ranking_signals = signals + feedback
     selected_base: set[frozenset[str]] = set()
     selected_item_ids: set[str] = set()
     looks: list[dict[str, Any]] = []
@@ -233,7 +236,7 @@ def build_daily_looks(
         candidate = max(
             available,
             key=lambda group: (
-                _score(group, role, signals, occasion, climate),
+                _score(group, role, ranking_signals, occasion, climate),
                 -sum(len(set(x["item_id"] for x in group) & selected_item_ids) for _ in (0,)),
                 _stable_tie(user_id, local_date, role, (x["item_id"] for x in group)),
             ),
@@ -252,7 +255,7 @@ def build_daily_looks(
                 optional_candidates.append(max(
                     pool,
                     key=lambda x: (
-                        _score([x], role, signals, occasion, climate),
+                        _score([x], role, ranking_signals, occasion, climate),
                         _stable_tie(user_id, local_date, role, [x["item_id"]]),
                     ),
                 ))
@@ -300,7 +303,11 @@ def build_daily_looks(
         "looks": looks,
         "personalization": {
             "style_signals_used": bool(signals),
-            "source": "consented_usi_profile" if signals else "no_persisted_style_signals",
+            "style_signal_count": len(signals),
+            "style_source": "consented_usi_profile" if signals else "no_profile_signals_used",
+            "feedback_signals_used": bool(feedback),
+            "feedback_signal_count": len(feedback),
+            "feedback_source": "consented_wardrobe_feedback" if feedback else "no_active_consent_feedback_signals",
             "durable_learning_performed": False,
         },
         "limits": [
