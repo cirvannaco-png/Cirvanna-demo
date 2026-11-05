@@ -852,12 +852,15 @@ def test_market_aware_checkout_revalidates_quotes_and_charges_localized_total(cl
     assert order["total_minor"] == 4460
     assert order["destination_country_code"] == "KE"
     assert len(order["charges"]) == 2
-    assert sum(
-        int(value.split("]")[0].split("[")[-1])
-        for key, value in seen["data"].items()
-        if key.endswith("[unit_amount]")
-    ) > 0
-    assert any("Fulfilment" in key or "Courier Delivery" in value for key, value in seen["data"].items())
+    stripe_data = seen["data"]
+    charged_total = sum(
+        int(stripe_data[f"line_items[{index}][price_data][unit_amount]"])
+        * int(stripe_data[f"line_items[{index}][quantity]"])
+        for index in range(3)
+    )
+    assert charged_total == 4460
+    assert "Courier Delivery" in stripe_data["line_items[1][price_data][product_data][name]"]
+    assert "Tax" in stripe_data["line_items[2][price_data][product_data][name]"]
 
     db = TEST_SESSION()
     persisted = db.get(main.CommerceOrder, order["order_id"])
