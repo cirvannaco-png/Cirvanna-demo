@@ -699,6 +699,14 @@ def readiness() -> dict:
     commerce_configured = bool(os.getenv("COMMERCE_API_URL"))
     catalog_ready = False
     commerce_ready = False
+    privacy_governance_configured = bool(os.getenv("PRIVACY_GOVERNANCE_API_URL")) and len(os.getenv("PRIVACY_GOVERNANCE_API_TOKEN", "").encode()) >= 32
+    privacy_governance_ready = False
+    try:
+        privacy_base = _upstream_base("PRIVACY_GOVERNANCE_API_URL")
+        if privacy_governance_configured:
+            privacy_governance_ready = _upstream_ready(privacy_base)
+    except HTTPException:
+        privacy_governance_ready = False
     try:
         catalog_base = _upstream_base("CATALOG_API_URL")
         if catalog_configured:
@@ -718,6 +726,9 @@ def readiness() -> dict:
         "catalog_ready": catalog_ready,
         "commerce_url_configured": commerce_configured,
         "commerce_ready": commerce_ready,
+        "privacy_governance_configured": privacy_governance_configured,
+        "privacy_governance_ready": privacy_governance_ready,
+        "click_it_privacy_ready": privacy_governance_ready,
         "ready": ready,
     }
     if not ready:
@@ -976,7 +987,7 @@ async def get_image_rights_request_status(
     """Let a photographed person track their request without an uploader account."""
     if not re.fullmatch(r"[A-Za-z0-9_-]{8,160}", request_id):
         raise HTTPException(404, detail={"code": "IMAGE_RIGHTS_REQUEST_NOT_FOUND"})
-    base, token = _internal_service("PRIVACY_RIGHTS_API_URL", "PRIVACY_RIGHTS_API_TOKEN")
+    base, token = _internal_service("PRIVACY_GOVERNANCE_API_URL", "PRIVACY_GOVERNANCE_API_TOKEN")
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(8.0, connect=2.0),
