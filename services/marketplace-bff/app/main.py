@@ -586,6 +586,9 @@ async def marketplace_click_it(
     if not consent_image_processing or not consent_click_it:
         await product_image.close()
         raise HTTPException(400, detail={"code": "EXPLICIT_CLICK_IT_CONSENT_REQUIRED"})
+    if photographed_people_status not in {"no_people", "adults_only", "contains_minor"}:
+        await product_image.close()
+        raise HTTPException(403, detail={"code": "CHILD_SAFETY_STATUS_UNCONFIRMED"})
     if photographed_people_status == "contains_minor" and twin_id:
         await product_image.close()
         raise HTTPException(403, detail={"code": "CHILD_TWIN_PERSONALIZATION_DISABLED"})
