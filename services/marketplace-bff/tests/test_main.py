@@ -492,3 +492,18 @@ def test_wardrobe_learning_without_identity_provider_has_no_personalization_bonu
     monkeypatch.delenv("IDENTITY_SERVICE_URL", raising=False)
     monkeypatch.delenv("IDENTITY_SERVICE_TOKEN", raising=False)
     assert main._load_consent_aware_wardrobe_likes("subject-1") == {}
+
+
+def test_wardrobe_consent_listing_allows_closet_browse_when_learning_provider_absent(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.delenv("IDENTITY_SERVICE_URL", raising=False)
+    monkeypatch.delenv("IDENTITY_SERVICE_TOKEN", raising=False)
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get("/api/wardrobe/consents", headers={"Authorization": "Bearer signed-session"})
+    assert response.status_code == 200
+    assert response.json()["learning_configured"] is False
+    assert response.json()["items"] == []
+    assert len(fake.calls) == 1
