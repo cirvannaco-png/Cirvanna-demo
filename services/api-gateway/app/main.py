@@ -1073,6 +1073,14 @@ def _wardrobe_match(
     }
 
 
+def _offer_comparison_max_age_seconds() -> int:
+    try:
+        configured = int(os.getenv("COMMERCE_OFFER_MAX_AGE_SECONDS", "3600"))
+    except ValueError:
+        configured = 3600
+    return max(60, min(configured, 604800))
+
+
 def _fresh_context_for_eepl(context: ContextInput, *, strict: bool) -> tuple[ContextInput, dict[str, Any]]:
     """Drop context that lacks explicit provenance, timezone or freshness."""
     now = datetime.now(timezone.utc)
@@ -1811,7 +1819,7 @@ def discover_marketplace(
     comparisons_by_product = {
         product_id: compare_like_for_like_offers(
             [offer for offer in offers if offer.get("catalog_product_id") == product_id],
-            max_age_seconds=int(os.getenv("COMMERCE_OFFER_MAX_AGE_SECONDS", "3600")),
+            max_age_seconds=_offer_comparison_max_age_seconds(),
         )
         for product_id in by_product
     }
