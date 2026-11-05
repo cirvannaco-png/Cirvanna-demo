@@ -233,7 +233,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
         openDrawer("Comparison unavailable",'<p class="config-note">'+escapeHtml(data.reason_code||"Required market evidence is missing or stale.")+'</p><p class="config-note">No landed-cost ranking is shown until variant identity, stock, delivery, tax, FX and payment evidence all pass.</p>');
         return;
       }
-      const rows=(data.offers||[]).map(item=>'<div class="drawer-row"><div>'+escapeHtml(item.merchant_name)+'<small>Item '+moneyMinor(item.item_display_minor,data.display_currency)+' · Delivery '+moneyMinor(item.fulfillment_display_minor,data.display_currency)+' · Tax added '+moneyMinor(item.added_to_total_minor,data.display_currency)+'</small></div><strong>'+moneyMinor(item.landed_total_minor,data.display_currency)+'</strong></div>').join("");
+      const rows=(data.offers||[]).map(item=>'<div class="drawer-row"><div>'+escapeHtml(item.merchant_name)+'<small>Item '+moneyMinor(item.item_display_price_minor,data.display_currency)+' · Delivery '+moneyMinor(item.fulfillment_charge_minor,data.display_currency)+' · Tax added '+moneyMinor(item.tax&&item.tax.added_to_total_minor,data.display_currency)+'</small></div><strong>'+moneyMinor(item.landed_total_minor,data.display_currency)+'</strong></div>').join("");
       openDrawer("Like-for-like comparison",rows+'<p class="config-note">Same canonical variant · '+escapeHtml(data.display_currency)+' · '+escapeHtml(data.fulfillment_mode)+' · '+escapeHtml(data.destination_key)+'. Tax, fulfilment and FX are provider-quoted and time-bound. This is not a guarantee after quote expiry.</p>');
     }catch(error){setStatus(error.message||"Comparison could not be completed.",true)}
   }
