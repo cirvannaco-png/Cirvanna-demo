@@ -26,6 +26,8 @@ def client():
 def configure_upstreams(monkeypatch):
     monkeypatch.setenv("CATALOG_API_URL", "https://catalog.example.test")
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_URL", "https://privacy.example.test")
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_TOKEN", "privacy-governance-test-token-at-least-32-bytes")
 
 
 def test_page_bootstraps_same_origin_live_offers_not_demo_data(client):
