@@ -290,6 +290,10 @@ def test_multi_jurisdiction_uses_stricter_guardian_policy(client, monkeypatch):
             "jurisdiction_resolution_complete": True,
             "policy_conflicts_resolved": True,
             "applicable_jurisdictions": ["JUR-A", "JUR-B"],
+            "controller_establishments": ["controller-A"],
+            "processor_establishments": ["processor-A"],
+            "processing_locations": ["region-A", "region-B"],
+            "storage_locations": ["region-A"],
             "transfer_paths": [{"from": "processor-a", "to": "processor-b", "allowed": True}],
         }
 
@@ -335,6 +339,10 @@ def test_policy_missing_for_one_overlapping_jurisdiction_blocks(client, monkeypa
             "jurisdiction_resolution_complete": True,
             "policy_conflicts_resolved": True,
             "applicable_jurisdictions": ["JUR-A", "JUR-B"],
+            "controller_establishments": ["controller-A"],
+            "processor_establishments": ["processor-A"],
+            "processing_locations": ["region-A"],
+            "storage_locations": ["region-A"],
             "transfer_paths": [],
         }
 
@@ -441,7 +449,15 @@ def test_rights_status_token_is_one_time_and_only_its_hash_is_stored(client, mon
 
 
 def test_rights_approval_requires_verified_authority_and_full_deletion_propagation(client, monkeypatch):
-    async def content(_name, path, _payload):
+    async def content(name, path, payload):
+        if name == "RIGHTS_AUTHORITY_VERIFICATION":
+            return {
+                "verified": True, "active": True,
+                "request_id": payload["request_id"],
+                "asset_id": payload["asset_id"],
+                "requester_relationship": payload["requester_relationship"],
+                "authority_confirmed": True,
+            }
         if path.endswith("/resolve"):
             return {"found": True, "active": True, "asset_id": "asset-opaque-004"}
         return {"propagation_complete": True, "deleted_surfaces": sorted(main.REQUIRED_REMOVAL_SURFACES)}
@@ -460,13 +476,13 @@ def test_rights_approval_requires_verified_authority_and_full_deletion_propagati
     denied = client.post(
         f"/internal/v1/image-rights/requests/{created['request_id']}/review",
         headers=reviewer(),
-        json={"decision": "approve", "authority_verified": False, "verification_reference": "verification-ticket-123", "resolution_code": "privacy-approved"},
+        json={"decision": "approve", "verification_reference": "verification-ticket-123", "resolution_code": "privacy-approved"},
     )
     assert denied.status_code == 403
     approved = client.post(
         f"/internal/v1/image-rights/requests/{created['request_id']}/review",
         headers=reviewer(),
-        json={"decision": "approve", "authority_verified": True, "verification_reference": "verification-ticket-123", "resolution_code": "privacy-approved"},
+        json={"decision": "approve", "verification_reference": "verification-ticket-123", "resolution_code": "privacy-approved"},
     )
     assert approved.status_code == 200
     assert approved.json()["deletion_propagated"] is True
@@ -474,7 +490,15 @@ def test_rights_approval_requires_verified_authority_and_full_deletion_propagati
 
 
 def test_rights_review_does_not_mark_completed_when_deletion_is_partial(client, monkeypatch):
-    async def content(_name, path, _payload):
+    async def content(name, path, payload):
+        if name == "RIGHTS_AUTHORITY_VERIFICATION":
+            return {
+                "verified": True, "active": True,
+                "request_id": payload["request_id"],
+                "asset_id": payload["asset_id"],
+                "requester_relationship": payload["requester_relationship"],
+                "authority_confirmed": True,
+            }
         if path.endswith("/resolve"):
             return {"found": True, "active": True, "asset_id": "asset-opaque-005"}
         return {"propagation_complete": False, "deleted_surfaces": ["source", "cdn"]}
