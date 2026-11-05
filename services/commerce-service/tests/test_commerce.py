@@ -717,7 +717,7 @@ def _market_compare_seed(client, monkeypatch):
             id=str(uuid.uuid4()), variant_id=variant.id, destination_country_code="KE",
             destination_key="Nakuru/Subukia", fulfillment_mode="courier_delivery",
             amount_minor=fulfillment_minor, currency=currency, status="confirmed",
-            charge_basis="per_unit", distance_km=Decimal("10") if merchant is merchant_a else Decimal("40"),
+            charge_basis="per_unit", distance_km=main.Decimal("10") if merchant is merchant_a else main.Decimal("40"),
             provider="test-courier", provider_quote_id=str(uuid.uuid4()),
             observed_at=main.now(), expires_at=main.now()+timedelta(hours=1),
         )
@@ -731,7 +731,7 @@ def _market_compare_seed(client, monkeypatch):
         db.add_all([market, payment, fulfillment, tax])
     db.add(main.OfferFXQuote(
         id=str(uuid.uuid4()), variant_id=variant_b.id, base_currency="USD", quote_currency="KES",
-        rate=Decimal("130.000000000000"), provider="test-fx", provider_quote_id=str(uuid.uuid4()),
+        rate=main.Decimal("130.000000000000"), provider="test-fx", provider_quote_id=str(uuid.uuid4()),
         rounding_rule="HALF_UP", spread_bps=0, observed_at=main.now(),
         expires_at=main.now()+timedelta(hours=1),
     ))
@@ -750,7 +750,7 @@ def _make_offer_currency_kes(merchant):
     fulfillment = db.query(main.OfferFulfillmentQuote).filter_by(variant_id=variant.id).one()
     fulfillment.currency = "KES"
     fulfillment.amount_minor = 200
-    fulfillment.distance_km = Decimal("20")
+    fulfillment.distance_km = main.Decimal("20")
     tax = db.query(main.OfferTaxQuote).filter_by(variant_id=variant.id).one()
     tax.currency = "KES"
     tax.amount_minor = 120
