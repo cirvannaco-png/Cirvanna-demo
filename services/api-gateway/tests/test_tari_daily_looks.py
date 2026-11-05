@@ -4,6 +4,8 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
+from npl import NegativePreference, PreferenceSource, TargetType
+
 from app import main
 
 
@@ -51,6 +53,7 @@ def test_tari_gateway_checks_subject_and_uses_only_active_usi_profile(monkeypatc
         SimpleNamespace(attribute="color:teal", active=True),
         SimpleNamespace(attribute="style:editorial", active=False),
         SimpleNamespace(attribute="silhouette:relaxed", active=True),
+        SimpleNamespace(attribute="culture:declared-context", active=True),
     ])
     observed = {}
 
@@ -121,3 +124,38 @@ def test_tari_gateway_rejects_non_active_wardrobe_snapshot(monkeypatch):
         json=body,
     )
     assert response.status_code == 422
+
+
+def test_tari_filters_explicit_npl_hard_vetoes_from_wardrobe(monkeypatch):
+    def persisted_preferences(*, request_id, user_id, product_id, attributes):
+        if product_id == "shirt-001":
+            return (NegativePreference(
+                preference_id="avoid-shirt",
+                user_id=user_id,
+                target_type=TargetType.ITEM,
+                target_value="shirt-001",
+                source=PreferenceSource.USER_DECLARED,
+            ),)
+        if "red" in {value.casefold() for value in attributes}:
+            return (NegativePreference(
+                preference_id="avoid-red",
+                user_id=user_id,
+                target_type=TargetType.ATTRIBUTE,
+                target_value="red",
+                source=PreferenceSource.USER_DECLARED,
+            ),)
+        return ()
+
+    monkeypatch.setattr(main, "_load_persisted_npl_preferences", persisted_preferences)
+    items = [
+        {"item_id": "shirt-001", "display_name": "Linen shirt", "category": "tops", "attributes": ["blue"]},
+        {"item_id": "red-skirt", "display_name": "Red skirt", "category": "skirts", "attributes": ["red"]},
+        {"item_id": "navy-trousers", "display_name": "Navy trousers", "category": "trousers", "attributes": ["navy"]},
+    ]
+    allowed, excluded = main._filter_npl_blocked_wardrobe_items(
+        request_id="tari-npl-001",
+        user_id="signed-user-42",
+        wardrobe_items=items,
+    )
+    assert [item["item_id"] for item in allowed] == ["navy-trousers"]
+    assert excluded == 2
