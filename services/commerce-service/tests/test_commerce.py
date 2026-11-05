@@ -750,6 +750,7 @@ def _make_offer_currency_kes(merchant):
     fulfillment = db.query(main.OfferFulfillmentQuote).filter_by(variant_id=variant.id).one()
     fulfillment.currency = "KES"
     fulfillment.amount_minor = 200
+    fulfillment.distance_km = Decimal("20")
     tax = db.query(main.OfferTaxQuote).filter_by(variant_id=variant.id).one()
     tax.currency = "KES"
     tax.amount_minor = 120
@@ -1055,7 +1056,7 @@ def test_compare_offers_rejects_currency_mismatch_even_when_fx_exists(client, mo
     response = client.post("/marketplace/compare", json={
         "variant_ids": [a["variant_id"], b["variant_id"]],
         "destination_country_code": "KE", "destination_key": "Nakuru/Subukia",
-        "fulfillment_mode": "courier_delivery", "display_currency": "KES", "payment_method": "card",
+        "fulfillment_mode": "courier_delivery", "display_currency": "KES", "payment_method": "card", "radius_km": 50,
     })
     assert response.status_code == 200
     assert response.json()["status"] == "unavailable"
@@ -1074,3 +1075,15 @@ def test_offer_display_price_fails_closed_when_fx_quote_is_stale(client, monkeyp
     item = next(value for value in response.json()["items"] if value["variant_id"] == b["variant_id"])
     assert item["display_price_status"] == "conversion_unavailable"
     assert item["display_price_minor"] is None
+
+
+def test_compare_offers_respects_user_selected_radius(client, monkeypatch):
+    a, b = _market_compare_seed(client, monkeypatch)
+    response = client.post("/marketplace/compare", json={
+        "variant_ids": [a["variant_id"], b["variant_id"]],
+        "destination_country_code": "KE", "destination_key": "Nakuru/Subukia",
+        "fulfillment_mode": "courier_delivery", "display_currency": "KES",
+        "payment_method": "card", "radius_km": 30,
+    })
+    assert response.json()["status"] == "unavailable"
+    assert response.json()["reason_code"] == "FULFILLMENT_QUOTE_OUTSIDE_RADIUS"
