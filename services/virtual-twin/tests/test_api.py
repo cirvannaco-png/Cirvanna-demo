@@ -165,7 +165,6 @@ def test_twin_success_returns_only_a_partial_ephemeral_pose(monkeypatch):
         }
 
     monkeypatch.setattr(main, "_verify_consent", verify)
-    monkeypatch.setattr(main, "authorize_click_it_policy", policy)
     monkeypatch.setattr(main, "_run_vision", run)
     response = client.post(
         "/twin",
@@ -282,6 +281,7 @@ def test_click_it_success_returns_candidates_but_never_claims_display_authorizat
         }
 
     monkeypatch.setattr(main, "_verify_consent", verify)
+    monkeypatch.setattr(main, "authorize_click_it_policy", policy)
     monkeypatch.setattr(main, "_authorize_twin", authorize)
     monkeypatch.setattr(main, "_run_vision", run)
     response = client.post(
