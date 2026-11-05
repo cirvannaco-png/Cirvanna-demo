@@ -800,8 +800,15 @@ def _load_verified_usi_profile(subject_id: str, *, allow_without_consent: bool =
     """
     base = os.getenv("IDENTITY_SERVICE_URL", "").strip().rstrip("/")
     token = os.getenv("IDENTITY_SERVICE_TOKEN", "").strip()
+    if not base and not token and allow_without_consent:
+        return USIProfile(
+            profile_id=f"usi-empty:{subject_id}",
+            user_id=subject_id,
+            version="profile-storage-provider-not-configured",
+            preferences=(),
+        )
     if not base or not _trusted_internal_base_url(base) or len(token.encode("utf-8")) < 32:
-        raise HTTPException(503, detail={"code": "USI_PROFILE_PROVIDER_NOT_CONFIGURED"})
+        raise HTTPException(503, detail={"code": "USI_PROFILE_PROVIDER_CONFIGURATION_INVALID"})
     try:
         with httpx.Client(timeout=httpx.Timeout(4.0, connect=1.5), trust_env=False, follow_redirects=False) as client:
             response = client.get(
