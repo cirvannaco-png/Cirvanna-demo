@@ -49,6 +49,9 @@ class PortalContractTests(unittest.TestCase):
         self.assertIn("destination_key:destinationKey", MARKETPLACE)
         self.assertIn("fulfillment_mode:fulfillmentMode", MARKETPLACE)
         self.assertIn("display_currency:displayCurrency", MARKETPLACE)
+        self.assertIn('data-action="compare"', MARKETPLACE)
+        self.assertIn('/marketplace/compare', MARKETPLACE)
+        self.assertIn("Like-for-like comparison", MARKETPLACE)
         self.assertIn('body:JSON.stringify(checkoutPayload)', MARKETPLACE)
 
     def test_founder_console_uses_server_side_admin_authorization(self):
