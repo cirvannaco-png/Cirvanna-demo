@@ -209,6 +209,35 @@ class ComplementerAdvisoryRequest(BaseModel):
         return normalized
 
 
+class TariDailyLooksRequest(BaseModel):
+    """Daily-look request from the trusted same-origin BFF."""
+    model_config = ConfigDict(extra="forbid")
+    request_id: str = Field(min_length=1, max_length=128)
+    user_id: str = Field(min_length=1, max_length=128)
+    local_date: str = Field(min_length=10, max_length=10)
+    occasion: str | None = Field(default=None, max_length=120)
+    climate: str | None = Field(default=None, max_length=80)
+    wardrobe_items: list[dict[str, Any]] = Field(max_length=150)
+
+    @field_validator("request_id", "user_id")
+    @classmethod
+    def trim_tari_identifiers(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("identifier must not be blank")
+        return normalized
+
+    @field_validator("local_date")
+    @classmethod
+    def validate_tari_date(cls, value: str) -> str:
+        from datetime import date
+        try:
+            date.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError("local_date must be an ISO calendar date") from exc
+        return value
+
+
 class ReasonOutput(BaseModel):
     code: str
     explanation: str
@@ -594,6 +623,76 @@ def _complementer_advisory(
         "mode": "advisory_only",
         "display_authorized": False,
         "durable_personal_memory": False,
+        "recommendation": result,
+    }
+
+
+def _tari_daily_looks(payload: TariDailyLooksRequest, style_signals: list[str]) -> dict[str, Any]:
+    """Call the internal wardrobe-only composer and verify every returned item ID."""
+    base = os.getenv("COMPLEMENTER_SERVICE_URL", "").strip().rstrip("/")
+    token = os.getenv("COMPLEMENTER_SERVICE_TOKEN", "").strip()
+    if not base or len(token.encode("utf-8")) < 32 or not _trusted_internal_base_url(base):
+        raise HTTPException(503, detail={"code": "TARI_PROVIDER_CONFIGURATION_INVALID"})
+
+    body = payload.model_dump(mode="json")
+    body["style_signals"] = style_signals[:40]
+    try:
+        with httpx.Client(
+            timeout=httpx.Timeout(8.0, connect=2.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            response = client.post(
+                f"{base}/v1/tari/daily-looks",
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                json=body,
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "TARI_PROVIDER_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "TARI_PROVIDER_UNAVAILABLE"}) from exc
+    if response.status_code == 403:
+        raise HTTPException(403, detail={"code": "TARI_WARDROBE_SCOPE_REJECTED"})
+    if response.status_code == 422:
+        raise HTTPException(422, detail={"code": "TARI_REQUEST_REJECTED"})
+    if response.status_code in {401, 502, 503, 504} or response.status_code < 200 or response.status_code >= 300:
+        raise HTTPException(503, detail={"code": "TARI_PROVIDER_UNAVAILABLE"})
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "TARI_INVALID_RESPONSE"}) from exc
+
+    roles = ["everyday", "elevated", "explore"]
+    owned_ids = {
+        item["item_id"] for item in payload.wardrobe_items
+        if isinstance(item, dict) and item.get("owner_user_id") == payload.user_id and item.get("status") == "active"
+        and isinstance(item.get("item_id"), str)
+    }
+    looks = result.get("looks") if isinstance(result, dict) else None
+    if (
+        not isinstance(result, dict)
+        or result.get("schema_version") != "1.0"
+        or result.get("request_id") != payload.request_id
+        or result.get("capability") != "tari_daily_looks"
+        or result.get("look_count") != 3
+        or result.get("status") not in {"ready", "partial", "needs_input"}
+        or not isinstance(looks, list)
+        or len(looks) != 3
+        or [item.get("role") if isinstance(item, dict) else None for item in looks] != roles
+    ):
+        raise HTTPException(502, detail={"code": "TARI_RESPONSE_SCHEMA_INVALID"})
+
+    for look in looks:
+        item_ids = look.get("item_ids")
+        if not isinstance(item_ids, list) or any(not isinstance(item_id, str) or item_id not in owned_ids for item_id in item_ids):
+            raise HTTPException(502, detail={"code": "TARI_RESPONSE_WARDROBE_SCOPE_MISMATCH"})
+        preview = look.get("virtual_twin_preview")
+        if not isinstance(preview, dict) or preview.get("status") != "unavailable":
+            raise HTTPException(502, detail={"code": "TARI_TWIN_PREVIEW_STATE_INVALID"})
+    return {
+        "schema_version": "1.0",
+        "request_id": payload.request_id,
+        "mode": "tari_wardrobe_daily_looks",
         "recommendation": result,
     }
 
@@ -1631,6 +1730,29 @@ def readiness() -> dict[str, Any]:
 def recommend_complementary_look(payload: ComplementerAdvisoryRequest) -> dict[str, Any]:
     """Return styling guidance only; product candidates require the separate CAL decision path."""
     return _complementer_advisory(payload)
+
+
+@app.post(
+    "/v1/tari/daily-looks",
+    dependencies=[Depends(require_api_token)],
+    tags=["tari daily looks"],
+)
+def compose_tari_daily_looks(
+    payload: TariDailyLooksRequest,
+    end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
+) -> dict[str, Any]:
+    """Compose three looks only from the signed-in user's wardrobe snapshot."""
+    subject = _resolve_verified_subject(end_user_authorization)
+    if not hmac.compare_digest(subject, payload.user_id):
+        raise HTTPException(403, detail={"code": "REQUEST_SUBJECT_MISMATCH"})
+    for item in payload.wardrobe_items:
+        if not isinstance(item, dict) or item.get("owner_user_id") != subject:
+            raise HTTPException(403, detail={"code": "WARDROBE_SUBJECT_MISMATCH"})
+        if item.get("status") != "active":
+            raise HTTPException(422, detail={"code": "WARDROBE_SNAPSHOT_MUST_BE_ACTIVE_ONLY"})
+    profile = _load_verified_usi_profile(subject, allow_without_consent=True)
+    style_signals = [preference.attribute for preference in profile.preferences if preference.active]
+    return _tari_daily_looks(payload, style_signals)
 
 
 @app.get("/v1/me/style-profile", dependencies=[Depends(require_api_token)], tags=["identity and learning"])
