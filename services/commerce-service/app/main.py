@@ -1290,6 +1290,9 @@ def capabilities() -> dict[str, Any]:
         "idempotent_orders": True, "stripe_hosted_checkout": StripeGateway().ready,
         "verified_payment_webhooks": bool(os.getenv("STRIPE_WEBHOOK_SECRET")),
         "automated_seller_payouts": False, "shipping_tax_calculation": False,
+        "multimarket_onboarding": True, "localized_offer_pricing": True,
+        "provider_quote_ingestion": bool(os.getenv("COMMERCE_MARKET_CONTEXT_TOKEN")),
+        "landed_cost_comparison": True, "checkout_landed_cost_revalidation": False,
         "catacaci_eligibility": False, "click_it_reconstruction": False,
         "virtual_twin_generation": False, "virtual_try_on": False}
 
@@ -1358,6 +1361,8 @@ def list_merchants(
             "display_name": merchant.display_name,
             "legal_name": merchant.legal_name,
             "country_code": merchant.country_code,
+            "brand_home_country_code": merchant.brand_home_country_code,
+            "legal_country_code": merchant.legal_country_code or merchant.country_code,
             "contact_email": merchant.contact_email,
             "status": merchant.state,
             "commission_bps": merchant.commission_bps,
@@ -1505,7 +1510,9 @@ def set_merchant_market_state(
         )).all())
         if not any(
             quote_is_current(item.observed_at, item.expires_at)
-            and display_currency in item.transaction_currencies
+            and bool(item.transaction_currencies)
+            and bool(item.settlement_currencies)
+            and bool(item.payment_methods)
             for item in capable
         ):
             raise HTTPException(409, detail={"code": "MARKET_PAYMENT_CAPABILITY_NOT_READY"})
