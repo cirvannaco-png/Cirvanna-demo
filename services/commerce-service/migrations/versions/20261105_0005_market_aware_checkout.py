@@ -17,6 +17,11 @@ def upgrade() -> None:
         "commerce_offer_fulfillment_quotes",
         sa.Column("charge_basis", sa.String(16), nullable=False, server_default="per_unit"),
     )
+    with op.batch_alter_table("commerce_offer_fulfillment_quotes") as batch_op:
+        batch_op.create_check_constraint(
+            "ck_commerce_fulfillment_charge_basis",
+            "charge_basis IN ('per_unit','per_quote')",
+        )
     op.add_column("commerce_merchant_operating_markets", sa.Column("tax_provider", sa.String(100), nullable=True))
     op.add_column("commerce_merchant_operating_markets", sa.Column("tax_provider_reference", sa.String(180), nullable=True))
     op.add_column("commerce_merchant_operating_markets", sa.Column("tax_capability_observed_at", sa.DateTime(timezone=True), nullable=True))
@@ -64,6 +69,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    with op.batch_alter_table("commerce_offer_fulfillment_quotes") as batch_op:
+        batch_op.drop_constraint("ck_commerce_fulfillment_charge_basis", type_="check")
     op.drop_column("commerce_offer_fulfillment_quotes", "charge_basis")
     op.drop_column("commerce_merchant_operating_markets", "fulfillment_capability_expires_at")
     op.drop_column("commerce_merchant_operating_markets", "fulfillment_capability_observed_at")
