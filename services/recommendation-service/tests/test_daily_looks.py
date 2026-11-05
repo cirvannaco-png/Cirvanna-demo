@@ -81,7 +81,8 @@ def test_foreign_owner_is_rejected():
         )
 
 
-def test_duplicate_ids_and_invalid_dates_are_rejected():
+def test_duplicate_ids_and_invalid_dates_are_rejected(monkeypatch):
+    monkeypatch.setenv("COMPLEMENTER_SERVICE_TOKEN", TOKEN)
     items = wardrobe()
     items.append(dict(items[0]))
     with pytest.raises(ValueError, match="duplicate"):
