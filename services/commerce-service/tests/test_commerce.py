@@ -821,7 +821,14 @@ def test_offers_return_display_currency_only_with_market_and_fresh_fx(client, mo
 
 
 def test_market_aware_checkout_revalidates_quotes_and_charges_localized_total(client, monkeypatch):
-    merchant, _ = _market_compare_seed(client, monkeypatch)
+    merchant, peer = _market_compare_seed(client, monkeypatch)
+    comparison = client.post("/marketplace/compare", json={
+        "variant_ids": [merchant["variant_id"], peer["variant_id"]],
+        "destination_country_code": "KE", "destination_key": "Nakuru/Subukia",
+        "fulfillment_mode": "courier_delivery", "display_currency": "KES", "payment_method": "card",
+    })
+    assert comparison.status_code == 200 and comparison.json()["status"] == "comparable"
+    merchant_comparison = next(item for item in comparison.json()["offers"] if item["merchant_id"] == merchant["merchant_id"])
     variant_id = merchant["variant_id"]
     buyer_id = "buyer-market-checkout"
     db = TEST_SESSION()
@@ -863,6 +870,7 @@ def test_market_aware_checkout_revalidates_quotes_and_charges_localized_total(cl
     assert order["fulfillment_total_minor"] == 500
     assert order["tax_total_minor"] == 360
     assert order["total_minor"] == 4460
+    assert order["total_minor"] == merchant_comparison["landed_total_minor"] * 2
     assert order["destination_country_code"] == "KE"
     assert len(order["charges"]) == 2
     stripe_data = seen["data"]
