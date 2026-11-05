@@ -85,10 +85,10 @@ def client(monkeypatch):
     main.SessionLocal = ORIGINAL_SESSION
 
 
-def seed_offer(stock: int = 8, price_minor: int = 250, image_urls: list[str] | None = None):
+def seed_offer(stock: int = 8, price_minor: int = 250, image_urls: list[str] | None = None, owner_user_id: str = "merchant-1"):
     db = TEST_SESSION()
     merchant = main.Merchant(
-        id=str(uuid.uuid4()), owner_user_id="merchant-1", display_name="Verified Studio",
+        id=str(uuid.uuid4()), owner_user_id=owner_user_id, display_name="Verified Studio",
         legal_name="Verified Studio Ltd", country_code="KE", contact_email="seller@example.test",
         verification_reference="verified-by-admin-123", state="approved", commission_bps=300,
     )
@@ -673,7 +673,7 @@ def _market_compare_seed(client, monkeypatch):
     from datetime import timedelta
     from decimal import Decimal
     merchant_a = seed_offer(price_minor=1800)
-    merchant_b = seed_offer(price_minor=10)
+    merchant_b = seed_offer(price_minor=10, owner_user_id="merchant-2")
     canonical_id = str(uuid.uuid4())
     db = TEST_SESSION()
     variant_a = db.get(main.Variant, merchant_a["variant_id"])
