@@ -464,7 +464,7 @@ def test_tari_daily_looks_reject_cross_subject_wardrobe_response(client, monkeyp
         json={},
     )
     assert response.status_code == 502
-    assert response.json()["detail"]["code"] == "WARDROBE_SCOPE_OR_SCHEMA_MISMATCH"
+    assert response.json()["detail"]["code"] == "TARI_WARDROBE_SCOPE_MISMATCH"
 
 
 def test_wardrobe_page_exposes_feedback_and_consent_controls(client):
