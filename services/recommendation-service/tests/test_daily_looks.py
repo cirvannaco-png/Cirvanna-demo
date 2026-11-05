@@ -165,6 +165,7 @@ def test_declared_occasion_changes_look_ranking():
         occasion="work",
     )
     assert "work-top" in result["looks"][0]["item_ids"]
+    assert "declared occasion (work)" in result["looks"][0]["reason"]
 
 
 def test_declared_climate_changes_look_ranking():
@@ -181,6 +182,7 @@ def test_declared_climate_changes_look_ranking():
         climate="hot_humid",
     )
     assert "linen-top" in result["looks"][0]["item_ids"]
+    assert "declared climate (hot humid)" in result["looks"][0]["reason"]
 
 
 def test_consent_based_feedback_signal_changes_look_ranking():
@@ -199,3 +201,4 @@ def test_consent_based_feedback_signal_changes_look_ranking():
     assert "teal-top" in result["looks"][0]["item_ids"]
     assert result["personalization"]["feedback_signals_used"] is True
     assert result["personalization"]["feedback_source"] == "consented_wardrobe_feedback"
+    assert "consented like/wear feedback: teal" in result["looks"][0]["reason"]
