@@ -1177,6 +1177,10 @@ def _market_is_active(db: Session, merchant_id: str, market_country_code: str) -
     ))
     if market is None:
         return None
+    if not market.tax_provider or not market.tax_provider_reference:
+        return None
+    if not market.fulfillment_provider or not market.fulfillment_provider_reference:
+        return None
     if not quote_is_current(market.tax_capability_observed_at, market.tax_capability_expires_at):
         return None
     if not quote_is_current(market.fulfillment_capability_observed_at, market.fulfillment_capability_expires_at):
@@ -2178,6 +2182,10 @@ def list_offers(
         stmt = stmt.join(MerchantOperatingMarket, MerchantOperatingMarket.merchant_id == Merchant.id).where(
             MerchantOperatingMarket.market_country_code == market_code,
             MerchantOperatingMarket.state == "active",
+            MerchantOperatingMarket.tax_provider.is_not(None),
+            MerchantOperatingMarket.tax_provider_reference.is_not(None),
+            MerchantOperatingMarket.fulfillment_provider.is_not(None),
+            MerchantOperatingMarket.fulfillment_provider_reference.is_not(None),
             MerchantOperatingMarket.tax_capability_observed_at >= market_now - timedelta(seconds=offer_max_age_seconds()),
             MerchantOperatingMarket.tax_capability_observed_at <= market_now + timedelta(minutes=5),
             MerchantOperatingMarket.tax_capability_expires_at > market_now,
@@ -2386,7 +2394,11 @@ def _resolve_market_checkout_line(
         db, merchant.id, payload.destination_country_code or "",
         payload.display_currency or "", payload.payment_method,
     )
-    if payment is None or payment.provider.strip().lower() != gateway.provider:
+    if (
+        payment is None
+        or payment.provider.strip().lower() != gateway.provider
+        or not payment.settlement_currencies
+    ):
         raise HTTPException(409, detail={"code": "PAYMENT_PROVIDER_NOT_READY_FOR_CHECKOUT_CURRENCY"})
     fulfillment_rows = list(db.scalars(select(OfferFulfillmentQuote).where(
         OfferFulfillmentQuote.variant_id == variant.id,
