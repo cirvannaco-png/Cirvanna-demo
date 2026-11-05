@@ -517,7 +517,7 @@ def test_rights_review_does_not_mark_completed_when_deletion_is_partial(client, 
     response = client.post(
         f"/internal/v1/image-rights/requests/{created['request_id']}/review",
         headers=reviewer(),
-        json={"decision": "approve", "authority_verified": True, "verification_reference": "verification-ticket-456", "resolution_code": "privacy-approved"},
+        json={"decision": "approve", "verification_reference": "verification-ticket-456", "resolution_code": "privacy-approved"},
     )
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "IMAGE_RIGHTS_DELETION_PROPAGATION_INCOMPLETE"
