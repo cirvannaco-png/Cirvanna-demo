@@ -1193,6 +1193,10 @@ def _market_is_active(db: Session, merchant_id: str, market_country_code: str) -
         return None
     if not quote_is_current(market.fulfillment_capability_observed_at, market.fulfillment_capability_expires_at):
         return None
+    if not market.display_currency or _market_payment_capability(
+        db, merchant_id, market_country_code, market.display_currency, None,
+    ) is None:
+        return None
     return market
 
 
@@ -2200,7 +2204,14 @@ def list_offers(
             MerchantOperatingMarket.fulfillment_capability_observed_at >= market_now - timedelta(seconds=offer_max_age_seconds()),
             MerchantOperatingMarket.fulfillment_capability_observed_at <= market_now + timedelta(minutes=5),
             MerchantOperatingMarket.fulfillment_capability_expires_at > market_now,
-        )
+        ).where(select(MarketPaymentCapability.id).where(
+            MarketPaymentCapability.merchant_id == Merchant.id,
+            MarketPaymentCapability.market_country_code == market_code,
+            MarketPaymentCapability.state == "active",
+            MarketPaymentCapability.observed_at >= market_now - timedelta(seconds=offer_max_age_seconds()),
+            MarketPaymentCapability.observed_at <= market_now + timedelta(minutes=5),
+            MarketPaymentCapability.expires_at > market_now,
+        ).exists())
     if q and q.strip():
         stmt = stmt.where(func.lower(Listing.product_name).like(f"%{q.strip().lower()}%"))
     if category:
