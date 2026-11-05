@@ -13,6 +13,14 @@ depends_on = None
 
 
 def upgrade() -> None:
+    op.add_column("commerce_merchant_operating_markets", sa.Column("tax_provider", sa.String(100), nullable=True))
+    op.add_column("commerce_merchant_operating_markets", sa.Column("tax_provider_reference", sa.String(180), nullable=True))
+    op.add_column("commerce_merchant_operating_markets", sa.Column("tax_capability_observed_at", sa.DateTime(timezone=True), nullable=True))
+    op.add_column("commerce_merchant_operating_markets", sa.Column("tax_capability_expires_at", sa.DateTime(timezone=True), nullable=True))
+    op.add_column("commerce_merchant_operating_markets", sa.Column("fulfillment_provider", sa.String(100), nullable=True))
+    op.add_column("commerce_merchant_operating_markets", sa.Column("fulfillment_provider_reference", sa.String(180), nullable=True))
+    op.add_column("commerce_merchant_operating_markets", sa.Column("fulfillment_capability_observed_at", sa.DateTime(timezone=True), nullable=True))
+    op.add_column("commerce_merchant_operating_markets", sa.Column("fulfillment_capability_expires_at", sa.DateTime(timezone=True), nullable=True))
     op.add_column("commerce_orders", sa.Column("fulfillment_total_minor", sa.Integer(), nullable=True))
     op.add_column("commerce_orders", sa.Column("tax_total_minor", sa.Integer(), nullable=True))
     op.add_column("commerce_orders", sa.Column("total_minor", sa.Integer(), nullable=True))
@@ -50,6 +58,14 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    op.drop_column("commerce_merchant_operating_markets", "fulfillment_capability_expires_at")
+    op.drop_column("commerce_merchant_operating_markets", "fulfillment_capability_observed_at")
+    op.drop_column("commerce_merchant_operating_markets", "fulfillment_provider_reference")
+    op.drop_column("commerce_merchant_operating_markets", "fulfillment_provider")
+    op.drop_column("commerce_merchant_operating_markets", "tax_capability_expires_at")
+    op.drop_column("commerce_merchant_operating_markets", "tax_capability_observed_at")
+    op.drop_column("commerce_merchant_operating_markets", "tax_provider_reference")
+    op.drop_column("commerce_merchant_operating_markets", "tax_provider")
     op.drop_index("ix_commerce_order_charges_merchant_id", table_name="commerce_order_charges")
     op.drop_index("ix_commerce_order_charges_order_id", table_name="commerce_order_charges")
     op.drop_table("commerce_order_charges")
