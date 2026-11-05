@@ -555,12 +555,14 @@ def test_offer_comparison_proxy_preserves_unavailable_reason_without_claiming_co
         "fulfillment_mode": "courier_delivery",
         "display_currency": "KES",
         "payment_method": "card",
+        "radius_km": 75,
     })
     assert response.status_code == 200
     assert response.json()["status"] == "unavailable"
     assert response.json()["reason_code"] == "TAX_QUOTE_NOT_AUTHORITATIVE"
     assert seen["url"] == "https://commerce.example.test/marketplace/compare"
     assert seen["json"]["display_currency"] == "KES"
+    assert seen["json"]["radius_km"] == 75
 
 
 def test_offer_comparison_rejects_invalid_variant_identity_before_upstream(client, monkeypatch):
