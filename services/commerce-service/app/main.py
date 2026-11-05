@@ -52,6 +52,12 @@ def now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def offer_max_age_seconds() -> int:
     try:
         configured = int(os.getenv("COMMERCE_OFFER_MAX_AGE_SECONDS", "3600"))
@@ -2564,14 +2570,14 @@ def checkout(
         quote_expiries = [expiry]
         for cost in market_costs.values():
             quote_expiries.extend([
-                cost["fulfillment"].expires_at,
-                cost["tax"].expires_at,
-                cost["payment"].expires_at,
+                _aware_utc(cost["fulfillment"].expires_at),
+                _aware_utc(cost["tax"].expires_at),
+                _aware_utc(cost["payment"].expires_at),
             ])
             for fx_meta in (cost["item_fx"], cost["fulfillment_fx"], cost["tax_fx"]):
                 if fx_meta and fx_meta.get("expires_at"):
-                    quote_expiries.append(datetime.fromisoformat(fx_meta["expires_at"].replace("Z", "+00:00")))
-        expiry = min(quote_expiries)
+                    quote_expiries.append(_aware_utc(datetime.fromisoformat(fx_meta["expires_at"].replace("Z", "+00:00"))))
+        expiry = min(_aware_utc(value) for value in quote_expiries)
         if expiry <= now():
             raise HTTPException(409, detail={"code": "MARKET_QUOTE_EXPIRED_BEFORE_CHECKOUT"})
     order = CommerceOrder(
