@@ -258,6 +258,8 @@ def test_marketplace_ui_has_xari_description_search_and_mobile_click_it_capture(
     assert 'id="clickItCaptureJurisdiction"' in response.text
     assert 'id="imageRightsForm"' in response.text
     assert 'fetch("/api/privacy/image-requests"' in response.text
+    assert 'id="imageRightsStatusForm"' in response.text
+    assert 'X-Privacy-Request-Token' in response.text
     assert 'fetch("/api/vision/marketplace-search"' in response.text
     assert 'fetch("/api/vision/click-it"' in response.text
     assert "display_authorized===true" in response.text
@@ -587,3 +589,57 @@ def test_image_rights_intake_rejects_arbitrary_urls_and_unknown_fields(client):
     })
     assert response.status_code == 422
 
+
+
+def test_image_rights_status_uses_private_token_without_uploader_account(client, monkeypatch):
+    monkeypatch.setenv("PRIVACY_RIGHTS_API_URL", "https://privacy-rights.example.test")
+    monkeypatch.setenv("PRIVACY_RIGHTS_API_TOKEN", "privacy-rights-internal-token-at-least-32-bytes")
+    fake = FakeAsyncClient([FakeResponse({
+        "request_id": "rights-request-0001",
+        "status": "under_review",
+        "quarantined": True,
+        "updated_at": "2026-11-05T05:00:00Z",
+        "resolution_code": None,
+        "requester_identity": "must-not-be-forwarded",
+    })])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get(
+        "/api/privacy/image-requests/rights-request-0001",
+        headers={"X-Privacy-Request-Token": "opaque-request-status-token-123456"},
+    )
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.json()["status"] == "under_review"
+    assert response.json()["quarantined"] is True
+    assert "requester_identity" not in response.text
+    assert fake.calls[0][1] == "https://privacy-rights.example.test/internal/v1/image-rights/requests/rights-request-0001"
+    assert fake.calls[0][2]["headers"]["X-Requester-Status-Token"] == "opaque-request-status-token-123456"
+
+
+def test_image_rights_status_rejects_invalid_request_id(client):
+    response = client.get(
+        "/api/privacy/image-requests/https%3A%2F%2Fattacker.example%2Fimage",
+        headers={"X-Privacy-Request-Token": "opaque-request-status-token-123456"},
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "IMAGE_RIGHTS_REQUEST_NOT_FOUND"
+
+
+def test_image_rights_status_rejects_invalid_or_missing_status_token(client, monkeypatch):
+    monkeypatch.setenv("PRIVACY_RIGHTS_API_URL", "https://privacy-rights.example.test")
+    monkeypatch.setenv("PRIVACY_RIGHTS_API_TOKEN", "privacy-rights-internal-token-at-least-32-bytes")
+    response = client.get("/api/privacy/image-requests/rights-request-0001")
+    assert response.status_code == 422
+
+
+def test_image_rights_status_does_not_disclose_request_when_provider_rejects_token(client, monkeypatch):
+    monkeypatch.setenv("PRIVACY_RIGHTS_API_URL", "https://privacy-rights.example.test")
+    monkeypatch.setenv("PRIVACY_RIGHTS_API_TOKEN", "privacy-rights-internal-token-at-least-32-bytes")
+    fake = FakeAsyncClient([FakeResponse({"detail": "not found"}, status_code=403)])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get(
+        "/api/privacy/image-requests/rights-request-0001",
+        headers={"X-Privacy-Request-Token": "wrong-private-status-token-123456"},
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "IMAGE_RIGHTS_REQUEST_NOT_FOUND"
