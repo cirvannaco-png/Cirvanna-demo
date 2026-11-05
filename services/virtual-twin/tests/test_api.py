@@ -165,6 +165,7 @@ def test_twin_success_returns_only_a_partial_ephemeral_pose(monkeypatch):
         }
 
     monkeypatch.setattr(main, "_verify_consent", verify)
+    monkeypatch.setattr(main, "authorize_click_it_policy", policy)
     monkeypatch.setattr(main, "_run_vision", run)
     response = client.post(
         "/twin",
@@ -196,7 +197,7 @@ def test_click_it_requires_explicit_consent(monkeypatch):
 def test_click_it_requires_authentication():
     response = client.post(
         "/click-it",
-        data={**identity_fields(), "twin_id": "twin-123", "consent_image_processing": "true", "consent_click_it": "true"},
+        data={**identity_fields(), "twin_id": "twin-123", "consent_image_processing": "true", "consent_click_it": "true", "photographed_people_status": "adults_only"},
         files={"product_image": ("product.jpg", b"image", "image/jpeg")},
     )
     assert response.status_code == 401
@@ -207,7 +208,7 @@ def test_click_it_rejects_unsupported_media_type(monkeypatch):
     response = client.post(
         "/click-it",
         headers=auth(),
-        data={**identity_fields(), "twin_id": "twin-123", "consent_image_processing": "true", "consent_click_it": "true"},
+        data={**identity_fields(), "twin_id": "twin-123", "consent_image_processing": "true", "consent_click_it": "true", "photographed_people_status": "adults_only"},
         files={"product_image": ("product.bin", b"not-image", "application/octet-stream")},
     )
     assert response.status_code == 415
@@ -220,7 +221,7 @@ def test_click_it_rejects_oversized_product_image(monkeypatch):
     response = client.post(
         "/click-it",
         headers=auth(),
-        data={**identity_fields(), "twin_id": "twin-123", "consent_image_processing": "true", "consent_click_it": "true"},
+        data={**identity_fields(), "twin_id": "twin-123", "consent_image_processing": "true", "consent_click_it": "true", "photographed_people_status": "adults_only"},
         files={"product_image": ("product.jpg", b"four", "image/jpeg")},
     )
     assert response.status_code == 413
@@ -232,7 +233,7 @@ def test_click_it_stays_unavailable_without_worker(monkeypatch):
     response = client.post(
         "/click-it",
         headers=auth(),
-        data={**identity_fields(), "twin_id": "twin-123", "consent_image_processing": "true", "consent_click_it": "true"},
+        data={**identity_fields(), "twin_id": "twin-123", "consent_image_processing": "true", "consent_click_it": "true", "photographed_people_status": "adults_only"},
         files={"product_image": ("product.jpg", b"photo", "image/jpeg")},
     )
     assert response.status_code == 503
@@ -246,7 +247,7 @@ def test_click_it_requires_verified_consent_before_worker(monkeypatch):
     response = client.post(
         "/click-it",
         headers=auth(),
-        data={**identity_fields(), "twin_id": "twin-123", "consent_image_processing": "true", "consent_click_it": "true"},
+        data={**identity_fields(), "twin_id": "twin-123", "consent_image_processing": "true", "consent_click_it": "true", "photographed_people_status": "adults_only"},
         files={"product_image": ("product.jpg", b"photo", "image/jpeg")},
     )
     assert response.status_code == 503
@@ -260,6 +261,14 @@ def test_click_it_success_returns_candidates_but_never_claims_display_authorizat
 
     async def verify(*_args, **_kwargs):
         return None
+    async def policy(*_args, **_kwargs):
+        return {
+            "policy_version": "test-policy-v1",
+            "policy_sha256": "a" * 64,
+            "applicable_jurisdictions": ["test-jurisdiction"],
+            "guardian_consent_required": False,
+            "public_sharing_allowed": False,
+        }
 
     async def authorize(*_args, **_kwargs):
         return None
@@ -278,7 +287,7 @@ def test_click_it_success_returns_candidates_but_never_claims_display_authorizat
     response = client.post(
         "/click-it",
         headers=auth(),
-        data={**identity_fields(), "twin_id": "twin-123", "consent_image_processing": "true", "consent_click_it": "true"},
+        data={**identity_fields(), "twin_id": "twin-123", "consent_image_processing": "true", "consent_click_it": "true", "photographed_people_status": "adults_only"},
         files={"product_image": ("product.jpg", b"photo", "image/jpeg")},
     )
     assert response.status_code == 200
