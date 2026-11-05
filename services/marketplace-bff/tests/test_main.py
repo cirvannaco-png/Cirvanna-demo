@@ -321,7 +321,7 @@ def test_wardrobe_feedback_forwards_only_verified_subject_to_service(client, mon
     monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
     fake = FakeAsyncClient([
         FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
-        FakeResponse({"status": "recorded", "event_id": "feedback-event-123", "delivery_state": "delivered"}),
+        FakeResponse({"status": "recorded", "event_id": "feedback-event-123", "delivery_state": "delivered"}, status_code=201),
     ])
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.post(
