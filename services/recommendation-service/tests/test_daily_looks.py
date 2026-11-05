@@ -181,3 +181,21 @@ def test_declared_climate_changes_look_ranking():
         climate="hot_humid",
     )
     assert "linen-top" in result["looks"][0]["item_ids"]
+
+
+def test_consent_based_feedback_signal_changes_look_ranking():
+    items = [
+        {"item_id": "plain-top", "owner_user_id": "user-123", "display_name": "Plain shirt", "category": "tops", "attributes": [], "status": "active"},
+        {"item_id": "teal-top", "owner_user_id": "user-123", "display_name": "Teal shirt", "category": "tops", "attributes": ["teal"], "status": "active"},
+        {"item_id": "bottom-12", "owner_user_id": "user-123", "display_name": "Straight trousers", "category": "trousers", "attributes": [], "status": "active"},
+    ]
+    result = build_daily_looks(
+        request_id="daily-feedback-context",
+        user_id="user-123",
+        wardrobe_items=items,
+        local_date="2026-11-05",
+        feedback_signals=["feedback:teal"],
+    )
+    assert "teal-top" in result["looks"][0]["item_ids"]
+    assert result["personalization"]["feedback_signals_used"] is True
+    assert result["personalization"]["feedback_source"] == "consented_wardrobe_feedback"
