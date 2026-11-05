@@ -403,6 +403,70 @@ def test_wardrobe_recommendations_forward_verified_token_to_cal_decision_gateway
     assert "Authorization" not in response.text
 
 
+def test_tari_daily_looks_use_verified_active_wardrobe_and_return_three_unique_looks(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    wardrobe_items = [
+        {"owner_user_id": "signed-user-42", "item_id": "top-1", "display_name": "Blue linen shirt", "category": "tops", "attributes": ["blue", "linen"], "status": "active"},
+        {"owner_user_id": "signed-user-42", "item_id": "top-2", "display_name": "White cotton shirt", "category": "tops", "attributes": ["white", "cotton"], "status": "active"},
+        {"owner_user_id": "signed-user-42", "item_id": "bottom-1", "display_name": "Black trousers", "category": "lower_body", "attributes": ["black", "formal"], "status": "active"},
+        {"owner_user_id": "signed-user-42", "item_id": "bottom-2", "display_name": "Blue jeans", "category": "lower_body", "attributes": ["blue", "casual"], "status": "active"},
+        {"owner_user_id": "signed-user-42", "item_id": "shoe-1", "display_name": "White sneakers", "category": "shoes", "attributes": ["white"], "status": "active"},
+        {"owner_user_id": "signed-user-42", "item_id": "shoe-2", "display_name": "Black shoes", "category": "shoes", "attributes": ["black", "formal"], "status": "active"},
+        {"owner_user_id": "signed-user-42", "item_id": "draft-1", "display_name": "Unfinished coat", "category": "outerwear", "attributes": [], "status": "draft"},
+    ]
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"owner_user_id": "signed-user-42", "items": wardrobe_items}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/daily-looks",
+        headers={"Authorization": "Bearer signed-session"},
+        json={"occasion": "work", "climate": "cool", "timezone": "Africa/Nairobi"},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["capability"] == "Tari"
+    assert data["orchestrator"] == "Xari"
+    recommendation = data["recommendation"]
+    assert [look["role"] for look in recommendation["looks"]] == ["Everyday", "Elevated", "Explore"]
+    assert recommendation["ready_count"] == 3
+    outfit_ids = [tuple(sorted(item["item_id"] for item in look["items"])) for look in recommendation["looks"]]
+    assert len(set(outfit_ids)) == 3
+    assert all("draft-1" not in outfit for outfit in outfit_ids)
+    assert all("work" in look["reason"].lower() for look in recommendation["looks"])
+    assert recommendation["preview_status"] == "unavailable"
+    assert "validated renderer" in recommendation["preview_message"]
+    assert response.headers["cache-control"] == "no-store, private"
+    assert fake.calls[0][1] == "https://commerce.example.test/me"
+    assert fake.calls[1][1] == "https://wardrobe.example.test/v1/items"
+    assert fake.calls[1][2]["params"]["owner_user_id"] == "signed-user-42"
+    assert "Authorization" not in response.text
+
+
+def test_tari_daily_looks_reject_cross_subject_wardrobe_response(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({
+            "owner_user_id": "signed-user-42",
+            "items": [{"owner_user_id": "another-user", "item_id": "foreign-1", "display_name": "Foreign shirt", "category": "tops", "status": "active"}],
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/daily-looks",
+        headers={"Authorization": "Bearer signed-session"},
+        json={},
+    )
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "WARDROBE_SCOPE_OR_SCHEMA_MISMATCH"
+
+
 def test_wardrobe_page_exposes_feedback_and_consent_controls(client):
     response = client.get("/wardrobe")
     assert response.status_code == 200
