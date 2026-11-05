@@ -782,7 +782,7 @@ async def submit_image_rights_request(payload: ImageRightsRequest) -> Response:
     base, token = _internal_service("PRIVACY_RIGHTS_API_URL", "PRIVACY_RIGHTS_API_TOKEN")
     request_body = payload.model_dump(exclude_none=True)
     request_body["jurisdiction_hint_is_unverified"] = True
-    request_body["requester_authentication"] = "verified_by_privacy_rights_workflow"
+    request_body["requester_authentication"] = "verification_required"
     try:
         async with httpx.AsyncClient(
             timeout=httpx.Timeout(12.0, connect=2.0),
