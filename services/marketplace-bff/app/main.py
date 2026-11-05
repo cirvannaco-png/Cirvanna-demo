@@ -584,7 +584,11 @@ async def marketplace_click_it(
     if scheme.lower() != "bearer" or not user_token.strip():
         raise HTTPException(401, detail={"code": "USER_BEARER_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
     if not consent_image_processing or not consent_click_it:
+        await product_image.close()
         raise HTTPException(400, detail={"code": "EXPLICIT_CLICK_IT_CONSENT_REQUIRED"})
+    if photographed_people_status == "contains_minor" and twin_id:
+        await product_image.close()
+        raise HTTPException(403, detail={"code": "CHILD_TWIN_PERSONALIZATION_DISABLED"})
     content_type = product_image.content_type or ""
     if content_type not in {"image/jpeg", "image/png", "image/webp"}:
         await product_image.close()
@@ -811,6 +815,8 @@ async def create_click_it_consent(payload: ClickItConsentGrant, request: Request
         raise HTTPException(401, detail={"code": "USER_BEARER_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
     if not payload.consent_image_processing or not payload.consent_click_it:
         raise HTTPException(403, detail={"code": "EXPLICIT_CLICK_IT_CONSENT_REQUIRED"})
+    if payload.photographed_people_status == "contains_minor" and payload.twin_id:
+        raise HTTPException(403, detail={"code": "CHILD_TWIN_PERSONALIZATION_DISABLED"})
     commerce_base = _upstream_base("COMMERCE_API_URL")
     privacy_base, privacy_token = _internal_service("PRIVACY_GOVERNANCE_API_URL", "PRIVACY_GOVERNANCE_API_TOKEN")
     try:
