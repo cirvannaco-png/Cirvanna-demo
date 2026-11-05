@@ -212,6 +212,7 @@ def test_click_it_uses_verified_commerce_subject_and_returns_only_pending_candid
             "consent_image_processing": "true",
             "consent_click_it": "true",
             "photographed_people_status": "adults_only",
+            "capture_jurisdiction_hint": "Unverified Capture Region",
         },
         files={"product_image": ("dress.png", b"validated-photo-bytes", "image/png")},
     )
@@ -224,6 +225,7 @@ def test_click_it_uses_verified_commerce_subject_and_returns_only_pending_candid
     assert fake.calls[1][1] == "https://virtual-twin.example.test/click-it"
     assert fake.calls[1][2]["data"]["subject_id"] == "signed-user-42"
     assert fake.calls[1][2]["data"]["photographed_people_status"] == "adults_only"
+    assert fake.calls[1][2]["data"]["capture_jurisdiction_hint"] == "Unverified Capture Region"
     assert "subject_id" not in response.request.content.decode(errors="ignore")
     assert fake.calls[1][2]["files"]["product_image"][1] == b"validated-photo-bytes"
 
@@ -253,6 +255,7 @@ def test_marketplace_ui_has_xari_description_search_and_mobile_click_it_capture(
     assert 'id="clickItImageConsent"' in response.text
     assert 'id="clickItSearchConsent"' in response.text
     assert 'id="clickItPeopleStatus"' in response.text
+    assert 'id="clickItCaptureJurisdiction"' in response.text
     assert 'id="imageRightsForm"' in response.text
     assert 'fetch("/api/privacy/image-requests"' in response.text
     assert 'fetch("/api/vision/marketplace-search"' in response.text
