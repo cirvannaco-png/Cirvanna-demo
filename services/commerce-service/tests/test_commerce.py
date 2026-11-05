@@ -945,5 +945,5 @@ def test_marketplace_offers_default_to_30km_and_allow_user_radius_expansion(clie
     expanded_data = expanded_response.json()
     assert expanded_data["total"] == 2
     usd_offer = next(item for item in expanded_data["items"] if item["merchant_id"] == b["merchant_id"])
-    assert usd_offer["fulfillment_quote"]["distance_km"] == "40.000000"
+    assert float(usd_offer["fulfillment_quote"]["distance_km"]) == 40.0
     assert usd_offer["fulfillment_quote"]["display_conversion_status"] == "localized"
