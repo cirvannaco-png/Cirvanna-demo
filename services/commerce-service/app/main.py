@@ -2139,6 +2139,9 @@ def list_offers(
     currency: str | None = Query(None, min_length=3, max_length=3),
     market_country_code: str | None = Query(None, min_length=2, max_length=2),
     display_currency: str | None = Query(None, min_length=3, max_length=3),
+    destination_key: str | None = Query(None, min_length=3, max_length=180),
+    fulfillment_mode: Literal["shipping", "courier_delivery", "merchant_delivery", "collection", "local_transport"] | None = Query(None),
+    radius_km: Decimal = Query(Decimal("30"), ge=Decimal("1"), le=Decimal("500")),
     offset: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=100),
 ):
@@ -2150,6 +2153,26 @@ def list_offers(
     requested_display_currency = _valid_currency(display_currency) if display_currency else None
     if requested_display_currency and not market_code:
         raise HTTPException(422, detail={"code": "DISPLAY_CURRENCY_REQUIRES_MARKET"})
+    if (destination_key is None) != (fulfillment_mode is None):
+        raise HTTPException(422, detail={"code": "DESTINATION_AND_FULFILLMENT_MODE_REQUIRED_TOGETHER"})
+    if destination_key is not None and not market_code:
+        raise HTTPException(422, detail={"code": "DESTINATION_REQUIRES_MARKET"})
+    if destination_key is not None:
+        destination_key = destination_key.strip()
+        current = now()
+        stmt = stmt.where(select(OfferFulfillmentQuote.id).where(
+            OfferFulfillmentQuote.variant_id == Variant.id,
+            OfferFulfillmentQuote.destination_country_code == market_code,
+            OfferFulfillmentQuote.destination_key == destination_key,
+            OfferFulfillmentQuote.fulfillment_mode == fulfillment_mode,
+            OfferFulfillmentQuote.status == "confirmed",
+            OfferFulfillmentQuote.amount_minor.is_not(None),
+            OfferFulfillmentQuote.distance_km.is_not(None),
+            OfferFulfillmentQuote.distance_km <= radius_km,
+            OfferFulfillmentQuote.observed_at >= current - timedelta(seconds=offer_max_age_seconds()),
+            OfferFulfillmentQuote.observed_at <= current + timedelta(minutes=5),
+            OfferFulfillmentQuote.expires_at > current,
+        ).exists())
     if market_code:
         stmt = stmt.join(MerchantOperatingMarket, MerchantOperatingMarket.merchant_id == Merchant.id).where(
             MerchantOperatingMarket.market_country_code == market_code,
@@ -2172,6 +2195,21 @@ def list_offers(
             if market is None:
                 continue
         target_currency = requested_display_currency or (market.display_currency if market else None)
+        fulfillment_quote = None
+        if destination_key is not None:
+            quote_rows = list(db.scalars(select(OfferFulfillmentQuote).where(
+                OfferFulfillmentQuote.variant_id == variant.id,
+                OfferFulfillmentQuote.destination_country_code == market_code,
+                OfferFulfillmentQuote.destination_key == destination_key,
+                OfferFulfillmentQuote.fulfillment_mode == fulfillment_mode,
+                OfferFulfillmentQuote.status == "confirmed",
+                OfferFulfillmentQuote.amount_minor.is_not(None),
+                OfferFulfillmentQuote.distance_km.is_not(None),
+                OfferFulfillmentQuote.distance_km <= radius_km,
+            ).order_by(OfferFulfillmentQuote.observed_at.desc(), OfferFulfillmentQuote.id.desc()).limit(10)).all())
+            fulfillment_quote = next((quote for quote in quote_rows if quote_is_current(quote.observed_at, quote.expires_at)), None)
+            if fulfillment_quote is None:
+                continue
         localized_minor = None
         localization_status = "not_requested"
         localization_fx = None
@@ -2206,6 +2244,24 @@ def list_offers(
             "display_price_status": localization_status,
             "display_fx_quote": localization_fx,
             "market_country_code": market_code,
+            "destination_key": destination_key,
+            "fulfillment_mode": fulfillment_mode,
+            "radius_km": str(radius_km) if destination_key is not None else None,
+            "fulfillment_quote": ({
+                "quote_id": fulfillment_quote.id,
+                "provider": fulfillment_quote.provider,
+                "provider_quote_id": fulfillment_quote.provider_quote_id,
+                "amount_minor": fulfillment_quote.amount_minor,
+                "currency": fulfillment_quote.currency,
+                "display_amount_minor": _convert_minor_amount(
+                    db, variant_id=variant.id, amount_minor=fulfillment_quote.amount_minor,
+                    source_currency=fulfillment_quote.currency, target_currency=target_currency or fulfillment_quote.currency,
+                )[0],
+                "display_currency": target_currency or fulfillment_quote.currency,
+                "distance_km": str(fulfillment_quote.distance_km),
+                "observed_at": fulfillment_quote.observed_at.isoformat(),
+                "expires_at": fulfillment_quote.expires_at.isoformat(),
+            } if fulfillment_quote else None),
             "available_stock": variant.on_hand - variant.reserved_qty,
             "canonical_variant_id": variant.canonical_variant_id,
             "observed_at": variant.observed_at.isoformat() if variant.observed_at else None,
