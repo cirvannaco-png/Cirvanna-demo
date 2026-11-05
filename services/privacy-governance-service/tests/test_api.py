@@ -441,6 +441,9 @@ def test_rights_status_token_is_one_time_and_only_its_hash_is_stored(client, mon
     )
     assert status.status_code == 200
     assert status.json()["quarantined"] is True
+    assert status.json()["triage_due_at"]
+    assert status.json()["legal_response_due_at"] is None
+    assert status.json()["deadline_basis"] == "jurisdiction_unresolved_platform_triage"
     wrong = client.get(
         f"/internal/v1/image-rights/requests/{created['request_id']}",
         headers={**internal(), "X-Requester-Status-Token": "wrong-token-value-long-enough-123"},
@@ -544,3 +547,52 @@ def test_internal_and_reviewer_endpoints_require_separate_tokens(client):
     assert client.post("/internal/v1/consents/verify", json={}).status_code == 401
     assert client.get("/internal/v1/image-rights/queue", headers=internal()).status_code == 401
     assert client.post("/internal/v1/privacy/policies", headers=reviewer(), json={}).status_code == 401
+
+
+def test_rights_request_uses_strictest_current_signed_jurisdiction_deadline(client, monkeypatch):
+    signer = configure_policy_key(monkeypatch)
+    for code, deadline in [("JUR-A", 72), ("JUR-B", 12)]:
+        policy = policy_bundle(signer, code, rights_response_deadline_hours=deadline)
+        published = client.post("/internal/v1/privacy/policies", headers=publisher(), json=policy)
+        assert published.status_code == 200, published.text
+
+    async def providers(name, path, payload):
+        if name == "CONTENT_LIFECYCLE" and path.endswith("/resolve"):
+            return {"found": True, "active": True, "asset_id": "asset-deadline-001"}
+        if name == "JURISDICTION_RESOLVER":
+            return {
+                "jurisdiction_resolution_complete": True,
+                "policy_conflicts_resolved": True,
+                "applicable_jurisdictions": ["JUR-A", "JUR-B"],
+                "controller_establishments": ["controller-A"],
+                "processor_establishments": ["processor-A"],
+                "processing_locations": ["region-A"],
+                "storage_locations": ["region-A"],
+                "transfer_paths": [{"from": "region-A", "to": "region-A", "allowed": True}],
+            }
+        raise AssertionError((name, path))
+
+    monkeypatch.setattr(main, "post_trusted", providers)
+    created = client.post(
+        "/internal/v1/image-rights/requests",
+        headers=internal(),
+        json={
+            "asset_reference": "cirvanna-share-deadline",
+            "request_type": "removal",
+            "reason_code": "privacy_concern",
+            "requester_relationship": "photographed_person",
+        },
+    )
+    assert created.status_code == 200, created.text
+    status = client.get(
+        f"/internal/v1/image-rights/requests/{created.json()['request_id']}",
+        headers={**internal(), "X-Requester-Status-Token": created.json()["status_token"]},
+    )
+    assert status.status_code == 200
+    result = status.json()
+    assert result["deadline_basis"] == "resolved_signed_jurisdiction_policy"
+    assert result["applicable_jurisdictions"] == ["JUR-A", "JUR-B"]
+    assert result["legal_response_due_at"] is not None
+    triage_due = datetime.fromisoformat(result["triage_due_at"])
+    legal_due = datetime.fromisoformat(result["legal_response_due_at"])
+    assert triage_due < legal_due
