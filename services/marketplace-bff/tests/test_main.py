@@ -823,3 +823,23 @@ def test_click_it_refuses_to_bind_a_minor_photo_to_any_virtual_twin(client, monk
     assert response.json()["detail"]["code"] == "CHILD_TWIN_PERSONALIZATION_DISABLED"
     assert not calls
 
+
+
+def test_click_it_rejects_unknown_people_status_before_buffering_or_upstream_calls(client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: calls.append(kwargs))
+    response = client.post(
+        "/api/vision/click-it",
+        headers={"Authorization": "Bearer signed-user-token"},
+        data={
+            "consent_id": "consent-record-1234",
+            "consent_image_processing": "true",
+            "consent_click_it": "true",
+            "photographed_people_status": "unknown",
+        },
+        files={"product_image": ("photo.png", b"photo-bytes", "image/png")},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "CHILD_SAFETY_STATUS_UNCONFIRMED"
+    assert not calls
+
