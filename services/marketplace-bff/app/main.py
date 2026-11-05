@@ -18,6 +18,8 @@ from urllib.parse import urlsplit
 import httpx
 from fastapi import Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
+
+from app.daily_looks import build_daily_looks
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 SERVICE = "cirvanna-marketplace-bff"
