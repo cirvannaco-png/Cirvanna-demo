@@ -55,7 +55,7 @@ async def security_headers(request: Request, call_next):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
     response.headers.setdefault("X-Frame-Options", "DENY")
-    if request.url.path in {"/api/vision/click-it", "/api/privacy/image-requests"}:
+    if request.url.path == "/api/vision/click-it" or request.url.path.startswith("/api/privacy/image-requests"):
         response.headers["Cache-Control"] = "no-store, private"
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
     return response
