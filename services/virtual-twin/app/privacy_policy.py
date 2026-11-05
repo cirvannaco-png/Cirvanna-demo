@@ -17,8 +17,8 @@ _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 def _policy_config() -> tuple[str, str] | None:
-    raw = os.getenv("PRIVACY_POLICY_API_URL", "").strip().rstrip("/")
-    token = os.getenv("PRIVACY_POLICY_API_TOKEN", "").strip()
+    raw = os.getenv("PRIVACY_GOVERNANCE_API_URL", "").strip().rstrip("/")
+    token = os.getenv("PRIVACY_GOVERNANCE_API_TOKEN", "").strip()
     if not raw or len(token.encode("utf-8")) < 32:
         return None
     parsed = urlsplit(raw)
