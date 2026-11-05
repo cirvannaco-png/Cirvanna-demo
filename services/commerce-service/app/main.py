@@ -605,8 +605,14 @@ class StripeGateway:
             "client_reference_id": order.id, "expires_at": str(int(order.expires_at.timestamp())),
             "metadata[order_id]": order.id, "metadata[order_number]": order.order_number,
         }
-        for i, country in enumerate(self.countries):
+        allowed_countries = [order.destination_country_code] if order.destination_country_code else self.countries
+        for i, country in enumerate(allowed_countries):
             params[f"shipping_address_collection[allowed_countries][{i}]"] = country
+        if order.destination_country_code:
+            params["metadata[destination_country_code]"] = order.destination_country_code
+            params["metadata[destination_key]"] = (order.destination_key or "")[:180]
+            params["metadata[fulfillment_mode]"] = order.fulfillment_mode or ""
+            params["metadata[display_currency]"] = order.currency
         if email:
             params["customer_email"] = email
         for i, item in enumerate(items):
@@ -2375,18 +2381,59 @@ def checkout(
             "payment_method": market_context.payment_method,
             "items": [{
                 "variant_id": v.id,
+                "source_price_minor": v.price_minor,
+                "source_currency": v.currency,
                 "item_fx": market_costs[v.id]["item_fx"],
-                "fulfillment_quote_id": market_costs[v.id]["fulfillment"].id,
+                "fulfillment": {
+                    "quote_id": market_costs[v.id]["fulfillment"].id,
+                    "provider": market_costs[v.id]["fulfillment"].provider,
+                    "provider_quote_id": market_costs[v.id]["fulfillment"].provider_quote_id,
+                    "amount_minor": market_costs[v.id]["fulfillment"].amount_minor,
+                    "currency": market_costs[v.id]["fulfillment"].currency,
+                    "observed_at": market_costs[v.id]["fulfillment"].observed_at.isoformat(),
+                    "expires_at": market_costs[v.id]["fulfillment"].expires_at.isoformat(),
+                },
                 "fulfillment_fx": market_costs[v.id]["fulfillment_fx"],
-                "tax_quote_id": market_costs[v.id]["tax"].id,
+                "tax": {
+                    "quote_id": market_costs[v.id]["tax"].id,
+                    "provider": market_costs[v.id]["tax"].provider,
+                    "provider_quote_id": market_costs[v.id]["tax"].provider_quote_id,
+                    "amount_minor": market_costs[v.id]["tax"].amount_minor,
+                    "currency": market_costs[v.id]["tax"].currency,
+                    "basis": market_costs[v.id]["tax"].basis,
+                    "authoritative": market_costs[v.id]["tax"].authoritative,
+                    "jurisdiction": market_costs[v.id]["tax"].jurisdiction,
+                    "tax_category": market_costs[v.id]["tax"].tax_category,
+                    "rule_version": market_costs[v.id]["tax"].rule_version,
+                    "observed_at": market_costs[v.id]["tax"].observed_at.isoformat(),
+                    "expires_at": market_costs[v.id]["tax"].expires_at.isoformat(),
+                },
                 "tax_fx": market_costs[v.id]["tax_fx"],
-                "tax_basis": market_costs[v.id]["tax"].basis,
-                "tax_authoritative": market_costs[v.id]["tax"].authoritative,
+                "payment_capability": {
+                    "provider": market_costs[v.id]["payment"].provider,
+                    "provider_reference": market_costs[v.id]["payment"].provider_reference,
+                    "observed_at": market_costs[v.id]["payment"].observed_at.isoformat(),
+                    "expires_at": market_costs[v.id]["payment"].expires_at.isoformat(),
+                },
             } for _, v, _, _ in rows],
         }
     if total <= 0:
         raise HTTPException(422, detail={"code": "INVALID_ORDER_TOTAL"})
     expiry = now() + timedelta(minutes=RESERVATION_MINUTES)
+    if market_context is not None:
+        quote_expiries = [expiry]
+        for cost in market_costs.values():
+            quote_expiries.extend([
+                cost["fulfillment"].expires_at,
+                cost["tax"].expires_at,
+                cost["payment"].expires_at,
+            ])
+            for fx_meta in (cost["item_fx"], cost["fulfillment_fx"], cost["tax_fx"]):
+                if fx_meta and fx_meta.get("expires_at"):
+                    quote_expiries.append(datetime.fromisoformat(fx_meta["expires_at"].replace("Z", "+00:00")))
+        expiry = min(quote_expiries)
+        if expiry <= now():
+            raise HTTPException(409, detail={"code": "MARKET_QUOTE_EXPIRED_BEFORE_CHECKOUT"})
     order = CommerceOrder(
         id=str(uuid.uuid4()), order_number=f"CV-{now():%Y%m%d}-{uuid.uuid4().hex[:10].upper()}",
         buyer_user_id=actor.user_id, state="pending_payment", payment_state="pending", currency=currency,
