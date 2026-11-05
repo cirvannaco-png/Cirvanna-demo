@@ -773,8 +773,9 @@ def test_compare_offers_requires_complete_like_for_like_landed_cost(client, monk
     assert result["status"] == "comparable", result
     assert result["display_currency"] == "KES"
     assert result["offers"][0]["landed_total_minor"] <= result["offers"][1]["landed_total_minor"]
-    usd_offer = next(item for item in result["offers"] if item["merchant_id"] == b["merchant_id"])
-    assert usd_offer["fx_quotes"]["item"]["provider"] == "test-fx"
+    peer_offer = next(item for item in result["offers"] if item["merchant_id"] == b["merchant_id"])
+    assert peer_offer["offer_currency"] == "KES"
+    assert peer_offer["fx_quotes"]["item"] is None
     assert result["offers"][0]["tax"]["basis"] == "exclusive"
 
 
