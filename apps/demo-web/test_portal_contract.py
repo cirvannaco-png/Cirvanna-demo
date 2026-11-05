@@ -22,6 +22,10 @@ class PortalContractTests(unittest.TestCase):
         self.assertIn('"/merchant/markets"', MERCHANT)
         self.assertIn("source_price_minor", MERCHANT)
         self.assertIn("source_currency", MERCHANT)
+        self.assertIn('source_price_minor:$("sourcePriceMinor")', MERCHANT)
+        self.assertIn('source_currency:$("sourceCurrency")', MERCHANT)
+        self.assertIn('operating_markets:$("operatingMarkets")', MERCHANT)
+        self.assertIn('api("/merchant/markets"', MERCHANT)
         self.assertIn("offer / transaction currency", MERCHANT.lower())
 
     def test_merchant_portal_never_persists_access_token(self):
