@@ -61,11 +61,11 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     <section class="ai-panel" aria-labelledby="clickItTitle">
       <div class="eyebrow">Click It · Photograph it</div>
       <h2 id="clickItTitle">Find a product from a photo</h2>
-      <p>Take or choose a product photo. All detected faces are blurred before search; Click It never identifies people. A verified account, active consent record and privacy checks are required.</p>
+      <p>Take or choose a product photo. All detected faces are blurred before search; Click It never identifies people. A verified account and a new purpose-bound consent receipt are required for each scan.</p>
       <form id="clickItForm">
         <div class="ai-controls">
           <input id="clickItImage" class="wide" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" aria-label="Take or choose a product image" required>
-          <input id="clickItConsentId" class="wide" type="text" maxlength="160" minlength="8" autocomplete="off" placeholder="Consent record ID issued by Cirvanna" aria-label="Active Cirvanna consent record ID" required>
+          <input id="clickItConsentId" type="hidden" value="">
         </div>
         <label class="consent-line"><input id="clickItImageConsent" type="checkbox" required><span>I consent to processing this photo to search marketplace products. The image is processed ephemerally.</span></label>
         <label class="consent-line"><input id="clickItSearchConsent" type="checkbox" required><span>I agree to use Click It for this product search. I understand an active consent record is also verified by the server.</span></label>
@@ -79,6 +79,8 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
           </select>
         </label>
         <p class="wide">If a child is visible, guardian authorization may be required by the applicable privacy rules. Child images are never eligible for face reveal, public sharing or behavioural profiling.</p>
+        <input id="clickItGuardianVerificationRef" class="wide" type="text" minlength="12" maxlength="200" autocomplete="off" placeholder="Guardian verification reference (only if issued by Cirvanna)" aria-label="Guardian verification reference, optional">
+        <p class="wide">A guardian reference is checked with Cirvanna’s verification provider. Entering a reference does not itself prove guardianship; processing remains blocked unless the provider verifies it when required.</p>
         <button class="btn primary wide" id="clickItBtn" type="submit">Scan photo and search marketplace</button>
       </form>
       <div class="ai-status" id="clickItStatus" role="status" aria-live="polite">Use the Connect catalog button to connect a signed Commerce user session first. Photos and results are not saved by this scanner.</div>
@@ -338,6 +340,23 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     const captureJurisdiction=$("clickItCaptureJurisdiction").value.trim();if(captureJurisdiction)form.append("capture_jurisdiction_hint",captureJurisdiction);form.append("product_image",image);
     setAiBusy("clickItBtn",true,"Scanning…");setAiStatus("clickItStatus","Checking your signed account, consent record and image quality, then searching live marketplace offers…");
     try{
+      const consentPayload={
+        consent_image_processing:true,
+        consent_click_it:true,
+        photographed_people_status:$("clickItPeopleStatus").value,
+        consent_version:"click-it-privacy-v1"
+      };
+      const guardianReference=$("clickItGuardianVerificationRef").value.trim();
+      if(guardianReference)consentPayload.guardian_verification_reference=guardianReference;
+      const consentResponse=await fetch("/api/privacy/consents",{
+        method:"POST",
+        headers:{Authorization:"Bearer "+config.userToken,"Content-Type":"application/json",Accept:"application/json"},
+        body:JSON.stringify(consentPayload)
+      });
+      const consentReceipt=await consentResponse.json().catch(()=>({}));
+      if(!consentResponse.ok||!consentReceipt.consent_id)throw new Error((consentReceipt.detail&&consentReceipt.detail.code)||("Consent creation returned HTTP "+consentResponse.status+"."));
+      $("clickItConsentId").value=consentReceipt.consent_id;
+      form.append("consent_id",consentReceipt.consent_id);
       const response=await fetch("/api/vision/click-it",{method:"POST",headers:{Authorization:"Bearer "+config.userToken,Accept:"application/json"},body:form});
       const data=await response.json().catch(()=>({}));
       if(!response.ok)throw new Error((data.detail&&data.detail.code)||("Click It returned HTTP "+response.status+"."));
