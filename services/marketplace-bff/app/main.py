@@ -17,7 +17,7 @@ from urllib.parse import urlsplit
 import httpx
 from fastapi import Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 SERVICE = "cirvanna-marketplace-bff"
 ROOT = Path(__file__).resolve().parents[3]
@@ -119,6 +119,40 @@ class MarketplaceSearchIn(BaseModel):
     @property
     def normalized_query(self) -> str:
         return " ".join(self.query.split()).strip()
+
+
+class OfferComparisonIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    variant_ids: list[str] = Field(min_length=2, max_length=2)
+    destination_country_code: str = Field(min_length=2, max_length=2)
+    destination_key: str = Field(min_length=3, max_length=180)
+    fulfillment_mode: Literal["shipping", "courier_delivery", "merchant_delivery", "collection", "local_transport"]
+    display_currency: str = Field(min_length=3, max_length=3)
+    payment_method: str | None = Field(default=None, min_length=2, max_length=50)
+
+    @field_validator("variant_ids")
+    @classmethod
+    def valid_variants(cls, values: list[str]) -> list[str]:
+        parsed = [str(uuid.UUID(value)) for value in values]
+        if len(set(parsed)) != 2:
+            raise ValueError("two distinct variant IDs are required")
+        return parsed
+
+    @field_validator("destination_country_code")
+    @classmethod
+    def valid_market_country(cls, value: str) -> str:
+        value = value.strip().upper()
+        if not re.fullmatch(r"[A-Z]{2}", value):
+            raise ValueError("destination country must be a two-letter code")
+        return value
+
+    @field_validator("display_currency")
+    @classmethod
+    def valid_display_currency(cls, value: str) -> str:
+        value = value.strip().upper()
+        if not re.fullmatch(r"[A-Z]{3}", value):
+            raise ValueError("display currency must be a three-letter code")
+        return value
 
 
 async def _safe_json_post(
@@ -706,10 +740,12 @@ def public_offers(
     q: str | None = Query(default=None, max_length=160),
     category: str | None = Query(default=None, max_length=80),
     currency: str | None = Query(default=None, min_length=3, max_length=3),
+    market_country_code: str | None = Query(default=None, min_length=2, max_length=2),
+    display_currency: str | None = Query(default=None, min_length=3, max_length=3),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=MAX_PAGE_SIZE),
 ) -> dict:
-    """Expose only Commerce's active, approved, in-stock merchant offers."""
+    """Expose active offers with localized display prices only when FX evidence exists."""
     base = _upstream_base("COMMERCE_API_URL")
     params: dict[str, str | int] = {"offset": offset, "limit": limit}
     if q and q.strip():
@@ -718,6 +754,10 @@ def public_offers(
         params["category"] = category.strip()
     if currency and currency.strip():
         params["currency"] = currency.strip().upper()
+    if market_country_code and market_country_code.strip():
+        params["market_country_code"] = market_country_code.strip().upper()
+    if display_currency and display_currency.strip():
+        params["display_currency"] = display_currency.strip().upper()
     try:
         response = httpx.get(
             base + "/marketplace/offers",
@@ -734,16 +774,67 @@ def public_offers(
             detail={"code": "COMMERCE_OFFERS_UNAVAILABLE", "upstream_status": response.status_code},
         )
     try:
-        payload = response.json()
+        data = response.json()
     except ValueError as exc:
         raise HTTPException(status_code=502, detail={"code": "INVALID_COMMERCE_RESPONSE"}) from exc
-    if not (
-        isinstance(payload, dict)
-        and isinstance(payload.get("items"), list)
-        and isinstance(payload.get("total"), int)
-    ):
+    if not isinstance(data, dict) or not isinstance(data.get("items"), list) or not isinstance(data.get("total"), int):
         raise HTTPException(status_code=502, detail={"code": "INVALID_COMMERCE_RESPONSE"})
-    return payload
+    return data
+
+
+@app.post("/api/commerce/marketplace/compare")
+def compare_public_offers(payload: OfferComparisonIn) -> Response:
+    """Proxy a Commerce-authored comparison response without inventing any costs."""
+    base = _upstream_base("COMMERCE_API_URL")
+    try:
+        response = httpx.post(
+            base + "/marketplace/compare",
+            json=payload.model_dump(mode="json"),
+            headers={"Accept": "application/json"},
+            timeout=TIMEOUT_SECONDS,
+            follow_redirects=False,
+        )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail={"code": "COMMERCE_COMPARISON_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=503, detail={"code": "COMMERCE_COMPARISON_UNAVAILABLE"}) from exc
+    if response.status_code != 200:
+        raise HTTPException(status_code=503, detail={"code": "COMMERCE_COMPARISON_UNAVAILABLE"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail={"code": "INVALID_COMMERCE_COMPARISON_RESPONSE"}) from exc
+    if not isinstance(data, dict) or data.get("status") not in {"comparable", "unavailable"}:
+        raise HTTPException(status_code=502, detail={"code": "INVALID_COMMERCE_COMPARISON_RESPONSE"})
+    return JSONResponse(content=data, headers={"Cache-Control": "no-store, private"})
+
+@app.post("/api/commerce/marketplace/compare")
+def compare_public_offers(payload: OfferComparisonIn) -> Response:
+    """Proxy a Commerce-authored comparison response without inventing any costs."""
+    base = _upstream_base("COMMERCE_API_URL")
+    try:
+        response = httpx.post(
+            base + "/marketplace/compare",
+            json=payload.model_dump(mode="json"),
+            headers={"Accept": "application/json"},
+            timeout=TIMEOUT_SECONDS,
+            follow_redirects=False,
+        )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail={"code": "COMMERCE_COMPARISON_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=503, detail={"code": "COMMERCE_COMPARISON_UNAVAILABLE"}) from exc
+    if response.status_code != 200:
+        raise HTTPException(status_code=503, detail={"code": "COMMERCE_COMPARISON_UNAVAILABLE"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail={"code": "INVALID_COMMERCE_COMPARISON_RESPONSE"}) from exc
+    if not isinstance(data, dict) or data.get("status") not in {"comparable", "unavailable"}:
+        raise HTTPException(status_code=502, detail={"code": "INVALID_COMMERCE_COMPARISON_RESPONSE"})
+    return JSONResponse(content=data, headers={"Cache-Control": "no-store, private"})
+
+
 
 
 def _authorized_commerce_path(method: str, path: str) -> bool:
