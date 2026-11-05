@@ -39,6 +39,12 @@ No existing deployed consent or Twin-registry endpoint was found in the reposito
 
 Failure payloads use stable opaque codes and do not forward bearer secrets, full upstream bodies, local paths or stack traces. The API does not silently return demo products or fake Twin geometry.
 
+## Click It Privacy Governance integration
+
+Configure `CONSENT_API_URL` and `PRIVACY_POLICY_API_URL` to the trusted Privacy Governance Service URL. Configure `CONSENT_API_TOKEN` and `PRIVACY_POLICY_API_TOKEN` to the service's `PRIVACY_GOVERNANCE_INTERNAL_TOKEN` (the same internal token must be shared through the approved secret manager). The consent adapter verifies purpose-bound scopes, subject binding, resource binding and guardian-authority evidence. The policy adapter requires a current signed receipt covering every trusted applicable jurisdiction.
+
+The capture-country hint remains unverified input; the separate jurisdiction resolver must determine controller/processor establishments, capture context, processing/storage regions and transfer paths. Missing or conflicting jurisdiction, absent policy signatures, denied lawful basis/transfer or missing guardian scope results in BLOCK/REVIEW.
+
 ## Remaining release gates
 
 1. Deploy the pinned Vision Intelligence service and provision the CLIP revision and checksummed MediaPipe model asset.
