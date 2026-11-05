@@ -551,6 +551,9 @@ def capabilities() -> dict[str, Any]:
         "product_image_fetching": False,
         "similarity_scores_calibrated": False,
         "model_revision_pinned": clip_configured,
+        "click_it_face_masking_configured": detector_configuration()[0],
+        "facial_recognition": False,
+        "image_persistence": False,
     }
 
 
@@ -605,6 +608,7 @@ async def click_it_scan(
             detail={"code": "CLICK_IT_PRIVACY_DETECTOR_NOT_READY", "reason": privacy_reason},
         )
     privacy_safe_image, faces_masked = anonymize_click_it_image(decoded)
+    decoded.close()  # Drop the unmasked decoded image before any downstream model work.
     quality = evaluate_image_quality(privacy_safe_image)
     if not quality["passed"]:
         raise HTTPException(
