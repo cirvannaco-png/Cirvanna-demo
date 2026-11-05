@@ -777,6 +777,85 @@ async def evaluate_click_it_policy(payload: JurisdictionEvaluateIn, db: Session 
     }
 
 
+async def rights_deadline_context(asset_id: str, db: Session, created_at: datetime) -> dict:
+    """Use the strictest current signed jurisdiction deadline; otherwise set only platform triage SLA."""
+    try:
+        resolution = await post_trusted(
+            "JURISDICTION_RESOLVER",
+            "/internal/v1/privacy/image-rights/jurisdictions/resolve",
+            {
+                "asset_id": asset_id,
+                "purpose": "photographed_person_rights",
+                "resolve_from_asset_subject_and_controller_context": True,
+                "include_controller_and_processor_establishments": True,
+                "include_processing_and_storage_locations": True,
+                "include_all_transfer_destinations": True,
+            },
+        )
+    except HTTPException:
+        resolution = {}
+    jurisdictions = resolution.get("applicable_jurisdictions")
+    required_context = (
+        "controller_establishments",
+        "processor_establishments",
+        "processing_locations",
+        "storage_locations",
+        "transfer_paths",
+    )
+    context_complete = all(
+        isinstance(resolution.get(name), list)
+        and (name == "transfer_paths" or bool(resolution.get(name)))
+        and (
+            all(isinstance(item, str) and bool(item.strip()) for item in resolution.get(name, []))
+            if name != "transfer_paths"
+            else all(
+                isinstance(item, dict)
+                and isinstance(item.get("from"), str) and bool(item["from"].strip())
+                and isinstance(item.get("to"), str) and bool(item["to"].strip())
+                and isinstance(item.get("allowed"), bool)
+                for item in resolution.get(name, [])
+            )
+        )
+        for name in required_context
+    )
+    complete = (
+        resolution.get("jurisdiction_resolution_complete") is True
+        and resolution.get("policy_conflicts_resolved") is True
+        and isinstance(jurisdictions, list)
+        and bool(jurisdictions)
+        and all(isinstance(value, str) and JURISDICTION_RE.fullmatch(value.upper()) for value in jurisdictions)
+        and context_complete
+    )
+    normalized = sorted({value.upper() for value in jurisdictions}) if complete else []
+    bundles = [_active_policy(db, code, created_at) for code in normalized] if complete else []
+    complete = complete and bool(bundles) and all(bundle is not None for bundle in bundles)
+    if complete:
+        transfer_paths = resolution.get("transfer_paths", [])
+        complete = (
+            all(bundle.lawful_basis_approved and bundle.cross_border_transfer_allowed for bundle in bundles)
+            and all(item.get("allowed") is True for item in transfer_paths)
+        )
+    if complete:
+        legal_hours = min(bundle.rights_response_deadline_hours for bundle in bundles)
+        return {
+            "applicable_jurisdictions": normalized,
+            "legal_response_due_at": created_at + timedelta(hours=legal_hours),
+            "deadline_basis": "resolved_signed_jurisdiction_policy",
+            "triage_hours": int(os.getenv("PRIVACY_RIGHTS_TRIAGE_HOURS", "4")),
+        }
+    try:
+        triage_hours = int(os.getenv("PRIVACY_RIGHTS_TRIAGE_HOURS", "4"))
+    except ValueError:
+        triage_hours = 4
+    triage_hours = max(1, min(triage_hours, 24))
+    return {
+        "applicable_jurisdictions": [],
+        "legal_response_due_at": None,
+        "deadline_basis": "jurisdiction_unresolved_platform_triage",
+        "triage_hours": triage_hours,
+    }
+
+
 async def resolve_asset_reference(asset_reference: str) -> dict:
     resolved = await post_trusted(
         "CONTENT_LIFECYCLE",
