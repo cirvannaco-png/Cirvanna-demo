@@ -450,3 +450,45 @@ def test_wardrobe_consent_revocation_is_subject_scoped(client, monkeypatch):
     assert response.status_code == 200
     assert fake.calls[1][1] == "https://identity.example.test/v1/tal/consents/receipt-style-123/revoke"
     assert fake.calls[1][2]["params"]["subject_id"] == "signed-user-42"
+
+
+def test_wardrobe_manual_item_creation_binds_verified_owner_and_activates(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"item": {
+            "owner_user_id": "signed-user-42", "item_id": "generated-item-id",
+            "version": 1, "status": "draft",
+        }}, status_code=201),
+        FakeResponse({"item": {
+            "owner_user_id": "signed-user-42", "item_id": "generated-item-id",
+            "version": 2, "status": "active",
+        }}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/items",
+        headers={"Authorization": "Bearer signed-session"},
+        json={
+            "display_name": "Blue linen shirt",
+            "category": "tops",
+            "attributes": ["blue", "linen", "relaxed"],
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["item"]["status"] == "active"
+    created = fake.calls[1][2]["json"]
+    transition = fake.calls[2][2]["json"]
+    assert created["owner_user_id"] == "signed-user-42"
+    assert created["image_asset_id"] is None
+    assert created["image_storage_consent"] is False
+    assert transition["owner_user_id"] == "signed-user-42"
+    assert transition["target_status"] == "active"
+
+
+def test_wardrobe_learning_without_identity_provider_has_no_personalization_bonus(monkeypatch):
+    monkeypatch.delenv("IDENTITY_SERVICE_URL", raising=False)
+    monkeypatch.delenv("IDENTITY_SERVICE_TOKEN", raising=False)
+    assert main._load_consent_aware_wardrobe_likes("subject-1") == {}
