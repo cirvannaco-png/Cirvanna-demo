@@ -9,12 +9,13 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlsplit
 
 import httpx
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 SERVICE = "cirvanna-marketplace-bff"
 ROOT = Path(__file__).resolve().parents[3]
