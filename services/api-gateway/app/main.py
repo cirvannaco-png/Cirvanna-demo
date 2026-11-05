@@ -667,7 +667,7 @@ def _filter_npl_blocked_wardrobe_items(
     return allowed, len(evaluated) - len(allowed)
 
 
-def _tari_daily_looks(payload: TariDailyLooksRequest, style_signals: list[str]) -> dict[str, Any]:
+def _tari_daily_looks(payload: TariDailyLooksRequest, style_signals: list[str], feedback_signals: list[str]) -> dict[str, Any]:
     """Call the internal wardrobe-only composer and verify every returned item ID."""
     base = os.getenv("COMPLEMENTER_SERVICE_URL", "").strip().rstrip("/")
     token = os.getenv("COMPLEMENTER_SERVICE_TOKEN", "").strip()
@@ -676,6 +676,7 @@ def _tari_daily_looks(payload: TariDailyLooksRequest, style_signals: list[str]) 
 
     body = payload.model_dump(mode="json")
     body["style_signals"] = style_signals[:40]
+    body["feedback_signals"] = feedback_signals[:40]
     try:
         with httpx.Client(
             timeout=httpx.Timeout(8.0, connect=2.0),
@@ -1815,7 +1816,13 @@ def compose_tari_daily_looks(
         wardrobe_items=payload.wardrobe_items,
     )
     safe_payload = payload.model_copy(update={"wardrobe_items": eligible_items})
-    result = _tari_daily_looks(safe_payload, style_signals)
+    positive_feedback = _load_consent_aware_wardrobe_likes(subject)
+    feedback_signals = [
+        f"feedback:{attribute}"
+        for attribute, weight in positive_feedback.items()
+        if isinstance(attribute, str) and attribute.strip() and isinstance(weight, (int, float)) and weight > 0
+    ][:40]
+    result = _tari_daily_looks(safe_payload, style_signals, feedback_signals)
     result["npl_excluded_wardrobe_item_count"] = npl_excluded_count
     return result
 
