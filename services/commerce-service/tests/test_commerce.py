@@ -191,7 +191,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
     assert payload["payment_configured"] is True
     assert payload["migrations_required"] is True
     assert payload["migrations_applied"] is True
-    assert payload["schema_revision"] == "20261105_0004"
+    assert payload["schema_revision"] == "20261105_0005"
     assert payload["ready"] is True
 
 
@@ -937,7 +937,7 @@ def test_marketplace_offers_default_to_30km_and_allow_user_radius_expansion(clie
     assert default_data["total"] == 1
     assert default_data["items"][0]["merchant_id"] == a["merchant_id"]
     quote = default_data["items"][0]["fulfillment_quote"]
-    assert quote["distance_km"] == "10.000000"
+    assert float(quote["distance_km"]) == 10.0
     assert quote["display_amount_minor"] == 250
 
     expanded_response = client.get(base + "&radius_km=50")
