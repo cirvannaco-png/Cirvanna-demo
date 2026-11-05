@@ -48,6 +48,9 @@ def test_tari_gateway_requires_internal_and_verified_end_user_authentication(mon
 
 def test_tari_gateway_checks_subject_and_uses_only_active_usi_profile(monkeypatch):
     monkeypatch.setenv("CIRVANNA_API_TOKEN", GATEWAY_TOKEN)
+    monkeypatch.setenv("NPL_SERVICE_URL", "https://npl.example.test")
+    monkeypatch.setenv("NPL_SERVICE_TOKEN", "npl-internal-token-more-than-thirty-two-bytes")
+    monkeypatch.setenv("NPL_EVIDENCE_HMAC_SECRET", "npl-evidence-secret-more-than-thirty-two-bytes")
     monkeypatch.setattr(main, "_resolve_verified_subject", lambda _header: "signed-user-42")
     profile = SimpleNamespace(preferences=[
         SimpleNamespace(attribute="color:teal", active=True),
@@ -160,3 +163,20 @@ def test_tari_filters_explicit_npl_hard_vetoes_from_wardrobe(monkeypatch):
     )
     assert [item["item_id"] for item in allowed] == ["navy-trousers"]
     assert excluded == 2
+
+
+def test_tari_fails_closed_when_persistent_npl_is_not_configured(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_API_TOKEN", GATEWAY_TOKEN)
+    monkeypatch.delenv("NPL_SERVICE_URL", raising=False)
+    monkeypatch.delenv("NPL_SERVICE_TOKEN", raising=False)
+    monkeypatch.delenv("NPL_EVIDENCE_HMAC_SECRET", raising=False)
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda _header: "signed-user-42")
+    monkeypatch.setattr(main, "_load_verified_usi_profile", lambda *_args, **_kwargs: SimpleNamespace(preferences=[]))
+    client = TestClient(main.app)
+    response = client.post(
+        "/v1/tari/daily-looks",
+        headers={"Authorization": f"Bearer {GATEWAY_TOKEN}", "X-End-User-Authorization": END_USER},
+        json=request_body(),
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "TARI_NPL_PROVIDER_NOT_CONFIGURED"
