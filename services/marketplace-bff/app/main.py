@@ -551,6 +551,7 @@ async def marketplace_click_it(
     consent_click_it: bool = Form(),
     product_image: UploadFile = File(...),
     photographed_people_status: str = Form(default="unknown"),
+    capture_jurisdiction_hint: str | None = Form(default=None, max_length=100),
     twin_id: str | None = Form(default=None, min_length=3, max_length=128),
     category: str | None = Form(default=None, max_length=80),
     limit: int = Form(default=10, ge=1, le=25),
@@ -612,6 +613,7 @@ async def marketplace_click_it(
                 "consent_image_processing": "true",
                 "consent_click_it": "true",
                 "photographed_people_status": photographed_people_status,
+                "capture_jurisdiction_hint": capture_jurisdiction_hint or "",
                 "limit": str(limit),
             }
             if twin_id and twin_id.strip():
