@@ -84,6 +84,8 @@ def test_discovery_returns_only_products_authorized_by_cal(client, monkeypatch):
     assert data["withheld_candidate_ids"][0]["product_id"] == P2
     assert "product" not in data["withheld_candidate_ids"][0]
     assert data["display_authority"] == "CaTaCaCi/CAL"
+    assert data["displayable_products"][0]["merchant_comparison"]["status"] == "unavailable"
+    assert data["displayable_products"][0]["merchant_comparison"]["landed_cost_available"] is False
 
 
 def test_discovery_fails_closed_when_verified_identity_is_disabled(client, monkeypatch):
