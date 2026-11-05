@@ -444,7 +444,8 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       });
       const data=await response.json().catch(()=>({}));
       if(!response.ok)throw new Error((data.detail&&data.detail.code)||("Request status returned HTTP "+response.status+"."));
-      setAiStatus("imageRightsTrackingStatus","Request "+data.request_id+": "+data.status+"."+(data.quarantined?" The image remains quarantined.":"")+" Updated "+data.updated_at+".");
+      const legalDue=data.legal_response_due_at?" Legal response deadline: "+data.legal_response_due_at+".":" Legal deadline is not yet resolved; use the platform triage target while jurisdiction review is completed.";
+      setAiStatus("imageRightsTrackingStatus","Request "+data.request_id+": "+data.status+"."+(data.quarantined?" The image remains quarantined.":"")+" Triage target: "+data.triage_due_at+"."+legalDue+" Updated "+data.updated_at+".");
     }catch(err){
       setAiStatus("imageRightsTrackingStatus",(err&&err.message?err.message:"Status unavailable")+".",true);
     }finally{
