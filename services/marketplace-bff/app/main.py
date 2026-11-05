@@ -362,6 +362,13 @@ async def create_wardrobe_item(request: Request, payload: CreateWardrobeItemIn =
 async def wardrobe_list_consents(request: Request) -> Response:
     async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
         subject, _ = await _verified_commerce_subject(client, request)
+        identity_url = os.getenv("IDENTITY_SERVICE_URL", "").strip()
+        identity_token = os.getenv("IDENTITY_SERVICE_TOKEN", "").strip()
+        if not identity_url and not identity_token:
+            # A missing learning provider must not prevent a user browsing their closet.
+            return _private_json_response({"subject_id": subject, "items": [], "learning_configured": False})
+        if not identity_url or len(identity_token.encode("utf-8")) < 32:
+            raise HTTPException(503, detail={"code": "IDENTITY_CONSENT_CONFIGURATION_INVALID"})
         base, token = _identity_learning_service()
         try:
             response = await client.get(
@@ -378,7 +385,7 @@ async def wardrobe_list_consents(request: Request) -> Response:
         raise HTTPException(502, detail={"code": "IDENTITY_CONSENT_RESPONSE_INVALID"}) from exc
     if not isinstance(data, list) or any(not isinstance(item, dict) for item in data):
         raise HTTPException(502, detail={"code": "IDENTITY_CONSENT_RESPONSE_INVALID"})
-    return _private_json_response({"subject_id": subject, "items": data})
+    return _private_json_response({"subject_id": subject, "items": data, "learning_configured": True})
 
 @app.post("/api/wardrobe/consents")
 async def wardrobe_create_consent(request: Request, payload: WardrobeConsentIn = Body(...)) -> Response:
