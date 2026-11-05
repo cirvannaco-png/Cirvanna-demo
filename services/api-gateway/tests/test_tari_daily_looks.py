@@ -76,6 +76,7 @@ def test_tari_gateway_checks_subject_and_uses_only_active_usi_profile(monkeypatc
         }
 
     monkeypatch.setattr(main, "_load_verified_usi_profile", load_profile)
+    monkeypatch.setattr(main, "_load_persisted_npl_preferences", lambda **_kwargs: ())
     monkeypatch.setattr(main, "_tari_daily_looks", compose)
     client = TestClient(main.app)
     response = client.post(
