@@ -2074,6 +2074,9 @@ def compare_offers(
         if tax.status != "confirmed" or not tax.authoritative or tax.amount_minor is None:
             return _comparison_unavailable("TAX_QUOTE_NOT_AUTHORITATIVE", variant_id=variant.id)
 
+        if selected and selected[0]["variant"].currency != variant.currency:
+            return _comparison_unavailable("OFFER_CURRENCY_MISMATCH", variant_id=variant.id)
+
         payment = _market_payment_capability(
             db, merchant.id, payload.destination_country_code, variant.currency, payload.payment_method
         )
