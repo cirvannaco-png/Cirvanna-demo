@@ -507,3 +507,74 @@ def test_wardrobe_consent_listing_allows_closet_browse_when_learning_provider_ab
     assert response.json()["learning_configured"] is False
     assert response.json()["items"] == []
     assert len(fake.calls) == 1
+
+
+def test_public_offers_forwards_market_and_display_currency(client, monkeypatch):
+    configure_upstreams(monkeypatch)
+    seen = {}
+
+    def fake_get(url, **kwargs):
+        seen["url"] = url
+        seen.update(kwargs)
+        return FakeResponse({"items": [], "total": 0, "offset": 0, "limit": 20})
+
+    monkeypatch.setattr(main.httpx, "get", fake_get)
+    response = client.get(
+        "/api/commerce/marketplace/offers?market_country_code=KE&display_currency=KES&destination_key=Nakuru%2FSubukia&fulfillment_mode=courier_delivery&radius_km=75"
+    )
+    assert response.status_code == 200
+    assert seen["params"]["market_country_code"] == "KE"
+    assert seen["params"]["display_currency"] == "KES"
+    assert seen["params"]["destination_key"] == "Nakuru/Subukia"
+    assert seen["params"]["fulfillment_mode"] == "courier_delivery"
+    assert seen["params"]["radius_km"] == 75.0
+    assert "Authorization" not in seen["headers"]
+
+
+def test_offer_comparison_proxy_preserves_unavailable_reason_without_claiming_cost(client, monkeypatch):
+    configure_upstreams(monkeypatch)
+    seen = {}
+
+    def fake_post(url, **kwargs):
+        seen["url"] = url
+        seen.update(kwargs)
+        return FakeResponse({
+            "status": "unavailable",
+            "reason_code": "TAX_QUOTE_NOT_AUTHORITATIVE",
+            "comparison": None,
+        })
+
+    monkeypatch.setattr(main.httpx, "post", fake_post)
+    response = client.post("/api/commerce/marketplace/compare", json={
+        "variant_ids": [
+            "11111111-1111-4111-8111-111111111111",
+            "22222222-2222-4222-8222-222222222222",
+        ],
+        "destination_country_code": "KE",
+        "destination_key": "Nakuru/Subukia",
+        "fulfillment_mode": "courier_delivery",
+        "display_currency": "KES",
+        "payment_method": "card",
+        "radius_km": 75,
+    })
+    assert response.status_code == 200
+    assert response.json()["status"] == "unavailable"
+    assert response.json()["reason_code"] == "TAX_QUOTE_NOT_AUTHORITATIVE"
+    assert seen["url"] == "https://commerce.example.test/marketplace/compare"
+    assert seen["json"]["display_currency"] == "KES"
+    assert seen["json"]["radius_km"] == 75
+
+
+def test_offer_comparison_rejects_invalid_variant_identity_before_upstream(client, monkeypatch):
+    configure_upstreams(monkeypatch)
+    calls = []
+    monkeypatch.setattr(main.httpx, "post", lambda *args, **kwargs: calls.append(args))
+    response = client.post("/api/commerce/marketplace/compare", json={
+        "variant_ids": ["not-a-uuid", "also-not-a-uuid"],
+        "destination_country_code": "KE",
+        "destination_key": "Nakuru",
+        "fulfillment_mode": "collection",
+        "display_currency": "KES",
+    })
+    assert response.status_code == 422
+    assert calls == []

@@ -14,6 +14,7 @@ import os
 import re
 import time
 import uuid
+from decimal import Decimal, ROUND_HALF_UP
 from functools import lru_cache
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Iterator, Literal
@@ -22,14 +23,15 @@ import httpx
 import jwt as pyjwt
 from jwt import PyJWKClient
 from jwt.exceptions import PyJWKClientConnectionError, PyJWTError
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from urllib.parse import urlsplit
+from babel.numbers import get_currency_precision
 
 from sqlalchemy import (
-    JSON, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint,
+    JSON, Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint,
     create_engine, func, inspect, select, text, update,
 )
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -37,7 +39,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 
 
 SERVICE = "cirvanna-commerce-service"
-EXPECTED_SCHEMA_REVISION = "20261104_0003"
+EXPECTED_SCHEMA_REVISION = "20261105_0005"
 MAX_QTY = 50
 RESERVATION_MINUTES = 60
 SKU_RE = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,79}$")
@@ -48,6 +50,12 @@ EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
 def now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _aware_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
 
 
 def offer_max_age_seconds() -> int:
@@ -89,7 +97,9 @@ class Merchant(Base):
     owner_user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     display_name: Mapped[str] = mapped_column(String(120), nullable=False)
     legal_name: Mapped[str] = mapped_column(String(180), nullable=False)
-    country_code: Mapped[str] = mapped_column(String(2), nullable=False)
+    country_code: Mapped[str] = mapped_column(String(2), nullable=False)  # legacy legal-country alias
+    brand_home_country_code: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    legal_country_code: Mapped[str | None] = mapped_column(String(2), nullable=True)
     contact_email: Mapped[str] = mapped_column(String(254), nullable=False)
     verification_reference: Mapped[str | None] = mapped_column(String(180))
     state: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)
@@ -138,6 +148,8 @@ class Variant(Base):
     canonical_variant_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now, onupdate=now)
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+    source_price_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
 
 
 class InventoryMovement(Base):
@@ -148,6 +160,122 @@ class InventoryMovement(Base):
     delta: Mapped[int] = mapped_column(Integer, nullable=False)
     reason: Mapped[str] = mapped_column(String(160), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+
+
+class MerchantOperatingMarket(Base):
+    __tablename__ = "commerce_merchant_operating_markets"
+    __table_args__ = (
+        UniqueConstraint("merchant_id", "market_country_code", name="uq_commerce_merchant_market"),
+        CheckConstraint("state IN ('pending','active','blocked')", name="ck_commerce_market_state"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(ForeignKey("commerce_merchants.id", ondelete="CASCADE"), nullable=False, index=True)
+    market_country_code: Mapped[str] = mapped_column(String(2), nullable=False, index=True)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    display_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    locale: Mapped[str | None] = mapped_column(String(35), nullable=True)
+    activated_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    tax_provider: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    tax_provider_reference: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    tax_capability_observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    tax_capability_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    fulfillment_provider: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    fulfillment_provider_reference: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    fulfillment_capability_observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    fulfillment_capability_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now, onupdate=now)
+
+
+class OfferFXQuote(Base):
+    __tablename__ = "commerce_offer_fx_quotes"
+    __table_args__ = (
+        UniqueConstraint("variant_id", "provider", "provider_quote_id", name="uq_commerce_fx_provider_quote"),
+        Index("ix_commerce_fx_pair_expiry", "variant_id", "base_currency", "quote_currency", "expires_at"),
+        CheckConstraint("rate > 0", name="ck_commerce_fx_rate_positive"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    variant_id: Mapped[str] = mapped_column(ForeignKey("commerce_variants.id", ondelete="CASCADE"), nullable=False, index=True)
+    base_currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    quote_currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    rate: Mapped[Decimal] = mapped_column(Numeric(24, 12), nullable=False)
+    provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    provider_quote_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    rounding_rule: Mapped[str] = mapped_column(String(40), nullable=False, default="HALF_UP")
+    spread_bps: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+
+
+class OfferFulfillmentQuote(Base):
+    __tablename__ = "commerce_offer_fulfillment_quotes"
+    __table_args__ = (
+        UniqueConstraint("variant_id", "provider", "provider_quote_id", name="uq_commerce_fulfillment_provider_quote"),
+        Index("ix_commerce_fulfillment_lookup", "variant_id", "destination_country_code", "destination_key", "fulfillment_mode", "expires_at"),
+        CheckConstraint("status IN ('estimate','confirmed','unavailable')", name="ck_commerce_fulfillment_status"),
+        CheckConstraint("charge_basis IN ('per_unit','per_quote')", name="ck_commerce_fulfillment_charge_basis"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    variant_id: Mapped[str] = mapped_column(ForeignKey("commerce_variants.id", ondelete="CASCADE"), nullable=False, index=True)
+    destination_country_code: Mapped[str] = mapped_column(String(2), nullable=False)
+    destination_key: Mapped[str] = mapped_column(String(180), nullable=False)
+    fulfillment_mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    charge_basis: Mapped[str] = mapped_column(String(16), nullable=False, default="per_unit")
+    amount_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    distance_km: Mapped[Decimal | None] = mapped_column(Numeric(9, 2), nullable=True)
+    provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    provider_quote_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class OfferTaxQuote(Base):
+    __tablename__ = "commerce_offer_tax_quotes"
+    __table_args__ = (
+        UniqueConstraint("variant_id", "provider", "provider_quote_id", name="uq_commerce_tax_provider_quote"),
+        Index("ix_commerce_tax_lookup", "variant_id", "destination_country_code", "jurisdiction", "expires_at"),
+        CheckConstraint("basis IN ('inclusive','exclusive')", name="ck_commerce_tax_basis"),
+        CheckConstraint("status IN ('estimate','confirmed','unavailable')", name="ck_commerce_tax_status"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    variant_id: Mapped[str] = mapped_column(ForeignKey("commerce_variants.id", ondelete="CASCADE"), nullable=False, index=True)
+    destination_country_code: Mapped[str] = mapped_column(String(2), nullable=False)
+    jurisdiction: Mapped[str] = mapped_column(String(100), nullable=False)
+    tax_category: Mapped[str] = mapped_column(String(80), nullable=False)
+    basis: Mapped[str] = mapped_column(String(16), nullable=False)
+    amount_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    authoritative: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    provider_quote_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    rule_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class MarketPaymentCapability(Base):
+    __tablename__ = "commerce_market_payment_capabilities"
+    __table_args__ = (
+        UniqueConstraint("merchant_id", "market_country_code", "provider", name="uq_commerce_market_payment_provider"),
+        CheckConstraint("state IN ('pending','active','blocked')", name="ck_commerce_market_payment_state"),
+        Index("ix_commerce_payment_capability_market", "merchant_id", "market_country_code", "state"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(ForeignKey("commerce_merchants.id", ondelete="CASCADE"), nullable=False, index=True)
+    market_country_code: Mapped[str] = mapped_column(String(2), nullable=False)
+    provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    transaction_currencies: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    settlement_currencies: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    payment_methods: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    provider_reference: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class SavedProduct(Base):
@@ -191,6 +319,14 @@ class CommerceOrder(Base):
     payment_state: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     subtotal_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    fulfillment_total_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tax_total_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    destination_country_code: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    destination_key: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    fulfillment_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    checkout_context_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    market_quote_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     commission_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
     payment_session_id: Mapped[str | None] = mapped_column(String(180), unique=True)
@@ -214,9 +350,39 @@ class OrderItem(Base):
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     unit_price_minor: Mapped[int] = mapped_column(Integer, nullable=False)
     line_total_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_unit_price_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    fx_quote_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     commission_bps: Mapped[int] = mapped_column(Integer, nullable=False)
     commission_minor: Mapped[int] = mapped_column(Integer, nullable=False)
     __table_args__ = (CheckConstraint("quantity > 0", name="ck_commerce_order_item_quantity_positive"), CheckConstraint("unit_price_minor >= 0 AND line_total_minor >= 0", name="ck_commerce_order_item_price_nonnegative"))
+
+
+
+
+class OrderCharge(Base):
+    __tablename__ = "commerce_order_charges"
+    __table_args__ = (
+        CheckConstraint("amount_minor >= 0", name="ck_commerce_order_charge_amount_nonnegative"),
+        CheckConstraint("charge_type IN ('fulfilment','tax')", name="ck_commerce_order_charge_type"),
+        CheckConstraint("charge_basis IN ('per_unit','per_quote')", name="ck_commerce_order_charge_basis"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    order_id: Mapped[str] = mapped_column(ForeignKey("commerce_orders.id", ondelete="CASCADE"), nullable=False, index=True)
+    merchant_id: Mapped[str] = mapped_column(ForeignKey("commerce_merchants.id"), nullable=False, index=True)
+    variant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    charge_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    charge_basis: Mapped[str] = mapped_column(String(16), nullable=False, default="per_unit")
+    description: Mapped[str] = mapped_column(String(180), nullable=False)
+    amount_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    source_amount_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    fx_quote_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    provider_quote_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class StockReservation(Base):
@@ -434,6 +600,8 @@ class CatalogClient:
 
 
 class StripeGateway:
+    provider = "stripe"
+
     def __init__(self):
         self.secret = os.getenv("STRIPE_SECRET_KEY", "")
         self.webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET", "")
@@ -447,7 +615,7 @@ class StripeGateway:
             and self.success_url.startswith("https://") and self.cancel_url.startswith("https://")
             and self.countries and all(COUNTRY_RE.fullmatch(x) for x in self.countries))
 
-    def create_session(self, order: CommerceOrder, items: list[OrderItem], email: str | None) -> dict[str, str]:
+    def create_session(self, order: CommerceOrder, items: list[OrderItem], charges: list[OrderCharge], email: str | None) -> dict[str, str]:
         if not self.ready:
             raise RuntimeError("Stripe not configured")
         params: dict[str, str] = {
@@ -455,8 +623,16 @@ class StripeGateway:
             "client_reference_id": order.id, "expires_at": str(int(order.expires_at.timestamp())),
             "metadata[order_id]": order.id, "metadata[order_number]": order.order_number,
         }
-        for i, country in enumerate(self.countries):
-            params[f"shipping_address_collection[allowed_countries][{i}]"] = country
+        if order.destination_country_code:
+            # Market-aware destination is a provider-quoted zone key. Do not let
+            # Stripe collect a second, potentially different address after the quote.
+            params["metadata[destination_country_code]"] = order.destination_country_code
+            params["metadata[destination_key]"] = (order.destination_key or "")[:180]
+            params["metadata[fulfillment_mode]"] = order.fulfillment_mode or ""
+            params["metadata[display_currency]"] = order.currency
+        else:
+            for i, country in enumerate(self.countries):
+                params[f"shipping_address_collection[allowed_countries][{i}]"] = country
         if email:
             params["customer_email"] = email
         for i, item in enumerate(items):
@@ -464,6 +640,15 @@ class StripeGateway:
             params[f"line_items[{i}][price_data][unit_amount]"] = str(item.unit_price_minor)
             params[f"line_items[{i}][price_data][product_data][name]"] = item.product_name[:120]
             params[f"line_items[{i}][quantity]"] = str(item.quantity)
+        offset = len(items)
+        for index, charge in enumerate(charges):
+            if charge.amount_minor <= 0:
+                continue
+            i = offset + index
+            params[f"line_items[{i}][price_data][currency]"] = order.currency.lower()
+            params[f"line_items[{i}][price_data][unit_amount]"] = str(charge.amount_minor)
+            params[f"line_items[{i}][price_data][product_data][name]"] = charge.description[:120]
+            params[f"line_items[{i}][quantity]"] = "1"
         try:
             res = httpx.post("https://api.stripe.com/v1/checkout/sessions", data=params,
                 auth=(self.secret, ""), headers={"Idempotency-Key": f"cirvanna-order-{order.id}"}, timeout=12.0)
@@ -492,20 +677,37 @@ class MerchantApplication(BaseModel):
     model_config = ConfigDict(extra="forbid")
     display_name: str = Field(min_length=2, max_length=120)
     legal_name: str = Field(min_length=2, max_length=180)
-    country_code: str = Field(min_length=2, max_length=2)
+    # country_code remains the legacy legal-country alias for older clients.
+    country_code: str | None = Field(default=None, min_length=2, max_length=2)
+    brand_home_country_code: str | None = Field(default=None, min_length=2, max_length=2)
+    legal_country_code: str | None = Field(default=None, min_length=2, max_length=2)
+    operating_markets: list[str] = Field(default_factory=list, max_length=30)
     contact_email: str = Field(min_length=5, max_length=254)
+
     @field_validator("display_name", "legal_name", "contact_email", mode="before")
     @classmethod
     def trim(cls, v: Any) -> Any:
         return v.strip() if isinstance(v, str) else v
 
-    @field_validator("country_code")
+    @field_validator("country_code", "brand_home_country_code", "legal_country_code")
     @classmethod
-    def country(cls, v: str) -> str:
+    def country(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
         v = v.strip().upper()
         if not COUNTRY_RE.fullmatch(v):
             raise ValueError("country code must be two letters")
         return v
+
+    @field_validator("operating_markets")
+    @classmethod
+    def countries(cls, values: list[str]) -> list[str]:
+        output = [value.strip().upper() for value in values]
+        if any(not COUNTRY_RE.fullmatch(value) for value in output):
+            raise ValueError("operating markets must use two-letter country codes")
+        if len(output) != len(set(output)):
+            raise ValueError("operating markets must not contain duplicates")
+        return output
 
     @field_validator("contact_email")
     @classmethod
@@ -513,6 +715,12 @@ class MerchantApplication(BaseModel):
         if not EMAIL_RE.fullmatch(v):
             raise ValueError("valid contact email required")
         return v.lower()
+
+    @model_validator(mode="after")
+    def legal_country_required(self):
+        if self.legal_country_code is None and self.country_code is None:
+            raise ValueError("legal_country_code is required (or legacy country_code)")
+        return self
 
 
 class MerchantDecision(BaseModel):
@@ -542,6 +750,18 @@ class VariantIn(BaseModel):
     currency: str = Field(min_length=3, max_length=3)
     initial_stock: int = Field(ge=0, le=1_000_000)
     canonical_variant_id: str | None = Field(default=None, min_length=36, max_length=36)
+    source_price_minor: int | None = Field(default=None, ge=0, le=2_000_000_000)
+    source_currency: str | None = Field(default=None, min_length=3, max_length=3)
+
+    @model_validator(mode="after")
+    def source_price_pair(self):
+        if (self.source_price_minor is None) != (self.source_currency is None):
+            raise ValueError("source_price_minor and source_currency must be supplied together")
+        if self.source_currency is not None:
+            self.source_currency = self.source_currency.strip().upper()
+            if not CODE3_RE.fullmatch(self.source_currency):
+                raise ValueError("source_currency must be three letters")
+        return self
 
     @field_validator("canonical_variant_id")
     @classmethod
@@ -578,6 +798,241 @@ class VariantIn(BaseModel):
                 raise ValueError("duplicate normalized option name")
             out[key] = value
         return out
+
+
+MARKET_MODES = {"shipping", "courier_delivery", "merchant_delivery", "collection", "local_transport"}
+
+
+def _valid_country(value: str) -> str:
+    value = value.strip().upper()
+    if not COUNTRY_RE.fullmatch(value):
+        raise ValueError("country code must be two letters")
+    return value
+
+
+def _valid_currency(value: str) -> str:
+    value = value.strip().upper()
+    if not CODE3_RE.fullmatch(value):
+        raise ValueError("currency must be three letters")
+    return value
+
+
+class MarketDeclaration(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    market_country_code: str = Field(min_length=2, max_length=2)
+    display_currency: str | None = Field(default=None, min_length=3, max_length=3)
+    locale: str | None = Field(default=None, min_length=2, max_length=35)
+
+    _country = field_validator("market_country_code")(_valid_country)
+    _currency = field_validator("display_currency")(_valid_currency)
+
+
+class MarketActivation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    state: Literal["active", "blocked", "pending"]
+    display_currency: str | None = Field(default=None, min_length=3, max_length=3)
+    locale: str | None = Field(default=None, min_length=2, max_length=35)
+    tax_provider: str | None = Field(default=None, min_length=2, max_length=100)
+    tax_provider_reference: str | None = Field(default=None, min_length=3, max_length=180)
+    tax_capability_observed_at: datetime | None = None
+    tax_capability_expires_at: datetime | None = None
+    fulfillment_provider: str | None = Field(default=None, min_length=2, max_length=100)
+    fulfillment_provider_reference: str | None = Field(default=None, min_length=3, max_length=180)
+    fulfillment_capability_observed_at: datetime | None = None
+    fulfillment_capability_expires_at: datetime | None = None
+
+    _currency = field_validator("display_currency")(_valid_currency)
+
+    @model_validator(mode="after")
+    def provider_evidence_required_for_activation(self):
+        if self.state == "active":
+            required = (
+                self.tax_provider, self.tax_provider_reference,
+                self.tax_capability_observed_at, self.tax_capability_expires_at,
+                self.fulfillment_provider, self.fulfillment_provider_reference,
+                self.fulfillment_capability_observed_at, self.fulfillment_capability_expires_at,
+            )
+            if any(value is None for value in required):
+                raise ValueError("fresh tax and fulfilment provider evidence is required before market activation")
+            for observed, expires in (
+                (self.tax_capability_observed_at, self.tax_capability_expires_at),
+                (self.fulfillment_capability_observed_at, self.fulfillment_capability_expires_at),
+            ):
+                if observed.tzinfo is None or expires.tzinfo is None or expires <= observed:
+                    raise ValueError("market capability evidence must use valid timezone-aware quote windows")
+        return self
+
+
+class FXQuoteIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    provider: str = Field(min_length=2, max_length=100)
+    provider_quote_id: str = Field(min_length=3, max_length=180)
+    base_currency: str = Field(min_length=3, max_length=3)
+    quote_currency: str = Field(min_length=3, max_length=3)
+    rate: Decimal = Field(gt=0, le=Decimal("1000000"))
+    rounding_rule: Literal["HALF_UP"] = "HALF_UP"
+    spread_bps: int = Field(default=0, ge=0, le=5000)
+    observed_at: datetime
+    expires_at: datetime
+
+    _base = field_validator("base_currency")(_valid_currency)
+    _quote = field_validator("quote_currency")(_valid_currency)
+
+    @model_validator(mode="after")
+    def quote_window(self):
+        if self.base_currency == self.quote_currency:
+            raise ValueError("FX quote currencies must differ")
+        if self.observed_at.tzinfo is None or self.expires_at.tzinfo is None:
+            raise ValueError("FX timestamps must include timezone")
+        if self.expires_at <= self.observed_at:
+            raise ValueError("FX quote expiry must follow observation")
+        return self
+
+
+class FulfillmentQuoteIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    provider: str = Field(min_length=2, max_length=100)
+    provider_quote_id: str = Field(min_length=3, max_length=180)
+    destination_country_code: str = Field(min_length=2, max_length=2)
+    destination_key: str = Field(min_length=3, max_length=180)
+    fulfillment_mode: Literal["shipping", "courier_delivery", "merchant_delivery", "collection", "local_transport"]
+    charge_basis: Literal["per_unit", "per_quote"]
+    amount_minor: int | None = Field(default=None, ge=0, le=2_000_000_000)
+    currency: str = Field(min_length=3, max_length=3)
+    status: Literal["estimate", "confirmed", "unavailable"]
+    distance_km: Decimal | None = Field(default=None, ge=0, le=Decimal("100000"))
+    observed_at: datetime
+    expires_at: datetime
+
+    _country = field_validator("destination_country_code")(_valid_country)
+    _currency = field_validator("currency")(_valid_currency)
+
+    @model_validator(mode="after")
+    def validate_fulfillment_quote(self):
+        if self.status == "unavailable" and self.amount_minor is not None:
+            raise ValueError("unavailable fulfilment quotes cannot include an amount")
+        if self.status != "unavailable" and self.amount_minor is None:
+            raise ValueError("estimated or confirmed fulfilment quotes require an amount")
+        if self.observed_at.tzinfo is None or self.expires_at.tzinfo is None or self.expires_at <= self.observed_at:
+            raise ValueError("fulfilment quote timestamps must be valid and ordered")
+        return self
+
+
+class TaxQuoteIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    provider: str = Field(min_length=2, max_length=100)
+    provider_quote_id: str = Field(min_length=3, max_length=180)
+    destination_country_code: str = Field(min_length=2, max_length=2)
+    jurisdiction: str = Field(min_length=2, max_length=100)
+    tax_category: str = Field(min_length=2, max_length=80)
+    basis: Literal["inclusive", "exclusive"]
+    amount_minor: int | None = Field(default=None, ge=0, le=2_000_000_000)
+    currency: str = Field(min_length=3, max_length=3)
+    status: Literal["estimate", "confirmed", "unavailable"]
+    authoritative: bool = False
+    rule_version: str | None = Field(default=None, max_length=80)
+    observed_at: datetime
+    expires_at: datetime
+
+    _country = field_validator("destination_country_code")(_valid_country)
+    _currency = field_validator("currency")(_valid_currency)
+
+    @model_validator(mode="after")
+    def validate_tax_quote(self):
+        if self.status == "unavailable" and self.amount_minor is not None:
+            raise ValueError("unavailable tax quotes cannot include an amount")
+        if self.status != "unavailable" and self.amount_minor is None:
+            raise ValueError("tax amount required unless unavailable")
+        if self.authoritative and (self.status != "confirmed" or not self.provider):
+            raise ValueError("authoritative tax requires a confirmed provider quote")
+        if self.observed_at.tzinfo is None or self.expires_at.tzinfo is None or self.expires_at <= self.observed_at:
+            raise ValueError("tax quote timestamps must be valid and ordered")
+        return self
+
+
+class PaymentCapabilityIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    market_country_code: str = Field(min_length=2, max_length=2)
+    provider: str = Field(min_length=2, max_length=100)
+    state: Literal["pending", "active", "blocked"]
+    transaction_currencies: list[str] = Field(min_length=1, max_length=20)
+    settlement_currencies: list[str] = Field(min_length=1, max_length=20)
+    payment_methods: list[str] = Field(min_length=1, max_length=30)
+    provider_reference: str | None = Field(default=None, max_length=180)
+    observed_at: datetime
+    expires_at: datetime
+
+    _country = field_validator("market_country_code")(_valid_country)
+
+    @field_validator("transaction_currencies", "settlement_currencies")
+    @classmethod
+    def currency_list(cls, values: list[str]) -> list[str]:
+        output = [_valid_currency(value) for value in values]
+        if len(output) != len(set(output)):
+            raise ValueError("payment currencies must be unique")
+        return output
+
+    @model_validator(mode="after")
+    def valid_window(self):
+        if self.observed_at.tzinfo is None or self.expires_at.tzinfo is None or self.expires_at <= self.observed_at:
+            raise ValueError("payment capability timestamps must be valid and ordered")
+        return self
+
+
+class OfferComparisonIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    variant_ids: list[str] = Field(min_length=2, max_length=2)
+    destination_country_code: str = Field(min_length=2, max_length=2)
+    destination_key: str = Field(min_length=3, max_length=180)
+    fulfillment_mode: Literal["shipping", "courier_delivery", "merchant_delivery", "collection", "local_transport"]
+    display_currency: str = Field(min_length=3, max_length=3)
+    payment_method: str | None = Field(default=None, min_length=2, max_length=50)
+    radius_km: Decimal = Field(default=Decimal("30"), ge=Decimal("1"), le=Decimal("500"))
+
+    @field_validator("variant_ids")
+    @classmethod
+    def uuids(cls, values: list[str]) -> list[str]:
+        output = [str(uuid.UUID(value)) for value in values]
+        if len(set(output)) != 2:
+            raise ValueError("two distinct variant IDs are required")
+        return output
+
+    _country = field_validator("destination_country_code")(_valid_country)
+    _currency = field_validator("display_currency")(_valid_currency)
+
+
+
+class CheckoutRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    destination_country_code: str | None = Field(default=None, min_length=2, max_length=2)
+    destination_key: str | None = Field(default=None, min_length=3, max_length=180)
+    fulfillment_mode: Literal["shipping", "courier_delivery", "merchant_delivery", "collection", "local_transport"] | None = None
+    display_currency: str | None = Field(default=None, min_length=3, max_length=3)
+    payment_method: Literal["card"] = "card"
+    confirm: bool | None = None
+
+    @field_validator("destination_country_code")
+    @classmethod
+    def valid_destination(cls, value: str | None) -> str | None:
+        return _valid_country(value) if value is not None else None
+
+    @field_validator("display_currency")
+    @classmethod
+    def valid_checkout_currency(cls, value: str | None) -> str | None:
+        return _valid_currency(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def complete_market_context(self):
+        values = (self.destination_country_code, self.destination_key, self.fulfillment_mode, self.display_currency)
+        if any(value is not None for value in values) and not all(value is not None for value in values):
+            raise ValueError("destination, fulfilment mode and display currency must be supplied together")
+        if self.destination_key is not None:
+            self.destination_key = self.destination_key.strip()
+        return self
+
+    @property
+    def market_aware(self) -> bool:
+        return self.destination_country_code is not None
 
 
 class CartItemIn(BaseModel):
@@ -622,11 +1077,158 @@ class Readiness(BaseModel):
     ready: bool
 
 
+def merchant_market_json(market: MerchantOperatingMarket, *, include_evidence: bool = False) -> dict[str, Any]:
+    result = {
+        "market_country_code": market.market_country_code,
+        "state": market.state,
+        "display_currency": market.display_currency,
+        "locale": market.locale,
+        "tax_provider": market.tax_provider,
+        "tax_capability_ready": quote_is_current(market.tax_capability_observed_at, market.tax_capability_expires_at),
+        "fulfillment_provider": market.fulfillment_provider,
+        "fulfillment_capability_ready": quote_is_current(market.fulfillment_capability_observed_at, market.fulfillment_capability_expires_at),
+        "activated_at": market.activated_at.isoformat() if market.activated_at else None,
+    }
+    if include_evidence:
+        result.update({
+            "tax_provider_reference": market.tax_provider_reference,
+            "tax_capability_observed_at": market.tax_capability_observed_at.isoformat() if market.tax_capability_observed_at else None,
+            "tax_capability_expires_at": market.tax_capability_expires_at.isoformat() if market.tax_capability_expires_at else None,
+            "fulfillment_provider_reference": market.fulfillment_provider_reference,
+            "fulfillment_capability_observed_at": market.fulfillment_capability_observed_at.isoformat() if market.fulfillment_capability_observed_at else None,
+            "fulfillment_capability_expires_at": market.fulfillment_capability_expires_at.isoformat() if market.fulfillment_capability_expires_at else None,
+        })
+    return result
+
+
 def merchant_json(m: Merchant) -> dict[str, Any]:
     return {"merchant_id": m.id, "owner_user_id": m.owner_user_id, "display_name": m.display_name,
-        "legal_name": m.legal_name, "country_code": m.country_code, "contact_email": m.contact_email,
+        "legal_name": m.legal_name, "country_code": m.country_code,
+        "brand_home_country_code": m.brand_home_country_code,
+        "legal_country_code": m.legal_country_code or m.country_code,
+        "contact_email": m.contact_email,
         "verification_reference": m.verification_reference, "status": m.state, "commission_bps": m.commission_bps,
         "decision_note": m.decision_note, "created_at": m.created_at.isoformat() if m.created_at else None}
+
+
+
+def quote_is_current(observed_at: datetime | None, expires_at: datetime | None) -> bool:
+    if observed_at is None or expires_at is None:
+        return False
+    observed = observed_at if observed_at.tzinfo else observed_at.replace(tzinfo=timezone.utc)
+    expiry = expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=timezone.utc)
+    current = now()
+    return (
+        current - timedelta(seconds=offer_max_age_seconds()) <= observed <= current + timedelta(minutes=5)
+        and expiry > current
+    )
+
+
+def _require_market_context_token(token: str | None) -> None:
+    expected = os.getenv("COMMERCE_MARKET_CONTEXT_TOKEN", "").strip()
+    if len(expected.encode("utf-8")) < 32 or not token or not hmac.compare_digest(expected, token):
+        raise HTTPException(401, detail={"code": "MARKET_CONTEXT_AUTH_REQUIRED"})
+
+
+def _currency_minor_units(currency: str) -> int:
+    try:
+        return int(get_currency_precision(currency.upper()))
+    except Exception as exc:
+        raise ValueError("unsupported ISO currency") from exc
+
+
+def _fresh_fx_quote(db: Session, variant_id: str, base_currency: str, quote_currency: str) -> OfferFXQuote | None:
+    if base_currency == quote_currency:
+        return None
+    quote = db.scalar(select(OfferFXQuote).where(
+        OfferFXQuote.variant_id == variant_id,
+        OfferFXQuote.base_currency == base_currency,
+        OfferFXQuote.quote_currency == quote_currency,
+    ).order_by(OfferFXQuote.observed_at.desc(), OfferFXQuote.id.desc()).limit(1))
+    if quote is None or not quote_is_current(quote.observed_at, quote.expires_at):
+        return None
+    return quote
+
+
+def _convert_minor_amount(
+    db: Session, *, variant_id: str, amount_minor: int, source_currency: str, target_currency: str
+) -> tuple[int | None, dict[str, Any] | None]:
+    source_currency = source_currency.upper()
+    target_currency = target_currency.upper()
+    try:
+        source_exponent = _currency_minor_units(source_currency)
+        target_exponent = _currency_minor_units(target_currency)
+    except ValueError:
+        return None, None
+    amount_major = Decimal(amount_minor) / (Decimal(10) ** source_exponent)
+    fx = None
+    rate = Decimal("1")
+    if source_currency != target_currency:
+        fx = _fresh_fx_quote(db, variant_id, source_currency, target_currency)
+        if fx is None:
+            return None, None
+        rate = Decimal(fx.rate)
+    converted_minor = (amount_major * rate * (Decimal(10) ** target_exponent)).quantize(
+        Decimal("1"), rounding=ROUND_HALF_UP
+    )
+    fx_meta = None if fx is None else {
+        "quote_id": fx.id,
+        "provider": fx.provider,
+        "provider_quote_id": fx.provider_quote_id,
+        "base_currency": fx.base_currency,
+        "quote_currency": fx.quote_currency,
+        "rate": str(fx.rate),
+        "observed_at": fx.observed_at.isoformat(),
+        "expires_at": fx.expires_at.isoformat(),
+        "rounding_rule": fx.rounding_rule,
+        "spread_bps": fx.spread_bps,
+    }
+    return int(converted_minor), fx_meta
+
+
+def _market_payment_capability(
+    db: Session, merchant_id: str, market_country_code: str, transaction_currency: str,
+    payment_method: str | None = None,
+) -> MarketPaymentCapability | None:
+    current = now()
+    rows = list(db.scalars(select(MarketPaymentCapability).where(
+        MarketPaymentCapability.merchant_id == merchant_id,
+        MarketPaymentCapability.market_country_code == market_country_code,
+        MarketPaymentCapability.state == "active",
+    ).order_by(MarketPaymentCapability.observed_at.desc())).all())
+    for row in rows:
+        if not quote_is_current(row.observed_at, row.expires_at):
+            continue
+        if transaction_currency not in row.transaction_currencies:
+            continue
+        if payment_method and payment_method not in row.payment_methods:
+            continue
+        return row
+    return None
+
+
+def _market_is_active(db: Session, merchant_id: str, market_country_code: str) -> MerchantOperatingMarket | None:
+    market = db.scalar(select(MerchantOperatingMarket).where(
+        MerchantOperatingMarket.merchant_id == merchant_id,
+        MerchantOperatingMarket.market_country_code == market_country_code,
+        MerchantOperatingMarket.state == "active",
+    ))
+    if market is None:
+        return None
+    if not market.tax_provider or not market.tax_provider_reference:
+        return None
+    if not market.fulfillment_provider or not market.fulfillment_provider_reference:
+        return None
+    if not quote_is_current(market.tax_capability_observed_at, market.tax_capability_expires_at):
+        return None
+    if not quote_is_current(market.fulfillment_capability_observed_at, market.fulfillment_capability_expires_at):
+        return None
+    if not market.display_currency or _market_payment_capability(
+        db, merchant_id, market_country_code, market.display_currency, None,
+    ) is None:
+        return None
+    return market
+
 
 
 def approved_merchant(db: Session, actor: Actor) -> Merchant:
@@ -687,13 +1289,37 @@ def cart_json(db: Session, cart: Cart) -> dict[str, Any]:
 
 def order_json(db: Session, order: CommerceOrder, include_url: bool = False) -> dict[str, Any]:
     lines = list(db.scalars(select(OrderItem).where(OrderItem.order_id == order.id)).all())
-    result = {"order_id": order.id, "order_number": order.order_number, "status": order.state,
-        "payment_status": order.payment_state, "currency": order.currency, "subtotal_minor": order.subtotal_minor,
+    charges = list(db.scalars(select(OrderCharge).where(OrderCharge.order_id == order.id)).all())
+    result = {
+        "order_id": order.id, "order_number": order.order_number, "status": order.state,
+        "payment_status": order.payment_state, "currency": order.currency,
+        "subtotal_minor": order.subtotal_minor,
+        "fulfillment_total_minor": order.fulfillment_total_minor or 0,
+        "tax_total_minor": order.tax_total_minor or 0,
+        "total_minor": order.total_minor if order.total_minor is not None else order.subtotal_minor,
+        "destination_country_code": order.destination_country_code,
+        "destination_key": order.destination_key, "fulfillment_mode": order.fulfillment_mode,
+        "market_quote_snapshot": order.market_quote_snapshot,
         "commission_minor": order.commission_minor, "expires_at": order.expires_at, "paid_at": order.paid_at,
-        "created_at": order.created_at, "items": [{"merchant_id": i.merchant_id, "variant_id": i.variant_id,
-        "catalog_product_id": i.catalog_product_id, "product_name": i.product_name, "sku": i.sku, "options": i.options,
-        "quantity": i.quantity, "unit_price_minor": i.unit_price_minor, "line_total_minor": i.line_total_minor,
-        "commission_bps": i.commission_bps, "commission_minor": i.commission_minor} for i in lines]}
+        "created_at": order.created_at,
+        "items": [{
+            "merchant_id": i.merchant_id, "variant_id": i.variant_id,
+            "catalog_product_id": i.catalog_product_id, "product_name": i.product_name,
+            "sku": i.sku, "options": i.options, "quantity": i.quantity,
+            "unit_price_minor": i.unit_price_minor, "line_total_minor": i.line_total_minor,
+            "source_unit_price_minor": i.source_unit_price_minor, "source_currency": i.source_currency,
+            "fx_quote_id": i.fx_quote_id, "commission_bps": i.commission_bps,
+            "commission_minor": i.commission_minor,
+        } for i in lines],
+        "charges": [{
+            "charge_type": charge.charge_type, "charge_basis": charge.charge_basis, "description": charge.description,
+            "amount_minor": charge.amount_minor, "currency": charge.currency,
+            "source_amount_minor": charge.source_amount_minor, "source_currency": charge.source_currency,
+            "fx_quote_id": charge.fx_quote_id, "provider": charge.provider,
+            "provider_quote_id": charge.provider_quote_id,
+            "observed_at": charge.observed_at, "expires_at": charge.expires_at,
+        } for charge in charges],
+    }
     if include_url and order.checkout_url and order.state == "pending_payment":
         result["checkout_url"] = order.checkout_url
     return result
@@ -708,8 +1334,9 @@ def persist_stripe_session(db: Session, order_id: str, email: str | None, gatewa
     if order.state != "pending_payment":
         raise HTTPException(409, detail={"code": "ORDER_NOT_PAYABLE", "state": order.state})
     lines = list(db.scalars(select(OrderItem).where(OrderItem.order_id == order.id).order_by(OrderItem.id)).all())
+    charges = list(db.scalars(select(OrderCharge).where(OrderCharge.order_id == order.id).order_by(OrderCharge.charge_type, OrderCharge.id)).all())
     try:
-        session = gateway.create_session(order, lines, email)
+        session = gateway.create_session(order, lines, charges, email)
     except RuntimeError as exc:
         # Network failure may occur after Stripe accepted the request. Keep the
         # reservation and recover via stable provider idempotency on retry.
@@ -742,7 +1369,8 @@ def settle_paid(db: Session, order: CommerceOrder, amount_total: int, currency: 
         return
     if order.state != "pending_payment":
         raise HTTPException(409, detail={"code": "PAYMENT_ORDER_NOT_PENDING", "state": order.state})
-    if amount_total != order.subtotal_minor or currency.lower() != order.currency.lower():
+    expected_total = order.total_minor if order.total_minor is not None else order.subtotal_minor
+    if amount_total != expected_total or currency.lower() != order.currency.lower():
         raise HTTPException(400, detail={"code": "PAYMENT_AMOUNT_MISMATCH"})
     reservations = list(db.scalars(select(StockReservation).where(
         StockReservation.order_id == order.id, StockReservation.state == "reserved").with_for_update()).all())
@@ -862,6 +1490,9 @@ def capabilities() -> dict[str, Any]:
         "idempotent_orders": True, "stripe_hosted_checkout": StripeGateway().ready,
         "verified_payment_webhooks": bool(os.getenv("STRIPE_WEBHOOK_SECRET")),
         "automated_seller_payouts": False, "shipping_tax_calculation": False,
+        "multimarket_onboarding": True, "localized_offer_pricing": True,
+        "provider_quote_ingestion": bool(os.getenv("COMMERCE_MARKET_CONTEXT_TOKEN")),
+        "landed_cost_comparison": True, "checkout_landed_cost_revalidation": False,
         "catacaci_eligibility": False, "click_it_reconstruction": False,
         "virtual_twin_generation": False, "virtual_try_on": False}
 
@@ -873,10 +1504,18 @@ def apply_merchant(payload: MerchantApplication, actor: Annotated[Actor, Depends
     exists = db.scalar(select(Merchant).where(Merchant.owner_user_id == actor.user_id))
     if exists:
         raise HTTPException(409, detail={"code": "MERCHANT_APPLICATION_EXISTS", "merchant": merchant_json(exists)})
+    legacy_country = payload.country_code or payload.legal_country_code
+    legal_country = payload.legal_country_code or legacy_country
     merchant = Merchant(id=str(uuid.uuid4()), owner_user_id=actor.user_id,
-        display_name=payload.display_name, legal_name=payload.legal_name, country_code=payload.country_code,
+        display_name=payload.display_name, legal_name=payload.legal_name, country_code=legacy_country,
+        brand_home_country_code=payload.brand_home_country_code, legal_country_code=legal_country,
         contact_email=payload.contact_email, verification_reference=None, state="pending")
     db.add(merchant)
+    for market_country in payload.operating_markets:
+        db.add(MerchantOperatingMarket(
+            id=str(uuid.uuid4()), merchant_id=merchant.id, market_country_code=market_country,
+            state="pending", display_currency=None, locale=None,
+        ))
     try:
         db.commit()
     except IntegrityError as exc:
@@ -922,6 +1561,8 @@ def list_merchants(
             "display_name": merchant.display_name,
             "legal_name": merchant.legal_name,
             "country_code": merchant.country_code,
+            "brand_home_country_code": merchant.brand_home_country_code,
+            "legal_country_code": merchant.legal_country_code or merchant.country_code,
             "contact_email": merchant.contact_email,
             "status": merchant.state,
             "commission_bps": merchant.commission_bps,
@@ -980,6 +1621,325 @@ def trusted_catalog_image_urls(product: dict[str, Any]) -> list[str]:
     return safe
 
 
+
+@app.get("/merchant/markets")
+def list_merchant_markets(
+    actor: Annotated[Actor, Depends(require_actor)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    merchant = approved_merchant(db, actor)
+    rows = list(db.scalars(select(MerchantOperatingMarket).where(
+        MerchantOperatingMarket.merchant_id == merchant.id
+    ).order_by(MerchantOperatingMarket.market_country_code)).all())
+    return {"items": [{
+        "market_country_code": row.market_country_code,
+        "state": row.state,
+        "display_currency": row.display_currency,
+        "locale": row.locale,
+        "tax_provider": row.tax_provider,
+        "tax_capability_ready": quote_is_current(row.tax_capability_observed_at, row.tax_capability_expires_at),
+        "fulfillment_provider": row.fulfillment_provider,
+        "fulfillment_capability_ready": quote_is_current(row.fulfillment_capability_observed_at, row.fulfillment_capability_expires_at),
+        "activated_at": row.activated_at.isoformat() if row.activated_at else None,
+    } for row in rows]}
+
+
+@app.post("/merchant/markets", status_code=201)
+def declare_merchant_market(
+    payload: MarketDeclaration,
+    actor: Annotated[Actor, Depends(require_actor)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    merchant = approved_merchant(db, actor)
+    row = db.scalar(select(MerchantOperatingMarket).where(
+        MerchantOperatingMarket.merchant_id == merchant.id,
+        MerchantOperatingMarket.market_country_code == payload.market_country_code,
+    ))
+    if row is None:
+        row = MerchantOperatingMarket(
+            id=str(uuid.uuid4()), merchant_id=merchant.id,
+            market_country_code=payload.market_country_code, state="pending",
+            display_currency=payload.display_currency, locale=payload.locale,
+        )
+        db.add(row)
+    else:
+        row.display_currency = payload.display_currency
+        row.locale = payload.locale
+        # A merchant may not activate a market or reverse a block.
+        if row.state == "active":
+            row.state = "pending"
+            row.activated_by = None
+            row.activated_at = None
+    db.commit()
+    db.refresh(row)
+    return {
+        "market_country_code": row.market_country_code,
+        "state": row.state,
+        "display_currency": row.display_currency,
+        "locale": row.locale,
+        "activation_authority": "admin",
+    }
+
+
+@app.get("/merchants/me/markets")
+def list_my_markets(actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Session, Depends(get_db)]):
+    merchant = db.scalar(select(Merchant).where(Merchant.owner_user_id == actor.user_id))
+    if merchant is None:
+        raise HTTPException(404, detail={"code": "MERCHANT_APPLICATION_NOT_FOUND"})
+    rows = list(db.scalars(select(MerchantOperatingMarket).where(
+        MerchantOperatingMarket.merchant_id == merchant.id,
+    ).order_by(MerchantOperatingMarket.market_country_code)).all())
+    return {"items": [merchant_market_json(row) for row in rows]}
+
+
+@app.get("/admin/merchants/{merchant_id}/markets")
+def list_merchant_markets(
+    merchant_id: uuid.UUID,
+    actor: Annotated[Actor, Depends(require_actor)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    if actor.role != "admin":
+        raise HTTPException(403, detail={"code": "ADMIN_REQUIRED"})
+    merchant = db.get(Merchant, str(merchant_id))
+    if merchant is None:
+        raise HTTPException(404, detail={"code": "MERCHANT_NOT_FOUND"})
+    rows = list(db.scalars(select(MerchantOperatingMarket).where(
+        MerchantOperatingMarket.merchant_id == merchant.id,
+    ).order_by(MerchantOperatingMarket.market_country_code)).all())
+    return {"merchant_id": merchant.id, "items": [merchant_market_json(row, include_evidence=True) for row in rows]}
+
+
+@app.put("/admin/merchants/{merchant_id}/markets/{market_country_code}")
+def set_merchant_market_state(
+    merchant_id: uuid.UUID,
+    market_country_code: str,
+    payload: MarketActivation,
+    actor: Annotated[Actor, Depends(require_actor)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    if actor.role != "admin":
+        raise HTTPException(403, detail={"code": "ADMIN_REQUIRED"})
+    market_code = _valid_country(market_country_code)
+    merchant = db.get(Merchant, str(merchant_id))
+    if merchant is None:
+        raise HTTPException(404, detail={"code": "MERCHANT_NOT_FOUND"})
+    market = db.scalar(select(MerchantOperatingMarket).where(
+        MerchantOperatingMarket.merchant_id == merchant.id,
+        MerchantOperatingMarket.market_country_code == market_code,
+    ))
+    if market is None:
+        raise HTTPException(404, detail={"code": "MERCHANT_MARKET_NOT_DECLARED"})
+    if payload.state == "active":
+        if merchant.state != "approved":
+            raise HTTPException(409, detail={"code": "MERCHANT_NOT_APPROVED"})
+        display_currency = payload.display_currency or market.display_currency
+        if not display_currency:
+            raise HTTPException(409, detail={"code": "MARKET_DISPLAY_CURRENCY_REQUIRED"})
+        capable = list(db.scalars(select(MarketPaymentCapability).where(
+            MarketPaymentCapability.merchant_id == merchant.id,
+            MarketPaymentCapability.market_country_code == market_code,
+            MarketPaymentCapability.state == "active",
+        )).all())
+        if not any(
+            quote_is_current(item.observed_at, item.expires_at)
+            and bool(item.transaction_currencies)
+            and bool(item.settlement_currencies)
+            and bool(item.payment_methods)
+            for item in capable
+        ):
+            raise HTTPException(409, detail={"code": "MARKET_PAYMENT_CAPABILITY_NOT_READY"})
+        if not quote_is_current(payload.tax_capability_observed_at, payload.tax_capability_expires_at):
+            raise HTTPException(409, detail={"code": "MARKET_TAX_CAPABILITY_NOT_READY"})
+        if not quote_is_current(payload.fulfillment_capability_observed_at, payload.fulfillment_capability_expires_at):
+            raise HTTPException(409, detail={"code": "MARKET_FULFILLMENT_CAPABILITY_NOT_READY"})
+        market.display_currency = display_currency
+        market.locale = payload.locale or market.locale
+        market.tax_provider = payload.tax_provider
+        market.tax_provider_reference = payload.tax_provider_reference
+        market.tax_capability_observed_at = payload.tax_capability_observed_at
+        market.tax_capability_expires_at = payload.tax_capability_expires_at
+        market.fulfillment_provider = payload.fulfillment_provider
+        market.fulfillment_provider_reference = payload.fulfillment_provider_reference
+        market.fulfillment_capability_observed_at = payload.fulfillment_capability_observed_at
+        market.fulfillment_capability_expires_at = payload.fulfillment_capability_expires_at
+        market.activated_by = actor.user_id
+        market.activated_at = now()
+    else:
+        market.activated_by = None
+        market.activated_at = None
+    market.state = payload.state
+    market.updated_at = now()
+    db.commit()
+    return {
+        "merchant_id": merchant.id,
+        "market_country_code": market.market_country_code,
+        "state": market.state,
+        "display_currency": market.display_currency,
+        "locale": market.locale,
+        "activated_at": market.activated_at.isoformat() if market.activated_at else None,
+    }
+
+
+def _validate_quote_variant(db: Session, variant_id: str) -> Variant:
+    variant = db.get(Variant, variant_id)
+    if variant is None or variant.state != "active":
+        raise HTTPException(404, detail={"code": "ACTIVE_VARIANT_NOT_FOUND"})
+    return variant
+
+
+@app.post("/internal/market-context/variants/{variant_id}/fx-quotes", status_code=201)
+def ingest_fx_quote(
+    variant_id: uuid.UUID,
+    payload: FXQuoteIn,
+    db: Annotated[Session, Depends(get_db)],
+    token: Annotated[str | None, Header(alias="X-Commerce-Market-Context-Token")] = None,
+):
+    _require_market_context_token(token)
+    variant = _validate_quote_variant(db, str(variant_id))
+    if not quote_is_current(payload.observed_at, payload.expires_at):
+        raise HTTPException(422, detail={"code": "FX_QUOTE_NOT_CURRENT"})
+    existing = db.scalar(select(OfferFXQuote).where(
+        OfferFXQuote.variant_id == variant.id,
+        OfferFXQuote.provider == payload.provider,
+        OfferFXQuote.provider_quote_id == payload.provider_quote_id,
+    ))
+    if existing:
+        raise HTTPException(409, detail={"code": "FX_QUOTE_ALREADY_RECORDED"})
+    row = OfferFXQuote(
+        id=str(uuid.uuid4()), variant_id=variant.id,
+        base_currency=payload.base_currency, quote_currency=payload.quote_currency,
+        rate=payload.rate, provider=payload.provider, provider_quote_id=payload.provider_quote_id,
+        rounding_rule=payload.rounding_rule, spread_bps=payload.spread_bps,
+        observed_at=payload.observed_at, expires_at=payload.expires_at,
+    )
+    db.add(row)
+    db.commit()
+    return {
+        "quote_id": row.id, "variant_id": variant.id,
+        "base_currency": row.base_currency, "quote_currency": row.quote_currency,
+        "rate": str(row.rate), "provider": row.provider,
+        "provider_quote_id": row.provider_quote_id,
+        "observed_at": row.observed_at.isoformat(), "expires_at": row.expires_at.isoformat(),
+    }
+
+
+@app.post("/internal/market-context/variants/{variant_id}/fulfillment-quotes", status_code=201)
+def ingest_fulfillment_quote(
+    variant_id: uuid.UUID,
+    payload: FulfillmentQuoteIn,
+    db: Annotated[Session, Depends(get_db)],
+    token: Annotated[str | None, Header(alias="X-Commerce-Market-Context-Token")] = None,
+):
+    _require_market_context_token(token)
+    variant = _validate_quote_variant(db, str(variant_id))
+    if not quote_is_current(payload.observed_at, payload.expires_at):
+        raise HTTPException(422, detail={"code": "FULFILLMENT_QUOTE_NOT_CURRENT"})
+    existing = db.scalar(select(OfferFulfillmentQuote).where(
+        OfferFulfillmentQuote.variant_id == variant.id,
+        OfferFulfillmentQuote.provider == payload.provider,
+        OfferFulfillmentQuote.provider_quote_id == payload.provider_quote_id,
+    ))
+    if existing:
+        raise HTTPException(409, detail={"code": "FULFILLMENT_QUOTE_ALREADY_RECORDED"})
+    row = OfferFulfillmentQuote(
+        id=str(uuid.uuid4()), variant_id=variant.id,
+        destination_country_code=payload.destination_country_code,
+        destination_key=payload.destination_key.strip(), fulfillment_mode=payload.fulfillment_mode,
+        amount_minor=payload.amount_minor, currency=payload.currency, status=payload.status,
+        charge_basis=payload.charge_basis, distance_km=payload.distance_km, provider=payload.provider,
+        provider_quote_id=payload.provider_quote_id, observed_at=payload.observed_at,
+        expires_at=payload.expires_at,
+    )
+    db.add(row)
+    db.commit()
+    return {"quote_id": row.id, "variant_id": variant.id, "destination_country_code": row.destination_country_code,
+        "destination_key": row.destination_key, "fulfillment_mode": row.fulfillment_mode,
+        "amount_minor": row.amount_minor, "currency": row.currency, "status": row.status,
+        "charge_basis": row.charge_basis, "provider": row.provider, "observed_at": row.observed_at.isoformat(), "expires_at": row.expires_at.isoformat()}
+
+
+@app.post("/internal/market-context/variants/{variant_id}/tax-quotes", status_code=201)
+def ingest_tax_quote(
+    variant_id: uuid.UUID,
+    payload: TaxQuoteIn,
+    db: Annotated[Session, Depends(get_db)],
+    token: Annotated[str | None, Header(alias="X-Commerce-Market-Context-Token")] = None,
+):
+    _require_market_context_token(token)
+    variant = _validate_quote_variant(db, str(variant_id))
+    if not quote_is_current(payload.observed_at, payload.expires_at):
+        raise HTTPException(422, detail={"code": "TAX_QUOTE_NOT_CURRENT"})
+    existing = db.scalar(select(OfferTaxQuote).where(
+        OfferTaxQuote.variant_id == variant.id,
+        OfferTaxQuote.provider == payload.provider,
+        OfferTaxQuote.provider_quote_id == payload.provider_quote_id,
+    ))
+    if existing:
+        raise HTTPException(409, detail={"code": "TAX_QUOTE_ALREADY_RECORDED"})
+    row = OfferTaxQuote(
+        id=str(uuid.uuid4()), variant_id=variant.id,
+        destination_country_code=payload.destination_country_code,
+        jurisdiction=payload.jurisdiction.strip(), tax_category=payload.tax_category.strip(),
+        basis=payload.basis, amount_minor=payload.amount_minor, currency=payload.currency,
+        status=payload.status, authoritative=payload.authoritative, provider=payload.provider,
+        provider_quote_id=payload.provider_quote_id, rule_version=payload.rule_version,
+        observed_at=payload.observed_at, expires_at=payload.expires_at,
+    )
+    db.add(row)
+    db.commit()
+    return {"quote_id": row.id, "variant_id": variant.id, "destination_country_code": row.destination_country_code,
+        "jurisdiction": row.jurisdiction, "tax_category": row.tax_category, "basis": row.basis,
+        "amount_minor": row.amount_minor, "currency": row.currency, "status": row.status,
+        "authoritative": row.authoritative, "provider": row.provider,
+        "observed_at": row.observed_at.isoformat(), "expires_at": row.expires_at.isoformat()}
+
+
+@app.put("/internal/market-context/merchants/{merchant_id}/payment-capabilities")
+def upsert_market_payment_capability(
+    merchant_id: uuid.UUID,
+    payload: PaymentCapabilityIn,
+    db: Annotated[Session, Depends(get_db)],
+    token: Annotated[str | None, Header(alias="X-Commerce-Market-Context-Token")] = None,
+):
+    _require_market_context_token(token)
+    merchant = db.get(Merchant, str(merchant_id))
+    if merchant is None:
+        raise HTTPException(404, detail={"code": "MERCHANT_NOT_FOUND"})
+    market = db.scalar(select(MerchantOperatingMarket).where(
+        MerchantOperatingMarket.merchant_id == merchant.id,
+        MerchantOperatingMarket.market_country_code == payload.market_country_code,
+    ))
+    if market is None:
+        raise HTTPException(404, detail={"code": "MERCHANT_MARKET_NOT_DECLARED"})
+    if not quote_is_current(payload.observed_at, payload.expires_at):
+        raise HTTPException(422, detail={"code": "PAYMENT_CAPABILITY_NOT_CURRENT"})
+    row = db.scalar(select(MarketPaymentCapability).where(
+        MarketPaymentCapability.merchant_id == merchant.id,
+        MarketPaymentCapability.market_country_code == payload.market_country_code,
+        MarketPaymentCapability.provider == payload.provider,
+    ))
+    if row is None:
+        row = MarketPaymentCapability(
+            id=str(uuid.uuid4()), merchant_id=merchant.id,
+            market_country_code=payload.market_country_code, provider=payload.provider,
+            state=payload.state,
+        )
+        db.add(row)
+    row.state = payload.state
+    row.transaction_currencies = payload.transaction_currencies
+    row.settlement_currencies = payload.settlement_currencies
+    row.payment_methods = payload.payment_methods
+    row.provider_reference = payload.provider_reference
+    row.observed_at = payload.observed_at
+    row.expires_at = payload.expires_at
+    db.commit()
+    return {"capability_id": row.id, "merchant_id": merchant.id, "market_country_code": row.market_country_code,
+        "provider": row.provider, "state": row.state, "transaction_currencies": row.transaction_currencies,
+        "settlement_currencies": row.settlement_currencies, "payment_methods": row.payment_methods,
+        "observed_at": row.observed_at.isoformat(), "expires_at": row.expires_at.isoformat()}
+
+
+
 @app.post("/merchant/listings", status_code=201)
 def create_listing(payload: ListingIn, actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Session, Depends(get_db)]):
     merchant = approved_merchant(db, actor)
@@ -1017,7 +1977,8 @@ def create_variant(listing_id: uuid.UUID, payload: VariantIn,
     variant = Variant(id=str(uuid.uuid4()), listing_id=listing.id, sku=payload.sku, options=payload.options,
         price_minor=payload.price_minor, currency=payload.currency, on_hand=payload.initial_stock,
         reserved_qty=0, state="active", version=1, canonical_variant_id=payload.canonical_variant_id,
-        updated_at=observed_at, observed_at=observed_at)
+        updated_at=observed_at, observed_at=observed_at,
+        source_price_minor=payload.source_price_minor, source_currency=payload.source_currency)
     db.add(variant)
     if payload.initial_stock:
         db.add(InventoryMovement(id=str(uuid.uuid4()), variant_id=variant.id,
@@ -1028,8 +1989,10 @@ def create_variant(listing_id: uuid.UUID, payload: VariantIn,
         db.rollback()
         raise HTTPException(409, detail={"code": "VARIANT_SKU_CONFLICT"}) from exc
     return {"variant_id": variant.id, "listing_id": listing.id, "sku": variant.sku, "options": variant.options,
-        "price_minor": variant.price_minor, "currency": variant.currency, "on_hand": variant.on_hand,
-        "reserved_qty": variant.reserved_qty, "available_stock": variant.on_hand - variant.reserved_qty,
+        "price_minor": variant.price_minor, "currency": variant.currency,
+        "source_price_minor": variant.source_price_minor, "source_currency": variant.source_currency,
+        "on_hand": variant.on_hand, "reserved_qty": variant.reserved_qty,
+        "available_stock": variant.on_hand - variant.reserved_qty,
         "canonical_variant_id": variant.canonical_variant_id, "observed_at": variant.observed_at.isoformat(),
         "version": variant.version}
 
@@ -1060,32 +2023,367 @@ def adjust_inventory(variant_id: uuid.UUID, payload: InventoryAdjustment,
         "observed_at": variant.observed_at.isoformat() if variant.observed_at else None, "version": variant.version}
 
 
+
+def _comparison_unavailable(code: str, **context: Any) -> dict[str, Any]:
+    return {"status": "unavailable", "reason_code": code, "context": context, "comparison": None}
+
+
+@app.post("/marketplace/compare")
+def compare_offers(
+    payload: OfferComparisonIn,
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Compare only exact same-variant offers with complete, fresh destination costs."""
+    selected: list[dict[str, Any]] = []
+    for variant_id in payload.variant_ids:
+        joined = variant_triplet(db, variant_id)
+        if not joined:
+            return _comparison_unavailable("OFFER_NOT_FOUND", variant_id=variant_id)
+        variant, listing, merchant = joined
+        if variant.state != "active" or listing.state != "active" or merchant.state != "approved":
+            return _comparison_unavailable("OFFER_NOT_ACTIVE", variant_id=variant.id)
+        available = variant.on_hand - variant.reserved_qty
+        if available <= 0:
+            return _comparison_unavailable("OFFER_OUT_OF_STOCK", variant_id=variant.id)
+        if not variant.canonical_variant_id:
+            return _comparison_unavailable("CANONICAL_VARIANT_ID_MISSING", variant_id=variant.id)
+        if not offer_is_fresh(variant.observed_at):
+            return _comparison_unavailable("OFFER_OBSERVATION_STALE", variant_id=variant.id)
+        market = _market_is_active(db, merchant.id, payload.destination_country_code)
+        if market is None:
+            return _comparison_unavailable("MERCHANT_NOT_ACTIVE_IN_DESTINATION_MARKET", variant_id=variant.id)
+
+        fulfillment_rows = list(db.scalars(select(OfferFulfillmentQuote).where(
+            OfferFulfillmentQuote.variant_id == variant.id,
+            OfferFulfillmentQuote.destination_country_code == payload.destination_country_code,
+            OfferFulfillmentQuote.destination_key == payload.destination_key,
+            OfferFulfillmentQuote.fulfillment_mode == payload.fulfillment_mode,
+        ).order_by(OfferFulfillmentQuote.observed_at.desc(), OfferFulfillmentQuote.id.desc()).limit(10)).all())
+        fulfillment = next((q for q in fulfillment_rows if quote_is_current(q.observed_at, q.expires_at)), None)
+        if fulfillment is None:
+            return _comparison_unavailable("FULFILLMENT_QUOTE_MISSING_OR_STALE", variant_id=variant.id)
+        if fulfillment.status != "confirmed" or fulfillment.amount_minor is None:
+            return _comparison_unavailable("FULFILLMENT_QUOTE_NOT_CONFIRMED", variant_id=variant.id)
+        if fulfillment.distance_km is None:
+            return _comparison_unavailable("FULFILLMENT_DISTANCE_MISSING", variant_id=variant.id)
+        if fulfillment.distance_km > payload.radius_km:
+            return _comparison_unavailable("FULFILLMENT_QUOTE_OUTSIDE_RADIUS", variant_id=variant.id)
+
+        tax_rows = list(db.scalars(select(OfferTaxQuote).where(
+            OfferTaxQuote.variant_id == variant.id,
+            OfferTaxQuote.destination_country_code == payload.destination_country_code,
+        ).order_by(OfferTaxQuote.observed_at.desc(), OfferTaxQuote.id.desc()).limit(10)).all())
+        tax = next((q for q in tax_rows if quote_is_current(q.observed_at, q.expires_at)), None)
+        if tax is None:
+            return _comparison_unavailable("TAX_QUOTE_MISSING_OR_STALE", variant_id=variant.id)
+        if tax.status != "confirmed" or not tax.authoritative or tax.amount_minor is None:
+            return _comparison_unavailable("TAX_QUOTE_NOT_AUTHORITATIVE", variant_id=variant.id)
+
+        if selected and selected[0]["variant"].currency != variant.currency:
+            return _comparison_unavailable("OFFER_CURRENCY_MISMATCH", variant_id=variant.id)
+
+        payment = _market_payment_capability(
+            db, merchant.id, payload.destination_country_code, payload.display_currency, payload.payment_method
+        )
+        if payment is None:
+            return _comparison_unavailable("PAYMENT_PROVIDER_NOT_SUPPORTED_FOR_MARKET_OR_CURRENCY", variant_id=variant.id)
+
+        item_display_minor, item_fx = _convert_minor_amount(
+            db, variant_id=variant.id, amount_minor=variant.price_minor,
+            source_currency=variant.currency, target_currency=payload.display_currency,
+        )
+        if item_display_minor is None:
+            return _comparison_unavailable("ITEM_PRICE_FX_QUOTE_MISSING_OR_STALE", variant_id=variant.id)
+        fulfillment_display_minor, fulfillment_fx = _convert_minor_amount(
+            db, variant_id=variant.id, amount_minor=fulfillment.amount_minor,
+            source_currency=fulfillment.currency, target_currency=payload.display_currency,
+        )
+        if fulfillment_display_minor is None:
+            return _comparison_unavailable("FULFILLMENT_FX_QUOTE_MISSING_OR_STALE", variant_id=variant.id)
+        tax_display_minor, tax_fx = _convert_minor_amount(
+            db, variant_id=variant.id, amount_minor=tax.amount_minor,
+            source_currency=tax.currency, target_currency=payload.display_currency,
+        )
+        if tax_display_minor is None:
+            return _comparison_unavailable("TAX_FX_QUOTE_MISSING_OR_STALE", variant_id=variant.id)
+
+        # Inclusive tax is already in the offer price; adding it again would double count.
+        payable_tax_minor = 0 if tax.basis == "inclusive" else tax_display_minor
+        total_minor = item_display_minor + fulfillment_display_minor + payable_tax_minor
+        selected.append({
+            "variant": variant,
+            "listing": listing,
+            "merchant": merchant,
+            "available_stock": available,
+            "market": market,
+            "fulfillment": fulfillment,
+            "tax": tax,
+            "payment": payment,
+            "item_display_minor": item_display_minor,
+            "item_fx": item_fx,
+            "fulfillment_display_minor": fulfillment_display_minor,
+            "fulfillment_fx": fulfillment_fx,
+            "tax_display_minor": tax_display_minor,
+            "tax_fx": tax_fx,
+            "payable_tax_minor": payable_tax_minor,
+            "total_minor": total_minor,
+        })
+
+    if selected[0]["variant"].canonical_variant_id != selected[1]["variant"].canonical_variant_id:
+        return _comparison_unavailable("CANONICAL_VARIANT_MISMATCH")
+    if selected[0]["tax"].basis != selected[1]["tax"].basis:
+        return _comparison_unavailable("TAX_BASIS_MISMATCH")
+    if selected[0]["tax"].tax_category != selected[1]["tax"].tax_category:
+        return _comparison_unavailable("TAX_CATEGORY_MISMATCH")
+    if selected[0]["tax"].jurisdiction != selected[1]["tax"].jurisdiction:
+        return _comparison_unavailable("TAX_JURISDICTION_MISMATCH")
+    if any(item["market"].market_country_code != payload.destination_country_code for item in selected):
+        return _comparison_unavailable("DESTINATION_MARKET_MISMATCH")
+
+    lines = []
+    for item in selected:
+        variant = item["variant"]
+        listing = item["listing"]
+        merchant = item["merchant"]
+        lines.append({
+            "variant_id": variant.id,
+            "merchant_id": merchant.id,
+            "merchant_name": merchant.display_name,
+            "merchant_local_sku": variant.sku,
+            "canonical_product_id": listing.catalog_product_id,
+            "canonical_variant_id": variant.canonical_variant_id,
+            "brand_home_country_code": merchant.brand_home_country_code,
+            "legal_country_code": merchant.legal_country_code or merchant.country_code,
+            "offer_price_minor": variant.price_minor,
+            "offer_currency": variant.currency,
+            "source_price_minor": variant.source_price_minor,
+            "source_currency": variant.source_currency,
+            "available_stock": item["available_stock"],
+            "offer_observed_at": variant.observed_at.isoformat(),
+            "item_display_price_minor": item["item_display_minor"],
+            "fulfillment_mode": item["fulfillment"].fulfillment_mode,
+            "fulfillment_charge_basis": item["fulfillment"].charge_basis,
+            "fulfillment_charge_minor": item["fulfillment_display_minor"],
+            "fulfillment_quote": {
+                "quote_id": item["fulfillment"].id,
+                "provider": item["fulfillment"].provider,
+                "provider_quote_id": item["fulfillment"].provider_quote_id,
+                "observed_at": item["fulfillment"].observed_at.isoformat(),
+                "expires_at": item["fulfillment"].expires_at.isoformat(),
+                "status": item["fulfillment"].status,
+            },
+            "tax": {
+                "tax_category": item["tax"].tax_category,
+                "basis": item["tax"].basis,
+                "jurisdiction": item["tax"].jurisdiction,
+                "amount_minor": item["tax_display_minor"],
+                "added_to_total_minor": item["payable_tax_minor"],
+                "included_in_item_price": item["tax"].basis == "inclusive",
+                "authoritative": item["tax"].authoritative,
+                "provider": item["tax"].provider,
+                "rule_version": item["tax"].rule_version,
+                "observed_at": item["tax"].observed_at.isoformat(),
+                "expires_at": item["tax"].expires_at.isoformat(),
+            },
+            "payment_provider": item["payment"].provider,
+            "payment_methods": item["payment"].payment_methods,
+            "fx_quotes": {
+                "item": item["item_fx"],
+                "fulfillment": item["fulfillment_fx"],
+                "tax": item["tax_fx"],
+            },
+            "landed_total_minor": item["total_minor"],
+        })
+    ranked = sorted(lines, key=lambda item: (item["landed_total_minor"], item["merchant_id"], item["variant_id"]))
+    cheapest = ranked[0]
+    return {
+        "status": "comparable",
+        "display_currency": payload.display_currency,
+        "currency_minor_units": _currency_minor_units(payload.display_currency),
+        "destination_country_code": payload.destination_country_code,
+        "destination_key": payload.destination_key,
+        "fulfillment_mode": payload.fulfillment_mode,
+        "radius_km": str(payload.radius_km),
+        "canonical_variant_id": selected[0]["variant"].canonical_variant_id,
+        "tax_basis": selected[0]["tax"].basis,
+        "tax_category": selected[0]["tax"].tax_category,
+        "cheapest_variant_id": cheapest["variant_id"],
+        "comparison_semantics": "confirmed item price + selected destination fulfilment charge + authoritative tax where exclusive; inclusive tax is not double counted",
+        "offers": ranked,
+        "comparison_observed_at": now().isoformat(),
+    }
+
+
 @app.get("/marketplace/offers")
-def list_offers(db: Annotated[Session, Depends(get_db)], q: str | None = Query(None, max_length=160),
-    category: str | None = Query(None, max_length=80), currency: str | None = Query(None, min_length=3, max_length=3),
-    offset: int = Query(0, ge=0), limit: int = Query(20, ge=1, le=100)):
+def list_offers(
+    db: Annotated[Session, Depends(get_db)],
+    q: str | None = Query(None, max_length=160),
+    category: str | None = Query(None, max_length=80),
+    currency: str | None = Query(None, min_length=3, max_length=3),
+    market_country_code: str | None = Query(None, min_length=2, max_length=2),
+    display_currency: str | None = Query(None, min_length=3, max_length=3),
+    destination_key: str | None = Query(None, min_length=3, max_length=180),
+    fulfillment_mode: Literal["shipping", "courier_delivery", "merchant_delivery", "collection", "local_transport"] | None = Query(None),
+    radius_km: Decimal = Query(Decimal("30"), ge=Decimal("1"), le=Decimal("500")),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+):
     stmt = select(Variant, Listing, Merchant).join(Listing, Variant.listing_id == Listing.id).join(Merchant, Listing.merchant_id == Merchant.id).where(
-        Variant.state == "active", Listing.state == "active", Merchant.state == "approved", Variant.on_hand > Variant.reserved_qty)
+        Variant.state == "active", Listing.state == "active", Merchant.state == "approved",
+        Variant.on_hand > Variant.reserved_qty,
+    )
+    market_code = _valid_country(market_country_code) if market_country_code else None
+    requested_display_currency = _valid_currency(display_currency) if display_currency else None
+    if requested_display_currency and not market_code:
+        raise HTTPException(422, detail={"code": "DISPLAY_CURRENCY_REQUIRES_MARKET"})
+    if (destination_key is None) != (fulfillment_mode is None):
+        raise HTTPException(422, detail={"code": "DESTINATION_AND_FULFILLMENT_MODE_REQUIRED_TOGETHER"})
+    if destination_key is not None and not market_code:
+        raise HTTPException(422, detail={"code": "DESTINATION_REQUIRES_MARKET"})
+    if destination_key is not None:
+        destination_key = destination_key.strip()
+        current = now()
+        stmt = stmt.where(select(OfferFulfillmentQuote.id).where(
+            OfferFulfillmentQuote.variant_id == Variant.id,
+            OfferFulfillmentQuote.destination_country_code == market_code,
+            OfferFulfillmentQuote.destination_key == destination_key,
+            OfferFulfillmentQuote.fulfillment_mode == fulfillment_mode,
+            OfferFulfillmentQuote.status == "confirmed",
+            OfferFulfillmentQuote.amount_minor.is_not(None),
+            OfferFulfillmentQuote.distance_km.is_not(None),
+            OfferFulfillmentQuote.distance_km <= radius_km,
+            OfferFulfillmentQuote.observed_at >= current - timedelta(seconds=offer_max_age_seconds()),
+            OfferFulfillmentQuote.observed_at <= current + timedelta(minutes=5),
+            OfferFulfillmentQuote.expires_at > current,
+        ).exists())
+    if market_code:
+        market_now = now()
+        stmt = stmt.join(MerchantOperatingMarket, MerchantOperatingMarket.merchant_id == Merchant.id).where(
+            MerchantOperatingMarket.market_country_code == market_code,
+            MerchantOperatingMarket.state == "active",
+            MerchantOperatingMarket.tax_provider.is_not(None),
+            MerchantOperatingMarket.tax_provider_reference.is_not(None),
+            MerchantOperatingMarket.fulfillment_provider.is_not(None),
+            MerchantOperatingMarket.fulfillment_provider_reference.is_not(None),
+            MerchantOperatingMarket.tax_capability_observed_at >= market_now - timedelta(seconds=offer_max_age_seconds()),
+            MerchantOperatingMarket.tax_capability_observed_at <= market_now + timedelta(minutes=5),
+            MerchantOperatingMarket.tax_capability_expires_at > market_now,
+            MerchantOperatingMarket.fulfillment_capability_observed_at >= market_now - timedelta(seconds=offer_max_age_seconds()),
+            MerchantOperatingMarket.fulfillment_capability_observed_at <= market_now + timedelta(minutes=5),
+            MerchantOperatingMarket.fulfillment_capability_expires_at > market_now,
+        ).where(select(MarketPaymentCapability.id).where(
+            MarketPaymentCapability.merchant_id == Merchant.id,
+            MarketPaymentCapability.market_country_code == market_code,
+            MarketPaymentCapability.state == "active",
+            MarketPaymentCapability.observed_at >= market_now - timedelta(seconds=offer_max_age_seconds()),
+            MarketPaymentCapability.observed_at <= market_now + timedelta(minutes=5),
+            MarketPaymentCapability.expires_at > market_now,
+        ).exists())
     if q and q.strip():
         stmt = stmt.where(func.lower(Listing.product_name).like(f"%{q.strip().lower()}%"))
     if category:
         stmt = stmt.where(func.lower(Listing.category) == category.strip().lower())
     if currency:
-        curr = currency.strip().upper()
-        if not CODE3_RE.fullmatch(curr):
-            raise HTTPException(422, detail={"code": "INVALID_CURRENCY"})
+        curr = _valid_currency(currency)
         stmt = stmt.where(Variant.currency == curr)
     total = int(db.scalar(select(func.count()).select_from(stmt.subquery())) or 0)
     rows = db.execute(stmt.order_by(Listing.created_at.desc(), Variant.id).offset(offset).limit(limit)).all()
-    return {"items": [{"variant_id": v.id, "listing_id": l.id, "merchant_id": m.id, "merchant_name": m.display_name,
-        "catalog_product_id": l.catalog_product_id, "product_name": l.product_name, "category": l.category,
-        "image_urls": l.image_urls, "sku": v.sku, "options": v.options, "price_minor": v.price_minor, "currency": v.currency,
-        "available_stock": v.on_hand - v.reserved_qty, "canonical_variant_id": v.canonical_variant_id,
-        "observed_at": v.observed_at.isoformat() if v.observed_at else None,
-        "is_fresh": offer_is_fresh(v.observed_at),
-        "comparison_eligible": bool(v.canonical_variant_id and offer_is_fresh(v.observed_at))}
-        for v, l, m in rows], "total": total, "offset": offset, "limit": limit,
-        "offer_max_age_seconds": offer_max_age_seconds()}
+    items = []
+    for variant, listing, merchant in rows:
+        market = None
+        if market_code:
+            market = _market_is_active(db, merchant.id, market_code)
+            if market is None:
+                continue
+        target_currency = requested_display_currency or (market.display_currency if market else None)
+        fulfillment_quote = None
+        if destination_key is not None:
+            quote_rows = list(db.scalars(select(OfferFulfillmentQuote).where(
+                OfferFulfillmentQuote.variant_id == variant.id,
+                OfferFulfillmentQuote.destination_country_code == market_code,
+                OfferFulfillmentQuote.destination_key == destination_key,
+                OfferFulfillmentQuote.fulfillment_mode == fulfillment_mode,
+                OfferFulfillmentQuote.status == "confirmed",
+                OfferFulfillmentQuote.amount_minor.is_not(None),
+                OfferFulfillmentQuote.distance_km.is_not(None),
+                OfferFulfillmentQuote.distance_km <= radius_km,
+            ).order_by(OfferFulfillmentQuote.observed_at.desc(), OfferFulfillmentQuote.id.desc()).limit(10)).all())
+            fulfillment_quote = next((quote for quote in quote_rows if quote_is_current(quote.observed_at, quote.expires_at)), None)
+            if fulfillment_quote is None:
+                continue
+        localized_minor = None
+        localization_status = "not_requested"
+        localization_fx = None
+        transport_display_minor = None
+        transport_fx = None
+        transport_display_status = "not_requested"
+        locale = None
+        if fulfillment_quote is not None:
+            transport_display_minor, transport_fx = _convert_minor_amount(
+                db, variant_id=variant.id, amount_minor=fulfillment_quote.amount_minor,
+                source_currency=fulfillment_quote.currency,
+                target_currency=target_currency or fulfillment_quote.currency,
+            )
+            transport_display_status = "localized" if transport_display_minor is not None else "conversion_unavailable"
+        if target_currency:
+            locale = market.locale if market else None
+            localized_minor, localization_fx = _convert_minor_amount(
+                db, variant_id=variant.id, amount_minor=variant.price_minor,
+                source_currency=variant.currency, target_currency=target_currency,
+            )
+            localization_status = "localized" if localized_minor is not None else "conversion_unavailable"
+        items.append({
+            "variant_id": variant.id,
+            "listing_id": listing.id,
+            "merchant_id": merchant.id,
+            "merchant_name": merchant.display_name,
+            "brand_home_country_code": merchant.brand_home_country_code,
+            "legal_country_code": merchant.legal_country_code or merchant.country_code,
+            "catalog_product_id": listing.catalog_product_id,
+            "product_name": listing.product_name,
+            "category": listing.category,
+            "image_urls": listing.image_urls,
+            "sku": variant.sku,
+            "options": variant.options,
+            "price_minor": variant.price_minor,
+            "currency": variant.currency,
+            "source_price_minor": variant.source_price_minor,
+            "source_currency": variant.source_currency,
+            "display_price_minor": localized_minor,
+            "display_currency": target_currency,
+            "display_locale": locale,
+            "display_price_status": localization_status,
+            "display_fx_quote": localization_fx,
+            "market_country_code": market_code,
+            "destination_key": destination_key,
+            "fulfillment_mode": fulfillment_mode,
+            "radius_km": str(radius_km) if destination_key is not None else None,
+            "fulfillment_quote": ({
+                "quote_id": fulfillment_quote.id,
+                "provider": fulfillment_quote.provider,
+                "provider_quote_id": fulfillment_quote.provider_quote_id,
+                "amount_minor": fulfillment_quote.amount_minor,
+                "currency": fulfillment_quote.currency,
+                "charge_basis": fulfillment_quote.charge_basis,
+                "display_amount_minor": transport_display_minor,
+                "display_currency": target_currency or fulfillment_quote.currency,
+                "display_conversion_status": transport_display_status,
+                "display_fx_quote": transport_fx,
+                "distance_km": str(fulfillment_quote.distance_km),
+                "observed_at": fulfillment_quote.observed_at.isoformat(),
+                "expires_at": fulfillment_quote.expires_at.isoformat(),
+            } if fulfillment_quote else None),
+            "available_stock": variant.on_hand - variant.reserved_qty,
+            "canonical_variant_id": variant.canonical_variant_id,
+            "observed_at": variant.observed_at.isoformat() if variant.observed_at else None,
+            "is_fresh": offer_is_fresh(variant.observed_at),
+            "comparison_eligible": bool(variant.canonical_variant_id and offer_is_fresh(variant.observed_at)),
+        })
+    return {
+        "items": items, "total": total, "offset": offset, "limit": limit,
+        "offer_max_age_seconds": offer_max_age_seconds(),
+    }
+
 
 
 @app.put("/saved-products/{catalog_product_id}", status_code=201)
@@ -1170,15 +2468,97 @@ def remove_cart_item(variant_id: uuid.UUID, actor: Annotated[Actor, Depends(requ
     return cart_json(db, cart)
 
 
+def _resolve_market_checkout_line(
+    db: Session, variant: Variant, listing: Listing, merchant: Merchant,
+    payload: CheckoutRequest, gateway: StripeGateway,
+) -> dict[str, Any]:
+    market = _market_is_active(db, merchant.id, payload.destination_country_code or "")
+    if market is None:
+        raise HTTPException(409, detail={"code": "MERCHANT_NOT_ACTIVE_IN_DESTINATION_MARKET", "merchant_id": merchant.id})
+    if payload.destination_country_code not in gateway.countries:
+        raise HTTPException(409, detail={"code": "PAYMENT_PROVIDER_DESTINATION_NOT_SUPPORTED"})
+    payment = _market_payment_capability(
+        db, merchant.id, payload.destination_country_code or "",
+        payload.display_currency or "", payload.payment_method,
+    )
+    if (
+        payment is None
+        or payment.provider.strip().lower() != gateway.provider
+        or not payment.settlement_currencies
+    ):
+        raise HTTPException(409, detail={"code": "PAYMENT_PROVIDER_NOT_READY_FOR_CHECKOUT_CURRENCY"})
+    fulfillment_rows = list(db.scalars(select(OfferFulfillmentQuote).where(
+        OfferFulfillmentQuote.variant_id == variant.id,
+        OfferFulfillmentQuote.destination_country_code == payload.destination_country_code,
+        OfferFulfillmentQuote.destination_key == payload.destination_key,
+        OfferFulfillmentQuote.fulfillment_mode == payload.fulfillment_mode,
+    ).order_by(OfferFulfillmentQuote.observed_at.desc(), OfferFulfillmentQuote.id.desc()).limit(10)).all())
+    fulfillment = next((q for q in fulfillment_rows if quote_is_current(q.observed_at, q.expires_at)), None)
+    if fulfillment is None or fulfillment.status != "confirmed" or fulfillment.amount_minor is None:
+        raise HTTPException(409, detail={"code": "FULFILLMENT_QUOTE_MISSING_STALE_OR_UNCONFIRMED", "variant_id": variant.id})
+    tax_rows = list(db.scalars(select(OfferTaxQuote).where(
+        OfferTaxQuote.variant_id == variant.id,
+        OfferTaxQuote.destination_country_code == payload.destination_country_code,
+    ).order_by(OfferTaxQuote.observed_at.desc(), OfferTaxQuote.id.desc()).limit(10)).all())
+    tax = next((q for q in tax_rows if quote_is_current(q.observed_at, q.expires_at)), None)
+    if tax is None or tax.status != "confirmed" or not tax.authoritative or tax.amount_minor is None:
+        raise HTTPException(409, detail={"code": "AUTHORITATIVE_TAX_QUOTE_MISSING_STALE_OR_UNCONFIRMED", "variant_id": variant.id})
+    item_minor, item_fx = _convert_minor_amount(
+        db, variant_id=variant.id, amount_minor=variant.price_minor,
+        source_currency=variant.currency, target_currency=payload.display_currency or "",
+    )
+    fulfillment_minor, fulfillment_fx = _convert_minor_amount(
+        db, variant_id=variant.id, amount_minor=fulfillment.amount_minor,
+        source_currency=fulfillment.currency, target_currency=payload.display_currency or "",
+    )
+    tax_minor, tax_fx = _convert_minor_amount(
+        db, variant_id=variant.id, amount_minor=tax.amount_minor,
+        source_currency=tax.currency, target_currency=payload.display_currency or "",
+    )
+    if item_minor is None:
+        raise HTTPException(409, detail={"code": "ITEM_PRICE_FX_QUOTE_MISSING_OR_STALE", "variant_id": variant.id})
+    if fulfillment_minor is None:
+        raise HTTPException(409, detail={"code": "FULFILLMENT_FX_QUOTE_MISSING_OR_STALE", "variant_id": variant.id})
+    if tax_minor is None:
+        raise HTTPException(409, detail={"code": "TAX_FX_QUOTE_MISSING_OR_STALE", "variant_id": variant.id})
+    return {
+        "market": market, "payment": payment, "fulfillment": fulfillment, "tax": tax,
+        "item_display_minor": item_minor, "item_fx": item_fx,
+        "fulfillment_display_minor": fulfillment_minor, "fulfillment_fx": fulfillment_fx,
+        "tax_display_minor": tax_minor, "tax_fx": tax_fx,
+        "payable_tax_minor": 0 if tax.basis == "inclusive" else tax_minor,
+    }
+
+
 @app.post("/checkout", status_code=201)
-def checkout(actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Session, Depends(get_db)],
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=255)]):
+def checkout(
+    actor: Annotated[Actor, Depends(require_actor)],
+    db: Annotated[Session, Depends(get_db)],
+    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=255)],
+    payload: CheckoutRequest | None = Body(default=None),
+):
     gateway = StripeGateway()
     if not gateway.ready:
         raise HTTPException(503, detail={"code": "PAYMENT_PROVIDER_NOT_CONFIGURED"})
-    existing = db.scalar(select(CommerceOrder).where(CommerceOrder.buyer_user_id == actor.user_id, CommerceOrder.idempotency_key == idempotency_key))
+    market_context = payload if payload is not None and payload.market_aware else None
+    context_hash = None
+    if market_context is not None:
+        context_hash = hashlib.sha256(json.dumps({
+            "destination_country_code": market_context.destination_country_code,
+            "destination_key": market_context.destination_key,
+            "fulfillment_mode": market_context.fulfillment_mode,
+            "display_currency": market_context.display_currency,
+            "payment_method": market_context.payment_method,
+        }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+    existing = db.scalar(select(CommerceOrder).where(
+        CommerceOrder.buyer_user_id == actor.user_id,
+        CommerceOrder.idempotency_key == idempotency_key,
+    ))
     if existing:
+        if existing.checkout_context_hash != context_hash:
+            raise HTTPException(409, detail={"code": "IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_CHECKOUT_CONTEXT"})
         return persist_stripe_session(db, existing.id, actor.email, gateway)
+
     cart = ensure_cart(db, actor.user_id)
     rows = db.execute(select(CartItem, Variant, Listing, Merchant)
         .join(Variant, CartItem.variant_id == Variant.id).join(Listing, Variant.listing_id == Listing.id)
@@ -1189,17 +2569,126 @@ def checkout(actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Sess
         raise HTTPException(422, detail={"code": "INVALID_CART_ITEMS"})
     if any(v.state != "active" or l.state != "active" or m.state != "approved" for _, v, l, m in rows):
         raise HTTPException(409, detail={"code": "CART_CONTAINS_UNAVAILABLE_OFFERS"})
-    currencies = {v.currency for _, v, _, _ in rows}
-    if len(currencies) != 1:
-        raise HTTPException(422, detail={"code": "MIXED_CURRENCY_CART"})
-    currency = next(iter(currencies))
-    subtotal = sum(v.price_minor * ci.quantity for ci, v, _, _ in rows)
-    if subtotal <= 0:
+
+    market_costs: dict[str, dict[str, Any]] = {}
+    quote_snapshot: dict[str, Any] | None = None
+    if market_context is None:
+        for _, variant, _, merchant in rows:
+            active_market = db.scalar(select(MerchantOperatingMarket.id).where(
+                MerchantOperatingMarket.merchant_id == merchant.id,
+                MerchantOperatingMarket.state == "active",
+            ))
+            if active_market:
+                raise HTTPException(409, detail={"code": "MARKET_CHECKOUT_CONTEXT_REQUIRED"})
+        currencies = {v.currency for _, v, _, _ in rows}
+        if len(currencies) != 1:
+            raise HTTPException(422, detail={"code": "MIXED_CURRENCY_CART"})
+        currency = next(iter(currencies))
+        item_subtotal = sum(v.price_minor * ci.quantity for ci, v, _, _ in rows)
+        fulfillment_total = 0
+        tax_total = 0
+        total = item_subtotal
+    else:
+        if market_context.destination_country_code not in gateway.countries:
+            raise HTTPException(409, detail={"code": "PAYMENT_PROVIDER_DESTINATION_NOT_SUPPORTED"})
+        currency = market_context.display_currency or ""
+        for _, variant, listing, merchant in rows:
+            market_costs[variant.id] = _resolve_market_checkout_line(
+                db, variant, listing, merchant, market_context, gateway,
+            )
+        item_subtotal = sum(market_costs[v.id]["item_display_minor"] * ci.quantity for ci, v, _, _ in rows)
+        fulfillment_total = 0
+        counted_fulfillment_quotes: dict[tuple[str, str, str], tuple[int, str, int]] = {}
+        for ci, variant, _, merchant in rows:
+            fulfillment_quote = market_costs[variant.id]["fulfillment"]
+            display_amount = market_costs[variant.id]["fulfillment_display_minor"]
+            if fulfillment_quote.charge_basis == "per_unit":
+                fulfillment_total += display_amount * ci.quantity
+            else:
+                quote_key = (merchant.id, fulfillment_quote.provider, fulfillment_quote.provider_quote_id)
+                quote_value = (fulfillment_quote.amount_minor, fulfillment_quote.currency, display_amount)
+                previous = counted_fulfillment_quotes.get(quote_key)
+                if previous is not None and previous != quote_value:
+                    raise HTTPException(409, detail={"code": "FULFILLMENT_QUOTE_INCONSISTENT_FOR_CART"})
+                if previous is None:
+                    fulfillment_total += display_amount
+                    counted_fulfillment_quotes[quote_key] = quote_value
+        tax_total = sum(market_costs[v.id]["payable_tax_minor"] * ci.quantity for ci, v, _, _ in rows)
+        total = item_subtotal + fulfillment_total + tax_total
+        quote_snapshot = {
+            "destination_country_code": market_context.destination_country_code,
+            "destination_key": market_context.destination_key,
+            "fulfillment_mode": market_context.fulfillment_mode,
+            "display_currency": currency,
+            "payment_method": market_context.payment_method,
+            "items": [{
+                "variant_id": v.id,
+                "source_price_minor": v.price_minor,
+                "source_currency": v.currency,
+                "item_fx": market_costs[v.id]["item_fx"],
+                "fulfillment": {
+                    "quote_id": market_costs[v.id]["fulfillment"].id,
+                    "charge_basis": market_costs[v.id]["fulfillment"].charge_basis,
+                    "provider": market_costs[v.id]["fulfillment"].provider,
+                    "provider_quote_id": market_costs[v.id]["fulfillment"].provider_quote_id,
+                    "amount_minor": market_costs[v.id]["fulfillment"].amount_minor,
+                    "currency": market_costs[v.id]["fulfillment"].currency,
+                    "observed_at": market_costs[v.id]["fulfillment"].observed_at.isoformat(),
+                    "expires_at": market_costs[v.id]["fulfillment"].expires_at.isoformat(),
+                },
+                "fulfillment_fx": market_costs[v.id]["fulfillment_fx"],
+                "tax": {
+                    "quote_id": market_costs[v.id]["tax"].id,
+                    "provider": market_costs[v.id]["tax"].provider,
+                    "provider_quote_id": market_costs[v.id]["tax"].provider_quote_id,
+                    "amount_minor": market_costs[v.id]["tax"].amount_minor,
+                    "currency": market_costs[v.id]["tax"].currency,
+                    "basis": market_costs[v.id]["tax"].basis,
+                    "authoritative": market_costs[v.id]["tax"].authoritative,
+                    "jurisdiction": market_costs[v.id]["tax"].jurisdiction,
+                    "tax_category": market_costs[v.id]["tax"].tax_category,
+                    "rule_version": market_costs[v.id]["tax"].rule_version,
+                    "observed_at": market_costs[v.id]["tax"].observed_at.isoformat(),
+                    "expires_at": market_costs[v.id]["tax"].expires_at.isoformat(),
+                },
+                "tax_fx": market_costs[v.id]["tax_fx"],
+                "payment_capability": {
+                    "provider": market_costs[v.id]["payment"].provider,
+                    "provider_reference": market_costs[v.id]["payment"].provider_reference,
+                    "observed_at": market_costs[v.id]["payment"].observed_at.isoformat(),
+                    "expires_at": market_costs[v.id]["payment"].expires_at.isoformat(),
+                },
+            } for _, v, _, _ in rows],
+        }
+    if total <= 0:
         raise HTTPException(422, detail={"code": "INVALID_ORDER_TOTAL"})
     expiry = now() + timedelta(minutes=RESERVATION_MINUTES)
-    order = CommerceOrder(id=str(uuid.uuid4()), order_number=f"CV-{now():%Y%m%d}-{uuid.uuid4().hex[:10].upper()}",
+    if market_context is not None:
+        quote_expiries = [expiry]
+        for cost in market_costs.values():
+            quote_expiries.extend([
+                _aware_utc(cost["fulfillment"].expires_at),
+                _aware_utc(cost["tax"].expires_at),
+                _aware_utc(cost["payment"].expires_at),
+            ])
+            for fx_meta in (cost["item_fx"], cost["fulfillment_fx"], cost["tax_fx"]):
+                if fx_meta and fx_meta.get("expires_at"):
+                    quote_expiries.append(_aware_utc(datetime.fromisoformat(fx_meta["expires_at"].replace("Z", "+00:00"))))
+        expiry = min(_aware_utc(value) for value in quote_expiries)
+        if expiry <= now():
+            raise HTTPException(409, detail={"code": "MARKET_QUOTE_EXPIRED_BEFORE_CHECKOUT"})
+    order = CommerceOrder(
+        id=str(uuid.uuid4()), order_number=f"CV-{now():%Y%m%d}-{uuid.uuid4().hex[:10].upper()}",
         buyer_user_id=actor.user_id, state="pending_payment", payment_state="pending", currency=currency,
-        subtotal_minor=subtotal, commission_minor=0, idempotency_key=idempotency_key, expires_at=expiry)
+        subtotal_minor=item_subtotal, fulfillment_total_minor=fulfillment_total,
+        tax_total_minor=tax_total, total_minor=total,
+        destination_country_code=market_context.destination_country_code if market_context else None,
+        destination_key=market_context.destination_key if market_context else None,
+        fulfillment_mode=market_context.fulfillment_mode if market_context else None,
+        checkout_context_hash=context_hash, market_quote_snapshot=quote_snapshot,
+        commission_minor=0, idempotency_key=idempotency_key, expires_at=expiry,
+    )
+    charged_fulfillment_quotes: set[tuple[str, str, str]] = set()
     try:
         for ci, v, listing, merchant in rows:
             changed = db.execute(update(Variant).where(Variant.id == v.id, Variant.state == "active",
@@ -1207,13 +2696,58 @@ def checkout(actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Sess
                 reserved_qty=Variant.reserved_qty + ci.quantity, version=Variant.version + 1, updated_at=now(), observed_at=now()))
             if changed.rowcount != 1:
                 raise HTTPException(409, detail={"code": "INSUFFICIENT_AVAILABLE_STOCK", "variant_id": v.id})
-            line = v.price_minor * ci.quantity
+            cost = market_costs.get(v.id)
+            unit_price = cost["item_display_minor"] if cost else v.price_minor
+            line = unit_price * ci.quantity
             commission = line * merchant.commission_bps // 10000
             order.commission_minor += commission
-            db.add(OrderItem(id=str(uuid.uuid4()), order_id=order.id, merchant_id=merchant.id,
+            db.add(OrderItem(
+                id=str(uuid.uuid4()), order_id=order.id, merchant_id=merchant.id,
                 variant_id=v.id, catalog_product_id=listing.catalog_product_id, product_name=listing.product_name,
-                sku=v.sku, options=v.options, quantity=ci.quantity, unit_price_minor=v.price_minor,
-                line_total_minor=line, commission_bps=merchant.commission_bps, commission_minor=commission))
+                sku=v.sku, options=v.options, quantity=ci.quantity, unit_price_minor=unit_price,
+                line_total_minor=line,
+                source_unit_price_minor=v.price_minor if cost else None,
+                source_currency=v.currency if cost else None,
+                fx_quote_id=(cost["item_fx"]["quote_id"] if cost and cost["item_fx"] else None),
+                commission_bps=merchant.commission_bps, commission_minor=commission,
+            ))
+            if cost:
+                fulfillment = cost["fulfillment"]
+                fulfillment_key = (merchant.id, fulfillment.provider, fulfillment.provider_quote_id)
+                if fulfillment.charge_basis == "per_unit":
+                    fulfillment_source = fulfillment.amount_minor * ci.quantity
+                    fulfillment_amount = cost["fulfillment_display_minor"] * ci.quantity
+                    should_add_fulfillment_charge = True
+                else:
+                    fulfillment_source = fulfillment.amount_minor
+                    fulfillment_amount = cost["fulfillment_display_minor"]
+                    should_add_fulfillment_charge = fulfillment_key not in charged_fulfillment_quotes
+                if fulfillment_amount > 0 and should_add_fulfillment_charge:
+                    db.add(OrderCharge(
+                        id=str(uuid.uuid4()), order_id=order.id, merchant_id=merchant.id, variant_id=v.id,
+                        charge_type="fulfilment", charge_basis=fulfillment.charge_basis,
+                        description=f"{market_context.fulfillment_mode.replace('_', ' ').title()} – {merchant.display_name}",
+                        amount_minor=fulfillment_amount, currency=currency,
+                        source_amount_minor=fulfillment_source, source_currency=fulfillment.currency,
+                        fx_quote_id=(cost["fulfillment_fx"]["quote_id"] if cost["fulfillment_fx"] else None),
+                        provider=fulfillment.provider, provider_quote_id=fulfillment.provider_quote_id,
+                        observed_at=fulfillment.observed_at, expires_at=fulfillment.expires_at,
+                    ))
+                if fulfillment.charge_basis == "per_quote":
+                    charged_fulfillment_quotes.add(fulfillment_key)
+                tax = cost["tax"]
+                tax_source = tax.amount_minor * ci.quantity
+                tax_amount = cost["payable_tax_minor"] * ci.quantity
+                if tax_amount > 0:
+                    db.add(OrderCharge(
+                        id=str(uuid.uuid4()), order_id=order.id, merchant_id=merchant.id, variant_id=v.id,
+                        charge_type="tax", charge_basis="per_unit", description=f"Tax – {merchant.display_name}",
+                        amount_minor=tax_amount, currency=currency,
+                        source_amount_minor=tax_source, source_currency=tax.currency,
+                        fx_quote_id=(cost["tax_fx"]["quote_id"] if cost["tax_fx"] else None),
+                        provider=tax.provider, provider_quote_id=tax.provider_quote_id,
+                        observed_at=tax.observed_at, expires_at=tax.expires_at,
+                    ))
             db.add(StockReservation(id=str(uuid.uuid4()), order_id=order.id, variant_id=v.id, quantity=ci.quantity,
                 state="reserved", expires_at=expiry))
             db.add(InventoryMovement(id=str(uuid.uuid4()), variant_id=v.id, actor_user_id="system:checkout",
@@ -1226,8 +2760,13 @@ def checkout(actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Sess
         raise
     except IntegrityError as exc:
         db.rollback()
-        existing = db.scalar(select(CommerceOrder).where(CommerceOrder.buyer_user_id == actor.user_id, CommerceOrder.idempotency_key == idempotency_key))
+        existing = db.scalar(select(CommerceOrder).where(
+            CommerceOrder.buyer_user_id == actor.user_id,
+            CommerceOrder.idempotency_key == idempotency_key,
+        ))
         if existing:
+            if existing.checkout_context_hash != context_hash:
+                raise HTTPException(409, detail={"code": "IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_CHECKOUT_CONTEXT"})
             return persist_stripe_session(db, existing.id, actor.email, gateway)
         raise HTTPException(409, detail={"code": "ORDER_CONFLICT_RETRY_SAME_IDEMPOTENCY_KEY"}) from exc
     return persist_stripe_session(db, order.id, actor.email, gateway)
