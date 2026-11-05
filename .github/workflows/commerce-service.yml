@@ -58,10 +58,10 @@ jobs:
           import re
           for name in ("merchant-portal", "marketplace"):
               html = Path(f"apps/demo-web/{name}.html").read_text(encoding="utf-8")
-              scripts = re.findall(r"<script(?:\\s[^>]*)?>(.*?)</script>", html, re.I | re.S)
+              scripts = re.findall(r"<script(?:\s[^>]*)?>(.*?)</script>", html, re.I | re.S)
               if not scripts:
                   raise SystemExit(f"No inline script found in {name}.html")
-              Path(f"/tmp/cirvanna-{name}.js").write_text("\\n".join(scripts), encoding="utf-8")
+              Path(f"/tmp/cirvanna-{name}.js").write_text("\n".join(scripts), encoding="utf-8")
           PY
           node --check /tmp/cirvanna-merchant-portal.js
           node --check /tmp/cirvanna-marketplace.js
