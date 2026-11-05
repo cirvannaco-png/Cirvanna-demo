@@ -1637,6 +1637,13 @@ def capabilities() -> dict[str, Any]:
             and len(os.getenv("COMPLEMENTER_SERVICE_TOKEN", "").encode("utf-8")) >= 32
             and _trusted_internal_base_url(os.getenv("COMPLEMENTER_SERVICE_URL", ""))
         ),
+        "tari_daily_look_orchestration_configured": bool(
+            os.getenv("COMPLEMENTER_SERVICE_URL")
+            and len(os.getenv("COMPLEMENTER_SERVICE_TOKEN", "").encode("utf-8")) >= 32
+            and _trusted_internal_base_url(os.getenv("COMPLEMENTER_SERVICE_URL", ""))
+        ),
+        "tari_daily_look_roles": ["everyday", "elevated", "explore"],
+        "tari_virtual_twin_preview_enabled": False,
         "complementer_product_retrieval": False,
         "complementer_display_authority": False,
         "durable_complementer_memory": False,
