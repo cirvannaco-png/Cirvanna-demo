@@ -619,6 +619,8 @@ def test_image_rights_status_uses_private_token_without_uploader_account(client,
     assert response.headers["cache-control"] == "no-store, private"
     assert response.json()["status"] == "under_review"
     assert response.json()["quarantined"] is True
+    assert response.json()["triage_due_at"] == "2026-11-05T09:00:00Z"
+    assert response.json()["legal_response_due_at"] is None
     assert "requester_identity" not in response.text
     assert fake.calls[0][1] == "https://privacy-rights.example.test/internal/v1/image-rights/requests/rights-request-0001"
     assert fake.calls[0][2]["headers"]["X-Requester-Status-Token"] == "opaque-request-status-token-123456"
