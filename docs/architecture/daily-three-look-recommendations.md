@@ -1,7 +1,9 @@
 # Tari Daily Three-Look capability: product and service contract
 
-**Status:** Proposed implementation contract; not a production capability claim  
+**Status:** Initial executable slice implemented on the feature branch; production integration remains gated  
 **Date:** 5 November 2026
+
+The current slice includes a deterministic three-role composer, an authenticated internal recommendation endpoint, a verified-subject decision-gateway route, a same-origin authenticated Wardrobe BFF route, and a Wardrobe page action. The gateway filters persisted NPL hard-vetoed closet items and uses only allowlisted positive USI fashion signals when profile-storage consent permits. The implementation does not yet provide a persistent Virtual Twin, a validated renderer, live weather ingestion, durable daily-look history, or experiment assignment/event instrumentation. The current Twin preview is explicitly unavailable.
 
 ## Product decision
 
@@ -10,7 +12,7 @@
 2. **Elevated** — a polished option for a user-declared work, meeting, evening or other occasion.
 3. **Explore** — a meaningfully different styling direction that remains within declared preferences and exclusions.
 
-These are recommendation roles, not stereotypes. Never infer gender, culture, religion, modesty, body characteristics, occupation or occasion from a face, name, location or behavioural proxy. Context must be user-declared or supplied by an explicitly enabled, purpose-limited provider.
+These are recommendation roles, not stereotypes. Never infer gender, culture, religion, modesty, body characteristics, occupation or occasion from a face, name, location or behavioural proxy. Context must be user-declared or supplied by an explicitly enabled, purpose-limited provider. In the first UI slice, occasion and climate are user-declared; live weather is not yet connected.
 
 ## Canonical assistant naming
 
@@ -38,7 +40,7 @@ Never fabricate wardrobe items, SKUs, merchant offers, stock, prices, product li
 
 1. Resolve identity and authorization at the trusted BFF.
 2. Verify current purpose-specific consent and revocation state for wardrobe, personalization, Twin imagery and rendering.
-3. Hydrate positive preferences from USI, explicit exclusions from NPL, and consented learning observations from TAL. Complementer must not own a duplicate profile.
+3. Hydrate positive preferences from USI only when active profile-storage consent permits; accept only the allowlisted non-sensitive fashion namespaces for ranking. Apply persisted NPL hard vetoes to each owned wardrobe item before composition. Consented TAL observations may inform future profiles through their canonical owner; this first slice does not write learning events. Complementer must not own a duplicate profile.
 4. Retrieve the current owner-scoped wardrobe; exclude deleted, unavailable, unverified or unauthorized assets.
 5. Resolve only explicit context: user-declared occasion, supplied schedule, climate/weather provider if enabled, and user-selected radius/budget.
 6. Compose Tari's three roles with Complementer, invoked through the existing Xari orchestration or the authorized daily-look application flow. Prefer existing wardrobe items; use marketplace candidates only to fill a clearly identified gap.
