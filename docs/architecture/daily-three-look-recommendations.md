@@ -1,11 +1,11 @@
-# Daily three-look recommendations: product and service contract
+# Tari Daily Three-Look capability: product and service contract
 
 **Status:** Proposed implementation contract; not a production capability claim  
 **Date:** 5 November 2026
 
 ## Product decision
 
-Cirvanna should offer exactly three distinct daily looks:
+**Tari** is the name of Cirvanna's daily-look recommendation capability. It should offer exactly three distinct daily looks:
 1. **Everyday** — practical and compatible with the user's stated day.
 2. **Elevated** — a polished option for a user-declared work, meeting, evening or other occasion.
 3. **Explore** — a meaningfully different styling direction that remains within declared preferences and exclusions.
@@ -14,7 +14,7 @@ These are recommendation roles, not stereotypes. Never infer gender, culture, re
 
 ## Canonical assistant naming
 
-ADR-0005 (4 November 2026) establishes Xari as the sole canonical assistant identity and Tari as a legacy compatibility name. Implement this capability through the existing Xari runtime and Complementer. Do not create a second Tari service, API, token family, profile store or assistant runtime. A product-facing rename requires an explicit ADR update and legal/trademark review before launch.
+ADR-0005 (4 November 2026) establishes Xari as the sole canonical assistant identity. Preserve that decision: Xari remains the conversational assistant/orchestrator, while **Tari is the named daily-look capability** coordinated by Xari and powered by the existing Complementer. Tari is not a second assistant, service, API, token family, profile store or runtime. This preserves the user's Tari product concept without creating duplicate assistant infrastructure or silently reversing the accepted naming ADR. Any future decision to make Tari the canonical conversational assistant requires a separate ADR and jurisdiction/category-specific trademark review.
 
 ## Authenticated request and response contract
 
@@ -41,7 +41,7 @@ Never fabricate wardrobe items, SKUs, merchant offers, stock, prices, product li
 3. Hydrate positive preferences from USI, explicit exclusions from NPL, and consented learning observations from TAL. Complementer must not own a duplicate profile.
 4. Retrieve the current owner-scoped wardrobe; exclude deleted, unavailable, unverified or unauthorized assets.
 5. Resolve only explicit context: user-declared occasion, supplied schedule, climate/weather provider if enabled, and user-selected radius/budget.
-6. Compose the three roles with Complementer. Prefer existing wardrobe items; use marketplace candidates only to fill a clearly identified gap.
+6. Compose Tari's three roles with Complementer, invoked through the existing Xari orchestration or the authorized daily-look application flow. Prefer existing wardrobe items; use marketplace candidates only to fill a clearly identified gap.
 7. Retrieve product facts from Catalog/Commerce. Every candidate passes required NPL, context, safety, fit-evidence and CAL checks. Only CAL SHOW may be displayed; BLOCK, REVIEW, missing evidence and pending decisions stay hidden.
 8. Generate a Twin preview only through the separately authorized Twin/Try-On path after verifying Twin ownership, asset authorization, active server-side consent and renderer readiness.
 9. Return explanations and reversible actions. One rejection is not an automatic permanent NPL veto.
