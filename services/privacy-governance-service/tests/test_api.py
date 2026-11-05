@@ -449,6 +449,7 @@ def test_rights_status_token_is_one_time_and_only_its_hash_is_stored(client, mon
 
 
 def test_rights_approval_requires_verified_authority_and_full_deletion_propagation(client, monkeypatch):
+    authority_confirmed = False
     async def content(name, path, payload):
         if name == "RIGHTS_AUTHORITY_VERIFICATION":
             return {
@@ -456,7 +457,7 @@ def test_rights_approval_requires_verified_authority_and_full_deletion_propagati
                 "request_id": payload["request_id"],
                 "asset_id": payload["asset_id"],
                 "requester_relationship": payload["requester_relationship"],
-                "authority_confirmed": True,
+                "authority_confirmed": authority_confirmed,
             }
         if path.endswith("/resolve"):
             return {"found": True, "active": True, "asset_id": "asset-opaque-004"}
@@ -479,6 +480,7 @@ def test_rights_approval_requires_verified_authority_and_full_deletion_propagati
         json={"decision": "approve", "verification_reference": "verification-ticket-123", "resolution_code": "privacy-approved"},
     )
     assert denied.status_code == 403
+    authority_confirmed = True
     approved = client.post(
         f"/internal/v1/image-rights/requests/{created['request_id']}/review",
         headers=reviewer(),
