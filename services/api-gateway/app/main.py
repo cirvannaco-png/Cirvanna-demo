@@ -45,6 +45,7 @@ from eepl import ContextField, EEPLContext, EEPLPolicy  # noqa: E402
 from fci import FitConfidenceEstimate  # noqa: E402
 from npl import NegativePreference, PreferenceSource, TargetType, canonical_npl_evidence_payload  # noqa: E402
 from usi import StylePreference, USIProfile  # noqa: E402
+from app.comparison import compare_like_for_like_offers  # noqa: E402
 
 SERVICE_NAME = "cirvanna-decision-gateway"
 API_VERSION = "1.0.0"
@@ -1072,6 +1073,14 @@ def _wardrobe_match(
     }
 
 
+def _offer_comparison_max_age_seconds() -> int:
+    try:
+        configured = int(os.getenv("COMMERCE_OFFER_MAX_AGE_SECONDS", "3600"))
+    except ValueError:
+        configured = 3600
+    return max(60, min(configured, 604800))
+
+
 def _fresh_context_for_eepl(context: ContextInput, *, strict: bool) -> tuple[ContextInput, dict[str, Any]]:
     """Drop context that lacks explicit provenance, timezone or freshness."""
     now = datetime.now(timezone.utc)
@@ -1807,6 +1816,13 @@ def discover_marketplace(
     decision_response = evaluate_decisions(decision_request, end_user_authorization)
     decisions = {item.product_id: item for item in decision_response.candidates}
     displayable = []
+    comparisons_by_product = {
+        product_id: compare_like_for_like_offers(
+            [offer for offer in offers if offer.get("catalog_product_id") == product_id],
+            max_age_seconds=_offer_comparison_max_age_seconds(),
+        )
+        for product_id in by_product
+    }
     withheld = [
         {"product_id": pid, "decision": reason.lower(), "reason_code": reason}
         for pid, reason in sorted(withheld_reasons.items())
@@ -1819,6 +1835,12 @@ def discover_marketplace(
         displayable.append({
             "product": by_product[product_id],
             "offer": offer,
+            "merchant_comparison": comparisons_by_product.get(product_id, {
+                "status": "unavailable", "basis": None, "groups": [],
+                "unavailable_reasons": ["NO_COMPARABLE_OFFERS"],
+                "exclusions": ["shipping", "tax", "fulfilment", "local_transport", "foreign_exchange"],
+                "landed_cost_available": False,
+            }),
             "rank_score": score,
             "rank_score_semantics": "weighted explicit-USI match plus bounded exact wardrobe-attribute overlap; not probability",
             "usi_rank_score": usi_score,
