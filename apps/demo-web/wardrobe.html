@@ -168,6 +168,11 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     if (!token) throw new Error("Enter a signed Commerce token.");
     // Identity is verified server-side by the BFF on every personal-data request.
     await loadWardrobe();
+    const consentData = await api("/api/wardrobe/consents");
+    const activeReceipts = (consentData.items || []).filter(x => x && x.granted === true && !x.revoked_at);
+    activeReceipts.sort((a,b) => String(b.created_at || "").localeCompare(String(a.created_at || "")));
+    styleReceipt = activeReceipts.find(x => x.scope === "style_learning" || x.scope === "personalization")?.receipt_id || null;
+    profileReceipt = activeReceipts.find(x => x.scope === "profile_storage")?.receipt_id || null;
     $("learningPanel").classList.remove("hidden");
     $("closetPanel").classList.remove("hidden");
     $("recommendPanel").classList.remove("hidden");
