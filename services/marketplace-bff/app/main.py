@@ -129,6 +129,7 @@ class OfferComparisonIn(BaseModel):
     fulfillment_mode: Literal["shipping", "courier_delivery", "merchant_delivery", "collection", "local_transport"]
     display_currency: str = Field(min_length=3, max_length=3)
     payment_method: str | None = Field(default=None, min_length=2, max_length=50)
+    radius_km: float = Field(default=30.0, ge=1.0, le=500.0)
 
     @field_validator("variant_ids")
     @classmethod
