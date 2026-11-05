@@ -1040,7 +1040,6 @@ async def review_image_rights_request(
             {
                 "request_id": request_id,
                 "resolution_code": payload.resolution_code,
-                "verification_reference": payload.verification_reference,
                 "delete_derivatives": True,
                 "invalidate_caches": True,
                 "unpublish_shared_links": True,
