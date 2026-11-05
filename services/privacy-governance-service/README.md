@@ -26,6 +26,7 @@ It accepts no uploaded image, face crop, biometric template or identity document
 ### Image rights
 - `POST /internal/v1/image-rights/requests`: accepts only an opaque Cirvanna asset reference. The service first validates the reference with the trusted Content Lifecycle provider. Urgent reasons require confirmed quarantine **and unpublishing** before a receipt is returned.
 - `GET /internal/v1/image-rights/requests/{request_id}`: requester-only status, protected by an opaque one-time status token whose hash is stored.
+- Each rights case records a configurable platform triage target (`PRIVACY_RIGHTS_TRIAGE_HOURS`, default 4 hours) and, only when every applicable jurisdiction resolves to a current signed bundle, a separate legal response deadline. The platform triage target is an operational service target, not a statutory deadline. An unresolved jurisdiction is explicitly labelled; it is never represented as a legal deadline.
 - `GET /internal/v1/image-rights/queue`: internal reviewer queue.
 - `POST /internal/v1/image-rights/requests/{request_id}/review`: requires a separate reviewer token. Approval requires verified requester authority and confirmation that source, derivatives, replicas, cache, CDN, merchant surfaces and shared links were all handled.
 - The service records safe decision metadata only; it does not store the source image, status token, verification reference, or raw jurisdiction hint.
@@ -51,6 +52,7 @@ Provider response schemas are enforced in the code. Test mocks do not constitute
 - `PRIVACY_GOVERNANCE_INTERNAL_TOKEN`: service-to-service bearer token, at least 32 bytes.
 - `PRIVACY_POLICY_PUBLISH_TOKEN`: separate policy publisher token, at least 32 bytes.
 - `PRIVACY_RIGHTS_REVIEW_TOKEN`: separate reviewer token, at least 32 bytes.
+- `PRIVACY_RIGHTS_TRIAGE_HOURS`: platform internal triage target between 1 and 24 hours; not a substitute for jurisdiction-specific statutory response deadlines.
 - `PRIVACY_POLICY_BUNDLE_PUBLIC_KEY_PEM`: Ed25519 public key in PEM form.
 - `RIGHTS_AUTHORITY_VERIFICATION_API_URL/TOKEN`: trusted provider that independently verifies a photographed person's, parent/guardian's or authorized representative's authority for the specific image-rights case.
 - Provider URL/token pairs listed above.
