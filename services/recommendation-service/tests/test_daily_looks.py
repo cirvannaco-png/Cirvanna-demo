@@ -149,3 +149,35 @@ def test_category_values_used_by_wardrobe_ui_are_recognized():
     assert result["ready_count"] == 1
     assert result["looks"][0]["item_ids"]
     assert "bottom-101" in result["looks"][0]["item_ids"]
+
+
+def test_declared_occasion_changes_look_ranking():
+    items = [
+        {"item_id": "casual-top", "owner_user_id": "user-123", "display_name": "Casual tee", "category": "tops", "attributes": ["casual"], "status": "active"},
+        {"item_id": "work-top", "owner_user_id": "user-123", "display_name": "Tailored blouse", "category": "tops", "attributes": ["work", "formal", "tailored"], "status": "active"},
+        {"item_id": "bottom-10", "owner_user_id": "user-123", "display_name": "Straight trousers", "category": "trousers", "attributes": [], "status": "active"},
+    ]
+    result = build_daily_looks(
+        request_id="daily-work-context",
+        user_id="user-123",
+        wardrobe_items=items,
+        local_date="2026-11-05",
+        occasion="work",
+    )
+    assert "work-top" in result["looks"][0]["item_ids"]
+
+
+def test_declared_climate_changes_look_ranking():
+    items = [
+        {"item_id": "linen-top", "owner_user_id": "user-123", "display_name": "Linen blouse", "category": "tops", "attributes": ["linen", "breathable", "lightweight"], "status": "active"},
+        {"item_id": "wool-top", "owner_user_id": "user-123", "display_name": "Wool sweater", "category": "tops", "attributes": ["wool", "heavy"], "status": "active"},
+        {"item_id": "bottom-11", "owner_user_id": "user-123", "display_name": "Cotton trousers", "category": "trousers", "attributes": [], "status": "active"},
+    ]
+    result = build_daily_looks(
+        request_id="daily-climate-context",
+        user_id="user-123",
+        wardrobe_items=items,
+        local_date="2026-11-05",
+        climate="hot_humid",
+    )
+    assert "linen-top" in result["looks"][0]["item_ids"]
