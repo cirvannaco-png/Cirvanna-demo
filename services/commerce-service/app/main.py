@@ -23,7 +23,7 @@ import httpx
 import jwt as pyjwt
 from jwt import PyJWKClient
 from jwt.exceptions import PyJWKClientConnectionError, PyJWTError
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -303,6 +303,14 @@ class CommerceOrder(Base):
     payment_state: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     subtotal_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    fulfillment_total_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tax_total_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    destination_country_code: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    destination_key: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    fulfillment_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    checkout_context_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    market_quote_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     commission_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
     payment_session_id: Mapped[str | None] = mapped_column(String(180), unique=True)
@@ -326,9 +334,37 @@ class OrderItem(Base):
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     unit_price_minor: Mapped[int] = mapped_column(Integer, nullable=False)
     line_total_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_unit_price_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    fx_quote_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     commission_bps: Mapped[int] = mapped_column(Integer, nullable=False)
     commission_minor: Mapped[int] = mapped_column(Integer, nullable=False)
     __table_args__ = (CheckConstraint("quantity > 0", name="ck_commerce_order_item_quantity_positive"), CheckConstraint("unit_price_minor >= 0 AND line_total_minor >= 0", name="ck_commerce_order_item_price_nonnegative"))
+
+
+
+
+class OrderCharge(Base):
+    __tablename__ = "commerce_order_charges"
+    __table_args__ = (
+        CheckConstraint("amount_minor >= 0", name="ck_commerce_order_charge_amount_nonnegative"),
+        CheckConstraint("charge_type IN ('fulfilment','tax')", name="ck_commerce_order_charge_type"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    order_id: Mapped[str] = mapped_column(ForeignKey("commerce_orders.id", ondelete="CASCADE"), nullable=False, index=True)
+    merchant_id: Mapped[str] = mapped_column(ForeignKey("commerce_merchants.id"), nullable=False, index=True)
+    variant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    charge_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    description: Mapped[str] = mapped_column(String(180), nullable=False)
+    amount_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    source_amount_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    fx_quote_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    provider_quote_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class StockReservation(Base):
@@ -546,6 +582,8 @@ class CatalogClient:
 
 
 class StripeGateway:
+    provider = "stripe"
+
     def __init__(self):
         self.secret = os.getenv("STRIPE_SECRET_KEY", "")
         self.webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET", "")
@@ -559,7 +597,7 @@ class StripeGateway:
             and self.success_url.startswith("https://") and self.cancel_url.startswith("https://")
             and self.countries and all(COUNTRY_RE.fullmatch(x) for x in self.countries))
 
-    def create_session(self, order: CommerceOrder, items: list[OrderItem], email: str | None) -> dict[str, str]:
+    def create_session(self, order: CommerceOrder, items: list[OrderItem], charges: list[OrderCharge], email: str | None) -> dict[str, str]:
         if not self.ready:
             raise RuntimeError("Stripe not configured")
         params: dict[str, str] = {
@@ -576,6 +614,15 @@ class StripeGateway:
             params[f"line_items[{i}][price_data][unit_amount]"] = str(item.unit_price_minor)
             params[f"line_items[{i}][price_data][product_data][name]"] = item.product_name[:120]
             params[f"line_items[{i}][quantity]"] = str(item.quantity)
+        offset = len(items)
+        for index, charge in enumerate(charges):
+            if charge.amount_minor <= 0:
+                continue
+            i = offset + index
+            params[f"line_items[{i}][price_data][currency]"] = order.currency.lower()
+            params[f"line_items[{i}][price_data][unit_amount]"] = str(charge.amount_minor)
+            params[f"line_items[{i}][price_data][product_data][name]"] = charge.description[:120]
+            params[f"line_items[{i}][quantity]"] = "1"
         try:
             res = httpx.post("https://api.stripe.com/v1/checkout/sessions", data=params,
                 auth=(self.secret, ""), headers={"Idempotency-Key": f"cirvanna-order-{order.id}"}, timeout=12.0)
@@ -900,6 +947,39 @@ class OfferComparisonIn(BaseModel):
 
 
 
+class CheckoutRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    destination_country_code: str | None = Field(default=None, min_length=2, max_length=2)
+    destination_key: str | None = Field(default=None, min_length=3, max_length=180)
+    fulfillment_mode: Literal["shipping", "courier_delivery", "merchant_delivery", "collection", "local_transport"] | None = None
+    display_currency: str | None = Field(default=None, min_length=3, max_length=3)
+    payment_method: Literal["card"] = "card"
+    confirm: bool | None = None
+
+    @field_validator("destination_country_code")
+    @classmethod
+    def valid_destination(cls, value: str | None) -> str | None:
+        return _valid_country(value) if value is not None else None
+
+    @field_validator("display_currency")
+    @classmethod
+    def valid_checkout_currency(cls, value: str | None) -> str | None:
+        return _valid_currency(value) if value is not None else None
+
+    @model_validator(mode="after")
+    def complete_market_context(self):
+        values = (self.destination_country_code, self.destination_key, self.fulfillment_mode, self.display_currency)
+        if any(value is not None for value in values) and not all(value is not None for value in values):
+            raise ValueError("destination, fulfilment mode and display currency must be supplied together")
+        if self.destination_key is not None:
+            self.destination_key = self.destination_key.strip()
+        return self
+
+    @property
+    def market_aware(self) -> bool:
+        return self.destination_country_code is not None
+
+
 class CartItemIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     variant_id: str = Field(min_length=36, max_length=36)
@@ -1115,13 +1195,37 @@ def cart_json(db: Session, cart: Cart) -> dict[str, Any]:
 
 def order_json(db: Session, order: CommerceOrder, include_url: bool = False) -> dict[str, Any]:
     lines = list(db.scalars(select(OrderItem).where(OrderItem.order_id == order.id)).all())
-    result = {"order_id": order.id, "order_number": order.order_number, "status": order.state,
-        "payment_status": order.payment_state, "currency": order.currency, "subtotal_minor": order.subtotal_minor,
+    charges = list(db.scalars(select(OrderCharge).where(OrderCharge.order_id == order.id)).all())
+    result = {
+        "order_id": order.id, "order_number": order.order_number, "status": order.state,
+        "payment_status": order.payment_state, "currency": order.currency,
+        "subtotal_minor": order.subtotal_minor,
+        "fulfillment_total_minor": order.fulfillment_total_minor or 0,
+        "tax_total_minor": order.tax_total_minor or 0,
+        "total_minor": order.total_minor if order.total_minor is not None else order.subtotal_minor,
+        "destination_country_code": order.destination_country_code,
+        "destination_key": order.destination_key, "fulfillment_mode": order.fulfillment_mode,
+        "market_quote_snapshot": order.market_quote_snapshot,
         "commission_minor": order.commission_minor, "expires_at": order.expires_at, "paid_at": order.paid_at,
-        "created_at": order.created_at, "items": [{"merchant_id": i.merchant_id, "variant_id": i.variant_id,
-        "catalog_product_id": i.catalog_product_id, "product_name": i.product_name, "sku": i.sku, "options": i.options,
-        "quantity": i.quantity, "unit_price_minor": i.unit_price_minor, "line_total_minor": i.line_total_minor,
-        "commission_bps": i.commission_bps, "commission_minor": i.commission_minor} for i in lines]}
+        "created_at": order.created_at,
+        "items": [{
+            "merchant_id": i.merchant_id, "variant_id": i.variant_id,
+            "catalog_product_id": i.catalog_product_id, "product_name": i.product_name,
+            "sku": i.sku, "options": i.options, "quantity": i.quantity,
+            "unit_price_minor": i.unit_price_minor, "line_total_minor": i.line_total_minor,
+            "source_unit_price_minor": i.source_unit_price_minor, "source_currency": i.source_currency,
+            "fx_quote_id": i.fx_quote_id, "commission_bps": i.commission_bps,
+            "commission_minor": i.commission_minor,
+        } for i in lines],
+        "charges": [{
+            "charge_type": charge.charge_type, "description": charge.description,
+            "amount_minor": charge.amount_minor, "currency": charge.currency,
+            "source_amount_minor": charge.source_amount_minor, "source_currency": charge.source_currency,
+            "fx_quote_id": charge.fx_quote_id, "provider": charge.provider,
+            "provider_quote_id": charge.provider_quote_id,
+            "observed_at": charge.observed_at, "expires_at": charge.expires_at,
+        } for charge in charges],
+    }
     if include_url and order.checkout_url and order.state == "pending_payment":
         result["checkout_url"] = order.checkout_url
     return result
@@ -1136,8 +1240,9 @@ def persist_stripe_session(db: Session, order_id: str, email: str | None, gatewa
     if order.state != "pending_payment":
         raise HTTPException(409, detail={"code": "ORDER_NOT_PAYABLE", "state": order.state})
     lines = list(db.scalars(select(OrderItem).where(OrderItem.order_id == order.id).order_by(OrderItem.id)).all())
+    charges = list(db.scalars(select(OrderCharge).where(OrderCharge.order_id == order.id).order_by(OrderCharge.id)).all())
     try:
-        session = gateway.create_session(order, lines, email)
+        session = gateway.create_session(order, lines, charges, email)
     except RuntimeError as exc:
         # Network failure may occur after Stripe accepted the request. Keep the
         # reservation and recover via stable provider idempotency on retry.
@@ -1170,7 +1275,8 @@ def settle_paid(db: Session, order: CommerceOrder, amount_total: int, currency: 
         return
     if order.state != "pending_payment":
         raise HTTPException(409, detail={"code": "PAYMENT_ORDER_NOT_PENDING", "state": order.state})
-    if amount_total != order.subtotal_minor or currency.lower() != order.currency.lower():
+    expected_total = order.total_minor if order.total_minor is not None else order.subtotal_minor
+    if amount_total != expected_total or currency.lower() != order.currency.lower():
         raise HTTPException(400, detail={"code": "PAYMENT_AMOUNT_MISMATCH"})
     reservations = list(db.scalars(select(StockReservation).where(
         StockReservation.order_id == order.id, StockReservation.state == "reserved").with_for_update()).all())
