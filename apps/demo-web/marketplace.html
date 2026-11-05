@@ -124,7 +124,9 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       const image=Array.isArray(p.image_urls)&&p.image_urls[0]?'<img loading="lazy" alt="'+escapeHtml(p.name)+'" src="'+escapeHtml(p.image_urls[0])+'" referrerpolicy="no-referrer">':'<div class="placeholder" aria-hidden="true">C.</div>';
       const fq=p.fulfillment_quote;
       const transport=fq?'<div class="brandline">Delivery: '+moneyMinor(fq.display_conversion_status==="localized"?fq.display_amount_minor:fq.amount_minor,fq.display_conversion_status==="localized"?fq.display_currency:fq.currency)+' · '+escapeHtml(fq.distance_km)+' km</div>':'';
-      return '<article class="card"><div class="visual">'+image+'<span class="tag">'+(p.attributes&&p.attributes.demo?'Demo data':escapeHtml(p.category||'Product'))+'</span></div><div class="card-body"><div class="brandline">'+escapeHtml(p.brand||'Independent brand')+'</div><div class="name">'+escapeHtml(p.name)+'</div><div class="description">'+escapeHtml(p.description||'Product details have not been provided.')+'</div><div class="price">'+money(p)+'</div>'+transport+'<div class="brandline">'+escapeHtml(p.sku||'')+'</div><div class="card-actions"><button class="btn" data-action="save" data-id="'+escapeHtml(id)+'">'+(isSaved?'Saved ✓':'Save')+'</button><button class="btn" data-action="bag" data-id="'+escapeHtml(id)+'">'+(inBag?'In bag ✓':'Add to bag')+'</button><button class="btn wide" data-action="tryon" data-id="'+escapeHtml(id)+'" disabled title="Virtual try-on adapter is not connected">Try on — unavailable</button></div></div></article>'
+      const comparablePeers=p.canonical_variant_id?items.filter(x=>x.canonical_variant_id===p.canonical_variant_id&&x.merchant_id!==p.merchant_id&&x.available_stock>0):[];
+      const compareAction=comparablePeers.length?'<button class="btn wide" data-action="compare" data-id="'+escapeHtml(id)+'">Compare merchant offers</button>':'';
+      return '<article class="card"><div class="visual">'+image+'<span class="tag">'+(p.attributes&&p.attributes.demo?'Demo data':escapeHtml(p.category||'Product'))+'</span></div><div class="card-body"><div class="brandline">'+escapeHtml(p.brand||'Independent brand')+'</div><div class="name">'+escapeHtml(p.name)+'</div><div class="description">'+escapeHtml(p.description||'Product details have not been provided.')+'</div><div class="price">'+money(p)+'</div>'+transport+'<div class="brandline">'+escapeHtml(p.sku||'')+'</div><div class="card-actions"><button class="btn" data-action="save" data-id="'+escapeHtml(id)+'">'+(isSaved?'Saved ✓':'Save')+'</button><button class="btn" data-action="bag" data-id="'+escapeHtml(id)+'">'+(inBag?'In bag ✓':'Add to bag')+'</button>'+compareAction+'<button class="btn wide" data-action="tryon" data-id="'+escapeHtml(id)+'" disabled title="Virtual try-on adapter is not connected">Try on — unavailable</button></div></div></article>'
     }).join(''):'<div class="empty">No products match this search. Try a broader term or clear the category filter.</div>';
     $("pageLabel").textContent='Page '+(page+1);$("prevBtn").disabled=page===0;$("nextBtn").disabled=(page+1)*20>=total;
   }
@@ -205,8 +207,39 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     }catch(e){items=[];total=0;setStatus((e&&e.message?e.message:"Catalog request failed")+" Check the API URL, CORS policy, service health and token. Demo data is not substituted after a live API error.",true);render()}
   }
   function findProduct(id){return items.find(p=>getId(p)===id)||demoProducts.find(p=>getId(p)===id)}
+  async function compareOffers(p){
+    const marketCountry=$("marketCountry").value.trim().toUpperCase();
+    const destinationKey=$("destinationKey").value.trim();
+    const displayCurrency=$("displayCurrency").value.trim().toUpperCase()||p.display_currency||"";
+    if(!marketCountry||!destinationKey||!displayCurrency){setStatus("Choose a market, delivery area and display currency before comparing landed costs.",true);return}
+    const peer=items.find(x=>x.canonical_variant_id===p.canonical_variant_id&&x.merchant_id!==p.merchant_id&&x.available_stock>0);
+    if(!peer){setStatus("A second in-stock offer for this exact canonical variant is not on the current page.",true);return}
+    const base=mode==="commerce"?config.commerceBase:(bootstrap.publicOffersBase||"").replace(/\/$/,"");
+    if(!base){setStatus("The comparison API is not configured.",true);return}
+    const headers={Accept:"application/json","Content-Type":"application/json"};
+    if(mode==="commerce")headers.Authorization="Bearer "+config.userToken;
+    try{
+      const response=await fetch(base+"/marketplace/compare",{method:"POST",headers,body:JSON.stringify({
+        variant_ids:[p.variant_id,peer.variant_id],
+        destination_country_code:marketCountry,
+        destination_key:destinationKey,
+        fulfillment_mode:$("fulfillmentMode").value,
+        display_currency:displayCurrency,
+        payment_method:"card"
+      })});
+      const data=await response.json().catch(()=>null);
+      if(!response.ok)throw new Error((data&&data.detail&&data.detail.code)||"Comparison API returned HTTP "+response.status+".");
+      if(data.status!=="comparable"){
+        openDrawer("Comparison unavailable",'<p class="config-note">'+escapeHtml(data.reason_code||"Required market evidence is missing or stale.")+'</p><p class="config-note">No landed-cost ranking is shown until variant identity, stock, delivery, tax, FX and payment evidence all pass.</p>');
+        return;
+      }
+      const rows=(data.offers||[]).map(item=>'<div class="drawer-row"><div>'+escapeHtml(item.merchant_name)+'<small>Item '+moneyMinor(item.item_display_minor,data.display_currency)+' · Delivery '+moneyMinor(item.fulfillment_display_minor,data.display_currency)+' · Tax added '+moneyMinor(item.added_to_total_minor,data.display_currency)+'</small></div><strong>'+moneyMinor(item.landed_total_minor,data.display_currency)+'</strong></div>').join("");
+      openDrawer("Like-for-like comparison",rows+'<p class="config-note">Same canonical variant · '+escapeHtml(data.display_currency)+' · '+escapeHtml(data.fulfillment_mode)+' · '+escapeHtml(data.destination_key)+'. Tax, fulfilment and FX are provider-quoted and time-bound. This is not a guarantee after quote expiry.</p>');
+    }catch(error){setStatus(error.message||"Comparison could not be completed.",true)}
+  }
   async function act(action,id){
     const p=findProduct(id);if(!p)return;
+    if(action==="compare"){await compareOffers(p);return}
     if(mode==="commerce"){
       try{
         if(action==="save"){
