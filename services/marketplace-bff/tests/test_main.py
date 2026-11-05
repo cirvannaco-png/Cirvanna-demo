@@ -618,7 +618,7 @@ def test_image_rights_status_uses_private_token_without_uploader_account(client,
 
 def test_image_rights_status_rejects_invalid_request_id(client):
     response = client.get(
-        "/api/privacy/image-requests/https%3A%2F%2Fattacker.example%2Fimage",
+        "/api/privacy/image-requests/bad.request.id",
         headers={"X-Privacy-Request-Token": "opaque-request-status-token-123456"},
     )
     assert response.status_code == 404
