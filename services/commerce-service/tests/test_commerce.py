@@ -948,3 +948,36 @@ def test_marketplace_offers_default_to_30km_and_allow_user_radius_expansion(clie
     usd_offer = next(item for item in expanded_data["items"] if item["merchant_id"] == b["merchant_id"])
     assert float(usd_offer["fulfillment_quote"]["distance_km"]) == 40.0
     assert usd_offer["fulfillment_quote"]["display_conversion_status"] == "localized"
+
+
+def test_per_quote_fulfilment_is_not_multiplied_by_quantity(client, monkeypatch):
+    merchant, _ = _market_compare_seed(client, monkeypatch)
+    db = TEST_SESSION()
+    quote = db.query(main.OfferFulfillmentQuote).filter_by(variant_id=merchant["variant_id"]).one()
+    quote.charge_basis = "per_quote"
+    buyer_id = "buyer-per-quote"
+    cart = main.Cart(id=str(uuid.uuid4()), user_id=buyer_id, version=1)
+    db.add(cart)
+    db.flush()
+    db.add(main.CartItem(id=str(uuid.uuid4()), cart_id=cart.id, variant_id=merchant["variant_id"], quantity=2))
+    db.commit()
+    db.close()
+    configure_stripe(monkeypatch, session_id="cs_test_per_quote")
+    monkeypatch.setattr(main.httpx, "post", lambda *args, **kwargs: FakeResponse({
+        "id": "cs_test_per_quote", "url": "https://checkout.stripe.test/cs_test_per_quote", "status": "open",
+    }))
+    response = client.post("/checkout", headers={
+        **auth(buyer_id), "Idempotency-Key": "market-per-quote-0001",
+    }, json={
+        "destination_country_code": "KE", "destination_key": "Nakuru/Subukia",
+        "fulfillment_mode": "courier_delivery", "display_currency": "KES", "payment_method": "card",
+    })
+    assert response.status_code == 201, response.text
+    order = response.json()["order"]
+    assert order["subtotal_minor"] == 3600
+    assert order["fulfillment_total_minor"] == 250
+    assert order["tax_total_minor"] == 360
+    assert order["total_minor"] == 4210
+    fulfilment_charges = [charge for charge in order["charges"] if charge["charge_type"] == "fulfilment"]
+    assert len(fulfilment_charges) == 1
+    assert fulfilment_charges[0]["charge_basis"] == "per_quote"
