@@ -58,6 +58,13 @@ class ContextInput(BaseModel):
     location: str | None = Field(default=None, max_length=120)
     occasion: str | None = Field(default=None, max_length=120)
     climate: str | None = Field(default=None, max_length=120)
+    # Context is explicitly sourced; user-declared context is never represented as provider-verified.
+    location_source: Literal["user_declared", "consented_device"] | None = None
+    location_observed_at: str | None = Field(default=None, max_length=64)
+    occasion_source: Literal["user_declared"] | None = None
+    occasion_observed_at: str | None = Field(default=None, max_length=64)
+    climate_source: Literal["user_declared", "weather_provider"] | None = None
+    climate_observed_at: str | None = Field(default=None, max_length=64)
 
 
 class StylePreferenceInput(BaseModel):
@@ -132,6 +139,8 @@ class DiscoveryRequest(BaseModel):
     currency: str | None = Field(default=None, min_length=3, max_length=3)
     limit: int = Field(default=10, ge=1, le=25)
     context: ContextInput = Field(default_factory=ContextInput)
+    use_wardrobe_context: bool = False
+    exclude_owned_products: bool = True
     negative_preferences: list[NegativePreferenceInput] = Field(default_factory=list, max_length=100)
     cultural_requirements: list[CulturalRequirementInput] = Field(default_factory=list, max_length=60)
     hard_constraints: list[HardConstraintInput] = Field(default_factory=list, max_length=60)
@@ -841,6 +850,159 @@ def _load_verified_usi_profile(subject_id: str) -> USIProfile:
 
 
 
+
+def _load_verified_wardrobe(subject_id: str) -> list[dict[str, Any]]:
+    """Load only active items for the Commerce-verified subject."""
+    base = os.getenv("WARDROBE_SERVICE_URL", "").strip().rstrip("/")
+    token = os.getenv("WARDROBE_SERVICE_TOKEN", "").strip()
+    if not base or not _trusted_internal_base_url(base) or len(token.encode("utf-8")) < 32:
+        raise HTTPException(503, detail={"code": "WARDROBE_PROVIDER_NOT_CONFIGURED"})
+    try:
+        with httpx.Client(
+            timeout=httpx.Timeout(4.0, connect=1.5),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            response = client.get(
+                base + "/v1/items",
+                params={"owner_user_id": subject_id, "include_archived": "false"},
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "WARDROBE_PROVIDER_UNAVAILABLE"}) from exc
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "WARDROBE_PROVIDER_UNAVAILABLE"})
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "WARDROBE_RESPONSE_INVALID"}) from exc
+    if (
+        not isinstance(result, dict)
+        or result.get("owner_user_id") != subject_id
+        or not isinstance(result.get("items"), list)
+    ):
+        raise HTTPException(502, detail={"code": "WARDROBE_SCOPE_OR_SCHEMA_MISMATCH"})
+    items: list[dict[str, Any]] = []
+    for item in result["items"]:
+        if not isinstance(item, dict):
+            raise HTTPException(502, detail={"code": "WARDROBE_ITEM_SCHEMA_INVALID"})
+        if item.get("owner_user_id") != subject_id:
+            raise HTTPException(502, detail={"code": "WARDROBE_CROSS_SUBJECT_ITEM"})
+        if item.get("status") != "active":
+            continue
+        if (
+            not isinstance(item.get("item_id"), str)
+            or not isinstance(item.get("category"), str)
+            or not isinstance(item.get("attributes"), list)
+            or any(not isinstance(value, str) or not value.strip() for value in item["attributes"])
+        ):
+            raise HTTPException(502, detail={"code": "WARDROBE_ITEM_SCHEMA_INVALID"})
+        items.append(item)
+    return items
+
+
+def _wardrobe_feature_values(item: dict[str, Any]) -> set[str]:
+    values = {
+        str(item.get("category", "")).strip().casefold(),
+        *(value.strip().casefold() for value in item.get("attributes", []) if isinstance(value, str) and value.strip()),
+    }
+    values.discard("")
+    return values
+
+
+def _product_feature_values(product: dict[str, Any]) -> set[str]:
+    values: set[str] = set()
+    def visit(value: Any) -> None:
+        if isinstance(value, str) and value.strip():
+            values.add(value.strip().casefold())
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+        elif isinstance(value, dict):
+            for child in value.values():
+                visit(child)
+    visit(product.get("attributes", {}))
+    visit(product.get("category"))
+    return values
+
+
+def _wardrobe_match(product: dict[str, Any], wardrobe_items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Return transparent exact-tag overlaps; this is a ranking hint, not a probability."""
+    product_values = _product_feature_values(product)
+    matched: list[tuple[str, list[str]]] = []
+    for item in wardrobe_items:
+        overlap = sorted(product_values.intersection(_wardrobe_feature_values(item)))
+        if overlap:
+            matched.append((item["item_id"], overlap))
+    matched.sort(key=lambda value: value[0])
+    attributes = sorted({tag for _, tags in matched for tag in tags})
+    score = min(0.25, 0.05 * len(attributes))
+    return {
+        "score": score,
+        "owned_item_ids": [item_id for item_id, _ in matched],
+        "matched_attributes": attributes,
+    }
+
+
+def _fresh_context_for_eepl(context: ContextInput, *, strict: bool) -> tuple[ContextInput, dict[str, Any]]:
+    """Drop context that lacks explicit provenance, timezone or freshness."""
+    now = datetime.now(timezone.utc)
+    specs = (
+        ("location", "location_source", "location_observed_at", 24 * 3600),
+        ("occasion", "occasion_source", "occasion_observed_at", 7 * 24 * 3600),
+        ("climate", "climate_source", "climate_observed_at", 6 * 3600),
+    )
+    values: dict[str, Any] = {}
+    evidence: dict[str, Any] = {}
+    for field, source_field, observed_field, max_age in specs:
+        value = getattr(context, field)
+        source = getattr(context, source_field)
+        observed_raw = getattr(context, observed_field)
+        status = "unknown"
+        if value is not None and (not strict or (source and observed_raw)):
+            if not strict and not source and not observed_raw:
+                values[field] = value
+                status = "legacy_explicit_value"
+            else:
+                try:
+                    observed = datetime.fromisoformat(observed_raw.replace("Z", "+00:00"))
+                    if observed.tzinfo is None:
+                        raise ValueError("timezone required")
+                    observed = observed.astimezone(timezone.utc)
+                    age = (now - observed).total_seconds()
+                    if -300 <= age <= max_age:
+                        values[field] = value
+                        status = "current"
+                    else:
+                        values[field] = None
+                        status = "stale_or_future"
+                except (AttributeError, TypeError, ValueError):
+                    values[field] = None
+                    status = "invalid_timestamp"
+        else:
+            values[field] = None
+            status = "missing_value_or_provenance"
+        evidence[field] = {
+            "status": status,
+            "source": source if status == "current" or status == "legacy_explicit_value" else None,
+            "observed_at": observed_raw if status == "current" else None,
+            "max_age_seconds": max_age,
+        }
+    normalized = ContextInput(
+        age_years=context.age_years,
+        location=values["location"],
+        occasion=values["occasion"],
+        climate=values["climate"],
+        location_source=context.location_source,
+        location_observed_at=context.location_observed_at,
+        occasion_source=context.occasion_source,
+        occasion_observed_at=context.occasion_observed_at,
+        climate_source=context.climate_source,
+        climate_observed_at=context.climate_observed_at,
+    )
+    return normalized, evidence
+
+
 def _identity_service_request(method: str, path: str, subject_id: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     base = os.getenv("IDENTITY_SERVICE_URL", "").strip().rstrip("/")
     token = os.getenv("IDENTITY_SERVICE_TOKEN", "").strip()
@@ -1412,32 +1574,97 @@ def discover_marketplace(
     if not hmac.compare_digest(subject, payload.user_id):
         raise HTTPException(403, detail={"code": "REQUEST_SUBJECT_MISMATCH"})
     profile = _load_verified_usi_profile(subject)
+    wardrobe_items: list[dict[str, Any]] = []
+    if payload.use_wardrobe_context:
+        # The NPL ledger is mandatory for wardrobe-driven recommendations. A missing
+        # or partial configuration must not silently degrade into preference-blind output.
+        npl_values = (
+            bool(os.getenv("NPL_SERVICE_URL", "").strip()),
+            len(os.getenv("NPL_SERVICE_TOKEN", "").encode("utf-8")) >= 32,
+            len(os.getenv("NPL_EVIDENCE_HMAC_SECRET", "").encode("utf-8")) >= 32,
+        )
+        if not all(npl_values):
+            raise HTTPException(503, detail={"code": "NPL_PROVIDER_REQUIRED_FOR_WARDROBE_DISCOVERY"})
+        wardrobe_items = _load_verified_wardrobe(subject)
+    eepl_context, context_evidence = _fresh_context_for_eepl(
+        payload.context, strict=payload.use_wardrobe_context
+    )
     products, offers = _discover_catalog_and_offers(payload)
     by_product = {item["product_id"]: item for item in products}
+    owned_product_ids = {
+        item.get("catalog_product_id")
+        for item in wardrobe_items
+        if isinstance(item.get("catalog_product_id"), str)
+    }
     best_offer: dict[str, dict[str, Any]] = {}
+    withheld_reasons: dict[str, str] = {}
     for offer in offers:
         product_id = offer.get("catalog_product_id")
         if not isinstance(product_id, str) or product_id not in by_product:
             continue
-        previous = best_offer.get(product_id)
         price = offer.get("price_minor")
+        currency = offer.get("currency")
+        available = offer.get("available_stock")
         if isinstance(price, bool) or not isinstance(price, int) or price < 0:
             continue
-        if previous is None or (price, str(offer.get("variant_id", ""))) < (previous["price_minor"], str(previous.get("variant_id", ""))):
+        if not isinstance(currency, str) or not re.fullmatch(r"[A-Z]{3}", currency):
+            continue
+        if isinstance(available, bool) or not isinstance(available, int) or available <= 0:
+            continue
+        if payload.currency and currency != payload.currency.upper():
+            continue
+        product_currency = by_product[product_id].get("currency")
+        target_currency = payload.currency.upper() if payload.currency else product_currency
+        if isinstance(target_currency, str) and re.fullmatch(r"[A-Z]{3}", target_currency):
+            if currency != target_currency.upper():
+                continue
+        current = best_offer.get(product_id)
+        if current is None:
             best_offer[product_id] = offer
-    ranked = sorted(
-        (
-            (product_id, _style_rank_score(by_product[product_id], profile), best_offer[product_id])
-            for product_id in best_offer
-        ),
-        key=lambda item: (-item[1], item[2]["price_minor"], item[0]),
-    )[:payload.limit]
+        elif current.get("currency") != currency:
+            withheld_reasons[product_id] = "OFFER_CURRENCY_AMBIGUOUS"
+        elif (price, str(offer.get("merchant_id", "")), str(offer.get("variant_id", ""))) < (
+            current["price_minor"], str(current.get("merchant_id", "")), str(current.get("variant_id", ""))
+        ):
+            best_offer[product_id] = offer
+
+    candidates = []
+    for product_id, offer in best_offer.items():
+        product = by_product[product_id]
+        if payload.use_wardrobe_context and payload.exclude_owned_products and product_id in owned_product_ids:
+            withheld_reasons[product_id] = "ALREADY_IN_WARDROBE"
+            continue
+        wardrobe_match = _wardrobe_match(product, wardrobe_items) if payload.use_wardrobe_context else {
+            "score": 0.0, "owned_item_ids": [], "matched_attributes": [],
+        }
+        usi_score = _style_rank_score(product, profile)
+        total_score = usi_score + wardrobe_match["score"]
+        candidates.append((product_id, total_score, usi_score, wardrobe_match, offer))
+    candidates.sort(key=lambda item: (
+        -item[1], item[4]["currency"], item[4]["price_minor"], item[0]
+    ))
+    ranked = candidates[:payload.limit]
     if not ranked:
-        return {"request_id": str(uuid.uuid4()), "ranked_candidate_count": 0, "displayable_products": [], "withheld_candidate_ids": [], "display_authority": "CaTaCaCi/CAL"}
+        return {
+            "request_id": str(uuid.uuid4()),
+            "ranked_candidate_count": 0,
+            "displayable_products": [],
+            "withheld_candidate_ids": [
+                {"product_id": pid, "decision": reason.lower(), "reason_code": reason}
+                for pid, reason in sorted(withheld_reasons.items())
+            ],
+            "display_authority": "CaTaCaCi/CAL",
+            "eepl_context_evidence": context_evidence,
+            "wardrobe_context": {
+                "used": payload.use_wardrobe_context,
+                "active_item_count": len(wardrobe_items),
+                "excluded_owned_product_count": sum(1 for reason in withheld_reasons.values() if reason == "ALREADY_IN_WARDROBE"),
+            },
+        }
     decision_request = DecisionRequest(
         user_id=subject,
         product_ids=[item[0] for item in ranked],
-        context=payload.context,
+        context=eepl_context,
         style_preferences=[],
         negative_preferences=payload.negative_preferences,
         cultural_requirements=payload.cultural_requirements,
@@ -1446,8 +1673,11 @@ def discover_marketplace(
     decision_response = evaluate_decisions(decision_request, end_user_authorization)
     decisions = {item.product_id: item for item in decision_response.candidates}
     displayable = []
-    withheld = []
-    for product_id, score, offer in ranked:
+    withheld = [
+        {"product_id": pid, "decision": reason.lower(), "reason_code": reason}
+        for pid, reason in sorted(withheld_reasons.items())
+    ]
+    for product_id, score, usi_score, wardrobe_match, offer in ranked:
         decision = decisions.get(product_id)
         if decision is None or not decision.may_display or decision.verdict != "show":
             withheld.append({"product_id": product_id, "rank_score": score, "decision": decision.verdict if decision else "review"})
@@ -1456,7 +1686,12 @@ def discover_marketplace(
             "product": by_product[product_id],
             "offer": offer,
             "rank_score": score,
-            "rank_score_semantics": "weighted explicit-preference match; not probability",
+            "rank_score_semantics": "weighted explicit-USI match plus bounded exact wardrobe-attribute overlap; not probability",
+            "usi_rank_score": usi_score,
+            "wardrobe_compatibility": {
+                "matched_owned_item_ids": wardrobe_match["owned_item_ids"],
+                "matched_attributes": wardrobe_match["matched_attributes"],
+            },
             "decision": decision.model_dump(),
         })
     return {
@@ -1466,6 +1701,12 @@ def discover_marketplace(
         "withheld_candidate_ids": withheld,
         "display_authority": "CaTaCaCi/CAL",
         "display_rule": "Only candidates with CAL SHOW are returned with product and offer details.",
+        "eepl_context_evidence": context_evidence,
+        "wardrobe_context": {
+            "used": payload.use_wardrobe_context,
+            "active_item_count": len(wardrobe_items),
+            "excluded_owned_product_count": sum(1 for reason in withheld_reasons.values() if reason == "ALREADY_IN_WARDROBE"),
+        },
     }
 
 
