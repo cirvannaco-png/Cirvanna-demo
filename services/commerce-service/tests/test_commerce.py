@@ -717,7 +717,7 @@ def _market_compare_seed(client, monkeypatch):
             id=str(uuid.uuid4()), variant_id=variant.id, destination_country_code="KE",
             destination_key="Nakuru/Subukia", fulfillment_mode="courier_delivery",
             amount_minor=fulfillment_minor, currency=currency, status="confirmed",
-            distance_km=Decimal("10") if merchant is merchant_a else Decimal("40"),
+            charge_basis="per_unit", distance_km=Decimal("10") if merchant is merchant_a else Decimal("40"),
             provider="test-courier", provider_quote_id=str(uuid.uuid4()),
             observed_at=main.now(), expires_at=main.now()+timedelta(hours=1),
         )
