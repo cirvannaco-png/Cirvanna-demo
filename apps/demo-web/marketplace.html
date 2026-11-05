@@ -82,6 +82,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
         <input id="clickItGuardianVerificationRef" class="wide" type="text" minlength="12" maxlength="200" autocomplete="off" placeholder="Guardian verification reference (only if issued by Cirvanna)" aria-label="Guardian verification reference, optional">
         <p class="wide">A guardian reference is checked with Cirvanna’s verification provider. Entering a reference does not itself prove guardianship; processing remains blocked unless the provider verifies it when required.</p>
         <button class="btn primary wide" id="clickItBtn" type="submit">Scan photo and search marketplace</button>
+        <button class="btn wide" id="clickItRevokeConsentBtn" type="button" disabled>Revoke latest Click It consent</button>
       </form>
       <div class="ai-status" id="clickItStatus" role="status" aria-live="polite">Use the Connect catalog button to connect a signed Commerce user session first. Photos and results are not saved by this scanner.</div>
     </section>
@@ -356,6 +357,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       const consentReceipt=await consentResponse.json().catch(()=>({}));
       if(!consentResponse.ok||!consentReceipt.consent_id)throw new Error((consentReceipt.detail&&consentReceipt.detail.code)||("Consent creation returned HTTP "+consentResponse.status+"."));
       $("clickItConsentId").value=consentReceipt.consent_id;
+      $("clickItRevokeConsentBtn").disabled=false;
       form.append("consent_id",consentReceipt.consent_id);
       const response=await fetch("/api/vision/click-it",{method:"POST",headers:{Authorization:"Bearer "+config.userToken,Accept:"application/json"},body:form});
       const data=await response.json().catch(()=>({}));
@@ -369,6 +371,27 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       if(message==="TWIN_REGISTRY_NOT_CONFIGURED")message="Twin personalization is not configured; a basic marketplace scan should not require a Twin.";
       setAiStatus("clickItStatus",message+". No demo or fabricated matches were shown.",true);
     }finally{setAiBusy("clickItBtn",false,"Scan photo and search marketplace")}
+  });
+
+  $("clickItRevokeConsentBtn").addEventListener("click",async()=>{
+    const consentId=$("clickItConsentId").value.trim();
+    if(!consentId||!config.userToken)return;
+    setAiBusy("clickItRevokeConsentBtn",true,"Revoking…");
+    try{
+      const response=await fetch("/api/privacy/consents/"+encodeURIComponent(consentId)+"/revoke",{
+        method:"POST",
+        headers:{Authorization:"Bearer "+config.userToken,"Content-Type":"application/json",Accept:"application/json"},
+        body:JSON.stringify({reason_code:"user_request"})
+      });
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok||data.revoked!==true)throw new Error((data.detail&&data.detail.code)||("Consent revocation returned HTTP "+response.status+"."));
+      $("clickItRevokeConsentBtn").disabled=true;
+      setAiStatus("clickItStatus","Consent revoked. Future Click It processing with this receipt is blocked.");
+    }catch(err){
+      setAiStatus("clickItStatus",(err&&err.message?err.message:"Consent revocation failed")+".",true);
+    }finally{
+      setAiBusy("clickItRevokeConsentBtn",false,"Revoke latest Click It consent");
+    }
   });
 
   $("imageRightsForm").addEventListener("submit",async e=>{
