@@ -23,6 +23,13 @@ It accepts no uploaded image, face crop, biometric template or identity document
 - Missing, stale, incomplete, conflicting, unlawful, or transfer-denied policy returns BLOCK. No jurisdiction, age threshold, legal basis, or retention rule is seeded in code.
 - Policy bundles require legal-review metadata, an effective/expiry window, guardian-consent rules for declared minors, lawful-basis approval, transfer authorization, and explicit prohibitions on identity analysis, child behavioural profiling, image retention and public unmasked-face exposure.
 
+### Public media publication gate
+
+- `POST /internal/v1/privacy/assets/publication/evaluate` is a mandatory pre-publication contract for public profiles, community feeds, Marketplace media, merchant surfaces and shared links.
+- The service requires a trusted Vision Privacy Attestation provider. The attestation must bind to the exact opaque asset ID and masking-attestation ID, prove all detected faces were masked before publication, report zero unmasked faces and confirm no facial recognition, face embeddings or age estimation ran.
+- Missing, stale, mismatched, incomplete or unsafe masking evidence returns BLOCK. The service does not infer whether a face belongs to a child; it requires every detected face in a public asset to be masked. This is a conservative platform safeguard, not a legal classification.
+- The Content Lifecycle/publication owner must call this gate before every public publish, restore, syndication or share-link activation path. A gate implementation that is not wired to all publication paths is not production protection.
+
 ### Image rights
 - `POST /internal/v1/image-rights/requests`: accepts only an opaque Cirvanna asset reference. The service first validates the reference with the trusted Content Lifecycle provider. Urgent reasons require confirmed quarantine **and unpublishing** before a receipt is returned.
 - `GET /internal/v1/image-rights/requests/{request_id}`: requester-only status, protected by an opaque one-time status token whose hash is stored.
