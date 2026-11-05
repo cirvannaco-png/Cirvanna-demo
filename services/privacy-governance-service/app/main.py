@@ -441,8 +441,12 @@ def ready(db: Session = Depends(session_for_request)) -> dict:
     review_ready = len(os.getenv("PRIVACY_RIGHTS_REVIEW_TOKEN", "").encode()) >= 32
     rights_authority_ready = bool(os.getenv("RIGHTS_AUTHORITY_VERIFICATION_API_URL")) and bool(os.getenv("RIGHTS_AUTHORITY_VERIFICATION_API_TOKEN"))
     vision_attestation_ready = bool(os.getenv("VISION_PRIVACY_ATTESTATION_API_URL")) and bool(os.getenv("VISION_PRIVACY_ATTESTATION_API_TOKEN"))
+    required_providers_ready = all([
+        database_ready, resolver_ready, content_ready, guardian_ready, internal_ready,
+        signing_ready, review_ready, rights_authority_ready, vision_attestation_ready,
+    ])
     return {
-        "status": "ready" if all([database_ready, resolver_ready, content_ready, internal_ready, signing_ready, review_ready, rights_authority_ready, vision_attestation_ready]) else "not_ready",
+        "status": "ready" if required_providers_ready else "not_ready",
         "service": SERVICE,
         "database_ready": database_ready,
         "jurisdiction_resolver_configured": resolver_ready,
@@ -453,7 +457,7 @@ def ready(db: Session = Depends(session_for_request)) -> dict:
         "rights_review_auth_configured": review_ready,
         "requester_authority_provider_configured": rights_authority_ready,
         "vision_privacy_attestation_configured": vision_attestation_ready,
-        "ready": all([database_ready, resolver_ready, content_ready, internal_ready, signing_ready, review_ready, rights_authority_ready, vision_attestation_ready]),
+        "ready": required_providers_ready,
     }
 
 
