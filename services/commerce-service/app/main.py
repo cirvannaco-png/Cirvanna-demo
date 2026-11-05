@@ -170,6 +170,14 @@ class MerchantOperatingMarket(Base):
     locale: Mapped[str | None] = mapped_column(String(35), nullable=True)
     activated_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    tax_provider: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    tax_provider_reference: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    tax_capability_observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    tax_capability_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    fulfillment_provider: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    fulfillment_provider_reference: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    fulfillment_capability_observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    fulfillment_capability_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now, onupdate=now)
 
@@ -812,8 +820,35 @@ class MarketActivation(BaseModel):
     state: Literal["active", "blocked", "pending"]
     display_currency: str | None = Field(default=None, min_length=3, max_length=3)
     locale: str | None = Field(default=None, min_length=2, max_length=35)
+    tax_provider: str | None = Field(default=None, min_length=2, max_length=100)
+    tax_provider_reference: str | None = Field(default=None, min_length=3, max_length=180)
+    tax_capability_observed_at: datetime | None = None
+    tax_capability_expires_at: datetime | None = None
+    fulfillment_provider: str | None = Field(default=None, min_length=2, max_length=100)
+    fulfillment_provider_reference: str | None = Field(default=None, min_length=3, max_length=180)
+    fulfillment_capability_observed_at: datetime | None = None
+    fulfillment_capability_expires_at: datetime | None = None
 
     _currency = field_validator("display_currency")(_valid_currency)
+
+    @model_validator(mode="after")
+    def provider_evidence_required_for_activation(self):
+        if self.state == "active":
+            required = (
+                self.tax_provider, self.tax_provider_reference,
+                self.tax_capability_observed_at, self.tax_capability_expires_at,
+                self.fulfillment_provider, self.fulfillment_provider_reference,
+                self.fulfillment_capability_observed_at, self.fulfillment_capability_expires_at,
+            )
+            if any(value is None for value in required):
+                raise ValueError("fresh tax and fulfilment provider evidence is required before market activation")
+            for observed, expires in (
+                (self.tax_capability_observed_at, self.tax_capability_expires_at),
+                (self.fulfillment_capability_observed_at, self.fulfillment_capability_expires_at),
+            ):
+                if observed.tzinfo is None or expires.tzinfo is None or expires <= observed:
+                    raise ValueError("market capability evidence must use valid timezone-aware quote windows")
+        return self
 
 
 class FXQuoteIn(BaseModel):
@@ -1135,11 +1170,18 @@ def _market_payment_capability(
 
 
 def _market_is_active(db: Session, merchant_id: str, market_country_code: str) -> MerchantOperatingMarket | None:
-    return db.scalar(select(MerchantOperatingMarket).where(
+    market = db.scalar(select(MerchantOperatingMarket).where(
         MerchantOperatingMarket.merchant_id == merchant_id,
         MerchantOperatingMarket.market_country_code == market_country_code,
         MerchantOperatingMarket.state == "active",
     ))
+    if market is None:
+        return None
+    if not quote_is_current(market.tax_capability_observed_at, market.tax_capability_expires_at):
+        return None
+    if not quote_is_current(market.fulfillment_capability_observed_at, market.fulfillment_capability_expires_at):
+        return None
+    return market
 
 
 
@@ -1548,6 +1590,10 @@ def list_merchant_markets(
         "state": row.state,
         "display_currency": row.display_currency,
         "locale": row.locale,
+        "tax_provider": row.tax_provider,
+        "tax_capability_ready": quote_is_current(row.tax_capability_observed_at, row.tax_capability_expires_at),
+        "fulfillment_provider": row.fulfillment_provider,
+        "fulfillment_capability_ready": quote_is_current(row.fulfillment_capability_observed_at, row.fulfillment_capability_expires_at),
         "activated_at": row.activated_at.isoformat() if row.activated_at else None,
     } for row in rows]}
 
@@ -1628,8 +1674,20 @@ def set_merchant_market_state(
             for item in capable
         ):
             raise HTTPException(409, detail={"code": "MARKET_PAYMENT_CAPABILITY_NOT_READY"})
+        if not quote_is_current(payload.tax_capability_observed_at, payload.tax_capability_expires_at):
+            raise HTTPException(409, detail={"code": "MARKET_TAX_CAPABILITY_NOT_READY"})
+        if not quote_is_current(payload.fulfillment_capability_observed_at, payload.fulfillment_capability_expires_at):
+            raise HTTPException(409, detail={"code": "MARKET_FULFILLMENT_CAPABILITY_NOT_READY"})
         market.display_currency = display_currency
         market.locale = payload.locale or market.locale
+        market.tax_provider = payload.tax_provider
+        market.tax_provider_reference = payload.tax_provider_reference
+        market.tax_capability_observed_at = payload.tax_capability_observed_at
+        market.tax_capability_expires_at = payload.tax_capability_expires_at
+        market.fulfillment_provider = payload.fulfillment_provider
+        market.fulfillment_provider_reference = payload.fulfillment_provider_reference
+        market.fulfillment_capability_observed_at = payload.fulfillment_capability_observed_at
+        market.fulfillment_capability_expires_at = payload.fulfillment_capability_expires_at
         market.activated_by = actor.user_id
         market.activated_at = now()
     else:
