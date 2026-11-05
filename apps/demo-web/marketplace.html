@@ -225,7 +225,8 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
         destination_key:destinationKey,
         fulfillment_mode:$("fulfillmentMode").value,
         display_currency:displayCurrency,
-        payment_method:"card"
+        payment_method:"card",
+        radius_km:Number($("radiusKm").value||30)
       })});
       const data=await response.json().catch(()=>null);
       if(!response.ok)throw new Error((data&&data.detail&&data.detail.code)||"Comparison API returned HTTP "+response.status+".");
