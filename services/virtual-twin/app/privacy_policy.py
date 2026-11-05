@@ -33,7 +33,7 @@ def _policy_config() -> tuple[str, str] | None:
     return raw, token
 
 
-async def authorize_click_it_policy(subject_id: str, photographed_people_status: str) -> dict[str, object]:
+async def authorize_click_it_policy(subject_id: str, photographed_people_status: str, capture_jurisdiction_hint: str | None = None) -> dict[str, object]:
     """Resolve all applicable jurisdictions and require an explicit current PASS receipt."""
     if photographed_people_status not in {"no_people", "adults_only", "contains_minor"}:
         raise HTTPException(403, detail={"code": "CHILD_SAFETY_STATUS_UNCONFIRMED"})
@@ -46,6 +46,10 @@ async def authorize_click_it_policy(subject_id: str, photographed_people_status:
         "service": "cirvanna-click-it",
         "purpose": "visual_product_discovery",
         "photographed_people_status": photographed_people_status,
+        "capture_jurisdiction_hint": capture_jurisdiction_hint,
+        "capture_jurisdiction_hint_is_unverified": True,
+        "service_deployment_region": os.getenv("CIRVANNA_SERVICE_REGION", "").strip() or None,
+        "controller_profile_id": os.getenv("CIRVANNA_CONTROLLER_PROFILE_ID", "").strip() or None,
         "requested_retention_seconds": 0,
         "requested_public_display": False,
         "prohibited_processing": [
