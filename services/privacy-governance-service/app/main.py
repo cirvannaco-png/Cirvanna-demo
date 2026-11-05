@@ -671,7 +671,19 @@ async def evaluate_click_it_policy(payload: JurisdictionEvaluateIn, db: Session 
         "transfer_paths",
     )
     context_locations_complete = all(
-        isinstance(resolution.get(name), list) and (name == "transfer_paths" or bool(resolution.get(name)))
+        isinstance(resolution.get(name), list)
+        and (name == "transfer_paths" or bool(resolution.get(name)))
+        and (
+            all(isinstance(item, str) and bool(item.strip()) for item in resolution.get(name, []))
+            if name != "transfer_paths"
+            else all(
+                isinstance(item, dict)
+                and isinstance(item.get("from"), str) and bool(item["from"].strip())
+                and isinstance(item.get("to"), str) and bool(item["to"].strip())
+                and isinstance(item.get("allowed"), bool)
+                for item in resolution.get(name, [])
+            )
+        )
         for name in required_context_lists
     )
     resolution_complete = (
