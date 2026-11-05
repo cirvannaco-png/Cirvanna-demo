@@ -259,6 +259,9 @@ def test_marketplace_ui_has_xari_description_search_and_mobile_click_it_capture(
     assert 'id="clickItPeopleStatus"' in response.text
     assert 'id="clickItGuardianVerificationRef"' in response.text
     assert 'id="clickItRevokeConsentBtn"' in response.text
+    assert 'const twinResourceAllowed=photographedPeopleStatus!=="contains_minor"' in response.text
+    assert 'if(twinId&&twinResourceAllowed)consentPayload.twin_id=twinId' in response.text
+    assert 'form.append("consent_id",$("clickItConsentId").value.trim())' not in response.text
     assert 'fetch("/api/privacy/consents"' in response.text
     assert 'id="clickItCaptureJurisdiction"' in response.text
     assert 'id="imageRightsForm"' in response.text
@@ -681,6 +684,7 @@ def test_click_it_consent_is_created_from_verified_commerce_subject(client, monk
             "consent_click_it": True,
             "photographed_people_status": "adults_only",
             "consent_version": "click-it-privacy-v1",
+            "twin_id": "twin-123",
         },
     )
     assert response.status_code == 200, response.text
@@ -688,6 +692,7 @@ def test_click_it_consent_is_created_from_verified_commerce_subject(client, monk
     assert fake.calls[0][1] == "https://commerce.example.test/me"
     assert fake.calls[1][1] == "https://privacy.example.test/internal/v1/consents/grant"
     assert fake.calls[1][2]["json"]["subject_id"] == "signed-customer-42"
+    assert fake.calls[1][2]["json"]["resource_id"] == "twin-123"
     assert "subject_id" not in response.text
 
 
