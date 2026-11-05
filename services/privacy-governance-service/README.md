@@ -52,6 +52,7 @@ Provider response schemas are enforced in the code. Test mocks do not constitute
 - `PRIVACY_POLICY_PUBLISH_TOKEN`: separate policy publisher token, at least 32 bytes.
 - `PRIVACY_RIGHTS_REVIEW_TOKEN`: separate reviewer token, at least 32 bytes.
 - `PRIVACY_POLICY_BUNDLE_PUBLIC_KEY_PEM`: Ed25519 public key in PEM form.
+- `RIGHTS_AUTHORITY_VERIFICATION_API_URL/TOKEN`: trusted provider that independently verifies a photographed person's, parent/guardian's or authorized representative's authority for the specific image-rights case.
 - Provider URL/token pairs listed above.
 
 Never store production credentials in GitHub files, browser JavaScript, or this README. Use the approved secret manager and rotate independent service/reviewer/publisher tokens.
