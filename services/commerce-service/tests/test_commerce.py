@@ -981,3 +981,24 @@ def test_per_quote_fulfilment_is_not_multiplied_by_quantity(client, monkeypatch)
     fulfilment_charges = [charge for charge in order["charges"] if charge["charge_type"] == "fulfilment"]
     assert len(fulfilment_charges) == 1
     assert fulfilment_charges[0]["charge_basis"] == "per_quote"
+
+
+def test_fulfillment_quote_ingestion_requires_explicit_charge_basis(client, monkeypatch):
+    offer = seed_offer()
+    token = "market-context-test-token-with-more-than-32-bytes"
+    monkeypatch.setenv("COMMERCE_MARKET_CONTEXT_TOKEN", token)
+    now = main.now()
+    response = client.post(
+        f"/internal/market-context/variants/{offer['variant_id']}/fulfillment-quotes",
+        headers={"X-Commerce-Market-Context-Token": token},
+        json={
+            "provider": "verified-courier", "provider_quote_id": "courier-quote-0001",
+            "destination_country_code": "KE", "destination_key": "Nakuru/Subukia",
+            "fulfillment_mode": "courier_delivery", "charge_basis": "per_quote",
+            "amount_minor": 250, "currency": "KES", "status": "confirmed",
+            "distance_km": "10.0", "observed_at": now.isoformat(),
+            "expires_at": (now + main.timedelta(minutes=30)).isoformat(),
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["charge_basis"] == "per_quote"
