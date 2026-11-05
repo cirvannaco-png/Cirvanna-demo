@@ -8,7 +8,10 @@ from __future__ import annotations
 
 import os
 import re
+import uuid
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Literal
 from urllib.parse import urlsplit
 
 import httpx
@@ -19,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field
 SERVICE = "cirvanna-marketplace-bff"
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_HTML = ROOT / "apps" / "demo-web" / "marketplace.html"
+DEFAULT_WARDROBE_HTML = ROOT / "apps" / "demo-web" / "wardrobe.html"
 HTML_PATH = Path(os.getenv("MARKETPLACE_HTML_PATH", str(DEFAULT_HTML)))
 TIMEOUT_SECONDS = 5.0
 MAX_PAGE_SIZE = 100
@@ -35,7 +39,7 @@ SERVICE_PATHS = {
 app = FastAPI(
     title="Cirvanna Marketplace BFF",
     version="0.1.0",
-    description="Same-origin marketplace UI, account-safe AI search, and constrained API gateway.",
+    description="Same-origin marketplace and Wardrobe UI with verified account identity and private service proxies.",
 )
 
 
@@ -173,6 +177,236 @@ async def marketplace_description_search(payload: MarketplaceSearchIn) -> dict:
     }
 
 
+
+async def _verified_commerce_subject(client: httpx.AsyncClient, request: Request) -> tuple[str, str]:
+    authorization = request.headers.get("authorization", "")
+    scheme, _, user_token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not user_token.strip():
+        raise HTTPException(401, detail={"code": "USER_BEARER_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
+    commerce_base = _upstream_base("COMMERCE_API_URL")
+    try:
+        identity = await client.get(
+            commerce_base + "/me",
+            headers={"Authorization": "Bearer " + user_token.strip(), "Accept": "application/json"},
+        )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "USER_IDENTITY_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "USER_IDENTITY_UNAVAILABLE"}) from exc
+    if identity.status_code in {401, 403}:
+        raise HTTPException(401, detail={"code": "USER_AUTHENTICATION_FAILED"})
+    if identity.status_code != 200:
+        raise HTTPException(503, detail={"code": "USER_IDENTITY_UNAVAILABLE"})
+    try:
+        actor = identity.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "INVALID_USER_IDENTITY_RESPONSE"}) from exc
+    subject = actor.get("user_id") if isinstance(actor, dict) else None
+    if not isinstance(subject, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}", subject.strip()):
+        raise HTTPException(502, detail={"code": "INVALID_USER_IDENTITY_RESPONSE"})
+    return subject.strip(), user_token.strip()
+
+
+def _wardrobe_service() -> tuple[str, str]:
+    return _internal_service("WARDROBE_SERVICE_URL", "WARDROBE_SERVICE_TOKEN")
+
+
+def _identity_learning_service() -> tuple[str, str]:
+    return _internal_service("IDENTITY_SERVICE_URL", "IDENTITY_SERVICE_TOKEN")
+
+
+def _decision_gateway() -> tuple[str, str]:
+    return _internal_service("DECISION_GATEWAY_URL", "DECISION_GATEWAY_TOKEN")
+
+
+def _private_json_response(data: dict) -> JSONResponse:
+    return JSONResponse(content=data, headers={"Cache-Control": "no-store, private"})
+
+
+@app.get("/wardrobe", response_class=HTMLResponse)
+def wardrobe_page() -> HTMLResponse:
+    try:
+        html = DEFAULT_WARDROBE_HTML.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail={"code": "WARDROBE_PAGE_UNAVAILABLE"}) from exc
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/wardrobe/items")
+async def wardrobe_items(request: Request) -> Response:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        base, token = _wardrobe_service()
+        try:
+            response = await client.get(
+                base + "/v1/items",
+                params={"owner_user_id": subject, "include_archived": "false"},
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "WARDROBE_SERVICE_UNAVAILABLE"}) from exc
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "WARDROBE_SERVICE_UNAVAILABLE"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "WARDROBE_RESPONSE_INVALID"}) from exc
+    if (
+        not isinstance(data, dict) or data.get("owner_user_id") != subject
+        or not isinstance(data.get("items"), list)
+        or any(not isinstance(item, dict) or item.get("owner_user_id") != subject for item in data["items"])
+    ):
+        raise HTTPException(502, detail={"code": "WARDROBE_SCOPE_OR_SCHEMA_MISMATCH"})
+    return _private_json_response(data)
+
+
+@app.post("/api/wardrobe/consents")
+async def wardrobe_create_consent(payload: WardrobeConsentIn, request: Request) -> Response:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        base, token = _identity_learning_service()
+        receipt_id = str(uuid.uuid4())
+        try:
+            response = await client.post(
+                base + "/v1/tal/consents",
+                params={"subject_id": subject},
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json={
+                    "receipt_id": receipt_id,
+                    "scope": payload.scope,
+                    "consent_version": "wardrobe-pnelly-learning-v1",
+                    "granted": payload.granted,
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "IDENTITY_CONSENT_UNAVAILABLE"}) from exc
+    if response.status_code not in {200, 201}:
+        raise HTTPException(503, detail={"code": "IDENTITY_CONSENT_WRITE_FAILED"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "IDENTITY_CONSENT_RESPONSE_INVALID"}) from exc
+    return _private_json_response({"subject_id": subject, "receipt_id": receipt_id, "scope": payload.scope, "granted": payload.granted, "result": data})
+
+
+@app.post("/api/wardrobe/consents/{receipt_id}/revoke")
+async def wardrobe_revoke_consent(receipt_id: str, request: Request) -> Response:
+    if len(receipt_id) < 8 or len(receipt_id) > 128:
+        raise HTTPException(422, detail={"code": "INVALID_CONSENT_RECEIPT_ID"})
+    async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        base, token = _identity_learning_service()
+        try:
+            response = await client.post(
+                base + f"/v1/tal/consents/{receipt_id}/revoke",
+                params={"subject_id": subject},
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "IDENTITY_CONSENT_UNAVAILABLE"}) from exc
+    if response.status_code == 404:
+        raise HTTPException(404, detail={"code": "CONSENT_RECEIPT_NOT_FOUND"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "IDENTITY_CONSENT_REVOKE_FAILED"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "IDENTITY_CONSENT_RESPONSE_INVALID"}) from exc
+    return _private_json_response(data)
+
+
+@app.post("/api/wardrobe/feedback")
+async def wardrobe_feedback(payload: WardrobeFeedbackIn, request: Request) -> Response:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        base, token = _wardrobe_service()
+        body = payload.model_dump(mode="json")
+        body["owner_user_id"] = subject
+        body["observed_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        try:
+            response = await client.post(
+                base + "/v1/feedback",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json=body,
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "WARDROBE_FEEDBACK_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "WARDROBE_FEEDBACK_UNAVAILABLE"}) from exc
+    if response.status_code in {400, 403, 404, 409, 422}:
+        try:
+            detail = response.json().get("detail", {})
+            code = detail.get("code") if isinstance(detail, dict) else None
+        except ValueError:
+            code = None
+        raise HTTPException(response.status_code, detail={"code": code or "WARDROBE_FEEDBACK_REJECTED"})
+    if response.status_code != 201:
+        raise HTTPException(503, detail={"code": "WARDROBE_FEEDBACK_UNAVAILABLE"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "WARDROBE_FEEDBACK_RESPONSE_INVALID"}) from exc
+    return _private_json_response(data)
+
+
+@app.post("/api/wardrobe/recommendations")
+async def wardrobe_recommendations(payload: WardrobeRecommendationIn, request: Request) -> Response:
+    subject, user_token = (None, None)
+    async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, user_token = await _verified_commerce_subject(client, request)
+        base, token = _decision_gateway()
+        now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        context: dict[str, str] = {}
+        if payload.location and payload.location.strip():
+            context.update({"location": payload.location.strip(), "location_source": "user_declared", "location_observed_at": now})
+        if payload.occasion and payload.occasion.strip():
+            context.update({"occasion": payload.occasion.strip(), "occasion_source": "user_declared", "occasion_observed_at": now})
+        if payload.climate and payload.climate.strip():
+            context.update({"climate": payload.climate.strip(), "climate_source": "user_declared", "climate_observed_at": now})
+        body = {
+            "user_id": subject,
+            "query": " ".join(payload.query.split()).strip(),
+            "category": payload.category,
+            "currency": payload.currency.upper() if payload.currency else None,
+            "limit": payload.limit,
+            "context": context,
+            "use_wardrobe_context": True,
+            "exclude_owned_products": payload.exclude_owned_products,
+        }
+        try:
+            response = await client.post(
+                base + "/v1/discover",
+                headers={
+                    "Authorization": "Bearer " + token,
+                    "X-End-User-Authorization": "Bearer " + user_token,
+                    "Accept": "application/json",
+                },
+                json=body,
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "WARDROBE_RECOMMENDATIONS_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "WARDROBE_RECOMMENDATIONS_UNAVAILABLE"}) from exc
+    if response.status_code in {400, 401, 403, 404, 409, 422}:
+        try:
+            detail = response.json().get("detail", {})
+            code = detail.get("code") if isinstance(detail, dict) else None
+        except ValueError:
+            code = None
+        raise HTTPException(response.status_code, detail={"code": code or "WARDROBE_RECOMMENDATIONS_REJECTED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "WARDROBE_RECOMMENDATIONS_UNAVAILABLE"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "WARDROBE_RECOMMENDATIONS_RESPONSE_INVALID"}) from exc
+    # The decision gateway returns product/offer details only for CAL SHOW.
+    if not isinstance(data, dict) or not isinstance(data.get("displayable_products"), list):
+        raise HTTPException(502, detail={"code": "WARDROBE_RECOMMENDATIONS_RESPONSE_INVALID"})
+    return _private_json_response(data)
+
+
+
 @app.post("/api/vision/click-it")
 async def marketplace_click_it(
     request: Request,
@@ -278,6 +512,34 @@ async def marketplace_click_it(
     if response.status_code in {502, 503}:
         raise HTTPException(503 if response.status_code == 503 else 502, detail=safe)
     raise HTTPException(502, detail={"code": "CLICK_IT_FAILED"})
+
+
+class WardrobeFeedbackIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    item_id: str = Field(min_length=3, max_length=128)
+    event_id: str = Field(min_length=8, max_length=128)
+    signal: Literal["like", "dislike", "avoid", "modify", "wear"]
+    consent_receipt_id: str = Field(min_length=8, max_length=128)
+    target_type: Literal["item", "attribute"] | None = None
+    target_value: str | None = Field(default=None, min_length=1, max_length=180)
+
+
+class WardrobeConsentIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    scope: Literal["style_learning", "personalization", "profile_storage"]
+    granted: bool = True
+
+
+class WardrobeRecommendationIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    query: str = Field(min_length=2, max_length=160)
+    category: str | None = Field(default=None, max_length=80)
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    limit: int = Field(default=10, ge=1, le=25)
+    occasion: str | None = Field(default=None, max_length=120)
+    location: str | None = Field(default=None, max_length=120)
+    climate: str | None = Field(default=None, max_length=120)
+    exclude_owned_products: bool = True
 
 
 def _page_html() -> str:
