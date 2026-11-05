@@ -15,7 +15,7 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 import httpx
-from fastapi import Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import Body, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -822,6 +822,59 @@ async def submit_image_rights_request(payload: ImageRightsRequest) -> Response:
         "status_token": receipt.get("status_token") if isinstance(receipt.get("status_token"), str) else None,
     }
     return JSONResponse(status_code=202, content=safe_receipt, headers={"Cache-Control": "no-store, private"})
+
+
+@app.get("/api/privacy/image-requests/{request_id}")
+async def get_image_rights_request_status(
+    request_id: str,
+    status_token: str = Header(alias="X-Privacy-Request-Token", min_length=24, max_length=512),
+) -> Response:
+    """Let a photographed person track their request without an uploader account."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{8,160}", request_id):
+        raise HTTPException(404, detail={"code": "IMAGE_RIGHTS_REQUEST_NOT_FOUND"})
+    base, token = _internal_service("PRIVACY_RIGHTS_API_URL", "PRIVACY_RIGHTS_API_TOKEN")
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(8.0, connect=2.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            upstream = await client.get(
+                base + "/internal/v1/image-rights/requests/" + request_id,
+                headers={
+                    "Authorization": "Bearer " + token,
+                    "X-Requester-Status-Token": status_token,
+                    "Accept": "application/json",
+                },
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "IMAGE_RIGHTS_STATUS_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "IMAGE_RIGHTS_SERVICE_UNAVAILABLE"}) from exc
+    if upstream.status_code in {401, 403, 404}:
+        raise HTTPException(404, detail={"code": "IMAGE_RIGHTS_REQUEST_NOT_FOUND"})
+    if upstream.status_code != 200:
+        raise HTTPException(503, detail={"code": "IMAGE_RIGHTS_STATUS_UNAVAILABLE"})
+    try:
+        receipt = upstream.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "IMAGE_RIGHTS_STATUS_INVALID"}) from exc
+    valid = (
+        isinstance(receipt, dict)
+        and receipt.get("request_id") == request_id
+        and receipt.get("status") in {"accepted", "quarantined", "under_review", "completed", "rejected", "escalated"}
+        and isinstance(receipt.get("updated_at"), str)
+    )
+    if not valid:
+        raise HTTPException(502, detail={"code": "IMAGE_RIGHTS_STATUS_INVALID"})
+    safe = {
+        "request_id": request_id,
+        "status": receipt["status"],
+        "quarantined": receipt.get("quarantined") is True,
+        "updated_at": receipt["updated_at"],
+        "resolution_code": receipt.get("resolution_code") if isinstance(receipt.get("resolution_code"), str) else None,
+    }
+    return JSONResponse(content=safe, headers={"Cache-Control": "no-store, private"})
 
 
 @app.api_route("/api/commerce/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
