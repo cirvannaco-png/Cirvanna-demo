@@ -92,7 +92,7 @@ def health() -> dict[str, str]:
 @app.get("/ready", response_model=ReadinessResponse, tags=["operations"])
 async def ready() -> ReadinessResponse:
     vision_ready = await _vision_worker_ready()
-    consent_configured = _internal_config("CONSENT_API_URL", "CONSENT_API_TOKEN") is not None
+    consent_configured = _internal_config("PRIVACY_GOVERNANCE_API_URL", "PRIVACY_GOVERNANCE_API_TOKEN") is not None
     twin_registry_configured = _internal_config("TWIN_REGISTRY_API_URL", "TWIN_REGISTRY_API_TOKEN") is not None
     api_token_configured = len(os.getenv("VIRTUAL_TWIN_API_TOKEN", "").encode("utf-8")) >= 32
     ready_now = vision_ready and consent_configured and api_token_configured
@@ -169,7 +169,7 @@ async def _verify_consent(
     require_guardian_authority: bool = False,
 ) -> None:
     """Verify durable, revocable user consent with the configured identity service."""
-    config = _internal_config("CONSENT_API_URL", "CONSENT_API_TOKEN")
+    config = _internal_config("PRIVACY_GOVERNANCE_API_URL", "PRIVACY_GOVERNANCE_API_TOKEN")
     if config is None:
         raise HTTPException(503, detail={"code": "CONSENT_PROVIDER_NOT_CONFIGURED"})
     base, token = config
@@ -332,7 +332,7 @@ async def capabilities() -> dict[str, object]:
     """Report verified model/service state and deliberately separate partial inference."""
     dermalsight_ready = await _dermalsight_ready()
     vision_ready = await _vision_worker_ready()
-    consent_configured = _internal_config("CONSENT_API_URL", "CONSENT_API_TOKEN") is not None
+    consent_configured = _internal_config("PRIVACY_GOVERNANCE_API_URL", "PRIVACY_GOVERNANCE_API_TOKEN") is not None
     twin_registry_configured = _internal_config("TWIN_REGISTRY_API_URL", "TWIN_REGISTRY_API_TOKEN") is not None
     return {
         "service": SERVICE_NAME,
