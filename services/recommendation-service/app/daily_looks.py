@@ -114,6 +114,7 @@ def _score(
     items: list[dict[str, Any]],
     role: str,
     style_signals: tuple[str, ...],
+    feedback_signals: tuple[str, ...],
     occasion: str | None = None,
     climate: str | None = None,
 ) -> int:
@@ -132,7 +133,11 @@ def _score(
 
     # USI attributes are explicit positive fashion preference strings; they
     # are ranking hints only and never inferred traits or hard exclusions.
-    score += sum(2 for signal in style_signals if signal and signal.split(":", 1)[-1] in text)
+    style_matches = sum(2 for signal in style_signals if signal and signal.split(":", 1)[-1] in text)
+    feedback_matches = sum(1 for signal in feedback_signals if signal and signal.split(":", 1)[-1] in text)
+    # Keep learned feedback advisory and bounded so a noisy event history
+    # cannot overwhelm the declared day context or hard policy boundaries.
+    score += min(8, style_matches) + min(4, feedback_matches)
     return score
 
 
@@ -202,7 +207,6 @@ def build_daily_looks(
 
     signals = tuple(_normalise(value) for value in style_signals if isinstance(value, str) and value.strip())[:40]
     feedback = tuple(_normalise(value) for value in feedback_signals if isinstance(value, str) and value.strip())[:40]
-    ranking_signals = signals + feedback
     selected_base: set[frozenset[str]] = set()
     selected_item_ids: set[str] = set()
     looks: list[dict[str, Any]] = []
@@ -236,7 +240,7 @@ def build_daily_looks(
         candidate = max(
             available,
             key=lambda group: (
-                _score(group, role, ranking_signals, occasion, climate),
+                _score(group, role, signals, feedback, occasion, climate),
                 -sum(len(set(x["item_id"] for x in group) & selected_item_ids) for _ in (0,)),
                 _stable_tie(user_id, local_date, role, (x["item_id"] for x in group)),
             ),
@@ -255,7 +259,7 @@ def build_daily_looks(
                 optional_candidates.append(max(
                     pool,
                     key=lambda x: (
-                        _score([x], role, ranking_signals, occasion, climate),
+                        _score([x], role, signals, feedback, occasion, climate),
                         _stable_tie(user_id, local_date, role, [x["item_id"]]),
                     ),
                 ))
