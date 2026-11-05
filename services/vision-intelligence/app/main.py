@@ -23,6 +23,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFi
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field
+from app.click_it_privacy import anonymize_click_it_image, detector_configuration
 from starlette import status
 from urllib.parse import urlsplit
 
@@ -604,9 +605,7 @@ async def click_it_scan(
                 "message": "Retake the photo with better lighting, focus, contrast, and the product clearly in frame.",
             },
         )
-    query_vector = _image_embedding(decoded)
-    offers, truncated = await _live_offers()
-    if category and category.strip():
+    # Privacy shield is mandatory: no image embedding or downstream request runs until\n    # face detection succeeds and every detected face has been blurred.\n    privacy_ready, privacy_reason = detector_configuration()\n    if not privacy_ready:\n        raise HTTPException(503, detail={"code": "CLICK_IT_PRIVACY_DETECTOR_NOT_READY", "reason": privacy_reason})\n    privacy_safe_image, faces_masked = anonymize_click_it_image(decoded)\n    query_vector = _image_embedding(privacy_safe_image)\n    offers, truncated = await _live_offers()\n    if category and category.strip():
         selected = category.strip().casefold()
         offers = [
             item for item in offers
@@ -618,8 +617,7 @@ async def click_it_scan(
         "status": "complete",
         "scan_id": str(uuid.uuid4()),
         "search_mode": "image_to_catalog_text_similarity",
-        "image_quality": quality,
-        "candidate_count": len(results),
+        "image_quality": quality,\n        "privacy": {"face_detection": "completed", "faces_masked": faces_masked, "face_recognition": False, "original_image_persisted": False},\n        "candidate_count": len(results),
         "catalog_offer_count": len(offers),
         "results": results,
         "catalog_truncated": truncated,
