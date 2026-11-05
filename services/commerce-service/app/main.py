@@ -1076,6 +1076,30 @@ class Readiness(BaseModel):
     ready: bool
 
 
+def merchant_market_json(market: MerchantOperatingMarket, *, include_evidence: bool = False) -> dict[str, Any]:
+    result = {
+        "market_country_code": market.market_country_code,
+        "state": market.state,
+        "display_currency": market.display_currency,
+        "locale": market.locale,
+        "tax_provider": market.tax_provider,
+        "tax_capability_ready": quote_is_current(market.tax_capability_observed_at, market.tax_capability_expires_at),
+        "fulfillment_provider": market.fulfillment_provider,
+        "fulfillment_capability_ready": quote_is_current(market.fulfillment_capability_observed_at, market.fulfillment_capability_expires_at),
+        "activated_at": market.activated_at.isoformat() if market.activated_at else None,
+    }
+    if include_evidence:
+        result.update({
+            "tax_provider_reference": market.tax_provider_reference,
+            "tax_capability_observed_at": market.tax_capability_observed_at.isoformat() if market.tax_capability_observed_at else None,
+            "tax_capability_expires_at": market.tax_capability_expires_at.isoformat() if market.tax_capability_expires_at else None,
+            "fulfillment_provider_reference": market.fulfillment_provider_reference,
+            "fulfillment_capability_observed_at": market.fulfillment_capability_observed_at.isoformat() if market.fulfillment_capability_observed_at else None,
+            "fulfillment_capability_expires_at": market.fulfillment_capability_expires_at.isoformat() if market.fulfillment_capability_expires_at else None,
+        })
+    return result
+
+
 def merchant_json(m: Merchant) -> dict[str, Any]:
     return {"merchant_id": m.id, "owner_user_id": m.owner_user_id, "display_name": m.display_name,
         "legal_name": m.legal_name, "country_code": m.country_code,
@@ -1654,6 +1678,34 @@ def declare_merchant_market(
         "locale": row.locale,
         "activation_authority": "admin",
     }
+
+
+@app.get("/merchants/me/markets")
+def list_my_markets(actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Session, Depends(get_db)]):
+    merchant = db.scalar(select(Merchant).where(Merchant.owner_user_id == actor.user_id))
+    if merchant is None:
+        raise HTTPException(404, detail={"code": "MERCHANT_APPLICATION_NOT_FOUND"})
+    rows = list(db.scalars(select(MerchantOperatingMarket).where(
+        MerchantOperatingMarket.merchant_id == merchant.id,
+    ).order_by(MerchantOperatingMarket.market_country_code)).all())
+    return {"items": [merchant_market_json(row) for row in rows]}
+
+
+@app.get("/admin/merchants/{merchant_id}/markets")
+def list_merchant_markets(
+    merchant_id: uuid.UUID,
+    actor: Annotated[Actor, Depends(require_actor)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    if actor.role != "admin":
+        raise HTTPException(403, detail={"code": "ADMIN_REQUIRED"})
+    merchant = db.get(Merchant, str(merchant_id))
+    if merchant is None:
+        raise HTTPException(404, detail={"code": "MERCHANT_NOT_FOUND"})
+    rows = list(db.scalars(select(MerchantOperatingMarket).where(
+        MerchantOperatingMarket.merchant_id == merchant.id,
+    ).order_by(MerchantOperatingMarket.market_country_code)).all())
+    return {"merchant_id": merchant.id, "items": [merchant_market_json(row, include_evidence=True) for row in rows]}
 
 
 @app.put("/admin/merchants/{merchant_id}/markets/{market_country_code}")
