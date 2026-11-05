@@ -177,6 +177,7 @@ class ConsentGrantIn(StrictModel):
     consent_image_processing: bool
     consent_click_it: bool
     photographed_people_status: Literal["no_people", "adults_only", "contains_minor"]
+    photographed_people_consent_confirmed: bool = False
     consent_version: str = Field(min_length=1, max_length=80)
     resource_id: str | None = Field(default=None, min_length=3, max_length=160)
     guardian_verification_reference: str | None = Field(default=None, min_length=12, max_length=200)
@@ -465,6 +466,8 @@ def ready(db: Session = Depends(session_for_request)) -> dict:
 async def grant_consent(payload: ConsentGrantIn, db: Session = Depends(session_for_request)) -> dict:
     if not payload.consent_image_processing or not payload.consent_click_it:
         raise HTTPException(403, detail={"code": "EXPLICIT_CLICK_IT_CONSENT_REQUIRED"})
+    if payload.photographed_people_status == "adults_only" and not payload.photographed_people_consent_confirmed:
+        raise HTTPException(403, detail={"code": "PHOTOGRAPHED_PEOPLE_CONSENT_REQUIRED"})
     scopes = ["image_processing", "click_it", DECLARATION_SCOPES[payload.photographed_people_status]]
     guardian_verified = False
     verification_digest = None
