@@ -944,9 +944,117 @@ class Readiness(BaseModel):
 
 def merchant_json(m: Merchant) -> dict[str, Any]:
     return {"merchant_id": m.id, "owner_user_id": m.owner_user_id, "display_name": m.display_name,
-        "legal_name": m.legal_name, "country_code": m.country_code, "contact_email": m.contact_email,
+        "legal_name": m.legal_name, "country_code": m.country_code,
+        "brand_home_country_code": m.brand_home_country_code,
+        "legal_country_code": m.legal_country_code or m.country_code,
+        "contact_email": m.contact_email,
         "verification_reference": m.verification_reference, "status": m.state, "commission_bps": m.commission_bps,
         "decision_note": m.decision_note, "created_at": m.created_at.isoformat() if m.created_at else None}
+
+
+
+def quote_is_current(observed_at: datetime | None, expires_at: datetime | None) -> bool:
+    if observed_at is None or expires_at is None:
+        return False
+    observed = observed_at if observed_at.tzinfo else observed_at.replace(tzinfo=timezone.utc)
+    expiry = expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=timezone.utc)
+    current = now()
+    return (
+        current - timedelta(seconds=offer_max_age_seconds()) <= observed <= current + timedelta(minutes=5)
+        and expiry > current
+    )
+
+
+def _require_market_context_token(token: str | None) -> None:
+    expected = os.getenv("COMMERCE_MARKET_CONTEXT_TOKEN", "").strip()
+    if len(expected.encode("utf-8")) < 32 or not token or not hmac.compare_digest(expected, token):
+        raise HTTPException(401, detail={"code": "MARKET_CONTEXT_AUTH_REQUIRED"})
+
+
+def _currency_minor_units(currency: str) -> int:
+    try:
+        return int(get_currency_precision(currency.upper()))
+    except Exception as exc:
+        raise ValueError("unsupported ISO currency") from exc
+
+
+def _fresh_fx_quote(db: Session, variant_id: str, base_currency: str, quote_currency: str) -> OfferFXQuote | None:
+    if base_currency == quote_currency:
+        return None
+    quote = db.scalar(select(OfferFXQuote).where(
+        OfferFXQuote.variant_id == variant_id,
+        OfferFXQuote.base_currency == base_currency,
+        OfferFXQuote.quote_currency == quote_currency,
+    ).order_by(OfferFXQuote.observed_at.desc(), OfferFXQuote.id.desc()).limit(1))
+    if quote is None or not quote_is_current(quote.observed_at, quote.expires_at):
+        return None
+    return quote
+
+
+def _convert_minor_amount(
+    db: Session, *, variant_id: str, amount_minor: int, source_currency: str, target_currency: str
+) -> tuple[int | None, dict[str, Any] | None]:
+    source_currency = source_currency.upper()
+    target_currency = target_currency.upper()
+    try:
+        source_exponent = _currency_minor_units(source_currency)
+        target_exponent = _currency_minor_units(target_currency)
+    except ValueError:
+        return None, None
+    amount_major = Decimal(amount_minor) / (Decimal(10) ** source_exponent)
+    fx = None
+    rate = Decimal("1")
+    if source_currency != target_currency:
+        fx = _fresh_fx_quote(db, variant_id, source_currency, target_currency)
+        if fx is None:
+            return None, None
+        rate = Decimal(fx.rate)
+    converted_minor = (amount_major * rate * (Decimal(10) ** target_exponent)).quantize(
+        Decimal("1"), rounding=ROUND_HALF_UP
+    )
+    fx_meta = None if fx is None else {
+        "quote_id": fx.id,
+        "provider": fx.provider,
+        "provider_quote_id": fx.provider_quote_id,
+        "base_currency": fx.base_currency,
+        "quote_currency": fx.quote_currency,
+        "rate": str(fx.rate),
+        "observed_at": fx.observed_at.isoformat(),
+        "expires_at": fx.expires_at.isoformat(),
+        "rounding_rule": fx.rounding_rule,
+        "spread_bps": fx.spread_bps,
+    }
+    return int(converted_minor), fx_meta
+
+
+def _market_payment_capability(
+    db: Session, merchant_id: str, market_country_code: str, transaction_currency: str,
+    payment_method: str | None = None,
+) -> MarketPaymentCapability | None:
+    current = now()
+    rows = list(db.scalars(select(MarketPaymentCapability).where(
+        MarketPaymentCapability.merchant_id == merchant_id,
+        MarketPaymentCapability.market_country_code == market_country_code,
+        MarketPaymentCapability.state == "active",
+    ).order_by(MarketPaymentCapability.observed_at.desc())).all())
+    for row in rows:
+        if not quote_is_current(row.observed_at, row.expires_at):
+            continue
+        if transaction_currency not in row.transaction_currencies:
+            continue
+        if payment_method and payment_method not in row.payment_methods:
+            continue
+        return row
+    return None
+
+
+def _market_is_active(db: Session, merchant_id: str, market_country_code: str) -> MerchantOperatingMarket | None:
+    return db.scalar(select(MerchantOperatingMarket).where(
+        MerchantOperatingMarket.merchant_id == merchant_id,
+        MerchantOperatingMarket.market_country_code == market_country_code,
+        MerchantOperatingMarket.state == "active",
+    ))
+
 
 
 def approved_merchant(db: Session, actor: Actor) -> Merchant:
@@ -1193,10 +1301,18 @@ def apply_merchant(payload: MerchantApplication, actor: Annotated[Actor, Depends
     exists = db.scalar(select(Merchant).where(Merchant.owner_user_id == actor.user_id))
     if exists:
         raise HTTPException(409, detail={"code": "MERCHANT_APPLICATION_EXISTS", "merchant": merchant_json(exists)})
+    legacy_country = payload.country_code or payload.legal_country_code
+    legal_country = payload.legal_country_code or legacy_country
     merchant = Merchant(id=str(uuid.uuid4()), owner_user_id=actor.user_id,
-        display_name=payload.display_name, legal_name=payload.legal_name, country_code=payload.country_code,
+        display_name=payload.display_name, legal_name=payload.legal_name, country_code=legacy_country,
+        brand_home_country_code=payload.brand_home_country_code, legal_country_code=legal_country,
         contact_email=payload.contact_email, verification_reference=None, state="pending")
     db.add(merchant)
+    for market_country in payload.operating_markets:
+        db.add(MerchantOperatingMarket(
+            id=str(uuid.uuid4()), merchant_id=merchant.id, market_country_code=market_country,
+            state="pending", display_currency=None, locale=None,
+        ))
     try:
         db.commit()
     except IntegrityError as exc:
