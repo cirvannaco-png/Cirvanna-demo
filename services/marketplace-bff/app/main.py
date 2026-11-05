@@ -178,6 +178,14 @@ async def marketplace_description_search(payload: MarketplaceSearchIn) -> dict:
 
 
 
+class CreateWardrobeItemIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    display_name: str = Field(min_length=1, max_length=200)
+    category: str = Field(min_length=1, max_length=80)
+    attributes: list[str] = Field(default_factory=list, max_length=100)
+    catalog_product_id: str | None = Field(default=None, max_length=128)
+
+
 class WardrobeFeedbackIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     item_id: str = Field(min_length=3, max_length=128)
@@ -287,6 +295,66 @@ async def wardrobe_items(request: Request) -> Response:
     ):
         raise HTTPException(502, detail={"code": "WARDROBE_SCOPE_OR_SCHEMA_MISMATCH"})
     return _private_json_response(data)
+
+
+
+
+@app.post("/api/wardrobe/items", status_code=201)
+async def create_wardrobe_item(request: Request, payload: CreateWardrobeItemIn = Body(...)) -> Response:
+    """Create and activate a text-described garment for the verified Commerce subject."""
+    owner = None
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+            owner, _ = await _verified_commerce_subject(client, request)
+            base, token = _wardrobe_service()
+            item_id = str(uuid.uuid4())
+            created = await client.post(
+                base + "/v1/items",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json={
+                    "owner_user_id": owner,
+                    "item_id": item_id,
+                    "display_name": payload.display_name.strip(),
+                    "category": payload.category.strip(),
+                    "attributes": [value.strip() for value in payload.attributes if value.strip()],
+                    "catalog_product_id": payload.catalog_product_id.strip() if payload.catalog_product_id else None,
+                    "image_asset_id": None,
+                    "image_storage_consent": False,
+                },
+            )
+            if created.status_code != 201:
+                raise HTTPException(503, detail={"code": "WARDROBE_ITEM_CREATE_UNAVAILABLE"})
+            try:
+                item = created.json().get("item")
+            except ValueError as exc:
+                raise HTTPException(502, detail={"code": "WARDROBE_ITEM_CREATE_RESPONSE_INVALID"}) from exc
+            if not isinstance(item, dict) or item.get("owner_user_id") != owner or item.get("item_id") != item_id:
+                raise HTTPException(502, detail={"code": "WARDROBE_ITEM_CREATE_SCOPE_MISMATCH"})
+            activated = await client.post(
+                base + f"/v1/items/{item_id}/transition",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json={
+                    "owner_user_id": owner,
+                    "expected_version": item.get("version", 1),
+                    "target_status": "active",
+                    "command_id": "activate-" + str(uuid.uuid4()),
+                },
+            )
+            if activated.status_code != 200:
+                raise HTTPException(503, detail={"code": "WARDROBE_ITEM_ACTIVATION_UNAVAILABLE"})
+            try:
+                result = activated.json().get("item")
+            except ValueError as exc:
+                raise HTTPException(502, detail={"code": "WARDROBE_ITEM_ACTIVATION_RESPONSE_INVALID"}) from exc
+            if not isinstance(result, dict) or result.get("owner_user_id") != owner or result.get("status") != "active":
+                raise HTTPException(502, detail={"code": "WARDROBE_ITEM_ACTIVATION_SCOPE_MISMATCH"})
+            return _private_json_response({"item": result})
+    except HTTPException:
+        raise
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "WARDROBE_ITEM_CREATE_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "WARDROBE_ITEM_CREATE_UNAVAILABLE"}) from exc
 
 
 
