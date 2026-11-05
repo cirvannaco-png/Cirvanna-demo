@@ -22,7 +22,7 @@ def identity_fields():
 
 def mock_internal_config(monkeypatch, *, consent=True, twin_registry=True, vision=True):
     def config(url_name, token_name):
-        if url_name == "CONSENT_API_URL":
+        if url_name == "PRIVACY_GOVERNANCE_API_URL":
             return ("https://consent.example.test", "c" * 40) if consent else None
         if url_name == "TWIN_REGISTRY_API_URL":
             return ("https://twins.example.test", "t" * 40) if twin_registry else None
