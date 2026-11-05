@@ -591,6 +591,7 @@ async def click_it(
         fields = {
             "consent_image_processing": "true",
             "consent_click_it": "true",
+            "photographed_people_status": photographed_people_status,
             "limit": str(limit),
         }
         if category and category.strip():
