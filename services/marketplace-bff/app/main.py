@@ -15,7 +15,7 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 import httpx
-from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -284,7 +284,7 @@ async def wardrobe_list_consents(request: Request) -> Response:
     return _private_json_response({"subject_id": subject, "items": data})
 
 @app.post("/api/wardrobe/consents")
-async def wardrobe_create_consent(payload: WardrobeConsentIn, request: Request) -> Response:
+async def wardrobe_create_consent(request: Request, payload: WardrobeConsentIn = Body(...)) -> Response:
     async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
         subject, _ = await _verified_commerce_subject(client, request)
         base, token = _identity_learning_service()
@@ -339,7 +339,7 @@ async def wardrobe_revoke_consent(receipt_id: str, request: Request) -> Response
 
 
 @app.post("/api/wardrobe/feedback")
-async def wardrobe_feedback(payload: WardrobeFeedbackIn, request: Request) -> Response:
+async def wardrobe_feedback(request: Request, payload: WardrobeFeedbackIn = Body(...)) -> Response:
     async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
         subject, _ = await _verified_commerce_subject(client, request)
         base, token = _wardrobe_service()
@@ -373,7 +373,7 @@ async def wardrobe_feedback(payload: WardrobeFeedbackIn, request: Request) -> Re
 
 
 @app.post("/api/wardrobe/recommendations")
-async def wardrobe_recommendations(payload: WardrobeRecommendationIn, request: Request) -> Response:
+async def wardrobe_recommendations(request: Request, payload: WardrobeRecommendationIn = Body(...)) -> Response:
     subject, user_token = (None, None)
     async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
         subject, user_token = await _verified_commerce_subject(client, request)
