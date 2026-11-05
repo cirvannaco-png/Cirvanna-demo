@@ -1020,6 +1020,13 @@ async def get_image_rights_request_status(
         and receipt.get("request_id") == request_id
         and receipt.get("status") in {"accepted", "quarantined", "under_review", "completed", "rejected", "escalated"}
         and isinstance(receipt.get("updated_at"), str)
+        and isinstance(receipt.get("triage_due_at"), str)
+        and (receipt.get("legal_response_due_at") is None or isinstance(receipt.get("legal_response_due_at"), str))
+        and receipt.get("deadline_basis") in {
+            "resolved_signed_jurisdiction_policy",
+            "jurisdiction_unresolved_platform_triage",
+        }
+        and isinstance(receipt.get("applicable_jurisdictions"), list)
     )
     if not valid:
         raise HTTPException(502, detail={"code": "IMAGE_RIGHTS_STATUS_INVALID"})
@@ -1028,6 +1035,10 @@ async def get_image_rights_request_status(
         "status": receipt["status"],
         "quarantined": receipt.get("quarantined") is True,
         "updated_at": receipt["updated_at"],
+        "triage_due_at": receipt["triage_due_at"],
+        "legal_response_due_at": receipt.get("legal_response_due_at"),
+        "deadline_basis": receipt["deadline_basis"],
+        "applicable_jurisdictions": receipt["applicable_jurisdictions"],
         "resolution_code": receipt.get("resolution_code") if isinstance(receipt.get("resolution_code"), str) else None,
     }
     return JSONResponse(content=safe, headers={"Cache-Control": "no-store, private"})
