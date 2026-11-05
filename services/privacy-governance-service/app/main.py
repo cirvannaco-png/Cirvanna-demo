@@ -833,14 +833,8 @@ async def rights_deadline_context(asset_id: str, db: Session, created_at: dateti
     )
     normalized = sorted({value.upper() for value in jurisdictions}) if complete else []
     bundles = [_active_policy(db, code, created_at) for code in normalized] if complete else []
-    complete = complete and bool(bundles) and all(bundle is not None for bundle in bundles)
-    if complete:
-        transfer_paths = resolution.get("transfer_paths", [])
-        complete = (
-            all(bundle.lawful_basis_approved and bundle.cross_border_transfer_allowed for bundle in bundles)
-            and all(item.get("allowed") is True for item in transfer_paths)
-        )
-    if complete:
+    policies_complete = complete and bool(bundles) and all(bundle is not None for bundle in bundles)
+    if policies_complete:
         legal_hours = min(bundle.rights_response_deadline_hours for bundle in bundles)
         return {
             "applicable_jurisdictions": normalized,
@@ -849,9 +843,13 @@ async def rights_deadline_context(asset_id: str, db: Session, created_at: dateti
             "triage_hours": triage_hours,
         }
     return {
-        "applicable_jurisdictions": [],
+        "applicable_jurisdictions": normalized,
         "legal_response_due_at": None,
-        "deadline_basis": "jurisdiction_unresolved_platform_triage",
+        "deadline_basis": (
+            "jurisdiction_policy_missing_platform_triage"
+            if complete
+            else "jurisdiction_unresolved_platform_triage"
+        ),
         "triage_hours": triage_hours,
     }
 
