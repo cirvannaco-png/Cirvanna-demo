@@ -27,6 +27,7 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import (
@@ -494,7 +495,7 @@ async def ready(db: Session = Depends(session_for_request)) -> dict:
         signing_ready,
         *(state["ready"] for state in provider_state.values()),
     ])
-    return {
+    payload = {
         "status": "ready" if required_providers_ready else "not_ready",
         "service": SERVICE,
         "database_ready": database_ready,
@@ -514,6 +515,9 @@ async def ready(db: Session = Depends(session_for_request)) -> dict:
         "providers": provider_state,
         "ready": required_providers_ready,
     }
+    if not required_providers_ready:
+        return JSONResponse(status_code=503, content=payload)
+    return payload
 
 
 @app.post("/internal/v1/consents/grant", dependencies=[Depends(require_internal)])
