@@ -207,7 +207,7 @@ def test_click_it_uses_verified_commerce_subject_and_returns_only_pending_candid
         FakeResponse({"user_id": "signed-user-42", "role": "customer", "email": None}),
         FakeResponse({
             "status": "complete",
-            "candidates": [{"variant_id": "variant-3", "product_name": "linen shirt", "render_url": "https://cdn.example.test/render.png", "media": {"photo_asset_id": "asset-private", "src": "https://cdn.example.test/private-src.jpg", "type": "image"}}],
+            "candidates": [{"variant_id": "variant-3", "product_name": "linen shirt", "render_url": "https://cdn.example.test/render.png", "media": {"photo_asset_id": "asset-private", "src": "https://cdn.example.test/private-src.jpg", "type": "image"}, "assets": [{"url": "https://cdn.example.test/asset.jpg", "storage_key": "private-key", "type": "image"}], "gallery": [{"href": "https://cdn.example.test/gallery.jpg", "caption": "look"}]}],
             "candidate_count": 1,
             "display_authorized": False,
             "decision_status": "PENDING_CAL",
@@ -235,6 +235,11 @@ def test_click_it_uses_verified_commerce_subject_and_returns_only_pending_candid
     assert response.json()["candidates"][0]["media"]["photo_asset_id"] is None
     assert response.json()["candidates"][0]["media"]["src"] is None
     assert response.json()["candidates"][0]["media"]["type"] == "image"
+    assert response.json()["candidates"][0]["assets"][0]["url"] is None
+    assert response.json()["candidates"][0]["assets"][0]["storage_key"] is None
+    assert response.json()["candidates"][0]["assets"][0]["type"] == "image"
+    assert response.json()["candidates"][0]["gallery"][0]["href"] is None
+    assert response.json()["candidates"][0]["gallery"][0]["caption"] == "look"
     assert len(fake.calls) == 2
     assert fake.calls[0][1] == "https://commerce.example.test/me"
     assert fake.calls[1][1] == "https://virtual-twin.example.test/click-it"
