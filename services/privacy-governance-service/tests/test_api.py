@@ -107,7 +107,7 @@ def configure_policy_key(monkeypatch):
 def test_health_and_readiness_do_not_claim_missing_provider_readiness(client):
     assert client.get("/health").json()["status"] == "alive"
     ready = client.get("/ready")
-    assert ready.status_code == 200
+    assert ready.status_code == 503
     assert ready.json()["ready"] is False
     assert ready.json()["jurisdiction_resolver_configured"] is False
     assert ready.json()["content_lifecycle_configured"] is False
@@ -157,7 +157,7 @@ def test_readiness_probes_every_trusted_provider_instead_of_trusting_configurati
     response = client.get("/ready")
     body = response.json()
 
-    assert response.status_code == 200
+    assert response.status_code == 503
     assert len(calls) == 5
     assert all(token.startswith("Bearer provider-token-") for _, token in calls)
     assert body["jurisdiction_resolver_configured"] is True
