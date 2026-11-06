@@ -13,6 +13,7 @@ def client(monkeypatch):
     monkeypatch.setenv("FASHN_VTON_SOURCE_REF","a"*40)
     monkeypatch.setenv("FASHN_VTON_WEIGHTS_DIR","/mock/weights")
     monkeypatch.setattr(main,"_configured",lambda:(True,"ready"))
+    monkeypatch.setattr(main,"_pipeline",lambda:object())
     with TestClient(main.app) as c:
         yield c
 
@@ -93,3 +94,38 @@ def test_readiness_requires_gpu_source_pin_and_weights(monkeypatch):
     with TestClient(main.app) as client:
         response=client.get("/ready")
     assert response.status_code==503
+
+
+
+def test_weight_manifest_checksums_are_verified(tmp_path, monkeypatch):
+    import hashlib
+
+    weight = tmp_path / "model.bin"
+    weight.write_bytes(b"pinned model weights")
+    digest = hashlib.sha256(weight.read_bytes()).hexdigest()
+    manifest = tmp_path / "SHA256SUMS"
+    manifest.write_text(f"{digest}  model.bin\n", encoding="utf-8")
+    monkeypatch.setenv("FASHN_VTON_WEIGHTS_MANIFEST", str(manifest))
+    assert main._weights_manifest_valid(tmp_path) is True
+
+    weight.write_bytes(b"modified weights")
+    assert main._weights_manifest_valid(tmp_path) is False
+
+
+def test_weight_manifest_rejects_paths_outside_model_directory(tmp_path, monkeypatch):
+    outside = tmp_path.parent / "outside-model.bin"
+    outside.write_bytes(b"not a model file")
+    manifest = tmp_path / "SHA256SUMS"
+    digest = __import__("hashlib").sha256(outside.read_bytes()).hexdigest()
+    manifest.write_text(f"{digest}  ../outside-model.bin\n", encoding="utf-8")
+    monkeypatch.setenv("FASHN_VTON_WEIGHTS_MANIFEST", str(manifest))
+    assert main._weights_manifest_valid(tmp_path) is False
+
+
+def test_ready_fails_if_real_pipeline_initialization_fails(client, monkeypatch):
+    monkeypatch.setattr(main, "_configured", lambda: (True, "ready"))
+    monkeypatch.setattr(main, "_pipeline", lambda: (_ for _ in ()).throw(RuntimeError("weights unavailable")))
+    response = client.get("/ready")
+    assert response.status_code == 503
+    assert response.json()["detail"]["reason"] == "model_initialization_failed"
+    assert "weights unavailable" not in response.text

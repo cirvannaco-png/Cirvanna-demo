@@ -19,6 +19,7 @@ Unsupported values are rejected by the request schema; no silent category fallba
 - `VTON_WORKER_TOKEN`: internal bearer token of at least 32 bytes.
 - `FASHN_VTON_SOURCE_REF`: exact 40-character upstream Git commit SHA.
 - `FASHN_VTON_WEIGHTS_DIR`: mounted model-weight directory.
+- `FASHN_VTON_WEIGHTS_MANIFEST`: optional path to a `SHA256SUMS` manifest inside that directory; defaults to `$FASHN_VTON_WEIGHTS_DIR/SHA256SUMS`. Every listed file must exist beneath the mount and match its SHA-256 digest.
 - NVIDIA CUDA runtime, compatible GPU, pinned model code and required weights must all be present before readiness succeeds.
 
 Build from the repository root only after verifying the upstream source commit and dependency licenses:
@@ -34,7 +35,7 @@ Mount weights from a controlled model artifact store; do not bake private/user a
 ## API
 
 - `GET /health`: process liveness only.
-- `GET /ready`: 503 unless token, exact source pin, model weights and CUDA are available.
+- `GET /ready`: 503 unless token, exact source pin, checksummed model files and CUDA are available, and the actual FASHN pipeline initializes successfully.
 - `GET /capabilities`: describes supported categories and no-persistence behavior.
 - `POST /v1/render`: authenticated multipart person/garment images, category and both explicit consent flags; returns validated `image/png`.
 
