@@ -1,41 +1,44 @@
 # Public image publication inventory and fail-closed contract
 
-**Audit snapshot:** 6 November 2026, branch feature/outfit-evaluation-publication-guards.
-**Status:** existing marketplace outputs withhold image URLs; the central gate is stricter and tested. Global publication safety is NOT certified because no Content Lifecycle service or complete publish/restore/share route inventory exists in this repository.
+**Audit snapshot:** 6 November 2026.
+**Status:** the known public marketplace image leak is fixed on main by merged PR #112. The broader gate has digest-bound, human-review requirements in draft PR #111. Global publication safety is NOT certified because no Content Lifecycle service or complete publish/restore/share route inventory exists.
 
 ## Known image-bearing boundaries
 
 | Surface | Current behavior | Evidence / release condition |
 |---|---|---|
 | API Gateway marketplace discovery, POST /v1/discover | CAL-authorized product and offer payloads return empty image_urls; tests inject unmasked Catalog and Commerce URLs and assert both are removed. | services/api-gateway/app/main.py; services/api-gateway/tests/test_marketplace_discovery.py |
-| Commerce marketplace offers, GET /marketplace/offers | Returns image_urls as an empty list. | services/commerce-service/app/main.py; services/commerce-service/tests/test_commerce.py |
-| Vision text search, POST /v1/search/text | Removes top-level and nested product image URLs unless separately attested; current implementation withholds them. | services/vision-intelligence/app/main.py |
-| Vision Click It, POST /v1/click-it/scan | Detector/mask must run before quality scoring, embedding and catalog retrieval; original decoded image is closed before quality scoring; response is no-store and reports image_persisted=false; candidate image URLs are withheld. | services/vision-intelligence/app/main.py; services/vision-intelligence/app/click_it_privacy.py; services/vision-intelligence/tests/test_api.py; services/vision-intelligence/tests/test_click_it_privacy.py |
-| Catalog product CRUD and batch reads | Image URLs remain in Catalog records, but these endpoints require the internal Catalog read/write token. They are not public publication routes and must not be exposed directly by a gateway. | services/catalog-service/app/main.py |
-| Merchant listing creation | Authenticated merchant workflow snapshots Catalog image URLs for the merchant's own listing. Customer-facing Commerce offers still return no image URLs. If a future merchant/customer surface displays these assets, it must call the publication gate first. | services/commerce-service/app/main.py; services/commerce-service/tests/test_commerce.py |
+| Commerce marketplace offers, GET /marketplace/offers | Returns image_urls as an empty list. This fix is merged to main in PR #112. | services/commerce-service/app/main.py; services/commerce-service/tests/test_commerce.py |
+| Marketplace BFF public offers | Independently strips top-level and nested product image URLs even if upstream regresses. Merged to main in PR #112. | services/marketplace-bff/app/main.py; services/marketplace-bff/tests/test_main.py |
+| Vision text search and Click It | Removes top-level and nested image URLs from ranked candidates. Click It masks before quality scoring, embedding and catalog retrieval; closes the original decoded image before quality scoring; response is no-store and reports image_persisted=false. Merged image suppression is on main; deeper buffer-cleanup tests are in PR #111. | services/vision-intelligence/app/main.py; services/vision-intelligence/app/click_it_privacy.py; services/vision-intelligence/tests/test_api.py |
+| Catalog product CRUD and batch reads | Image URLs remain in Catalog records, but endpoints require internal Catalog credentials. They are not public publication routes and must never be exposed directly by a gateway. | services/catalog-service/app/main.py |
+| Merchant listing creation | PR #111 changes the authenticated merchant listing workflow to persist and return no image URLs until an asset-bound masking receipt is verified. | services/commerce-service/app/main.py; services/commerce-service/tests/test_commerce.py |
+| Virtual Try-On model worker | Returns a consented, private, no-store image response to its authenticated internal caller; this is not a public media URL or a publishing route. Real renderer/provider remains unconfigured. | services/virtual-try-on/model-worker/app/main.py; services/virtual-try-on/README.md |
 
 ## Central publication gate
 
 The internal Privacy Governance endpoint accepts five target surfaces: public_profile, community_feed, marketplace, merchant_surface and shared_link.
 
-A PASS now requires a trusted Vision provider receipt that:
-- matches the opaque asset ID and the SHA-256 digest of the exact asset bytes;
-- carries an active, independently human-reviewed privacy decision bound to that same digest;
-- confirms all detected faces were masked before publication, zero unmasked faces remain and all detected regions were processed;
+A PASS requires a trusted Vision provider receipt that:
+- matches the opaque asset ID and SHA-256 digest of the exact stored asset bytes;
+- carries an active, independent human privacy review bound to that same digest, with review receipt, reviewer reference and timestamp;
+- confirms every detected face was masked before publication, zero unmasked faces remain and every detected region was processed;
 - confirms no face recognition, face embeddings or age estimation occurred; and
-- identifies a valid SHA-256 digest for the pinned masking model.
+- identifies the SHA-256 digest for the pinned masking model.
 
-Missing providers, digest mismatch, missing human review, stale/revoked receipts, incomplete masking or unsafe processing block publication. A prior receipt cannot be replayed after the asset bytes change.
+Missing providers, digest mismatch, missing human review, stale/revoked receipts, incomplete masking or unsafe processing block publication. A prior receipt cannot be replayed after asset bytes change. The trusted provider must independently resolve the stored asset and verify its digest; a caller-supplied digest alone is not proof.
 
 ## Main-branch exposure versus PR protection
 
-The 6 November comparison found a real main-branch leak: Commerce GET /marketplace/offers returned the stored Listing.image_urls, and the unauthenticated Marketplace BFF proxy passed those URLs through. The Commerce test on main also asserted that the public offer returned the merchant listing URLs.
+The 6 November comparison found a main-branch leak: Commerce GET /marketplace/offers returned stored Listing.image_urls and the unauthenticated Marketplace BFF proxy passed them through. Vision text search and Click It also exposed Catalog image URLs.
 
-PR #107 corrects this: its Commerce public-offer serializer always emits an empty image_urls list; its Marketplace BFF strips top-level and nested image_urls as defense in depth; and the Commerce/BFF tests now inject unmasked URLs and assert that they are withheld. These fixes are present in feature/privacy-governance-service (and therefore in the stacked branch for PR #111), but PR #107 remains an open draft and has not been merged or deployed. To avoid waiting for the broader privacy service, PR #112 isolates the Commerce/BFF/Vision image-withholding changes as a small main-based hotfix. All nine checks on PR #112 are green, including Commerce, Marketplace BFF, Vision Intelligence, architecture and container image build. **Do not treat main or production as protected until #112 (or #107) is merged, deployed, and rechecked against the public BFF URL.**
+PR #112 is merged to main (merge commit 357ae63a5018306a6fc8ba3c218adec2f0018a2a). It fixes the known public marketplace surfaces in Commerce, Marketplace BFF and Vision. PR #111 adds further fail-closed protection for merchant listing persistence and strengthens the Privacy Governance gate. PR #107 remains a draft and contains the broader consent, image-rights and jurisdiction-aware privacy service.
+
+**Production qualification:** the merged source fix is not proof of a deployed production URL. Recheck the deployed public BFF and Commerce endpoints after the relevant deployment; no production deployment is claimed here.
 
 ## Critical coverage gap
 
-The repository tree has no Content Lifecycle service and no implemented public profile, community-feed, shared-link, restore or syndication publisher to wire to this gate. Therefore the gate is currently a tested policy contract, not a globally enforced publication middleware. Existing marketplace response tests show that the known product-discovery surfaces withhold URLs; they do not prove protection for absent services, external applications, CDN origins or future routes.
+The repository still has no Content Lifecycle service and no implemented public profile, community-feed, shared-link, restore or syndication publisher to wire to this gate. Therefore the gate is a tested policy contract, not globally enforced publication middleware. Existing marketplace response tests prove only that known product-discovery surfaces withhold URLs; they do not prove protection for absent services, external applications, CDN origins or future routes.
 
 **Release rule:** keep all public image URLs withheld until a provider-neutral Content Lifecycle owner exists and every upload, publish, restore, syndication, shared-link and merchant-publication route is inventoried and integration-tested against the gate. No bypass/fallback may publish an image when the provider is unavailable. Validate the exact asset digest at the storage/CDN origin, not from client-supplied metadata.
 
