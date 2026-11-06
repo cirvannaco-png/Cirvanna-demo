@@ -99,7 +99,7 @@ def _internal_service(url_key: str, token_key: str) -> tuple[str, str]:
     return base, token
 
 def _xari_internal_service() -> tuple[str, str]:
-    """Prefer Xari environment names while retaining PNELLY aliases during migration."""
+    """Prefer Xari environment names; retain TARI_* only as legacy Xari credential aliases."""
     xari_url = os.getenv("XARI_API_URL", "").strip()
     legacy_assistant_url = os.getenv("TARI_API_URL", "").strip()
     url_key = "XARI_API_URL" if xari_url else "TARI_API_URL"
@@ -552,7 +552,8 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
 
 
 
-@app.post("/api/wardrobe/daily-looks")
+@app.post("/api/wardrobe/daily-looks", include_in_schema=False)
+@app.post("/api/wardrobe/pnelly/daily-looks")
 async def wardrobe_daily_looks(request: Request, payload: DailyLooksIn = Body(default=DailyLooksIn())) -> Response:
     """Build PNELLY's three daily looks using only the verified user's active wardrobe."""
     request_id = str(uuid.uuid4())
