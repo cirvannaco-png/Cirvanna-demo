@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 import asyncio
+import sys
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -337,6 +339,80 @@ def test_click_it_masks_before_quality_embedding_and_catalog_access(client, monk
     assert response.json()["privacy"]["face_recognition"] is False
     assert response.json()["results"][0]["image_urls"] == []
     assert response.json()["results"][0]["product"]["image_urls"] == []
+
+
+def test_click_it_uses_real_masking_function_before_embedding(client, monkeypatch):
+    from app import click_it_privacy
+
+    events = []
+    payload = image_bytes(pattern=True)
+    with Image.open(io.BytesIO(payload)) as decoded:
+        original = decoded.convert("RGB").copy()
+
+    class FakeDetector:
+        def detect(self, mp_image):
+            events.append("detector")
+            assert mp_image.image_format == "SRGB"
+            assert mp_image.data.shape == (320, 240, 3)
+            detection = SimpleNamespace(
+                categories=[SimpleNamespace(score=0.99)],
+                bounding_box=SimpleNamespace(
+                    origin_x=64, origin_y=80, width=80, height=80,
+                ),
+            )
+            return SimpleNamespace(detections=[detection])
+
+    fake_mediapipe = SimpleNamespace(
+        ImageFormat=SimpleNamespace(SRGB="SRGB"),
+        Image=lambda **kwargs: SimpleNamespace(**kwargs),
+    )
+    monkeypatch.setitem(sys.modules, "mediapipe", fake_mediapipe)
+    monkeypatch.setattr(click_it_privacy, "_face_detector", lambda: FakeDetector())
+    monkeypatch.setattr(main, "detector_configuration", lambda: (True, "test_configured"))
+    monkeypatch.setattr(main, "anonymize_click_it_image", click_it_privacy.anonymize_click_it_image)
+
+    def quality(image):
+        events.append("quality")
+        assert image.size == original.size
+        return {"passed": True, "width": image.width, "height": image.height}
+
+    def embedding(image):
+        events.append("embedding")
+        original_region = np.asarray(original.crop((64, 80, 144, 160)))
+        masked_region = np.asarray(image.crop((64, 80, 144, 160)))
+        assert not np.array_equal(masked_region, original_region), (
+            "Unmasked original pixels reached the image embedding function."
+        )
+        return [0.4, 0.6]
+
+    async def offers():
+        events.append("catalog")
+        return ([{"variant_id": "safe-1", "product_name": "linen shirt", "search_text": "linen shirt"}], False)
+
+    monkeypatch.setattr(main, "evaluate_image_quality", quality)
+    monkeypatch.setattr(main, "_image_embedding", embedding)
+    monkeypatch.setattr(main, "_live_offers", offers)
+    monkeypatch.setattr(main, "_rank_offers", lambda *_args: [{
+        "variant_id": "safe-1",
+        "image_url": "https://cdn.example.test/unmasked.jpg",
+    }])
+
+    response = client.post(
+        "/v1/click-it/scan",
+        headers=auth(),
+        data={
+            "consent_image_processing": "true",
+            "consent_click_it": "true",
+            "photographed_people_status": "no_people",
+        },
+        files={"image": ("product.png", payload, "image/png")},
+    )
+
+    assert response.status_code == 200, response.text
+    assert events == ["detector", "quality", "embedding", "catalog"]
+    assert response.json()["privacy"]["faces_masked"] == 1
+    assert response.json()["results"][0]["image_url"] is None
+    assert response.headers["cache-control"] == "no-store, private"
 
 
 def test_click_it_detector_failure_blocks_embedding_and_catalog(client, monkeypatch):
