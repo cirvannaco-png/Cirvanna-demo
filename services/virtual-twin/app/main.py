@@ -18,6 +18,8 @@ from pydantic import BaseModel, Field
 from starlette.responses import JSONResponse
 from starlette import status
 
+from app.store import Base as TwinBase, engine as twin_engine, get_store
+
 SERVICE_NAME = "cirvanna-virtual-twin"
 # Adapter code is implemented; availability remains gated on a real worker, consent
 # verifier and (for Click It) a user-scoped Twin registry integration.
@@ -50,6 +52,8 @@ class ReadinessResponse(BaseModel):
     model_adapter_configured: bool
     consent_verifier_configured: bool
     twin_registry_configured: bool
+    twin_store_ready: bool = False
+    asset_service_configured: bool = False
     ready: bool
     reason: str | None = None
 
@@ -157,7 +161,7 @@ async def _verify_consent(
     consent_id: str,
     required_scopes: list[str],
     resource_id: str | None = None,
-) -> None:
+) -> dict[str, object]:
     """Verify durable, revocable user consent with the configured identity service."""
     config = _internal_config("CONSENT_API_URL", "CONSENT_API_TOKEN")
     if config is None:
