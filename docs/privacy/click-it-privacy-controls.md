@@ -89,6 +89,16 @@ Until a real asset publication owner and content-lifecycle provider are deployed
 
 This means the current application APIs do not provide a public path for a photograph or its image reference to be published. It does **not** prove that an externally hosted URL is inaccessible outside Cirvanna, nor does it replace storage-origin, CDN, signed-URL, cache, backup and deletion verification. Those controls belong to the yet-to-be-provisioned Content Lifecycle owner and remain release blockers.
 
+### Face-detector candidate assessment (6 November 2026)
+
+The official MediaPipe Face Detector documentation distinguishes BlazeFace short-range (front-facing/selfie use) from full-range (back-facing phone-camera use). The full-range model card states an Apache-2.0 licence and reports 99.3% global recall, 99.2% average recall across five skin-tone categories, and 96.7–100% recall across its 17 geography groupings. Those figures are not a guarantee for Cirvanna: the card's test sets are limited (1,060 samples in Dataset I, 500 in the skin-tone slice), not disjoint, and sampled from the same source as training. The card also documents out-of-scope back-of-head and strongly turned faces, sensitivity to position/scale/orientation and degraded lighting/occlusion, a detection cap (about 10), and a requirement that at least 70% of a face box remain inside the frame. It is therefore a candidate for Click It evaluation, not a sufficient single control for public image release.
+
+Sources:
+- [MediaPipe Face Detector model selection and supported camera ranges](https://developers.google.com/edge/mediapipe/solutions/vision/face_detector)
+- [BlazeFace Full Range model card (licence, intended use, limitations and evaluation)](https://storage.googleapis.com/mediapipe-assets/MediaPipe%20BlazeFace%20Model%20Card%20%28Full%20Range%29.pdf)
+
+No model binary is included or pinned by this repository change. A mutable `latest` download URL is not a production pin. Before enabling Click It or any publication path, the selected binary must be obtained from the official source, its exact immutable version and SHA-256 recorded, licence and supply chain reviewed, and an independently curated evaluation run on Cirvanna's actual capture distribution (including small/background faces, faces at distance, profile/back-facing/partially occluded faces, low light, motion blur, multiple people, children, skin-tone and regional slices). Report false-negative rate and confidence intervals by slice; any missed or uncertain face blocks publication. Until these results and the asset-bound verifier are deployed, all public image references remain withheld.
+
 ## 5. Photographed-person report and removal workflow
 
 The public BFF intake is:
