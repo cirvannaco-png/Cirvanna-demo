@@ -425,6 +425,11 @@ def test_resource_bound_consent_revocation_does_not_cross_resource(client):
     )
     assert revoked.status_code == 200
 
+    all_same_resource = client.post(
+        "/internal/v1/consents/verify", headers=auth(),
+        json={"subject_id": "user-verified-1", "consent_id": "bundle-resource-1",
+              "resource_id": "twin-resource-1", "required_scopes": ["image_processing", "twin_storage"]},
+    )
     first = client.post(
         "/internal/v1/consents/verify", headers=auth(),
         json={"subject_id": "user-verified-1", "consent_id": "bundle-resource-1",
