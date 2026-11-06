@@ -41,4 +41,4 @@ jobs:
           VIRTUAL_TWIN_API_TOKEN: ci-test-token-long-enough-for-local-check
         run: python -m pytest tests -q
       - name: Build container
-        run: docker build -f services/virtual-twin/Dockerfile -t cirvanna-virtual-twin:ci .
+        run: docker build -f Dockerfile -t cirvanna-virtual-twin:ci .
