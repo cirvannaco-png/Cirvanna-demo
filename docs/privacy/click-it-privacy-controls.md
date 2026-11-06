@@ -85,6 +85,7 @@ Until a real asset publication owner and content-lifecycle provider are deployed
 - API Gateway discovery and Vision search/Click It responses apply the same recursive media suppression.
 - Catalog stores canonical merchant image URLs behind distinct service-read/service-write bearer scopes; those URLs are not exposed through the customer BFF. Commerce may snapshot them server-side, but the public offer contract remains image-free.
 - Virtual Twin's current outputs are pose/metadata responses; image persistence and public rendering remain disabled. Virtual Try-On remains unavailable until its consent, asset-authorisation and renderer adapters are real.
+- The separate Virtual Try-On GPU worker's `POST /v1/render` returns a generated PNG only to a caller with its worker bearer credential; it has no input/output persistence, does not accept remote URLs, and sets `Cache-Control: no-store, private`. A static regression guard covers this explicit private-inference exception. The orchestrator remains disabled until live consent verification, asset authorization and renderer registration exist; this worker response is not a public asset publication.
 
 This means the current application APIs do not provide a public path for a photograph or its image reference to be published. It does **not** prove that an externally hosted URL is inaccessible outside Cirvanna, nor does it replace storage-origin, CDN, signed-URL, cache, backup and deletion verification. Those controls belong to the yet-to-be-provisioned Content Lifecycle owner and remain release blockers.
 
