@@ -99,7 +99,8 @@ def test_evaluation_compares_algorithm_and_baseline_on_same_candidate_pool():
     assert result["cases_evaluated"] == 1
     assert result["rankers"]["algorithm"]["mean_relevance_at_k"] == 3.5
     assert result["rankers"]["simple_baseline"]["mean_relevance_at_k"] == 3.0
-    assert result["rankers"]["algorithm"]["human_exclusion_violation_rate_at_k"] > 0
+    assert result["rankers"]["algorithm"]["human_exclusion_violation_rate_at_k"] == 0
+    assert result["rankers"]["simple_baseline"]["human_exclusion_violation_rate_at_k"] > 0
     assert result["algorithm_minus_baseline"]["mean_relevance_at_k"] is not None
     assert result["user_behavior"]["algorithm"]["edit_rate"] == 0.5
     assert result["user_behavior"]["algorithm"]["repeated_rejection_rate"] == 1.0
