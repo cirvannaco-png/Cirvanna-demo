@@ -27,6 +27,12 @@ A PASS now requires a trusted Vision provider receipt that:
 
 Missing providers, digest mismatch, missing human review, stale/revoked receipts, incomplete masking or unsafe processing block publication. A prior receipt cannot be replayed after the asset bytes change.
 
+## Main-branch exposure versus PR protection
+
+The 6 November comparison found a real main-branch leak: Commerce GET /marketplace/offers returned the stored Listing.image_urls, and the unauthenticated Marketplace BFF proxy passed those URLs through. The Commerce test on main also asserted that the public offer returned the merchant listing URLs.
+
+PR #107 corrects this: its Commerce public-offer serializer always emits an empty image_urls list; its Marketplace BFF strips top-level and nested image_urls as defense in depth; and the Commerce/BFF tests now inject unmasked URLs and assert that they are withheld. These fixes are present in feature/privacy-governance-service (and therefore in the stacked branch for PR #111), but PR #107 remains an open draft and has not been merged or deployed. **Do not treat main or production as protected until that change is merged, deployed, and rechecked against the public BFF URL.**
+
 ## Critical coverage gap
 
 The repository tree has no Content Lifecycle service and no implemented public profile, community-feed, shared-link, restore or syndication publisher to wire to this gate. Therefore the gate is currently a tested policy contract, not a globally enforced publication middleware. Existing marketplace response tests show that the known product-discovery surfaces withhold URLs; they do not prove protection for absent services, external applications, CDN origins or future routes.
