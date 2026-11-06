@@ -55,7 +55,7 @@ def registration(**overrides):
 
 
 def test_register_persists_only_full_body_mesh_after_consent_and_asset_checks(client, monkeypatch):
-    checked = {"consent": 0, "assets": 0}
+    checked = {"consent": 0, "mesh": 0, "assets": 0}
 
     async def consent(*_args, **_kwargs):
         checked["consent"] += 1
@@ -112,6 +112,17 @@ def test_registry_requires_matching_verified_consent(client, monkeypatch):
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "CONSENT_NOT_VERIFIED"
 
+
+
+
+def test_registry_requires_independent_validation_of_the_stored_mesh(client, monkeypatch):
+    async def invalid_mesh(*_args, **_kwargs):
+        raise HTTPException(403, detail={"code": "TWIN_MESH_NOT_VALIDATED"})
+
+    monkeypatch.setattr(registry, "_verify_mesh_artifact", invalid_mesh)
+    response = client.post("/internal/v1/twins/register", json=registration(), headers=headers())
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "TWIN_MESH_NOT_VALIDATED"
 
 def test_registry_requires_every_asset_to_be_authorized(client, monkeypatch):
     async def denied(*_args, **_kwargs):
