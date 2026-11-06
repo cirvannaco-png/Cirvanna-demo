@@ -99,12 +99,12 @@ def _internal_service(url_key: str, token_key: str) -> tuple[str, str]:
     return base, token
 
 def _xari_internal_service() -> tuple[str, str]:
-    """Prefer Xari environment names while retaining Tari aliases during migration."""
+    """Prefer Xari environment names while retaining PNELLY aliases during migration."""
     xari_url = os.getenv("XARI_API_URL", "").strip()
-    tari_url = os.getenv("TARI_API_URL", "").strip()
+    pnelly_url = os.getenv("TARI_API_URL", "").strip()
     url_key = "XARI_API_URL" if xari_url else "TARI_API_URL"
     token = os.getenv("XARI_API_TOKEN", "").strip() or os.getenv("TARI_API_TOKEN", "").strip()
-    if not xari_url and not tari_url:
+    if not xari_url and not pnelly_url:
         raise HTTPException(status_code=503, detail={"code": "XARI_API_URL_NOT_CONFIGURED"})
     base = _upstream_base(url_key)
     if len(token.encode("utf-8")) < 32:
@@ -554,7 +554,7 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
 
 @app.post("/api/wardrobe/daily-looks")
 async def wardrobe_daily_looks(request: Request, payload: DailyLooksIn = Body(default=DailyLooksIn())) -> Response:
-    """Build Tari's three daily looks using only the verified user's active wardrobe."""
+    """Build PNELLY's three daily looks using only the verified user's active wardrobe."""
     request_id = str(uuid.uuid4())
     local_date = datetime.now(ZoneInfo(payload.timezone)).date().isoformat()
     async with httpx.AsyncClient(
@@ -625,7 +625,7 @@ async def wardrobe_daily_looks(request: Request, payload: DailyLooksIn = Body(de
         }
         try:
             response = await client.post(
-                gateway_base + "/v1/tari/daily-looks",
+                gateway_base + "/v1/pnelly/daily-looks",
                 headers={
                     "Authorization": "Bearer " + gateway_token,
                     "X-End-User-Authorization": "Bearer " + user_token,
@@ -656,7 +656,7 @@ async def wardrobe_daily_looks(request: Request, payload: DailyLooksIn = Body(de
     looks = recommendation.get("looks") if isinstance(recommendation, dict) else None
     if (
         not isinstance(result, dict)
-        or result.get("mode") != "tari_wardrobe_daily_looks"
+        or result.get("mode") != "pnelly_wardrobe_daily_looks"
         or not isinstance(recommendation, dict)
         or recommendation.get("look_count") != 3
         or not isinstance(looks, list)
