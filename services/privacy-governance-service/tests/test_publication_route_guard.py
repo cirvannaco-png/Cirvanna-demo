@@ -62,12 +62,26 @@ def test_no_public_media_publication_or_restore_route_bypasses_privacy_gate():
             if not segments.intersection(PUBLIC_MEDIA_SURFACE_SEGMENTS) and not handler_media_name:
                 continue
             # This dependency name is the integration contract every publisher must import.
+            source_relative = source_path.relative_to(ROOT).as_posix()
+            private_vton_worker_response = (
+                source_relative == "services/virtual-try-on/model-worker/app/main.py"
+                and route == "/v1/render"
+                and any(
+                    isinstance(item, ast.Name) and item.id == "require_worker_auth"
+                    for item in ast.walk(handler)
+                )
+                and '"input_persistence": False' in source
+                and '"output_persistence": False' in source
+                and '"Cache-Control": "no-store, private"' in source
+            )
+            if private_vton_worker_response:
+                continue
             guarded = any(
                 isinstance(item, ast.Name) and item.id == "require_publication_gate"
                 for item in ast.walk(handler)
             )
             if not guarded:
-                unguarded.append(f"{source_path.relative_to(ROOT)}:{handler.name} {method} {route}")
+                unguarded.append(f"{source_relative}:{handler.name} {method} {route}")
     assert scanned > 0
     assert not unguarded, (
         "Public media routes must call require_publication_gate before returning or "
@@ -95,3 +109,20 @@ def test_privacy_governance_publication_gate_is_present_and_asset_bound():
     assert "face_embeddings_created" in gate_source
     assert "age_estimation_performed" in gate_source
     assert "masking_model_sha256" in gate_source
+
+
+
+def test_private_vton_worker_image_response_is_authenticated_ephemeral_and_non_publishing():
+    path = SERVICES / "virtual-try-on" / "model-worker" / "app" / "main.py"
+    source = path.read_text(encoding="utf-8")
+    routes = _route_definitions(source, path)
+    render_routes = [item for item in routes if item[1] == "/v1/render"]
+    assert len(render_routes) == 1
+    _method, _route, handler = render_routes[0]
+    assert any(
+        isinstance(item, ast.Name) and item.id == "require_worker_auth"
+        for item in ast.walk(handler)
+    )
+    assert '"input_persistence": False' in source
+    assert '"output_persistence": False' in source
+    assert '"Cache-Control": "no-store, private"' in source
