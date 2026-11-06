@@ -50,14 +50,15 @@ It does not use learned user history, embeddings, popularity, demographic proxie
 For both systems, using the top k looks (default 3):
 - **Human relevance:** mean adjudicated 1–5 score and nDCG@k.
 - **Diversity:** mean pairwise Jaccard distance across garment, category, style and color feature sets in the top-k slate.
-- **Exclusion violations:** fraction of top-k looks flagged by human adjudication or found to contain an explicitly excluded item/tag. Target is zero; average relevance must never compensate for a violation.
+- **Exclusion violations:** fraction of returned top-k looks flagged by human adjudication or found to contain an explicitly excluded item/tag. Target is zero; average relevance must never compensate for a violation.
+- **No-result rate / top-k fill:** report how often a system returns no eligible look and how many of the requested top-k slots it fills. An empty slate is not counted as a zero-violation success.
 
 For the randomly assigned live arm only:
 - **User edits:** edited-look rate and mean edit count per exposed look.
 - **Rejection:** rejected impressions divided by observed exposures.
 - **Repeated rejection:** proportion of rejected participant/look signatures rejected in at least two distinct sessions. Look signatures are SHA-256 hashes of sorted opaque garment IDs; raw user identity is never part of the key.
 
-The evaluator reports descriptive metrics and Cirvanna-minus-baseline deltas. It does not calculate inferential confidence intervals. Before launch decisions, pre-register the sample size and analysis plan, calculate confidence intervals, inspect inter-reviewer agreement, and report results stratified by declared occasion/climate and other non-sensitive context where sample sizes permit. Do not average away hard-exclusion failures.
+The evaluator also enforces one randomized system arm per participant across all sessions. It reports descriptive metrics, no-result rate, top-k fill and Cirvanna-minus-baseline deltas. It does not calculate inferential confidence intervals. Before launch decisions, pre-register the sample size and analysis plan, calculate confidence intervals, inspect inter-reviewer agreement, and report results stratified by declared occasion/climate and other non-sensitive context where sample sizes permit. Do not average away hard-exclusion failures.
 
 ## How to run
 
