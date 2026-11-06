@@ -30,7 +30,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 SERVICE = "cirvanna-identity-learning-service"
 bearer = HTTPBearer(auto_error=False)
 SUBJECT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$")
-SCOPES = {"personalization", "style_learning", "profile_storage", "image_processing", "body_measurements", "twin_storage", "virtual_try_on", "click_it"}
+SCOPES = {"personalization", "style_learning", "profile_storage", "image_processing", "body_measurements", "twin_storage", "virtual_try_on", "click_it", "wardrobe_image_storage"}
 
 
 def utcnow() -> datetime:

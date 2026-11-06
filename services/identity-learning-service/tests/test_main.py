@@ -467,3 +467,27 @@ def test_resource_bound_denial_does_not_revoke_other_resources(client):
         json={"subject_id": "user-verified-1", "consent_id": "bundle-b",
               "resource_id": "twin-b", "required_scopes": ["twin_storage"]},
     ).status_code == 200
+
+
+
+def test_wardrobe_image_storage_is_a_valid_resource_bound_consent_scope(client):
+    saved = resource_consent(
+        client,
+        subject="user-wardrobe-1",
+        bundle="wardrobe-consent-1",
+        resource="wardrobe-item-1",
+        scope="wardrobe_image_storage",
+        receipt="wardrobe-image-receipt-1",
+    )
+    assert saved.status_code == 200
+    verified = client.post(
+        "/internal/v1/consents/verify",
+        headers=auth(),
+        json={
+            "subject_id": "user-wardrobe-1",
+            "consent_id": "wardrobe-consent-1",
+            "resource_id": "wardrobe-item-1",
+            "required_scopes": ["image_processing", "wardrobe_image_storage"],
+        },
+    )
+    assert verified.status_code == 200
