@@ -207,7 +207,7 @@ def test_click_it_uses_verified_commerce_subject_and_returns_only_pending_candid
         FakeResponse({"user_id": "signed-user-42", "role": "customer", "email": None}),
         FakeResponse({
             "status": "complete",
-            "candidates": [{"variant_id": "variant-3", "product_name": "linen shirt", "render_url": "https://cdn.example.test/render.png", "media": {"photo_asset_id": "asset-private"}}],
+            "candidates": [{"variant_id": "variant-3", "product_name": "linen shirt", "render_url": "https://cdn.example.test/render.png", "media": {"photo_asset_id": "asset-private", "src": "https://cdn.example.test/private-src.jpg", "type": "image"}}],
             "candidate_count": 1,
             "display_authorized": False,
             "decision_status": "PENDING_CAL",
@@ -233,6 +233,8 @@ def test_click_it_uses_verified_commerce_subject_and_returns_only_pending_candid
     assert response.json()["candidates"][0]["variant_id"] == "variant-3"
     assert response.json()["candidates"][0]["render_url"] is None
     assert response.json()["candidates"][0]["media"]["photo_asset_id"] is None
+    assert response.json()["candidates"][0]["media"]["src"] is None
+    assert response.json()["candidates"][0]["media"]["type"] == "image"
     assert len(fake.calls) == 2
     assert fake.calls[0][1] == "https://commerce.example.test/me"
     assert fake.calls[1][1] == "https://virtual-twin.example.test/click-it"
