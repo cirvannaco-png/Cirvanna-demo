@@ -53,6 +53,28 @@ def test_capabilities_do_not_claim_mesh_measurement_or_cal_is_available(monkeypa
     assert data["decision_governance_connected_to_rendering"] is False
 
 
+async def _true():
+    return True
+
+
+def test_pose_inference_never_claims_persistent_twin_generation(monkeypatch):
+    monkeypatch.setattr(main, "_vision_worker_ready", lambda: _true())
+    monkeypatch.setattr(main, "_dermalsight_ready", lambda: _false())
+
+    def config(url_name, token_name):
+        if url_name == "CONSENT_API_URL":
+            return ("https://consent.example.test", "c" * 40)
+        return None
+
+    monkeypatch.setattr(main, "_internal_config", config)
+    response = client.get("/capabilities")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["pose_skeleton_inference"] is True
+    assert data["twin_generation"] is False
+    assert data["persistent_twin_available"] is False
+
+
 async def _false():
     return False
 
