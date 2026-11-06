@@ -905,6 +905,19 @@ async def evaluate_asset_publication(payload: AssetPublicationGateIn) -> dict:
         },
     )
     digest = receipt.get("masking_model_sha256")
+    review_id = receipt.get("human_privacy_review_receipt_id")
+    reviewer_ref = receipt.get("human_privacy_reviewer_ref")
+    reviewed_at = receipt.get("human_privacy_reviewed_at")
+    try:
+        review_timestamp = datetime.fromisoformat(str(reviewed_at).replace("Z", "+00:00"))
+        review_timestamp_valid = review_timestamp.tzinfo is not None and review_timestamp <= datetime.now(timezone.utc)
+    except (TypeError, ValueError):
+        review_timestamp_valid = False
+    review_provenance_valid = (
+        isinstance(review_id, str) and 12 <= len(review_id) <= 160
+        and isinstance(reviewer_ref, str) and 8 <= len(reviewer_ref) <= 160
+        and review_timestamp_valid
+    )
     valid = (
         receipt.get("verified") is True
         and receipt.get("active") is True
@@ -912,6 +925,7 @@ async def evaluate_asset_publication(payload: AssetPublicationGateIn) -> dict:
         and receipt.get("asset_sha256") == payload.asset_sha256
         and receipt.get("human_privacy_review_passed") is True
         and receipt.get("human_reviewed_asset_sha256") == payload.asset_sha256
+        and review_provenance_valid
         and receipt.get("attestation_id") == payload.masking_attestation_id
         and receipt.get("all_detected_faces_masked") is True
         and receipt.get("unmasked_face_count") == 0
@@ -931,6 +945,8 @@ async def evaluate_asset_publication(payload: AssetPublicationGateIn) -> dict:
         "asset_sha256": payload.asset_sha256,
         "target_surface": payload.target_surface,
         "human_privacy_review_passed": True,
+        "human_privacy_review_receipt_id": review_id,
+        "human_privacy_reviewed_at": review_timestamp.isoformat(),
         "all_detected_faces_masked": True,
         "unmasked_face_count": 0,
         "face_recognition_performed": False,
