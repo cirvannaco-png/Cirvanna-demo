@@ -8,6 +8,7 @@ providers. Missing providers fail closed; no legal policy is seeded in code.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -427,37 +428,90 @@ def health() -> dict:
     return {"status": "alive", "service": SERVICE}
 
 
+async def probe_trusted_service_ready(name: str) -> tuple[bool, bool]:
+    """Return (validly_configured, provider_ready); never equate configured with healthy."""
+    try:
+        base, token = trusted_service(name)
+    except HTTPException:
+        return False, False
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(3.0, connect=1.5),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            response = await client.get(
+                base + "/ready",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+            )
+    except httpx.HTTPError:
+        return True, False
+    if response.status_code != 200:
+        return True, False
+    try:
+        body = response.json()
+    except ValueError:
+        return True, False
+    return True, isinstance(body, dict) and body.get("ready") is True
+
+
 @app.get("/ready")
-def ready(db: Session = Depends(session_for_request)) -> dict:
+async def ready(db: Session = Depends(session_for_request)) -> dict:
     try:
         db.execute(select(func.count()).select_from(ConsentRecord)).scalar_one()
         database_ready = True
     except SQLAlchemyError:
         database_ready = False
-    resolver_ready = bool(os.getenv("JURISDICTION_RESOLVER_API_URL")) and bool(os.getenv("JURISDICTION_RESOLVER_API_TOKEN"))
-    content_ready = bool(os.getenv("CONTENT_LIFECYCLE_API_URL")) and bool(os.getenv("CONTENT_LIFECYCLE_API_TOKEN"))
-    guardian_ready = bool(os.getenv("GUARDIAN_VERIFICATION_API_URL")) and bool(os.getenv("GUARDIAN_VERIFICATION_API_TOKEN"))
+
+    provider_names = {
+        "jurisdiction_resolver": "JURISDICTION_RESOLVER",
+        "content_lifecycle": "CONTENT_LIFECYCLE",
+        "guardian_verification": "GUARDIAN_VERIFICATION",
+        "requester_authority": "RIGHTS_AUTHORITY_VERIFICATION",
+        "vision_privacy_attestation": "VISION_PRIVACY_ATTESTATION",
+    }
+    names = list(provider_names.items())
+    probes = await asyncio.gather(
+        *(probe_trusted_service_ready(provider_name) for _, provider_name in names)
+    )
+    provider_state = {
+        key: {"configured": configured, "ready": healthy}
+        for (key, _), (configured, healthy) in zip(names, probes, strict=True)
+    }
+
     internal_ready = len(os.getenv("PRIVACY_GOVERNANCE_INTERNAL_TOKEN", "").encode()) >= 32
-    signing_ready = bool(os.getenv("PRIVACY_POLICY_BUNDLE_PUBLIC_KEY_PEM"))
     review_ready = len(os.getenv("PRIVACY_RIGHTS_REVIEW_TOKEN", "").encode()) >= 32
-    rights_authority_ready = bool(os.getenv("RIGHTS_AUTHORITY_VERIFICATION_API_URL")) and bool(os.getenv("RIGHTS_AUTHORITY_VERIFICATION_API_TOKEN"))
-    vision_attestation_ready = bool(os.getenv("VISION_PRIVACY_ATTESTATION_API_URL")) and bool(os.getenv("VISION_PRIVACY_ATTESTATION_API_TOKEN"))
+    try:
+        _policy_signing_key()
+        signing_ready = True
+    except HTTPException:
+        signing_ready = False
+
     required_providers_ready = all([
-        database_ready, resolver_ready, content_ready, guardian_ready, internal_ready,
-        signing_ready, review_ready, rights_authority_ready, vision_attestation_ready,
+        database_ready,
+        internal_ready,
+        review_ready,
+        signing_ready,
+        *(state["ready"] for state in provider_state.values()),
     ])
     return {
         "status": "ready" if required_providers_ready else "not_ready",
         "service": SERVICE,
         "database_ready": database_ready,
-        "jurisdiction_resolver_configured": resolver_ready,
-        "content_lifecycle_configured": content_ready,
-        "guardian_verification_configured": guardian_ready,
+        "jurisdiction_resolver_configured": provider_state["jurisdiction_resolver"]["configured"],
+        "jurisdiction_resolver_ready": provider_state["jurisdiction_resolver"]["ready"],
+        "content_lifecycle_configured": provider_state["content_lifecycle"]["configured"],
+        "content_lifecycle_ready": provider_state["content_lifecycle"]["ready"],
+        "guardian_verification_configured": provider_state["guardian_verification"]["configured"],
+        "guardian_verification_ready": provider_state["guardian_verification"]["ready"],
         "internal_auth_configured": internal_ready,
         "policy_signing_key_configured": signing_ready,
         "rights_review_auth_configured": review_ready,
-        "requester_authority_provider_configured": rights_authority_ready,
-        "vision_privacy_attestation_configured": vision_attestation_ready,
+        "requester_authority_provider_configured": provider_state["requester_authority"]["configured"],
+        "requester_authority_provider_ready": provider_state["requester_authority"]["ready"],
+        "vision_privacy_attestation_configured": provider_state["vision_privacy_attestation"]["configured"],
+        "vision_privacy_attestation_ready": provider_state["vision_privacy_attestation"]["ready"],
+        "providers": provider_state,
         "ready": required_providers_ready,
     }
 
