@@ -78,12 +78,16 @@ class USIProfileRow(Base):
 
 class ConsentReceipt(Base):
     __tablename__ = "identity_tal_consent_receipts"
-    __table_args__ = (Index("ix_identity_tal_consent_subject_scope", "subject_id", "scope", "granted"),)
+    __table_args__ = (
+        Index("ix_identity_tal_consent_subject_scope", "subject_id", "scope", "granted"),
+        Index("ix_identity_tal_consent_bundle", "subject_id", "consent_id", "scope", "granted", "revoked_at"),
+        Index("ix_identity_tal_consent_resource", "subject_id", "consent_id", "resource_id"),
+    )
     receipt_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     subject_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     scope: Mapped[str] = mapped_column(String(40), nullable=False)
-    consent_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
-    resource_id: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
+    consent_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    resource_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
     consent_version: Mapped[str] = mapped_column(String(80), nullable=False)
     granted: Mapped[bool] = mapped_column(Boolean, nullable=False)
     granted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -517,4 +521,9 @@ def purge_expired(db: Annotated[Session, Depends(get_db)], cron_token: Annotated
 def list_consents(subject_id: str, db: Annotated[Session, Depends(get_db)]):
     subject = subject_or_404(subject_id)
     rows = list(db.scalars(select(ConsentReceipt).where(ConsentReceipt.subject_id == subject).order_by(ConsentReceipt.created_at)).all())
-    return [{"receipt_id": x.receipt_id, "scope": x.scope, "consent_version": x.consent_version, "granted": x.granted, "granted_at": x.granted_at.isoformat() if x.granted_at else None, "revoked_at": x.revoked_at.isoformat() if x.revoked_at else None} for x in rows]
+    return [{
+        "receipt_id": x.receipt_id, "consent_id": x.consent_id, "resource_id": x.resource_id,
+        "scope": x.scope, "consent_version": x.consent_version, "granted": x.granted,
+        "granted_at": x.granted_at.isoformat() if x.granted_at else None,
+        "revoked_at": x.revoked_at.isoformat() if x.revoked_at else None,
+    } for x in rows]
