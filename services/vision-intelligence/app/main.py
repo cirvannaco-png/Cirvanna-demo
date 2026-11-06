@@ -602,14 +602,11 @@ async def click_it_scan(
     category: Annotated[str | None, Form()] = None,
     limit: Annotated[int, Form(ge=1, le=25)] = 10,
 ) -> dict[str, Any]:
-    if not consent_image_processing or not consent_click_it:
-        await image.close()
-        raise HTTPException(403, detail={"code": "EXPLICIT_CLICK_IT_CONSENT_REQUIRED"})
-    # The current main-branch route has no verified face-masking stage. Do not
-    # decode, score, embed, or forward an unmasked user photograph. This hard
-    # stop remains until the pinned detector + fail-closed masking pipeline is
-    # merged and validated end-to-end.
+    # Fail closed: main does not yet include a verified face-masking stage.
+    # Never decode, score, embed, or forward an unmasked user photograph.
     await image.close()
+    if not consent_image_processing or not consent_click_it:
+        raise HTTPException(403, detail={"code": "EXPLICIT_CLICK_IT_CONSENT_REQUIRED"})
     raise HTTPException(
         503,
         detail={
@@ -617,46 +614,6 @@ async def click_it_scan(
             "message": "Image scanning is temporarily unavailable until privacy masking is enabled.",
         },
     )
-    content_type = image.content_type or ""
-    try:
-        data = await image.read(MAX_IMAGE_BYTES + 1)
-    finally:
-        await image.close()
-    decoded = _decode_image(data, content_type)
-    quality = evaluate_image_quality(decoded)
-    if not quality["passed"]:
-        raise HTTPException(
-            422,
-            detail={
-                "code": "IMAGE_QUALITY_REJECTED",
-                "quality": quality,
-                "message": "Retake the photo with better lighting, focus, contrast, and the product clearly in frame.",
-            },
-        )
-    query_vector = _image_embedding(decoded)
-    offers, truncated = await _live_offers()
-    if category and category.strip():
-        selected = category.strip().casefold()
-        offers = [
-            item for item in offers
-            if str(item.get("category", "")).casefold() == selected
-            or str((item.get("product") or {}).get("category", "")).casefold() == selected
-        ]
-    results = _withhold_unattested_image_urls(_rank_offers(query_vector, offers, limit))
-    return {
-        "status": "complete",
-        "scan_id": str(uuid.uuid4()),
-        "search_mode": "image_to_catalog_text_similarity",
-        "image_quality": quality,
-        "candidate_count": len(results),
-        "catalog_offer_count": len(offers),
-        "results": results,
-        "catalog_truncated": truncated,
-        "model": {"id": MODEL_ID, "revision": os.getenv("CLIP_MODEL_REVISION")},
-        "scores_are_probabilities": False,
-        "warning": "Scores rank the live catalog but are not calibrated match probabilities; visually verify the result before buying.",
-        "image_persisted": False,
-    }
 
 
 @app.post("/v1/twin/infer", dependencies=[Depends(require_worker_auth)], tags=["virtual-twin"])
