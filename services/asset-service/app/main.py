@@ -15,6 +15,7 @@ from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, 
 from fastapi.responses import Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from PIL import Image, ImageOps, UnidentifiedImageError
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import DateTime, Index, Integer, String, create_engine, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
@@ -33,6 +34,14 @@ app = FastAPI(title="Cirvanna Private Asset Service", version="1.0.0")
 
 class Base(DeclarativeBase):
     pass
+
+
+class AssetAuthorizeIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    subject_id: str = Field(min_length=3, max_length=128)
+    asset_id: str = Field(min_length=36, max_length=36)
+    purpose: AssetPurpose
+    parent_id: str = Field(min_length=3, max_length=160)
 
 
 class AssetRow(Base):
@@ -249,16 +258,14 @@ async def upload_asset(
 
 @app.post("/internal/v1/assets/authorize", dependencies=[Depends(require_internal_token)])
 def authorize_asset(
-    payload: dict,
+    payload: AssetAuthorizeIn,
     db: Annotated[Session, Depends(get_db)],
 ):
-    owner = payload.get("subject_id")
-    asset_id = payload.get("asset_id")
-    purpose = payload.get("purpose")
-    parent_id = payload.get("parent_id")
-    if not all(isinstance(x, str) and x.strip() for x in (owner, asset_id, purpose, parent_id)):
-        raise HTTPException(422, detail={"code": "ASSET_AUTHORIZATION_INPUT_INVALID"})
-    row = _owned_asset(db, asset_id.strip(), owner.strip(), purpose.strip(), parent_id.strip())
+    owner = payload.subject_id.strip()
+    asset_id = payload.asset_id.strip()
+    purpose = payload.purpose
+    parent_id = payload.parent_id.strip()
+    row = _owned_asset(db, asset_id, owner, purpose, parent_id)
     return {
         "authorized": True, "active": True, "subject_id": owner.strip(),
         "asset_id": row.asset_id, "purpose": row.purpose, "parent_id": row.parent_id,
@@ -290,22 +297,31 @@ def read_asset_content(
 def delete_asset(
     asset_id: str,
     owner_user_id: Annotated[str, Header(alias="X-Asset-Owner-ID", min_length=3, max_length=128)],
-    idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=128)],
-    db: Annotated[Session, Depends(get_db)],
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key", min_length=8, max_length=128)] = None,
+    db: Annotated[Session, Depends(get_db)] = None,
 ):
+    """Idempotent deletion by opaque asset ID; failures remain retryable."""
     row = db.get(AssetRow, asset_id)
     if row is None or row.owner_user_id != owner_user_id.strip():
         raise HTTPException(404, detail={"code": "ASSET_NOT_FOUND"})
     if row.status == "deleted":
         return Response(status_code=204)
+    if row.status == "active":
+        row.status = "deleting"
+        db.commit()
+        db.refresh(row)
     client, bucket = _object_store()
     try:
         client.delete_object(Bucket=bucket, Key=row.object_key)
     except (BotoCoreError, ClientError) as exc:
-        raise HTTPException(503, detail={"code": "ASSET_OBJECT_DELETE_FAILED"}) from exc
+        raise HTTPException(503, detail={"code": "ASSET_OBJECT_DELETE_FAILED", "retryable": True}) from exc
     row.status = "deleted"
     row.deleted_at = datetime.now(timezone.utc)
-    db.commit()
+    try:
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(503, detail={"code": "ASSET_DELETE_METADATA_RETRY_REQUIRED", "retryable": True}) from exc
     return Response(status_code=204)
 
 
@@ -315,29 +331,38 @@ def delete_parent_assets(
     owner_user_id: Annotated[str, Query(min_length=3, max_length=128)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    """Remove every asset attached to one owner's Twin/wardrobe parent record."""
+    """Retryably delete all assets attached to one owner's resource."""
     rows = list(db.scalars(select(AssetRow).where(
         AssetRow.owner_user_id == owner_user_id.strip(),
         AssetRow.parent_id == parent_id,
-        AssetRow.status == "active",
+        AssetRow.status.in_(["active", "deleting"]),
     )).all())
     if not rows:
-        return {"status": "deleted", "deleted_count": 0}
+        return {"status": "deleted", "deleted_count": 0, "failed_count": 0}
+    for row in rows:
+        if row.status == "active":
+            row.status = "deleting"
+    db.commit()
     client, bucket = _object_store()
     now = datetime.now(timezone.utc)
     deleted = 0
+    failed = 0
     for row in rows:
         try:
             client.delete_object(Bucket=bucket, Key=row.object_key)
+            row.status = "deleted"
+            row.deleted_at = now
+            deleted += 1
         except (BotoCoreError, ClientError):
-            continue
-        row.status = "deleted"
-        row.deleted_at = now
-        deleted += 1
-    db.commit()
-    if deleted != len(rows):
-        raise HTTPException(503, detail={"code": "ASSET_PARENT_DELETE_INCOMPLETE", "deleted_count": deleted})
-    return {"status": "deleted", "deleted_count": deleted}
+            failed += 1
+    try:
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(503, detail={"code": "ASSET_PARENT_DELETE_METADATA_RETRY_REQUIRED", "retryable": True}) from exc
+    if failed:
+        raise HTTPException(503, detail={"code": "ASSET_PARENT_DELETE_INCOMPLETE", "deleted_count": deleted, "failed_count": failed, "retryable": True})
+    return {"status": "deleted", "deleted_count": deleted, "failed_count": 0}
 
 
 @app.post("/internal/v1/assets/purge-expired", dependencies=[Depends(require_internal_token)])
@@ -351,7 +376,7 @@ def purge_expired_assets(
         raise HTTPException(401, detail={"code": "ASSET_CRON_AUTH_REQUIRED"})
     now = datetime.now(timezone.utc)
     rows = list(db.scalars(select(AssetRow).where(
-        AssetRow.status == "active", AssetRow.retention_until.is_not(None)
+        AssetRow.status.in_(["active", "deleting"]), AssetRow.retention_until.is_not(None)
     ).order_by(AssetRow.retention_until).limit(1000)).all())
     expired = []
     for row in rows:
@@ -359,7 +384,7 @@ def purge_expired_assets(
         if expiry is not None:
             if expiry.tzinfo is None:
                 expiry = expiry.replace(tzinfo=timezone.utc)
-            if expiry <= now:
+            if expiry <= now or row.status == "deleting":
                 expired.append(row)
     if not expired:
         return {"status": "complete", "purged_count": 0, "failed_count": 0}
@@ -368,6 +393,9 @@ def purge_expired_assets(
     failed = 0
     for row in expired:
         try:
+            if row.status == "active":
+                row.status = "deleting"
+                db.flush()
             client.delete_object(Bucket=bucket, Key=row.object_key)
             row.status = "deleted"
             row.deleted_at = now
