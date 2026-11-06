@@ -16,7 +16,7 @@ The simple baseline first prioritizes candidates that do not violate declared ex
 
 ## Runtime integration status
 
-The active recommendation service in this repository currently implements Complementer advisory composition; it does not expose the canonical Tari daily three-look candidate generator/ranker. The harness is therefore a validated evaluation contract, not yet wired to the live Tari runtime. Before collecting labels or claiming a model-vs-baseline result, identify the authoritative active Tari implementation, version its candidate scores and candidate pool, and connect its real outputs to this schema. Do not promote recovered or staged source candidates into production merely to satisfy the evaluator.
+The active recommendation service in this repository currently implements Complementer advisory composition; it does not expose a daily three-look candidate generator/ranker. The harness is therefore a validated evaluation contract, not yet wired to a live daily-look runtime. There is also a naming/ownership conflict to resolve before integration: ADR-0005 says Xari is the single canonical assistant and Tari is a legacy compatibility name, while issue #108 describes Tari as the daily-look capability under Xari. Keep Xari as the only assistant; confirm whether "Tari" is intended only as a capability label. Before collecting labels or claiming a model-vs-baseline result, identify the authoritative active candidate generator, version its scores and candidate pool, and connect its real outputs to this schema. Do not promote recovered or staged source candidates into production merely to satisfy the evaluator.
 
 ## Dataset privacy and annotation
 
