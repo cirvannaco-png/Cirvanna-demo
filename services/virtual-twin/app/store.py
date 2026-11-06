@@ -112,7 +112,8 @@ class TwinStore:
                 raise LookupError("twin not found")
             return self.serialize(row)
 
-    def delete(self, *, subject_id: str, twin_id: str) -> dict[str, Any]:
+    def begin_delete(self, *, subject_id: str, twin_id: str) -> dict[str, Any]:
+        """Hide the record before asset cleanup; failures remain retryable."""
         with self.sessions() as db, db.begin():
             row = db.scalar(select(TwinRow).where(
                 TwinRow.subject_id == subject_id, TwinRow.twin_id == twin_id
@@ -120,10 +121,30 @@ class TwinStore:
             if row is None:
                 raise LookupError("twin not found")
             if row.status == "active":
+                row.status = "deleting"
+                row.updated_at = datetime.now(timezone.utc)
+            return {"twin_id": row.twin_id, "source_asset_id": row.source_asset_id, "status": row.status}
+
+    def complete_delete(self, *, subject_id: str, twin_id: str) -> dict[str, Any]:
+        with self.sessions() as db, db.begin():
+            row = db.scalar(select(TwinRow).where(
+                TwinRow.subject_id == subject_id, TwinRow.twin_id == twin_id
+            ).with_for_update())
+            if row is None:
+                raise LookupError("twin not found")
+            if row.status == "active":
+                raise ValueError("Twin deletion has not started")
+            if row.status == "deleting":
                 row.status = "deleted"
                 row.deleted_at = datetime.now(timezone.utc)
                 row.updated_at = row.deleted_at
             return {"twin_id": row.twin_id, "source_asset_id": row.source_asset_id, "status": row.status}
+
+    def delete(self, *, subject_id: str, twin_id: str) -> dict[str, Any]:
+        pending = self.begin_delete(subject_id=subject_id, twin_id=twin_id)
+        if pending["status"] == "deleting":
+            return self.complete_delete(subject_id=subject_id, twin_id=twin_id)
+        return pending
 
 
 def get_store() -> TwinStore:
