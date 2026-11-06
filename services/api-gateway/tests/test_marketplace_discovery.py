@@ -38,7 +38,7 @@ def product(pid, name, attrs):
     return {
         "product_id": pid, "sku": "SKU-" + pid[:4], "name": name, "category": "shirt",
         "brand": "Cirvanna", "price_minor": 10000, "currency": "KES",
-        "attributes": attrs, "image_urls": [], "status": "active", "catalog_version": 1,
+        "attributes": attrs, "image_urls": ["https://cdn.example.test/unmasked-product.jpg"], "status": "active", "catalog_version": 1,
     }
 
 
@@ -46,7 +46,7 @@ def offer(pid, variant, price):
     return {
         "catalog_product_id": pid, "variant_id": variant, "listing_id": "listing-" + variant,
         "merchant_id": "merchant-1", "merchant_name": "Merchant", "product_name": "Shirt",
-        "category": "shirt", "image_urls": [], "sku": "SKU-" + variant,
+        "category": "shirt", "image_urls": ["https://cdn.example.test/unmasked-offer.jpg"], "sku": "SKU-" + variant,
         "options": {"size": "M"}, "price_minor": price, "currency": "KES", "available_stock": 4,
     }
 
@@ -81,6 +81,8 @@ def test_discovery_returns_only_products_authorized_by_cal(client, monkeypatch):
     assert response.status_code == 200, response.text
     data = response.json()
     assert [item["product"]["product_id"] for item in data["displayable_products"]] == [P1]
+    assert data["displayable_products"][0]["product"]["image_urls"] == []
+    assert data["displayable_products"][0]["offer"]["image_urls"] == []
     assert data["withheld_candidate_ids"][0]["product_id"] == P2
     assert "product" not in data["withheld_candidate_ids"][0]
     assert data["display_authority"] == "CaTaCaCi/CAL"
