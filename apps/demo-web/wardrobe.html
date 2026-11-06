@@ -408,7 +408,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     status("pnellyStatus", "Building three distinct looks from your active wardrobe…");
     try {
       const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-      const data = await api("/api/wardrobe/daily-looks", {
+      const data = await api("/api/wardrobe/pnelly/daily-looks", {
         method: "POST",
         body: JSON.stringify({
           occasion: $("pnellyOccasion").value || null,
