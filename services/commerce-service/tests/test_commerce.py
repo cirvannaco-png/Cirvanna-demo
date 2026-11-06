@@ -322,6 +322,14 @@ def test_merchant_listing_snapshots_only_trusted_catalog_images(client, monkeypa
     )
     assert response.status_code == 201
     assert response.json()["image_urls"] == []  # Merchant source URLs stay server-side until publication is attested.
+    listing_db = TEST_SESSION()
+    stored_listing = listing_db.get(main.Listing, response.json()["listing_id"])
+    assert stored_listing is not None
+    assert stored_listing.image_urls == [
+        "https://cdn.example.test/linen-front.jpg",
+        "https://cdn.example.test/linen-back.jpg",
+    ]
+    listing_db.close()
     variant = client.post(
         f"/merchant/listings/{response.json()['listing_id']}/variants",
         headers=auth("merchant-1", "merchant"),
