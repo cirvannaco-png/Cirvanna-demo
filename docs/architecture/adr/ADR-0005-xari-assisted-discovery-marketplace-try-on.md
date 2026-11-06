@@ -1,75 +1,66 @@
-# ADR-0005: Xari-assisted discovery, Complementer collaboration and marketplace Try-On
+# ADR-0005: PNELLY orchestration, Complementer collaboration and marketplace Try-On
 
-**Status:** Accepted — product and service ownership decision. Runtime completion remains gated.
-**Date:** 4 November 2026
+**Status:** Accepted — PNELLY supersedes Xari as canonical runtime identity. Operational readiness remains gated.
+**Date:** 6 November 2026
+**Supersedes:** The original Xari canonical-name and service-path decision. Domain ownership and API v1 schemas remain unchanged.
+**Related:** ADR-0007, ADR-0008, issue #108.
 
 ## Context
 
-Cirvanna has separate foundations for conversational discovery (`services/xari`), Complementer advisory styling, marketplace browsing, Virtual Twin and Virtual Try-On. The canonical product name is **Xari**. Tari is a legacy name in the preserved source lineage and must not become a second assistant or take over the product-facing identity. Marketplace search currently returns candidate matches pending CAL; it is not yet a complete price-comparison journey. Product-card Try-On is present but disabled because the renderer and secure adapters are not configured.
+Cirvanna has separate foundations for orchestration, Complementer advisory styling, marketplace discovery, Wardrobe, Virtual Twin and Virtual Try-On. The product owner selected PNELLY as the canonical assistant/runtime identity and requested migration from Xari without breaking existing orchestration clients. The existing runtime already exposes stable `/v1/route` and `/v1/marketplace/search` contracts. The old implementation must be moved behind PNELLY rather than duplicated.
 
-Public-name reconnaissance on 4 November 2026 found existing uses of both Xari and Tari. Xari is used by an AI marketing/SEO product and appears in an existing cosmetics/perfumery trademark record; Tari is used by an African business-software and fintech brand and appears in other trademark records. This is not legal trademark clearance. Cirvanna retains Xari as the product decision, subject to a jurisdiction- and category-specific trademark review before commercial launch.
-
-Adding duplicate assistant services or allowing the assistant to own product, price or fit truth would increase coupling and weaken the existing domain boundaries.
+The old Xari name remains in source paths, deployment configuration and v1 error codes. Those identifiers need a bounded compatibility period. This naming decision is not trademark clearance; complete Kenya and relevant international trademark, company-name and domain review before commercial launch.
 
 ## Decision
 
-### 1. Xari is the single canonical assistant
+### 1. PNELLY is the single canonical orchestration runtime
 
-Xari is the canonical product-facing assistant and orchestration identity. The existing `services/xari` path and `XARI_API_TOKEN` / `XARI_API_URL` configuration remain canonical. `TARI_API_TOKEN` / `TARI_API_URL` are compatibility fallbacks only; the capability response names Xari as canonical and Tari/Xyra as legacy names. Do not create or deploy a second Tari assistant.
+- PNELLY is the canonical runtime, API identity and user-facing assistant name.
+- The canonical implementation lives in `services/pnelly`.
+- `services/xari` is a compatibility shim to the same implementation. It must not own independent business logic, state, memory or model execution.
+- `PNELLY_API_URL`, `PNELLY_API_TOKEN` and `PNELLY_CHAT_API_URL` are canonical configuration variables.
+- During migration, `XARI_API_*` aliases are accepted second and `TARI_API_*` aliases third. PNELLY wins when multiple values are configured. New clients and deployment definitions must use PNELLY variables.
+- Existing v1 paths, request/response models, consent keys, candidate semantics and historic `XARI_*` error codes remain unchanged. A future error-code rename requires a versioned API contract.
+- All aliases resolve to one runtime. There is no dual-run assistant, duplicate memory or separate orchestration state.
 
-Xari is optional and user-invoked. It is available as a discovery/help entry point in Marketplace and may be offered from the Experience, Virtual Twin and Virtual Try-On surfaces. A user can browse, use Twin and use Try-On without invoking Xari.
+### 2. Preserve orchestration boundaries
 
-### 2. Complementer is an optional advisory collaborator
+PNELLY coordinates capabilities but does not take their domain ownership. Wardrobe owns garment records/lifecycle; USI owns positive style preferences; TAL owns consented learning events and receipts; NPL owns explicit hard exclusions; EEPL supplies context eligibility; Catalog owns canonical product identity/attributes; Commerce owns live merchant offers, inventory and transactions; FCI owns validated fit evidence; CAL is the only product-display authority; Virtual Twin owns persistent user-scoped representations; Virtual Try-On owns rendering and job orchestration.
 
-Complementer is available to Xari as an optional styling capability. Xari may call it when the user asks for look coordination or enables styling help; it is not a mandatory step for search, product display or Try-On. The same advisory capability may be surfaced as an optional action within Twin or Try-On.
+PNELLY may plan or invoke only fixed server-configured upstreams. It must not accept caller-supplied service URLs, bypass consent, synthesize product/merchant/price/stock facts, override NPL, infer sensitive cultural attributes or bypass CAL. A route-planning response does not prove an upstream executed.
 
-Complementer owns styling advice only. It does not own the user's canonical style profile, hard exclusions, products, variants, offers, prices, inventory, fit evidence or product-display decisions. It must not invent SKUs, merchant names, stock, prices, purchase links or claims of fit. USI owns positive preferences, NPL owns hard exclusions, TAL owns consented learning events, Catalog owns product identity and metadata, Commerce owns offers and transactions, FCI owns calibrated fit evidence, and CAL remains the only product-display authority.
+### 3. Complementer remains optional
 
-Complementer must not be required for baseline Xari search or marketplace browsing. Its output is explainable and reversible; a rejected suggestion is a soft observation, not an automatic NPL veto.
+Complementer supplies advisory outfit/styling composition when requested or explicitly enabled. It does not own user profiles, negative preferences, product facts, prices, stock, fit evidence or display decisions. Its output is reversible and explainable. It is not required for basic PNELLY search or Wardrobe operation.
 
-### 3. Marketplace discovery and price comparison
+### 4. Marketplace discovery
 
-The marketplace must expose an Xari natural-language search entry point. Users may describe the product or look they want in their own words and optionally supply explicit constraints such as category, currency-scoped budget, colour, climate, occasion, size or exclusions. Xari may clarify only when required; it must not infer sensitive cultural or identity attributes from appearance, name or location.
+PNELLY may interpret natural-language product/look requests and retrieve candidates through the private Vision Intelligence adapter. Candidate scores are not probabilities, fit confidence or permission to display. Product facts and merchant offers come from Catalog/Commerce. NPL and explicit cultural requirements must pass before CAL; only CAL SHOW exposes eligible product and offer details. Different currencies require separately sourced, timestamped FX evidence.
 
-The complete discovery flow is:
+### 5. Virtual Twin and Virtual Try-On
 
-1. Xari interprets the user's description and explicit constraints.
-2. Retrieval searches canonical active Catalog products and current, purchasable Commerce offers. Semantic/vision retrieval can rank candidates but cannot replace canonical product/offer records.
-3. Offers are joined to products by exact canonical product and variant identifiers. Orphan, inactive, out-of-stock or unapproved merchant offers are excluded.
-4. Where multiple merchants offer the same product/variant, the marketplace compares live offer prices within the same currency and shows the merchant, currency, stock/availability and offer observation time.
-5. Different currencies are not compared without a separately sourced, timestamped exchange-rate service. Merchant price is not described as total checkout cost unless shipping and tax are included.
-6. Every candidate passes NPL and explicit cultural requirements and then CAL. Only a CAL `SHOW` result may expose product and offer details. `BLOCK`, `REVIEW`, missing evidence and pending decisions remain hidden.
+The browser calls only the same-origin Marketplace BFF. BFF derives subject identity from verified Commerce `/me`, keeps service tokens private and accepts no browser-supplied user/asset identifiers. Virtual Twin verifies purpose-specific resource-bound consent, stores owner-bound representations and source assets, and permits deletion after consent withdrawal. Asset access binds subject, asset, purpose and parent resource. Virtual Try-On verifies image-processing/Try-On consent, re-resolves the live Twin and Wardrobe garment, invokes the pinned FASHN worker, persists output privately with expiry, and rechecks consent and current source before preview reads.
 
-Similarity and preference-ranking scores are not probabilities, fit-confidence estimates, or display authorization. Product facts, merchant details, currency, price and stock are retrieved from Catalog/Commerce; Xari and Complementer must never generate them.
+The current Twin representation is a pose skeleton, not a calibrated body mesh, measurement model or fit guarantee. VTON output is a visual preview, not fit evidence. Production enablement requires a real GPU deployment with verified weights, successful pipeline initialization, validated inference samples, asset/consent/Twin dependencies and end-to-end staging evidence.
 
-### 4. Virtual Try-On is a marketplace product action
+## Migration and compatibility
 
-Marketplace product cards are the first-class entry point for trying a selected catalog product before purchase. The Try-On action should be visible on eligible product cards and enabled only when the user is authenticated, a user-owned Twin and trusted person/product assets can be resolved, active server-side consent is verified, and the Virtual Try-On service confirms a validated renderer is ready.
+1. Move canonical implementation/tests to `services/pnelly`; replace old Xari modules with import shims.
+2. New clients use PNELLY service path and environment variables. Xari/Tari variables remain read-only fallback aliases for a bounded transition period.
+3. Keep `POST /v1/route`, `POST /v1/marketplace/search`, API v1 schemas and historic `XARI_*` error codes.
+4. Change user-facing UI/docs to PNELLY. Historical ADR references and compatibility documentation may identify Xari as the previous runtime.
+5. After telemetry proves legacy alias traffic is zero for the agreed period, remove Xari/Tari aliases in a separate release.
+6. Rollback is a revert of runtime/BFF/UI migration commits. The import shim preserves v1 callers during migration.
 
-The browser must call the same-origin Marketplace BFF. The BFF derives the subject from a verified Commerce identity and keeps service credentials server-side. The renderer accepts trusted opaque asset references; it must not accept arbitrary caller URLs or cross-tenant asset identifiers. Client checkboxes and client-supplied user IDs are not proof of consent or identity.
+## Verification
 
-Xari may optionally guide the Try-On journey. Complementer may optionally suggest styling or pairings. Both are outside the rendering, consent and asset-authorization trust boundary. Neither may bypass policy or turn a visual preview into a fit guarantee. FCI remains the separate owner of calibrated fit confidence; CAL governs product display.
+- PNELLY and Xari compatibility tests prove both import paths load the same implementation.
+- PNELLY token precedence is tested over Xari/Tari aliases.
+- Existing v1 schemas, paths, consent gates and stable error codes remain tested.
+- BFF tests prove PNELLY configuration preference and legacy fallback behavior.
+- Asset/Twin tests cover resource isolation, revocation, deletion and failure recovery.
+- CI does not prove trademark clearance, GPU quality, deployment health or production staging.
 
-Until renderer, consent verifier, asset authorizer, user-owned Twin and BFF integration are verified, the product-card action must remain visibly unavailable/disabled. Do not render synthetic try-on images, fake a successful result, or imply that the current pose-skeleton output is a persistent complete Twin.
+## Consequences
 
-### 5. Virtual Twin remains independently usable
-
-Xari is an optional conversational guide inside the Twin experience. Complementer is optional styling help. Neither is required to create, view or manage a Twin. Twin owns its user-scoped representation, consent and asset authorization; the current pose-skeleton response must not be marketed as a persistent avatar or calibrated measurement model.
-
-## Required acceptance criteria before claiming full integration
-
-- [x] Xari is the canonical name in the assistant capability contract.
-- [x] XARI environment names are preferred while Tari remains a compatibility fallback only.
-- [x] Marketplace discovery UI presents Xari as the natural-language assistant entry point.
-- [x] Complementer is defined as optional styling advice, not product or price authority.
-- [x] Marketplace Try-On remains visible but disabled while secure rendering prerequisites are absent.
-- [ ] Xari search calls the canonical Catalog/Commerce discovery path and returns current offer data only after CAL `SHOW`.
-- [ ] Multi-merchant offer comparison groups exact product/variant matches and compares only like currencies with timestamped source data.
-- [ ] Complementer has an authenticated, optional handoff from Xari and optional Twin/Try-On UI entry points; no duplicate profile or product store is introduced.
-- [ ] Marketplace BFF exposes a user-authenticated Try-On capability/request contract backed by verified identity, server-side consent, Twin ownership and asset authorization.
-- [ ] A pinned and licensed renderer is deployed and independently evaluated across supported garment categories, body representations, devices and lighting.
-- [ ] Browser E2E, service contract, privacy, security, model-quality, latency/cost and production smoke tests pass before enabling Try-On.
-
-## Implementation status and release truth
-
-This change establishes the canonical naming contract, compatibility path, marketplace Xari entry point, service ownership documentation and regression tests. It does not claim to complete live price comparison, Complementer runtime orchestration, persistent Twin storage or Try-On rendering. Those remain explicit follow-up implementation and release gates. Production readiness must not be inferred from this ADR or from passing unit tests.
+Cirvanna has one canonical assistant/runtime called PNELLY, with a migration bridge for old Xari/Tari identifiers. One runtime coordinates bounded domain owners rather than becoming a monolith or spawning competing assistants.
