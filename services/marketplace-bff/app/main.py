@@ -661,6 +661,16 @@ async def wardrobe_daily_looks(request: Request, payload: DailyLooksIn = Body(de
         or recommendation.get("look_count") != 3
         or not isinstance(looks, list)
         or [look.get("role") if isinstance(look, dict) else None for look in looks] != roles
+        # Until the persistent Twin registry, consent verifier, asset authorizer,
+        # and validated renderer are integrated, upstream data cannot claim a
+        # preview exists or smuggle an output asset reference into the UI.
+        or any(
+            not isinstance(look, dict)
+            or not isinstance(look.get("virtual_twin_preview"), dict)
+            or look["virtual_twin_preview"].get("status") != "unavailable"
+            or any(key in look["virtual_twin_preview"] for key in ("asset_id", "output_asset_id", "render_id"))
+            for look in looks
+        )
     ):
         raise HTTPException(502, detail={"code": "TARI_RECOMMENDATION_SCHEMA_INVALID"})
     return _private_json_response(result)
