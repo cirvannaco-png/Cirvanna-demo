@@ -95,7 +95,7 @@ def test_duplicate_ids_and_invalid_dates_are_rejected(monkeypatch):
 
     client = TestClient(app)
     response = client.post(
-        "/v1/tari/daily-looks",
+        "/v1/pnelly/daily-looks",
         headers={"Authorization": f"Bearer {TOKEN}"},
         json={
             "request_id": "daily-006",
@@ -116,11 +116,11 @@ def test_api_requires_internal_authentication_and_rejects_cross_owner_items(monk
         "local_date": "2026-11-05",
         "wardrobe_items": wardrobe(),
     }
-    assert client.post("/v1/tari/daily-looks", json=body).status_code == 401
+    assert client.post("/v1/pnelly/daily-looks", json=body).status_code == 401
 
     body["wardrobe_items"][0]["owner_user_id"] = "another-user"
     response = client.post(
-        "/v1/tari/daily-looks",
+        "/v1/pnelly/daily-looks",
         headers={"Authorization": f"Bearer {TOKEN}"},
         json=body,
     )
@@ -130,8 +130,8 @@ def test_api_requires_internal_authentication_and_rejects_cross_owner_items(monk
 
 def test_capabilities_report_preview_is_not_enabled():
     data = TestClient(app).get("/capabilities").json()
-    assert data["tari_daily_look_orchestration"] is True
-    assert data["tari_daily_look_roles"] == ["everyday", "elevated", "explore"]
+    assert data["pnelly_daily_look_orchestration"] is True
+    assert data["pnelly_daily_look_roles"] == ["everyday", "elevated", "explore"]
     assert data["virtual_twin_preview_enabled"] is False
 
 
@@ -202,3 +202,14 @@ def test_consent_based_feedback_signal_changes_look_ranking():
     assert result["personalization"]["feedback_signals_used"] is True
     assert result["personalization"]["feedback_source"] == "consented_wardrobe_feedback"
     assert "consented like/wear feedback: teal" in result["looks"][0]["reason"]
+
+
+def test_legacy_tari_route_remains_a_hidden_compatibility_alias(monkeypatch):
+    monkeypatch.setenv("COMPLEMENTER_SERVICE_TOKEN", TOKEN)
+    client = TestClient(app)
+    body = {"request_id": "daily-legacy-alias", "user_id": "user-123", "local_date": "2026-11-06", "wardrobe_items": wardrobe()}
+    headers = {"Authorization": f"Bearer {TOKEN}"}
+    canonical = client.post("/v1/pnelly/daily-looks", headers=headers, json=body)
+    legacy = client.post("/v1/tari/daily-looks", headers=headers, json=body)
+    assert canonical.status_code == legacy.status_code == 200
+    assert canonical.json() == legacy.json()
