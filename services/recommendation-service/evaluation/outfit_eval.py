@@ -155,6 +155,8 @@ def validate_record(record: dict[str, Any], line_number: int = 0) -> None:
             raise EvaluationError(prefix + "user_outcome references an unknown outfit_id")
         if not isinstance(event.get("subject_key"), str) or not event["subject_key"].strip():
             raise EvaluationError(prefix + "subject_key must be a pseudonymous non-empty key")
+        if not isinstance(event.get("exposure_id"), str) or not event["exposure_id"].strip():
+            raise EvaluationError(prefix + "exposure_id is required to deduplicate user actions")
         if event.get("ranker_id") not in {RANKER_ALGORITHM, RANKER_BASELINE}:
             raise EvaluationError(prefix + "ranker_id must be algorithm or simple_baseline")
         if event.get("event_type") not in VALID_USER_EVENTS:
@@ -165,6 +167,16 @@ def validate_record(record: dict[str, Any], line_number: int = 0) -> None:
             raise EvaluationError(prefix + "edited_item_count must be a non-negative integer")
         if event["event_type"] == "edited" and edited_count < 1:
             raise EvaluationError(prefix + "edited events require edited_item_count >= 1")
+
+    exposure_keys = {
+        (item["subject_key"], item["ranker_id"], item["outfit_id"], item["exposure_id"])
+        for item in events if item["event_type"] == "exposed"
+    }
+    for event in events:
+        if event["event_type"] != "exposed":
+            key = (event["subject_key"], event["ranker_id"], event["outfit_id"], event["exposure_id"])
+            if key not in exposure_keys:
+                raise EvaluationError(prefix + "user action must reference a recorded exposure")
 
 
 def _human_labels(record: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -258,6 +270,18 @@ def _user_behavior_metrics(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
         exposures = [item for item in own if item["event_type"] == "exposed"]
         edits = [item for item in own if item["event_type"] == "edited"]
         rejects = [item for item in own if item["event_type"] == "rejected"]
+        exposure_ids = {
+            (item["subject_key"], item["outfit_id"], item["exposure_id"])
+            for item in exposures
+        }
+        edited_exposures = {
+            (item["subject_key"], item["outfit_id"], item["exposure_id"])
+            for item in edits
+        }
+        rejected_exposures = {
+            (item["subject_key"], item["outfit_id"], item["exposure_id"])
+            for item in rejects
+        }
         pair_events: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
         for event in own:
             pair_events[(event["subject_key"], event["outfit_id"])].append(event)
@@ -272,7 +296,10 @@ def _user_behavior_metrics(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
             ]
             if rejected_times:
                 rejected_pairs += 1
-                if len({item["event_id"] for item in ordered if item["event_type"] == "rejected"}) >= 2:
+                if len({
+                    item["exposure_id"] for item in ordered
+                    if item["event_type"] == "rejected"
+                }) >= 2:
                     repeated_rejected_pairs += 1
                 first_rejection = min(rejected_times)
                 reexposed_after_rejection += sum(
@@ -281,14 +308,15 @@ def _user_behavior_metrics(events: Iterable[dict[str, Any]]) -> dict[str, Any]:
                 )
         result[ranker] = {
             "exposures": len(exposures),
-            "edits": len(edits),
-            "edit_rate": round(len(edits) / len(exposures), 4) if exposures else None,
+            "edited_exposures": len(edited_exposures),
+            "edit_rate": round(len(edited_exposures) / len(exposure_ids), 4) if exposure_ids else None,
             "mean_edited_items_per_exposure": (
-                round(sum(item["edited_item_count"] for item in edits) / len(exposures), 4)
-                if exposures else None
+                round(sum(item["edited_item_count"] for item in edits) / len(exposure_ids), 4)
+                if exposure_ids else None
             ),
             "rejections": len(rejects),
-            "rejection_rate": round(len(rejects) / len(exposures), 4) if exposures else None,
+            "rejected_exposures": len(rejected_exposures),
+            "rejection_rate": round(len(rejected_exposures) / len(exposure_ids), 4) if exposure_ids else None,
             "rejected_subject_outfit_pairs": rejected_pairs,
             "repeated_rejection_rate": (
                 round(repeated_rejected_pairs / rejected_pairs, 4) if rejected_pairs else None
