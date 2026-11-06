@@ -1,42 +1,43 @@
-# ADR-0008: PNELLY wardrobe companion and daily-look naming migration
+# ADR-0008: PNELLY capability, Wardrobe integration and runtime naming migration
 
-**Status:** Accepted for implementation on the feature branch; commercial brand use remains subject to trademark clearance.
+**Status:** Accepted for implementation; commercial brand use remains subject to trademark clearance.
 **Date:** 6 November 2026
-**Supersedes:** The daily-look product-name decision in the initial Tari implementation contract only. It does not supersede ADR-0005's Xari runtime decision or ADR-0007's domain ownership boundaries.
+**Supersedes:** The previous ADR-0008 decision that treated PNELLY only as a Wardrobe companion and explicitly retained Xari as runtime. It preserves ADR-0007 domain ownership and the daily-look product decision.
 **Related:** ADR-0005, ADR-0007, PR #81, PR #104, issue #108.
 
 ## Context
 
-The daily three-look slice was initially labelled Tari. The product owner has now selected **PNELLY** (pronounced “Pinelly”) as the name for the wardrobe companion and its daily-look experience. ADR-0007 already defines PNELLY as the contextual companion surface within Wardrobe, connected to the user's wardrobe, EEPL context, USI/TAL learning and NPL exclusions. The old Tari label creates two names for the same product experience and must be retired.
-
-PR #81 records PNELLY as a proposed brand and requires a migration ADR before changing service/UI naming. It also requires Xari to remain the current runtime identity pending legal review. This ADR satisfies the migration-decision gate; it does not constitute trademark clearance or authorize commercial launch.
+PNELLY was first introduced as the Wardrobe companion and daily-look capability. The product owner has now selected PNELLY as the canonical assistant and orchestration runtime as well. The previous distinction—PNELLY as a Wardrobe surface and Xari as the runtime—no longer reflects the product decision. The migration must not create two assistants or merge unrelated domain responsibilities.
 
 ## Decision
 
-1. **PNELLY is the product-facing name** for the Wardrobe companion and the daily three-look experience. The three recommendation roles remain Everyday, Elevated and Explore.
-2. **One runtime, not two assistants:** PNELLY is a product capability/surface, not a separately deployed agent, independent model runtime, identity store, wardrobe store, or profile database. The existing recommendation-service/Complementer capability performs advisory composition. Xari remains the shared conversational assistant/orchestration runtime under ADR-0005 and may coordinate PNELLY when conversational help is requested.
-3. **Preserve canonical domain ownership:** Wardrobe owns garment records and lifecycle; USI owns positive preferences; TAL owns consented learning events; NPL owns explicit hard exclusions; EEPL supplies context eligibility; Catalog/Commerce own product and offer facts; CAL remains the product-display authority; Virtual Twin owns its future persistent representation; Virtual Try-On owns render orchestration.
-4. **Canonical internal route names:** /v1/pnelly/daily-looks and /api/wardrobe/pnelly/daily-looks. The old /v1/tari/daily-looks route remains a hidden, deprecated compatibility alias for one migration window and delegates to the same handler. No duplicate implementation is permitted. No legacy Tari name is exposed in the user interface.
-5. **No unnecessary service or secret rename:** Keep the existing services/recommendation-service, services/marketplace-bff, COMPLEMENTER_SERVICE_TOKEN, and Xari service credentials. Do not create PNELLY_API_TOKEN, a separate PNELLY service, or a second assistant identity.
-6. **Virtual Twin remains honestly unavailable** until persistent user-owned Twin storage, purpose-specific server-side consent, authorized asset lifecycle, and a validated renderer pass issue #108's release gates. PNELLY must continue to provide wardrobe styling without pretending a pose skeleton or placeholder is a Twin preview.
-7. **Brand/legal gate:** PNELLY is a selected product name, not a claim of registered or cleared trademark. Before public commercial launch, complete Kenya and relevant international trademark, phonetic similarity, domain and company-name checks described in PR #81.
+1. **One canonical runtime:** PNELLY is the only assistant/orchestration runtime. Canonical implementation: `services/pnelly`. The old `services/xari` code is a compatibility shim to the same implementation, not an independent service.
+2. **PNELLY retains the Wardrobe capability:** it coordinates the three daily-look roles—Everyday, Elevated and Explore—through Wardrobe and the existing decision gateway. PNELLY does not own Wardrobe records or duplicate the user style profile. Recommendation service/Complementer remains advisory composition only.
+3. **Canonical names:** `PNELLY_API_URL`, `PNELLY_API_TOKEN`, `PNELLY_CHAT_API_URL`, and `services/pnelly`. `XARI_*` and `TARI_*` are temporary configuration aliases. PNELLY wins if multiple values are configured. Historic `XARI_*` error codes and API v1 schemas remain until a versioned compatibility change.
+4. **Routes:** `/v1/pnelly/daily-looks` and `/api/wardrobe/pnelly/daily-looks` are canonical daily-look routes. `/v1/tari/daily-looks` remains a hidden deprecated alias for one migration window and delegates to the same handler. Existing `/v1/route` and `/v1/marketplace/search` orchestration endpoints are preserved.
+5. **Domain ownership:** Wardrobe owns garment records/lifecycle; USI owns positive preferences; TAL owns consented observations/receipts; NPL owns explicit hard exclusions; EEPL supplies context; Catalog/Commerce own product and offer facts; CAL alone authorizes product display; Virtual Twin owns persistent user representations; Virtual Try-On owns render orchestration and output assets. PNELLY coordinates but does not replace these systems.
+6. **Media consent:** image processing, body-measurement processing, Twin storage, Wardrobe image storage and Try-On processing are distinct purpose scopes. Receipts are bound to subject, consent bundle and resource. Withdrawal affects the specified resource bundle, not another garment or Twin. Data deletion remains available after consent withdrawal.
+7. **Virtual Twin/try-on status:** persistent Twin storage and private asset boundaries are implemented as service/API foundations on the feature branch. The current representation is a pose skeleton, not a full body mesh, calibrated measurement model or fit guarantee. The FASHN worker is a real model adapter in source, but real GPU inference and staging validation remain release gates until pinned weights, a checksum manifest, GPU runtime and end-to-end render evidence are supplied.
+8. **Brand/legal gate:** PNELLY is the selected name, not a claim of registered or cleared trademark. Complete Kenya and relevant international trademark, phonetic similarity, domain and company-name checks before public commercial launch.
 
 ## Migration and compatibility
 
-- Update user-facing Wardrobe UI, CSS identifiers, docs, recommendation capability metadata, BFF/gateway paths, response capability identifiers and tests to PNELLY.
-- Keep the deprecated internal Tari route as a hidden alias to the exact same handler for one release window. Record its usage before removal; do not add a second service or duplicate state.
-- Browser UI calls only the PNELLY BFF route. Do not expose the legacy alias in UI, docs or new integrations.
-- Existing persisted wardrobe, consent, USI/TAL, NPL, Twin or render data is not renamed or migrated because this change is a product label/route migration, not a data-owner migration.
-- Rollback: revert the feature-branch migration commit(s); the old internal route alias remains available during the compatibility window. No database migration or production secret rotation is required.
+- Move runtime implementation, routing module, tests and workflow to `services/pnelly`.
+- Retain `services/xari` only as an import shim; all requests and imports execute the same PNELLY runtime.
+- New clients, deployment manifests and UI use PNELLY. Accept old Xari then Tari aliases only for the defined transition period, and instrument alias usage before removal.
+- Do not rename persisted owner IDs, Wardrobe items, consent receipt IDs, Twin IDs or Try-On jobs. The migration is a service/product identity migration, not a data-owner migration.
+- Continue hiding the deprecated Tari daily-look route from the browser; preserve it as an internal compatibility alias for one release window.
+- Rollback: revert runtime/BFF/UI migration commits. Existing v1 routes and compatibility shim preserve old callers while rollback is reviewed.
 
 ## Verification
 
-- Contract tests prove PNELLY canonical routes and capability metadata work.
-- A compatibility test proves the hidden Tari alias delegates to the same PNELLY handler and returns the same schema.
-- UI tests prove PNELLY is visible and the old name is absent from user-facing content.
-- Existing ownership, consent, NPL, CAL, cross-tenant and fail-closed Twin-preview tests remain unchanged and pass.
-- CI passing is not evidence of trademark clearance, persistent Twin readiness, real rendering, or production deployment.
+- Unit and import tests prove Xari compatibility imports are the same PNELLY module, not duplicated code.
+- Route/auth tests prove PNELLY-first token precedence and legacy alias support.
+- Contract tests preserve old v1 request/response shapes and historic error codes.
+- UI and docs expose PNELLY, not Xari/Tari.
+- Media tests cover resource-scoped consent revocation, cross-user isolation, deletion, retries and private asset access.
+- A mocked renderer test is contract verification only. Real render quality must be validated with the pinned GPU worker and licensed evaluation set before production activation.
 
 ## Consequences
 
-The product has one clear Wardrobe companion identity, PNELLY, while retaining the already accepted Xari orchestration runtime and existing service ownership. The rename does not imply that PNELLY's full learning loop or persistent Twin integration is complete.
+PNELLY now names both the Wardrobe companion capability and the single conversational/orchestration runtime. The architecture remains bounded: one runtime coordinates many domain owners, rather than becoming a monolith or spawning competing assistants.
