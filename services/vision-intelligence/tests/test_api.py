@@ -287,16 +287,20 @@ def test_live_offer_join_excludes_missing_or_archived_catalog_products(monkeypat
 
 def test_click_it_masks_before_quality_embedding_and_catalog_access(client, monkeypatch):
     events = []
+    decoded_refs = []
     masked = Image.new("RGB", (240, 320), (80, 100, 120))
 
     def anonymize(original):
         events.append("mask")
         assert original.size == (240, 320)
+        decoded_refs.append(original)
         return masked.copy(), 2
 
     def quality(image):
         events.append("quality")
         assert image is not None
+        with pytest.raises(ValueError):
+            decoded_refs[0].getpixel((0, 0))
         return {"passed": True, "width": 240, "height": 320}
 
     def embedding(image):
@@ -329,6 +333,7 @@ def test_click_it_masks_before_quality_embedding_and_catalog_access(client, monk
     assert response.headers["cache-control"] == "no-store, private"
     assert response.json()["privacy"]["faces_masked"] == 2
     assert response.json()["privacy"]["face_recognition"] is False
+    assert response.json()["image_persisted"] is False
     assert response.json()["results"][0]["image_urls"] == []
     assert response.json()["results"][0]["product"]["image_urls"] == []
 
