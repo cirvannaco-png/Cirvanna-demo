@@ -62,3 +62,23 @@ The current deterministic gate is intentionally conservative and is **not a vali
 For pose inference, reject if a pose/world-landmark group is absent, fewer than 33 landmarks are returned, or any critical shoulder/hip/ankle landmark visibility is below 0.45. This is a visibility gate, not a guarantee that the person is fully framed or that body geometry is accurate.
 
 These numeric thresholds are versioned heuristics chosen to block obvious failures; they must be re-tuned on a consented, labeled capture set before production. Current Click It does not have a validated semantic “this is a product” classifier or a calibrated no-match threshold. It therefore cannot honestly guarantee rejection of every irrelevant scene or reliable SKU identification. It returns candidate-only results, never display authorization. Before any UI is allowed to surface candidates, CAL must receive the ranking evidence and may abstain; do not interpret cosine scores as probabilities.
+
+## Click It face-detector asset
+
+The Vision Docker image now provisions the **versioned MediaPipe BlazeFace full-range detector** during build and verifies both its exact byte count and SHA-256 before the image can be built:
+
+- Source: https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_full_range/float16/1/blaze_face_full_range.tflite
+- Size: 1,083,786 bytes
+- SHA-256: `3698b18f063835bc609069ef052228fbe86d9c9a6dc8dcb7c7c2d69aed2b181b`
+- Runtime: MediaPipe Tasks FaceDetector, IMAGE mode, detector-only output (bounding boxes and confidence scores).
+- Licence: Apache License 2.0; attribution and model-card link are in `third-party/NOTICE-MEDIAPIPE-BLAZEFACE-FULL-RANGE.md`.
+
+The Docker build performs a real model-load and inference smoke test on a synthetic no-face image. This proves the pinned asset can load and execute in the container; it does **not** prove face recall, subgroup parity, or safe publication.
+
+**Known model limits:** the Google model card says this model is intended for prominent faces in smartphone images, is sensitive to face scale/orientation/position and lighting, and is out of scope for faces turned away, strongly inclined, beyond roughly 5 metres, or crowds beyond its detection limit. The model card's reported evaluation is not a substitute for Cirvanna's own consented representative-image evaluation. Therefore:
+- Click It still blocks on missing, low-confidence, malformed or uncertain detector output.
+- Every detected face must be masked before downstream quality scoring, embedding or retrieval.
+- Any public image still requires an asset-digest-bound, independently human-reviewed attestation; the detector alone never authorizes publication.
+- Keep public image URLs withheld until the attestation and Content Lifecycle providers are live and every publisher is wired to the gate.
+
+For non-Docker deployments, configure `CLICK_IT_FACE_DETECTOR_MODEL_PATH` and `CLICK_IT_FACE_DETECTOR_MODEL_SHA256` to the same verified bytes. Never point the service at a floating `latest` model URL or disable checksum verification.
