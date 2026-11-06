@@ -209,7 +209,7 @@ class ComplementerAdvisoryRequest(BaseModel):
         return normalized
 
 
-class TariDailyLooksRequest(BaseModel):
+class PNELLYDailyLooksRequest(BaseModel):
     """Daily-look request from the trusted same-origin BFF."""
     model_config = ConfigDict(extra="forbid")
     request_id: str = Field(min_length=1, max_length=128)
@@ -221,7 +221,7 @@ class TariDailyLooksRequest(BaseModel):
 
     @field_validator("request_id", "user_id")
     @classmethod
-    def trim_tari_identifiers(cls, value: str) -> str:
+    def trim_pnelly_identifiers(cls, value: str) -> str:
         normalized = value.strip()
         if not normalized:
             raise ValueError("identifier must not be blank")
@@ -229,7 +229,7 @@ class TariDailyLooksRequest(BaseModel):
 
     @field_validator("local_date")
     @classmethod
-    def validate_tari_date(cls, value: str) -> str:
+    def validate_pnelly_date(cls, value: str) -> str:
         from datetime import date
         try:
             date.fromisoformat(value)
@@ -627,8 +627,8 @@ def _complementer_advisory(
     }
 
 
-def _tari_npl_provider_configured() -> bool:
-    """Tari must not recommend wardrobe pieces when its hard-exclusion owner is unavailable."""
+def _pnelly_npl_provider_configured() -> bool:
+    """PNELLY must not recommend wardrobe pieces when its hard-exclusion owner is unavailable."""
     base = os.getenv("NPL_SERVICE_URL", "").strip()
     token = os.getenv("NPL_SERVICE_TOKEN", "").strip()
     secret = os.getenv("NPL_EVIDENCE_HMAC_SECRET", "").strip()
@@ -667,7 +667,7 @@ def _filter_npl_blocked_wardrobe_items(
     return allowed, len(evaluated) - len(allowed)
 
 
-def _tari_daily_looks(payload: TariDailyLooksRequest, style_signals: list[str], feedback_signals: list[str]) -> dict[str, Any]:
+def _pnelly_daily_looks(payload: PNELLYDailyLooksRequest, style_signals: list[str], feedback_signals: list[str]) -> dict[str, Any]:
     """Call the internal wardrobe-only composer and verify every returned item ID."""
     base = os.getenv("COMPLEMENTER_SERVICE_URL", "").strip().rstrip("/")
     token = os.getenv("COMPLEMENTER_SERVICE_TOKEN", "").strip()
@@ -684,7 +684,7 @@ def _tari_daily_looks(payload: TariDailyLooksRequest, style_signals: list[str], 
             follow_redirects=False,
         ) as client:
             response = client.post(
-                f"{base}/v1/tari/daily-looks",
+                f"{base}/v1/pnelly/daily-looks",
                 headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
                 json=body,
             )
@@ -714,7 +714,7 @@ def _tari_daily_looks(payload: TariDailyLooksRequest, style_signals: list[str], 
         not isinstance(result, dict)
         or result.get("schema_version") != "1.0"
         or result.get("request_id") != payload.request_id
-        or result.get("capability") != "tari_daily_looks"
+        or result.get("capability") != "pnelly_daily_looks"
         or result.get("look_count") != 3
         or result.get("status") not in {"ready", "partial", "needs_input"}
         or not isinstance(looks, list)
@@ -733,7 +733,7 @@ def _tari_daily_looks(payload: TariDailyLooksRequest, style_signals: list[str], 
     return {
         "schema_version": "1.0",
         "request_id": payload.request_id,
-        "mode": "tari_wardrobe_daily_looks",
+        "mode": "pnelly_wardrobe_daily_looks",
         "recommendation": result,
     }
 
@@ -1651,15 +1651,15 @@ def capabilities() -> dict[str, Any]:
             and len(os.getenv("COMPLEMENTER_SERVICE_TOKEN", "").encode("utf-8")) >= 32
             and _trusted_internal_base_url(os.getenv("COMPLEMENTER_SERVICE_URL", ""))
         ),
-        "tari_daily_look_orchestration_configured": bool(
+        "pnelly_daily_look_orchestration_configured": bool(
             os.getenv("COMPLEMENTER_SERVICE_URL")
             and len(os.getenv("COMPLEMENTER_SERVICE_TOKEN", "").encode("utf-8")) >= 32
             and _trusted_internal_base_url(os.getenv("COMPLEMENTER_SERVICE_URL", ""))
         ),
-        "tari_daily_look_roles": ["everyday", "elevated", "explore"],
-        "tari_requires_persistent_npl": True,
-        "tari_npl_provider_configured": _tari_npl_provider_configured(),
-        "tari_virtual_twin_preview_enabled": False,
+        "pnelly_daily_look_roles": ["everyday", "elevated", "explore"],
+        "pnelly_requires_persistent_npl": True,
+        "pnelly_npl_provider_configured": _pnelly_npl_provider_configured(),
+        "pnelly_virtual_twin_preview_enabled": False,
         "complementer_product_retrieval": False,
         "complementer_display_authority": False,
         "durable_complementer_memory": False,
@@ -1783,12 +1783,12 @@ def recommend_complementary_look(payload: ComplementerAdvisoryRequest) -> dict[s
 
 
 @app.post(
-    "/v1/tari/daily-looks",
+    "/v1/pnelly/daily-looks",
     dependencies=[Depends(require_api_token)],
-    tags=["tari daily looks"],
+    tags=["pnelly daily looks"],
 )
-def compose_tari_daily_looks(
-    payload: TariDailyLooksRequest,
+def compose_pnelly_daily_looks(
+    payload: PNELLYDailyLooksRequest,
     end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
 ) -> dict[str, Any]:
     """Compose three looks only from the signed-in user's wardrobe snapshot."""
@@ -1808,7 +1808,7 @@ def compose_tari_daily_looks(
         for preference in profile.preferences
         if preference.active and preference.attribute.strip().casefold().startswith(allowed_prefixes)
     ]
-    if payload.wardrobe_items and not _tari_npl_provider_configured():
+    if payload.wardrobe_items and not _pnelly_npl_provider_configured():
         raise HTTPException(503, detail={"code": "TARI_NPL_PROVIDER_NOT_CONFIGURED"})
     eligible_items, npl_excluded_count = _filter_npl_blocked_wardrobe_items(
         request_id=payload.request_id,
@@ -1822,7 +1822,7 @@ def compose_tari_daily_looks(
         for attribute, weight in positive_feedback.items()
         if isinstance(attribute, str) and attribute.strip() and isinstance(weight, (int, float)) and weight > 0
     ][:40]
-    result = _tari_daily_looks(safe_payload, style_signals, feedback_signals)
+    result = _pnelly_daily_looks(safe_payload, style_signals, feedback_signals)
     result["npl_excluded_wardrobe_item_count"] = npl_excluded_count
     return result
 
