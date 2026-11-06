@@ -304,8 +304,19 @@ MEDIA_REFERENCE_FIELDS = frozenset({
 })
 
 
-def _redact_unattested_media(value: Any) -> Any:
-    """Remove media references from customer-facing JSON until publication is attested."""
+MEDIA_CONTAINER_FIELDS = frozenset({
+    "media", "gallery", "image_metadata", "photo_metadata",
+    "avatar_metadata", "thumbnail_metadata", "render_metadata",
+})
+MEDIA_CONTEXT_REFERENCE_FIELDS = frozenset({
+    "url", "uri", "src", "href", "path", "file", "file_name",
+    "filename", "key", "id", "asset", "asset_id", "asset_reference",
+    "asset_key", "data", "base64", "bytes", "storage_key",
+})
+
+
+def _redact_unattested_media(value: Any, *, media_context: bool = False) -> Any:
+    """Remove media references recursively without stripping unrelated product links."""
     if isinstance(value, dict):
         safe: dict[str, Any] = {}
         for key, item in value.items():
@@ -323,15 +334,16 @@ def _redact_unattested_media(value: Any) -> Any:
                 "_image_path", "_photo_path", "_avatar_path", "_thumbnail_path",
                 "_image_asset_key", "_photo_asset_key", "_media_asset_key",
             ))
-            if media_field:
+            if media_field or (media_context and name in MEDIA_CONTEXT_REFERENCE_FIELDS):
                 safe[key] = [] if isinstance(item, (list, tuple)) else None
             else:
-                safe[key] = _redact_unattested_media(item)
+                child_media_context = media_context or name in MEDIA_CONTAINER_FIELDS
+                safe[key] = _redact_unattested_media(item, media_context=child_media_context)
         return safe
     if isinstance(value, list):
-        return [_redact_unattested_media(item) for item in value]
+        return [_redact_unattested_media(item, media_context=media_context) for item in value]
     if isinstance(value, tuple):
-        return [_redact_unattested_media(item) for item in value]
+        return [_redact_unattested_media(item, media_context=media_context) for item in value]
     return value
 
 
