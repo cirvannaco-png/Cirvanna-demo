@@ -1,6 +1,6 @@
 # Cirvanna Virtual Twin and Click It API
 
-**Status:** the API now has a real worker adapter contract. The worker can perform partial pose inference and CLIP-based marketplace-candidate retrieval when its pinned models and trusted services are configured. No production worker, consent provider or Twin registry is currently assumed to exist.
+**Status:** guarded pose-inference and Click It contracts plus a persistent Twin metadata-registry foundation. No production reconstruction worker, purpose-specific consent provider, mesh validator or asset provider is deployed/configured.
 
 ## Implemented flow
 
@@ -26,9 +26,9 @@ The adapters intentionally **fail closed** until these configurations and matchi
 - VISION_INTELLIGENCE_API_URL: private trusted HTTPS base URL of services/vision-intelligence.
 - VISION_INTELLIGENCE_API_TOKEN: internal worker token, at least 32 bytes, identical to VISION_WORKER_TOKEN on that service.
 - CONSENT_API_URL and CONSENT_API_TOKEN: trusted identity/consent service and internal token. This service calls POST /internal/v1/consents/verify with subject_id, consent_id, required_scopes, and (for Click It) resource_id. It requires JSON containing verified=true, active=true, the same subject_id and consent_id, granted_scopes covering every requested scope, and the same resource_id when one was supplied. Consent must be revocable and checked at request time.
-- TWIN_REGISTRY_API_URL and TWIN_REGISTRY_API_TOKEN: trusted Twin registry. This service calls POST /internal/v1/twins/authorize with subject_id and twin_id, and requires authorized=true, active=true, and matching IDs.
+- TWIN_REGISTRY_API_URL and TWIN_REGISTRY_API_TOKEN: point to this service's trusted internal base URL and the same private credential configured as VIRTUAL_TWIN_REGISTRY_TOKEN. The /internal/v1/twins/authorize endpoint is implemented, but requires the database migration and the consent, mesh-validation and asset providers below.
 
-No existing deployed consent or Twin-registry endpoint was found in the repository, so these adapter contracts do not imply that those services are live. Do not expose the service until those contracts are implemented and tested against the actual identity provider and persistent Twin store. A user-supplied subject_id is not authentication; only trusted server-side callers may call this service.
+The registry API and SQL migration now exist in source control; this does not prove that a production database, consent provider, mesh validator or asset provider is deployed. A user-supplied subject_id is not authentication; only trusted server-side callers may call this service.
 
 ## Failure behavior
 
@@ -42,7 +42,7 @@ Failure payloads use stable opaque codes and do not forward bearer secrets, full
 ## Remaining release gates
 
 1. Deploy the pinned Vision Intelligence service and provision the CLIP revision and checksummed MediaPipe model asset.
-2. Implement/configure the real consent-verification and Twin-ownership adapters using the actual identity issuer and persistent Twin registry.
+2. Apply the reviewed Twin registry migration to the approved PostgreSQL instance and validate backup/restore; deploy the purpose-specific consent, independent mesh-validation, and asset authorization/deletion providers against the actual identity issuer and object store.
 3. Put the service behind a trusted user-authenticated backend. Do not rely on form booleans or a client-submitted identity for proof.
 4. Connect the returned candidate set to the real CAL decision gateway and verify NPL/cultural hard vetoes before UI display.
 5. Run labeled image-quality and retrieval tests plus a consented full-body evaluation covering body/skin-tone variation, pose/occlusion and garment types. Confirm retention, redaction, alerting and incident response.
