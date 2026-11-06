@@ -75,6 +75,19 @@ It requires a trusted Vision attestation tied to the exact asset and target surf
 
 This deliberately masks all detected faces on public assets rather than trying to distinguish children from adults by appearance. It does not identify people or estimate age. This policy is more conservative than a child-only gate and must be disclosed in the product's media-publication terms. The repository contains the gate contract; every actual public publishing path still needs to integrate it and pass end-to-end tests before the platform can claim global protection.
 
+### Current repository route audit
+
+The current service source contains no public profile-photo, community-feed media, shared-link activation, restore, syndication or general asset-serving route. This is not an exemption for future work: `services/privacy-governance-service/tests/test_publication_route_guard.py` scans the FastAPI route declarations and fails CI when a public asset/image/photo/media/publish/restore/share/community/feed route is added without an explicit `require_publication_gate` dependency. The privacy gate itself is internal-only.
+
+Until a real asset publication owner and content-lifecycle provider are deployed, Cirvanna deliberately withholds media from customer-facing APIs:
+- Commerce `GET /marketplace/offers` returns no image URLs; merchant listing creation does not echo the stored source URLs.
+- Marketplace BFF recursively removes image/photo/avatar/thumbnail/render/asset URLs, IDs and references from customer-facing marketplace, wardrobe-recommendation, Click It and allowlisted Commerce JSON responses.
+- API Gateway discovery and Vision search/Click It responses apply the same recursive media suppression.
+- Catalog stores canonical merchant image URLs behind distinct service-read/service-write bearer scopes; those URLs are not exposed through the customer BFF. Commerce may snapshot them server-side, but the public offer contract remains image-free.
+- Virtual Twin's current outputs are pose/metadata responses; image persistence and public rendering remain disabled. Virtual Try-On remains unavailable until its consent, asset-authorisation and renderer adapters are real.
+
+This means the current application APIs do not provide a public path for a photograph or its image reference to be published. It does **not** prove that an externally hosted URL is inaccessible outside Cirvanna, nor does it replace storage-origin, CDN, signed-URL, cache, backup and deletion verification. Those controls belong to the yet-to-be-provisioned Content Lifecycle owner and remain release blockers.
+
 ## 5. Photographed-person report and removal workflow
 
 The public BFF intake is:
