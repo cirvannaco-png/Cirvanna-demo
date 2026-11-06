@@ -84,13 +84,42 @@ def health() -> dict[str, str]:
     return {"status": "alive", "service": SERVICE_NAME}
 
 
+async def _asset_service_ready() -> bool:
+    config = _asset_service_config()
+    if config is None:
+        return False
+    base, _token = config
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(2.5, connect=1.0), trust_env=False, follow_redirects=False
+        ) as client:
+            response = await client.get(base + "/ready")
+        return response.status_code == 200 and response.json().get("ready") is True
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return False
+
+
+@app.on_event("startup")
+def initialize_twin_schema() -> None:
+    if os.getenv("VIRTUAL_TWIN_AUTO_CREATE_SCHEMA", "false").lower() == "true":
+        url = os.getenv("VIRTUAL_TWIN_DATABASE_URL", "").strip()
+        if not url:
+            raise RuntimeError("VIRTUAL_TWIN_DATABASE_URL is required")
+        TwinBase.metadata.create_all(bind=twin_engine(url))
+
+
 @app.get("/ready", response_model=ReadinessResponse, tags=["operations"])
 async def ready() -> ReadinessResponse:
     vision_ready = await _vision_worker_ready()
     consent_configured = _internal_config("CONSENT_API_URL", "CONSENT_API_TOKEN") is not None
-    twin_registry_configured = _internal_config("TWIN_REGISTRY_API_URL", "TWIN_REGISTRY_API_TOKEN") is not None
+    asset_service_ready = await _asset_service_ready()
+    try:
+        get_store().ready()
+        twin_store_ready = True
+    except Exception:
+        twin_store_ready = False
     api_token_configured = len(os.getenv("VIRTUAL_TWIN_API_TOKEN", "").encode("utf-8")) >= 32
-    ready_now = vision_ready and consent_configured and api_token_configured
+    ready_now = all((vision_ready, consent_configured, asset_service_ready, twin_store_ready, api_token_configured))
     reason = None
     if not api_token_configured:
         reason = "api_auth_not_configured"
@@ -98,12 +127,18 @@ async def ready() -> ReadinessResponse:
         reason = "vision_worker_not_ready"
     elif not consent_configured:
         reason = "consent_verifier_not_configured"
+    elif not asset_service_ready:
+        reason = "asset_service_not_ready"
+    elif not twin_store_ready:
+        reason = "twin_store_not_ready"
     result = ReadinessResponse(
         status="ready" if ready_now else "not_ready",
         service=SERVICE_NAME,
         model_adapter_configured=vision_ready,
         consent_verifier_configured=consent_configured,
-        twin_registry_configured=twin_registry_configured,
+        twin_registry_configured=twin_store_ready,
+        twin_store_ready=twin_store_ready,
+        asset_service_configured=asset_service_ready,
         ready=ready_now,
         reason=reason,
     )
@@ -353,15 +388,23 @@ async def _run_vision(
 
 @app.get("/capabilities", tags=["operations"])
 async def capabilities() -> dict[str, object]:
-    """Report verified model/service state and deliberately separate partial inference."""
+    """Separate persistent pose-record capability from full-avatar reconstruction."""
     dermalsight_ready = await _dermalsight_ready()
     vision_ready = await _vision_worker_ready()
     consent_configured = _internal_config("CONSENT_API_URL", "CONSENT_API_TOKEN") is not None
-    twin_registry_configured = _internal_config("TWIN_REGISTRY_API_URL", "TWIN_REGISTRY_API_TOKEN") is not None
+    asset_ready = await _asset_service_ready()
+    try:
+        get_store().ready()
+        twin_store_ready = True
+    except Exception:
+        twin_store_ready = False
+    persistent_record = consent_configured and asset_ready and twin_store_ready
     return {
         "service": SERVICE_NAME,
         "twin_generation": False,
-        "persistent_twin_available": False,
+        "persistent_twin_available": persistent_record,
+        "persistent_twin_record_available": persistent_record,
+        "persistent_representation_type": "pose_skeleton_3d",
         "pose_skeleton_inference": vision_ready and consent_configured,
         "body_reconstruction": False,
         "full_surface_mesh": False,
@@ -373,11 +416,13 @@ async def capabilities() -> dict[str, object]:
         "ar_rendering": False,
         "click_it_product_reconstruction": False,
         "click_it_marketplace_search": vision_ready and consent_configured,
-        "click_it_twin_personalization": vision_ready and consent_configured and twin_registry_configured,
+        "click_it_twin_personalization": persistent_record,
         "decision_governance_connected_to_rendering": False,
-        "image_persistence": False,
+        "image_persistence": asset_ready,
+        "asset_service_configured": asset_ready,
+        "twin_store_ready": twin_store_ready,
         "display_authorization": "CAL_required_before_candidates_are_shown_or_used_to_purchase",
-        "reason": None if vision_ready else "vision_worker_not_ready_or_not_configured",
+        "reason": None if persistent_record else "twin_store_asset_service_or_consent_not_ready",
     }
 
 
