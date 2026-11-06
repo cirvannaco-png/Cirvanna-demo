@@ -672,18 +672,24 @@ async def delete_persistent_twin(
     subject_id: str,
 ):
     try:
-        record = get_store().get(subject_id=subject_id, twin_id=twin_id)
+        pending = get_store().begin_delete(subject_id=subject_id, twin_id=twin_id)
     except LookupError as exc:
         raise HTTPException(404, detail={"code": "TWIN_NOT_FOUND"}) from exc
     except Exception as exc:
         raise HTTPException(503, detail={"code": "TWIN_STORE_UNAVAILABLE"}) from exc
+    if pending["status"] == "deleted":
+        return JSONResponse(
+            content={"status": "deleted", "twin_id": twin_id, "asset_status": "deleted"},
+            headers={"Cache-Control": "no-store, private"},
+        )
+    # The record stays hidden in "deleting" if storage fails. Retrying is safe.
     await _delete_twin_assets(subject_id, twin_id)
     try:
-        get_store().delete(subject_id=subject_id, twin_id=twin_id)
+        deleted = get_store().complete_delete(subject_id=subject_id, twin_id=twin_id)
     except Exception as exc:
-        raise HTTPException(503, detail={"code": "TWIN_DELETE_PERSISTENCE_FAILED"}) from exc
+        raise HTTPException(503, detail={"code": "TWIN_DELETE_PERSISTENCE_FAILED", "retryable": True}) from exc
     return JSONResponse(
-        content={"status": "deleted", "twin_id": twin_id, "asset_status": "deleted"},
+        content={"status": deleted["status"], "twin_id": twin_id, "asset_status": "deleted"},
         headers={"Cache-Control": "no-store, private"},
     )
 
