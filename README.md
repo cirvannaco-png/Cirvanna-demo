@@ -4,7 +4,7 @@
 
 Cirvanna is an identity-first beauty, fashion, fit, and commerce-intelligence platform. It is designed to help people evaluate whether products and complete looks fit their declared preferences, context, and available evidence before purchase. For merchants, the objective is to improve relevance and measure avoidable returns through controlled pilots—not to promise unverified conversion or return-reduction gains.
 
-> **Engineering status — 2 November 2026:** Cirvanna is an active multi-service codebase with deterministic domain contracts and runnable API foundations. Complementer Personal Aesthetic Intelligence and Catalog product-intelligence validation are merged in PR #72. PR #74 has merged these capabilities: a private identity-learning service, Commerce-verified subject binding (required by default), consent-gated persistent USI profiles, durable TAL event storage, live Catalog/Commerce discovery, signed safety/FCI evidence adapters, and CAL-only product-detail release. These are implemented code paths and regression-tested contracts; the existing PostgreSQL migration, provider credentials/attestations, production OIDC configuration, deployed identity service, backup/restore, and end-to-end deployment verification remain operational gates. No real safety provider or calibrated FCI provider is configured, so discovery intentionally withholds candidates as REVIEW. Validated DermalSight inference and longitudinal skin forecasting also remain incomplete. **Cirvanna is not production-ready.**
+> **Engineering status — 6 November 2026:** Cirvanna is an active multi-service codebase with deterministic domain contracts and runnable API foundations. Complementer Personal Aesthetic Intelligence and Catalog product-intelligence validation are merged in PR #72. PR #74 has merged these capabilities: a private identity-learning service, Commerce-verified subject binding (required by default), consent-gated persistent USI profiles, durable TAL event storage, live Catalog/Commerce discovery, signed safety/FCI evidence adapters, and CAL-only product-detail release. These are implemented code paths and regression-tested contracts; the existing PostgreSQL migration, provider credentials/attestations, production OIDC configuration, deployed identity service, backup/restore, and end-to-end deployment verification remain operational gates. No real safety provider or calibrated FCI provider is configured, so discovery intentionally withholds candidates as REVIEW. Validated DermalSight inference and longitudinal skin forecasting also remain incomplete. **Cirvanna is not production-ready.**
 
 ## Contents
 
@@ -93,7 +93,7 @@ Complementer is advisory. It is not a second profile database, product database,
 - **Wardrobe:** intended digitisation and outfit-combination experiences.
 - **Experience Lab and moodboards:** intended spaces to explore, save, and compare looks.
 - **RadianceScore:** requires a defined construct, validation, calibration, and safe user-facing interpretation before it is treated as a reliable score.
-- **Xari:** canonical, optional conversational beauty and product-discovery assistant across Marketplace, Virtual Twin and Virtual Try-On. Complementer is an optional styling collaborator invoked through Xari; neither assistant can override Catalog/Commerce product truth, NPL, FCI or CAL.
+- **PNELLY:** canonical conversational and orchestration runtime across Marketplace, Wardrobe, Virtual Twin and Virtual Try-On. Complementer is an optional styling collaborator invoked through PNELLY; it cannot override Catalog/Commerce product truth, NPL, FCI or CAL. Xari/Tari names are temporary aliases to this same runtime.
 
 ### Marketplace and commerce
 
@@ -171,11 +171,11 @@ The user_id in this request is an opaque caller-supplied request-scope identifie
 
 The feedback endpoint accepts approval or rejection only when explicit personalisation consent is true. Rejections are soft observations; they do not create NPL hard vetoes. An explicit preference save requires a user-selected value.
 
-Complementer still produces a versioned feedback handoff contract; it does not write directly to a second profile store or automatically train a model. Durable persistence is owned by the identity-learning service and reached through authenticated gateway `/v1/me/*` routes. USI profiles require active `profile_storage` consent. TAL writes require active `personalization` or `style_learning` consent and support idempotent append, append-only same-feature corrections, export, deletion, and expiry purge. A denial or revocation withdraws all active grants for that subject and scope; an older receipt cannot remain active behind a newer withdrawal. These APIs provide durable storage foundations, not proof of a deployed cross-session learning loop or automated personalization improvement.
+Complementer still produces a versioned feedback handoff contract; it does not write directly to a second profile store or automatically train a model. Durable persistence is owned by the identity-learning service and reached through authenticated gateway `/v1/me/*` routes. USI profiles require active `profile_storage` consent. TAL writes require active `personalization` or `style_learning` consent and support idempotent append, append-only same-feature corrections, export, deletion, and expiry purge. A resource-bound denial or revocation withdraws grants only within the same subject, consent bundle, resource and scope; another garment or Twin remains separately consented. Legacy unscoped receipts retain the older subject-and-scope behavior. These APIs provide durable storage foundations, not proof of a deployed cross-session learning loop or automated personalization improvement.
 
 ## Daily three-look recommendations
 
-PNELLY is Cirvanna's named daily-look recommendation capability. The first executable slice returns exactly three distinct roles—Everyday, Elevated and Explore—from the signed-in user's active wardrobe through the same-origin BFF and decision gateway. The gateway requires persistent NPL when the wardrobe contains items, filters hard vetoes, uses allowlisted positive USI fashion signals only when profile-storage consent permits, and consumes existing positive Wardrobe like/wear TAL observations only when a current style-learning/personalization receipt is active. Occasion and climate are user-declared ranking hints matched to explicit wardrobe metadata; consented like/wear tags from TAL are bounded positive ranking signals; explanations cite matching inputs. There is no live weather ingestion in this slice. Xari remains the canonical conversational assistant; PNELLY is not a second assistant runtime. Virtual Twin preview is unavailable until persistent Twin ownership, active server-side consent, authorized assets and a validated renderer are integrated. The capability is implemented as an initial slice, not a production-ready end-to-end feature.
+PNELLY is Cirvanna's named daily-look recommendation capability. The first executable slice returns exactly three distinct roles—Everyday, Elevated and Explore—from the signed-in user's active wardrobe through the same-origin BFF and decision gateway. The gateway requires persistent NPL when the wardrobe contains items, filters hard vetoes, uses allowlisted positive USI fashion signals only when profile-storage consent permits, and consumes existing positive Wardrobe like/wear TAL observations only when a current style-learning/personalization receipt is active. Occasion and climate are user-declared ranking hints matched to explicit wardrobe metadata; consented like/wear tags from TAL are bounded positive ranking signals; explanations cite matching inputs. There is no live weather ingestion in this slice. PNELLY is the single canonical conversational and orchestration runtime; daily looks are a capability within it, not a second assistant. Persistent Twin storage and resource-bound consent/asset APIs now have an authenticated BFF integration path. The stored representation is a pose skeleton, not a calibrated body mesh or fit model. Virtual Try-On is wired to the real FASHN worker adapter, but rendering remains gated on checksummed model weights, a GPU runtime, successful real pipeline initialization, sample inference validation and staging evidence. The capability is integrated in source, not operationally validated end to end.
 
 See [daily three-look recommendation contract](docs/architecture/daily-three-look-recommendations.md) and [controlled retention experiment protocol](docs/research/retention-recommendation-experiments.md). The five experiments compare wardrobe-only vs integrated experience, PNELLY/Complementer with vs without wardrobe context, wardrobe-connected visual discovery, 30 km default vs user-expanded radius, and feedback-informed vs baseline recommendations. These are hypotheses; no uplift or industry benchmark is claimed.
 
@@ -213,9 +213,9 @@ The actual repository is a multi-service monorepo. Important areas are:
 | services/marketplace-bff | Same-origin marketplace UI and server-side proxy boundary |
 | services/vision-intelligence | Vision model runtime and worker-facing APIs |
 | services/virtual-twin | Guarded Twin and Click It APIs |
-| services/virtual-try-on | Consent-gated try-on orchestration; renderer is not enabled |
+| services/virtual-try-on | Consent-gated FASHN try-on orchestration; GPU worker readiness gates rendering |
 | services/wardrobe-service | Wardrobe API foundation |
-| services/xari | Xari conversational discovery and orchestration foundation |
+| services/pnelly | Canonical PNELLY orchestration runtime and discovery API |\n| services/xari | Temporary import and configuration compatibility shim to PNELLY |
 | services/graph-service, perception-service, sync-service | Supporting service foundations; inspect their READMEs before use |
 | packages/identity-intelligence | CaTaCaCi, USI, EEPL, TAL event contracts, and cultural identity domain contracts |
 | packages/preferences/npl | Canonical NPL policy and evidence contract |
@@ -299,7 +299,7 @@ For the Complementer proxy, configure COMPLEMENTER_SERVICE_URL=http://127.0.0.1:
 - Cultural Identity: from services/cultural-identity-service install requirements.txt and run python -m pytest -q. Set CULTURAL_IDENTITY_DATABASE_URL to PostgreSQL outside test mode.
 - Decision service: from services/decision-service install requirements.txt and run python -m pytest -q. Its signed evidence keys must be independently provisioned.
 - DermalSight: from services/dermalsight install requirements-dev.txt and run pytest -q. Actual inference is unavailable until a verified ONNX model and signed validation report are provided.
-- Commerce, marketplace BFF, Vision Intelligence, Twin, Try-On, Wardrobe, and Xari: follow the service-specific README and workflow. Do not assume a model/adapter is available because the API code exists.
+- Commerce, marketplace BFF, Vision Intelligence, Twin, Try-On, Wardrobe, and PNELLY: follow the service-specific README and workflow. Do not assume a model/adapter is available because the API code exists.
 
 ## Configuration
 
@@ -391,7 +391,7 @@ Run the relevant service tests plus architecture and security checks:
     python -m unittest discover -s tests/architecture -v
     python scripts/scan_source_secrets.py
 
-Service workflows are path-scoped. The Decision Gateway workflow runs API/contract tests, container build, architecture checks, and source secret scanning. It also triggers when the Complementer service changes because the gateway proxy depends on its response contract. The Complementer workflow runs dependency checks, compileall, and its API/domain tests. Catalog, NPL, Cultural Identity, DermalSight, marketplace, Commerce, Vision Intelligence, Twin, Try-On, Wardrobe and Xari have separate workflows.
+Service workflows are path-scoped. The Decision Gateway workflow runs API/contract tests, container build, architecture checks, and source secret scanning. It also triggers when the Complementer service changes because the gateway proxy depends on its response contract. The Complementer workflow runs dependency checks, compileall, and its API/domain tests. Catalog, NPL, Cultural Identity, DermalSight, marketplace, Commerce, Vision Intelligence, Twin, Try-On, Wardrobe and PNELLY have separate workflows; the Xari compatibility shim is tested by the PNELLY workflow.
 
 For every CI report, record the branch, commit SHA, workflow/job, exact test result, warnings, skips, and limitations. A passing unit suite or container build does not prove production readiness, model quality, live database health, cross-service identity, backup recovery, or commercial outcomes.
 
@@ -495,7 +495,7 @@ Start with the [Source of truth and contributor guide](docs/architecture/source-
 ## Architecture references
 
 - [Complementer, Marketplace Product Intelligence and Skin-State Forecasting](docs/architecture/complementer-product-intelligence-skin-forecast.md)
-- [Xari-assisted discovery, Complementer collaboration and marketplace Try-On](docs/architecture/adr/ADR-0005-xari-assisted-discovery-marketplace-try-on.md)
+- [PNELLY orchestration, Complementer collaboration and marketplace Try-On](docs/architecture/adr/ADR-0005-xari-assisted-discovery-marketplace-try-on.md)
 - [Decision flow](docs/architecture/decision-flow.md)
 - [CaTaCaCi decision contract ADR](docs/architecture/adr/ADR-0001-catacaci-decision-contract.md)
 - [Feature spine readiness](docs/architecture/feature-spine-readiness-2026-10-23.md)
@@ -516,3 +516,8 @@ Start with the [Source of truth and contributor guide](docs/architecture/source-
 ---
 
 **Final principle:** the README describes the system honestly; executable code and reproducible evidence establish what is built. Cirvanna should grow through clear ownership, validated contracts, integrated user journeys, and measured outcomes—not feature labels that outrun the software.
+
+
+## PNELLY runtime migration
+
+PNELLY is the canonical orchestration runtime. The previous Xari/Tari identifiers are temporary compatibility aliases to the same service and state, not parallel assistants. New integrations must use `services/pnelly`, `PNELLY_API_URL`, and `PNELLY_API_TOKEN`. The Marketplace BFF prefers PNELLY credentials, then accepts XARI and TARI aliases during the compatibility period. Existing `/v1/route`, `/v1/marketplace/search` schemas and historic `XARI_*` v1 error codes are retained to avoid breaking orchestration clients. See ADR-0005 and ADR-0008.
