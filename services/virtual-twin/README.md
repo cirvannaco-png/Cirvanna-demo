@@ -66,6 +66,7 @@ The API now includes a **database-backed metadata registry** for a validated Twi
 - `VIRTUAL_TWIN_REGISTRY_TOKEN`: a private machine credential of at least 32 bytes for registry calls. Never expose it in browser code.
 - `VIRTUAL_TWIN_DELETION_TOKEN`: a distinct private credential for the deletion dispatcher.
 - `CONSENT_API_URL` / `CONSENT_API_TOKEN`: the consent provider must return a verified, active receipt for the same subject, receipt ID and consent version, with all scopes `image_processing`, `body_measurements`, and `virtual_twin_storage`, for purpose `virtual_twin_persistence`.
+- `TWIN_VALIDATION_API_URL` / `TWIN_VALIDATION_API_TOKEN`: a separate validator endpoint `POST /internal/v1/twins/validate-mesh` must inspect the actual stored artifact and return an active validation receipt bound to the same subject, Twin ID, asset ID, representation type and exact model version. A caller-provided `full_body_mesh` label alone is never accepted.
 - `TWIN_ASSET_API_URL` / `TWIN_ASSET_API_TOKEN`: trusted asset provider endpoints `POST /internal/v1/assets/authorize` and `POST /internal/v1/assets/delete`. Authorization must echo the exact subject and all requested asset IDs. Deletion must be idempotent, cascade to derived artifacts, and return a deletion receipt covering every requested asset.
 - For Click It integration, set `TWIN_REGISTRY_API_URL` to this service's trusted internal base URL and `TWIN_REGISTRY_API_TOKEN` to the registry credential; the service calls `/internal/v1/twins/authorize`.
 
