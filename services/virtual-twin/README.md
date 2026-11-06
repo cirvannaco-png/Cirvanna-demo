@@ -47,6 +47,34 @@ Failure payloads use stable opaque codes and do not forward bearer secrets, full
 4. Connect the returned candidate set to the real CAL decision gateway and verify NPL/cultural hard vetoes before UI display.
 5. Run labeled image-quality and retrieval tests plus a consented full-body evaluation covering body/skin-tone variation, pose/occlusion and garment types. Confirm retention, redaction, alerting and incident response.
 
+## Persistent Twin registry foundation
+
+The API now includes a **database-backed metadata registry** for a validated Twin artifact. This is separate from the `POST /twin` pose-inference endpoint: that endpoint still returns an ephemeral pose skeleton and never registers it as a saved Twin. The registry accepts only `representation_type=full_body_mesh`; it does not generate meshes, infer measurements, or certify fit.
+
+### Registry operations
+
+- `POST /internal/v1/twins/register` registers a full-body mesh asset reference only after current consent and ownership of the derived mesh plus every source-image asset are verified.
+- `POST /internal/v1/twins/authorize` checks the subject/Twin ownership pair, active record state, current consent receipt/version, and all referenced assets on every authorization request.
+- `POST /internal/v1/twins/deactivate` immediately changes the record to `deletion_pending`, blocks new authorization, and writes an asset-deletion outbox command.
+- `POST /internal/v1/twins/revoke-consent` is the trusted consent-service callback for queueing deletion of Twins created under a withdrawn receipt.
+- `POST /internal/v1/twins/deletions/dispatch` is a separately authenticated worker operation. A Twin is marked `deleted` only after the asset service confirms deletion of all requested assets. Provider failure leaves the record pending and retryable.
+- `GET /internal/v1/twins/{twin_id}/status?subject_id=...` returns lifecycle metadata to an authenticated internal caller.
+
+### Required configuration and provider contracts
+
+- `VIRTUAL_TWIN_DATABASE_URL`: the approved existing PostgreSQL instance, not a new hosting-provider-specific database. Apply `migrations/0001_virtual_twin_registry.sql` through the controlled migration process; production schema auto-creation is not supported.
+- `VIRTUAL_TWIN_REGISTRY_TOKEN`: a private machine credential of at least 32 bytes for registry calls. Never expose it in browser code.
+- `VIRTUAL_TWIN_DELETION_TOKEN`: a distinct private credential for the deletion dispatcher.
+- `CONSENT_API_URL` / `CONSENT_API_TOKEN`: the consent provider must return a verified, active receipt for the same subject, receipt ID and consent version, with all scopes `image_processing`, `body_measurements`, and `virtual_twin_storage`, for purpose `virtual_twin_persistence`.
+- `TWIN_ASSET_API_URL` / `TWIN_ASSET_API_TOKEN`: trusted asset provider endpoints `POST /internal/v1/assets/authorize` and `POST /internal/v1/assets/delete`. Authorization must echo the exact subject and all requested asset IDs. Deletion must be idempotent, cascade to derived artifacts, and return a deletion receipt covering every requested asset.
+- For Click It integration, set `TWIN_REGISTRY_API_URL` to this service's trusted internal base URL and `TWIN_REGISTRY_API_TOKEN` to the registry credential; the service calls `/internal/v1/twins/authorize`.
+
+All registry endpoints require internal bearer authentication; deletion dispatch requires the separate `X-Twin-Deletion-Token`. The registration caller must be a trusted backend/generator that has independently validated a full-body mesh. Client-supplied subject IDs and form booleans are not identity or consent evidence.
+
+### Completion boundary
+
+This is a persistence and authorization foundation, **not a live Twin-generation system**. The repository still has no validated full-body reconstruction worker, deployed general-purpose consent provider for the required scopes, or asset authorization/deletion provider implementing these contracts. Consequently, no real user can yet register or render a persistent Twin in production. The asset-deletion worker remains unavailable until the provider exists. Virtual Try-On remains independently disabled until its renderer, asset authorizer, consent verifier and output validation are operational.
+
 ## Optional Xari and Complementer assistance
 
 Xari may be offered as an optional conversational guide from the Virtual Twin experience. Complementer may be invoked through Xari, or surfaced as an explicit optional styling action, for advisory look coordination. Both remain outside this service's ownership: the Twin service owns its consent-gated representation and authorization; Complementer owns styling advice; Catalog/Commerce own product truth; FCI owns calibrated fit evidence; CAL owns display authorization.
