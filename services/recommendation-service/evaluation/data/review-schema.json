@@ -193,7 +193,8 @@
           "ranker_id",
           "outfit_id",
           "event_type",
-          "occurred_at"
+          "occurred_at",
+          "exposure_id"
         ],
         "properties": {
           "subject_key": {
@@ -229,6 +230,10 @@
           "edited_item_count": {
             "type": "integer",
             "minimum": 0
+          },
+          "exposure_id": {
+            "type": "string",
+            "minLength": 1
           }
         }
       }
