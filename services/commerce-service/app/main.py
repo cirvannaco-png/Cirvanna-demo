@@ -956,28 +956,14 @@ def decide_merchant(merchant_id: uuid.UUID, payload: MerchantDecision,
     return merchant_json(merchant)
 
 
-def trusted_catalog_image_urls(product: dict[str, Any]) -> list[str]:
-    raw_urls = product.get("image_urls", [])
-    if not isinstance(raw_urls, list):
-        return []
-    safe: list[str] = []
-    for value in raw_urls:
-        if not isinstance(value, str) or not value.strip() or len(value) > 2048:
-            continue
-        try:
-            parsed = urlsplit(value.strip())
-        except ValueError:
-            continue
-        if parsed.scheme != "https" or not parsed.hostname or parsed.username is not None or parsed.password is not None:
-            continue
-        if parsed.fragment or any(ord(ch) < 32 for ch in value):
-            continue
-        normalized = value.strip()
-        if normalized not in safe:
-            safe.append(normalized)
-        if len(safe) == 8:
-            break
-    return safe
+def trusted_catalog_image_urls(_product: dict[str, Any]) -> list[str]:
+    """Fail closed: URL syntax/HTTPS is not proof of image masking or publication rights.
+
+    A future asset-ingestion provider must return an asset-bound, verified masking
+    receipt before this service can persist or expose an image URL. Until then,
+    commerce listings intentionally carry no public image URLs.
+    """
+    return []
 
 
 @app.post("/merchant/listings", status_code=201)
