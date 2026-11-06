@@ -79,19 +79,18 @@ def test_click_it_requires_both_consents(client):
     assert response.json()["detail"]["code"] == "EXPLICIT_CLICK_IT_CONSENT_REQUIRED"
 
 
-def test_click_it_rejects_low_quality_before_loading_model(client, monkeypatch):
-    monkeypatch.setattr(main, "_image_embedding", lambda _image: pytest.fail("model must not run"))
-    dark = Image.new("RGB", (240, 320), (0, 0, 0))
-    stream = io.BytesIO()
-    dark.save(stream, format="PNG")
+def test_click_it_fails_closed_before_decoding_or_loading_models(client, monkeypatch):
+    monkeypatch.setattr(main, "_decode_image", lambda *_: pytest.fail("upload must not be decoded"))
+    monkeypatch.setattr(main, "_image_embedding", lambda *_: pytest.fail("unmasked upload must not reach embedding"))
+    monkeypatch.setattr(main, "_live_offers", lambda: pytest.fail("marketplace must not be queried"))
     response = client.post(
         "/v1/click-it/scan",
         headers=auth(),
         data={"consent_image_processing": "true", "consent_click_it": "true"},
-        files={"image": ("dark.png", stream.getvalue(), "image/png")},
+        files={"image": ("product.png", image_bytes(), "image/png")},
     )
-    assert response.status_code == 422
-    assert response.json()["detail"]["code"] == "IMAGE_QUALITY_REJECTED"
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "CLICK_IT_PRIVACY_PIPELINE_NOT_RELEASED"
 
 
 def test_description_search_uses_live_offers_and_never_fabricates_results(client, monkeypatch):
@@ -122,35 +121,18 @@ def test_description_search_uses_live_offers_and_never_fabricates_results(client
     assert body["scores_are_probabilities"] is False
 
 
-def test_click_it_returns_ranked_live_marketplace_results_without_persisting_image(client, monkeypatch):
-    async def offers():
-        return ([{
-            "variant_id": "v1",
-            "product_name": "red woven top",
-            "category": "upper_body",
-            "product": {"product_id": "p1", "description": "Red woven cotton top"},
-            "search_text": "red woven cotton top",
-        }], False)
-
-    monkeypatch.setattr(main, "_live_offers", offers)
-    monkeypatch.setattr(main, "_image_embedding", lambda _image: [0.25, 0.75])
-    monkeypatch.setattr(main, "_rank_offers", lambda _query, _offers, limit: [{
-        "variant_id": "v1", "product_name": "red woven top",
-        "image_urls": ["https://cdn.example.test/unmasked.jpg"],
-        "product": {"image_urls": ["https://cdn.example.test/nested.jpg"]},
-        "match_score": 0.31, "match_score_type": "cosine_similarity_not_probability",
-    }][:limit])
+def test_click_it_never_returns_success_while_masking_pipeline_is_unavailable(client, monkeypatch):
+    monkeypatch.setattr(main, "_decode_image", lambda *_: pytest.fail("upload must not be decoded"))
+    monkeypatch.setattr(main, "_image_embedding", lambda *_: pytest.fail("unmasked upload must not reach embedding"))
+    monkeypatch.setattr(main, "_live_offers", lambda: pytest.fail("marketplace must not be queried"))
     response = client.post(
         "/v1/click-it/scan",
         headers=auth(),
         data={"consent_image_processing": "true", "consent_click_it": "true"},
         files={"image": ("product.png", image_bytes(), "image/png")},
     )
-    assert response.status_code == 200
-    body = response.json()
-    assert body["search_mode"] == "image_to_catalog_text_similarity"
-    assert body["image_persisted"] is False
-    assert body["results"][0]["variant_id"] == "v1"
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "CLICK_IT_PRIVACY_PIPELINE_NOT_RELEASED"
 
 
 def test_ranker_orders_scores_descending(monkeypatch):
