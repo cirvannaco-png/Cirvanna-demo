@@ -212,16 +212,27 @@ def evaluate(records: list[dict[str, Any]], k: int = 3) -> dict[str, Any]:
             "warning": "No human-reviewed records were supplied; no performance claim is supported.",
         }
     accum = {system: defaultdict(list) for system in SYSTEMS}
+    empty_slates = {system: 0 for system in SYSTEMS}
+    top_k_fill = {system: [] for system in SYSTEMS}
     assigned_exposures = {system: [] for system in SYSTEMS}
     seen_case_ids: set[str] = set()
+    participant_assignments: dict[str, str] = {}
     for record in records:
         case_id = record.get("case_id")
         if case_id in seen_case_ids:
             raise ValueError("case_id values must be unique")
         seen_case_ids.add(case_id)
+        participant_key = record.get("participant_key")
+        assigned_system = record.get("assigned_system")
+        previous_assignment = participant_assignments.setdefault(participant_key, assigned_system)
+        if previous_assignment != assigned_system:
+            raise ValueError("participant must remain in one randomized system arm across sessions")
         candidates, context, rankings, labels = _validate_case(record, k)
         for system, ranking in rankings.items():
             selected = ranking[:k]
+            top_k_fill[system].append(len(selected) / k)
+            if not selected:
+                empty_slates[system] += 1
             relevance = [float(labels[item]["relevance"]) for item in selected]
             violations = [
                 labels[item]["exclusion_violation"] or _violates_declared_exclusions(candidates[item], context)
@@ -230,7 +241,8 @@ def evaluate(records: list[dict[str, Any]], k: int = 3) -> dict[str, Any]:
             accum[system]["relevance"].append(statistics.mean(relevance) if relevance else 0.0)
             accum[system]["ndcg"].append(_ndcg(ranking, labels, k))
             accum[system]["diversity"].append(_diversity(ranking, candidates, k))
-            accum[system]["violations"].append(sum(violations) / len(violations) if violations else 0.0)
+            if violations:
+                accum[system]["violations"].append(sum(violations) / len(violations))
         system = record["assigned_system"]
         for exposure in record.get("exposures", []):
             candidate = candidates[exposure["look_id"]]
@@ -254,6 +266,8 @@ def evaluate(records: list[dict[str, Any]], k: int = 3) -> dict[str, Any]:
         repeated_count = sum(1 for sessions in rejected_by_session.values() if len(sessions) >= 2)
         output[system] = {
             "reviewed_contexts": len(records),
+            "no_result_rate": round(empty_slates[system] / len(records), 4),
+            "top_k_fill_rate": _mean(top_k_fill[system]),
             "mean_human_relevance_top_k": _mean(accum[system]["relevance"]),
             "ndcg_at_k": _mean(accum[system]["ndcg"]),
             "intra_list_diversity": _mean(accum[system]["diversity"]),
