@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.evaluation.outfit_eval import EvaluationError, evaluate_records, simple_baseline_score, validate_record
+from evaluation.outfit_eval import EvaluationError, evaluate_records, simple_baseline_score, validate_record
 
 
 def reviewed(outfit_id, relevance, *, exclusion=False, disposition="accept"):
