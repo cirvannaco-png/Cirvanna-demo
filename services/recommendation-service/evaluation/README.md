@@ -64,7 +64,7 @@ The tool reports a missing user metric as `null`, not zero, when no user events 
 
 ```bash
 cd services/recommendation-service
-python -m app.evaluation.outfit_eval /path/to/reviewed-outfits.jsonl --split locked_test --k 3 --output metrics.json
+python -m evaluation.outfit_eval /path/to/reviewed-outfits.jsonl --split locked_test --k 3 --output metrics.json
 ```
 
 The checked-in template is only a blank intake header. There are no reviewed examples and no human performance claims until the dataset is populated and independently annotated.
