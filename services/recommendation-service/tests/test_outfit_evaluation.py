@@ -146,3 +146,10 @@ def test_edit_annotations_require_explicit_replacement_items():
     record["human_reviews"][0]["proposed_item_ids"] = []
     with pytest.raises(EvaluationError, match="edit reviews require"):
         validate_record(record)
+
+
+def test_user_action_must_reference_the_exact_recorded_exposure():
+    record = sample_record()
+    record["user_outcomes"][1]["exposure_id"] = "unknown-exposure"
+    with pytest.raises(EvaluationError, match="must reference a recorded exposure"):
+        validate_record(record)
