@@ -8,7 +8,7 @@ from __future__ import annotations
 import hmac
 import os
 from typing import Annotated
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 import httpx
 
@@ -311,6 +311,28 @@ async def _delete_twin_asset(subject_id: str, asset_id: str) -> None:
         raise HTTPException(503, detail={"code": "TWIN_ASSET_DELETE_UNAVAILABLE"}) from exc
     if response.status_code not in {200, 202, 204, 404}:
         raise HTTPException(503, detail={"code": "TWIN_ASSET_DELETE_FAILED"})
+
+
+async def _delete_twin_assets(subject_id: str, twin_id: str) -> None:
+    """Purge the Twin source image and every child try-on preview together."""
+    config = _asset_service_config()
+    if config is None:
+        raise HTTPException(503, detail={"code": "ASSET_SERVICE_NOT_CONFIGURED"})
+    base, token = config
+    path = "/internal/v1/assets/by-parent/" + quote(twin_id, safe="")
+    query = urlencode({"owner_user_id": subject_id})
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(12.0, connect=2.0), trust_env=False, follow_redirects=False
+        ) as client:
+            response = await client.delete(
+                base + path + "?" + query,
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "TWIN_ASSET_DELETE_UNAVAILABLE"}) from exc
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "TWIN_ASSET_PARENT_DELETE_FAILED"})
 
 
 async def _vision_config() -> tuple[str, str] | None:
@@ -655,7 +677,7 @@ async def delete_persistent_twin(
         raise HTTPException(404, detail={"code": "TWIN_NOT_FOUND"}) from exc
     except Exception as exc:
         raise HTTPException(503, detail={"code": "TWIN_STORE_UNAVAILABLE"}) from exc
-    await _delete_twin_asset(subject_id, record["source_asset_id"])
+    await _delete_twin_assets(subject_id, twin_id)
     try:
         get_store().delete(subject_id=subject_id, twin_id=twin_id)
     except Exception as exc:
