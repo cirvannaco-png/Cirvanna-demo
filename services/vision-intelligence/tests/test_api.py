@@ -110,6 +110,8 @@ def test_description_search_uses_live_offers_and_never_fabricates_results(client
     monkeypatch.setattr(main, "_text_embedding", lambda _text: [1.0, 0.0])
     monkeypatch.setattr(main, "_rank_offers", lambda _query, _offers, limit: [{
         "variant_id": "v1", "product_name": "linen wrap dress",
+        "image_urls": ["https://cdn.example.test/unmasked.jpg"],
+        "product": {"image_urls": ["https://cdn.example.test/nested.jpg"]},
         "match_score": 0.25, "match_score_type": "cosine_similarity_not_probability",
     }][:limit])
     response = client.post("/v1/search/text", headers=auth(), json={"query": "linen wrap dress"})
@@ -117,6 +119,8 @@ def test_description_search_uses_live_offers_and_never_fabricates_results(client
     body = response.json()
     assert body["candidate_count"] == 1
     assert body["results"][0]["variant_id"] == "v1"
+    assert body["results"][0]["image_urls"] == []
+    assert body["results"][0]["product"]["image_urls"] == []
     assert body["scores_are_probabilities"] is False
 
 
@@ -309,7 +313,11 @@ def test_click_it_masks_before_quality_embedding_and_catalog_access(client, monk
     monkeypatch.setattr(main, "evaluate_image_quality", quality)
     monkeypatch.setattr(main, "_image_embedding", embedding)
     monkeypatch.setattr(main, "_live_offers", offers)
-    monkeypatch.setattr(main, "_rank_offers", lambda *_args: [{"variant_id": "variant-1"}])
+    monkeypatch.setattr(main, "_rank_offers", lambda *_args: [{
+        "variant_id": "variant-1",
+        "image_urls": ["https://cdn.example.test/unmasked.jpg"],
+        "product": {"image_urls": ["https://cdn.example.test/nested.jpg"]},
+    }])
     response = client.post(
         "/v1/click-it/scan",
         headers=auth(),
@@ -321,6 +329,8 @@ def test_click_it_masks_before_quality_embedding_and_catalog_access(client, monk
     assert response.headers["cache-control"] == "no-store, private"
     assert response.json()["privacy"]["faces_masked"] == 2
     assert response.json()["privacy"]["face_recognition"] is False
+    assert response.json()["results"][0]["image_urls"] == []
+    assert response.json()["results"][0]["product"]["image_urls"] == []
 
 
 def test_click_it_detector_failure_blocks_embedding_and_catalog(client, monkeypatch):
