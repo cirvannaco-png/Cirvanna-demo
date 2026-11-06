@@ -182,4 +182,10 @@ def test_pnelly_fails_closed_when_persistent_npl_is_not_configured(monkeypatch):
         json=request_body(),
     )
     assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "TARI_NPL_PROVIDER_NOT_CONFIGURED"
+    assert response.json()["detail"]["code"] == "PNELLY_NPL_PROVIDER_NOT_CONFIGURED"
+
+
+def test_legacy_tari_gateway_route_is_hidden_compatibility_alias(monkeypatch):
+    # The canonical handler is registered at both paths during one migration window.
+    assert "/v1/pnelly/daily-looks" in main.app.openapi()["paths"]
+    assert "/v1/tari/daily-looks" not in main.app.openapi()["paths"]
