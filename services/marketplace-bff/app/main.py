@@ -170,7 +170,7 @@ async def marketplace_description_search(payload: MarketplaceSearchIn) -> dict:
         "status": "complete",
         "query": payload.normalized_query,
         "candidate_count": data.get("candidate_count", len(data["candidates"])),
-        "candidates": data["candidates"],
+        "candidates": _withhold_unverified_media(data["candidates"]),
         "display_authorized": data.get("display_authorized") is True,
         "decision_status": data.get("decision_status", "PENDING_CAL"),
         "scores_are_probabilities": False,
@@ -256,8 +256,26 @@ def _decision_gateway() -> tuple[str, str]:
     return _internal_service("DECISION_GATEWAY_URL", "DECISION_GATEWAY_TOKEN")
 
 
+def _withhold_unverified_media(value):
+    """Recursively redact image URLs until the exact asset has a verified receipt."""
+    if isinstance(value, list):
+        return [_withhold_unverified_media(item) for item in value]
+    if isinstance(value, dict):
+        result = {}
+        for key, item in value.items():
+            normalized = str(key).casefold()
+            if normalized == "image_urls":
+                result[key] = []
+            elif normalized in {"image_url", "photo_url", "avatar_url", "media_url", "thumbnail_url"}:
+                result[key] = None
+            else:
+                result[key] = _withhold_unverified_media(item)
+        return result
+    return value
+
+
 def _private_json_response(data: dict) -> JSONResponse:
-    return JSONResponse(content=data, headers={"Cache-Control": "no-store, private"})
+    return JSONResponse(content=_withhold_unverified_media(data), headers={"Cache-Control": "no-store, private"})
 
 
 @app.get("/wardrobe", response_class=HTMLResponse)
@@ -530,7 +548,7 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
     # The decision gateway returns product/offer details only for CAL SHOW.
     if not isinstance(data, dict) or not isinstance(data.get("displayable_products"), list):
         raise HTTPException(502, detail={"code": "WARDROBE_RECOMMENDATIONS_RESPONSE_INVALID"})
-    return _private_json_response(data)
+    return _private_json_response(_withhold_unverified_media(data))
 
 
 
@@ -624,7 +642,7 @@ async def marketplace_click_it(
     except ValueError as exc:
         raise HTTPException(502, detail={"code": "CLICK_IT_INVALID_RESPONSE"}) from exc
     if response.status_code == 200 and isinstance(data, dict):
-        return JSONResponse(content=data, headers={"Cache-Control": "no-store, private"})
+        return JSONResponse(content=_withhold_unverified_media(data), headers={"Cache-Control": "no-store, private"})
     detail = data.get("detail", {}) if isinstance(data, dict) else {}
     code = detail.get("code") if isinstance(detail, dict) else None
     safe = {"code": code if isinstance(code, str) else "CLICK_IT_REQUEST_FAILED"}

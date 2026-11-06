@@ -159,7 +159,7 @@ def test_description_search_forwards_to_legacy_tari_alias_and_keeps_candidates_p
         "status": "complete",
         "query": "green linen dress",
         "candidate_count": 2,
-        "candidates": [{"variant_id": "offer-1", "product_name": "green dress"}],
+        "candidates": [{"variant_id": "offer-1", "product_name": "green dress", "image_urls": ["https://cdn.example.test/unverified.jpg"], "product": {"image_urls": ["https://cdn.example.test/nested.jpg"]}}],
         "display_authorized": False,
         "decision_status": "PENDING_CAL",
         "scores_are_probabilities": False,
@@ -171,6 +171,8 @@ def test_description_search_forwards_to_legacy_tari_alias_and_keeps_candidates_p
     assert data["candidate_count"] == 2
     assert data["display_authorized"] is False
     assert data["decision_status"] == "PENDING_CAL"
+    assert data["candidates"][0]["image_urls"] == []
+    assert data["candidates"][0]["product"]["image_urls"] == []
     assert fake.calls[0][1] == "https://xari.example.test/v1/marketplace/search"
     assert fake.calls[0][2]["json"]["query"] == "green linen dress"
     assert "Authorization" not in response.text
@@ -198,7 +200,7 @@ def test_click_it_uses_verified_commerce_subject_and_returns_only_pending_candid
         FakeResponse({"user_id": "signed-user-42", "role": "customer", "email": None}),
         FakeResponse({
             "status": "complete",
-            "candidates": [{"variant_id": "variant-3", "product_name": "linen shirt"}],
+            "candidates": [{"variant_id": "variant-3", "product_name": "linen shirt", "image_urls": ["https://cdn.example.test/unverified.jpg"], "product": {"image_urls": ["https://cdn.example.test/nested.jpg"]}}],
             "candidate_count": 1,
             "display_authorized": False,
             "decision_status": "PENDING_CAL",
@@ -220,6 +222,8 @@ def test_click_it_uses_verified_commerce_subject_and_returns_only_pending_candid
     assert response.headers["cache-control"] == "no-store, private"
     assert response.json()["display_authorized"] is False
     assert response.json()["candidates"][0]["variant_id"] == "variant-3"
+    assert response.json()["candidates"][0]["image_urls"] == []
+    assert response.json()["candidates"][0]["product"]["image_urls"] == []
     assert len(fake.calls) == 2
     assert fake.calls[0][1] == "https://commerce.example.test/me"
     assert fake.calls[1][1] == "https://virtual-twin.example.test/click-it"
@@ -376,8 +380,12 @@ def test_wardrobe_recommendations_forward_verified_token_to_cal_decision_gateway
         FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
         FakeResponse({
             "request_id": "req-1",
-            "ranked_candidate_count": 0,
-            "displayable_products": [],
+            "ranked_candidate_count": 1,
+            "displayable_products": [{
+                "product": {"product_id": "product-1", "image_urls": ["https://cdn.example.test/product.jpg"]},
+                "offer": {"variant_id": "variant-1", "image_urls": ["https://cdn.example.test/offer.jpg"],
+                          "product": {"image_urls": ["https://cdn.example.test/nested-offer.jpg"]}},
+            }],
             "withheld_candidate_ids": [],
             "display_authority": "CaTaCaCi/CAL",
         }),
@@ -402,6 +410,10 @@ def test_wardrobe_recommendations_forward_verified_token_to_cal_decision_gateway
     assert sent["json"]["use_wardrobe_context"] is True
     assert sent["json"]["context"]["location_source"] == "user_declared"
     assert sent["json"]["context"]["climate_source"] == "user_declared"
+    result = response.json()["displayable_products"][0]
+    assert result["product"]["image_urls"] == []
+    assert result["offer"]["image_urls"] == []
+    assert result["offer"]["product"]["image_urls"] == []
     assert "Authorization" not in response.text
 
 
