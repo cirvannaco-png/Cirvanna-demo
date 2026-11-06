@@ -19,7 +19,7 @@ def _tokens(values: Any, field: str, required: bool = False) -> set[str]:
 def _validate_record(record: dict[str, Any]) -> None:
     if record.get("schema_version") != SCHEMA_VERSION:
         raise ValueError("unsupported schema_version")
-    for key in ("case_id", "user_key", "reviewer_key", "reviewed_at"):
+    for key in ("case_id", "user_key", "reviewed_at", "algorithm_version", "baseline_version", "policy_version"):
         if not isinstance(record.get(key), str) or not record[key].strip():
             raise ValueError(f"{key} is required")
     if record.get("split") not in {"train", "validation", "test"}:
@@ -44,7 +44,21 @@ def _validate_record(record: dict[str, Any]) -> None:
         if not isinstance(score, (int, float)) or isinstance(score, bool) or not math.isfinite(score):
             raise ValueError("model_score must be a finite number")
         if not isinstance(rating, int) or isinstance(rating, bool) or not 1 <= rating <= 5:
-            raise ValueError("human_relevance must be a human rating from 1 to 5")
+            raise ValueError("human_relevance must be an adjudicated human rating from 1 to 5")
+        human_ratings = c.get("human_ratings")
+        if not isinstance(human_ratings, list) or len(human_ratings) < 2:
+            raise ValueError("each candidate requires at least two independent human_ratings")
+        reviewer_keys = set()
+        for label in human_ratings:
+            if not isinstance(label, dict):
+                raise ValueError("human_ratings entries must be objects")
+            reviewer = label.get("reviewer_key")
+            score = label.get("relevance")
+            if not isinstance(reviewer, str) or not reviewer.strip() or reviewer in reviewer_keys:
+                raise ValueError("human_ratings require distinct pseudonymous reviewer_key values")
+            if not isinstance(score, int) or isinstance(score, bool) or not 1 <= score <= 5:
+                raise ValueError("human_ratings relevance must be an integer from 1 to 5")
+            reviewer_keys.add(reviewer)
         for flag in ("shown", "user_edited", "user_rejected"):
             if not isinstance(c.get(flag, False), bool):
                 raise ValueError(f"{flag} must be boolean")
@@ -119,12 +133,16 @@ def evaluate(records: Iterable[dict[str, Any]], k: int = 3) -> dict[str, Any]:
     if not rows:
         raise ValueError("dataset contains no records")
     seen = set()
+    user_splits: dict[str, str] = {}
     for row in rows:
         _validate_record(row)
         key = (row["split"], row["case_id"])
         if key in seen:
             raise ValueError("case_id must be unique within each split")
         seen.add(key)
+        previous_split = user_splits.setdefault(row["user_key"], row["split"])
+        if previous_split != row["split"]:
+            raise ValueError("a pseudonymous user_key must belong to exactly one split")
     report = {
         "schema_version": SCHEMA_VERSION, "k": k, "case_count": len(rows),
         "split_metrics": {}, "observed_user_outcomes": {}, "paired_model_minus_baseline": {},
