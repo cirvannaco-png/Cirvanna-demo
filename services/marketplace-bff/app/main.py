@@ -232,6 +232,15 @@ class DailyLooksIn(BaseModel):
         return value
 
 
+class TryOnFromWardrobeIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    twin_id: str = Field(min_length=8, max_length=128)
+    wardrobe_item_id: str = Field(min_length=3, max_length=128)
+    garment_category: Literal["upper_body", "lower_body", "dress", "outerwear", "full_outfit"]
+    consent_image_processing: bool
+    consent_virtual_try_on: bool
+
+
 
 async def _verified_commerce_subject(client: httpx.AsyncClient, request: Request) -> tuple[str, str]:
     authorization = request.headers.get("authorization", "")
@@ -272,6 +281,120 @@ def _identity_learning_service() -> tuple[str, str]:
 
 def _decision_gateway() -> tuple[str, str]:
     return _internal_service("DECISION_GATEWAY_URL", "DECISION_GATEWAY_TOKEN")
+
+
+def _virtual_twin_service() -> tuple[str, str]:
+    return _internal_service("VIRTUAL_TWIN_API_URL", "VIRTUAL_TWIN_API_TOKEN")
+
+
+def _virtual_try_on_service() -> tuple[str, str]:
+    return _internal_service("VIRTUAL_TRY_ON_API_URL", "VIRTUAL_TRY_ON_API_TOKEN")
+
+
+def _asset_service() -> tuple[str, str]:
+    return _internal_service("ASSET_SERVICE_URL", "ASSET_SERVICE_TOKEN")
+
+
+async def _grant_resource_media_consent(
+    client: httpx.AsyncClient, subject_id: str, resource_id: str, scopes: list[str],
+) -> tuple[str, list[str]]:
+    """Persist explicit user intent as immutable, resource-bound TAL receipts."""
+    base, token = _identity_learning_service()
+    consent_id = str(uuid.uuid4())
+    receipt_ids: list[str] = []
+    try:
+        for scope in scopes:
+            receipt_id = str(uuid.uuid4())
+            response = await client.post(
+                base + "/v1/tal/consents",
+                params={"subject_id": subject_id},
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json={
+                    "receipt_id": receipt_id,
+                    "consent_id": consent_id,
+                    "resource_id": resource_id,
+                    "scope": scope,
+                    "consent_version": "cirvanna-media-consent-v1",
+                    "granted": True,
+                },
+            )
+            if response.status_code not in {200, 201}:
+                raise HTTPException(503, detail={"code": "MEDIA_CONSENT_WRITE_FAILED"})
+            try:
+                saved = response.json()
+            except ValueError as exc:
+                raise HTTPException(502, detail={"code": "MEDIA_CONSENT_RESPONSE_INVALID"}) from exc
+            if (
+                not isinstance(saved, dict) or saved.get("receipt_id") != receipt_id
+                or saved.get("consent_id") != consent_id or saved.get("resource_id") != resource_id
+                or saved.get("granted") is not True
+            ):
+                raise HTTPException(502, detail={"code": "MEDIA_CONSENT_SCOPE_MISMATCH"})
+            receipt_ids.append(receipt_id)
+    except Exception:
+        # Compensate any partial immutable grant set; failures stay deny-by-default
+        # because the receiving service still verifies every required scope.
+        for receipt_id in receipt_ids:
+            try:
+                await client.post(
+                    base + f"/v1/tal/consents/{receipt_id}/revoke",
+                    params={"subject_id": subject_id},
+                    headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                )
+            except httpx.HTTPError:
+                pass
+        raise
+    return consent_id, receipt_ids
+
+
+async def _revoke_resource_media_consents(
+    client: httpx.AsyncClient, subject_id: str, resource_id: str,
+) -> int:
+    base, token = _identity_learning_service()
+    response = await client.get(
+        base + f"/v1/tal/consents/{subject_id}",
+        headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+    )
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "MEDIA_CONSENT_LIST_UNAVAILABLE"})
+    try:
+        receipts = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "MEDIA_CONSENT_LIST_INVALID"}) from exc
+    if not isinstance(receipts, list):
+        raise HTTPException(502, detail={"code": "MEDIA_CONSENT_LIST_INVALID"})
+    revoked = 0
+    for receipt in receipts:
+        if (
+            isinstance(receipt, dict)
+            and receipt.get("resource_id") == resource_id
+            and receipt.get("granted") is True
+            and receipt.get("revoked_at") is None
+            and isinstance(receipt.get("receipt_id"), str)
+        ):
+            result = await client.post(
+                base + f"/v1/tal/consents/{receipt['receipt_id']}/revoke",
+                params={"subject_id": subject_id},
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+            )
+            if result.status_code != 200:
+                raise HTTPException(503, detail={"code": "MEDIA_CONSENT_REVOCATION_INCOMPLETE"})
+            revoked += 1
+    return revoked
+
+
+def _without_private_asset_ids(value):
+    """Do not expose internal asset UUIDs or storage references to browser clients."""
+    private_fields = {"asset_id", "source_asset_id", "output_asset_id", "image_asset_id", "person_image_asset_id", "garment_image_asset_id"}
+    if isinstance(value, list):
+        return [_without_private_asset_ids(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _without_private_asset_ids(item)
+            for key, item in value.items()
+            if str(key).casefold() not in private_fields
+        }
+    return value
 
 
 def _withhold_unverified_media(value):
@@ -817,6 +940,356 @@ def _page_html() -> str:
             raise HTTPException(status_code=503, detail={"code": "MARKETPLACE_BOOTSTRAP_MARKER_MISSING"})
         html = html.replace(marker, bootstrap, 1)
     return html
+
+
+@app.post("/api/wardrobe/items/photo", status_code=201)
+async def create_wardrobe_photo_item(
+    request: Request,
+    display_name: str = Form(min_length=1, max_length=200),
+    category: str = Form(min_length=1, max_length=80),
+    attributes: str = Form(default="", max_length=2000),
+    consent_image_processing: bool = Form(),
+    consent_wardrobe_storage: bool = Form(),
+    image: UploadFile = File(...),
+) -> Response:
+    """Store a garment photo only after an explicit resource-bound consent grant."""
+    if not consent_image_processing or not consent_wardrobe_storage:
+        await image.close()
+        raise HTTPException(403, detail={"code": "WARDROBE_IMAGE_CONSENT_REQUIRED"})
+    content_type = image.content_type or ""
+    if content_type not in {"image/jpeg", "image/png", "image/webp"}:
+        await image.close()
+        raise HTTPException(415, detail={"code": "UNSUPPORTED_WARDROBE_IMAGE_TYPE"})
+    try:
+        image_bytes = await image.read(MAX_VISION_IMAGE_BYTES + 1)
+    finally:
+        await image.close()
+    if not image_bytes:
+        raise HTTPException(400, detail={"code": "EMPTY_WARDROBE_IMAGE"})
+    if len(image_bytes) > MAX_VISION_IMAGE_BYTES:
+        raise HTTPException(413, detail={"code": "WARDROBE_IMAGE_SIZE_LIMIT_EXCEEDED"})
+
+    item_id = str(uuid.uuid4())
+    async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject_id, _ = await _verified_commerce_subject(client, request)
+        consent_id, receipts = await _grant_resource_media_consent(
+            client, subject_id, item_id, ["image_processing", "wardrobe_image_storage"],
+        )
+        asset_id = None
+        item_created = False
+        try:
+            asset_base, asset_token = _asset_service()
+            asset_response = await client.post(
+                asset_base + "/internal/v1/assets",
+                headers={"Authorization": "Bearer " + asset_token, "Accept": "application/json"},
+                data={"owner_user_id": subject_id, "purpose": "wardrobe_garment_image", "parent_id": item_id},
+                files={"file": (image.filename or "wardrobe-garment", image_bytes, content_type)},
+            )
+            if asset_response.status_code != 201:
+                raise HTTPException(503, detail={"code": "WARDROBE_IMAGE_STORAGE_FAILED"})
+            asset_data = asset_response.json()
+            asset_id = asset_data.get("asset_id") if isinstance(asset_data, dict) else None
+            if not isinstance(asset_id, str) or asset_data.get("owner_user_id") != subject_id or asset_data.get("parent_id") != item_id or asset_data.get("purpose") != "wardrobe_garment_image":
+                raise HTTPException(502, detail={"code": "WARDROBE_IMAGE_ASSET_SCOPE_MISMATCH"})
+
+            wardrobe_base, wardrobe_token = _wardrobe_service()
+            created = await client.post(
+                wardrobe_base + "/v1/items",
+                headers={"Authorization": "Bearer " + wardrobe_token, "Accept": "application/json"},
+                json={
+                    "owner_user_id": subject_id, "item_id": item_id,
+                    "display_name": display_name.strip(), "category": category.strip(),
+                    "attributes": [entry.strip() for entry in attributes.split(",") if entry.strip()],
+                    "catalog_product_id": None, "image_asset_id": asset_id, "image_storage_consent": True,
+                },
+            )
+            if created.status_code != 201:
+                raise HTTPException(503, detail={"code": "WARDROBE_ITEM_CREATE_UNAVAILABLE"})
+            created_data = created.json()
+            item = created_data.get("item") if isinstance(created_data, dict) else None
+            if not isinstance(item, dict) or item.get("owner_user_id") != subject_id or item.get("item_id") != item_id:
+                raise HTTPException(502, detail={"code": "WARDROBE_ITEM_CREATE_SCOPE_MISMATCH"})
+            item_created = True
+            activated = await client.post(
+                wardrobe_base + f"/v1/items/{item_id}/transition",
+                headers={"Authorization": "Bearer " + wardrobe_token, "Accept": "application/json"},
+                json={
+                    "owner_user_id": subject_id, "expected_version": item.get("version", 1),
+                    "target_status": "active", "command_id": "activate-" + str(uuid.uuid4()),
+                },
+            )
+            if activated.status_code != 200:
+                raise HTTPException(503, detail={"code": "WARDROBE_ITEM_ACTIVATION_UNAVAILABLE"})
+            active_data = activated.json()
+            active_item = active_data.get("item") if isinstance(active_data, dict) else None
+            if not isinstance(active_item, dict) or active_item.get("owner_user_id") != subject_id or active_item.get("status") != "active":
+                raise HTTPException(502, detail={"code": "WARDROBE_ITEM_ACTIVATION_SCOPE_MISMATCH"})
+            return JSONResponse(
+                status_code=201,
+                content={"item": _without_private_asset_ids(active_item), "image_storage_consent": True, "consent_id": consent_id},
+                headers={"Cache-Control": "no-store, private"},
+            )
+        except Exception:
+            if asset_id:
+                try:
+                    await client.delete(
+                        asset_base + f"/v1/assets/{asset_id}",
+                        headers={"Authorization": "Bearer " + asset_token, "X-Asset-Owner-ID": subject_id},
+                    )
+                except Exception:
+                    pass
+            if item_created:
+                try:
+                    await client.post(
+                        wardrobe_base + f"/v1/items/{item_id}/transition",
+                        headers={"Authorization": "Bearer " + wardrobe_token},
+                        json={"owner_user_id": subject_id, "expected_version": active_item.get("version", 1) if "active_item" in locals() else item.get("version", 1), "target_status": "deleted", "command_id": "rollback-" + str(uuid.uuid4())},
+                    )
+                except Exception:
+                    pass
+            for receipt_id in receipts:
+                try:
+                    await client.post(
+                        (os.getenv("IDENTITY_SERVICE_URL", "").rstrip("/") + f"/v1/tal/consents/{receipt_id}/revoke"),
+                        params={"subject_id": subject_id},
+                        headers={"Authorization": "Bearer " + os.getenv("IDENTITY_SERVICE_TOKEN", "")},
+                    )
+                except Exception:
+                    pass
+            raise
+
+
+@app.post("/api/virtual-twins", status_code=201)
+async def create_virtual_twin(
+    request: Request,
+    height_cm: float = Form(gt=80, le=260),
+    consent_image_processing: bool = Form(),
+    consent_body_measurements: bool = Form(),
+    consent_twin_storage: bool = Form(),
+    image: UploadFile = File(...),
+) -> Response:
+    if not (consent_image_processing and consent_body_measurements and consent_twin_storage):
+        await image.close()
+        raise HTTPException(403, detail={"code": "EXPLICIT_TWIN_CONSENT_REQUIRED"})
+    content_type = image.content_type or ""
+    if content_type not in {"image/jpeg", "image/png", "image/webp"}:
+        await image.close()
+        raise HTTPException(415, detail={"code": "UNSUPPORTED_TWIN_IMAGE_TYPE"})
+    try:
+        image_bytes = await image.read(MAX_VISION_IMAGE_BYTES + 1)
+    finally:
+        await image.close()
+    if not image_bytes or len(image_bytes) > MAX_VISION_IMAGE_BYTES:
+        raise HTTPException(413 if image_bytes else 400, detail={"code": "TWIN_IMAGE_SIZE_LIMIT_EXCEEDED" if image_bytes else "EMPTY_TWIN_IMAGE"})
+
+    twin_id = str(uuid.uuid4())
+    async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject_id, _ = await _verified_commerce_subject(client, request)
+        consent_id, receipts = await _grant_resource_media_consent(
+            client, subject_id, twin_id, ["image_processing", "body_measurements", "twin_storage"],
+        )
+        try:
+            twin_base, twin_token = _virtual_twin_service()
+            response = await client.post(
+                twin_base + "/v1/twins",
+                headers={"Authorization": "Bearer " + twin_token, "Accept": "application/json"},
+                data={
+                    "subject_id": subject_id, "twin_id": twin_id, "consent_id": consent_id,
+                    "consent_image_processing": "true", "consent_body_measurements": "true",
+                    "consent_twin_storage": "true", "height_cm": str(height_cm),
+                },
+                files={"image": (image.filename or "twin-source", image_bytes, content_type)},
+            )
+            if response.status_code != 201:
+                raise HTTPException(503, detail={"code": "VIRTUAL_TWIN_CREATE_FAILED"})
+            result = response.json()
+            twin = result.get("twin") if isinstance(result, dict) else None
+            if not isinstance(twin, dict) or twin.get("twin_id") != twin_id or twin.get("subject_id") != subject_id or result.get("record_persisted") is not True:
+                raise HTTPException(502, detail={"code": "VIRTUAL_TWIN_CREATE_RESPONSE_INVALID"})
+            return JSONResponse(content=_without_private_asset_ids(result), status_code=201, headers={"Cache-Control": "no-store, private"})
+        except Exception:
+            for receipt_id in receipts:
+                try:
+                    identity_base, identity_token = _identity_learning_service()
+                    await client.post(
+                        identity_base + f"/v1/tal/consents/{receipt_id}/revoke",
+                        params={"subject_id": subject_id},
+                        headers={"Authorization": "Bearer " + identity_token},
+                    )
+                except Exception:
+                    pass
+            raise
+
+
+@app.get("/api/virtual-twins/{twin_id}")
+async def get_virtual_twin(twin_id: str, request: Request) -> Response:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject_id, _ = await _verified_commerce_subject(client, request)
+        base, token = _virtual_twin_service()
+        response = await client.get(
+            base + f"/v1/twins/{twin_id}", params={"subject_id": subject_id},
+            headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+        )
+    if response.status_code in {403, 404}:
+        raise HTTPException(404, detail={"code": "VIRTUAL_TWIN_NOT_FOUND"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "VIRTUAL_TWIN_UNAVAILABLE"})
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "VIRTUAL_TWIN_RESPONSE_INVALID"}) from exc
+    twin = result.get("twin") if isinstance(result, dict) else None
+    if not isinstance(twin, dict) or twin.get("subject_id") != subject_id or twin.get("twin_id") != twin_id:
+        raise HTTPException(502, detail={"code": "VIRTUAL_TWIN_SCOPE_MISMATCH"})
+    return _private_json_response(_without_private_asset_ids(result))
+
+
+@app.delete("/api/virtual-twins/{twin_id}")
+async def delete_virtual_twin(twin_id: str, request: Request) -> Response:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject_id, _ = await _verified_commerce_subject(client, request)
+        base, token = _virtual_twin_service()
+        response = await client.delete(
+            base + f"/v1/twins/{twin_id}", params={"subject_id": subject_id},
+            headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+        )
+        if response.status_code == 404:
+            raise HTTPException(404, detail={"code": "VIRTUAL_TWIN_NOT_FOUND"})
+        if response.status_code != 200:
+            raise HTTPException(503, detail={"code": "VIRTUAL_TWIN_DELETE_INCOMPLETE"})
+        # Deletion remains possible after consent revocation; remaining receipts are
+        # withdrawn after the Twin and all child image assets are inaccessible.
+        revoked_count = await _revoke_resource_media_consents(client, subject_id, twin_id)
+    return _private_json_response({"status": "deleted", "twin_id": twin_id, "consent_receipts_revoked": revoked_count})
+
+
+@app.post("/api/virtual-try-on")
+async def create_wardrobe_try_on(request: Request, payload: TryOnFromWardrobeIn = Body(...)) -> Response:
+    if not payload.consent_image_processing or not payload.consent_virtual_try_on:
+        raise HTTPException(403, detail={"code": "VIRTUAL_TRY_ON_CONSENT_REQUIRED"})
+    request_id = str(uuid.uuid4())
+    async with httpx.AsyncClient(timeout=httpx.Timeout(40.0, connect=3.0), trust_env=False, follow_redirects=False) as client:
+        subject_id, _ = await _verified_commerce_subject(client, request)
+        twin_base, twin_token = _virtual_twin_service()
+        twin_response = await client.get(
+            twin_base + f"/v1/twins/{payload.twin_id}", params={"subject_id": subject_id},
+            headers={"Authorization": "Bearer " + twin_token, "Accept": "application/json"},
+        )
+        if twin_response.status_code in {403, 404}:
+            raise HTTPException(404, detail={"code": "VIRTUAL_TWIN_NOT_FOUND"})
+        if twin_response.status_code != 200:
+            raise HTTPException(503, detail={"code": "VIRTUAL_TWIN_UNAVAILABLE"})
+        twin_result = twin_response.json()
+        twin = twin_result.get("twin") if isinstance(twin_result, dict) else None
+        if not isinstance(twin, dict) or twin.get("subject_id") != subject_id or twin.get("status") != "active":
+            raise HTTPException(403, detail={"code": "VIRTUAL_TWIN_SCOPE_MISMATCH"})
+        person_asset_id = twin.get("source_asset_id")
+        if not isinstance(person_asset_id, str) or not UUID_RE.fullmatch(person_asset_id):
+            raise HTTPException(502, detail={"code": "TWIN_SOURCE_ASSET_MISSING"})
+
+        wardrobe_base, wardrobe_token = _wardrobe_service()
+        item_response = await client.get(
+            wardrobe_base + f"/v1/items/{payload.wardrobe_item_id}",
+            params={"owner_user_id": subject_id},
+            headers={"Authorization": "Bearer " + wardrobe_token, "Accept": "application/json"},
+        )
+        if item_response.status_code in {403, 404}:
+            raise HTTPException(404, detail={"code": "WARDROBE_ITEM_NOT_FOUND"})
+        if item_response.status_code != 200:
+            raise HTTPException(503, detail={"code": "WARDROBE_ITEM_UNAVAILABLE"})
+        item_body = item_response.json()
+        item = item_body.get("item") if isinstance(item_body, dict) else None
+        if (
+            not isinstance(item, dict) or item.get("owner_user_id") != subject_id
+            or item.get("item_id") != payload.wardrobe_item_id or item.get("status") != "active"
+            or item.get("image_storage_consent") is not True
+            or not isinstance(item.get("image_asset_id"), str)
+            or not UUID_RE.fullmatch(item["image_asset_id"])
+        ):
+            raise HTTPException(403, detail={"code": "WARDROBE_GARMENT_ASSET_NOT_AUTHORIZED"})
+
+        consent_id, receipts = await _grant_resource_media_consent(
+            client, subject_id, payload.twin_id, ["image_processing", "virtual_try_on"],
+        )
+        try:
+            tryon_base, tryon_token = _virtual_try_on_service()
+            body = {
+                "request_id": request_id, "subject_id": subject_id, "twin_id": payload.twin_id,
+                "product_id": item.get("catalog_product_id") or item["item_id"],
+                "person_image_asset_id": person_asset_id,
+                "garment_image_asset_id": item["image_asset_id"],
+                "garment_asset_purpose": "wardrobe_garment_image",
+                "garment_asset_parent_id": item["item_id"],
+                "garment_category": payload.garment_category,
+                "consent": {
+                    "consent_id": consent_id, "image_processing": True,
+                    "virtual_try_on": True, "retention_policy": "ephemeral",
+                },
+            }
+            response = await client.post(
+                tryon_base + "/v1/try-ons",
+                headers={"Authorization": "Bearer " + tryon_token, "Accept": "application/json"},
+                json=body,
+            )
+            if response.status_code in {403, 409, 422}:
+                raise HTTPException(response.status_code, detail={"code": "VIRTUAL_TRY_ON_REQUEST_REJECTED"})
+            if response.status_code != 200:
+                raise HTTPException(503, detail={"code": "VIRTUAL_TRY_ON_RENDER_UNAVAILABLE"})
+            result = response.json()
+            if not isinstance(result, dict) or result.get("request_id") != request_id or result.get("status") != "complete":
+                raise HTTPException(502, detail={"code": "VIRTUAL_TRY_ON_RESPONSE_INVALID"})
+            return _private_json_response({
+                "request_id": request_id, "status": "complete",
+                "renderer_id": result.get("renderer_id"),
+                "renderer_version": result.get("renderer_version"),
+                "preview_path": f"/api/virtual-try-on/{request_id}/image",
+                "output_expires_after_hours": result.get("output_expires_after_hours", 24),
+                "warnings": result.get("warnings", []),
+            })
+        except Exception:
+            for receipt_id in receipts:
+                try:
+                    identity_base, identity_token = _identity_learning_service()
+                    await client.post(
+                        identity_base + f"/v1/tal/consents/{receipt_id}/revoke",
+                        params={"subject_id": subject_id},
+                        headers={"Authorization": "Bearer " + identity_token},
+                    )
+                except Exception:
+                    pass
+            raise
+
+
+@app.get("/api/virtual-try-on/{request_id}/image")
+async def get_virtual_try_on_image(request_id: str, request: Request) -> Response:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject_id, _ = await _verified_commerce_subject(client, request)
+        tryon_base, tryon_token = _virtual_try_on_service()
+        job_response = await client.get(
+            tryon_base + f"/v1/try-ons/{request_id}", params={"subject_id": subject_id},
+            headers={"Authorization": "Bearer " + tryon_token, "Accept": "application/json"},
+        )
+        if job_response.status_code in {403, 404, 410}:
+            raise HTTPException(404, detail={"code": "VIRTUAL_TRY_ON_PREVIEW_NOT_AVAILABLE"})
+        if job_response.status_code != 200:
+            raise HTTPException(503, detail={"code": "VIRTUAL_TRY_ON_PREVIEW_UNAVAILABLE"})
+        job = job_response.json()
+        if not isinstance(job, dict) or not isinstance(job.get("output_asset_id"), str) or not isinstance(job.get("request_id"), str):
+            raise HTTPException(502, detail={"code": "VIRTUAL_TRY_ON_JOB_RESPONSE_INVALID"})
+        twin_id = job.get("twin_id")
+        if not isinstance(twin_id, str) or not twin_id:
+            # Service response has the request fields; resolve the Twin binding through
+            # the request record only, never accept an asset ID from browser input.
+            twin_id = ""
+        asset_base, asset_token = _asset_service()
+        content = await client.get(
+            asset_base + f"/internal/v1/assets/{job['output_asset_id']}/content",
+            params={"subject_id": subject_id, "purpose": "try_on_output", "parent_id": twin_id},
+            headers={"Authorization": "Bearer " + asset_token, "Accept": "image/png"},
+        )
+    if content.status_code != 200 or content.headers.get("content-type", "").split(";")[0].lower() != "image/png":
+        raise HTTPException(503, detail={"code": "VIRTUAL_TRY_ON_ASSET_UNAVAILABLE"})
+    return Response(content=content.content, media_type="image/png", headers={"Cache-Control": "no-store, private", "X-Content-Type-Options": "nosniff"})
 
 
 @app.get("/health")
