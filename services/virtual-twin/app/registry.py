@@ -57,6 +57,7 @@ class TwinRecord(Base):
     artifact_asset_id: Mapped[str] = mapped_column(String(160), nullable=False)
     source_image_asset_ids: Mapped[list] = mapped_column(JSON, nullable=False)
     model_version: Mapped[str] = mapped_column(String(160), nullable=False)
+    validation_receipt_id: Mapped[str] = mapped_column(String(160), nullable=False)
     consent_id: Mapped[str] = mapped_column(String(160), nullable=False)
     consent_version: Mapped[str] = mapped_column(String(80), nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(160), nullable=False)
@@ -98,6 +99,7 @@ class RegisterTwinRequest(StrictModel):
     artifact_asset_id: str = Field(min_length=3, max_length=160)
     source_image_asset_ids: list[str] = Field(min_length=1, max_length=6)
     model_version: str = Field(min_length=3, max_length=160)
+    validation_receipt_id: str = Field(min_length=8, max_length=160)
     consent_id: str = Field(min_length=8, max_length=160)
     consent_version: str = Field(min_length=1, max_length=80)
     idempotency_key: str = Field(min_length=8, max_length=160)
@@ -162,6 +164,8 @@ def _engine_for_url(url: str):
 
 @lru_cache(maxsize=4)
 def get_engine(url: str):
+    if url.startswith("postgresql://"):
+        url = "postgresql+psycopg://" + url[len("postgresql://"):]
     return _engine_for_url(url)
 
 
@@ -267,6 +271,61 @@ async def _verify_consent(subject_id: str, consent_id: str, consent_version: str
         and set(TWIN_CONSENT_SCOPES).issubset(set(granted))
     ):
         raise HTTPException(403, detail={"code": "CONSENT_NOT_VERIFIED"})
+
+
+async def _verify_mesh_artifact(
+    subject_id: str,
+    twin_id: str,
+    artifact_asset_id: str,
+    model_version: str,
+    validation_receipt_id: str,
+) -> None:
+    """Require a separate validator to inspect the actual stored mesh artifact."""
+    config = _trusted_config("TWIN_VALIDATION_API_URL", "TWIN_VALIDATION_API_TOKEN")
+    if config is None:
+        raise HTTPException(503, detail={"code": "TWIN_MESH_VALIDATOR_NOT_CONFIGURED"})
+    base, token = config
+    request_body = {
+        "subject_id": subject_id,
+        "twin_id": twin_id,
+        "artifact_asset_id": artifact_asset_id,
+        "representation_type": "full_body_mesh",
+        "model_version": model_version,
+        "validation_receipt_id": validation_receipt_id,
+    }
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(6.0, connect=2.0), trust_env=False, follow_redirects=False
+        ) as client:
+            response = await client.post(
+                base + "/internal/v1/twins/validate-mesh",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json=request_body,
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "TWIN_MESH_VALIDATION_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "TWIN_MESH_VALIDATOR_UNAVAILABLE"}) from exc
+    if response.status_code in {401, 403, 404}:
+        raise HTTPException(403, detail={"code": "TWIN_MESH_NOT_VALIDATED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "TWIN_MESH_VALIDATOR_UNAVAILABLE"})
+    try:
+        receipt = response.json()
+    except ValueError as exc:
+        raise HTTPException(503, detail={"code": "TWIN_MESH_VALIDATOR_INVALID_RESPONSE"}) from exc
+    if not (
+        isinstance(receipt, dict)
+        and receipt.get("validated") is True
+        and receipt.get("active") is True
+        and receipt.get("subject_id") == subject_id
+        and receipt.get("twin_id") == twin_id
+        and receipt.get("artifact_asset_id") == artifact_asset_id
+        and receipt.get("representation_type") == "full_body_mesh"
+        and receipt.get("model_version") == model_version
+        and receipt.get("validation_receipt_id") == validation_receipt_id
+    ):
+        raise HTTPException(403, detail={"code": "TWIN_MESH_NOT_VALIDATED"})
 
 
 async def _authorize_assets(subject_id: str, asset_ids: list[str]) -> None:
@@ -387,6 +446,7 @@ async def register_twin(
 ) -> dict[str, object]:
     """Register only a validated full-body mesh; pose skeletons are rejected."""
     await _verify_consent(payload.subject_id, payload.consent_id, payload.consent_version)
+    await _verify_mesh_artifact(payload.subject_id, payload.twin_id, payload.artifact_asset_id, payload.model_version, payload.validation_receipt_id)
     await _authorize_assets(payload.subject_id, [payload.artifact_asset_id, *payload.source_image_asset_ids])
     digest = _request_hash(payload)
     existing = db.scalar(
@@ -415,6 +475,7 @@ async def register_twin(
         artifact_asset_id=payload.artifact_asset_id,
         source_image_asset_ids=payload.source_image_asset_ids,
         model_version=payload.model_version,
+        validation_receipt_id=payload.validation_receipt_id,
         consent_id=payload.consent_id,
         consent_version=payload.consent_version,
         idempotency_key=payload.idempotency_key,
@@ -437,6 +498,7 @@ async def register_twin(
         "version": row.version,
         "representation_type": row.representation_type,
         "model_version": row.model_version,
+        "validation_receipt_id": row.validation_receipt_id,
     }
 
 
@@ -451,6 +513,7 @@ async def authorize_twin(
     if record is None or record.subject_id != payload.subject_id or record.status != "active":
         raise HTTPException(403, detail={"code": "TWIN_ACCESS_DENIED"})
     await _verify_consent(record.subject_id, record.consent_id, record.consent_version)
+    await _verify_mesh_artifact(record.subject_id, record.twin_id, record.artifact_asset_id, record.model_version, record.validation_receipt_id)
     await _authorize_assets(record.subject_id, _asset_ids(record))
     return {
         "authorized": True,
