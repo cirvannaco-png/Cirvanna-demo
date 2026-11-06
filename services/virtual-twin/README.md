@@ -10,6 +10,8 @@ POST /twin accepts **one still full-body image**, declared height, subject_id, c
 
 It does **not** create or persist a Twin record, generate a full body-surface mesh, make calibrated body measurements, or certify clothing fit. The response labels the result as partial inference and requires downstream review.
 
+The `/capabilities` response reports `pose_skeleton_inference` separately and always keeps `twin_generation=false` and `persistent_twin_available=false` until a durable user-owned Twin representation and its authorized asset lifecycle exist. A healthy pose worker is not evidence that a persistent Virtual Twin exists.
+
 ### Click It
 
 POST /click-it accepts a product photo, subject_id, consent_id, the Twin ID and explicit image-processing/Click It consent flags. Before sending image bytes to the model worker, it verifies durable consent and verifies that the Twin is active and belongs to the requesting subject. It then runs image-quality checks and CLIP-based retrieval against live Commerce offers enriched by active Catalog product descriptions/attributes.
