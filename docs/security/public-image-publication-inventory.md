@@ -45,7 +45,7 @@ The repository still has no Content Lifecycle service and no implemented public 
 
 ## Remaining live dependencies
 
-- Provision and license the pinned face detector and verify its checksum in the deployed Vision worker.
+- The Vision Dockerfile now provisions the versioned BlazeFace full-range model and verifies its exact size and SHA-256 during build; deploy that image and verify runtime readiness. A real, consented representative-image false-negative evaluation remains mandatory.
 - Provision the Vision attestation provider with exact asset digest binding and independent human-review evidence.
 - Provision Content Lifecycle storage/quarantine/deletion/CDN invalidation and connect every publication path.
 - Provision jurisdiction, guardian-authority and rights-authority providers; provide counsel-approved signed policy bundles.
