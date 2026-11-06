@@ -538,6 +538,8 @@ def deactivate_twin(
         raise HTTPException(404, detail={"code": "TWIN_RECORD_NOT_FOUND"})
     existing = db.scalar(select(TwinDeletionOutbox).where(TwinDeletionOutbox.command_id == payload.command_id))
     if existing is not None:
+        if existing.subject_id != payload.subject_id or existing.twin_id != payload.twin_id:
+            raise HTTPException(409, detail={"code": "TWIN_DELETION_COMMAND_CONFLICT"})
         return {"status": existing.status, "twin_id": record.twin_id, "deletion_queued": True, "version": record.version}
     if record.status == "deleted":
         return {"status": "complete", "twin_id": record.twin_id, "deletion_queued": False, "version": record.version}
