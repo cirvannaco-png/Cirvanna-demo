@@ -43,7 +43,7 @@ from cultural_identity import (  # noqa: E402
 )
 from eepl import ContextField, EEPLContext, EEPLPolicy  # noqa: E402
 from fci import FitConfidenceEstimate  # noqa: E402
-from npl import NegativePreference, PreferenceSource, TargetType, canonical_npl_evidence_payload  # noqa: E402
+from npl import NegativePreference, PreferenceSource, TargetType, canonical_npl_evidence_payload, evaluate as evaluate_npl  # noqa: E402
 from usi import StylePreference, USIProfile  # noqa: E402
 from app.comparison import compare_like_for_like_offers  # noqa: E402
 
@@ -207,6 +207,35 @@ class ComplementerAdvisoryRequest(BaseModel):
         if not normalized:
             raise ValueError("identifier must not be blank")
         return normalized
+
+
+class PNELLYDailyLooksRequest(BaseModel):
+    """Daily-look request from the trusted same-origin BFF."""
+    model_config = ConfigDict(extra="forbid")
+    request_id: str = Field(min_length=1, max_length=128)
+    user_id: str = Field(min_length=1, max_length=128)
+    local_date: str = Field(min_length=10, max_length=10)
+    occasion: str | None = Field(default=None, max_length=120)
+    climate: str | None = Field(default=None, max_length=80)
+    wardrobe_items: list[dict[str, Any]] = Field(max_length=150)
+
+    @field_validator("request_id", "user_id")
+    @classmethod
+    def trim_pnelly_identifiers(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("identifier must not be blank")
+        return normalized
+
+    @field_validator("local_date")
+    @classmethod
+    def validate_pnelly_date(cls, value: str) -> str:
+        from datetime import date
+        try:
+            date.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError("local_date must be an ISO calendar date") from exc
+        return value
 
 
 class ReasonOutput(BaseModel):
@@ -594,6 +623,117 @@ def _complementer_advisory(
         "mode": "advisory_only",
         "display_authorized": False,
         "durable_personal_memory": False,
+        "recommendation": result,
+    }
+
+
+def _pnelly_npl_provider_configured() -> bool:
+    """PNELLY must not recommend wardrobe pieces when its hard-exclusion owner is unavailable."""
+    base = os.getenv("NPL_SERVICE_URL", "").strip()
+    token = os.getenv("NPL_SERVICE_TOKEN", "").strip()
+    secret = os.getenv("NPL_EVIDENCE_HMAC_SECRET", "").strip()
+    return bool(
+        base
+        and _trusted_internal_base_url(base)
+        and len(token.encode("utf-8")) >= 32
+        and len(secret.encode("utf-8")) >= 32
+    )
+
+
+def _filter_npl_blocked_wardrobe_items(
+    *, request_id: str, user_id: str, wardrobe_items: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    """Apply the persistent NPL hard-veto kernel to each owner-scoped closet item."""
+    if not wardrobe_items:
+        return [], 0
+
+    def evaluate_item(item: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+        attributes = tuple(
+            [str(item.get("display_name", "")), str(item.get("category", ""))]
+            + [value for value in item.get("attributes", []) if isinstance(value, str)]
+        )
+        preferences = _load_persisted_npl_preferences(
+            request_id=request_id,
+            user_id=user_id,
+            product_id=item["item_id"],
+            attributes=attributes,
+        )
+        decision = evaluate_npl(user_id, item["item_id"], attributes, preferences)
+        return item, decision.blocked
+
+    with ThreadPoolExecutor(max_workers=min(5, len(wardrobe_items))) as executor:
+        evaluated = list(executor.map(evaluate_item, wardrobe_items))
+    allowed = [item for item, blocked in evaluated if not blocked]
+    return allowed, len(evaluated) - len(allowed)
+
+
+def _pnelly_daily_looks(payload: PNELLYDailyLooksRequest, style_signals: list[str], feedback_signals: list[str]) -> dict[str, Any]:
+    """Call the internal wardrobe-only composer and verify every returned item ID."""
+    base = os.getenv("COMPLEMENTER_SERVICE_URL", "").strip().rstrip("/")
+    token = os.getenv("COMPLEMENTER_SERVICE_TOKEN", "").strip()
+    if not base or len(token.encode("utf-8")) < 32 or not _trusted_internal_base_url(base):
+        raise HTTPException(503, detail={"code": "PNELLY_PROVIDER_CONFIGURATION_INVALID"})
+
+    body = payload.model_dump(mode="json")
+    body["style_signals"] = style_signals[:40]
+    body["feedback_signals"] = feedback_signals[:40]
+    try:
+        with httpx.Client(
+            timeout=httpx.Timeout(8.0, connect=2.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            response = client.post(
+                f"{base}/v1/pnelly/daily-looks",
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                json=body,
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "PNELLY_PROVIDER_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "PNELLY_PROVIDER_UNAVAILABLE"}) from exc
+    if response.status_code == 403:
+        raise HTTPException(403, detail={"code": "PNELLY_WARDROBE_SCOPE_REJECTED"})
+    if response.status_code == 422:
+        raise HTTPException(422, detail={"code": "PNELLY_REQUEST_REJECTED"})
+    if response.status_code in {401, 502, 503, 504} or response.status_code < 200 or response.status_code >= 300:
+        raise HTTPException(503, detail={"code": "PNELLY_PROVIDER_UNAVAILABLE"})
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "PNELLY_INVALID_RESPONSE"}) from exc
+
+    roles = ["everyday", "elevated", "explore"]
+    owned_ids = {
+        item["item_id"] for item in payload.wardrobe_items
+        if isinstance(item, dict) and item.get("owner_user_id") == payload.user_id and item.get("status") == "active"
+        and isinstance(item.get("item_id"), str)
+    }
+    looks = result.get("looks") if isinstance(result, dict) else None
+    if (
+        not isinstance(result, dict)
+        or result.get("schema_version") != "1.0"
+        or result.get("request_id") != payload.request_id
+        or result.get("capability") != "pnelly_daily_looks"
+        or result.get("look_count") != 3
+        or result.get("status") not in {"ready", "partial", "needs_input"}
+        or not isinstance(looks, list)
+        or len(looks) != 3
+        or [item.get("role") if isinstance(item, dict) else None for item in looks] != roles
+    ):
+        raise HTTPException(502, detail={"code": "PNELLY_RESPONSE_SCHEMA_INVALID"})
+
+    for look in looks:
+        item_ids = look.get("item_ids")
+        if not isinstance(item_ids, list) or any(not isinstance(item_id, str) or item_id not in owned_ids for item_id in item_ids):
+            raise HTTPException(502, detail={"code": "PNELLY_RESPONSE_WARDROBE_SCOPE_MISMATCH"})
+        preview = look.get("virtual_twin_preview")
+        if not isinstance(preview, dict) or preview.get("status") != "unavailable":
+            raise HTTPException(502, detail={"code": "PNELLY_TWIN_PREVIEW_STATE_INVALID"})
+    return {
+        "schema_version": "1.0",
+        "request_id": payload.request_id,
+        "mode": "pnelly_wardrobe_daily_looks",
         "recommendation": result,
     }
 
@@ -1511,6 +1651,15 @@ def capabilities() -> dict[str, Any]:
             and len(os.getenv("COMPLEMENTER_SERVICE_TOKEN", "").encode("utf-8")) >= 32
             and _trusted_internal_base_url(os.getenv("COMPLEMENTER_SERVICE_URL", ""))
         ),
+        "pnelly_daily_look_orchestration_configured": bool(
+            os.getenv("COMPLEMENTER_SERVICE_URL")
+            and len(os.getenv("COMPLEMENTER_SERVICE_TOKEN", "").encode("utf-8")) >= 32
+            and _trusted_internal_base_url(os.getenv("COMPLEMENTER_SERVICE_URL", ""))
+        ),
+        "pnelly_daily_look_roles": ["everyday", "elevated", "explore"],
+        "pnelly_requires_persistent_npl": True,
+        "pnelly_npl_provider_configured": _pnelly_npl_provider_configured(),
+        "pnelly_virtual_twin_preview_enabled": False,
         "complementer_product_retrieval": False,
         "complementer_display_authority": False,
         "durable_complementer_memory": False,
@@ -1631,6 +1780,57 @@ def readiness() -> dict[str, Any]:
 def recommend_complementary_look(payload: ComplementerAdvisoryRequest) -> dict[str, Any]:
     """Return styling guidance only; product candidates require the separate CAL decision path."""
     return _complementer_advisory(payload)
+
+
+@app.post(
+    "/v1/tari/daily-looks",
+    include_in_schema=False,
+    tags=["legacy compatibility"],
+    dependencies=[Depends(require_api_token)],
+)
+@app.post(
+    "/v1/pnelly/daily-looks",
+    dependencies=[Depends(require_api_token)],
+    tags=["pnelly daily looks"],
+)
+def compose_pnelly_daily_looks(
+    payload: PNELLYDailyLooksRequest,
+    end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
+) -> dict[str, Any]:
+    """Compose three looks only from the signed-in user's wardrobe snapshot."""
+    subject = _resolve_verified_subject(end_user_authorization)
+    if not hmac.compare_digest(subject, payload.user_id):
+        raise HTTPException(403, detail={"code": "REQUEST_SUBJECT_MISMATCH"})
+    for item in payload.wardrobe_items:
+        if not isinstance(item, dict) or item.get("owner_user_id") != subject:
+            raise HTTPException(403, detail={"code": "WARDROBE_SUBJECT_MISMATCH"})
+        if item.get("status") != "active":
+            raise HTTPException(422, detail={"code": "WARDROBE_SNAPSHOT_MUST_BE_ACTIVE_ONLY"})
+    # Only positive, non-sensitive fashion preference namespaces may guide ranking.
+    profile = _load_verified_usi_profile(subject, allow_without_consent=True)
+    allowed_prefixes = ("style:", "color:", "colour:", "silhouette:", "material:", "pattern:")
+    style_signals = [
+        preference.attribute.strip()
+        for preference in profile.preferences
+        if preference.active and preference.attribute.strip().casefold().startswith(allowed_prefixes)
+    ]
+    if payload.wardrobe_items and not _pnelly_npl_provider_configured():
+        raise HTTPException(503, detail={"code": "PNELLY_NPL_PROVIDER_NOT_CONFIGURED"})
+    eligible_items, npl_excluded_count = _filter_npl_blocked_wardrobe_items(
+        request_id=payload.request_id,
+        user_id=subject,
+        wardrobe_items=payload.wardrobe_items,
+    )
+    safe_payload = payload.model_copy(update={"wardrobe_items": eligible_items})
+    positive_feedback = _load_consent_aware_wardrobe_likes(subject)
+    feedback_signals = [
+        f"feedback:{attribute}"
+        for attribute, weight in positive_feedback.items()
+        if isinstance(attribute, str) and attribute.strip() and isinstance(weight, (int, float)) and weight > 0
+    ][:40]
+    result = _pnelly_daily_looks(safe_payload, style_signals, feedback_signals)
+    result["npl_excluded_wardrobe_item_count"] = npl_excluded_count
+    return result
 
 
 @app.get("/v1/me/style-profile", dependencies=[Depends(require_api_token)], tags=["identity and learning"])

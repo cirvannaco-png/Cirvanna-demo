@@ -13,6 +13,7 @@
 - Retrieve and verify candidate-bound signed safety and FCI evidence from separately configured providers.
 - Submit every candidate to CaTaCaCi/CAL. Product and offer details are returned to the marketplace only for CAL SHOW. The lower-level `/v1/decisions` response also redacts SKU, name, category, brand, price, currency and images for BLOCK/REVIEW.
 - Keep Complementer styling guidance advisory-only.
+- Orchestrate Tari's three daily wardrobe looks from the BFF-verified active closet; apply persisted NPL hard vetoes to each owned item before composition and hydrate only allowlisted positive fashion signals from USI when profile-storage consent permits.
 
 ## Authentication model
 
@@ -34,6 +35,7 @@ The gateway sends that user token to Commerce `GET /me` and uses only the verifi
 - `POST /v1/decisions` — evaluate 1–25 canonical Catalog product IDs through the decision pipeline; merchandising fields are present only for CAL SHOW, otherwise only the candidate ID and decision evidence are returned.
 - `POST /v1/discover` — live Catalog search + Commerce purchasable-offer retrieval, USI preference ranking, then CAL arbitration. Product and offer details are included only for SHOW candidates.
 - `POST /v1/complementer/recommend` — styling advice only; no product candidates or display authority.
+- `POST /v1/pnelly/daily-looks` — requires both the gateway bearer and verified Commerce user header; filters NPL hard-vetoed wardrobe items, loads only active non-sensitive USI fashion signals where profile-storage consent exists, then calls the internal three-role composer. It returns no marketplace products. Tari requires the persistent NPL provider to be configured whenever wardrobe items are present; it fails closed rather than risk recommending a hard-excluded item. Twin previews remain unavailable.
 - `GET /v1/me/style-profile` and `PUT /v1/me/style-profile` — read/update the verified subject's USI profile.
 - `POST /v1/me/consents` and `POST /v1/me/consents/{receipt_id}/revoke` — create and revoke versioned consent receipts.
 - `POST /v1/me/tal/events` — append consented observations or append-only correction events.

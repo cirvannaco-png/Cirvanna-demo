@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 import pytest
 
-from app import main
+from app import main, store
 from app.main import app
 
 client = TestClient(app)
@@ -43,11 +43,36 @@ def test_capabilities_do_not_claim_mesh_measurement_or_cal_is_available(monkeypa
     response = client.get("/capabilities")
     assert response.status_code == 200
     data = response.json()
+    assert data["twin_generation"] is False
+    assert data["persistent_twin_available"] is False
+    assert data["pose_skeleton_inference"] is False
     assert data["body_reconstruction"] is False
     assert data["full_surface_mesh"] is False
     assert data["calibrated_body_measurements"] is False
     assert data["click_it_product_reconstruction"] is False
     assert data["decision_governance_connected_to_rendering"] is False
+
+
+async def _true():
+    return True
+
+
+def test_pose_inference_never_claims_persistent_twin_generation(monkeypatch):
+    monkeypatch.setattr(main, "_vision_worker_ready", lambda: _true())
+    monkeypatch.setattr(main, "_dermalsight_ready", lambda: _false())
+
+    def config(url_name, token_name):
+        if url_name == "CONSENT_API_URL":
+            return ("https://consent.example.test", "c" * 40)
+        return None
+
+    monkeypatch.setattr(main, "_internal_config", config)
+    response = client.get("/capabilities")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["pose_skeleton_inference"] is True
+    assert data["twin_generation"] is False
+    assert data["persistent_twin_available"] is False
 
 
 async def _false():
@@ -179,6 +204,118 @@ def test_twin_success_returns_only_a_partial_ephemeral_pose(monkeypatch):
     assert body["full_surface_mesh_available"] is False
     assert body["decision_status"] == "REVIEW_REQUIRED"
     assert response.headers["cache-control"] == "no-store, private"
+
+
+def test_persistent_twin_create_read_and_delete_is_owner_scoped(tmp_path, monkeypatch):
+    from app.store import Base, engine, session_factory
+
+    database_url = "sqlite:///" + str(tmp_path / "virtual-twin.db")
+    monkeypatch.setenv("VIRTUAL_TWIN_DATABASE_URL", database_url)
+    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", TOKEN)
+    engine.cache_clear()
+    session_factory.cache_clear()
+    Base.metadata.create_all(bind=engine(database_url))
+    monkeypatch.setattr(main, "_asset_service_config", lambda: ("https://assets.example.test", "a" * 40))
+
+    async def verify(subject_id, consent_id, required_scopes, resource_id=None):
+        assert subject_id == SUBJECT
+        assert consent_id == CONSENT
+        assert set(required_scopes) == {"image_processing", "body_measurements", "twin_storage"}
+        assert resource_id == "twin-123"
+        return {"consent_version": "twin-consent-v1"}
+
+    async def upload(subject_id, twin_id, filename, content, content_type):
+        assert subject_id == SUBJECT
+        assert twin_id == "twin-123"
+        assert content == b"private-image-bytes"
+        return "5e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d"
+
+    async def infer(*args, **kwargs):
+        return {
+            "status": "partial_twin_inference",
+            "representation_type": "3d_pose_skeleton",
+            "landmarks": [{"name": "nose", "image": {"x": 0.5, "y": 0.1}}],
+            "input_quality": {"passed": True},
+            "pose_quality": {"mean_landmark_visibility": 0.9},
+            "model": {"family": "MediaPipe Pose Landmarker", "model_asset_sha256": "a" * 64},
+        }
+
+    async def delete_asset(subject_id, asset_id):
+        assert subject_id == SUBJECT
+        assert asset_id == "5e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d"
+
+    async def delete_all_assets(subject_id, twin_id):
+        assert subject_id == SUBJECT
+        assert twin_id == "twin-123"
+
+    monkeypatch.setattr(main, "_verify_consent", verify)
+    monkeypatch.setattr(main, "_upload_twin_asset", upload)
+    monkeypatch.setattr(main, "_run_vision", infer)
+    monkeypatch.setattr(main, "_delete_twin_asset", delete_asset)
+    monkeypatch.setattr(main, "_delete_twin_assets", delete_all_assets)
+
+    created = client.post(
+        "/v1/twins",
+        headers=auth(),
+        data={
+            "subject_id": SUBJECT,
+            "twin_id": "twin-123",
+            "consent_id": CONSENT,
+            "consent_image_processing": "true",
+            "consent_body_measurements": "true",
+            "consent_twin_storage": "true",
+            "height_cm": "180",
+        },
+        files={"image": ("person.png", b"private-image-bytes", "image/png")},
+    )
+    assert created.status_code == 201
+    body = created.json()
+    assert body["record_persisted"] is True
+    assert body["full_surface_mesh_available"] is False
+    assert body["twin"]["representation_type"] == "pose_skeleton_3d"
+    assert body["twin"]["source_asset_id"] == "5e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d"
+
+    own_record = client.get(
+        "/v1/twins/twin-123", headers=auth(), params={"subject_id": SUBJECT}
+    )
+    foreign_record = client.get(
+        "/v1/twins/twin-123", headers=auth(), params={"subject_id": "another-customer"}
+    )
+    assert own_record.status_code == 200
+    assert foreign_record.status_code == 404
+
+    deleted = client.delete(
+        "/v1/twins/twin-123", headers=auth(), params={"subject_id": SUBJECT}
+    )
+    assert deleted.status_code == 200
+    assert deleted.json()["status"] == "deleted"
+    after_delete = client.get(
+        "/v1/twins/twin-123", headers=auth(), params={"subject_id": SUBJECT}
+    )
+    assert after_delete.status_code == 404
+
+    session_factory.cache_clear()
+    engine.cache_clear()
+
+
+def test_persistent_twin_requires_each_explicit_consent_scope(monkeypatch):
+    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", TOKEN)
+    response = client.post(
+        "/v1/twins",
+        headers=auth(),
+        data={
+            "subject_id": SUBJECT,
+            "twin_id": "twin-123",
+            "consent_id": CONSENT,
+            "consent_image_processing": "true",
+            "consent_body_measurements": "true",
+            "consent_twin_storage": "false",
+            "height_cm": "180",
+        },
+        files={"image": ("person.png", b"image", "image/png")},
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "EXPLICIT_TWIN_CONSENT_REQUIRED"
 
 
 def test_click_it_requires_explicit_consent(monkeypatch):

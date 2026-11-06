@@ -269,3 +269,110 @@ def test_delete_user_data_removes_profile_consents_and_events(client):
     assert deleted.json()["deleted_events"] == 1
     assert client.get("/v1/tal/export/user-verified-1", headers=auth()).json()["profile"] is None
     assert client.get("/v1/tal/consents/user-verified-1", headers=auth()).json() == []
+
+
+def test_resource_bound_consent_bundle_verifies_exact_scopes_and_twin(client):
+    consent_id = "twin-consent-bundle-001"
+    twin_id = "twin-owned-by-user-001"
+    scopes = ["image_processing", "body_measurements", "twin_storage"]
+    for index, scope in enumerate(scopes, start=1):
+        response = client.post(
+            "/v1/tal/consents",
+            params={"subject_id": "user-verified-1"},
+            headers=auth(),
+            json={
+                "receipt_id": f"twin-receipt-{index:04d}",
+                "consent_id": consent_id,
+                "resource_id": twin_id,
+                "scope": scope,
+                "consent_version": "virtual-twin-v1",
+                "granted": True,
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["consent_id"] == consent_id
+        assert response.json()["resource_id"] == twin_id
+
+    verified = client.post(
+        "/internal/v1/consents/verify",
+        headers=auth(),
+        json={
+            "subject_id": "user-verified-1",
+            "consent_id": consent_id,
+            "resource_id": twin_id,
+            "required_scopes": scopes,
+        },
+    )
+    wrong_twin = client.post(
+        "/internal/v1/consents/verify",
+        headers=auth(),
+        json={
+            "subject_id": "user-verified-1",
+            "consent_id": consent_id,
+            "resource_id": "another-twin-0001",
+            "required_scopes": scopes,
+        },
+    )
+    missing_scope = client.post(
+        "/internal/v1/consents/verify",
+        headers=auth(),
+        json={
+            "subject_id": "user-verified-1",
+            "consent_id": consent_id,
+            "resource_id": twin_id,
+            "required_scopes": ["image_processing", "virtual_try_on"],
+        },
+    )
+    assert verified.status_code == 200
+    assert verified.json()["verified"] is True
+    assert set(verified.json()["granted_scopes"]) == set(scopes)
+    assert verified.json()["consent_version"] == "virtual-twin-v1"
+    assert wrong_twin.status_code == 403
+    assert missing_scope.status_code == 403
+
+
+def test_resource_bound_consent_bundle_revocation_blocks_try_on(client):
+    consent_id = "tryon-consent-bundle-001"
+    twin_id = "twin-owned-by-user-002"
+    receipt_ids = []
+    for index, scope in enumerate(["image_processing", "virtual_try_on", "twin_storage"], start=1):
+        receipt_id = f"tryon-receipt-{index:04d}"
+        receipt_ids.append(receipt_id)
+        client.post(
+            "/v1/tal/consents",
+            params={"subject_id": "user-verified-1"},
+            headers=auth(),
+            json={
+                "receipt_id": receipt_id,
+                "consent_id": consent_id,
+                "resource_id": twin_id,
+                "scope": scope,
+                "consent_version": "virtual-try-on-v1",
+                "granted": True,
+            },
+        )
+    before = client.post(
+        "/internal/v1/consents/verify",
+        headers=auth(),
+        json={
+            "subject_id": "user-verified-1", "consent_id": consent_id,
+            "resource_id": twin_id,
+            "required_scopes": ["image_processing", "virtual_try_on", "twin_storage"],
+        },
+    )
+    revoked = client.post(
+        f"/v1/tal/consents/{receipt_ids[1]}/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    after = client.post(
+        "/internal/v1/consents/verify",
+        headers=auth(),
+        json={
+            "subject_id": "user-verified-1", "consent_id": consent_id,
+            "resource_id": twin_id,
+            "required_scopes": ["image_processing", "virtual_try_on", "twin_storage"],
+        },
+    )
+    assert before.status_code == 200
+    assert revoked.status_code == 200
+    assert after.status_code == 403

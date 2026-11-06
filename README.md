@@ -13,6 +13,8 @@ Cirvanna is an identity-first beauty, fashion, fit, and commerce-intelligence pl
 - [Architecture and domain ownership](#architecture-and-domain-ownership)
 - [Decision and display flow](#decision-and-display-flow)
 - [Complementer: Personal Aesthetic Intelligence](#complementer-personal-aesthetic-intelligence)
+- [Daily three-look recommendations](#daily-three-look-recommendations)
+- [Retention and recommendation experiments](#retention-and-recommendation-experiments)
 - [Catalog product intelligence](#catalog-product-intelligence)
 - [Modules and services](#modules-and-services)
 - [Data ownership and privacy](#data-ownership-and-privacy)
@@ -170,6 +172,12 @@ The user_id in this request is an opaque caller-supplied request-scope identifie
 The feedback endpoint accepts approval or rejection only when explicit personalisation consent is true. Rejections are soft observations; they do not create NPL hard vetoes. An explicit preference save requires a user-selected value.
 
 Complementer still produces a versioned feedback handoff contract; it does not write directly to a second profile store or automatically train a model. Durable persistence is owned by the identity-learning service and reached through authenticated gateway `/v1/me/*` routes. USI profiles require active `profile_storage` consent. TAL writes require active `personalization` or `style_learning` consent and support idempotent append, append-only same-feature corrections, export, deletion, and expiry purge. A denial or revocation withdraws all active grants for that subject and scope; an older receipt cannot remain active behind a newer withdrawal. These APIs provide durable storage foundations, not proof of a deployed cross-session learning loop or automated personalization improvement.
+
+## Daily three-look recommendations
+
+PNELLY is Cirvanna's named daily-look recommendation capability. The first executable slice returns exactly three distinct roles—Everyday, Elevated and Explore—from the signed-in user's active wardrobe through the same-origin BFF and decision gateway. The gateway requires persistent NPL when the wardrobe contains items, filters hard vetoes, uses allowlisted positive USI fashion signals only when profile-storage consent permits, and consumes existing positive Wardrobe like/wear TAL observations only when a current style-learning/personalization receipt is active. Occasion and climate are user-declared ranking hints matched to explicit wardrobe metadata; consented like/wear tags from TAL are bounded positive ranking signals; explanations cite matching inputs. There is no live weather ingestion in this slice. Xari remains the canonical conversational assistant; PNELLY is not a second assistant runtime. Virtual Twin preview is unavailable until persistent Twin ownership, active server-side consent, authorized assets and a validated renderer are integrated. The capability is implemented as an initial slice, not a production-ready end-to-end feature.
+
+See [daily three-look recommendation contract](docs/architecture/daily-three-look-recommendations.md) and [controlled retention experiment protocol](docs/research/retention-recommendation-experiments.md). The five experiments compare wardrobe-only vs integrated experience, PNELLY/Complementer with vs without wardrobe context, wardrobe-connected visual discovery, 30 km default vs user-expanded radius, and feedback-informed vs baseline recommendations. These are hypotheses; no uplift or industry benchmark is claimed.
 
 ## Catalog product intelligence
 

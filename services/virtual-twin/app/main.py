@@ -8,7 +8,7 @@ from __future__ import annotations
 import hmac
 import os
 from typing import Annotated
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 import httpx
 
@@ -17,6 +17,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from starlette.responses import JSONResponse
 from starlette import status
+
+from app.store import Base as TwinBase, engine as twin_engine, get_store
 
 SERVICE_NAME = "cirvanna-virtual-twin"
 # Adapter code is implemented; availability remains gated on a real worker, consent
@@ -50,6 +52,8 @@ class ReadinessResponse(BaseModel):
     model_adapter_configured: bool
     consent_verifier_configured: bool
     twin_registry_configured: bool
+    twin_store_ready: bool = False
+    asset_service_configured: bool = False
     ready: bool
     reason: str | None = None
 
@@ -80,13 +84,42 @@ def health() -> dict[str, str]:
     return {"status": "alive", "service": SERVICE_NAME}
 
 
+async def _asset_service_ready() -> bool:
+    config = _asset_service_config()
+    if config is None:
+        return False
+    base, _token = config
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(2.5, connect=1.0), trust_env=False, follow_redirects=False
+        ) as client:
+            response = await client.get(base + "/ready")
+        return response.status_code == 200 and response.json().get("ready") is True
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return False
+
+
+@app.on_event("startup")
+def initialize_twin_schema() -> None:
+    if os.getenv("VIRTUAL_TWIN_AUTO_CREATE_SCHEMA", "false").lower() == "true":
+        url = os.getenv("VIRTUAL_TWIN_DATABASE_URL", "").strip()
+        if not url:
+            raise RuntimeError("VIRTUAL_TWIN_DATABASE_URL is required")
+        TwinBase.metadata.create_all(bind=twin_engine(url))
+
+
 @app.get("/ready", response_model=ReadinessResponse, tags=["operations"])
 async def ready() -> ReadinessResponse:
     vision_ready = await _vision_worker_ready()
     consent_configured = _internal_config("CONSENT_API_URL", "CONSENT_API_TOKEN") is not None
-    twin_registry_configured = _internal_config("TWIN_REGISTRY_API_URL", "TWIN_REGISTRY_API_TOKEN") is not None
+    asset_service_ready = await _asset_service_ready()
+    try:
+        get_store().ready()
+        twin_store_ready = True
+    except Exception:
+        twin_store_ready = False
     api_token_configured = len(os.getenv("VIRTUAL_TWIN_API_TOKEN", "").encode("utf-8")) >= 32
-    ready_now = vision_ready and consent_configured and api_token_configured
+    ready_now = all((vision_ready, consent_configured, asset_service_ready, twin_store_ready, api_token_configured))
     reason = None
     if not api_token_configured:
         reason = "api_auth_not_configured"
@@ -94,12 +127,18 @@ async def ready() -> ReadinessResponse:
         reason = "vision_worker_not_ready"
     elif not consent_configured:
         reason = "consent_verifier_not_configured"
+    elif not asset_service_ready:
+        reason = "asset_service_not_ready"
+    elif not twin_store_ready:
+        reason = "twin_store_not_ready"
     result = ReadinessResponse(
         status="ready" if ready_now else "not_ready",
         service=SERVICE_NAME,
         model_adapter_configured=vision_ready,
         consent_verifier_configured=consent_configured,
-        twin_registry_configured=twin_registry_configured,
+        twin_registry_configured=twin_store_ready,
+        twin_store_ready=twin_store_ready,
+        asset_service_configured=asset_service_ready,
         ready=ready_now,
         reason=reason,
     )
@@ -157,7 +196,7 @@ async def _verify_consent(
     consent_id: str,
     required_scopes: list[str],
     resource_id: str | None = None,
-) -> None:
+) -> dict[str, object]:
     """Verify durable, revocable user consent with the configured identity service."""
     config = _internal_config("CONSENT_API_URL", "CONSENT_API_TOKEN")
     if config is None:
@@ -204,43 +243,96 @@ async def _verify_consent(
     )
     if not valid:
         raise HTTPException(403, detail={"code": "CONSENT_NOT_VERIFIED"})
+    return receipt
 
 
 async def _authorize_twin(subject_id: str, twin_id: str) -> None:
-    """Prevent Click It from resolving a Twin belonging to a different account."""
-    config = _internal_config("TWIN_REGISTRY_API_URL", "TWIN_REGISTRY_API_TOKEN")
+    """Authorize the persistent Twin against this service's owner-scoped registry."""
+    try:
+        get_store().get(subject_id=subject_id, twin_id=twin_id)
+    except LookupError as exc:
+        raise HTTPException(404, detail={"code": "TWIN_ACCESS_DENIED"}) from exc
+    except Exception as exc:
+        raise HTTPException(503, detail={"code": "TWIN_STORE_UNAVAILABLE"}) from exc
+
+
+def _asset_service_config() -> tuple[str, str] | None:
+    return _internal_config("ASSET_SERVICE_URL", "ASSET_SERVICE_TOKEN")
+
+
+async def _upload_twin_asset(subject_id: str, twin_id: str, filename: str, content: bytes, content_type: str) -> str:
+    config = _asset_service_config()
     if config is None:
-        raise HTTPException(503, detail={"code": "TWIN_REGISTRY_NOT_CONFIGURED"})
+        raise HTTPException(503, detail={"code": "ASSET_SERVICE_NOT_CONFIGURED"})
     base, token = config
     try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(4.0, connect=1.5), trust_env=False, follow_redirects=False
-        ) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
             response = await client.post(
-                base + "/internal/v1/twins/authorize",
+                base + "/internal/v1/assets",
                 headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
-                json={"subject_id": subject_id, "twin_id": twin_id},
+                data={"owner_user_id": subject_id, "purpose": "twin_source_image", "parent_id": twin_id},
+                files={"file": (filename, content, content_type)},
             )
     except httpx.TimeoutException as exc:
-        raise HTTPException(504, detail={"code": "TWIN_AUTHORIZATION_TIMEOUT"}) from exc
+        raise HTTPException(504, detail={"code": "TWIN_ASSET_UPLOAD_TIMEOUT"}) from exc
     except httpx.HTTPError as exc:
-        raise HTTPException(503, detail={"code": "TWIN_REGISTRY_UNAVAILABLE"}) from exc
-    if response.status_code in {401, 403, 404}:
-        raise HTTPException(403, detail={"code": "TWIN_ACCESS_DENIED"})
-    if response.status_code != 200:
-        raise HTTPException(503, detail={"code": "TWIN_REGISTRY_UNAVAILABLE"})
+        raise HTTPException(503, detail={"code": "TWIN_ASSET_SERVICE_UNAVAILABLE"}) from exc
+    if response.status_code != 201:
+        raise HTTPException(503, detail={"code": "TWIN_ASSET_UPLOAD_FAILED"})
     try:
-        receipt = response.json()
+        result = response.json()
     except ValueError as exc:
-        raise HTTPException(503, detail={"code": "TWIN_REGISTRY_INVALID_RESPONSE"}) from exc
-    if not (
-        isinstance(receipt, dict)
-        and receipt.get("authorized") is True
-        and receipt.get("active") is True
-        and receipt.get("subject_id") == subject_id
-        and receipt.get("twin_id") == twin_id
+        raise HTTPException(502, detail={"code": "TWIN_ASSET_RESPONSE_INVALID"}) from exc
+    asset_id = result.get("asset_id") if isinstance(result, dict) else None
+    if (
+        not isinstance(asset_id, str) or result.get("owner_user_id") != subject_id
+        or result.get("purpose") != "twin_source_image" or result.get("parent_id") != twin_id
     ):
-        raise HTTPException(403, detail={"code": "TWIN_ACCESS_DENIED"})
+        raise HTTPException(502, detail={"code": "TWIN_ASSET_SCOPE_MISMATCH"})
+    return asset_id
+
+
+async def _delete_twin_asset(subject_id: str, asset_id: str) -> None:
+    config = _asset_service_config()
+    if config is None:
+        raise HTTPException(503, detail={"code": "ASSET_SERVICE_NOT_CONFIGURED"})
+    base, token = config
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+            response = await client.delete(
+                base + f"/v1/assets/{asset_id}",
+                headers={
+                    "Authorization": "Bearer " + token,
+                    "X-Asset-Owner-ID": subject_id,
+                    "Idempotency-Key": "twin-delete-" + asset_id,
+                },
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "TWIN_ASSET_DELETE_UNAVAILABLE"}) from exc
+    if response.status_code not in {200, 202, 204, 404}:
+        raise HTTPException(503, detail={"code": "TWIN_ASSET_DELETE_FAILED"})
+
+
+async def _delete_twin_assets(subject_id: str, twin_id: str) -> None:
+    """Purge the Twin source image and every child try-on preview together."""
+    config = _asset_service_config()
+    if config is None:
+        raise HTTPException(503, detail={"code": "ASSET_SERVICE_NOT_CONFIGURED"})
+    base, token = config
+    path = "/internal/v1/assets/by-parent/" + quote(twin_id, safe="")
+    query = urlencode({"owner_user_id": subject_id})
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(12.0, connect=2.0), trust_env=False, follow_redirects=False
+        ) as client:
+            response = await client.delete(
+                base + path + "?" + query,
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "TWIN_ASSET_DELETE_UNAVAILABLE"}) from exc
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "TWIN_ASSET_PARENT_DELETE_FAILED"})
 
 
 async def _vision_config() -> tuple[str, str] | None:
@@ -318,14 +410,23 @@ async def _run_vision(
 
 @app.get("/capabilities", tags=["operations"])
 async def capabilities() -> dict[str, object]:
-    """Report verified model/service state and deliberately separate partial inference."""
+    """Separate persistent pose-record capability from full-avatar reconstruction."""
     dermalsight_ready = await _dermalsight_ready()
     vision_ready = await _vision_worker_ready()
     consent_configured = _internal_config("CONSENT_API_URL", "CONSENT_API_TOKEN") is not None
-    twin_registry_configured = _internal_config("TWIN_REGISTRY_API_URL", "TWIN_REGISTRY_API_TOKEN") is not None
+    asset_ready = await _asset_service_ready()
+    try:
+        get_store().ready()
+        twin_store_ready = True
+    except Exception:
+        twin_store_ready = False
+    persistent_record = consent_configured and asset_ready and twin_store_ready
     return {
         "service": SERVICE_NAME,
-        "twin_generation": vision_ready and consent_configured,
+        "twin_generation": False,
+        "persistent_twin_available": persistent_record,
+        "persistent_twin_record_available": persistent_record,
+        "persistent_representation_type": "pose_skeleton_3d",
         "pose_skeleton_inference": vision_ready and consent_configured,
         "body_reconstruction": False,
         "full_surface_mesh": False,
@@ -337,11 +438,13 @@ async def capabilities() -> dict[str, object]:
         "ar_rendering": False,
         "click_it_product_reconstruction": False,
         "click_it_marketplace_search": vision_ready and consent_configured,
-        "click_it_twin_personalization": vision_ready and consent_configured and twin_registry_configured,
+        "click_it_twin_personalization": persistent_record,
         "decision_governance_connected_to_rendering": False,
-        "image_persistence": False,
+        "image_persistence": asset_ready,
+        "asset_service_configured": asset_ready,
+        "twin_store_ready": twin_store_ready,
         "display_authorization": "CAL_required_before_candidates_are_shown_or_used_to_purchase",
-        "reason": None if vision_ready else "vision_worker_not_ready_or_not_configured",
+        "reason": None if persistent_record else "twin_store_asset_service_or_consent_not_ready",
     }
 
 
@@ -439,6 +542,149 @@ async def proxy_skin_analysis(
     raise HTTPException(
         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
         detail={"code": "DERMALSIGHT_UNAVAILABLE"},
+    )
+
+
+@app.post("/v1/twins", tags=["twin"], status_code=201)
+async def create_persistent_twin(
+    _: Annotated[None, Depends(require_api_token)],
+    subject_id: Annotated[str, Form(min_length=3, max_length=128)],
+    twin_id: Annotated[str, Form(min_length=8, max_length=128)],
+    consent_id: Annotated[str, Form(min_length=8, max_length=128)],
+    consent_image_processing: Annotated[bool, Form()],
+    consent_body_measurements: Annotated[bool, Form()],
+    consent_twin_storage: Annotated[bool, Form()],
+    height_cm: Annotated[float, Form(gt=80, le=260)],
+    image: Annotated[UploadFile, File()],
+):
+    """Persist an owner-scoped pose representation and private source image."""
+    if not consent_image_processing or not consent_body_measurements or not consent_twin_storage:
+        await image.close()
+        raise HTTPException(400, detail={"code": "EXPLICIT_TWIN_CONSENT_REQUIRED"})
+    if image.content_type not in {"image/jpeg", "image/png", "image/webp"}:
+        await image.close()
+        raise HTTPException(415, detail={"code": "UNSUPPORTED_IMAGE_TYPE"})
+    if image.size is not None and image.size > MAX_IMAGE_BYTES:
+        await image.close()
+        raise HTTPException(413, detail={"code": "IMAGE_SIZE_LIMIT_EXCEEDED", "maximum_bytes": MAX_IMAGE_BYTES})
+    if _internal_config("VISION_INTELLIGENCE_API_URL", "VISION_INTELLIGENCE_API_TOKEN") is None:
+        await image.close()
+        raise HTTPException(503, detail={"code": "VISION_INFERENCE_NOT_CONFIGURED"})
+    if _asset_service_config() is None:
+        await image.close()
+        raise HTTPException(503, detail={"code": "ASSET_SERVICE_NOT_CONFIGURED"})
+    try:
+        store = get_store()
+        store.ready()
+    except Exception as exc:
+        await image.close()
+        raise HTTPException(503, detail={"code": "TWIN_STORE_NOT_READY"}) from exc
+    try:
+        consent = await _verify_consent(
+            subject_id, consent_id,
+            ["image_processing", "body_measurements", "twin_storage"],
+            resource_id=twin_id,
+        )
+        content = await image.read(MAX_IMAGE_BYTES + 1)
+        if not content:
+            raise HTTPException(400, detail={"code": "EMPTY_IMAGE"})
+        if len(content) > MAX_IMAGE_BYTES:
+            raise HTTPException(413, detail={"code": "IMAGE_SIZE_LIMIT_EXCEEDED", "maximum_bytes": MAX_IMAGE_BYTES})
+        inference = await _run_vision(
+            "/v1/twin/infer",
+            {
+                "consent_image_processing": "true",
+                "consent_body_measurements": "true",
+                "height_cm": str(height_cm),
+            },
+            "image",
+            image.filename or "twin-source",
+            content,
+            image.content_type or "application/octet-stream",
+        )
+        if inference.get("status") != "partial_twin_inference" or not isinstance(inference.get("landmarks"), list):
+            raise HTTPException(502, detail={"code": "TWIN_REPRESENTATION_INVALID"})
+        model_data = inference.get("model") if isinstance(inference.get("model"), dict) else {}
+        model_version = str(model_data.get("family") or "unknown-model") + "@" + str(model_data.get("model_asset_sha256") or "unreported")
+        consent_version = consent.get("consent_version")
+        if not isinstance(consent_version, str) or not consent_version:
+            raise HTTPException(502, detail={"code": "CONSENT_VERSION_MISSING"})
+        safe_representation = {
+            key: inference[key]
+            for key in ("representation_type", "landmarks", "input_quality", "pose_quality", "inference_id", "model")
+            if key in inference
+        }
+        asset_id = await _upload_twin_asset(
+            subject_id, twin_id, image.filename or "twin-source", content,
+            image.content_type or "application/octet-stream",
+        )
+        try:
+            record = store.create(
+                twin_id=twin_id, subject_id=subject_id,
+                representation=safe_representation, source_asset_id=asset_id,
+                consent_id=consent_id, consent_version=consent_version,
+                model_version=model_version,
+            )
+        except ValueError as exc:
+            await _delete_twin_asset(subject_id, asset_id)
+            raise HTTPException(409, detail={"code": "TWIN_ID_CONFLICT"}) from exc
+        except Exception as exc:
+            await _delete_twin_asset(subject_id, asset_id)
+            raise HTTPException(503, detail={"code": "TWIN_PERSISTENCE_FAILED"}) from exc
+        return JSONResponse(
+            status_code=201,
+            content={
+                "status": "persisted",
+                "twin": record,
+                "record_persisted": True,
+                "full_surface_mesh_available": False,
+                "calibrated_body_measurements_available": False,
+                "fit_grade_measurements_available": False,
+                "decision_status": "REVIEW_REQUIRED",
+                "decision_notice": "The saved Twin contains a pose-skeleton representation and consented source image; it is not a calibrated body mesh or fit guarantee.",
+            },
+            headers={"Cache-Control": "no-store, private"},
+        )
+    finally:
+        await image.close()
+
+
+@app.get("/v1/twins/{twin_id}", tags=["twin"])
+async def get_persistent_twin(
+    twin_id: str,
+    _: Annotated[None, Depends(require_api_token)],
+    subject_id: str,
+):
+    try:
+        record = get_store().get(subject_id=subject_id, twin_id=twin_id)
+    except LookupError as exc:
+        raise HTTPException(404, detail={"code": "TWIN_NOT_FOUND"}) from exc
+    except Exception as exc:
+        raise HTTPException(503, detail={"code": "TWIN_STORE_UNAVAILABLE"}) from exc
+    await _verify_consent(subject_id, record["consent_id"], ["twin_storage"], resource_id=twin_id)
+    return JSONResponse(content={"status": "active", "twin": record}, headers={"Cache-Control": "no-store, private"})
+
+
+@app.delete("/v1/twins/{twin_id}", tags=["twin"])
+async def delete_persistent_twin(
+    twin_id: str,
+    _: Annotated[None, Depends(require_api_token)],
+    subject_id: str,
+):
+    try:
+        record = get_store().get(subject_id=subject_id, twin_id=twin_id)
+    except LookupError as exc:
+        raise HTTPException(404, detail={"code": "TWIN_NOT_FOUND"}) from exc
+    except Exception as exc:
+        raise HTTPException(503, detail={"code": "TWIN_STORE_UNAVAILABLE"}) from exc
+    await _delete_twin_assets(subject_id, twin_id)
+    try:
+        get_store().delete(subject_id=subject_id, twin_id=twin_id)
+    except Exception as exc:
+        raise HTTPException(503, detail={"code": "TWIN_DELETE_PERSISTENCE_FAILED"}) from exc
+    return JSONResponse(
+        content={"status": "deleted", "twin_id": twin_id, "asset_status": "deleted"},
+        headers={"Cache-Control": "no-store, private"},
     )
 
 

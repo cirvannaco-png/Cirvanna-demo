@@ -1,36 +1,41 @@
 from __future__ import annotations
 
+import io
+from uuid import UUID
+
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from PIL import Image
 
 from app import main
+from app.store import Base, engine, session_factory
 
-TOKEN = "virtual-try-on-test-token"
-
-
-class FixtureConsentVerifier:
-    def __init__(self, result=True):
-        self.result = result
-
-    def verify(self, subject_id, consent):
-        return self.result
+TOKEN = "virtual-try-on-test-token-with-more-than-32-bytes"
+PERSON_ASSET = "5e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d"
+GARMENT_ASSET = "6e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d"
+OUTPUT_ASSET = "7e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d"
+MODEL_COMMIT = "a" * 40
 
 
-class FixtureAssetAuthorizer:
-    def __init__(self, result=True):
-        self.result = result
-
-    def authorize(self, subject_id, twin_id, product_id, person_image_asset_id, garment_image_asset_id):
-        return self.result
+def png_bytes(color=(30, 90, 150)):
+    output = io.BytesIO()
+    Image.new("RGB", (128, 160), color).save(output, format="PNG")
+    return output.getvalue()
 
 
 @pytest.fixture
-def client(monkeypatch):
+def client(tmp_path, monkeypatch):
+    url = "sqlite:///" + str(tmp_path / "try-on.db")
+    monkeypatch.setenv("VIRTUAL_TRY_ON_DATABASE_URL", url)
     monkeypatch.setenv("VIRTUAL_TRY_ON_API_TOKEN", TOKEN)
-    monkeypatch.setattr(main, "RENDERER", None)
-    monkeypatch.setattr(main, "CONSENT_VERIFIER", None)
-    monkeypatch.setattr(main, "ASSET_AUTHORIZER", None)
-    return TestClient(main.app)
+    engine.cache_clear()
+    session_factory.cache_clear()
+    Base.metadata.create_all(bind=engine(url))
+    test_client = TestClient(main.app)
+    yield test_client
+    session_factory.cache_clear()
+    engine.cache_clear()
 
 
 def headers():
@@ -39,12 +44,13 @@ def headers():
 
 def payload(**overrides):
     value = {
-        "request_id": "request-test-001",
+        "request_id": "request-test-0001",
         "subject_id": "subject-test-001",
         "twin_id": "twin-test-001",
         "product_id": "product-test-001",
-        "person_image_asset_id": "person-asset-001",
-        "garment_image_asset_id": "garment-asset-001",
+        "person_image_asset_id": PERSON_ASSET,
+        "garment_image_asset_id": GARMENT_ASSET,
+        "garment_asset_purpose": "catalog_garment_image",
         "garment_category": "upper_body",
         "consent": {
             "consent_id": "consent-test-0001",
@@ -57,9 +63,88 @@ def payload(**overrides):
     return value
 
 
-def install_test_authorizers(monkeypatch, consent=True, assets=True):
-    monkeypatch.setattr(main, "CONSENT_VERIFIER", FixtureConsentVerifier(consent))
-    monkeypatch.setattr(main, "ASSET_AUTHORIZER", FixtureAssetAuthorizer(assets))
+def install_providers(monkeypatch, *, twin_asset=PERSON_ASSET):
+    render_calls = {"count": 0}
+    verify_calls = {"count": 0}
+
+    def trusted_base(url_key, token_key):
+        return ("https://internal.example.test", "service-token-with-more-than-32-bytes")
+
+    async def verify(request):
+        verify_calls["count"] += 1
+        return {
+            "verified": True,
+            "active": True,
+            "subject_id": request.subject_id,
+            "consent_id": request.consent.consent_id,
+            "resource_id": request.twin_id,
+            "granted_scopes": ["image_processing", "virtual_try_on", "twin_storage"],
+            "consent_version": "consent-v1",
+        }
+
+    async def resolve(request):
+        return {
+            "twin_id": request.twin_id,
+            "subject_id": request.subject_id,
+            "source_asset_id": twin_asset,
+            "status": "active",
+        }
+
+    async def read_asset(*, subject_id, asset_id, purpose, parent_id):
+        assert subject_id == "subject-test-001"
+        if purpose == "twin_source_image":
+            assert parent_id == "twin-test-001"
+            return png_bytes(), "image/png"
+        assert purpose == "catalog_garment_image"
+        assert parent_id == "product-test-001"
+        return png_bytes((180, 20, 40)), "image/png"
+
+    async def render(request, person, garment):
+        render_calls["count"] += 1
+        assert request.garment_category == "upper_body"
+        assert person[1] == "image/png"
+        assert garment[1] == "image/png"
+        return png_bytes((20, 200, 80)), "fashn-vton-1.5@" + MODEL_COMMIT
+
+    async def save_output(request, image_bytes):
+        assert image_bytes.startswith(b"\x89PNG")
+        return OUTPUT_ASSET
+
+    deleted = []
+
+    async def delete_output(subject_id, twin_id, asset_id):
+        deleted.append((subject_id, twin_id, asset_id))
+
+    async def verify_bundle(subject_id, consent_id, twin_id):
+        verify_calls["count"] += 1
+        assert subject_id == "subject-test-001"
+        assert consent_id == "consent-test-0001"
+        assert twin_id == "twin-test-001"
+        return {"verified": True}
+
+    async def resolve_by_ids(subject_id, twin_id):
+        assert subject_id == "subject-test-001"
+        assert twin_id == "twin-test-001"
+        return {
+            "twin_id": twin_id, "subject_id": subject_id,
+            "source_asset_id": twin_asset, "status": "active",
+        }
+
+    monkeypatch.setattr(main, "_trusted_base", trusted_base)
+    monkeypatch.setattr(main, "_worker_ready", lambda: _ready())
+    monkeypatch.setattr(main, "_verify_consent", verify)
+    monkeypatch.setattr(main, "_verify_consent_bundle", verify_bundle)
+    monkeypatch.setattr(main, "_resolve_twin", resolve)
+    monkeypatch.setattr(main, "_resolve_twin_by_ids", resolve_by_ids)
+    monkeypatch.setattr(main, "_read_authorized_asset", read_asset)
+    monkeypatch.setattr(main, "_render_with_worker", render)
+    monkeypatch.setattr(main, "_persist_output_asset", save_output)
+    monkeypatch.setattr(main, "_delete_output_asset", delete_output)
+    return {"render_calls": render_calls, "verify_calls": verify_calls, "deleted": deleted}
+
+
+async def _ready():
+    return ("https://worker.example.test", "worker-token-with-more-than-32-bytes")
 
 
 def test_health_is_liveness_only(client):
@@ -68,22 +153,28 @@ def test_health_is_liveness_only(client):
     assert response.json()["service"] == main.SERVICE_NAME
 
 
-def test_ready_fails_closed_until_all_providers_exist(client):
+def test_readiness_fails_closed_without_live_dependencies(client, monkeypatch):
+    monkeypatch.setattr(main, "_trusted_base", lambda *_args: None)
+    monkeypatch.setattr(main, "_worker_ready", _not_ready)
     response = client.get("/ready")
     assert response.status_code == 503
-    assert response.json()["detail"]["reason"] == "validated_renderer_consent_and_asset_authorization_adapters_not_integrated"
+    assert "gpu_renderer" in response.json()["detail"]["missing_dependencies"]
+    assert "consent_provider" in response.json()["detail"]["missing_dependencies"]
 
 
-def test_capabilities_do_not_claim_rendering_is_live(client):
-    response = client.get("/capabilities")
-    assert response.status_code == 200
-    data = response.json()
+async def _not_ready():
+    return None
+
+
+def test_capabilities_never_claim_live_rendering_without_dependencies(client, monkeypatch):
+    monkeypatch.setattr(main, "_trusted_base", lambda *_args: None)
+    monkeypatch.setattr(main, "_worker_ready", _not_ready)
+    data = client.get("/capabilities").json()
     assert data["orchestration_api"] is True
     assert data["renderer_configured"] is False
     assert data["consent_verifier_configured"] is False
-    assert data["asset_authorizer_configured"] is False
-    assert data["raw_image_upload"] is False
-    assert data["arbitrary_remote_urls"] is False
+    assert data["asset_service_configured"] is False
+    assert data["output_persistence"] is False
 
 
 def test_try_on_requires_authentication(client):
@@ -91,20 +182,13 @@ def test_try_on_requires_authentication(client):
     assert response.status_code == 401
 
 
-@pytest.mark.parametrize("consent_field", ["image_processing", "virtual_try_on"])
-def test_try_on_requires_each_consent_flag(client, consent_field):
+@pytest.mark.parametrize("field", ["image_processing", "virtual_try_on"])
+def test_try_on_requires_explicit_consent_flags(client, field):
     body = payload()
-    body["consent"][consent_field] = False
+    body["consent"][field] = False
     response = client.post("/v1/try-ons", json=body, headers=headers())
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "CONSENT_REQUIRED"
-
-
-def test_try_on_fails_closed_without_providers_and_claims_no_output(client):
-    response = client.post("/v1/try-ons", json=payload(), headers=headers())
-    assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "TRY_ON_DEPENDENCIES_NOT_CONFIGURED"
-    assert "no output was created" in response.json()["detail"]["message"].lower()
 
 
 @pytest.mark.parametrize("asset_id", [
@@ -112,88 +196,147 @@ def test_try_on_fails_closed_without_providers_and_claims_no_output(client):
     "../private/person.jpg",
     "/tmp/person.jpg",
     "file:///tmp/person.jpg",
+    "not-a-uuid",
 ])
-def test_external_urls_and_paths_are_rejected_as_asset_ids(client, asset_id):
+def test_external_urls_paths_and_non_opaque_asset_ids_are_rejected(client, asset_id):
     body = payload(person_image_asset_id=asset_id)
     response = client.post("/v1/try-ons", json=body, headers=headers())
     assert response.status_code == 422
 
 
-def test_non_ephemeral_retention_is_rejected(client):
-    body = payload()
-    body["consent"]["retention_policy"] = "permanent"
+def test_wardrobe_asset_requires_exact_parent_binding(client):
+    body = payload(garment_asset_purpose="wardrobe_garment_image")
     response = client.post("/v1/try-ons", json=body, headers=headers())
     assert response.status_code == 422
-    assert response.json()["detail"]["code"] == "RETENTION_POLICY_UNSUPPORTED"
 
 
-def test_unverified_consent_blocks_rendering(client, monkeypatch):
-    install_test_authorizers(monkeypatch, consent=False)
-    class FixtureRenderer:
-        renderer_id = "fixture-renderer"
-        renderer_version = "fixture-only"
-        def render(self, request):
-            raise AssertionError("renderer must not be called without verified consent")
-    monkeypatch.setattr(main, "RENDERER", FixtureRenderer())
+def test_pnelly_look_requires_look_and_wardrobe_versions(client):
+    body = payload(look_id="look-001")
+    response = client.post("/v1/try-ons", json=body, headers=headers())
+    assert response.status_code == 422
+
+
+def test_try_on_persists_real_renderer_result_and_is_idempotent(client, monkeypatch):
+    providers = install_providers(monkeypatch)
+    first = client.post("/v1/try-ons", json=payload(), headers=headers())
+    replay = client.post("/v1/try-ons", json=payload(), headers=headers())
+    assert first.status_code == 200
+    assert first.json()["status"] == "complete"
+    assert first.json()["renderer_id"] == "fashn-vton-1.5"
+    assert first.json()["renderer_version"] == "fashn-vton-1.5@" + MODEL_COMMIT
+    assert first.json()["output_asset_id"] == OUTPUT_ASSET
+    assert first.json()["output_expires_after_hours"] == 24
+    assert replay.status_code == 200
+    assert replay.json()["output_asset_id"] == OUTPUT_ASSET
+    assert providers["render_calls"]["count"] == 1
+    # Consent is verified for both original creation and replay.
+    assert providers["verify_calls"]["count"] == 2
+
+
+def test_changed_payload_under_same_request_id_conflicts(client, monkeypatch):
+    install_providers(monkeypatch)
+    first = client.post("/v1/try-ons", json=payload(), headers=headers())
+    changed = payload(product_id="different-product")
+    second = client.post("/v1/try-ons", json=changed, headers=headers())
+    assert first.status_code == 200
+    assert second.status_code == 409
+    assert second.json()["detail"]["code"] == "TRY_ON_IDEMPOTENCY_CONFLICT"
+
+
+def test_try_on_rejects_a_different_twin_source_asset(client, monkeypatch):
+    install_providers(monkeypatch, twin_asset="8e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d")
+    response = client.post("/v1/try-ons", json=payload(), headers=headers())
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "TWIN_PERSON_ASSET_MISMATCH"
+
+
+def test_try_on_requires_resource_bound_active_consent(client, monkeypatch):
+    install_providers(monkeypatch)
+
+    async def no_consent(_request):
+        raise HTTPException(403, detail={"code": "CONSENT_NOT_VERIFIED"})
+
+    monkeypatch.setattr(main, "_verify_consent", no_consent)
     response = client.post("/v1/try-ons", json=payload(), headers=headers())
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "CONSENT_NOT_VERIFIED"
 
 
-def test_unauthorized_assets_block_rendering(client, monkeypatch):
-    install_test_authorizers(monkeypatch, assets=False)
-    class FixtureRenderer:
-        renderer_id = "fixture-renderer"
-        renderer_version = "fixture-only"
-        def render(self, request):
-            raise AssertionError("renderer must not be called for unauthorized assets")
-    monkeypatch.setattr(main, "RENDERER", FixtureRenderer())
-    response = client.post("/v1/try-ons", json=payload(), headers=headers())
-    assert response.status_code == 403
-    assert response.json()["detail"]["code"] == "ASSET_ACCESS_DENIED"
+def test_readback_rechecks_consent_and_current_twin_source(client, monkeypatch):
+    install_providers(monkeypatch)
+    created = client.post("/v1/try-ons", json=payload(), headers=headers())
+    assert created.status_code == 200
+    request_id = payload()["request_id"]
+    result = client.get(
+        f"/v1/try-ons/{request_id}",
+        headers=headers(),
+        params={"subject_id": "subject-test-001"},
+    )
+    assert result.status_code == 200
+    assert result.json()["output_asset_id"] == OUTPUT_ASSET
+
+    async def revoked(*_args):
+        raise HTTPException(403, detail={"code": "CONSENT_NOT_VERIFIED"})
+
+    monkeypatch.setattr(main, "_verify_consent_bundle", revoked)
+    denied = client.get(
+        f"/v1/try-ons/{request_id}",
+        headers=headers(),
+        params={"subject_id": "subject-test-001"},
+    )
+    assert denied.status_code == 403
 
 
-def test_renderer_success_is_only_returned_after_authorization_and_real_asset_id(client, monkeypatch):
-    install_test_authorizers(monkeypatch)
-    class FixtureRenderer:
-        renderer_id = "fixture-renderer"
-        renderer_version = "fixture-only"
-        def render(self, request):
-            assert request.consent.image_processing
-            assert request.consent.virtual_try_on
-            return "rendered-asset-001"
-    monkeypatch.setattr(main, "RENDERER", FixtureRenderer())
-    response = client.post("/v1/try-ons", json=payload(), headers=headers())
+def test_look_render_binds_versions_and_wardrobe_asset_owner(client, monkeypatch):
+    install_providers(monkeypatch)
+
+    async def read_asset(*, subject_id, asset_id, purpose, parent_id):
+        assert purpose == "wardrobe_garment_image"
+        assert parent_id == "wardrobe-item-001"
+        return png_bytes(), "image/png"
+
+    monkeypatch.setattr(main, "_read_authorized_asset", read_asset)
+    body = payload(
+        garment_asset_purpose="wardrobe_garment_image",
+        garment_asset_parent_id="wardrobe-item-001",
+        look_id="pnelly-look-001",
+        look_version=2,
+        wardrobe_snapshot_version=17,
+    )
+    response = client.post("/v1/try-ons", json=body, headers=headers())
     assert response.status_code == 200
-    result = response.json()
-    assert result["status"] == "complete"
-    assert result["output_asset_id"] == "rendered-asset-001"
-    assert result["renderer_version"] == "fixture-only"
 
 
-def test_renderer_failure_does_not_leak_provider_error(client, monkeypatch):
-    install_test_authorizers(monkeypatch)
-    class BrokenRenderer:
-        renderer_id = "fixture-renderer"
-        renderer_version = "fixture-only"
-        def render(self, request):
-            raise RuntimeError("private upstream credential and request payload")
-    monkeypatch.setattr(main, "RENDERER", BrokenRenderer())
+def test_private_asset_storage_failure_never_returns_complete(client, monkeypatch):
+    install_providers(monkeypatch)
+
+    async def broken_save(*_args):
+        raise HTTPException(503, detail={"code": "VTON_OUTPUT_STORAGE_UNAVAILABLE"})
+
+    monkeypatch.setattr(main, "_persist_output_asset", broken_save)
     response = client.post("/v1/try-ons", json=payload(), headers=headers())
-    assert response.status_code == 502
-    assert response.json()["detail"]["code"] == "RENDERER_FAILED"
-    assert "credential" not in response.text
-    assert "request payload" not in response.text
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "VTON_OUTPUT_STORAGE_UNAVAILABLE"
 
 
-def test_invalid_renderer_output_is_rejected(client, monkeypatch):
-    install_test_authorizers(monkeypatch)
-    class BadRenderer:
-        renderer_id = "fixture-renderer"
-        renderer_version = "fixture-only"
-        def render(self, request):
-            return "https://example.com/fake-output.png"
-    monkeypatch.setattr(main, "RENDERER", BadRenderer())
+def test_output_record_persistence_failure_rolls_back_private_output(client, monkeypatch):
+    providers = install_providers(monkeypatch)
+    from app.store import TryOnStore
+
+    def broken_create(self, data):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(TryOnStore, "create", broken_create)
     response = client.post("/v1/try-ons", json=payload(), headers=headers())
-    assert response.status_code == 502
-    assert response.json()["detail"]["code"] == "RENDERER_INVALID_OUTPUT"
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "TRY_ON_RESULT_PERSISTENCE_FAILED"
+    assert providers["deleted"] == [
+        ("subject-test-001", "twin-test-001", OUTPUT_ASSET)
+    ]
+
+
+def test_invalid_retention_policy_is_rejected(client):
+    body = payload()
+    body["consent"]["retention_policy"] = "permanent"
+    response = client.post("/v1/try-ons", json=body, headers=headers())
+    assert response.status_code == 422
