@@ -376,3 +376,89 @@ def test_resource_bound_consent_bundle_revocation_blocks_try_on(client):
     assert before.status_code == 200
     assert revoked.status_code == 200
     assert after.status_code == 403
+
+
+
+def resource_consent(client, *, subject, bundle, resource, scope, receipt):
+    return client.post(
+        "/v1/tal/consents",
+        params={"subject_id": subject},
+        headers=auth(),
+        json={
+            "receipt_id": receipt,
+            "consent_id": bundle,
+            "resource_id": resource,
+            "scope": scope,
+            "consent_version": "media-v1",
+            "granted": True,
+        },
+    )
+
+
+def test_resource_bound_consent_revocation_does_not_cross_resource(client):
+    for resource, bundle, prefix in (
+        ("twin-resource-1", "bundle-resource-1", "receipt-resource-1"),
+        ("twin-resource-2", "bundle-resource-2", "receipt-resource-2"),
+    ):
+        for suffix, scope in (("image", "image_processing"), ("storage", "twin_storage")):
+            response = resource_consent(
+                client, subject="user-verified-1", bundle=bundle, resource=resource,
+                scope=scope, receipt=prefix + "-" + suffix,
+            )
+            assert response.status_code == 200
+
+    verify = client.post(
+        "/internal/v1/consents/verify", headers=auth(),
+        json={
+            "subject_id": "user-verified-1",
+            "consent_id": "bundle-resource-1",
+            "resource_id": "twin-resource-1",
+            "required_scopes": ["image_processing", "twin_storage"],
+        },
+    )
+    assert verify.status_code == 200
+    assert verify.json()["consent_version"] == "media-v1"
+
+    revoked = client.post(
+        "/v1/tal/consents/receipt-resource-1-image/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert revoked.status_code == 200
+
+    first = client.post(
+        "/internal/v1/consents/verify", headers=auth(),
+        json={"subject_id": "user-verified-1", "consent_id": "bundle-resource-1",
+              "resource_id": "twin-resource-1", "required_scopes": ["twin_storage"]},
+    )
+    second = client.post(
+        "/internal/v1/consents/verify", headers=auth(),
+        json={"subject_id": "user-verified-1", "consent_id": "bundle-resource-2",
+              "resource_id": "twin-resource-2", "required_scopes": ["image_processing", "twin_storage"]},
+    )
+    assert first.status_code == 200  # storage receipt remains active
+    assert second.status_code == 200  # other Twin consent remains active
+
+
+def test_resource_bound_denial_does_not_revoke_other_resources(client):
+    resource_consent(
+        client, subject="user-verified-1", bundle="bundle-a", resource="twin-a",
+        scope="twin_storage", receipt="receipt-twin-a",
+    )
+    resource_consent(
+        client, subject="user-verified-1", bundle="bundle-b", resource="twin-b",
+        scope="twin_storage", receipt="receipt-twin-b",
+    )
+    denied = client.post(
+        "/v1/tal/consents", params={"subject_id": "user-verified-1"}, headers=auth(),
+        json={
+            "receipt_id": "receipt-denial-a", "consent_id": "bundle-a",
+            "resource_id": "twin-a", "scope": "twin_storage",
+            "consent_version": "media-v1", "granted": False,
+        },
+    )
+    assert denied.status_code == 200
+    assert client.post(
+        "/internal/v1/consents/verify", headers=auth(),
+        json={"subject_id": "user-verified-1", "consent_id": "bundle-b",
+              "resource_id": "twin-b", "required_scopes": ["twin_storage"]},
+    ).status_code == 200
