@@ -127,7 +127,7 @@ def health() -> dict[str, str]:
 
 @app.get("/ready", tags=["operations"])
 def readiness() -> dict[str, object]:
-    token = os.getenv("XARI_API_TOKEN", "").strip() or os.getenv("TARI_API_TOKEN", "").strip()
+    token = os.getenv("PNELLY_API_TOKEN", "").strip() or os.getenv("XARI_API_TOKEN", "").strip() or os.getenv("TARI_API_TOKEN", "").strip()
     token_configured = len(token.encode("utf-8")) >= 32
     search_configured = _marketplace_search_config() is not None
     result = {

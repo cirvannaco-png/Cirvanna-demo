@@ -81,18 +81,21 @@ def test_capabilities_report_search_contract_without_claiming_cal_display(monkey
     assert data["marketplace_description_search"]["configured"] is False
     assert data["marketplace_description_search"]["cal_authorization_required_before_display"] is True
 
-def test_pnelly_token_is_preferred_over_legacy_pnelly_token(monkeypatch):
+def test_pnelly_token_is_preferred_over_xari_and_tari_aliases(monkeypatch):
     pnelly_token = "pnelly-test-token-at-least-thirty-two-bytes"
-    pnelly_token = "tari-legacy-token-at-least-thirty-two-bytes"
+    xari_token = "xari-legacy-token-at-least-thirty-two-bytes"
+    tari_token = "tari-legacy-token-at-least-thirty-two-bytes"
     monkeypatch.setenv("PNELLY_API_TOKEN", pnelly_token)
-    monkeypatch.setenv("XARI_API_TOKEN", pnelly_token)
+    monkeypatch.setenv("XARI_API_TOKEN", xari_token)
+    monkeypatch.setenv("TARI_API_TOKEN", tari_token)
     monkeypatch.delenv("VISION_INTELLIGENCE_API_URL", raising=False)
     monkeypatch.delenv("VISION_INTELLIGENCE_API_TOKEN", raising=False)
-    wrong = client.post("/v1/marketplace/search", headers={"Authorization": f"Bearer {pnelly_token}"}, json=PAYLOAD)
-    assert wrong.status_code == 401
-    right = client.post("/v1/marketplace/search", headers={"Authorization": f"Bearer {pnelly_token}"}, json=PAYLOAD)
-    assert right.status_code == 503
-    assert right.json()["detail"]["code"] == "MARKETPLACE_SEARCH_NOT_CONFIGURED"
+    old = client.post("/v1/marketplace/search", headers={"Authorization": f"Bearer {xari_token}"}, json=PAYLOAD)
+    current = client.post("/v1/marketplace/search", headers={"Authorization": f"Bearer {pnelly_token}"}, json=PAYLOAD)
+    assert old.status_code == 401
+    assert current.status_code == 503
+    assert current.json()["detail"]["code"] == "MARKETPLACE_SEARCH_NOT_CONFIGURED"
+
 
 def test_capabilities_name_pnelly_as_canonical_and_keep_tari_as_legacy(monkeypatch):
     monkeypatch.setenv("PNELLY_API_TOKEN", "pnelly-test-token-at-least-thirty-two-bytes")
@@ -108,3 +111,25 @@ def test_legacy_xari_and_tari_credentials_remain_accepted(monkeypatch):
     response = client.get("/capabilities")
     assert response.status_code == 200
     assert response.json()["canonical_name"] == "PNELLY"
+
+
+
+def test_route_planner_prefers_pnelly_chat_url_and_falls_back_to_legacy_aliases():
+    from pnelly.routing import plan_route
+
+    pnelly = plan_route("assistant_chat", {}, environment={
+        "PNELLY_CHAT_API_URL": "https://pnelly.example.test",
+        "XARI_CHAT_API_URL": "https://xari.example.test",
+    })
+    xari = plan_route("assistant_chat", {}, environment={
+        "XARI_CHAT_API_URL": "https://xari.example.test",
+        "TARI_CHAT_API_URL": "https://tari.example.test",
+    })
+    tari = plan_route("assistant_chat", {}, environment={
+        "TARI_CHAT_API_URL": "https://tari.example.test",
+    })
+    assert pnelly.configured is True
+    assert pnelly.upstream_env == "PNELLY_CHAT_API_URL"
+    assert xari.configured is True
+    assert xari.upstream_env == "PNELLY_CHAT_API_URL"
+    assert tari.configured is True
