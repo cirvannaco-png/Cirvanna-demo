@@ -691,3 +691,66 @@ def test_legacy_daily_looks_bff_route_is_hidden_compatibility_alias(client):
     paths = response.json()["paths"]
     assert "/api/wardrobe/pnelly/daily-looks" in paths
     assert "/api/wardrobe/daily-looks" not in paths
+
+
+
+def test_media_asset_identifiers_are_never_returned_by_private_json():
+    payload = {
+        "item_id": "wardrobe-item-1",
+        "image_asset_id": "private-image-id",
+        "nested": {"source_asset_id": "private-source-id", "label": "safe"},
+    }
+    sanitized = main._private_json_response(payload).body.decode()
+    assert "private-image-id" not in sanitized
+    assert "private-source-id" not in sanitized
+    assert "wardrobe-item-1" in sanitized
+    assert '"label":"safe"' in sanitized
+
+
+def test_persistent_twin_and_try_on_routes_require_user_bearer(client):
+    assert client.get("/api/virtual-twins/twin-00000001").status_code == 401
+    assert client.delete("/api/virtual-twins/twin-00000001").status_code == 401
+    assert client.post(
+        "/api/virtual-try-on",
+        json={
+            "twin_id": "twin-00000001",
+            "wardrobe_item_id": "wardrobe-item-1",
+            "garment_category": "upper_body",
+            "consent_image_processing": True,
+            "consent_virtual_try_on": True,
+        },
+    ).status_code == 401
+
+
+def test_virtual_try_on_bff_rejects_client_supplied_identity_and_asset_ids(client):
+    response = client.post(
+        "/api/virtual-try-on",
+        headers={"Authorization": "Bearer customer-token"},
+        json={
+            "subject_id": "attacker-controlled-subject",
+            "twin_id": "twin-00000001",
+            "wardrobe_item_id": "wardrobe-item-1",
+            "person_image_asset_id": "00000000-0000-4000-8000-000000000001",
+            "garment_image_asset_id": "00000000-0000-4000-8000-000000000002",
+            "garment_category": "upper_body",
+            "consent_image_processing": True,
+            "consent_virtual_try_on": True,
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_try_on_capabilities_do_not_confuse_api_presence_with_renderer_readiness(client, monkeypatch):
+    monkeypatch.setattr(main, "_virtual_try_on_service", lambda: ("https://tryon.example.test", "t" * 40))
+    fake = FakeAsyncClient([FakeResponse({
+        "renderer_configured": False,
+        "consent_verifier_configured": True,
+        "asset_service_configured": True,
+        "twin_service_configured": True,
+        "database_ready": True,
+        "supported_categories": ["upper_body"],
+    })])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get("/api/virtual-try-on/capabilities")
+    assert response.status_code == 200
+    assert response.json()["try_on_enabled"] is False

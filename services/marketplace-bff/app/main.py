@@ -416,7 +416,7 @@ def _withhold_unverified_media(value):
 
 
 def _private_json_response(data: dict) -> JSONResponse:
-    return JSONResponse(content=_withhold_unverified_media(data), headers={"Cache-Control": "no-store, private"})
+    return JSONResponse(content=_without_private_asset_ids(_withhold_unverified_media(data)), headers={"Cache-Control": "no-store, private"})
 
 
 @app.get("/wardrobe", response_class=HTMLResponse)
