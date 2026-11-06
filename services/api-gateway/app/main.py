@@ -672,7 +672,7 @@ def _pnelly_daily_looks(payload: PNELLYDailyLooksRequest, style_signals: list[st
     base = os.getenv("COMPLEMENTER_SERVICE_URL", "").strip().rstrip("/")
     token = os.getenv("COMPLEMENTER_SERVICE_TOKEN", "").strip()
     if not base or len(token.encode("utf-8")) < 32 or not _trusted_internal_base_url(base):
-        raise HTTPException(503, detail={"code": "TARI_PROVIDER_CONFIGURATION_INVALID"})
+        raise HTTPException(503, detail={"code": "PNELLY_PROVIDER_CONFIGURATION_INVALID"})
 
     body = payload.model_dump(mode="json")
     body["style_signals"] = style_signals[:40]
@@ -689,19 +689,19 @@ def _pnelly_daily_looks(payload: PNELLYDailyLooksRequest, style_signals: list[st
                 json=body,
             )
     except httpx.TimeoutException as exc:
-        raise HTTPException(504, detail={"code": "TARI_PROVIDER_TIMEOUT"}) from exc
+        raise HTTPException(504, detail={"code": "PNELLY_PROVIDER_TIMEOUT"}) from exc
     except httpx.HTTPError as exc:
-        raise HTTPException(503, detail={"code": "TARI_PROVIDER_UNAVAILABLE"}) from exc
+        raise HTTPException(503, detail={"code": "PNELLY_PROVIDER_UNAVAILABLE"}) from exc
     if response.status_code == 403:
-        raise HTTPException(403, detail={"code": "TARI_WARDROBE_SCOPE_REJECTED"})
+        raise HTTPException(403, detail={"code": "PNELLY_WARDROBE_SCOPE_REJECTED"})
     if response.status_code == 422:
-        raise HTTPException(422, detail={"code": "TARI_REQUEST_REJECTED"})
+        raise HTTPException(422, detail={"code": "PNELLY_REQUEST_REJECTED"})
     if response.status_code in {401, 502, 503, 504} or response.status_code < 200 or response.status_code >= 300:
-        raise HTTPException(503, detail={"code": "TARI_PROVIDER_UNAVAILABLE"})
+        raise HTTPException(503, detail={"code": "PNELLY_PROVIDER_UNAVAILABLE"})
     try:
         result = response.json()
     except ValueError as exc:
-        raise HTTPException(502, detail={"code": "TARI_INVALID_RESPONSE"}) from exc
+        raise HTTPException(502, detail={"code": "PNELLY_INVALID_RESPONSE"}) from exc
 
     roles = ["everyday", "elevated", "explore"]
     owned_ids = {
@@ -721,15 +721,15 @@ def _pnelly_daily_looks(payload: PNELLYDailyLooksRequest, style_signals: list[st
         or len(looks) != 3
         or [item.get("role") if isinstance(item, dict) else None for item in looks] != roles
     ):
-        raise HTTPException(502, detail={"code": "TARI_RESPONSE_SCHEMA_INVALID"})
+        raise HTTPException(502, detail={"code": "PNELLY_RESPONSE_SCHEMA_INVALID"})
 
     for look in looks:
         item_ids = look.get("item_ids")
         if not isinstance(item_ids, list) or any(not isinstance(item_id, str) or item_id not in owned_ids for item_id in item_ids):
-            raise HTTPException(502, detail={"code": "TARI_RESPONSE_WARDROBE_SCOPE_MISMATCH"})
+            raise HTTPException(502, detail={"code": "PNELLY_RESPONSE_WARDROBE_SCOPE_MISMATCH"})
         preview = look.get("virtual_twin_preview")
         if not isinstance(preview, dict) or preview.get("status") != "unavailable":
-            raise HTTPException(502, detail={"code": "TARI_TWIN_PREVIEW_STATE_INVALID"})
+            raise HTTPException(502, detail={"code": "PNELLY_TWIN_PREVIEW_STATE_INVALID"})
     return {
         "schema_version": "1.0",
         "request_id": payload.request_id,
@@ -1783,6 +1783,12 @@ def recommend_complementary_look(payload: ComplementerAdvisoryRequest) -> dict[s
 
 
 @app.post(
+    "/v1/tari/daily-looks",
+    include_in_schema=False,
+    tags=["legacy compatibility"],
+    dependencies=[Depends(require_internal_token)],
+)
+@app.post(
     "/v1/pnelly/daily-looks",
     dependencies=[Depends(require_api_token)],
     tags=["pnelly daily looks"],
@@ -1809,7 +1815,7 @@ def compose_pnelly_daily_looks(
         if preference.active and preference.attribute.strip().casefold().startswith(allowed_prefixes)
     ]
     if payload.wardrobe_items and not _pnelly_npl_provider_configured():
-        raise HTTPException(503, detail={"code": "TARI_NPL_PROVIDER_NOT_CONFIGURED"})
+        raise HTTPException(503, detail={"code": "PNELLY_NPL_PROVIDER_NOT_CONFIGURED"})
     eligible_items, npl_excluded_count = _filter_npl_blocked_wardrobe_items(
         request_id=payload.request_id,
         user_id=subject,
