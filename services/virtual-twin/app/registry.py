@@ -19,7 +19,7 @@ from typing import Annotated, Iterator, Literal
 from urllib.parse import urlsplit
 
 import httpx
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import (
@@ -381,6 +381,7 @@ def _queue_deletion(db: Session, record: TwinRecord, command_id: str) -> TwinDel
 @router.post("/internal/v1/twins/register", status_code=201)
 async def register_twin(
     payload: RegisterTwinRequest,
+    response: Response,
     _: Annotated[None, Depends(require_registry_token)],
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, object]:
@@ -399,6 +400,7 @@ async def register_twin(
             raise HTTPException(409, detail={"code": "TWIN_REGISTRATION_IDEMPOTENCY_CONFLICT"})
         if existing.status != "active":
             raise HTTPException(409, detail={"code": "TWIN_REGISTRATION_NO_LONGER_ACTIVE"})
+        response.status_code = 200
         return {
             "status": "replayed",
             "subject_id": existing.subject_id,
@@ -499,8 +501,8 @@ def revoke_twin_consent(
         )
     ).all()
     for record in records:
-        command = f"{payload.command_id}:{record.twin_id}"
-        _queue_deletion(db, record, command[:160])
+        command_digest = hashlib.sha256(f"{payload.command_id}:{record.twin_id}".encode("utf-8")).hexdigest()
+        _queue_deletion(db, record, "consent-revocation:" + command_digest)
     db.commit()
     return {"status": "pending" if records else "complete", "twins_queued": len(records)}
 
