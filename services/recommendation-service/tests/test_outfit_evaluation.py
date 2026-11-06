@@ -5,20 +5,27 @@ from app.outfit_evaluation import evaluate
 def make_record(case_id="case-1", split="test", user="user-a"):
     return {
         "schema_version": "1.0", "case_id": case_id, "user_key": user,
-        "reviewer_key": "reviewer-a", "reviewed_at": "2026-11-06T08:00:00Z",
+        "reviewed_at": "2026-11-06T08:00:00Z", "algorithm_version": "daily-look-v1",
+        "baseline_version": "simple-baseline-v1", "policy_version": "npl-v1",
         "split": split, "preferred_tags": ["linen", "minimal"], "excluded_tags": ["leather"],
         "candidate_pool": [
             {"candidate_id": "model-top", "item_ids": ["shirt-1", "trouser-1", "shoe-1"],
              "categories": ["top", "bottom", "shoes"], "tags": ["linen", "minimal"],
-             "model_score": 0.95, "human_relevance": 5, "shown": True,
+             "model_score": 0.95, "human_relevance": 5,
+             "human_ratings": [{"reviewer_key": "reviewer-a", "relevance": 5}, {"reviewer_key": "reviewer-b", "relevance": 5}],
+             "shown": True,
              "user_edited": True, "user_rejected": False},
             {"candidate_id": "baseline-top", "item_ids": ["shirt-2", "skirt-1", "shoe-2"],
              "categories": ["top", "bottom", "shoes"], "tags": ["cotton", "classic"],
-             "model_score": 0.55, "human_relevance": 4, "shown": False,
+             "model_score": 0.55, "human_relevance": 4,
+             "human_ratings": [{"reviewer_key": "reviewer-a", "relevance": 4}, {"reviewer_key": "reviewer-b", "relevance": 4}],
+             "shown": False,
              "user_edited": False, "user_rejected": False},
             {"candidate_id": "excluded", "item_ids": ["jacket-1", "trouser-2"],
              "categories": ["outerwear", "bottom"], "tags": ["leather", "minimal"],
-             "model_score": 0.99, "human_relevance": 5, "shown": False,
+             "model_score": 0.99, "human_relevance": 5,
+             "human_ratings": [{"reviewer_key": "reviewer-a", "relevance": 5}, {"reviewer_key": "reviewer-b", "relevance": 5}],
+             "shown": False,
              "user_edited": False, "user_rejected": False},
         ],
     }
@@ -59,6 +66,21 @@ def test_human_rating_must_be_one_to_five():
     row["candidate_pool"][0]["human_relevance"] = 6
     with pytest.raises(ValueError, match="human rating"):
         evaluate([row])
+
+
+def test_every_candidate_requires_two_distinct_blinded_reviewers():
+    row = make_record()
+    row["candidate_pool"][0]["human_ratings"] = [{"reviewer_key": "reviewer-a", "relevance": 5}]
+    with pytest.raises(ValueError, match="at least two independent"):
+        evaluate([row])
+
+
+def test_participant_cannot_leak_across_dataset_splits():
+    train = make_record("train-case", "train", "same-user")
+    test = make_record("test-case", "test", "same-user")
+    with pytest.raises(ValueError, match="exactly one split"):
+        evaluate([train, test])
+
 
 def test_case_ids_are_unique_within_split():
     with pytest.raises(ValueError, match="unique within each split"):
