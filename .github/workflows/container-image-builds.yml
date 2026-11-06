@@ -18,6 +18,7 @@ on:
       - "services/decision-service/**"
       - "services/marketplace-bff/**"
       - "services/privacy-governance-service/**"
+      - "services/vision-intelligence/**"
       - ".github/workflows/container-image-builds.yml"
   workflow_dispatch:
 
