@@ -563,6 +563,11 @@ async def create_try_on(
         saved = store.create({
             "subject_id": payload.subject_id, "request_id": payload.request_id,
             "payload_hash": digest, "twin_id": payload.twin_id, "product_id": payload.product_id,
+            "person_image_asset_id": payload.person_image_asset_id,
+            "garment_image_asset_id": payload.garment_image_asset_id,
+            "garment_asset_purpose": payload.garment_asset_purpose,
+            "garment_asset_parent_id": payload.garment_parent,
+            "garment_category": payload.garment_category,
             "look_id": payload.look_id, "look_version": payload.look_version,
             "wardrobe_snapshot_version": payload.wardrobe_snapshot_version,
             "output_asset_id": output_asset_id, "renderer_id": "fashn-vton-1.5",
@@ -595,5 +600,7 @@ async def get_try_on(
     if result is None:
         raise HTTPException(404, detail={"code": "TRY_ON_NOT_FOUND"})
     await _verify_consent_bundle(subject_id, result["consent_id"], result["twin_id"])
-    await _resolve_twin_by_ids(subject_id, result["twin_id"])
+    twin = await _resolve_twin_by_ids(subject_id, result["twin_id"])
+    if twin.get("source_asset_id") != result["person_image_asset_id"]:
+        raise HTTPException(410, detail={"code": "TWIN_SOURCE_VERSION_CHANGED"})
     return JSONResponse(content=result["result"], headers={"Cache-Control": "no-store, private"})
