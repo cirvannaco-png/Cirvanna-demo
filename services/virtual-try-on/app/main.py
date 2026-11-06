@@ -237,10 +237,6 @@ async def _resolve_twin(payload: TryOnRequest) -> dict:
     return twin
 
 
-# Legacy implementation removed; Twin resolution now uses the one persisted registry.
-async def _resolve_twin_legacy_unused(payload: TryOnRequest) -> dict:
-    config = _trusted_base("VIRTUAL_TWIN_API_URL", "VIRTUAL_TWIN_API_TOKEN")
-
 async def _read_authorized_asset(
     *, subject_id: str, asset_id: str, purpose: str, parent_id: str,
 ) -> tuple[bytes, str]:
