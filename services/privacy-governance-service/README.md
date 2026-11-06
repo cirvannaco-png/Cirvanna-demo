@@ -51,6 +51,9 @@ The status token is a bearer secret. The BFF exposes it only once on submission 
 
 Provider response schemas are enforced in the code. Test mocks do not constitute deployed-provider proof.
 
+Every configured provider must also expose an authenticated `GET /ready` endpoint over the trusted HTTPS origin. The readiness request carries that provider's own bearer token, disables redirects and proxy-environment inheritance, and accepts only HTTP 200 with a JSON object containing `"ready": true`. A missing provider, bad URL/token, timeout, non-200 response, malformed body or `"ready": false` keeps Privacy Governance not-ready. The service probes all five providers concurrently; it does not expose provider URLs or tokens in its health response. A passing probe is still only an availability check—the operation-specific contracts below must be exercised against the real provider before production approval.
+
+
 ## Configuration
 
 - `PRIVACY_GOVERNANCE_DATABASE_URL`: existing approved PostgreSQL database in staging/production; SQLite is local/test only.
