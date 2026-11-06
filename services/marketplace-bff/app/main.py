@@ -743,7 +743,21 @@ def public_offers(
         and isinstance(payload.get("total"), int)
     ):
         raise HTTPException(status_code=502, detail={"code": "INVALID_COMMERCE_RESPONSE"})
-    return payload
+    safe_payload = dict(payload)
+    safe_items = []
+    for offer in payload["items"]:
+        if not isinstance(offer, dict):
+            raise HTTPException(status_code=502, detail={"code": "INVALID_COMMERCE_RESPONSE"})
+        safe_offer = dict(offer)
+        # Defense in depth: public media stays hidden until an asset-bound privacy receipt is verified.
+        safe_offer["image_urls"] = []
+        if isinstance(safe_offer.get("product"), dict):
+            safe_product = dict(safe_offer["product"])
+            safe_product["image_urls"] = []
+            safe_offer["product"] = safe_product
+        safe_items.append(safe_offer)
+    safe_payload["items"] = safe_items
+    return safe_payload
 
 
 def _authorized_commerce_path(method: str, path: str) -> bool:
