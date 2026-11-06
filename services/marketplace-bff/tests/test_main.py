@@ -142,14 +142,14 @@ class FakeAsyncClient:
         return self.responses.pop(0)
 
 
-def test_description_search_fails_closed_without_xari_or_legacy_secret(client, monkeypatch):
+def test_description_search_fails_closed_without_pnelly_or_legacy_secret(client, monkeypatch):
     monkeypatch.delenv("TARI_API_URL", raising=False)
     monkeypatch.delenv("TARI_API_TOKEN", raising=False)
     monkeypatch.delenv("XARI_API_URL", raising=False)
     monkeypatch.delenv("XARI_API_TOKEN", raising=False)
     response = client.post("/api/vision/marketplace-search", json={"query": "blue linen summer dress"})
     assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "XARI_API_URL_NOT_CONFIGURED"
+    assert response.json()["detail"]["code"] == "PNELLY_API_URL_NOT_CONFIGURED"
 
 
 def test_description_search_forwards_to_legacy_tari_alias_and_keeps_candidates_pending_cal(client, monkeypatch):
@@ -521,3 +521,19 @@ def test_wardrobe_consent_listing_allows_closet_browse_when_learning_provider_ab
     assert response.json()["learning_configured"] is False
     assert response.json()["items"] == []
     assert len(fake.calls) == 1
+
+def test_description_search_prefers_pnelly_endpoint_and_token(client, monkeypatch):
+    monkeypatch.setenv("PNELLY_API_URL", "https://pnelly.example.test")
+    monkeypatch.setenv("PNELLY_API_TOKEN", "pnelly-internal-token-at-least-thirty-two-bytes")
+    monkeypatch.setenv("XARI_API_URL", "https://xari.example.test")
+    monkeypatch.setenv("XARI_API_TOKEN", "xari-internal-token-at-least-thirty-two-bytes")
+    fake = FakeAsyncClient([FakeResponse({
+        "status": "complete", "query": "green linen dress", "candidate_count": 0,
+        "candidates": [], "display_authorized": False, "decision_status": "PENDING_CAL",
+        "scores_are_probabilities": False,
+    })])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post("/api/vision/marketplace-search", json={"query": "green linen dress"})
+    assert response.status_code == 200
+    assert fake.calls[0][1] == "https://pnelly.example.test/v1/marketplace/search"
+    assert fake.calls[0][2]["headers"]["Authorization"].endswith("pnelly-internal-token-at-least-thirty-two-bytes")

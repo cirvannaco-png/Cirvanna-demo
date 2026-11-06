@@ -97,5 +97,21 @@ def test_xari_token_is_preferred_over_legacy_tari_token(monkeypatch):
 def test_capabilities_name_xari_as_canonical_and_keep_tari_as_legacy(monkeypatch):
     monkeypatch.setenv("XARI_API_TOKEN", "xari-test-token-at-least-thirty-two-bytes")
     data = client.get("/capabilities").json()
-    assert data["canonical_name"] == "Xari"
-    assert data["legacy_names"] == ["Tari", "Xyra"]
+    assert data["canonical_name"] == "PNELLY"
+    assert data["legacy_names"] == ["Xari", "Tari", "Xyra"]
+    assert data["contract_compatibility"]["xari_routes_preserved"] is True
+
+def test_pnelly_token_is_preferred_over_xari_and_tari(monkeypatch):
+    pnelly = "pnelly-test-token-at-least-thirty-two-bytes"
+    xari = "xari-test-token-at-least-thirty-two-bytes"
+    tari = "tari-legacy-token-at-least-thirty-two-bytes"
+    monkeypatch.setenv("PNELLY_API_TOKEN", pnelly)
+    monkeypatch.setenv("XARI_API_TOKEN", xari)
+    monkeypatch.setenv("TARI_API_TOKEN", tari)
+    monkeypatch.delenv("VISION_INTELLIGENCE_API_URL", raising=False)
+    monkeypatch.delenv("VISION_INTELLIGENCE_API_TOKEN", raising=False)
+    old = client.post("/v1/marketplace/search", headers={"Authorization": f"Bearer {xari}"}, json=PAYLOAD)
+    current = client.post("/v1/marketplace/search", headers={"Authorization": f"Bearer {pnelly}"}, json=PAYLOAD)
+    assert old.status_code == 401
+    assert current.status_code == 503
+    assert current.json()["detail"]["code"] == "MARKETPLACE_SEARCH_NOT_CONFIGURED"
