@@ -9,7 +9,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 from typing import Annotated, Literal
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException
@@ -215,7 +215,7 @@ async def _resolve_twin_by_ids(subject_id: str, twin_id: str) -> dict:
     if config is None:
         raise HTTPException(503, detail={"code": "TWIN_SERVICE_NOT_CONFIGURED"})
     base, token = config
-    response = await _json_request("GET", base, f"/v1/twins/{twin_id}?subject_id={subject_id}", token)
+    response = await _json_request("GET", base, f"/v1/twins/{quote(twin_id, safe='')}?{urlencode({'subject_id': subject_id})}", token)
     if response.status_code in {403, 404}:
         raise HTTPException(404, detail={"code": "TWIN_NOT_FOUND_OR_NOT_AUTHORIZED"})
     if response.status_code != 200:
@@ -271,7 +271,7 @@ async def _read_authorized_asset(
         raise HTTPException(403, detail={"code": "ASSET_ACCESS_DENIED"})
     response = await _json_request(
         "GET", base,
-        f"/internal/v1/assets/{asset_id}/content?subject_id={subject_id}&purpose={purpose}&parent_id={parent_id}",
+        f"/internal/v1/assets/{quote(asset_id, safe='')}/content?{urlencode({'subject_id': subject_id, 'purpose': purpose, 'parent_id': parent_id})}",
         token,
     )
     if response.status_code in {403, 404}:
