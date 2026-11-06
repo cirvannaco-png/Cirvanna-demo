@@ -21,10 +21,14 @@ def client(tmp_path, monkeypatch):
     async def consent_ok(*_args, **_kwargs):
         return None
 
+    async def mesh_ok(*_args, **_kwargs):
+        return None
+
     async def assets_ok(*_args, **_kwargs):
         return None
 
     monkeypatch.setattr(registry, "_verify_consent", consent_ok)
+    monkeypatch.setattr(registry, "_verify_mesh_artifact", mesh_ok)
     monkeypatch.setattr(registry, "_authorize_assets", assets_ok)
     return TestClient(main.app)
 
@@ -41,6 +45,7 @@ def registration(**overrides):
         "artifact_asset_id": "mesh-asset-001",
         "source_image_asset_ids": ["source-image-001", "source-image-002"],
         "model_version": "mesh-model@sha256:abc123",
+        "validation_receipt_id": "mesh-validation-0001",
         "consent_id": "consent-receipt-0001",
         "consent_version": "privacy-2026-11-v1",
         "idempotency_key": "register-twin-command-001",
@@ -55,10 +60,14 @@ def test_register_persists_only_full_body_mesh_after_consent_and_asset_checks(cl
     async def consent(*_args, **_kwargs):
         checked["consent"] += 1
 
+    async def mesh(*_args, **_kwargs):
+        checked["mesh"] += 1
+
     async def assets(*_args, **_kwargs):
         checked["assets"] += 1
 
     monkeypatch.setattr(registry, "_verify_consent", consent)
+    monkeypatch.setattr(registry, "_verify_mesh_artifact", mesh)
     monkeypatch.setattr(registry, "_authorize_assets", assets)
 
     response = client.post("/internal/v1/twins/register", json=registration(), headers=headers())
@@ -67,7 +76,7 @@ def test_register_persists_only_full_body_mesh_after_consent_and_asset_checks(cl
     assert data["status"] == "registered"
     assert data["representation_type"] == "full_body_mesh"
     assert data["version"] == 1
-    assert checked == {"consent": 1, "assets": 1}
+    assert checked == {"consent": 1, "mesh": 1, "assets": 1}
 
 
 def test_registry_rejects_pose_skeleton_as_a_persistent_twin(client):
