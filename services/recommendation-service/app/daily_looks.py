@@ -11,7 +11,7 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
-POLICY_VERSION = "tari-daily-looks-v1"
+POLICY_VERSION = "pnelly-daily-looks-v1"
 ROLES = ("everyday", "elevated", "explore")
 
 _CATEGORY_ALIASES = {
@@ -353,7 +353,7 @@ def build_daily_looks(
         "schema_version": "1.0",
         "policy_version": POLICY_VERSION,
         "request_id": request_id,
-        "capability": "tari_daily_looks",
+        "capability": "pnelly_daily_looks",
         "status": "ready" if ready_count == 3 else ("partial" if ready_count else "needs_input"),
         "look_count": 3,
         "ready_count": ready_count,
