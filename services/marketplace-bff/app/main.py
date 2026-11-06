@@ -11,7 +11,7 @@ import re
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 import httpx
@@ -197,7 +197,7 @@ async def marketplace_description_search(payload: MarketplaceSearchIn) -> dict:
         "status": "complete",
         "query": payload.normalized_query,
         "candidate_count": data.get("candidate_count", len(data["candidates"])),
-        "candidates": data["candidates"],
+        "candidates": _redact_unattested_media(data["candidates"]),
         "display_authorized": data.get("display_authorized") is True,
         "decision_status": data.get("decision_status", "PENDING_CAL"),
         "scores_are_probabilities": False,
@@ -281,6 +281,44 @@ def _identity_learning_service() -> tuple[str, str]:
 
 def _decision_gateway() -> tuple[str, str]:
     return _internal_service("DECISION_GATEWAY_URL", "DECISION_GATEWAY_TOKEN")
+
+
+MEDIA_REFERENCE_FIELDS = frozenset({
+    "image", "photo", "avatar", "thumbnail", "media", "picture",
+    "image_url", "image_urls", "photo_url", "photo_urls", "avatar_url",
+    "thumbnail_url", "thumbnail_urls", "media_url", "media_urls",
+    "picture_url", "picture_urls", "render_url", "render_urls",
+    "rendered_image_url", "asset_url", "asset_urls",
+    "image_asset_id", "photo_asset_id", "media_asset_id",
+    "image_asset_reference", "photo_asset_reference", "media_asset_reference",
+    "image_data", "photo_data", "image_base64", "photo_base64",
+    "face_crop", "face_crops", "original_image", "original_photo",
+})
+
+
+def _redact_unattested_media(value: Any) -> Any:
+    """Remove media references from customer-facing JSON until publication is attested."""
+    if isinstance(value, dict):
+        safe: dict[str, Any] = {}
+        for key, item in value.items():
+            name = str(key).casefold()
+            media_field = name in MEDIA_REFERENCE_FIELDS or name.endswith((
+                "_image_url", "_image_urls", "_photo_url", "_photo_urls",
+                "_avatar_url", "_thumbnail_url", "_thumbnail_urls",
+                "_media_url", "_media_urls", "_picture_url", "_picture_urls",
+                "_render_url", "_render_urls", "_asset_url", "_asset_urls",
+                "_image_asset_id", "_photo_asset_id", "_media_asset_id",
+            ))
+            if media_field:
+                safe[key] = [] if isinstance(item, (list, tuple)) else None
+            else:
+                safe[key] = _redact_unattested_media(item)
+        return safe
+    if isinstance(value, list):
+        return [_redact_unattested_media(item) for item in value]
+    if isinstance(value, tuple):
+        return [_redact_unattested_media(item) for item in value]
+    return value
 
 
 def _private_json_response(data: dict) -> JSONResponse:
@@ -570,7 +608,7 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
                 safe_entry[key] = safe_media_record
         safe_displayable.append(safe_entry)
     safe_data["displayable_products"] = safe_displayable
-    return _private_json_response(safe_data)
+    return _private_json_response(_redact_unattested_media(safe_data))
 
 
 
@@ -675,7 +713,7 @@ async def marketplace_click_it(
     except ValueError as exc:
         raise HTTPException(502, detail={"code": "CLICK_IT_INVALID_RESPONSE"}) from exc
     if response.status_code == 200 and isinstance(data, dict):
-        return JSONResponse(content=data, headers={"Cache-Control": "no-store, private"})
+        return JSONResponse(content=_redact_unattested_media(data), headers={"Cache-Control": "no-store, private"})
     detail = data.get("detail", {}) if isinstance(data, dict) else {}
     code = detail.get("code") if isinstance(detail, dict) else None
     safe = {"code": code if isinstance(code, str) else "CLICK_IT_REQUEST_FAILED"}
@@ -820,7 +858,7 @@ def public_offers(
             safe_offer["product"] = safe_product
         safe_items.append(safe_offer)
     safe_payload["items"] = safe_items
-    return safe_payload
+    return _redact_unattested_media(safe_payload)
 
 
 def _authorized_commerce_path(method: str, path: str) -> bool:
@@ -1121,4 +1159,15 @@ async def commerce_proxy(path: str, request: Request) -> Response:
         response_headers["Content-Type"] = upstream.headers["content-type"]
     if upstream.headers.get("retry-after"):
         response_headers["Retry-After"] = upstream.headers["retry-after"]
+    content_type = upstream.headers.get("content-type", "").casefold()
+    if upstream.content and ("application/json" in content_type or "+json" in content_type):
+        try:
+            payload = upstream.json()
+        except ValueError as exc:
+            raise HTTPException(status_code=502, detail={"code": "COMMERCE_RESPONSE_INVALID"}) from exc
+        return JSONResponse(
+            content=_redact_unattested_media(payload),
+            status_code=upstream.status_code,
+            headers=response_headers,
+        )
     return Response(content=upstream.content, status_code=upstream.status_code, headers=response_headers)
