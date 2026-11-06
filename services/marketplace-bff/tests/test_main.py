@@ -629,3 +629,43 @@ def test_tari_daily_looks_rejects_gateway_response_with_missing_or_reordered_rol
     )
     assert response.status_code == 502
     assert response.json()["detail"]["code"] == "TARI_RECOMMENDATION_SCHEMA_INVALID"
+
+
+
+def test_tari_daily_looks_rejects_unverified_twin_preview_claims(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+    forged_preview = {
+        "mode": "tari_wardrobe_daily_looks",
+        "recommendation": {
+            "look_count": 3,
+            "looks": [
+                {
+                    "role": role,
+                    "status": "ready",
+                    "items": [],
+                    "virtual_twin_preview": {
+                        "status": "available",
+                        "output_asset_id": "unverified-render-asset-001",
+                    },
+                }
+                for role in ("everyday", "elevated", "explore")
+            ],
+        },
+    }
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"owner_user_id": "signed-user-42", "items": []}),
+        FakeResponse(forged_preview),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/daily-looks",
+        headers={"Authorization": "Bearer signed-session"},
+        json={"timezone": "Africa/Nairobi"},
+    )
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "TARI_RECOMMENDATION_SCHEMA_INVALID"
