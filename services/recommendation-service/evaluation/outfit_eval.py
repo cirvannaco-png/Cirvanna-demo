@@ -79,6 +79,8 @@ def validate_record(record: dict[str, Any], line_number: int = 0) -> None:
     for field in ("case_id", "split"):
         if not isinstance(record.get(field), str) or not record[field].strip():
             raise EvaluationError(prefix + f"{field} is required")
+    if record.get("dataset_version") != "1.0":
+        raise EvaluationError(prefix + "dataset_version must be '1.0'")
     if record["split"] not in VALID_SPLITS:
         raise EvaluationError(prefix + f"split must be one of {sorted(VALID_SPLITS)}")
     scenario = record.get("scenario")
@@ -415,8 +417,10 @@ def load_jsonl(path: Path, split: str = "all") -> list[dict[str, Any]]:
                 record = json.loads(line)
             except json.JSONDecodeError as exc:
                 raise EvaluationError(f"line {line_number}: invalid JSON") from exc
-            validate_record(record, line_number)
-            if split == "all" or record["split"] == split:
+            if not isinstance(record, dict):
+                raise EvaluationError(f"line {line_number}: record must be a JSON object")
+            if split == "all" or record.get("split") == split:
+                validate_record(record, line_number)
                 records.append(record)
     return records
 
