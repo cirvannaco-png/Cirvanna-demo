@@ -1786,7 +1786,7 @@ def recommend_complementary_look(payload: ComplementerAdvisoryRequest) -> dict[s
     "/v1/tari/daily-looks",
     include_in_schema=False,
     tags=["legacy compatibility"],
-    dependencies=[Depends(require_internal_token)],
+    dependencies=[Depends(require_api_token)],
 )
 @app.post(
     "/v1/pnelly/daily-looks",
