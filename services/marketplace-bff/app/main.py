@@ -101,10 +101,10 @@ def _internal_service(url_key: str, token_key: str) -> tuple[str, str]:
 def _xari_internal_service() -> tuple[str, str]:
     """Prefer Xari environment names while retaining PNELLY aliases during migration."""
     xari_url = os.getenv("XARI_API_URL", "").strip()
-    pnelly_url = os.getenv("TARI_API_URL", "").strip()
+    legacy_assistant_url = os.getenv("TARI_API_URL", "").strip()
     url_key = "XARI_API_URL" if xari_url else "TARI_API_URL"
     token = os.getenv("XARI_API_TOKEN", "").strip() or os.getenv("TARI_API_TOKEN", "").strip()
-    if not xari_url and not pnelly_url:
+    if not xari_url and not legacy_assistant_url:
         raise HTTPException(status_code=503, detail={"code": "XARI_API_URL_NOT_CONFIGURED"})
     base = _upstream_base(url_key)
     if len(token.encode("utf-8")) < 32:
@@ -571,15 +571,15 @@ async def wardrobe_daily_looks(request: Request, payload: DailyLooksIn = Body(de
                 headers={"Authorization": "Bearer " + wardrobe_token, "Accept": "application/json"},
             )
         except httpx.TimeoutException as exc:
-            raise HTTPException(504, detail={"code": "TARI_WARDROBE_TIMEOUT"}) from exc
+            raise HTTPException(504, detail={"code": "PNELLY_WARDROBE_TIMEOUT"}) from exc
         except httpx.HTTPError as exc:
-            raise HTTPException(503, detail={"code": "TARI_WARDROBE_UNAVAILABLE"}) from exc
+            raise HTTPException(503, detail={"code": "PNELLY_WARDROBE_UNAVAILABLE"}) from exc
         if wardrobe_response.status_code != 200:
-            raise HTTPException(503, detail={"code": "TARI_WARDROBE_UNAVAILABLE"})
+            raise HTTPException(503, detail={"code": "PNELLY_WARDROBE_UNAVAILABLE"})
         try:
             wardrobe_data = wardrobe_response.json()
         except ValueError as exc:
-            raise HTTPException(502, detail={"code": "TARI_WARDROBE_RESPONSE_INVALID"}) from exc
+            raise HTTPException(502, detail={"code": "PNELLY_WARDROBE_RESPONSE_INVALID"}) from exc
         if (
             not isinstance(wardrobe_data, dict)
             or wardrobe_data.get("owner_user_id") != subject
@@ -587,7 +587,7 @@ async def wardrobe_daily_looks(request: Request, payload: DailyLooksIn = Body(de
             or any(not isinstance(item, dict) or item.get("owner_user_id") != subject
                    for item in wardrobe_data.get("items", []))
         ):
-            raise HTTPException(502, detail={"code": "TARI_WARDROBE_SCOPE_MISMATCH"})
+            raise HTTPException(502, detail={"code": "PNELLY_WARDROBE_SCOPE_MISMATCH"})
 
         active_items = []
         for item in wardrobe_data["items"]:
@@ -600,7 +600,7 @@ async def wardrobe_daily_looks(request: Request, payload: DailyLooksIn = Body(de
                 or not isinstance(item.get("attributes", []), list)
                 or any(not isinstance(value, str) for value in item.get("attributes", []))
             ):
-                raise HTTPException(502, detail={"code": "TARI_WARDROBE_ITEM_SCHEMA_INVALID"})
+                raise HTTPException(502, detail={"code": "PNELLY_WARDROBE_ITEM_SCHEMA_INVALID"})
             # Send only the minimum text metadata. Image asset identifiers and bytes
             # never leave the wardrobe service for outfit composition.
             active_items.append({
@@ -612,7 +612,7 @@ async def wardrobe_daily_looks(request: Request, payload: DailyLooksIn = Body(de
                 "status": "active",
             })
         if len(active_items) > 150:
-            raise HTTPException(413, detail={"code": "TARI_WARDROBE_TOO_LARGE"})
+            raise HTTPException(413, detail={"code": "PNELLY_WARDROBE_TOO_LARGE"})
 
         gateway_base, gateway_token = _decision_gateway()
         body = {
@@ -634,9 +634,9 @@ async def wardrobe_daily_looks(request: Request, payload: DailyLooksIn = Body(de
                 json=body,
             )
         except httpx.TimeoutException as exc:
-            raise HTTPException(504, detail={"code": "TARI_RECOMMENDATION_TIMEOUT"}) from exc
+            raise HTTPException(504, detail={"code": "PNELLY_RECOMMENDATION_TIMEOUT"}) from exc
         except httpx.HTTPError as exc:
-            raise HTTPException(503, detail={"code": "TARI_RECOMMENDATION_UNAVAILABLE"}) from exc
+            raise HTTPException(503, detail={"code": "PNELLY_RECOMMENDATION_UNAVAILABLE"}) from exc
 
     if response.status_code in {401, 403, 422}:
         try:
@@ -644,13 +644,13 @@ async def wardrobe_daily_looks(request: Request, payload: DailyLooksIn = Body(de
             code = detail.get("code") if isinstance(detail, dict) else None
         except ValueError:
             code = None
-        raise HTTPException(response.status_code, detail={"code": code or "TARI_RECOMMENDATION_REJECTED"})
+        raise HTTPException(response.status_code, detail={"code": code or "PNELLY_RECOMMENDATION_REJECTED"})
     if response.status_code != 200:
-        raise HTTPException(503, detail={"code": "TARI_RECOMMENDATION_UNAVAILABLE"})
+        raise HTTPException(503, detail={"code": "PNELLY_RECOMMENDATION_UNAVAILABLE"})
     try:
         result = response.json()
     except ValueError as exc:
-        raise HTTPException(502, detail={"code": "TARI_RECOMMENDATION_RESPONSE_INVALID"}) from exc
+        raise HTTPException(502, detail={"code": "PNELLY_RECOMMENDATION_RESPONSE_INVALID"}) from exc
     recommendation = result.get("recommendation") if isinstance(result, dict) else None
     roles = ["everyday", "elevated", "explore"]
     looks = recommendation.get("looks") if isinstance(recommendation, dict) else None
@@ -672,7 +672,7 @@ async def wardrobe_daily_looks(request: Request, payload: DailyLooksIn = Body(de
             for look in looks
         )
     ):
-        raise HTTPException(502, detail={"code": "TARI_RECOMMENDATION_SCHEMA_INVALID"})
+        raise HTTPException(502, detail={"code": "PNELLY_RECOMMENDATION_SCHEMA_INVALID"})
     return _private_json_response(result)
 
 
