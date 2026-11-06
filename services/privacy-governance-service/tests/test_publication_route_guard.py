@@ -8,9 +8,11 @@ SERVICES = ROOT / "services"
 HTTP_METHODS = {"get", "post", "put", "patch", "delete", "api_route"}
 PUBLIC_MEDIA_SURFACE_SEGMENTS = {
     "asset", "assets", "image", "images", "photo", "photos", "media",
-    "avatar", "avatars", "publish", "publication", "restore", "share",
-    "shared", "shared-link", "shared-links", "syndicate", "syndication",
-    "community", "feed",
+    "avatar", "avatars", "thumbnail", "render", "publish", "publication",
+    "restore", "share", "shared", "shared-link", "shared-links",
+    "syndicate", "syndication", "community", "feed", "upload", "uploads",
+    "file", "files", "gallery", "galleries", "public", "static", "cdn",
+    "story", "stories", "post", "posts", "lookbook", "banner", "cover",
 }
 
 
@@ -42,14 +44,22 @@ def test_no_public_media_publication_or_restore_route_bypasses_privacy_gate():
     """Any future public media surface must explicitly wire the masking attestation gate."""
     unguarded = []
     scanned = 0
-    for source_path in sorted(SERVICES.glob("*/app/*.py")):
+    for source_path in sorted(SERVICES.rglob("*.py")):
+        relative_parts = source_path.relative_to(SERVICES).parts
+        if {"tests", "migrations", "__pycache__"}.intersection(relative_parts):
+            continue
         source = source_path.read_text(encoding="utf-8")
         scanned += 1
         for method, route, handler in _route_definitions(source, source_path):
             if route.startswith("/internal/"):
                 continue
             segments = {part.casefold() for part in route.split("/") if part}
-            if not segments.intersection(PUBLIC_MEDIA_SURFACE_SEGMENTS):
+            handler_media_name = any(term in handler.name.casefold() for term in (
+                "publish", "restore", "share", "syndicat", "upload",
+                "serve_image", "serve_photo", "serve_media", "avatar",
+                "gallery", "lookbook",
+            ))
+            if not segments.intersection(PUBLIC_MEDIA_SURFACE_SEGMENTS) and not handler_media_name:
                 continue
             # This dependency name is the integration contract every publisher must import.
             guarded = any(
