@@ -123,7 +123,7 @@ def test_registration_idempotency_replays_same_payload_and_rejects_changed_paylo
         headers=headers(),
     )
     assert first.status_code == 201
-    assert replay.status_code == 201
+    assert replay.status_code == 200
     assert replay.json()["status"] == "replayed"
     assert conflict.status_code == 409
     assert conflict.json()["detail"]["code"] == "TWIN_REGISTRATION_IDEMPOTENCY_CONFLICT"
