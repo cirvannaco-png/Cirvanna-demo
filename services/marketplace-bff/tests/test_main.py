@@ -398,7 +398,10 @@ def test_wardrobe_recommendations_forward_verified_token_to_cal_decision_gateway
         FakeResponse({
             "request_id": "req-1",
             "ranked_candidate_count": 0,
-            "displayable_products": [],
+            "displayable_products": [{
+                "product": {"product_id": "p1", "image_urls": ["https://cdn.example.test/unmasked-product.jpg"]},
+                "offer": {"variant_id": "v1", "image_urls": ["https://cdn.example.test/unmasked-offer.jpg"]},
+            }],
             "withheld_candidate_ids": [],
             "display_authority": "CaTaCaCi/CAL",
         }),
@@ -423,6 +426,8 @@ def test_wardrobe_recommendations_forward_verified_token_to_cal_decision_gateway
     assert sent["json"]["use_wardrobe_context"] is True
     assert sent["json"]["context"]["location_source"] == "user_declared"
     assert sent["json"]["context"]["climate_source"] == "user_declared"
+    assert response.json()["displayable_products"][0]["product"]["image_urls"] == []
+    assert response.json()["displayable_products"][0]["offer"]["image_urls"] == []
     assert "Authorization" not in response.text
 
 
