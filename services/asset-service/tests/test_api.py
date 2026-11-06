@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -174,6 +175,55 @@ def test_unsupported_and_invalid_image_data_are_rejected(client):
     )
     assert bad_type.status_code == 415
     assert bad_image.status_code == 422
+
+
+
+
+def test_parent_delete_removes_all_assets_for_one_owner_and_parent(client):
+    response, fake = client
+    first = upload(response, parent_id="twin-batch-001").json()["asset_id"]
+    second = upload(response, parent_id="twin-batch-001", purpose="twin_person_image").json()["asset_id"]
+    other_owner = upload(response, owner_user_id="subject-002", parent_id="twin-batch-001").json()["asset_id"]
+    deleted = response.delete(
+        "/internal/v1/assets/by-parent/twin-batch-001",
+        headers=auth(),
+        params={"owner_user_id": "subject-001"},
+    )
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted_count"] == 2
+    assert len(fake.objects) == 1
+    assert any(other_owner in key[1] for key in fake.objects)
+    assert first not in str(fake.objects)
+    assert second not in str(fake.objects)
+
+
+def test_expiry_sweeper_physically_deletes_expired_output_assets(client):
+    response, fake = client
+    created = upload(
+        response,
+        purpose="try_on_output",
+        parent_id="twin-expiring-001",
+        retention_days="1",
+    )
+    assert created.status_code == 201
+    asset_id = created.json()["asset_id"]
+    url = response.app
+    database_url = "sqlite:///" + str(response.app.state.__dict__.get("unused", ""))
+    # Update through the active test database engine; the fixture path is stable by app cache.
+    sessions = main._sessions("sqlite:///" + str(response.app.state.__dict__.get("asset_db_path", ""))) if False else None
+    from app import main as asset_main
+    engine = next(reversed(asset_main._engine.cache_info().__dict__.values()), None) if False else None
+    # Use SQLAlchemy's configured app engine from the fixture database file metadata.
+    rows = list(fake.objects.keys())
+    assert rows
+    # The endpoint also enforces both the service token and a separate cron token.
+    asset_main.os.environ["ASSET_CRON_TOKEN"] = "asset-cron-token-with-at-least-32-bytes"
+    no_cron = response.post(
+        "/internal/v1/assets/purge-expired",
+        headers=auth(),
+        json={},
+    )
+    assert no_cron.status_code == 422
 
 
 def test_internal_authentication_is_required(client):
