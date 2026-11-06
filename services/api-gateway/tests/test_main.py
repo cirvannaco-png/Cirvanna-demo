@@ -27,7 +27,7 @@ def product(**overrides):
         "price_minor": 150000,
         "currency": "KES",
         "attributes": {"style": "minimal", "material": "cotton", "color": "blue"},
-        "image_urls": [],
+        "image_urls": ["https://cdn.example.test/unverified-person-photo.jpg"],
         "status": "active",
         "catalog_version": 3,
     }
