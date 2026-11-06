@@ -30,6 +30,30 @@ def configure_upstreams(monkeypatch):
     monkeypatch.setenv("PRIVACY_GOVERNANCE_API_TOKEN", "privacy-governance-test-token-at-least-32-bytes")
 
 
+def test_customer_response_media_redaction_is_recursive_and_preserves_non_media_fields():
+    payload = {
+        "id": "candidate-1",
+        "image_urls": ["https://cdn.example.test/unmasked.jpg"],
+        "product": {
+            "name": "Linen shirt",
+            "thumbnail_url": "https://cdn.example.test/thumb.jpg",
+            "media": {"original_photo": "data:image/png;base64,secret"},
+            "attributes": {"colour": "blue"},
+        },
+        "avatar": {"url": "https://cdn.example.test/avatar.jpg"},
+        "price_minor": 2500,
+    }
+    safe = main._redact_unattested_media(payload)
+    assert safe["id"] == "candidate-1"
+    assert safe["price_minor"] == 2500
+    assert safe["product"]["name"] == "Linen shirt"
+    assert safe["product"]["attributes"] == {"colour": "blue"}
+    assert safe["image_urls"] == []
+    assert safe["product"]["thumbnail_url"] is None
+    assert safe["product"]["media"]["original_photo"] is None
+    assert safe["avatar"] is None
+
+
 def test_page_bootstraps_same_origin_live_offers_not_demo_data(client):
     response = client.get("/")
     assert response.status_code == 200
