@@ -649,6 +649,33 @@ async def create_persistent_twin(
         await image.close()
 
 
+@app.get("/v1/twins", tags=["twin"], dependencies=[Depends(require_internal_token)])
+async def list_persistent_twins(
+    subject_id: str = Query(min_length=3, max_length=128),
+) -> dict[str, object]:
+    """Return owner-bound Twin metadata; revoked consent hides the representation."""
+    try:
+        records = get_store().list(subject_id=subject_id)
+    except Exception as exc:
+        raise HTTPException(503, detail={"code": "TWIN_STORE_UNAVAILABLE"}) from exc
+    visible = []
+    for record in records:
+        try:
+            receipt = await _verify_consent(
+                subject_id, record["consent_id"], ["twin_storage"], record["twin_id"]
+            )
+            visible.append({**record, "consent_active": True, "consent_version": receipt.get("consent_version")})
+        except HTTPException as exc:
+            if exc.status_code != 403:
+                raise
+            visible.append({
+                "twin_id": record["twin_id"], "subject_id": subject_id,
+                "status": record["status"], "created_at": record["created_at"],
+                "consent_active": False, "representation": None,
+            })
+    return {"subject_id": subject_id, "twins": visible, "count": len(visible)}
+
+
 @app.get("/v1/twins/{twin_id}", tags=["twin"])
 async def get_persistent_twin(
     twin_id: str,

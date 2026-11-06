@@ -1128,6 +1128,30 @@ async def create_virtual_twin(
             raise
 
 
+@app.get("/api/virtual-twins")
+async def list_virtual_twins(request: Request) -> Response:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject_id, _ = await _verified_commerce_subject(client, request)
+        base, token = _virtual_twin_service()
+        response = await client.get(
+            base + "/v1/twins", params={"subject_id": subject_id},
+            headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+        )
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "VIRTUAL_TWIN_LIST_UNAVAILABLE"})
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "VIRTUAL_TWIN_LIST_INVALID"}) from exc
+    twins = result.get("twins") if isinstance(result, dict) else None
+    if result.get("subject_id") != subject_id or not isinstance(twins, list):
+        raise HTTPException(502, detail={"code": "VIRTUAL_TWIN_LIST_SCOPE_MISMATCH"})
+    for twin in twins:
+        if not isinstance(twin, dict) or twin.get("subject_id") != subject_id or not isinstance(twin.get("twin_id"), str):
+            raise HTTPException(502, detail={"code": "VIRTUAL_TWIN_LIST_SCOPE_MISMATCH"})
+    return _private_json_response(_without_private_asset_ids(result))
+
+
 @app.get("/api/virtual-twins/{twin_id}")
 async def get_virtual_twin(twin_id: str, request: Request) -> Response:
     async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=2.0), trust_env=False, follow_redirects=False) as client:

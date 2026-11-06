@@ -112,6 +112,15 @@ class TwinStore:
                 raise LookupError("twin not found")
             return self.serialize(row)
 
+    def list(self, *, subject_id: str) -> list[dict[str, Any]]:
+        """List only the requesting owner's Twin metadata, newest first."""
+        with self.sessions() as db:
+            rows = db.scalars(select(TwinRow).where(
+                TwinRow.subject_id == subject_id,
+                TwinRow.status.in_(["active", "deleting"]),
+            ).order_by(TwinRow.created_at.desc())).all()
+            return [self.serialize(row) for row in rows]
+
     def begin_delete(self, *, subject_id: str, twin_id: str) -> dict[str, Any]:
         """Hide the record before asset cleanup; failures remain retryable."""
         with self.sessions() as db, db.begin():
