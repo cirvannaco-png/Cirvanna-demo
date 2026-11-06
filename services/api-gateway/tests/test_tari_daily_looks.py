@@ -15,7 +15,7 @@ END_USER = "Bearer signed-user-session"
 
 def request_body():
     return {
-        "request_id": "tari-daily-001",
+        "request_id": "pnelly-daily-001",
         "user_id": "signed-user-42",
         "local_date": "2026-11-05",
         "occasion": "work",
@@ -33,20 +33,20 @@ def request_body():
     }
 
 
-def test_tari_gateway_requires_internal_and_verified_end_user_authentication(monkeypatch):
+def test_pnelly_gateway_requires_internal_and_verified_end_user_authentication(monkeypatch):
     monkeypatch.setenv("CIRVANNA_API_TOKEN", GATEWAY_TOKEN)
     client = TestClient(main.app)
-    assert client.post("/v1/tari/daily-looks", json=request_body()).status_code == 401
+    assert client.post("/v1/pnelly/daily-looks", json=request_body()).status_code == 401
 
     response = client.post(
-        "/v1/tari/daily-looks",
+        "/v1/pnelly/daily-looks",
         headers={"Authorization": f"Bearer {GATEWAY_TOKEN}"},
         json=request_body(),
     )
     assert response.status_code == 401
 
 
-def test_tari_gateway_checks_subject_and_uses_only_active_usi_profile(monkeypatch):
+def test_pnelly_gateway_checks_subject_and_uses_only_active_usi_profile(monkeypatch):
     monkeypatch.setenv("CIRVANNA_API_TOKEN", GATEWAY_TOKEN)
     monkeypatch.setenv("NPL_SERVICE_URL", "https://npl.example.test")
     monkeypatch.setenv("NPL_SERVICE_TOKEN", "npl-internal-token-more-than-thirty-two-bytes")
@@ -72,7 +72,7 @@ def test_tari_gateway_checks_subject_and_uses_only_active_usi_profile(monkeypatc
         return {
             "schema_version": "1.0",
             "request_id": payload.request_id,
-            "mode": "tari_wardrobe_daily_looks",
+            "mode": "pnelly_wardrobe_daily_looks",
             "recommendation": {
                 "look_count": 3,
                 "looks": [{"role": role, "item_ids": ["shirt-001"]} for role in ("everyday", "elevated", "explore")],
@@ -82,10 +82,10 @@ def test_tari_gateway_checks_subject_and_uses_only_active_usi_profile(monkeypatc
     monkeypatch.setattr(main, "_load_verified_usi_profile", load_profile)
     monkeypatch.setattr(main, "_load_persisted_npl_preferences", lambda **_kwargs: ())
     monkeypatch.setattr(main, "_load_consent_aware_wardrobe_likes", lambda _subject: {"teal": 0.12, "linen": 0.06})
-    monkeypatch.setattr(main, "_tari_daily_looks", compose)
+    monkeypatch.setattr(main, "_pnelly_daily_looks", compose)
     client = TestClient(main.app)
     response = client.post(
-        "/v1/tari/daily-looks",
+        "/v1/pnelly/daily-looks",
         headers={"Authorization": f"Bearer {GATEWAY_TOKEN}", "X-End-User-Authorization": END_USER},
         json=request_body(),
     )
@@ -94,10 +94,10 @@ def test_tari_gateway_checks_subject_and_uses_only_active_usi_profile(monkeypatc
     assert observed["allow_without_consent"] is True
     assert observed["style_signals"] == ["color:teal", "silhouette:relaxed"]
     assert observed["feedback_signals"] == ["feedback:teal", "feedback:linen"]
-    assert response.json()["mode"] == "tari_wardrobe_daily_looks"
+    assert response.json()["mode"] == "pnelly_wardrobe_daily_looks"
 
 
-def test_tari_gateway_rejects_subject_or_wardrobe_scope_mismatch(monkeypatch):
+def test_pnelly_gateway_rejects_subject_or_wardrobe_scope_mismatch(monkeypatch):
     monkeypatch.setenv("CIRVANNA_API_TOKEN", GATEWAY_TOKEN)
     client = TestClient(main.app)
     monkeypatch.setattr(main, "_resolve_verified_subject", lambda _header: "signed-user-42")
@@ -108,32 +108,32 @@ def test_tari_gateway_rejects_subject_or_wardrobe_scope_mismatch(monkeypatch):
 
     body = request_body()
     body["user_id"] = "another-user"
-    response = client.post("/v1/tari/daily-looks", headers=headers, json=body)
+    response = client.post("/v1/pnelly/daily-looks", headers=headers, json=body)
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "REQUEST_SUBJECT_MISMATCH"
 
     body = request_body()
     body["wardrobe_items"][0]["owner_user_id"] = "another-user"
-    response = client.post("/v1/tari/daily-looks", headers=headers, json=body)
+    response = client.post("/v1/pnelly/daily-looks", headers=headers, json=body)
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "WARDROBE_SUBJECT_MISMATCH"
 
 
-def test_tari_gateway_rejects_non_active_wardrobe_snapshot(monkeypatch):
+def test_pnelly_gateway_rejects_non_active_wardrobe_snapshot(monkeypatch):
     monkeypatch.setenv("CIRVANNA_API_TOKEN", GATEWAY_TOKEN)
     monkeypatch.setattr(main, "_resolve_verified_subject", lambda _header: "signed-user-42")
     client = TestClient(main.app)
     body = request_body()
     body["wardrobe_items"][0]["status"] = "archived"
     response = client.post(
-        "/v1/tari/daily-looks",
+        "/v1/pnelly/daily-looks",
         headers={"Authorization": f"Bearer {GATEWAY_TOKEN}", "X-End-User-Authorization": END_USER},
         json=body,
     )
     assert response.status_code == 422
 
 
-def test_tari_filters_explicit_npl_hard_vetoes_from_wardrobe(monkeypatch):
+def test_pnelly_filters_explicit_npl_hard_vetoes_from_wardrobe(monkeypatch):
     def persisted_preferences(*, request_id, user_id, product_id, attributes):
         if product_id == "shirt-001":
             return (NegativePreference(
@@ -160,7 +160,7 @@ def test_tari_filters_explicit_npl_hard_vetoes_from_wardrobe(monkeypatch):
         {"item_id": "navy-trousers", "display_name": "Navy trousers", "category": "trousers", "attributes": ["navy"]},
     ]
     allowed, excluded = main._filter_npl_blocked_wardrobe_items(
-        request_id="tari-npl-001",
+        request_id="pnelly-npl-001",
         user_id="signed-user-42",
         wardrobe_items=items,
     )
@@ -168,7 +168,7 @@ def test_tari_filters_explicit_npl_hard_vetoes_from_wardrobe(monkeypatch):
     assert excluded == 2
 
 
-def test_tari_fails_closed_when_persistent_npl_is_not_configured(monkeypatch):
+def test_pnelly_fails_closed_when_persistent_npl_is_not_configured(monkeypatch):
     monkeypatch.setenv("CIRVANNA_API_TOKEN", GATEWAY_TOKEN)
     monkeypatch.delenv("NPL_SERVICE_URL", raising=False)
     monkeypatch.delenv("NPL_SERVICE_TOKEN", raising=False)
@@ -177,7 +177,7 @@ def test_tari_fails_closed_when_persistent_npl_is_not_configured(monkeypatch):
     monkeypatch.setattr(main, "_load_verified_usi_profile", lambda *_args, **_kwargs: SimpleNamespace(preferences=[]))
     client = TestClient(main.app)
     response = client.post(
-        "/v1/tari/daily-looks",
+        "/v1/pnelly/daily-looks",
         headers={"Authorization": f"Bearer {GATEWAY_TOKEN}", "X-End-User-Authorization": END_USER},
         json=request_body(),
     )
