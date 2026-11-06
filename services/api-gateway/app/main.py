@@ -2016,11 +2016,9 @@ def evaluate_decisions(
             brand=product.get("brand") if display_authorized else None,
             price_minor=int(product["price_minor"]) if display_authorized else None,
             currency=str(product["currency"]) if display_authorized else None,
-            image_urls=(
-                product.get("image_urls")
-                if display_authorized and isinstance(product.get("image_urls"), list)
-                else []
-            ),
+            # CAL authorizes product display, not public image exposure. Images
+            # stay withheld until an asset-bound masking receipt is verified.
+            image_urls=[],
             catalog_version=int(product["catalog_version"]),
             verdict=verdict,
             may_display=display_authorized,
