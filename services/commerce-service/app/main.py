@@ -992,7 +992,7 @@ def create_listing(payload: ListingIn, actor: Annotated[Actor, Depends(require_a
     db.add(listing)
     db.commit()
     return {"listing_id": listing.id, "merchant_id": listing.merchant_id, "catalog_product_id": listing.catalog_product_id,
-        "product_name": listing.product_name, "category": listing.category, "image_urls": listing.image_urls,
+        "product_name": listing.product_name, "category": listing.category, "image_urls": [],
         "status": listing.state}
 
 
