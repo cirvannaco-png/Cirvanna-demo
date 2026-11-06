@@ -605,6 +605,18 @@ async def click_it_scan(
     if not consent_image_processing or not consent_click_it:
         await image.close()
         raise HTTPException(403, detail={"code": "EXPLICIT_CLICK_IT_CONSENT_REQUIRED"})
+    # The current main-branch route has no verified face-masking stage. Do not
+    # decode, score, embed, or forward an unmasked user photograph. This hard
+    # stop remains until the pinned detector + fail-closed masking pipeline is
+    # merged and validated end-to-end.
+    await image.close()
+    raise HTTPException(
+        503,
+        detail={
+            "code": "CLICK_IT_PRIVACY_PIPELINE_NOT_RELEASED",
+            "message": "Image scanning is temporarily unavailable until privacy masking is enabled.",
+        },
+    )
     content_type = image.content_type or ""
     try:
         data = await image.read(MAX_IMAGE_BYTES + 1)
