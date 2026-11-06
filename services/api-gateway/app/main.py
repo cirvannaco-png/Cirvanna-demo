@@ -53,6 +53,44 @@ POLICY_VERSION = os.getenv("CIRVANNA_POLICY_VERSION", "cirvanna-demo-policy-1")
 bearer = HTTPBearer(auto_error=False)
 
 
+MEDIA_REFERENCE_FIELDS = frozenset({
+    "image", "photo", "avatar", "thumbnail", "media", "picture",
+    "image_url", "image_urls", "photo_url", "photo_urls", "avatar_url",
+    "thumbnail_url", "thumbnail_urls", "media_url", "media_urls",
+    "picture_url", "picture_urls", "render_url", "render_urls",
+    "rendered_image_url", "asset_url", "asset_urls",
+    "image_asset_id", "photo_asset_id", "media_asset_id",
+    "image_asset_reference", "photo_asset_reference", "media_asset_reference",
+    "image_data", "photo_data", "image_base64", "photo_base64",
+    "face_crop", "face_crops", "original_image", "original_photo",
+})
+
+
+def _redact_unattested_media(value: Any) -> Any:
+    """Defence-in-depth for every media-bearing field in a discovery response."""
+    if isinstance(value, dict):
+        safe: dict[str, Any] = {}
+        for key, item in value.items():
+            name = str(key).casefold()
+            media_field = name in MEDIA_REFERENCE_FIELDS or name.endswith((
+                "_image_url", "_image_urls", "_photo_url", "_photo_urls",
+                "_avatar_url", "_thumbnail_url", "_thumbnail_urls",
+                "_media_url", "_media_urls", "_picture_url", "_picture_urls",
+                "_render_url", "_render_urls", "_asset_url", "_asset_urls",
+                "_image_asset_id", "_photo_asset_id", "_media_asset_id",
+            ))
+            if media_field:
+                safe[key] = [] if isinstance(item, (list, tuple)) else None
+            else:
+                safe[key] = _redact_unattested_media(item)
+        return safe
+    if isinstance(value, list):
+        return [_redact_unattested_media(item) for item in value]
+    if isinstance(value, tuple):
+        return [_redact_unattested_media(item) for item in value]
+    return value
+
+
 class ContextInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     age_years: int | None = Field(default=None, ge=0, le=120)
@@ -1854,7 +1892,7 @@ def discover_marketplace(
             },
             "decision": decision.model_dump(),
         })
-    return {
+    return _redact_unattested_media({
         "request_id": decision_response.request_id,
         "ranked_candidate_count": len(ranked),
         "displayable_products": displayable,
@@ -1867,7 +1905,7 @@ def discover_marketplace(
             "active_item_count": len(wardrobe_items),
             "excluded_owned_product_count": sum(1 for reason in withheld_reasons.values() if reason == "ALREADY_IN_WARDROBE"),
         },
-    }
+    })
 
 
 @app.post(
