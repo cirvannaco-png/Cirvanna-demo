@@ -79,7 +79,7 @@ def test_account_proxy_forwards_only_allowlisted_headers_and_bearer(client, monk
         seen["method"] = method
         seen["url"] = url
         seen.update(kwargs)
-        return FakeResponse({"order_id": "order-123"}, status_code=201)
+        return FakeResponse({"order_id": "order-123", "image_url": "https://cdn.example.test/unmasked.jpg", "order": {"thumbnail_url": "https://cdn.example.test/private.jpg"}}, status_code=201)
 
     monkeypatch.setattr(main.httpx, "request", fake_request)
     response = client.post(
@@ -93,6 +93,8 @@ def test_account_proxy_forwards_only_allowlisted_headers_and_bearer(client, monk
         json={"confirm": True},
     )
     assert response.status_code == 201
+    assert response.json()["image_url"] is None
+    assert response.json()["order"]["thumbnail_url"] is None
     assert seen["method"] == "POST"
     assert seen["url"] == "https://commerce.example.test/checkout"
     assert seen["headers"]["Authorization"] == "Bearer user-session-token"
@@ -161,7 +163,7 @@ def test_description_search_forwards_to_legacy_tari_alias_and_keeps_candidates_p
         "status": "complete",
         "query": "green linen dress",
         "candidate_count": 2,
-        "candidates": [{"variant_id": "offer-1", "product_name": "green dress"}],
+        "candidates": [{"variant_id": "offer-1", "product_name": "green dress", "image_url": "https://cdn.example.test/unmasked.jpg", "thumbnail_url": "https://cdn.example.test/thumbnail.jpg", "image_asset_id": "private-asset-1", "details": {"photo_url": "https://cdn.example.test/photo.jpg"}}],
         "display_authorized": False,
         "decision_status": "PENDING_CAL",
         "scores_are_probabilities": False,
@@ -173,6 +175,11 @@ def test_description_search_forwards_to_legacy_tari_alias_and_keeps_candidates_p
     assert data["candidate_count"] == 2
     assert data["display_authorized"] is False
     assert data["decision_status"] == "PENDING_CAL"
+    candidate = data["candidates"][0]
+    assert candidate["image_url"] is None
+    assert candidate["thumbnail_url"] is None
+    assert candidate["image_asset_id"] is None
+    assert candidate["details"]["photo_url"] is None
     assert fake.calls[0][1] == "https://xari.example.test/v1/marketplace/search"
     assert fake.calls[0][2]["json"]["query"] == "green linen dress"
     assert "Authorization" not in response.text
@@ -200,7 +207,7 @@ def test_click_it_uses_verified_commerce_subject_and_returns_only_pending_candid
         FakeResponse({"user_id": "signed-user-42", "role": "customer", "email": None}),
         FakeResponse({
             "status": "complete",
-            "candidates": [{"variant_id": "variant-3", "product_name": "linen shirt"}],
+            "candidates": [{"variant_id": "variant-3", "product_name": "linen shirt", "render_url": "https://cdn.example.test/render.png", "media": {"photo_asset_id": "asset-private"}}],
             "candidate_count": 1,
             "display_authorized": False,
             "decision_status": "PENDING_CAL",
@@ -224,6 +231,8 @@ def test_click_it_uses_verified_commerce_subject_and_returns_only_pending_candid
     assert response.headers["cache-control"] == "no-store, private"
     assert response.json()["display_authorized"] is False
     assert response.json()["candidates"][0]["variant_id"] == "variant-3"
+    assert response.json()["candidates"][0]["render_url"] is None
+    assert response.json()["candidates"][0]["media"]["photo_asset_id"] is None
     assert len(fake.calls) == 2
     assert fake.calls[0][1] == "https://commerce.example.test/me"
     assert fake.calls[1][1] == "https://virtual-twin.example.test/click-it"
@@ -399,8 +408,8 @@ def test_wardrobe_recommendations_forward_verified_token_to_cal_decision_gateway
             "request_id": "req-1",
             "ranked_candidate_count": 0,
             "displayable_products": [{
-                "product": {"product_id": "p1", "image_urls": ["https://cdn.example.test/unmasked-product.jpg"]},
-                "offer": {"variant_id": "v1", "image_urls": ["https://cdn.example.test/unmasked-offer.jpg"]},
+                "product": {"product_id": "p1", "image_urls": ["https://cdn.example.test/unmasked-product.jpg"], "image_url": "https://cdn.example.test/product.jpg"},
+                "offer": {"variant_id": "v1", "image_urls": ["https://cdn.example.test/unmasked-offer.jpg"], "media_url": "https://cdn.example.test/offer.jpg"},
             }],
             "withheld_candidate_ids": [],
             "display_authority": "CaTaCaCi/CAL",
@@ -428,6 +437,8 @@ def test_wardrobe_recommendations_forward_verified_token_to_cal_decision_gateway
     assert sent["json"]["context"]["climate_source"] == "user_declared"
     assert response.json()["displayable_products"][0]["product"]["image_urls"] == []
     assert response.json()["displayable_products"][0]["offer"]["image_urls"] == []
+    assert response.json()["displayable_products"][0]["product"]["image_url"] is None
+    assert response.json()["displayable_products"][0]["offer"]["media_url"] is None
     assert "Authorization" not in response.text
 
 
