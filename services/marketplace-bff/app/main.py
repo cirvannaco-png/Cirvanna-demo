@@ -642,7 +642,7 @@ async def marketplace_click_it(
     except ValueError as exc:
         raise HTTPException(502, detail={"code": "CLICK_IT_INVALID_RESPONSE"}) from exc
     if response.status_code == 200 and isinstance(data, dict):
-        return JSONResponse(content=data, headers={"Cache-Control": "no-store, private"})
+        return JSONResponse(content=_withhold_unverified_media(data), headers={"Cache-Control": "no-store, private"})
     detail = data.get("detail", {}) if isinstance(data, dict) else {}
     code = detail.get("code") if isinstance(detail, dict) else None
     safe = {"code": code if isinstance(code, str) else "CLICK_IT_REQUEST_FAILED"}
