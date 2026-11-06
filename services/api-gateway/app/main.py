@@ -1695,6 +1695,24 @@ def delete_my_learning_data(
 
 
 
+def _withhold_unverified_media(value: Any) -> Any:
+    """Recursively remove image URL fields from client-facing candidate payloads."""
+    if isinstance(value, list):
+        return [_withhold_unverified_media(item) for item in value]
+    if isinstance(value, dict):
+        sanitized = {}
+        for key, item in value.items():
+            normalized = str(key).casefold()
+            if normalized == "image_urls":
+                sanitized[key] = []
+            elif normalized in {"image_url", "photo_url", "avatar_url", "media_url", "thumbnail_url"}:
+                sanitized[key] = None
+            else:
+                sanitized[key] = _withhold_unverified_media(item)
+        return sanitized
+    return value
+
+
 @app.post(
     "/v1/discover",
     dependencies=[Depends(require_api_token)],
@@ -1833,8 +1851,8 @@ def discover_marketplace(
             withheld.append({"product_id": product_id, "rank_score": score, "decision": decision.verdict if decision else "review"})
             continue
         displayable.append({
-            "product": by_product[product_id],
-            "offer": offer,
+            "product": _withhold_unverified_media(by_product[product_id]),
+            "offer": _withhold_unverified_media(offer),
             "merchant_comparison": comparisons_by_product.get(product_id, {
                 "status": "unavailable", "basis": None, "groups": [],
                 "unavailable_reasons": ["NO_COMPARABLE_OFFERS"],
@@ -2016,11 +2034,9 @@ def evaluate_decisions(
             brand=product.get("brand") if display_authorized else None,
             price_minor=int(product["price_minor"]) if display_authorized else None,
             currency=str(product["currency"]) if display_authorized else None,
-            image_urls=(
-                product.get("image_urls")
-                if display_authorized and isinstance(product.get("image_urls"), list)
-                else []
-            ),
+            # CAL display authorization does not authorize publication of media.
+            # Keep product images withheld until an asset-bound receipt is verified.
+            image_urls=[],
             catalog_version=int(product["catalog_version"]),
             verdict=verdict,
             may_display=display_authorized,
