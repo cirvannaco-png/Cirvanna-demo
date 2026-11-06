@@ -321,10 +321,12 @@ def test_merchant_listing_snapshots_only_trusted_catalog_images(client, monkeypa
         json={"catalog_product_id": catalog_id},
     )
     assert response.status_code == 201
-    assert response.json()["image_urls"] == [
-        "https://cdn.example.test/linen-front.jpg",
-        "https://cdn.example.test/linen-back.jpg",
-    ]
+    # HTTPS URL validation is not an image privacy attestation. Merchant listing
+    # creation must not publish or persist raw image URLs before a verified,
+    # asset-bound masking receipt is available.
+    assert response.json()["image_urls"] == []
+    listing_row = row(main.Listing, response.json()["listing_id"])
+    assert listing_row.image_urls == []
     variant = client.post(
         f"/merchant/listings/{response.json()['listing_id']}/variants",
         headers=auth("merchant-1", "merchant"),

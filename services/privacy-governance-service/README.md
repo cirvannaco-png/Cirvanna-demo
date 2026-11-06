@@ -26,9 +26,9 @@ It accepts no uploaded image, face crop, biometric template or identity document
 ### Public media publication gate
 
 - `POST /internal/v1/privacy/assets/publication/evaluate` is a mandatory pre-publication contract for public profiles, community feeds, Marketplace media, merchant surfaces and shared links.
-- The service requires a trusted Vision Privacy Attestation provider. The attestation must bind to the exact opaque asset ID and masking-attestation ID, prove all detected faces were masked before publication, report zero unmasked faces and confirm no facial recognition, face embeddings or age estimation ran.
-- Missing, stale, mismatched, incomplete or unsafe masking evidence returns BLOCK. The service does not infer whether a face belongs to a child; it requires every detected face in a public asset to be masked. This is a conservative platform safeguard, not a legal classification.
-- The Content Lifecycle/publication owner must call this gate before every public publish, restore, syndication or share-link activation path. A gate implementation that is not wired to all publication paths is not production protection.
+- The service requires a trusted Vision Privacy Attestation provider. The caller supplies the SHA-256 digest of the exact stored asset; the provider must bind its signed receipt and independent human privacy review to that same digest and opaque asset ID. The provider must return a review receipt ID, opaque reviewer reference and timezone-aware review timestamp, all covered by the trusted provider's signed/verified response; a caller-supplied boolean is not proof of review. The receipt must prove all detected faces were masked before publication, report zero unmasked faces and confirm no facial recognition, face embeddings or age estimation ran.
+- A receipt for an older asset version, mismatched digest, missing human review, incomplete detection/masking, or unsafe processing returns BLOCK. Asset ID alone is not sufficient because an asset can be replaced while retaining its identifier. The service does not infer whether a face belongs to a child; it requires every detected face in a public asset to be masked. This is a conservative platform safeguard, not a legal classification.
+- The Content Lifecycle/publication owner must call this gate before every public publish, restore, syndication or share-link activation path. The current repository still has no verified end-to-end call-site coverage for every such path; existing marketplace serializers withhold image URLs, but this does not prove that every future or external publisher is guarded. A gate implementation that is not wired to all publication paths is not production protection.
 
 ### Image rights
 - `POST /internal/v1/image-rights/requests`: accepts only an opaque Cirvanna asset reference. The service first validates the reference with the trusted Content Lifecycle provider. Urgent reasons require confirmed quarantine **and unpublishing** before a receipt is returned.
@@ -61,7 +61,8 @@ Provider response schemas are enforced in the code. Test mocks do not constitute
 - `PRIVACY_RIGHTS_REVIEW_TOKEN`: separate reviewer token, at least 32 bytes.
 - `PRIVACY_RIGHTS_TRIAGE_HOURS`: platform internal triage target between 1 and 24 hours; not a substitute for jurisdiction-specific statutory response deadlines.
 - `PRIVACY_POLICY_BUNDLE_PUBLIC_KEY_PEM`: Ed25519 public key in PEM form.
-- `VISION_PRIVACY_ATTESTATION_API_URL/TOKEN`: trusted Vision provider that verifies a signed masking attestation for the exact asset and public publication target.
+- `VISION_PRIVACY_ATTESTATION_API_URL/TOKEN`: trusted Vision provider that verifies a signed masking attestation, exact asset SHA-256 digest and independent human privacy review for the public publication target. Its response must include a review receipt ID, opaque reviewer reference and timezone-aware review timestamp bound to the digest; a bare boolean is insufficient.
+- `PRIVACY_APPROVED_MASKING_MODEL_SHA256`: the exact approved detector-model SHA-256. Readiness remains false unless this is a 64-character lowercase digest, and the publication gate rejects receipts reporting any other model. For the current Vision Docker image, set it to `3698b18f063835bc609069ef052228fbe86d9c9a6dc8dcb7c7c2d69aed2b181b`.
 - `RIGHTS_AUTHORITY_VERIFICATION_API_URL/TOKEN`: trusted provider that independently verifies a photographed person's, parent/guardian's or authorized representative's authority for the specific image-rights case.
 - Provider URL/token pairs listed above.
 

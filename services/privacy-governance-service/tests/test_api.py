@@ -17,6 +17,7 @@ from app import main
 INTERNAL = "privacy-governance-internal-test-token-at-least-32-bytes"
 PUBLISH = "privacy-policy-publisher-test-token-at-least-32-bytes"
 REVIEW = "privacy-rights-review-test-token-at-least-32-bytes"
+MASKING_MODEL_SHA256 = "3698b18f063835bc609069ef052228fbe86d9c9a6dc8dcb7c7c2d69aed2b181b"
 
 
 @pytest.fixture(autouse=True)
@@ -27,6 +28,7 @@ def configure_database(tmp_path, monkeypatch):
     monkeypatch.setenv("PRIVACY_GOVERNANCE_INTERNAL_TOKEN", INTERNAL)
     monkeypatch.setenv("PRIVACY_POLICY_PUBLISH_TOKEN", PUBLISH)
     monkeypatch.setenv("PRIVACY_RIGHTS_REVIEW_TOKEN", REVIEW)
+    monkeypatch.setenv("PRIVACY_APPROVED_MASKING_MODEL_SHA256", MASKING_MODEL_SHA256)
     main.Base.metadata.create_all(main._engine(url))
     yield
     main.Base.metadata.drop_all(main._engine(url))
@@ -112,6 +114,7 @@ def test_health_and_readiness_do_not_claim_missing_provider_readiness(client):
     assert ready.json()["jurisdiction_resolver_configured"] is False
     assert ready.json()["content_lifecycle_configured"] is False
     assert ready.json()["vision_privacy_attestation_configured"] is False
+    assert ready.json()["approved_masking_model_pin_configured"] is True
 
 
 def test_publication_gate_requires_signed_mask_attestation_for_every_public_surface(client, monkeypatch):
@@ -123,6 +126,12 @@ def test_publication_gate_requires_signed_mask_attestation_for_every_public_surf
             "verified": True,
             "active": True,
             "asset_id": "asset-public-001",
+            "asset_sha256": "c" * 64,
+            "human_privacy_review_passed": True,
+            "human_reviewed_asset_sha256": "c" * 64,
+            "human_privacy_review_receipt_id": "human-review-receipt-000001",
+            "human_privacy_reviewer_ref": "reviewer-ref-001",
+            "human_privacy_reviewed_at": "2026-11-06T06:00:00Z",
             "attestation_id": "mask-attestation-000001",
             "all_detected_faces_masked": True,
             "unmasked_face_count": 0,
@@ -131,28 +140,38 @@ def test_publication_gate_requires_signed_mask_attestation_for_every_public_surf
             "face_embeddings_created": False,
             "age_estimation_performed": False,
             "all_face_regions_processed": True,
-            "masking_model_sha256": "a" * 64,
+            "masking_model_sha256": MASKING_MODEL_SHA256,
         }
 
     monkeypatch.setattr(main, "post_trusted", verify)
-    response = client.post(
-        "/internal/v1/privacy/assets/publication/evaluate",
-        headers=internal(),
-        json={
-            "asset_id": "asset-public-001",
-            "masking_attestation_id": "mask-attestation-000001",
-            "target_surface": "community_feed",
-        },
-    )
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["decision"] == "PASS"
-    assert body["all_detected_faces_masked"] is True
-    assert body["unmasked_face_count"] == 0
-    assert body["face_recognition_performed"] is False
-    assert body["age_estimation_performed"] is False
-    assert calls[0][0] == "VISION_PRIVACY_ATTESTATION"
-    assert calls[0][2]["require_all_detected_faces_masked"] is True
+    surfaces = ("public_profile", "community_feed", "marketplace", "merchant_surface", "shared_link")
+    for surface in surfaces:
+        response = client.post(
+            "/internal/v1/privacy/assets/publication/evaluate",
+            headers=internal(),
+            json={
+                "asset_id": "asset-public-001",
+                "asset_sha256": "c" * 64,
+                "masking_attestation_id": "mask-attestation-000001",
+                "target_surface": surface,
+            },
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["decision"] == "PASS"
+        assert body["asset_sha256"] == "c" * 64
+        assert body["human_privacy_review_passed"] is True
+        assert body["all_detected_faces_masked"] is True
+        assert body["unmasked_face_count"] == 0
+        assert body["face_recognition_performed"] is False
+        assert body["age_estimation_performed"] is False
+    assert len(calls) == len(surfaces)
+    assert all(call[0] == "VISION_PRIVACY_ATTESTATION" for call in calls)
+    assert all(call[2]["asset_sha256"] == "c" * 64 for call in calls)
+    assert all(call[2]["require_exact_asset_digest_match"] is True for call in calls)
+    assert all(call[2]["require_independent_human_privacy_review"] is True for call in calls)
+    assert all(call[2]["require_all_detected_faces_masked"] is True for call in calls)
+    assert all(call[2]["required_masking_model_sha256"] == MASKING_MODEL_SHA256 for call in calls)
 
 
 def test_publication_gate_blocks_any_unmasked_face_or_identity_or_age_processing(client, monkeypatch):
@@ -178,12 +197,178 @@ def test_publication_gate_blocks_any_unmasked_face_or_identity_or_age_processing
         headers=internal(),
         json={
             "asset_id": "asset-public-002",
+            "asset_sha256": "d" * 64,
             "masking_attestation_id": "mask-attestation-000002",
             "target_surface": "shared_link",
         },
     )
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "PUBLICATION_PRIVACY_ATTESTATION_NOT_VALID"
+
+
+
+def test_publication_gate_rejects_stale_digest_and_missing_human_review(client, monkeypatch):
+    async def verify(_name, _path, _payload):
+        return {
+            "verified": True,
+            "active": True,
+            "asset_id": "asset-public-004",
+            "asset_sha256": "f" * 64,
+            "human_privacy_review_passed": False,
+            "human_reviewed_asset_sha256": "f" * 64,
+            "attestation_id": "mask-attestation-000004",
+            "all_detected_faces_masked": True,
+            "unmasked_face_count": 0,
+            "masking_applied_before_publication": True,
+            "face_recognition_performed": False,
+            "face_embeddings_created": False,
+            "age_estimation_performed": False,
+            "all_face_regions_processed": True,
+            "masking_model_sha256": "b" * 64,
+        }
+
+    monkeypatch.setattr(main, "post_trusted", verify)
+    response = client.post(
+        "/internal/v1/privacy/assets/publication/evaluate",
+        headers=internal(),
+        json={
+            "asset_id": "asset-public-004",
+            "asset_sha256": "f" * 64,
+            "masking_attestation_id": "mask-attestation-000004",
+            "target_surface": "merchant_surface",
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "PUBLICATION_PRIVACY_ATTESTATION_NOT_VALID"
+
+
+
+
+
+def test_publication_gate_fails_closed_without_approved_masking_model_pin(client, monkeypatch):
+    monkeypatch.delenv("PRIVACY_APPROVED_MASKING_MODEL_SHA256", raising=False)
+
+    async def must_not_call(*_args, **_kwargs):
+        raise AssertionError("attestation provider must not be called without an approved model pin")
+
+    monkeypatch.setattr(main, "post_trusted", must_not_call)
+    response = client.post(
+        "/internal/v1/privacy/assets/publication/evaluate",
+        headers=internal(),
+        json={
+            "asset_id": "asset-public-no-pin",
+            "asset_sha256": "c" * 64,
+            "masking_attestation_id": "mask-attestation-no-pin",
+            "target_surface": "marketplace",
+        },
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "APPROVED_MASKING_MODEL_PIN_NOT_CONFIGURED"
+
+
+def test_publication_gate_rejects_attestation_from_unapproved_masking_model(client, monkeypatch):
+    async def verify(*_args, **_kwargs):
+        return {
+            "verified": True, "active": True,
+            "asset_id": "asset-public-model-mismatch", "asset_sha256": "d" * 64,
+            "human_privacy_review_passed": True, "human_reviewed_asset_sha256": "d" * 64,
+            "human_privacy_review_receipt_id": "human-review-receipt-model",
+            "human_privacy_reviewer_ref": "reviewer-ref-model",
+            "human_privacy_reviewed_at": "2026-11-06T06:00:00Z",
+            "attestation_id": "mask-attestation-model-mismatch",
+            "all_detected_faces_masked": True, "unmasked_face_count": 0,
+            "masking_applied_before_publication": True,
+            "face_recognition_performed": False, "face_embeddings_created": False,
+            "age_estimation_performed": False, "all_face_regions_processed": True,
+            "masking_model_sha256": "a" * 64,
+        }
+
+    monkeypatch.setattr(main, "post_trusted", verify)
+    response = client.post(
+        "/internal/v1/privacy/assets/publication/evaluate",
+        headers=internal(),
+        json={
+            "asset_id": "asset-public-model-mismatch", "asset_sha256": "d" * 64,
+            "masking_attestation_id": "mask-attestation-model-mismatch",
+            "target_surface": "marketplace",
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "PUBLICATION_PRIVACY_ATTESTATION_NOT_VALID"
+
+def test_publication_gate_rejects_unverifiable_human_reviewer_provenance(client, monkeypatch):
+    async def verify(_name, _path, _payload):
+        return {
+            "verified": True, "active": True,
+            "asset_id": "asset-public-007", "asset_sha256": "7" * 64,
+            "human_privacy_review_passed": True, "human_reviewed_asset_sha256": "7" * 64,
+            "human_privacy_review_receipt_id": "short",
+            "human_privacy_reviewer_ref": "reviewer-ref-007",
+            "human_privacy_reviewed_at": "2026-11-06T06:00:00Z",
+            "attestation_id": "mask-attestation-000007",
+            "all_detected_faces_masked": True, "unmasked_face_count": 0,
+            "masking_applied_before_publication": True,
+            "face_recognition_performed": False, "face_embeddings_created": False,
+            "age_estimation_performed": False, "all_face_regions_processed": True,
+            "masking_model_sha256": "b" * 64,
+        }
+
+    monkeypatch.setattr(main, "post_trusted", verify)
+    response = client.post(
+        "/internal/v1/privacy/assets/publication/evaluate",
+        headers=internal(),
+        json={
+            "asset_id": "asset-public-007", "asset_sha256": "7" * 64,
+            "masking_attestation_id": "mask-attestation-000007",
+            "target_surface": "community_feed",
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "PUBLICATION_PRIVACY_ATTESTATION_NOT_VALID"
+
+
+def test_publication_gate_rejects_attestation_for_different_asset_bytes(client, monkeypatch):
+    async def verify(_name, _path, _payload):
+        return {
+            "verified": True, "active": True,
+            "asset_id": "asset-public-006", "asset_sha256": "0" * 64,
+            "human_privacy_review_passed": True, "human_reviewed_asset_sha256": "0" * 64,
+            "human_privacy_review_receipt_id": "human-review-receipt-000006",
+            "human_privacy_reviewer_ref": "reviewer-ref-006",
+            "human_privacy_reviewed_at": "2026-11-06T06:00:00Z",
+            "attestation_id": "mask-attestation-000006",
+            "all_detected_faces_masked": True, "unmasked_face_count": 0,
+            "masking_applied_before_publication": True,
+            "face_recognition_performed": False, "face_embeddings_created": False,
+            "age_estimation_performed": False, "all_face_regions_processed": True,
+            "masking_model_sha256": "b" * 64,
+        }
+
+    monkeypatch.setattr(main, "post_trusted", verify)
+    response = client.post(
+        "/internal/v1/privacy/assets/publication/evaluate",
+        headers=internal(),
+        json={
+            "asset_id": "asset-public-006", "asset_sha256": "1" * 64,
+            "masking_attestation_id": "mask-attestation-000006",
+            "target_surface": "public_profile",
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "PUBLICATION_PRIVACY_ATTESTATION_NOT_VALID"
+
+
+def test_publication_gate_requires_content_digest(client):
+    response = client.post(
+        "/internal/v1/privacy/assets/publication/evaluate",
+        headers=internal(),
+        json={
+            "asset_id": "asset-public-005",
+            "masking_attestation_id": "mask-attestation-000005",
+            "target_surface": "public_profile",
+        },
+    )
+    assert response.status_code == 422
 
 
 def test_publication_gate_fails_closed_when_vision_attestation_provider_is_missing(client, monkeypatch):
@@ -194,6 +379,7 @@ def test_publication_gate_fails_closed_when_vision_attestation_provider_is_missi
         headers=internal(),
         json={
             "asset_id": "asset-public-003",
+            "asset_sha256": "e" * 64,
             "masking_attestation_id": "mask-attestation-000003",
             "target_surface": "public_profile",
         },

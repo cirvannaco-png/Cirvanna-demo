@@ -264,6 +264,7 @@ class RightsReviewIn(StrictModel):
 
 class AssetPublicationGateIn(StrictModel):
     asset_id: str = Field(min_length=3, max_length=160)
+    asset_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
     masking_attestation_id: str = Field(min_length=12, max_length=160)
     target_surface: Literal["public_profile", "community_feed", "marketplace", "merchant_surface", "shared_link"]
 
@@ -442,9 +443,12 @@ def ready(db: Session = Depends(session_for_request)) -> dict:
     review_ready = len(os.getenv("PRIVACY_RIGHTS_REVIEW_TOKEN", "").encode()) >= 32
     rights_authority_ready = bool(os.getenv("RIGHTS_AUTHORITY_VERIFICATION_API_URL")) and bool(os.getenv("RIGHTS_AUTHORITY_VERIFICATION_API_TOKEN"))
     vision_attestation_ready = bool(os.getenv("VISION_PRIVACY_ATTESTATION_API_URL")) and bool(os.getenv("VISION_PRIVACY_ATTESTATION_API_TOKEN"))
+    approved_masking_model_sha256 = os.getenv("PRIVACY_APPROVED_MASKING_MODEL_SHA256", "").strip().lower()
+    masking_model_pin_ready = bool(re.fullmatch(r"[0-9a-f]{64}", approved_masking_model_sha256))
     required_providers_ready = all([
         database_ready, resolver_ready, content_ready, guardian_ready, internal_ready,
         signing_ready, review_ready, rights_authority_ready, vision_attestation_ready,
+        masking_model_pin_ready,
     ])
     return {
         "status": "ready" if required_providers_ready else "not_ready",
@@ -458,6 +462,7 @@ def ready(db: Session = Depends(session_for_request)) -> dict:
         "rights_review_auth_configured": review_ready,
         "requester_authority_provider_configured": rights_authority_ready,
         "vision_privacy_attestation_configured": vision_attestation_ready,
+        "approved_masking_model_pin_configured": masking_model_pin_ready,
         "ready": required_providers_ready,
     }
 
@@ -886,25 +891,49 @@ async def evaluate_asset_publication(payload: AssetPublicationGateIn) -> dict:
     """Block public exposure unless a trusted Vision service attests every face is masked."""
     if not ASSET_ID_RE.fullmatch(payload.asset_id):
         raise HTTPException(422, detail={"code": "INVALID_ASSET_ID"})
+    expected_masking_model_sha256 = os.getenv("PRIVACY_APPROVED_MASKING_MODEL_SHA256", "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", expected_masking_model_sha256):
+        raise HTTPException(503, detail={"code": "APPROVED_MASKING_MODEL_PIN_NOT_CONFIGURED"})
     receipt = await post_trusted(
         "VISION_PRIVACY_ATTESTATION",
         "/internal/v1/privacy/mask-attestations/verify",
         {
             "asset_id": payload.asset_id,
+            "asset_sha256": payload.asset_sha256,
             "attestation_id": payload.masking_attestation_id,
             "target_surface": payload.target_surface,
             "purpose": "public_media_publication",
+            "require_exact_asset_digest_match": True,
+            "require_independent_human_privacy_review": True,
             "require_all_detected_faces_masked": True,
+            "required_masking_model_sha256": expected_masking_model_sha256,
             "prohibit_face_recognition": True,
             "prohibit_face_embeddings": True,
             "prohibit_age_estimation": True,
         },
     )
     digest = receipt.get("masking_model_sha256")
+    review_id = receipt.get("human_privacy_review_receipt_id")
+    reviewer_ref = receipt.get("human_privacy_reviewer_ref")
+    reviewed_at = receipt.get("human_privacy_reviewed_at")
+    try:
+        review_timestamp = datetime.fromisoformat(str(reviewed_at).replace("Z", "+00:00"))
+        review_timestamp_valid = review_timestamp.tzinfo is not None and review_timestamp <= datetime.now(timezone.utc)
+    except (TypeError, ValueError):
+        review_timestamp_valid = False
+    review_provenance_valid = (
+        isinstance(review_id, str) and 12 <= len(review_id) <= 160
+        and isinstance(reviewer_ref, str) and 8 <= len(reviewer_ref) <= 160
+        and review_timestamp_valid
+    )
     valid = (
         receipt.get("verified") is True
         and receipt.get("active") is True
         and receipt.get("asset_id") == payload.asset_id
+        and receipt.get("asset_sha256") == payload.asset_sha256
+        and receipt.get("human_privacy_review_passed") is True
+        and receipt.get("human_reviewed_asset_sha256") == payload.asset_sha256
+        and review_provenance_valid
         and receipt.get("attestation_id") == payload.masking_attestation_id
         and receipt.get("all_detected_faces_masked") is True
         and receipt.get("unmasked_face_count") == 0
@@ -915,13 +944,18 @@ async def evaluate_asset_publication(payload: AssetPublicationGateIn) -> dict:
         and receipt.get("all_face_regions_processed") is True
         and isinstance(digest, str)
         and bool(re.fullmatch(r"[0-9a-f]{64}", digest))
+        and digest == expected_masking_model_sha256
     )
     if not valid:
         raise HTTPException(403, detail={"code": "PUBLICATION_PRIVACY_ATTESTATION_NOT_VALID"})
     return {
         "decision": "PASS",
         "asset_id": payload.asset_id,
+        "asset_sha256": payload.asset_sha256,
         "target_surface": payload.target_surface,
+        "human_privacy_review_passed": True,
+        "human_privacy_review_receipt_id": review_id,
+        "human_privacy_reviewed_at": review_timestamp.isoformat(),
         "all_detected_faces_masked": True,
         "unmasked_face_count": 0,
         "face_recognition_performed": False,
