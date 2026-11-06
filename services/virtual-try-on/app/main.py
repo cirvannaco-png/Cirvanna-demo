@@ -1,28 +1,39 @@
-"""Guarded Virtual Try-On orchestration API.
-
-No renderer is enabled by default. This API accepts opaque internal asset IDs,
-not arbitrary image URLs or uploaded photos, and will not fabricate render
-results. A provider must implement the Renderer protocol and pass validation
-before being registered in RENDERER.
-"""
 from __future__ import annotations
 
+import hashlib
 import hmac
+import io
+import json
 import os
 import re
 import uuid
 from datetime import datetime, timezone
-from typing import Annotated, Literal, Protocol
+from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, ConfigDict, Field, field_validator
-from starlette import status
+from PIL import Image, UnidentifiedImageError
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from sqlalchemy.exc import IntegrityError
+
+from app.store import Base as TryOnBase, engine as tryon_engine, get_store
 
 SERVICE_NAME = "cirvanna-virtual-try-on"
-API_VERSION = "1.0.0"
-ASSET_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,159}$")
+API_VERSION = "2.0.0"
+ASSET_ID_PATTERN = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
+SHA40 = re.compile(r"^[0-9a-f]{40}$")
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_IMAGE_PIXELS = 25_000_000
 bearer = HTTPBearer(auto_error=False)
+
+app = FastAPI(
+    title="Cirvanna Virtual Try-On API",
+    version=API_VERSION,
+    description="Consent-gated, idempotent orchestration around a private VTON GPU worker and owner-scoped asset service.",
+)
 
 
 class ConsentInput(BaseModel):
@@ -30,29 +41,32 @@ class ConsentInput(BaseModel):
     consent_id: str = Field(min_length=8, max_length=160)
     image_processing: bool
     virtual_try_on: bool
-    retention_policy: str = Field(default="ephemeral", min_length=1, max_length=32)
+    retention_policy: Literal["ephemeral"] = "ephemeral"
 
 
 class TryOnRequest(BaseModel):
-    """Asset references must resolve through an authenticated internal asset service."""
+    """Internal asset references and versioned look context; never accept URLs."""
     model_config = ConfigDict(extra="forbid")
-    request_id: str = Field(default_factory=lambda: str(uuid.uuid4()), min_length=1, max_length=128)
+    request_id: str = Field(min_length=8, max_length=128)
     subject_id: str = Field(min_length=3, max_length=128)
-    twin_id: str = Field(min_length=3, max_length=128)
+    twin_id: str = Field(min_length=8, max_length=128)
     product_id: str = Field(min_length=3, max_length=128)
-    person_image_asset_id: str = Field(min_length=3, max_length=160)
-    garment_image_asset_id: str = Field(min_length=3, max_length=160)
+    person_image_asset_id: str = Field(min_length=36, max_length=36)
+    garment_image_asset_id: str = Field(min_length=36, max_length=36)
+    garment_asset_purpose: Literal["catalog_garment_image", "wardrobe_garment_image"] = "catalog_garment_image"
+    garment_asset_parent_id: str | None = Field(default=None, min_length=3, max_length=160)
     garment_category: Literal["upper_body", "lower_body", "dress", "outerwear", "full_outfit"]
+    look_id: str | None = Field(default=None, min_length=3, max_length=128)
+    look_version: int | None = Field(default=None, ge=1)
+    wardrobe_snapshot_version: int | None = Field(default=None, ge=1)
     consent: ConsentInput
 
     @field_validator("person_image_asset_id", "garment_image_asset_id")
     @classmethod
     def validate_asset_ids(cls, value: str) -> str:
-        normalized = value.strip()
+        normalized = value.strip().lower()
         if not ASSET_ID_PATTERN.fullmatch(normalized):
-            raise ValueError("Asset IDs must be opaque internal identifiers, not URLs or file paths.")
-        if "://" in normalized or "/" in normalized or "\\" in normalized:
-            raise ValueError("External URLs and file paths are not accepted.")
+            raise ValueError("Asset IDs must be opaque UUIDs, not URLs or paths.")
         return normalized
 
     @field_validator("request_id", "subject_id", "twin_id", "product_id")
@@ -63,14 +77,32 @@ class TryOnRequest(BaseModel):
             raise ValueError("Identifier must not be blank.")
         return normalized
 
+    @model_validator(mode="after")
+    def consistent_look_version(self):
+        if self.garment_asset_purpose == "catalog_garment_image":
+            if self.garment_asset_parent_id and self.garment_asset_parent_id != self.product_id:
+                raise ValueError("Catalog garment asset parent must match product_id.")
+        elif not self.garment_asset_parent_id:
+            raise ValueError("Wardrobe garment assets require their wardrobe item parent ID.")
+        if self.look_id and (self.look_version is None or self.wardrobe_snapshot_version is None):
+            raise ValueError("A PNELLY look render requires both look_version and wardrobe_snapshot_version.")
+        if not self.look_id and (self.look_version is not None or self.wardrobe_snapshot_version is not None):
+            raise ValueError("Look versions cannot be supplied without look_id.")
+        return self
+
+    @property
+    def garment_parent(self) -> str:
+        return self.garment_asset_parent_id or self.product_id
+
 
 class TryOnResult(BaseModel):
-    schema_version: Literal["1.0"] = "1.0"
+    schema_version: Literal["2.0"] = "2.0"
     request_id: str
     status: Literal["complete"]
     renderer_id: str
     renderer_version: str
     output_asset_id: str
+    output_expires_after_hours: int
     created_at: datetime
     warnings: list[str] = Field(default_factory=list)
 
@@ -81,7 +113,9 @@ class CapabilityResponse(BaseModel):
     orchestration_api: bool
     renderer_configured: bool
     consent_verifier_configured: bool
-    asset_authorizer_configured: bool
+    asset_service_configured: bool
+    twin_service_configured: bool
+    database_ready: bool
     supported_categories: list[str]
     raw_image_upload: bool
     arbitrary_remote_urls: bool
@@ -89,69 +123,317 @@ class CapabilityResponse(BaseModel):
     reason: str | None = None
 
 
-class ConsentVerifier(Protocol):
-    """Verify the consent record server-side; never trust request booleans alone."""
-
-    def verify(self, subject_id: str, consent: ConsentInput) -> bool:
-        ...
-
-
-class AssetAuthorizer(Protocol):
-    """Verify ownership and access to both private assets and their parent records."""
-
-    def authorize(
-        self,
-        subject_id: str,
-        twin_id: str,
-        product_id: str,
-        person_image_asset_id: str,
-        garment_image_asset_id: str,
-    ) -> bool:
-        ...
-
-
-class Renderer(Protocol):
-    """Provider boundary; real implementation must resolve assets securely."""
-
-    renderer_id: str
-    renderer_version: str
-
-    def render(self, request: TryOnRequest) -> str:
-        """Return an opaque output asset ID after storing a validated result."""
-        ...
-
-
-# All three integrations are intentionally disabled until real implementations
-# and independent integration tests exist. Environment flags cannot enable them.
-CONSENT_VERIFIER: ConsentVerifier | None = None
-ASSET_AUTHORIZER: AssetAuthorizer | None = None
-RENDERER: Renderer | None = None
-
-app = FastAPI(
-    title="Cirvanna Virtual Try-On API",
-    version=API_VERSION,
-    description=(
-        "Consent-gated try-on orchestration contract. Rendering stays disabled "
-        "until a real renderer and secure asset adapter are validated."
-    ),
-)
+def _trusted_base(url_key: str, token_key: str) -> tuple[str, str] | None:
+    raw = os.getenv(url_key, "").strip().rstrip("/")
+    token = os.getenv(token_key, "").strip()
+    if not raw or len(token.encode("utf-8")) < 32:
+        return None
+    try:
+        parts = urlsplit(raw)
+        host = (parts.hostname or "").lower()
+        local = host in {"localhost", "127.0.0.1", "::1"}
+        if (
+            not host or parts.username is not None or parts.password is not None
+            or parts.query or parts.fragment
+            or (parts.scheme != "https" and not (parts.scheme == "http" and local))
+        ):
+            return None
+    except ValueError:
+        return None
+    return raw, token
 
 
 def require_api_token(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
 ) -> None:
-    expected = os.getenv("VIRTUAL_TRY_ON_API_TOKEN", "")
-    if not expected:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "AUTH_NOT_CONFIGURED", "message": "Try-on API is not accepting traffic until authentication is configured."},
-        )
+    expected = os.getenv("VIRTUAL_TRY_ON_API_TOKEN", "").strip()
+    if len(expected.encode("utf-8")) < 32:
+        raise HTTPException(503, detail={"code": "AUTH_NOT_CONFIGURED"})
     if credentials is None or not hmac.compare_digest(credentials.credentials, expected):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Valid bearer authentication is required.",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise HTTPException(401, detail={"code": "INTERNAL_AUTH_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
+
+
+def _payload_hash(payload: TryOnRequest) -> str:
+    serialized = json.dumps(payload.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+async def _json_request(method: str, base: str, path: str, token: str, *, json_body: dict | None = None):
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(8.0, connect=2.0), trust_env=False, follow_redirects=False
+        ) as client:
+            return await client.request(
+                method, base + path,
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json=json_body,
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "INTERNAL_PROVIDER_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "INTERNAL_PROVIDER_UNAVAILABLE"}) from exc
+
+
+async def _verify_consent(payload: TryOnRequest) -> dict:
+    config = _trusted_base("IDENTITY_SERVICE_URL", "IDENTITY_SERVICE_TOKEN")
+    if config is None:
+        raise HTTPException(503, detail={"code": "CONSENT_PROVIDER_NOT_CONFIGURED"})
+    base, token = config
+    response = await _json_request(
+        "POST", base, "/internal/v1/consents/verify", token,
+        json_body={
+            "subject_id": payload.subject_id,
+            "consent_id": payload.consent.consent_id,
+            "required_scopes": ["image_processing", "virtual_try_on", "twin_storage"],
+            "resource_id": payload.twin_id,
+        },
+    )
+    if response.status_code in {401, 403, 404}:
+        raise HTTPException(403, detail={"code": "CONSENT_NOT_VERIFIED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "CONSENT_VERIFIER_UNAVAILABLE"})
+    try:
+        receipt = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "CONSENT_VERIFIER_INVALID_RESPONSE"}) from exc
+    if not (
+        isinstance(receipt, dict) and receipt.get("verified") is True
+        and receipt.get("active") is True and receipt.get("subject_id") == payload.subject_id
+        and receipt.get("consent_id") == payload.consent.consent_id
+        and receipt.get("resource_id") == payload.twin_id
+        and set(["image_processing", "virtual_try_on", "twin_storage"]).issubset(set(receipt.get("granted_scopes", [])))
+    ):
+        raise HTTPException(403, detail={"code": "CONSENT_NOT_VERIFIED"})
+    return receipt
+
+
+async def _resolve_twin(payload: TryOnRequest) -> dict:
+    config = _trusted_base("VIRTUAL_TWIN_API_URL", "VIRTUAL_TWIN_API_TOKEN")
+    if config is None:
+        raise HTTPException(503, detail={"code": "TWIN_SERVICE_NOT_CONFIGURED"})
+    base, token = config
+    response = await _json_request(
+        "GET", base, f"/v1/twins/{payload.twin_id}?subject_id={payload.subject_id}", token
+    )
+    if response.status_code in {403, 404}:
+        raise HTTPException(404, detail={"code": "TWIN_NOT_FOUND_OR_NOT_AUTHORIZED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "TWIN_SERVICE_UNAVAILABLE"})
+    try:
+        body = response.json()
+        twin = body.get("twin") if isinstance(body, dict) else None
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "TWIN_SERVICE_INVALID_RESPONSE"}) from exc
+    if (
+        not isinstance(twin, dict) or twin.get("subject_id") != payload.subject_id
+        or twin.get("twin_id") != payload.twin_id or twin.get("status") != "active"
+        or twin.get("source_asset_id") != payload.person_image_asset_id
+    ):
+        raise HTTPException(403, detail={"code": "TWIN_PERSON_ASSET_MISMATCH"})
+    return twin
+
+
+async def _read_authorized_asset(
+    *, subject_id: str, asset_id: str, purpose: str, parent_id: str,
+) -> tuple[bytes, str]:
+    config = _trusted_base("ASSET_SERVICE_URL", "ASSET_SERVICE_TOKEN")
+    if config is None:
+        raise HTTPException(503, detail={"code": "ASSET_SERVICE_NOT_CONFIGURED"})
+    base, token = config
+    authorized = await _json_request(
+        "POST", base, "/internal/v1/assets/authorize", token,
+        json_body={
+            "subject_id": subject_id, "asset_id": asset_id,
+            "purpose": purpose, "parent_id": parent_id,
+        },
+    )
+    if authorized.status_code in {403, 404}:
+        raise HTTPException(403, detail={"code": "ASSET_ACCESS_DENIED"})
+    if authorized.status_code != 200:
+        raise HTTPException(503, detail={"code": "ASSET_AUTHORIZATION_UNAVAILABLE"})
+    try:
+        metadata = authorized.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "ASSET_AUTHORIZATION_INVALID"}) from exc
+    if not (
+        isinstance(metadata, dict) and metadata.get("authorized") is True
+        and metadata.get("subject_id") == subject_id and metadata.get("asset_id") == asset_id
+        and metadata.get("purpose") == purpose and metadata.get("parent_id") == parent_id
+    ):
+        raise HTTPException(403, detail={"code": "ASSET_ACCESS_DENIED"})
+    response = await _json_request(
+        "GET", base,
+        f"/internal/v1/assets/{asset_id}/content?subject_id={subject_id}&purpose={purpose}&parent_id={parent_id}",
+        token,
+    )
+    if response.status_code in {403, 404}:
+        raise HTTPException(403, detail={"code": "ASSET_ACCESS_DENIED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "ASSET_CONTENT_UNAVAILABLE"})
+    content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
+    if content_type not in {"image/png", "image/jpeg", "image/webp"}:
+        raise HTTPException(415, detail={"code": "ASSET_CONTENT_TYPE_INVALID"})
+    data = response.content
+    if not data or len(data) > MAX_IMAGE_BYTES:
+        raise HTTPException(413, detail={"code": "ASSET_CONTENT_SIZE_INVALID"})
+    return data, content_type
+
+
+async def _worker_ready() -> tuple[str, str] | None:
+    config = _trusted_base("VTON_WORKER_URL", "VTON_WORKER_TOKEN")
+    if config is None:
+        return None
+    base, token = config
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(3.0, connect=1.0), trust_env=False, follow_redirects=False
+        ) as client:
+            response = await client.get(
+                base + "/ready",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+            )
+        if response.status_code != 200:
+            return None
+        result = response.json()
+        source_commit = result.get("source_commit") if isinstance(result, dict) else None
+        if not isinstance(source_commit, str) or not SHA40.fullmatch(source_commit):
+            return None
+        return base, token
+    except (httpx.HTTPError, ValueError, AttributeError):
+        return None
+
+
+def _validated_png(data: bytes) -> bool:
+    if not data or len(data) > MAX_IMAGE_BYTES:
+        return False
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            if image.format != "PNG" or image.width < 64 or image.height < 64:
+                return False
+            if image.width * image.height > MAX_IMAGE_PIXELS:
+                return False
+            image.verify()
+        return True
+    except (UnidentifiedImageError, OSError, ValueError):
+        return False
+
+
+async def _render_with_worker(payload: TryOnRequest, person: tuple[bytes, str], garment: tuple[bytes, str]) -> tuple[bytes, str]:
+    config = await _worker_ready()
+    if config is None:
+        raise HTTPException(503, detail={"code": "VTON_RENDERER_NOT_READY"})
+    base, token = config
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(90.0, connect=5.0), trust_env=False, follow_redirects=False
+        ) as client:
+            response = await client.post(
+                base + "/v1/render",
+                headers={"Authorization": "Bearer " + token, "Accept": "image/png"},
+                data={
+                    "consent_image_processing": "true",
+                    "consent_virtual_try_on": "true",
+                    "category": payload.garment_category,
+                },
+                files={
+                    "person_image": ("person.png", person[0], person[1]),
+                    "garment_image": ("garment.png", garment[0], garment[1]),
+                },
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "VTON_RENDER_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "VTON_RENDER_WORKER_UNAVAILABLE"}) from exc
+    if response.status_code != 200 or response.headers.get("content-type", "").split(";")[0].lower() != "image/png":
+        raise HTTPException(502, detail={"code": "VTON_RENDER_FAILED"})
+    if not _validated_png(response.content):
+        raise HTTPException(502, detail={"code": "VTON_RENDER_OUTPUT_INVALID"})
+    model_commit = response.headers.get("X-Cirvanna-Model-Commit", "")
+    if not SHA40.fullmatch(model_commit):
+        raise HTTPException(502, detail={"code": "VTON_MODEL_PROVENANCE_MISSING"})
+    return response.content, "fashn-vton-1.5@" + model_commit
+
+
+async def _persist_output_asset(payload: TryOnRequest, image_bytes: bytes) -> str:
+    config = _trusted_base("ASSET_SERVICE_URL", "ASSET_SERVICE_TOKEN")
+    if config is None:
+        raise HTTPException(503, detail={"code": "ASSET_SERVICE_NOT_CONFIGURED"})
+    base, token = config
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(20.0, connect=2.0), trust_env=False, follow_redirects=False
+        ) as client:
+            response = await client.post(
+                base + "/internal/v1/assets",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                data={
+                    "owner_user_id": payload.subject_id,
+                    "purpose": "try_on_output",
+                    "parent_id": payload.twin_id,
+                    "retention_days": "1",
+                },
+                files={"file": ("try-on.png", image_bytes, "image/png")},
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "VTON_OUTPUT_STORAGE_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "VTON_OUTPUT_STORAGE_UNAVAILABLE"}) from exc
+    if response.status_code != 201:
+        raise HTTPException(503, detail={"code": "VTON_OUTPUT_STORAGE_FAILED"})
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "VTON_OUTPUT_STORAGE_INVALID"}) from exc
+    output_id = result.get("asset_id") if isinstance(result, dict) else None
+    if (
+        not isinstance(output_id, str) or not ASSET_ID_PATTERN.fullmatch(output_id)
+        or result.get("owner_user_id") != payload.subject_id
+        or result.get("purpose") != "try_on_output" or result.get("parent_id") != payload.twin_id
+    ):
+        raise HTTPException(502, detail={"code": "VTON_OUTPUT_ASSET_SCOPE_MISMATCH"})
+    return output_id
+
+
+async def _delete_output_asset(subject_id: str, twin_id: str, asset_id: str) -> None:
+    config = _trusted_base("ASSET_SERVICE_URL", "ASSET_SERVICE_TOKEN")
+    if config is None:
+        return
+    base, token = config
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=1.5), trust_env=False, follow_redirects=False) as client:
+            await client.delete(
+                base + f"/v1/assets/{asset_id}",
+                headers={
+                    "Authorization": "Bearer " + token,
+                    "X-Asset-Owner-ID": subject_id,
+                    "Idempotency-Key": "vton-rollback-" + asset_id,
+                },
+            )
+    except httpx.HTTPError:
+        pass
+
+
+def _response_from_job(job: dict) -> TryOnResult:
+    result = job["result"]
+    return TryOnResult(
+        request_id=result["request_id"],
+        status="complete",
+        renderer_id=result["renderer_id"],
+        renderer_version=result["renderer_version"],
+        output_asset_id=result["output_asset_id"],
+        output_expires_after_hours=24,
+        created_at=datetime.fromisoformat(result["created_at"]),
+        warnings=result.get("warnings", []),
+    )
+
+
+@app.on_event("startup")
+def initialize_tryon_schema() -> None:
+    if os.getenv("VIRTUAL_TRY_ON_AUTO_CREATE_SCHEMA", "false").lower() == "true":
+        url = os.getenv("VIRTUAL_TRY_ON_DATABASE_URL", "").strip()
+        if not url:
+            raise RuntimeError("VIRTUAL_TRY_ON_DATABASE_URL is required")
+        TryOnBase.metadata.create_all(bind=tryon_engine(url))
 
 
 @app.get("/health", tags=["operations"])
@@ -160,132 +442,149 @@ def health() -> dict[str, str]:
 
 
 @app.get("/ready", tags=["operations"])
-def ready() -> dict[str, object]:
-    ready_now = (
-        RENDERER is not None
-        and CONSENT_VERIFIER is not None
-        and ASSET_AUTHORIZER is not None
-        and bool(os.getenv("VIRTUAL_TRY_ON_API_TOKEN"))
-    )
+async def ready() -> dict[str, object]:
+    database_ready = False
+    try:
+        get_store().ready()
+        database_ready = True
+    except Exception:
+        pass
+    consent_ready = _trusted_base("IDENTITY_SERVICE_URL", "IDENTITY_SERVICE_TOKEN") is not None
+    asset_ready = _trusted_base("ASSET_SERVICE_URL", "ASSET_SERVICE_TOKEN") is not None
+    twin_ready = _trusted_base("VIRTUAL_TWIN_API_URL", "VIRTUAL_TWIN_API_TOKEN") is not None
+    worker_ready = await _worker_ready() is not None
+    auth_ready = len(os.getenv("VIRTUAL_TRY_ON_API_TOKEN", "").encode()) >= 32
+    ready_now = all((database_ready, consent_ready, asset_ready, twin_ready, worker_ready, auth_ready))
     if not ready_now:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "status": "not_ready",
-                "service": SERVICE_NAME,
-                "renderer_configured": RENDERER is not None,
-                "consent_verifier_configured": CONSENT_VERIFIER is not None,
-                "asset_authorizer_configured": ASSET_AUTHORIZER is not None,
-                "reason": "validated_renderer_consent_and_asset_authorization_adapters_not_integrated",
-            },
-        )
+        missing = [
+            key for key, value in (
+                ("database", database_ready), ("consent_provider", consent_ready),
+                ("asset_service", asset_ready), ("twin_service", twin_ready),
+                ("gpu_renderer", worker_ready), ("api_auth", auth_ready),
+            ) if not value
+        ]
+        raise HTTPException(503, detail={
+            "status": "not_ready", "service": SERVICE_NAME, "ready": False,
+            "missing_dependencies": missing,
+        })
     return {
-        "status": "ready",
-        "service": SERVICE_NAME,
-        "renderer_configured": True,
-        "consent_verifier_configured": True,
-        "asset_authorizer_configured": True,
+        "status": "ready", "service": SERVICE_NAME, "ready": True,
+        "database": "reachable", "consent_provider": True,
+        "asset_service": True, "twin_service": True, "gpu_renderer": True,
     }
 
 
 @app.get("/capabilities", response_model=CapabilityResponse, tags=["operations"])
-def capabilities() -> CapabilityResponse:
-    configured = RENDERER is not None
+async def capabilities() -> CapabilityResponse:
+    database_ready = False
+    try:
+        get_store().ready()
+        database_ready = True
+    except Exception:
+        pass
+    consent_ready = _trusted_base("IDENTITY_SERVICE_URL", "IDENTITY_SERVICE_TOKEN") is not None
+    asset_ready = _trusted_base("ASSET_SERVICE_URL", "ASSET_SERVICE_TOKEN") is not None
+    twin_ready = _trusted_base("VIRTUAL_TWIN_API_URL", "VIRTUAL_TWIN_API_TOKEN") is not None
+    renderer_ready = await _worker_ready() is not None
+    configured = database_ready and consent_ready and asset_ready and twin_ready and renderer_ready
     return CapabilityResponse(
-        service=SERVICE_NAME,
-        api_version=API_VERSION,
-        orchestration_api=True,
-        renderer_configured=configured,
-        consent_verifier_configured=CONSENT_VERIFIER is not None,
-        asset_authorizer_configured=ASSET_AUTHORIZER is not None,
+        service=SERVICE_NAME, api_version=API_VERSION, orchestration_api=True,
+        renderer_configured=renderer_ready, consent_verifier_configured=consent_ready,
+        asset_service_configured=asset_ready, twin_service_configured=twin_ready,
+        database_ready=database_ready,
         supported_categories=["upper_body", "lower_body", "dress", "outerwear", "full_outfit"],
-        raw_image_upload=False,
-        arbitrary_remote_urls=False,
-        output_persistence=False,
-        reason=None if configured else "validated_renderer_and_secure_asset_adapter_not_integrated",
+        raw_image_upload=False, arbitrary_remote_urls=False,
+        output_persistence=asset_ready,
+        reason=None if configured else "postgres_consent_twin_asset_or_pinned_gpu_renderer_not_ready",
     )
 
 
-@app.post(
-    "/v1/try-ons",
-    response_model=TryOnResult,
-    status_code=status.HTTP_200_OK,
-    tags=["try-on"],
-)
-def create_try_on(
+@app.post("/v1/try-ons", response_model=TryOnResult, tags=["try-on"])
+async def create_try_on(
     payload: TryOnRequest,
     _: Annotated[None, Depends(require_api_token)],
 ) -> TryOnResult:
-    """Request a render only when explicit consent and a real renderer exist."""
+    """Render only after current consent, Twin ownership and both asset bindings pass."""
     if not payload.consent.image_processing or not payload.consent.virtual_try_on:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "CONSENT_REQUIRED", "message": "Explicit image-processing and virtual-try-on consent are both required."},
-        )
-    if payload.consent.retention_policy != "ephemeral":
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={"code": "RETENTION_POLICY_UNSUPPORTED", "message": "Only ephemeral processing is currently supported."},
-        )
-    consent_verifier = CONSENT_VERIFIER
-    asset_authorizer = ASSET_AUTHORIZER
-    renderer = RENDERER
-    if consent_verifier is None or asset_authorizer is None or renderer is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={
-                "code": "TRY_ON_DEPENDENCIES_NOT_CONFIGURED",
-                "message": "Validated consent, asset authorization, and rendering integrations are required. No image was processed and no output was created.",
-            },
-        )
+        raise HTTPException(403, detail={"code": "CONSENT_REQUIRED"})
+    if _trusted_base("IDENTITY_SERVICE_URL", "IDENTITY_SERVICE_TOKEN") is None:
+        raise HTTPException(503, detail={"code": "CONSENT_PROVIDER_NOT_CONFIGURED"})
     try:
-        consent_is_valid = consent_verifier.verify(payload.subject_id, payload.consent)
+        store = get_store()
+        store.ready()
     except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "CONSENT_VERIFICATION_UNAVAILABLE", "message": "Consent could not be verified; rendering was not started."},
-        ) from exc
-    if not consent_is_valid:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "CONSENT_NOT_VERIFIED", "message": "No matching active server-side consent record was verified."},
-        )
-    try:
-        assets_are_authorized = asset_authorizer.authorize(
-            payload.subject_id,
-            payload.twin_id,
-            payload.product_id,
-            payload.person_image_asset_id,
-            payload.garment_image_asset_id,
-        )
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"code": "ASSET_AUTHORIZATION_UNAVAILABLE", "message": "Asset access could not be verified; rendering was not started."},
-        ) from exc
-    if not assets_are_authorized:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"code": "ASSET_ACCESS_DENIED", "message": "The subject is not authorized to use one or more referenced assets."},
-        )
-    try:
-        output_asset_id = renderer.render(payload)
-    except Exception as exc:
-        # Do not expose provider internals, request data, or upstream response bodies.
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail={"code": "RENDERER_FAILED", "message": "Rendering failed; no successful output can be claimed."},
-        ) from exc
-    if not isinstance(output_asset_id, str) or not ASSET_ID_PATTERN.fullmatch(output_asset_id):
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail={"code": "RENDERER_INVALID_OUTPUT", "message": "Renderer returned an invalid output asset identifier."},
-        )
-    return TryOnResult(
-        request_id=payload.request_id,
-        status="complete",
-        renderer_id=renderer.renderer_id,
-        renderer_version=renderer.renderer_version,
-        output_asset_id=output_asset_id,
-        created_at=datetime.now(timezone.utc),
+        raise HTTPException(503, detail={"code": "TRY_ON_DATABASE_NOT_READY"}) from exc
+
+    digest = _payload_hash(payload)
+    prior = store.get(payload.subject_id, payload.request_id)
+    if prior is not None:
+        if prior["payload_hash"] != digest:
+            raise HTTPException(409, detail={"code": "TRY_ON_IDEMPOTENCY_CONFLICT"})
+        if prior["status"] == "complete":
+            return _response_from_job(prior)
+
+    consent = await _verify_consent(payload)
+    twin = await _resolve_twin(payload)
+    person = await _read_authorized_asset(
+        subject_id=payload.subject_id, asset_id=payload.person_image_asset_id,
+        purpose="twin_source_image", parent_id=payload.twin_id,
     )
+    garment = await _read_authorized_asset(
+        subject_id=payload.subject_id, asset_id=payload.garment_image_asset_id,
+        purpose=payload.garment_asset_purpose, parent_id=payload.garment_parent,
+    )
+    rendered, renderer_version = await _render_with_worker(payload, person, garment)
+    output_asset_id = await _persist_output_asset(payload, rendered)
+    consent_version = consent.get("consent_version")
+    if not isinstance(consent_version, str) or not consent_version:
+        await _delete_output_asset(payload.subject_id, payload.twin_id, output_asset_id)
+        raise HTTPException(502, detail={"code": "CONSENT_VERSION_MISSING"})
+
+    created_at = datetime.now(timezone.utc)
+    result = {
+        "request_id": payload.request_id,
+        "renderer_id": "fashn-vton-1.5",
+        "renderer_version": renderer_version,
+        "output_asset_id": output_asset_id,
+        "created_at": created_at.isoformat(),
+        "warnings": [
+            "Visual preview only; not a fit guarantee.",
+            "Output asset expires after 24 hours unless retained under a separate explicit product action.",
+        ],
+    }
+    try:
+        saved = store.create({
+            "subject_id": payload.subject_id, "request_id": payload.request_id,
+            "payload_hash": digest, "twin_id": payload.twin_id, "product_id": payload.product_id,
+            "look_id": payload.look_id, "look_version": payload.look_version,
+            "wardrobe_snapshot_version": payload.wardrobe_snapshot_version,
+            "output_asset_id": output_asset_id, "renderer_id": "fashn-vton-1.5",
+            "renderer_version": renderer_version, "consent_id": payload.consent.consent_id,
+            "consent_version": consent_version, "status": "complete",
+            "created_at": created_at, "result": result,
+        })
+    except IntegrityError as exc:
+        await _delete_output_asset(payload.subject_id, payload.twin_id, output_asset_id)
+        prior = store.get(payload.subject_id, payload.request_id)
+        if prior is not None and prior["payload_hash"] == digest and prior["status"] == "complete":
+            return _response_from_job(prior)
+        raise HTTPException(409, detail={"code": "TRY_ON_IDEMPOTENCY_CONFLICT"}) from exc
+    except Exception as exc:
+        await _delete_output_asset(payload.subject_id, payload.twin_id, output_asset_id)
+        raise HTTPException(503, detail={"code": "TRY_ON_RESULT_PERSISTENCE_FAILED"}) from exc
+    return _response_from_job(saved)
+
+
+@app.get("/v1/try-ons/{request_id}", tags=["try-on"])
+async def get_try_on(
+    request_id: str,
+    subject_id: str,
+    _: Annotated[None, Depends(require_api_token)],
+):
+    try:
+        result = get_store().get(subject_id, request_id)
+    except Exception as exc:
+        raise HTTPException(503, detail={"code": "TRY_ON_DATABASE_UNAVAILABLE"}) from exc
+    if result is None:
+        raise HTTPException(404, detail={"code": "TRY_ON_NOT_FOUND"})
+    return JSONResponse(content=result["result"], headers={"Cache-Control": "no-store, private"})
