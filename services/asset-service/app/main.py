@@ -11,7 +11,7 @@ from typing import Annotated, Iterator, Literal
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -303,3 +303,72 @@ def delete_asset(
     row.deleted_at = datetime.now(timezone.utc)
     db.commit()
     return Response(status_code=204)
+
+
+@app.delete("/internal/v1/assets/by-parent/{parent_id}", dependencies=[Depends(require_internal_token)])
+def delete_parent_assets(
+    parent_id: str,
+    owner_user_id: Annotated[str, Query(min_length=3, max_length=128)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Remove every asset attached to one owner's Twin/wardrobe parent record."""
+    rows = list(db.scalars(select(AssetRow).where(
+        AssetRow.owner_user_id == owner_user_id.strip(),
+        AssetRow.parent_id == parent_id,
+        AssetRow.status == "active",
+    )).all())
+    if not rows:
+        return {"status": "deleted", "deleted_count": 0}
+    client, bucket = _object_store()
+    now = datetime.now(timezone.utc)
+    deleted = 0
+    for row in rows:
+        try:
+            client.delete_object(Bucket=bucket, Key=row.object_key)
+        except (BotoCoreError, ClientError):
+            continue
+        row.status = "deleted"
+        row.deleted_at = now
+        deleted += 1
+    db.commit()
+    if deleted != len(rows):
+        raise HTTPException(503, detail={"code": "ASSET_PARENT_DELETE_INCOMPLETE", "deleted_count": deleted})
+    return {"status": "deleted", "deleted_count": deleted}
+
+
+@app.post("/internal/v1/assets/purge-expired", dependencies=[Depends(require_internal_token)])
+def purge_expired_assets(
+    cron_token: Annotated[str, Header(alias="X-Asset-Cron-Token", min_length=32)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Physically delete expired short-lived assets; caller is a dedicated cron identity."""
+    expected = os.getenv("ASSET_CRON_TOKEN", "").strip()
+    if len(expected.encode("utf-8")) < 32 or not hmac.compare_digest(cron_token, expected):
+        raise HTTPException(401, detail={"code": "ASSET_CRON_AUTH_REQUIRED"})
+    now = datetime.now(timezone.utc)
+    rows = list(db.scalars(select(AssetRow).where(
+        AssetRow.status == "active", AssetRow.retention_until.is_not(None)
+    ).limit(1000)).all())
+    expired = []
+    for row in rows:
+        expiry = row.retention_until
+        if expiry is not None:
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
+            if expiry <= now:
+                expired.append(row)
+    if not expired:
+        return {"status": "complete", "purged_count": 0, "failed_count": 0}
+    client, bucket = _object_store()
+    purged = 0
+    failed = 0
+    for row in expired:
+        try:
+            client.delete_object(Bucket=bucket, Key=row.object_key)
+            row.status = "deleted"
+            row.deleted_at = now
+            purged += 1
+        except (BotoCoreError, ClientError):
+            failed += 1
+    db.commit()
+    return {"status": "complete" if failed == 0 else "partial", "purged_count": purged, "failed_count": failed}
