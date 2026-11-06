@@ -244,9 +244,15 @@ def test_persistent_twin_create_read_and_delete_is_owner_scoped(tmp_path, monkey
         assert subject_id == SUBJECT
         assert asset_id == "5e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d"
 
+    delete_calls = {"count": 0}
+
     async def delete_all_assets(subject_id, twin_id):
+        from fastapi import HTTPException
         assert subject_id == SUBJECT
         assert twin_id == "twin-123"
+        delete_calls["count"] += 1
+        if delete_calls["count"] == 1:
+            raise HTTPException(503, detail={"code": "TWIN_ASSET_DELETE_UNAVAILABLE"})
 
     monkeypatch.setattr(main, "_verify_consent", verify)
     monkeypatch.setattr(main, "_upload_twin_asset", upload)
@@ -284,11 +290,22 @@ def test_persistent_twin_create_read_and_delete_is_owner_scoped(tmp_path, monkey
     assert own_record.status_code == 200
     assert foreign_record.status_code == 404
 
+    failed_delete = client.delete(
+        "/v1/twins/twin-123", headers=auth(), params={"subject_id": SUBJECT}
+    )
+    assert failed_delete.status_code == 503
+    # The record is hidden while external image cleanup is pending.
+    hidden_during_cleanup = client.get(
+        "/v1/twins/twin-123", headers=auth(), params={"subject_id": SUBJECT}
+    )
+    assert hidden_during_cleanup.status_code == 404
+
     deleted = client.delete(
         "/v1/twins/twin-123", headers=auth(), params={"subject_id": SUBJECT}
     )
     assert deleted.status_code == 200
     assert deleted.json()["status"] == "deleted"
+    assert delete_calls["count"] == 2
     after_delete = client.get(
         "/v1/twins/twin-123", headers=auth(), params={"subject_id": SUBJECT}
     )
