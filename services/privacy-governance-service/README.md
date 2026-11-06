@@ -62,6 +62,7 @@ Provider response schemas are enforced in the code. Test mocks do not constitute
 - `PRIVACY_RIGHTS_TRIAGE_HOURS`: platform internal triage target between 1 and 24 hours; not a substitute for jurisdiction-specific statutory response deadlines.
 - `PRIVACY_POLICY_BUNDLE_PUBLIC_KEY_PEM`: Ed25519 public key in PEM form.
 - `VISION_PRIVACY_ATTESTATION_API_URL/TOKEN`: trusted Vision provider that verifies a signed masking attestation, exact asset SHA-256 digest and independent human privacy review for the public publication target. Its response must include a review receipt ID, opaque reviewer reference and timezone-aware review timestamp bound to the digest; a bare boolean is insufficient.
+- `PRIVACY_APPROVED_MASKING_MODEL_SHA256`: the exact approved detector-model SHA-256. Readiness remains false unless this is a 64-character lowercase digest, and the publication gate rejects receipts reporting any other model. For the current Vision Docker image, set it to `3698b18f063835bc609069ef052228fbe86d9c9a6dc8dcb7c7c2d69aed2b181b`.
 - `RIGHTS_AUTHORITY_VERIFICATION_API_URL/TOKEN`: trusted provider that independently verifies a photographed person's, parent/guardian's or authorized representative's authority for the specific image-rights case.
 - Provider URL/token pairs listed above.
 
