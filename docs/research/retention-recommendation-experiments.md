@@ -42,7 +42,7 @@ An app open or passive notification view is not meaningful retention.
 **Secondary:** save, modify, reject, mark-worn and missing-item suggestion rates.  
 **Guardrails:** consent violations, unauthorized reads, hard-exclusion violations and unsupported claims.
 
-Do not expose more wardrobe data than needed. Xari remains the canonical assistant under ADR-0005 unless a separate ADR changes the name; do not introduce a second Tari runtime.
+Do not expose more wardrobe data than needed. Xari remains the canonical assistant under ADR-0005 unless a separate ADR changes the name; do not introduce a second PNELLY runtime.
 
 ## 3. Visual discovery connected to wardrobe vs standalone
 
