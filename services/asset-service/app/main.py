@@ -100,7 +100,10 @@ def _storage_config() -> tuple[str, str, str, str]:
     secret = os.getenv("ASSET_S3_SECRET_ACCESS_KEY", "").strip()
     region = os.getenv("ASSET_S3_REGION", "us-east-1").strip()
     endpoint = os.getenv("ASSET_S3_ENDPOINT_URL", "").strip()
-    if not bucket or not access or len(secret) < 16 or not region:
+    if (
+        not bucket or not region or bool(access) != bool(secret)
+        or (access and len(secret) < 16)
+    ):
         raise HTTPException(503, detail={"code": "ASSET_OBJECT_STORAGE_NOT_CONFIGURED"})
     if endpoint:
         from urllib.parse import urlsplit
@@ -116,13 +119,14 @@ def _storage_config() -> tuple[str, str, str, str]:
 
 def _object_store():
     bucket, access, secret, endpoint = _storage_config()
-    return boto3.client(
-        "s3",
-        endpoint_url=endpoint or None,
-        aws_access_key_id=access,
-        aws_secret_access_key=secret,
-        region_name=os.getenv("ASSET_S3_REGION", "us-east-1"),
-    ), bucket
+    options = {
+        "endpoint_url": endpoint or None,
+        "region_name": os.getenv("ASSET_S3_REGION", "us-east-1"),
+    }
+    # Empty credentials use the cloud SDK's workload/IAM credential chain.
+    if access and secret:
+        options.update({"aws_access_key_id": access, "aws_secret_access_key": secret})
+    return boto3.client("s3", **options), bucket
 
 
 def _normalize_image(data: bytes, content_type: str) -> bytes:
@@ -348,7 +352,7 @@ def purge_expired_assets(
     now = datetime.now(timezone.utc)
     rows = list(db.scalars(select(AssetRow).where(
         AssetRow.status == "active", AssetRow.retention_until.is_not(None)
-    ).limit(1000)).all())
+    ).order_by(AssetRow.retention_until).limit(1000)).all())
     expired = []
     for row in rows:
         expiry = row.retention_until
