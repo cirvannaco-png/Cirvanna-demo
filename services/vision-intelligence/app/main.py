@@ -434,15 +434,23 @@ async def _live_offers() -> tuple[list[dict[str, Any]], bool]:
 
 
 MEDIA_REFERENCE_FIELDS = frozenset({
-    "image", "photo", "avatar", "thumbnail", "media", "picture",
+    "image", "images", "photo", "photos", "avatar", "avatars",
+    "thumbnail", "thumbnails", "media", "media_items", "media_assets",
+    "picture", "pictures", "render", "renders", "face", "face_crop", "face_crops",
     "image_url", "image_urls", "photo_url", "photo_urls", "avatar_url",
     "thumbnail_url", "thumbnail_urls", "media_url", "media_urls",
     "picture_url", "picture_urls", "render_url", "render_urls",
-    "rendered_image_url", "asset_url", "asset_urls",
-    "image_asset_id", "photo_asset_id", "media_asset_id",
+    "rendered_image_url", "source_image_url", "source_photo_url",
+    "original_image_url", "original_photo_url", "asset_url", "asset_urls",
+    "image_asset_id", "photo_asset_id", "media_asset_id", "avatar_id",
+    "thumbnail_id", "image_id", "photo_id", "picture_id", "render_id",
     "image_asset_reference", "photo_asset_reference", "media_asset_reference",
+    "image_asset_key", "photo_asset_key", "media_asset_key",
     "image_data", "photo_data", "image_base64", "photo_base64",
-    "face_crop", "face_crops", "original_image", "original_photo",
+    "image_src", "photo_src", "avatar_src", "thumbnail_src", "media_src",
+    "image_path", "photo_path", "avatar_path", "thumbnail_path", "media_path",
+    "image_storage_key", "photo_storage_key", "media_storage_key",
+    "original_image", "original_photo",
 })
 
 
@@ -453,11 +461,17 @@ def _redact_unattested_media(value: Any) -> Any:
         for key, item in value.items():
             name = str(key).casefold()
             media_field = name in MEDIA_REFERENCE_FIELDS or name.endswith((
-                "_image_url", "_image_urls", "_photo_url", "_photo_urls",
+                "_image", "_images", "_photo", "_photos", "_avatar", "_avatars",
+                "_thumbnail", "_thumbnails", "_media", "_picture", "_pictures",
+                "_render", "_renders", "_image_url", "_image_urls", "_photo_url", "_photo_urls",
                 "_avatar_url", "_thumbnail_url", "_thumbnail_urls",
                 "_media_url", "_media_urls", "_picture_url", "_picture_urls",
                 "_render_url", "_render_urls", "_asset_url", "_asset_urls",
                 "_image_asset_id", "_photo_asset_id", "_media_asset_id",
+                "_image_id", "_photo_id", "_avatar_id", "_thumbnail_id", "_picture_id",
+                "_image_src", "_photo_src", "_avatar_src", "_thumbnail_src",
+                "_image_path", "_photo_path", "_avatar_path", "_thumbnail_path",
+                "_image_asset_key", "_photo_asset_key", "_media_asset_key",
             ))
             if media_field:
                 safe[key] = [] if isinstance(item, (list, tuple)) else None
