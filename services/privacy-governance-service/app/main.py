@@ -264,6 +264,7 @@ class RightsReviewIn(StrictModel):
 
 class AssetPublicationGateIn(StrictModel):
     asset_id: str = Field(min_length=3, max_length=160)
+    asset_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
     masking_attestation_id: str = Field(min_length=12, max_length=160)
     target_surface: Literal["public_profile", "community_feed", "marketplace", "merchant_surface", "shared_link"]
 
@@ -891,9 +892,12 @@ async def evaluate_asset_publication(payload: AssetPublicationGateIn) -> dict:
         "/internal/v1/privacy/mask-attestations/verify",
         {
             "asset_id": payload.asset_id,
+            "asset_sha256": payload.asset_sha256,
             "attestation_id": payload.masking_attestation_id,
             "target_surface": payload.target_surface,
             "purpose": "public_media_publication",
+            "require_exact_asset_digest_match": True,
+            "require_independent_human_privacy_review": True,
             "require_all_detected_faces_masked": True,
             "prohibit_face_recognition": True,
             "prohibit_face_embeddings": True,
@@ -905,6 +909,9 @@ async def evaluate_asset_publication(payload: AssetPublicationGateIn) -> dict:
         receipt.get("verified") is True
         and receipt.get("active") is True
         and receipt.get("asset_id") == payload.asset_id
+        and receipt.get("asset_sha256") == payload.asset_sha256
+        and receipt.get("human_privacy_review_passed") is True
+        and receipt.get("human_reviewed_asset_sha256") == payload.asset_sha256
         and receipt.get("attestation_id") == payload.masking_attestation_id
         and receipt.get("all_detected_faces_masked") is True
         and receipt.get("unmasked_face_count") == 0
@@ -921,7 +928,9 @@ async def evaluate_asset_publication(payload: AssetPublicationGateIn) -> dict:
     return {
         "decision": "PASS",
         "asset_id": payload.asset_id,
+        "asset_sha256": payload.asset_sha256,
         "target_surface": payload.target_surface,
+        "human_privacy_review_passed": True,
         "all_detected_faces_masked": True,
         "unmasked_face_count": 0,
         "face_recognition_performed": False,
