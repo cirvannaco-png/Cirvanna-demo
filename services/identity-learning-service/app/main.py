@@ -150,7 +150,7 @@ class ProfilePut(StrictModel):
 
 ConsentScope = Literal[
     "personalization", "style_learning", "profile_storage",
-    "image_processing", "body_measurements", "twin_storage", "virtual_try_on", "click_it",
+    "image_processing", "body_measurements", "twin_storage", "virtual_try_on", "click_it", "wardrobe_image_storage",
 ]
 
 
@@ -353,17 +353,22 @@ def put_consent(subject_id: str = Query(min_length=1, max_length=128), payload: 
 
     now = utcnow()
     if not payload.granted:
-        # A withdrawal is scope-wide: no older grant may keep authorizing writes.
-        db.execute(
-            update(ConsentReceipt)
-            .where(
-                ConsentReceipt.subject_id == subject,
-                ConsentReceipt.scope == payload.scope,
-                ConsentReceipt.granted.is_(True),
-                ConsentReceipt.revoked_at.is_(None),
-            )
-            .values(revoked_at=now)
+        # Resource-bound withdrawal is confined to this bundle and resource.
+        # Legacy unscoped receipts retain their historical scope-wide semantics.
+        withdrawal = update(ConsentReceipt).where(
+            ConsentReceipt.subject_id == subject,
+            ConsentReceipt.scope == payload.scope,
+            ConsentReceipt.granted.is_(True),
+            ConsentReceipt.revoked_at.is_(None),
         )
+        if resource_id is not None:
+            withdrawal = withdrawal.where(
+                ConsentReceipt.consent_id == consent_id,
+                ConsentReceipt.resource_id == resource_id,
+            )
+        else:
+            withdrawal = withdrawal.where(ConsentReceipt.resource_id.is_(None))
+        db.execute(withdrawal.values(revoked_at=now))
     row = ConsentReceipt(
         receipt_id=payload.receipt_id, subject_id=subject, scope=payload.scope,
         consent_id=consent_id, resource_id=resource_id,
@@ -392,7 +397,8 @@ def verify_consent(payload: ConsentVerifyIn, db: Annotated[Session, Depends(get_
     granted = {row.scope for row in rows if row.resource_id == payload.resource_id}
     if not set(payload.required_scopes).issubset(granted):
         raise HTTPException(403, detail={"code": "CONSENT_NOT_VERIFIED"})
-    versions = sorted({row.consent_version for row in rows if row.scope in payload.required_scopes})
+    matching_rows = [row for row in rows if row.resource_id == payload.resource_id and row.scope in payload.required_scopes]
+    versions = sorted({row.consent_version for row in matching_rows})
     return {
         "verified": True, "active": True, "subject_id": subject,
         "consent_id": payload.consent_id, "resource_id": payload.resource_id,
@@ -412,19 +418,22 @@ def revoke_consent(
     if receipt is None or receipt.subject_id != subject:
         raise HTTPException(404, detail={"code": "CONSENT_RECEIPT_NOT_FOUND"})
     if receipt.granted:
-        # Revoke every active receipt for this scope so parallel grants cannot
-        # silently preserve consent after the user withdraws it.
+        # Parallel receipts cannot preserve withdrawn consent within this resource bundle.
         revoked_at = utcnow()
-        db.execute(
-            update(ConsentReceipt)
-            .where(
-                ConsentReceipt.subject_id == subject,
-                ConsentReceipt.scope == receipt.scope,
-                ConsentReceipt.granted.is_(True),
-                ConsentReceipt.revoked_at.is_(None),
-            )
-            .values(revoked_at=revoked_at)
+        withdrawal = update(ConsentReceipt).where(
+            ConsentReceipt.subject_id == subject,
+            ConsentReceipt.scope == receipt.scope,
+            ConsentReceipt.granted.is_(True),
+            ConsentReceipt.revoked_at.is_(None),
         )
+        if receipt.resource_id is not None:
+            withdrawal = withdrawal.where(
+                ConsentReceipt.consent_id == receipt.consent_id,
+                ConsentReceipt.resource_id == receipt.resource_id,
+            )
+        else:
+            withdrawal = withdrawal.where(ConsentReceipt.resource_id.is_(None))
+        db.execute(withdrawal.values(revoked_at=revoked_at))
         db.commit()
         db.refresh(receipt)
     return {
