@@ -193,9 +193,19 @@ def test_parent_delete_removes_all_assets_for_one_owner_and_parent(client):
     assert deleted.status_code == 200
     assert deleted.json()["deleted_count"] == 2
     assert len(fake.objects) == 1
-    assert any(other_owner in key[1] for key in fake.objects)
-    assert first not in str(fake.objects)
-    assert second not in str(fake.objects)
+    still_owned = response.get(
+        f"/internal/v1/assets/{other_owner}/content",
+        headers=auth(),
+        params={"subject_id": "subject-002", "purpose": "twin_source_image", "parent_id": "twin-batch-001"},
+    )
+    assert still_owned.status_code == 200
+    for deleted_id in (first, second):
+        not_found = response.get(
+            f"/internal/v1/assets/{deleted_id}/content",
+            headers=auth(),
+            params={"subject_id": "subject-001", "purpose": "twin_source_image", "parent_id": "twin-batch-001"},
+        )
+        assert not_found.status_code == 404
 
 
 def test_expiry_sweeper_physically_deletes_expired_output_assets(client, monkeypatch):
