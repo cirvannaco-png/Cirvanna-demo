@@ -44,6 +44,7 @@ def client(tmp_path, monkeypatch):
     main._engine.cache_clear()
     main._sessions.cache_clear()
     main.Base.metadata.create_all(bind=main._engine(url))
+    main.app.state.asset_test_database_url = url
     with TestClient(main.app) as test_client:
         yield test_client, fake
     main._sessions.cache_clear()
@@ -197,7 +198,7 @@ def test_parent_delete_removes_all_assets_for_one_owner_and_parent(client):
     assert second not in str(fake.objects)
 
 
-def test_expiry_sweeper_physically_deletes_expired_output_assets(client):
+def test_expiry_sweeper_physically_deletes_expired_output_assets(client, monkeypatch):
     response, fake = client
     created = upload(
         response,
@@ -207,23 +208,25 @@ def test_expiry_sweeper_physically_deletes_expired_output_assets(client):
     )
     assert created.status_code == 201
     asset_id = created.json()["asset_id"]
-    url = response.app
-    database_url = "sqlite:///" + str(response.app.state.__dict__.get("unused", ""))
-    # Update through the active test database engine; the fixture path is stable by app cache.
-    sessions = main._sessions("sqlite:///" + str(response.app.state.__dict__.get("asset_db_path", ""))) if False else None
-    from app import main as asset_main
-    engine = next(reversed(asset_main._engine.cache_info().__dict__.values()), None) if False else None
-    # Use SQLAlchemy's configured app engine from the fixture database file metadata.
-    rows = list(fake.objects.keys())
-    assert rows
-    # The endpoint also enforces both the service token and a separate cron token.
-    asset_main.os.environ["ASSET_CRON_TOKEN"] = "asset-cron-token-with-at-least-32-bytes"
-    no_cron = response.post(
+    database_url = response.app.state.asset_test_database_url
+    with main._sessions(database_url) as db:
+        row = db.get(main.AssetRow, asset_id)
+        row.retention_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+        db.commit()
+    monkeypatch.setenv("ASSET_CRON_TOKEN", "asset-cron-token-with-at-least-32-bytes")
+    purged = response.post(
         "/internal/v1/assets/purge-expired",
-        headers=auth(),
-        json={},
+        headers={**auth(), "X-Asset-Cron-Token": "asset-cron-token-with-at-least-32-bytes"},
     )
-    assert no_cron.status_code == 422
+    assert purged.status_code == 200
+    assert purged.json()["purged_count"] == 1
+    assert fake.objects == {}
+    read = response.get(
+        f"/internal/v1/assets/{asset_id}/content",
+        headers=auth(),
+        params={"subject_id": "subject-001", "purpose": "try_on_output", "parent_id": "twin-expiring-001"},
+    )
+    assert read.status_code == 404
 
 
 def test_internal_authentication_is_required(client):
