@@ -258,6 +258,47 @@ def test_failed_asset_deletion_stays_pending_and_does_not_claim_completion(clien
     assert status_response.json()["status"] == "deletion_pending"
 
 
+
+def test_deactivation_command_cannot_be_reused_for_another_twin(client):
+    first = registration()
+    second = registration(
+        twin_id="twin-registry-002",
+        artifact_asset_id="mesh-asset-002",
+        idempotency_key="register-twin-command-002",
+    )
+    assert client.post("/internal/v1/twins/register", json=first, headers=headers()).status_code == 201
+    assert client.post("/internal/v1/twins/register", json=second, headers=headers()).status_code == 201
+
+    first_delete = client.post(
+        "/internal/v1/twins/deactivate",
+        json={
+            "subject_id": "subject-registry-001",
+            "twin_id": "twin-registry-001",
+            "expected_version": 1,
+            "command_id": "reused-delete-command-001",
+        },
+        headers=headers(),
+    )
+    second_delete = client.post(
+        "/internal/v1/twins/deactivate",
+        json={
+            "subject_id": "subject-registry-001",
+            "twin_id": "twin-registry-002",
+            "expected_version": 1,
+            "command_id": "reused-delete-command-001",
+        },
+        headers=headers(),
+    )
+    second_status = client.get(
+        "/internal/v1/twins/twin-registry-002/status?subject_id=subject-registry-001",
+        headers=headers(),
+    )
+    assert first_delete.status_code == 202
+    assert second_delete.status_code == 409
+    assert second_delete.json()["detail"]["code"] == "TWIN_DELETION_COMMAND_CONFLICT"
+    assert second_status.json()["status"] == "active"
+
+
 def test_consent_revocation_queues_all_active_twins_for_the_receipt(client):
     for idx in (1, 2):
         payload = registration(
