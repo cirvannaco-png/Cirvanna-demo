@@ -433,7 +433,53 @@ async def _live_offers() -> tuple[list[dict[str, Any]], bool]:
     return joined, truncated
 
 
+MEDIA_REFERENCE_FIELDS = frozenset({
+    "image", "photo", "avatar", "thumbnail", "media", "picture",
+    "image_url", "image_urls", "photo_url", "photo_urls", "avatar_url",
+    "thumbnail_url", "thumbnail_urls", "media_url", "media_urls",
+    "picture_url", "picture_urls", "render_url", "render_urls",
+    "rendered_image_url", "asset_url", "asset_urls",
+    "image_asset_id", "photo_asset_id", "media_asset_id",
+    "image_asset_reference", "photo_asset_reference", "media_asset_reference",
+    "image_data", "photo_data", "image_base64", "photo_base64",
+    "face_crop", "face_crops", "original_image", "original_photo",
+})
+
+
+def _redact_unattested_media(value: Any) -> Any:
+    """Remove media references until an asset-bound publication receipt is verified."""
+    if isinstance(value, dict):
+        safe: dict[str, Any] = {}
+        for key, item in value.items():
+            name = str(key).casefold()
+            media_field = name in MEDIA_REFERENCE_FIELDS or name.endswith((
+                "_image_url", "_image_urls", "_photo_url", "_photo_urls",
+                "_avatar_url", "_thumbnail_url", "_thumbnail_urls",
+                "_media_url", "_media_urls", "_picture_url", "_picture_urls",
+                "_render_url", "_render_urls", "_asset_url", "_asset_urls",
+                "_image_asset_id", "_photo_asset_id", "_media_asset_id",
+            ))
+            if media_field:
+                safe[key] = [] if isinstance(item, (list, tuple)) else None
+            else:
+                safe[key] = _redact_unattested_media(item)
+        return safe
+    if isinstance(value, list):
+        return [_redact_unattested_media(item) for item in value]
+    if isinstance(value, tuple):
+        return [_redact_unattested_media(item) for item in value]
+    return value
+
+
 def _withhold_unattested_image_urls(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep visual results metadata-only until every asset has a verified mask receipt."""
+    return [
+        _redact_unattested_media(candidate)
+        for candidate in results
+        if isinstance(candidate, dict)
+    ]
+
+
     """Keep visual results metadata-only until every asset has a verified mask receipt."""
     safe_results: list[dict[str, Any]] = []
     for candidate in results:
