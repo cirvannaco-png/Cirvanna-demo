@@ -1832,9 +1832,13 @@ def discover_marketplace(
         if decision is None or not decision.may_display or decision.verdict != "show":
             withheld.append({"product_id": product_id, "rank_score": score, "decision": decision.verdict if decision else "review"})
             continue
+        # Product/offer display authority does not certify media privacy.
+        # Hide both URL collections until their asset-bound masking receipts exist.
+        safe_product = {**by_product[product_id], "image_urls": []}
+        safe_offer = {**offer, "image_urls": []}
         displayable.append({
-            "product": by_product[product_id],
-            "offer": offer,
+            "product": safe_product,
+            "offer": safe_offer,
             "merchant_comparison": comparisons_by_product.get(product_id, {
                 "status": "unavailable", "basis": None, "groups": [],
                 "unavailable_reasons": ["NO_COMPARABLE_OFFERS"],
