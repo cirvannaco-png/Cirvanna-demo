@@ -435,7 +435,7 @@ async def _live_offers() -> tuple[list[dict[str, Any]], bool]:
 
 MEDIA_REFERENCE_FIELDS = frozenset({
     "image", "images", "photo", "photos", "avatar", "avatars",
-    "thumbnail", "thumbnails", "media", "media_items", "media_assets",
+    "thumbnail", "thumbnails", "media_items", "media_assets",
     "picture", "pictures", "render", "renders", "face", "face_crop", "face_crops",
     "image_url", "image_urls", "photo_url", "photo_urls", "avatar_url",
     "thumbnail_url", "thumbnail_urls", "media_url", "media_urls",
