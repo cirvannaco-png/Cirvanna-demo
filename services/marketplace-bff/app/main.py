@@ -557,7 +557,20 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
     # The decision gateway returns product/offer details only for CAL SHOW.
     if not isinstance(data, dict) or not isinstance(data.get("displayable_products"), list):
         raise HTTPException(502, detail={"code": "WARDROBE_RECOMMENDATIONS_RESPONSE_INVALID"})
-    return _private_json_response(data)
+    safe_data = dict(data)
+    safe_displayable = []
+    for entry in data["displayable_products"]:
+        if not isinstance(entry, dict):
+            raise HTTPException(502, detail={"code": "WARDROBE_RECOMMENDATIONS_RESPONSE_INVALID"})
+        safe_entry = dict(entry)
+        for key in ("product", "offer"):
+            if isinstance(safe_entry.get(key), dict):
+                safe_media_record = dict(safe_entry[key])
+                safe_media_record["image_urls"] = []
+                safe_entry[key] = safe_media_record
+        safe_displayable.append(safe_entry)
+    safe_data["displayable_products"] = safe_displayable
+    return _private_json_response(safe_data)
 
 
 
