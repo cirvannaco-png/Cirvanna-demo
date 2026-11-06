@@ -208,43 +208,74 @@ async def _verify_consent(
     )
     if not valid:
         raise HTTPException(403, detail={"code": "CONSENT_NOT_VERIFIED"})
+    return receipt
 
 
 async def _authorize_twin(subject_id: str, twin_id: str) -> None:
-    """Prevent Click It from resolving a Twin belonging to a different account."""
-    config = _internal_config("TWIN_REGISTRY_API_URL", "TWIN_REGISTRY_API_TOKEN")
+    """Authorize the persistent Twin against this service's owner-scoped registry."""
+    try:
+        get_store().get(subject_id=subject_id, twin_id=twin_id)
+    except LookupError as exc:
+        raise HTTPException(404, detail={"code": "TWIN_ACCESS_DENIED"}) from exc
+    except Exception as exc:
+        raise HTTPException(503, detail={"code": "TWIN_STORE_UNAVAILABLE"}) from exc
+
+
+def _asset_service_config() -> tuple[str, str] | None:
+    return _internal_config("ASSET_SERVICE_URL", "ASSET_SERVICE_TOKEN")
+
+
+async def _upload_twin_asset(subject_id: str, twin_id: str, filename: str, content: bytes, content_type: str) -> str:
+    config = _asset_service_config()
     if config is None:
-        raise HTTPException(503, detail={"code": "TWIN_REGISTRY_NOT_CONFIGURED"})
+        raise HTTPException(503, detail={"code": "ASSET_SERVICE_NOT_CONFIGURED"})
     base, token = config
     try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(4.0, connect=1.5), trust_env=False, follow_redirects=False
-        ) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
             response = await client.post(
-                base + "/internal/v1/twins/authorize",
+                base + "/internal/v1/assets",
                 headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
-                json={"subject_id": subject_id, "twin_id": twin_id},
+                data={"owner_user_id": subject_id, "purpose": "twin_source_image", "parent_id": twin_id},
+                files={"file": (filename, content, content_type)},
             )
     except httpx.TimeoutException as exc:
-        raise HTTPException(504, detail={"code": "TWIN_AUTHORIZATION_TIMEOUT"}) from exc
+        raise HTTPException(504, detail={"code": "TWIN_ASSET_UPLOAD_TIMEOUT"}) from exc
     except httpx.HTTPError as exc:
-        raise HTTPException(503, detail={"code": "TWIN_REGISTRY_UNAVAILABLE"}) from exc
-    if response.status_code in {401, 403, 404}:
-        raise HTTPException(403, detail={"code": "TWIN_ACCESS_DENIED"})
-    if response.status_code != 200:
-        raise HTTPException(503, detail={"code": "TWIN_REGISTRY_UNAVAILABLE"})
+        raise HTTPException(503, detail={"code": "TWIN_ASSET_SERVICE_UNAVAILABLE"}) from exc
+    if response.status_code != 201:
+        raise HTTPException(503, detail={"code": "TWIN_ASSET_UPLOAD_FAILED"})
     try:
-        receipt = response.json()
+        result = response.json()
     except ValueError as exc:
-        raise HTTPException(503, detail={"code": "TWIN_REGISTRY_INVALID_RESPONSE"}) from exc
-    if not (
-        isinstance(receipt, dict)
-        and receipt.get("authorized") is True
-        and receipt.get("active") is True
-        and receipt.get("subject_id") == subject_id
-        and receipt.get("twin_id") == twin_id
+        raise HTTPException(502, detail={"code": "TWIN_ASSET_RESPONSE_INVALID"}) from exc
+    asset_id = result.get("asset_id") if isinstance(result, dict) else None
+    if (
+        not isinstance(asset_id, str) or result.get("owner_user_id") != subject_id
+        or result.get("purpose") != "twin_source_image" or result.get("parent_id") != twin_id
     ):
-        raise HTTPException(403, detail={"code": "TWIN_ACCESS_DENIED"})
+        raise HTTPException(502, detail={"code": "TWIN_ASSET_SCOPE_MISMATCH"})
+    return asset_id
+
+
+async def _delete_twin_asset(subject_id: str, asset_id: str) -> None:
+    config = _asset_service_config()
+    if config is None:
+        raise HTTPException(503, detail={"code": "ASSET_SERVICE_NOT_CONFIGURED"})
+    base, token = config
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+            response = await client.delete(
+                base + f"/v1/assets/{asset_id}",
+                headers={
+                    "Authorization": "Bearer " + token,
+                    "X-Asset-Owner-ID": subject_id,
+                    "Idempotency-Key": "twin-delete-" + asset_id,
+                },
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "TWIN_ASSET_DELETE_UNAVAILABLE"}) from exc
+    if response.status_code not in {200, 202, 204, 404}:
+        raise HTTPException(503, detail={"code": "TWIN_ASSET_DELETE_FAILED"})
 
 
 async def _vision_config() -> tuple[str, str] | None:
