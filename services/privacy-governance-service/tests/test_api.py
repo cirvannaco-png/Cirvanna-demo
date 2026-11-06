@@ -126,6 +126,9 @@ def test_publication_gate_requires_signed_mask_attestation_for_every_public_surf
             "asset_sha256": "c" * 64,
             "human_privacy_review_passed": True,
             "human_reviewed_asset_sha256": "c" * 64,
+            "human_privacy_review_receipt_id": "human-review-receipt-000001",
+            "human_privacy_reviewer_ref": "reviewer-ref-001",
+            "human_privacy_reviewed_at": "2026-11-06T06:00:00Z",
             "attestation_id": "mask-attestation-000001",
             "all_detected_faces_masked": True,
             "unmasked_face_count": 0,
@@ -236,12 +239,47 @@ def test_publication_gate_rejects_stale_digest_and_missing_human_review(client, 
 
 
 
+
+def test_publication_gate_rejects_unverifiable_human_reviewer_provenance(client, monkeypatch):
+    async def verify(_name, _path, _payload):
+        return {
+            "verified": True, "active": True,
+            "asset_id": "asset-public-007", "asset_sha256": "7" * 64,
+            "human_privacy_review_passed": True, "human_reviewed_asset_sha256": "7" * 64,
+            "human_privacy_review_receipt_id": "short",
+            "human_privacy_reviewer_ref": "reviewer-ref-007",
+            "human_privacy_reviewed_at": "2026-11-06T06:00:00Z",
+            "attestation_id": "mask-attestation-000007",
+            "all_detected_faces_masked": True, "unmasked_face_count": 0,
+            "masking_applied_before_publication": True,
+            "face_recognition_performed": False, "face_embeddings_created": False,
+            "age_estimation_performed": False, "all_face_regions_processed": True,
+            "masking_model_sha256": "b" * 64,
+        }
+
+    monkeypatch.setattr(main, "post_trusted", verify)
+    response = client.post(
+        "/internal/v1/privacy/assets/publication/evaluate",
+        headers=internal(),
+        json={
+            "asset_id": "asset-public-007", "asset_sha256": "7" * 64,
+            "masking_attestation_id": "mask-attestation-000007",
+            "target_surface": "community_feed",
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "PUBLICATION_PRIVACY_ATTESTATION_NOT_VALID"
+
+
 def test_publication_gate_rejects_attestation_for_different_asset_bytes(client, monkeypatch):
     async def verify(_name, _path, _payload):
         return {
             "verified": True, "active": True,
             "asset_id": "asset-public-006", "asset_sha256": "0" * 64,
             "human_privacy_review_passed": True, "human_reviewed_asset_sha256": "0" * 64,
+            "human_privacy_review_receipt_id": "human-review-receipt-000006",
+            "human_privacy_reviewer_ref": "reviewer-ref-006",
+            "human_privacy_reviewed_at": "2026-11-06T06:00:00Z",
             "attestation_id": "mask-attestation-000006",
             "all_detected_faces_masked": True, "unmasked_face_count": 0,
             "masking_applied_before_publication": True,
