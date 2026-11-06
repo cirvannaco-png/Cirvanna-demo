@@ -247,3 +247,72 @@ def test_internal_authentication_is_required(client):
               "purpose": "twin_source_image", "parent_id": "twin-001"},
     )
     assert result.status_code == 401
+
+
+
+def test_failed_asset_delete_is_hidden_and_recoverable(client, monkeypatch):
+    response, fake = client
+    asset_id = upload(response).json()["asset_id"]
+    original_delete = fake.delete_object
+    calls = {"count": 0}
+
+    def fail_once(**kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            from botocore.exceptions import ClientError
+            raise ClientError({"Error": {"Code": "SlowDown"}}, "DeleteObject")
+        return original_delete(**kwargs)
+
+    monkeypatch.setattr(fake, "delete_object", fail_once)
+    headers = {**auth(), "X-Asset-Owner-ID": "subject-001"}
+    first = response.delete(f"/v1/assets/{asset_id}", headers=headers)
+    assert first.status_code == 503
+    hidden = response.get(
+        f"/internal/v1/assets/{asset_id}/content",
+        headers=auth(),
+        params={"subject_id": "subject-001", "purpose": "twin_source_image", "parent_id": "twin-001"},
+    )
+    assert hidden.status_code == 404
+    retry = response.delete(f"/v1/assets/{asset_id}", headers=headers)
+    assert retry.status_code == 204
+    assert fake.objects == {}
+
+
+def test_parent_delete_retry_does_not_touch_another_subject(client, monkeypatch):
+    response, fake = client
+    first_asset = upload(response, parent_id="shared-parent").json()["asset_id"]
+    second_asset = upload(
+        response, owner_user_id="subject-002", parent_id="shared-parent"
+    ).json()["asset_id"]
+    original_delete = fake.delete_object
+    calls = {"count": 0}
+
+    def fail_once(**kwargs):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            from botocore.exceptions import ClientError
+            raise ClientError({"Error": {"Code": "SlowDown"}}, "DeleteObject")
+        return original_delete(**kwargs)
+
+    monkeypatch.setattr(fake, "delete_object", fail_once)
+    params = {"owner_user_id": "subject-001"}
+    failed = response.delete(
+        "/internal/v1/assets/by-parent/shared-parent", headers=auth(), params=params
+    )
+    assert failed.status_code == 503
+    retry = response.delete(
+        "/internal/v1/assets/by-parent/shared-parent", headers=auth(), params=params
+    )
+    assert retry.status_code == 200
+    assert retry.json()["deleted_count"] == 1
+    assert len(fake.objects) == 1
+    own_read = response.get(
+        f"/internal/v1/assets/{first_asset}/content", headers=auth(),
+        params={"subject_id": "subject-001", "purpose": "twin_source_image", "parent_id": "shared-parent"},
+    )
+    foreign_read = response.get(
+        f"/internal/v1/assets/{second_asset}/content", headers=auth(),
+        params={"subject_id": "subject-002", "purpose": "twin_source_image", "parent_id": "shared-parent"},
+    )
+    assert own_read.status_code == 404
+    assert foreign_read.status_code == 200
