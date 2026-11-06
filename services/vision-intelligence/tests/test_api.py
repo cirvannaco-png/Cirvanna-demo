@@ -111,7 +111,8 @@ def test_description_search_uses_live_offers_and_never_fabricates_results(client
     monkeypatch.setattr(main, "_rank_offers", lambda _query, _offers, limit: [{
         "variant_id": "v1", "product_name": "linen wrap dress",
         "image_urls": ["https://cdn.example.test/unmasked.jpg"],
-        "product": {"image_urls": ["https://cdn.example.test/nested.jpg"]},
+        "image_url": "https://cdn.example.test/top-level.jpg",
+        "product": {"image_urls": ["https://cdn.example.test/nested.jpg"], "thumbnail_url": "https://cdn.example.test/thumb.jpg", "image_asset_id": "private-product-asset"},
         "match_score": 0.25, "match_score_type": "cosine_similarity_not_probability",
     }][:limit])
     response = client.post("/v1/search/text", headers=auth(), json={"query": "linen wrap dress"})
@@ -121,6 +122,9 @@ def test_description_search_uses_live_offers_and_never_fabricates_results(client
     assert body["results"][0]["variant_id"] == "v1"
     assert body["results"][0]["image_urls"] == []
     assert body["results"][0]["product"]["image_urls"] == []
+    assert body["results"][0]["image_url"] is None
+    assert body["results"][0]["product"]["thumbnail_url"] is None
+    assert body["results"][0]["product"]["image_asset_id"] is None
     assert body["scores_are_probabilities"] is False
 
 
@@ -138,6 +142,7 @@ def test_click_it_returns_ranked_live_marketplace_results_without_persisting_ima
     monkeypatch.setattr(main, "_image_embedding", lambda _image: [0.25, 0.75])
     monkeypatch.setattr(main, "_rank_offers", lambda _query, _offers, limit: [{
         "variant_id": "v1", "product_name": "red woven top",
+        "render_url": "https://cdn.example.test/render.png",
         "match_score": 0.31, "match_score_type": "cosine_similarity_not_probability",
     }][:limit])
     response = client.post(
@@ -151,6 +156,7 @@ def test_click_it_returns_ranked_live_marketplace_results_without_persisting_ima
     assert body["search_mode"] == "image_to_catalog_text_similarity"
     assert body["image_persisted"] is False
     assert body["results"][0]["variant_id"] == "v1"
+    assert body["results"][0]["render_url"] is None
 
 
 def test_ranker_orders_scores_descending(monkeypatch):
