@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS virtual_twin_records (
     artifact_asset_id VARCHAR(160) NOT NULL,
     source_image_asset_ids JSONB NOT NULL,
     model_version VARCHAR(160) NOT NULL,
+    validation_receipt_id VARCHAR(160) NOT NULL,
     consent_id VARCHAR(160) NOT NULL,
     consent_version VARCHAR(80) NOT NULL,
     idempotency_key VARCHAR(160) NOT NULL,
