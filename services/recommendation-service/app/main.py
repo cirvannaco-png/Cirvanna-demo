@@ -160,7 +160,7 @@ class WardrobeItemForDailyLook(StrictModel):
     status: Literal["draft", "active", "archived", "deleted"]
 
 
-class TariDailyLooksRequest(StrictModel):
+class PNELLYDailyLooksRequest(StrictModel):
     request_id: str = Field(min_length=1, max_length=128)
     user_id: str = Field(min_length=1, max_length=128)
     local_date: str = Field(min_length=10, max_length=10)
@@ -259,8 +259,8 @@ def capabilities() -> dict[str, object]:
         "jewellery_and_accessories": True,
         "aesthetic_direction": True,
         "look_completion": True,
-        "tari_daily_look_orchestration": True,
-        "tari_daily_look_roles": ["everyday", "elevated", "explore"],
+        "pnelly_daily_look_orchestration": True,
+        "pnelly_daily_look_roles": ["everyday", "elevated", "explore"],
         "virtual_twin_preview_enabled": False,
         "feedback_event_contract": True,
         "durable_personal_memory": False,
@@ -281,10 +281,16 @@ def recommend(request: RecommendationRequest) -> dict[str, object]:
 
 @app.post(
     "/v1/tari/daily-looks",
-    tags=["tari daily looks"],
+    include_in_schema=False,
+    tags=["legacy compatibility"],
     dependencies=[Depends(require_internal_token)],
 )
-def tari_daily_looks(request: TariDailyLooksRequest) -> dict[str, object]:
+@app.post(
+    "/v1/pnelly/daily-looks",
+    tags=["pnelly daily looks"],
+    dependencies=[Depends(require_internal_token)],
+)
+def pnelly_daily_looks(request: PNELLYDailyLooksRequest) -> dict[str, object]:
     """Compose exactly three role slots from an authenticated BFF's wardrobe snapshot."""
     try:
         return build_daily_looks(
