@@ -83,7 +83,7 @@ def test_registry_rejects_pose_skeleton_as_a_persistent_twin(client):
     "https://example.com/image.png",
     "../private/image.png",
     "/tmp/image.png",
-    "file-private-image-001",
+    "file:///tmp/private-image.png",
 ])
 def test_registry_rejects_external_or_path_asset_references(client, asset_id):
     response = client.post(
