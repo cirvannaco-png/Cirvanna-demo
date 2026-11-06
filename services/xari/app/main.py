@@ -18,28 +18,28 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from xari.routing import ROUTES, plan_route
 
-SERVICE = "cirvanna-xari"
+SERVICE = "cirvanna-pnelly"
 bearer = HTTPBearer(auto_error=False)
 app = FastAPI(
-    title="Cirvanna Xari API",
+    title="Cirvanna PNELLY API",
     version="0.1.0",
-    description="Xari route planning and configuration-gated marketplace description search.",
+    description="PNELLY orchestration with backward-compatible Xari route and marketplace-search contracts.",
 )
 
 def require_api_token(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
 ) -> None:
-    expected = os.getenv("XARI_API_TOKEN", "").strip() or os.getenv("TARI_API_TOKEN", "").strip()
+    expected = os.getenv("PNELLY_API_TOKEN", "").strip() or os.getenv("XARI_API_TOKEN", "").strip() or os.getenv("TARI_API_TOKEN", "").strip()
     if len(expected.encode("utf-8")) < 32 or credentials is None:
         raise HTTPException(
             status_code=401,
-            detail="Valid Xari bearer authentication is required.",
+            detail="Valid PNELLY bearer authentication is required.",
             headers={"WWW-Authenticate": "Bearer"},
         )
     if not hmac.compare_digest(credentials.credentials, expected):
         raise HTTPException(
             status_code=401,
-            detail="Invalid Xari bearer token.",
+            detail="Invalid PNELLY bearer token.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -147,8 +147,9 @@ def capabilities() -> dict[str, object]:
     return {
         "service": SERVICE,
         "contract_version": "1.0.0",
-        "canonical_name": "Xari",
-        "legacy_names": ["Tari", "Xyra"],
+        "canonical_name": "PNELLY",
+        "legacy_names": ["Xari", "Tari", "Xyra"],
+        "contract_compatibility": {"xari_routes_preserved": True, "route_contract_version": "1.0.0"},
         "execution_enabled": _marketplace_search_config() is not None,
         "marketplace_description_search": {
             "implemented": True,
