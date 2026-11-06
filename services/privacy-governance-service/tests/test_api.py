@@ -114,6 +114,100 @@ def test_health_and_readiness_do_not_claim_missing_provider_readiness(client):
     assert ready.json()["vision_privacy_attestation_configured"] is False
 
 
+def test_readiness_probes_every_trusted_provider_instead_of_trusting_configuration(client, monkeypatch):
+    configure_policy_key(monkeypatch)
+    provider_names = {
+        "JURISDICTION_RESOLVER",
+        "CONTENT_LIFECYCLE",
+        "GUARDIAN_VERIFICATION",
+        "RIGHTS_AUTHORITY_VERIFICATION",
+        "VISION_PRIVACY_ATTESTATION",
+    }
+    for name in provider_names:
+        monkeypatch.setenv(name + "_API_URL", "https://" + name.lower().replace("_", "-") + ".example.test")
+        monkeypatch.setenv(name + "_API_TOKEN", "provider-token-" + name.lower() + "-long-enough-for-test")
+
+    calls = []
+
+    class FakeResponse:
+        def __init__(self, payload, status_code=200):
+            self.payload = payload
+            self.status_code = status_code
+
+        def json(self):
+            return self.payload
+
+    class FakeAsyncClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def get(self, url, **kwargs):
+            calls.append((url, kwargs["headers"]["Authorization"]))
+            if "content-lifecycle" in url:
+                return FakeResponse({"ready": False})
+            return FakeResponse({"ready": True})
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", FakeAsyncClient)
+    response = client.get("/ready")
+    body = response.json()
+
+    assert response.status_code == 200
+    assert len(calls) == 5
+    assert all(token.startswith("Bearer provider-token-") for _, token in calls)
+    assert body["jurisdiction_resolver_configured"] is True
+    assert body["jurisdiction_resolver_ready"] is True
+    assert body["content_lifecycle_configured"] is True
+    assert body["content_lifecycle_ready"] is False
+    assert body["vision_privacy_attestation_ready"] is True
+    assert body["ready"] is False
+    assert body["status"] == "not_ready"
+
+
+def test_readiness_rejects_provider_http_errors_and_malformed_health_payloads(client, monkeypatch):
+    for name in (
+        "JURISDICTION_RESOLVER", "CONTENT_LIFECYCLE", "GUARDIAN_VERIFICATION",
+        "RIGHTS_AUTHORITY_VERIFICATION", "VISION_PRIVACY_ATTESTATION",
+    ):
+        monkeypatch.setenv(name + "_API_URL", "https://" + name.lower() + ".example.test")
+        monkeypatch.setenv(name + "_API_TOKEN", "provider-token-" + name.lower() + "-long-enough-for-test")
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return ["ready"]  # A list is not the provider readiness contract.
+
+    class FakeAsyncClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def get(self, url, **_kwargs):
+            if "jurisdiction-resolver" in url:
+                raise main.httpx.ConnectError("provider offline")
+            return FakeResponse()
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", FakeAsyncClient)
+    response = client.get("/ready")
+    body = response.json()
+    assert body["ready"] is False
+    assert body["jurisdiction_resolver_configured"] is True
+    assert body["jurisdiction_resolver_ready"] is False
+    assert body["guardian_verification_ready"] is False
+    assert body["vision_privacy_attestation_ready"] is False
+
+
 def test_publication_gate_requires_signed_mask_attestation_for_every_public_surface(client, monkeypatch):
     calls = []
 
