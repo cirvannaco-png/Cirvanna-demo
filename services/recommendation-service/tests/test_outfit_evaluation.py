@@ -78,11 +78,11 @@ def sample_record():
             + reviewed("outfit-c", 1, exclusion=True, disposition="reject")
         ),
         "user_outcomes": [
-            {"subject_key": "hmac-user-a", "event_id": "e1", "ranker_id": "algorithm", "outfit_id": "outfit-a", "event_type": "exposed", "occurred_at": "2026-01-01T09:00:00Z"},
-            {"subject_key": "hmac-user-a", "event_id": "e2", "ranker_id": "algorithm", "outfit_id": "outfit-a", "event_type": "edited", "occurred_at": "2026-01-01T09:05:00Z", "edited_item_count": 1},
-            {"subject_key": "hmac-user-a", "event_id": "e3", "ranker_id": "algorithm", "outfit_id": "outfit-a", "event_type": "rejected", "occurred_at": "2026-01-02T09:00:00Z"},
-            {"subject_key": "hmac-user-a", "event_id": "e4", "ranker_id": "algorithm", "outfit_id": "outfit-a", "event_type": "rejected", "occurred_at": "2026-01-03T09:00:00Z"},
-            {"subject_key": "hmac-user-a", "event_id": "e5", "ranker_id": "algorithm", "outfit_id": "outfit-a", "event_type": "exposed", "occurred_at": "2026-01-04T09:00:00Z"},
+            {"subject_key": "hmac-user-a", "event_id": "e1", "ranker_id": "algorithm", "outfit_id": "outfit-a", "exposure_id": "exposure-1", "event_type": "exposed", "occurred_at": "2026-01-01T09:00:00Z"},
+            {"subject_key": "hmac-user-a", "event_id": "e2", "ranker_id": "algorithm", "outfit_id": "outfit-a", "exposure_id": "exposure-1", "event_type": "edited", "occurred_at": "2026-01-01T09:05:00Z", "edited_item_count": 1},
+            {"subject_key": "hmac-user-a", "event_id": "e3", "ranker_id": "algorithm", "outfit_id": "outfit-a", "exposure_id": "exposure-1", "event_type": "rejected", "occurred_at": "2026-01-02T09:00:00Z"},
+            {"subject_key": "hmac-user-a", "event_id": "e4", "ranker_id": "algorithm", "outfit_id": "outfit-a", "exposure_id": "exposure-2", "event_type": "exposed", "occurred_at": "2026-01-03T09:00:00Z"},
+            {"subject_key": "hmac-user-a", "event_id": "e5", "ranker_id": "algorithm", "outfit_id": "outfit-a", "exposure_id": "exposure-2", "event_type": "rejected", "occurred_at": "2026-01-04T09:00:00Z"},
         ],
     }
 
@@ -95,13 +95,13 @@ def test_simple_baseline_is_deterministic_and_documented():
 
 
 def test_evaluation_compares_algorithm_and_baseline_on_same_candidate_pool():
-    result = evaluate_records([sample_record()], k=3)
+    result = evaluate_records([sample_record()], k=2)
     assert result["cases_evaluated"] == 1
-    assert result["rankers"]["algorithm"]["mean_relevance_at_k"] == 2.6667
+    assert result["rankers"]["algorithm"]["mean_relevance_at_k"] == 3.5
+    assert result["rankers"]["simple_baseline"]["mean_relevance_at_k"] == 3.0
     assert result["rankers"]["algorithm"]["human_exclusion_violation_rate_at_k"] > 0
-    assert result["rankers"]["simple_baseline"]["outfits_at_k"] if "outfits_at_k" in result["rankers"]["simple_baseline"] else True
     assert result["algorithm_minus_baseline"]["mean_relevance_at_k"] is not None
-    assert result["user_behavior"]["algorithm"]["edit_rate"] == 1.0
+    assert result["user_behavior"]["algorithm"]["edit_rate"] == 0.5
     assert result["user_behavior"]["algorithm"]["repeated_rejection_rate"] == 1.0
     assert result["user_behavior"]["algorithm"]["reexposures_after_first_rejection"] == 1
     assert result["user_behavior"]["simple_baseline"]["edit_rate"] is None
