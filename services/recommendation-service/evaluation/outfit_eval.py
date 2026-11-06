@@ -395,8 +395,8 @@ def evaluate_records(records: list[dict[str, Any]], k: int = 3) -> dict[str, Any
         "rankers": summarized,
         "algorithm_minus_baseline": deltas,
         "hard_exclusion_cases_with_any_human_violation": dict(violation_cases),
-        "human_review_disagreements_in_top_k": disagreements,
-        "reviewed_outfits_in_top_k": candidate_count,
+        "ranked_candidate_slots_with_review_disagreement": disagreements,
+        "ranked_candidate_slots": candidate_count,
         "user_behavior": behavior,
         "interpretation": {
             "human_labels_are_required": True,
