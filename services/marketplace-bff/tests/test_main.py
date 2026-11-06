@@ -150,7 +150,7 @@ def test_description_search_fails_closed_without_xari_or_legacy_secret(client, m
     assert response.json()["detail"]["code"] == "XARI_API_URL_NOT_CONFIGURED"
 
 
-def test_description_search_forwards_to_legacy_pnelly_alias_and_keeps_candidates_pending_cal(client, monkeypatch):
+def test_description_search_forwards_to_legacy_xari_alias_and_keeps_candidates_pending_cal(client, monkeypatch):
     monkeypatch.setenv("XARI_API_URL", "https://xari.example.test")
     monkeypatch.setenv("XARI_API_TOKEN", "xari-internal-token-at-least-thirty-two-bytes")
     fake = FakeAsyncClient([FakeResponse({
@@ -258,8 +258,8 @@ def test_marketplace_ui_has_xari_description_search_and_mobile_click_it_capture(
 def test_description_search_prefers_xari_environment_names(client, monkeypatch):
     monkeypatch.setenv("XARI_API_URL", "https://xari.example.test")
     monkeypatch.setenv("XARI_API_TOKEN", "xari-internal-token-at-least-thirty-two-bytes")
-    monkeypatch.setenv("TARI_API_URL", "https://legacy-pnelly.example.test")
-    monkeypatch.setenv("TARI_API_TOKEN", "legacy-pnelly-token-at-least-thirty-two-bytes")
+    monkeypatch.setenv("TARI_API_URL", "https://legacy-xari.example.test")
+    monkeypatch.setenv("TARI_API_TOKEN", "legacy-xari-token-at-least-thirty-two-bytes")
     fake = FakeAsyncClient([FakeResponse({
         "status": "complete",
         "query": "linen shirt",
@@ -411,7 +411,7 @@ def test_wardrobe_page_exposes_feedback_and_consent_controls(client):
     assert "Avoid" in response.text
     assert "/api/wardrobe/recommendations" in response.text
     assert "PNELLY · daily look intelligence" in response.text
-    assert "/api/wardrobe/daily-looks" in response.text
+    assert "/api/wardrobe/pnelly/daily-looks" in response.text
     assert "Mark this look worn" in response.text
     assert "Not my style" in response.text
     assert "profile_storage" in response.text
@@ -560,7 +560,7 @@ def test_pnelly_daily_looks_uses_verified_wardrobe_and_gateway_subject(client, m
     fake.post = post_with_request_echo
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.post(
-        "/api/wardrobe/daily-looks",
+        "/api/wardrobe/pnelly/daily-looks",
         headers={"Authorization": "Bearer signed-session"},
         json={"occasion": "work", "climate": "hot_dry", "timezone": "Africa/Nairobi"},
     )
@@ -591,12 +591,12 @@ def test_pnelly_daily_looks_rejects_cross_subject_wardrobe_data(client, monkeypa
     ])
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.post(
-        "/api/wardrobe/daily-looks",
+        "/api/wardrobe/pnelly/daily-looks",
         headers={"Authorization": "Bearer signed-session"},
         json={"timezone": "Africa/Nairobi"},
     )
     assert response.status_code == 502
-    assert response.json()["detail"]["code"] == "TARI_WARDROBE_SCOPE_MISMATCH"
+    assert response.json()["detail"]["code"] == "PNELLY_WARDROBE_SCOPE_MISMATCH"
 
 
 def test_pnelly_daily_looks_rejects_gateway_response_with_missing_or_reordered_roles(client, monkeypatch):
@@ -623,12 +623,12 @@ def test_pnelly_daily_looks_rejects_gateway_response_with_missing_or_reordered_r
     ])
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.post(
-        "/api/wardrobe/daily-looks",
+        "/api/wardrobe/pnelly/daily-looks",
         headers={"Authorization": "Bearer signed-session"},
         json={"timezone": "Africa/Nairobi"},
     )
     assert response.status_code == 502
-    assert response.json()["detail"]["code"] == "TARI_RECOMMENDATION_SCHEMA_INVALID"
+    assert response.json()["detail"]["code"] == "PNELLY_RECOMMENDATION_SCHEMA_INVALID"
 
 
 
@@ -663,9 +663,17 @@ def test_pnelly_daily_looks_rejects_unverified_twin_preview_claims(client, monke
     ])
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.post(
-        "/api/wardrobe/daily-looks",
+        "/api/wardrobe/pnelly/daily-looks",
         headers={"Authorization": "Bearer signed-session"},
         json={"timezone": "Africa/Nairobi"},
     )
     assert response.status_code == 502
-    assert response.json()["detail"]["code"] == "TARI_RECOMMENDATION_SCHEMA_INVALID"
+    assert response.json()["detail"]["code"] == "PNELLY_RECOMMENDATION_SCHEMA_INVALID"
+
+
+def test_legacy_daily_looks_bff_route_is_hidden_compatibility_alias(client):
+    response = client.get("/openapi.json")
+    assert response.status_code == 200
+    paths = response.json()["paths"]
+    assert "/api/wardrobe/pnelly/daily-looks" in paths
+    assert "/api/wardrobe/daily-looks" not in paths
