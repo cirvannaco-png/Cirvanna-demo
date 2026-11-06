@@ -150,7 +150,7 @@ def test_description_search_fails_closed_without_xari_or_legacy_secret(client, m
     assert response.json()["detail"]["code"] == "XARI_API_URL_NOT_CONFIGURED"
 
 
-def test_description_search_forwards_to_legacy_tari_alias_and_keeps_candidates_pending_cal(client, monkeypatch):
+def test_description_search_forwards_to_legacy_pnelly_alias_and_keeps_candidates_pending_cal(client, monkeypatch):
     monkeypatch.setenv("XARI_API_URL", "https://xari.example.test")
     monkeypatch.setenv("XARI_API_TOKEN", "xari-internal-token-at-least-thirty-two-bytes")
     fake = FakeAsyncClient([FakeResponse({
@@ -258,8 +258,8 @@ def test_marketplace_ui_has_xari_description_search_and_mobile_click_it_capture(
 def test_description_search_prefers_xari_environment_names(client, monkeypatch):
     monkeypatch.setenv("XARI_API_URL", "https://xari.example.test")
     monkeypatch.setenv("XARI_API_TOKEN", "xari-internal-token-at-least-thirty-two-bytes")
-    monkeypatch.setenv("TARI_API_URL", "https://legacy-tari.example.test")
-    monkeypatch.setenv("TARI_API_TOKEN", "legacy-tari-token-at-least-thirty-two-bytes")
+    monkeypatch.setenv("TARI_API_URL", "https://legacy-pnelly.example.test")
+    monkeypatch.setenv("TARI_API_TOKEN", "legacy-pnelly-token-at-least-thirty-two-bytes")
     fake = FakeAsyncClient([FakeResponse({
         "status": "complete",
         "query": "linen shirt",
@@ -410,7 +410,7 @@ def test_wardrobe_page_exposes_feedback_and_consent_controls(client):
     assert "Dislike" in response.text
     assert "Avoid" in response.text
     assert "/api/wardrobe/recommendations" in response.text
-    assert "Tari · daily look intelligence" in response.text
+    assert "PNELLY · daily look intelligence" in response.text
     assert "/api/wardrobe/daily-looks" in response.text
     assert "Mark this look worn" in response.text
     assert "Not my style" in response.text
@@ -513,7 +513,7 @@ def test_wardrobe_consent_listing_allows_closet_browse_when_learning_provider_ab
     assert len(fake.calls) == 1
 
 
-def test_tari_daily_looks_uses_verified_wardrobe_and_gateway_subject(client, monkeypatch):
+def test_pnelly_daily_looks_uses_verified_wardrobe_and_gateway_subject(client, monkeypatch):
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
     monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
     monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
@@ -544,7 +544,7 @@ def test_tari_daily_looks_uses_verified_wardrobe_and_gateway_subject(client, mon
         FakeResponse({
             "schema_version": "1.0",
             "request_id": "will-be-uuid",
-            "mode": "tari_wardrobe_daily_looks",
+            "mode": "pnelly_wardrobe_daily_looks",
             "recommendation": recommendation,
         }),
     ])
@@ -553,7 +553,7 @@ def test_tari_daily_looks_uses_verified_wardrobe_and_gateway_subject(client, mon
     original_post = fake.post
 
     async def post_with_request_echo(url, **kwargs):
-        if url == "https://decision.example.test/v1/tari/daily-looks":
+        if url == "https://decision.example.test/v1/pnelly/daily-looks":
             fake.responses[0]._payload["request_id"] = kwargs["json"]["request_id"]
         return await original_post(url, **kwargs)
 
@@ -567,7 +567,7 @@ def test_tari_daily_looks_uses_verified_wardrobe_and_gateway_subject(client, mon
     assert response.status_code == 200, response.text
     assert response.headers["cache-control"] == "no-store, private"
     call = fake.calls[2]
-    assert call[1] == "https://decision.example.test/v1/tari/daily-looks"
+    assert call[1] == "https://decision.example.test/v1/pnelly/daily-looks"
     assert call[2]["headers"]["X-End-User-Authorization"] == "Bearer signed-session"
     sent_items = call[2]["json"]["wardrobe_items"]
     assert sent_items[0]["owner_user_id"] == "signed-user-42"
@@ -578,7 +578,7 @@ def test_tari_daily_looks_uses_verified_wardrobe_and_gateway_subject(client, mon
     assert "DECISION_GATEWAY_TOKEN" not in response.text
 
 
-def test_tari_daily_looks_rejects_cross_subject_wardrobe_data(client, monkeypatch):
+def test_pnelly_daily_looks_rejects_cross_subject_wardrobe_data(client, monkeypatch):
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
     monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
     monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
@@ -599,14 +599,14 @@ def test_tari_daily_looks_rejects_cross_subject_wardrobe_data(client, monkeypatc
     assert response.json()["detail"]["code"] == "TARI_WARDROBE_SCOPE_MISMATCH"
 
 
-def test_tari_daily_looks_rejects_gateway_response_with_missing_or_reordered_roles(client, monkeypatch):
+def test_pnelly_daily_looks_rejects_gateway_response_with_missing_or_reordered_roles(client, monkeypatch):
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
     monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
     monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
     monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
     monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
     malformed = {
-        "mode": "tari_wardrobe_daily_looks",
+        "mode": "pnelly_wardrobe_daily_looks",
         "recommendation": {
             "look_count": 3,
             "looks": [
@@ -632,14 +632,14 @@ def test_tari_daily_looks_rejects_gateway_response_with_missing_or_reordered_rol
 
 
 
-def test_tari_daily_looks_rejects_unverified_twin_preview_claims(client, monkeypatch):
+def test_pnelly_daily_looks_rejects_unverified_twin_preview_claims(client, monkeypatch):
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
     monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
     monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
     monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
     monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
     forged_preview = {
-        "mode": "tari_wardrobe_daily_looks",
+        "mode": "pnelly_wardrobe_daily_looks",
         "recommendation": {
             "look_count": 3,
             "looks": [
