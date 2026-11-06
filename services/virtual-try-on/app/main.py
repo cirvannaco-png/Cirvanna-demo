@@ -184,7 +184,7 @@ async def _verify_consent_bundle(subject_id: str, consent_id: str, twin_id: str)
         json_body={
             "subject_id": subject_id,
             "consent_id": consent_id,
-            "required_scopes": ["image_processing", "virtual_try_on", "twin_storage"],
+            "required_scopes": ["image_processing", "virtual_try_on"],
             "resource_id": twin_id,
         },
     )
@@ -201,7 +201,7 @@ async def _verify_consent_bundle(subject_id: str, consent_id: str, twin_id: str)
         and receipt.get("active") is True and receipt.get("subject_id") == subject_id
         and receipt.get("consent_id") == consent_id
         and receipt.get("resource_id") == twin_id
-        and set(["image_processing", "virtual_try_on", "twin_storage"]).issubset(set(receipt.get("granted_scopes", [])))
+        and set(["image_processing", "virtual_try_on"]).issubset(set(receipt.get("granted_scopes", [])))
     ):
         raise HTTPException(403, detail={"code": "CONSENT_NOT_VERIFIED"})
     return receipt
