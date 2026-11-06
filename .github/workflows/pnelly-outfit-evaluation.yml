@@ -1,0 +1,28 @@
+name: PNELLY outfit evaluation benchmark
+on:
+  push:
+    branches: [main, "feature/**", "engineering/**"]
+    paths:
+      - "tools/pnelly_evaluation/**"
+      - ".github/workflows/pnelly-outfit-evaluation.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "tools/pnelly_evaluation/**"
+      - ".github/workflows/pnelly-outfit-evaluation.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  evaluator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile evaluator and tests
+        run: python -m compileall -q tools/pnelly_evaluation tests/pnelly_evaluation
+      - name: Run evaluator contract tests
+        run: python -m unittest discover -s tests/pnelly_evaluation -v
