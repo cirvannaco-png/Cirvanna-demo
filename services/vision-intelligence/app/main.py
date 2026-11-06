@@ -509,21 +509,6 @@ def _withhold_unattested_image_urls(results: list[dict[str, Any]]) -> list[dict[
     ]
 
 
-    """Keep visual results metadata-only until every asset has a verified mask receipt."""
-    safe_results: list[dict[str, Any]] = []
-    for candidate in results:
-        if not isinstance(candidate, dict):
-            continue
-        safe_candidate = dict(candidate)
-        safe_candidate["image_urls"] = []
-        if isinstance(safe_candidate.get("product"), dict):
-            safe_product = dict(safe_candidate["product"])
-            safe_product["image_urls"] = []
-            safe_candidate["product"] = safe_product
-        safe_results.append(safe_candidate)
-    return safe_results
-
-
 def _rank_offers(query_vector: list[float], offers: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
     if not offers:
         return []
