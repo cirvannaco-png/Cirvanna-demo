@@ -84,6 +84,26 @@ class OutfitEvaluationTests(unittest.TestCase):
         }]
         self.assertEqual(evaluate([case])["status"], "descriptive_only")
 
+
+    def test_participant_cannot_switch_randomized_system_arms(self):
+        first = make_case("case-0001", "session-0001")
+        second = make_case("case-0002", "session-0002")
+        second["assigned_system"] = "baseline"
+        second["exposures"] = []
+        with self.assertRaisesRegex(ValueError, "one randomized system arm"):
+            evaluate([first, second])
+
+    def test_empty_baseline_slate_is_reported_as_no_result_not_zero_violations(self):
+        case = make_case("case-0001", "session-0001")
+        case["context"]["hard_excluded_item_ids"] = [
+            "shirt-1", "trouser-1", "dress-1", "jacket-1"
+        ]
+        result = evaluate([case], k=3)
+        baseline = result["systems"]["baseline"]
+        self.assertEqual(baseline["no_result_rate"], 1.0)
+        self.assertEqual(baseline["top_k_fill_rate"], 0.0)
+        self.assertIsNone(baseline["hard_exclusion_violation_rate"])
+
     def test_empty_dataset_makes_no_performance_claim(self):
         result = evaluate([])
         self.assertEqual(result["status"], "insufficient_human_reviewed_data")
