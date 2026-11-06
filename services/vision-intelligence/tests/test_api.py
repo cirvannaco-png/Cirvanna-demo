@@ -41,6 +41,29 @@ def auth():
     return {"Authorization": f"Bearer {TOKEN}"}
 
 
+def test_ranked_result_media_redaction_removes_nested_and_alternate_media_fields():
+    results = [{
+        "variant_id": "v1",
+        "product_name": "Linen shirt",
+        "render_url": "https://cdn.example.test/render.jpg",
+        "product": {
+            "image_urls": ["https://cdn.example.test/image.jpg"],
+            "image_asset_id": "private-asset-1",
+            "details": {"face_crop": "data:image/png;base64,secret"},
+            "colour": "blue",
+        },
+        "price_minor": 2500,
+    }]
+    safe = main._withhold_unattested_image_urls(results)
+    assert safe[0]["variant_id"] == "v1"
+    assert safe[0]["price_minor"] == 2500
+    assert safe[0]["render_url"] is None
+    assert safe[0]["product"]["image_urls"] == []
+    assert safe[0]["product"]["image_asset_id"] is None
+    assert safe[0]["product"]["details"]["face_crop"] is None
+    assert safe[0]["product"]["colour"] == "blue"
+
+
 def test_health_is_liveness_only(client):
     assert client.get("/health").json()["status"] == "alive"
 
