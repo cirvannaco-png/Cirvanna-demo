@@ -1049,10 +1049,11 @@ async def create_wardrobe_photo_item(
                     pass
             for receipt_id in receipts:
                 try:
+                    identity_base, identity_token = _identity_learning_service()
                     await client.post(
-                        (os.getenv("IDENTITY_SERVICE_URL", "").rstrip("/") + f"/v1/tal/consents/{receipt_id}/revoke"),
+                        identity_base + f"/v1/tal/consents/{receipt_id}/revoke",
                         params={"subject_id": subject_id},
-                        headers={"Authorization": "Bearer " + os.getenv("IDENTITY_SERVICE_TOKEN", "")},
+                        headers={"Authorization": "Bearer " + identity_token},
                     )
                 except Exception:
                     pass
@@ -1161,6 +1162,37 @@ async def delete_virtual_twin(twin_id: str, request: Request) -> Response:
         # withdrawn after the Twin and all child image assets are inaccessible.
         revoked_count = await _revoke_resource_media_consents(client, subject_id, twin_id)
     return _private_json_response({"status": "deleted", "twin_id": twin_id, "consent_receipts_revoked": revoked_count})
+
+
+@app.get("/api/virtual-try-on/capabilities")
+async def virtual_try_on_capabilities() -> Response:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(6.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        base, token = _virtual_try_on_service()
+        try:
+            response = await client.get(
+                base + "/capabilities",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "VIRTUAL_TRY_ON_CAPABILITIES_UNAVAILABLE"}) from exc
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "VIRTUAL_TRY_ON_CAPABILITIES_UNAVAILABLE"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "VIRTUAL_TRY_ON_CAPABILITIES_INVALID"}) from exc
+    if not isinstance(data, dict):
+        raise HTTPException(502, detail={"code": "VIRTUAL_TRY_ON_CAPABILITIES_INVALID"})
+    return _private_json_response({
+        "service": data.get("service"),
+        "renderer_configured": data.get("renderer_configured") is True,
+        "consent_verifier_configured": data.get("consent_verifier_configured") is True,
+        "asset_service_configured": data.get("asset_service_configured") is True,
+        "twin_service_configured": data.get("twin_service_configured") is True,
+        "database_ready": data.get("database_ready") is True,
+        "supported_categories": data.get("supported_categories", []),
+        "try_on_enabled": all(data.get(key) is True for key in ("renderer_configured", "consent_verifier_configured", "asset_service_configured", "twin_service_configured", "database_ready")),
+    })
 
 
 @app.post("/api/virtual-try-on")

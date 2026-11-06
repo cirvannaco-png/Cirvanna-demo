@@ -546,6 +546,7 @@ async def create_try_on(
     created_at = datetime.now(timezone.utc)
     result = {
         "request_id": payload.request_id,
+        "twin_id": payload.twin_id,
         "renderer_id": "fashn-vton-1.5",
         "renderer_version": renderer_version,
         "output_asset_id": output_asset_id,
