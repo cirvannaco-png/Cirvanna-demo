@@ -4,6 +4,8 @@
 
 The current canonical Recommendation Service is Complementer: a stateless, advisory look-coordination API. It is not yet a validated three-outfit ranker. The Wardrobe service records explicit item-level feedback and forwards consented signals to TAL/NPL, but does not yet persist outfit-level edit histories or three-look exposure/rejection events. This evaluation harness therefore creates a strict offline contract without pretending those missing signals already exist.
 
+The evaluator expects a capture adapter to supply each candidate's `algorithm_score`. The active Complementer response does not currently emit ranked complete-outfit candidates or that score; therefore the harness is not yet connected to a serving three-look ranker and cannot produce a valid algorithm-vs-baseline result until that product path exists.
+
 ## Paired experiment design
 
 For each scenario, freeze one candidate pool and score every candidate with both:
@@ -34,9 +36,9 @@ The baseline is intentionally unsophisticated. It is a control, not a production
 | Diversity@3 | Mean pairwise Jaccard distance across selected outfit categories, colors and style tags |
 | Exclusion violation rate@3 | Fraction of displayed top-three outfits with any human-confirmed possible hard-exclusion violation; must be zero |
 | Known exclusion-hit rate@3 | Fraction of top-three outfits with an upstream explicit-constraint hit |
-| User edit rate | Explicit `edited` user events / exposed outfit events; report changed item count per exposure |
+| User edit rate | Unique exposed recommendation IDs with at least one `edited` event / unique exposed recommendation IDs; report changed item count per exposure |
 | Rejection rate | Explicit `rejected` events / exposures |
-| Repeated rejection rate | Share of subject–outfit pairs with at least two distinct rejection events among pairs rejected at least once |
+| Repeated rejection rate | Share of subject–outfit pairs with at least two distinct rejected exposure IDs among pairs rejected at least once |
 | Re-exposure after rejection | Count of exposures of the same subject–outfit pair after its first rejection; this should trend to zero |
 
 The tool reports a missing user metric as `null`, not zero, when no user events have been instrumented. Rejection and edit rates must be computed only from purpose-consented user events, not inferred from dwell time, non-clicks or reviewer labels. Do not silently convert item-level NPL rejections into outfit-level rejections.
