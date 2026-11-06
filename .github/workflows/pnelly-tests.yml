@@ -1,0 +1,62 @@
+name: PNELLY orchestration and Xari compatibility tests
+
+on:
+  push:
+    branches: [main, "feat/**", "feature/**", "engineering/**"]
+    paths:
+      - "services/pnelly/**"
+      - "services/xari/**"
+      - ".github/workflows/pnelly-tests.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "services/pnelly/**"
+      - "services/xari/**"
+      - ".github/workflows/pnelly-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  canonical-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/pnelly
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/pnelly/requirements.txt
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Check dependency consistency
+        run: python -m pip check
+      - name: Compile canonical service
+        run: python -m compileall -q app pnelly tests
+      - name: Test PNELLY route and v1 contracts
+        run: python -m pytest -q
+
+  legacy-import-contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/xari
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/pnelly/requirements.txt
+      - name: Install canonical dependencies
+        run: python -m pip install -r ../pnelly/requirements.txt
+      - name: Compile the compatibility shim
+        run: python -m compileall -q app xari tests
+      - name: Verify legacy entry point
+        run: python -m pytest -q
