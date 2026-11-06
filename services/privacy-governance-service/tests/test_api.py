@@ -169,6 +169,43 @@ def test_readiness_probes_every_trusted_provider_instead_of_trusting_configurati
     assert body["status"] == "not_ready"
 
 
+def test_readiness_returns_200_only_when_all_providers_and_policy_key_are_live(client, monkeypatch):
+    configure_policy_key(monkeypatch)
+    names = (
+        "JURISDICTION_RESOLVER", "CONTENT_LIFECYCLE", "GUARDIAN_VERIFICATION",
+        "RIGHTS_AUTHORITY_VERIFICATION", "VISION_PRIVACY_ATTESTATION",
+    )
+    for name in names:
+        monkeypatch.setenv(name + "_API_URL", "https://" + name.lower().replace("_", "-") + ".example.test")
+        monkeypatch.setenv(name + "_API_TOKEN", "provider-token-" + name.lower() + "-long-enough-for-test")
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"ready": True}
+
+    class FakeAsyncClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def get(self, _url, **_kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", FakeAsyncClient)
+    response = client.get("/ready")
+    assert response.status_code == 200
+    assert response.json()["ready"] is True
+    assert response.json()["status"] == "ready"
+    assert all(item["ready"] and item["configured"] for item in response.json()["providers"].values())
+
+
 def test_readiness_rejects_provider_http_errors_and_malformed_health_payloads(client, monkeypatch):
     for name in (
         "JURISDICTION_RESOLVER", "CONTENT_LIFECYCLE", "GUARDIAN_VERIFICATION",
