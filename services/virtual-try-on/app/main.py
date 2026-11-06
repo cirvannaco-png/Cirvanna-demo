@@ -174,7 +174,7 @@ async def _json_request(method: str, base: str, path: str, token: str, *, json_b
         raise HTTPException(503, detail={"code": "INTERNAL_PROVIDER_UNAVAILABLE"}) from exc
 
 
-async def _verify_consent(payload: TryOnRequest) -> dict:
+async def _verify_consent_bundle(subject_id: str, consent_id: str, twin_id: str) -> dict:
     config = _trusted_base("IDENTITY_SERVICE_URL", "IDENTITY_SERVICE_TOKEN")
     if config is None:
         raise HTTPException(503, detail={"code": "CONSENT_PROVIDER_NOT_CONFIGURED"})
@@ -182,10 +182,10 @@ async def _verify_consent(payload: TryOnRequest) -> dict:
     response = await _json_request(
         "POST", base, "/internal/v1/consents/verify", token,
         json_body={
-            "subject_id": payload.subject_id,
-            "consent_id": payload.consent.consent_id,
+            "subject_id": subject_id,
+            "consent_id": consent_id,
             "required_scopes": ["image_processing", "virtual_try_on", "twin_storage"],
-            "resource_id": payload.twin_id,
+            "resource_id": twin_id,
         },
     )
     if response.status_code in {401, 403, 404}:
@@ -198,23 +198,24 @@ async def _verify_consent(payload: TryOnRequest) -> dict:
         raise HTTPException(502, detail={"code": "CONSENT_VERIFIER_INVALID_RESPONSE"}) from exc
     if not (
         isinstance(receipt, dict) and receipt.get("verified") is True
-        and receipt.get("active") is True and receipt.get("subject_id") == payload.subject_id
-        and receipt.get("consent_id") == payload.consent.consent_id
-        and receipt.get("resource_id") == payload.twin_id
+        and receipt.get("active") is True and receipt.get("subject_id") == subject_id
+        and receipt.get("consent_id") == consent_id
+        and receipt.get("resource_id") == twin_id
         and set(["image_processing", "virtual_try_on", "twin_storage"]).issubset(set(receipt.get("granted_scopes", [])))
     ):
         raise HTTPException(403, detail={"code": "CONSENT_NOT_VERIFIED"})
     return receipt
 
 
-async def _resolve_twin(payload: TryOnRequest) -> dict:
+async def _verify_consent(payload: TryOnRequest) -> dict:
+    return await _verify_consent_bundle(payload.subject_id, payload.consent.consent_id, payload.twin_id)
+
+async def _resolve_twin_by_ids(subject_id: str, twin_id: str) -> dict:
     config = _trusted_base("VIRTUAL_TWIN_API_URL", "VIRTUAL_TWIN_API_TOKEN")
     if config is None:
         raise HTTPException(503, detail={"code": "TWIN_SERVICE_NOT_CONFIGURED"})
     base, token = config
-    response = await _json_request(
-        "GET", base, f"/v1/twins/{payload.twin_id}?subject_id={payload.subject_id}", token
-    )
+    response = await _json_request("GET", base, f"/v1/twins/{twin_id}?subject_id={subject_id}", token)
     if response.status_code in {403, 404}:
         raise HTTPException(404, detail={"code": "TWIN_NOT_FOUND_OR_NOT_AUTHORIZED"})
     if response.status_code != 200:
@@ -224,14 +225,21 @@ async def _resolve_twin(payload: TryOnRequest) -> dict:
         twin = body.get("twin") if isinstance(body, dict) else None
     except ValueError as exc:
         raise HTTPException(502, detail={"code": "TWIN_SERVICE_INVALID_RESPONSE"}) from exc
-    if (
-        not isinstance(twin, dict) or twin.get("subject_id") != payload.subject_id
-        or twin.get("twin_id") != payload.twin_id or twin.get("status") != "active"
-        or twin.get("source_asset_id") != payload.person_image_asset_id
-    ):
+    if not isinstance(twin, dict) or twin.get("subject_id") != subject_id or twin.get("twin_id") != twin_id or twin.get("status") != "active":
+        raise HTTPException(403, detail={"code": "TWIN_NOT_AUTHORIZED"})
+    return twin
+
+
+async def _resolve_twin(payload: TryOnRequest) -> dict:
+    twin = await _resolve_twin_by_ids(payload.subject_id, payload.twin_id)
+    if twin.get("source_asset_id") != payload.person_image_asset_id:
         raise HTTPException(403, detail={"code": "TWIN_PERSON_ASSET_MISMATCH"})
     return twin
 
+
+# Legacy implementation removed; Twin resolution now uses the one persisted registry.
+async def _resolve_twin_legacy_unused(payload: TryOnRequest) -> dict:
+    config = _trusted_base("VIRTUAL_TWIN_API_URL", "VIRTUAL_TWIN_API_TOKEN")
 
 async def _read_authorized_asset(
     *, subject_id: str, asset_id: str, purpose: str, parent_id: str,
@@ -516,15 +524,14 @@ async def create_try_on(
         raise HTTPException(503, detail={"code": "TRY_ON_DATABASE_NOT_READY"}) from exc
 
     digest = _payload_hash(payload)
+    consent = await _verify_consent(payload)
+    twin = await _resolve_twin(payload)
     prior = store.get(payload.subject_id, payload.request_id)
     if prior is not None:
         if prior["payload_hash"] != digest:
             raise HTTPException(409, detail={"code": "TRY_ON_IDEMPOTENCY_CONFLICT"})
         if prior["status"] == "complete":
             return _response_from_job(prior)
-
-    consent = await _verify_consent(payload)
-    twin = await _resolve_twin(payload)
     person = await _read_authorized_asset(
         subject_id=payload.subject_id, asset_id=payload.person_image_asset_id,
         purpose="twin_source_image", parent_id=payload.twin_id,
@@ -587,4 +594,6 @@ async def get_try_on(
         raise HTTPException(503, detail={"code": "TRY_ON_DATABASE_UNAVAILABLE"}) from exc
     if result is None:
         raise HTTPException(404, detail={"code": "TRY_ON_NOT_FOUND"})
+    await _verify_consent_bundle(subject_id, result["consent_id"], result["twin_id"])
+    await _resolve_twin_by_ids(subject_id, result["twin_id"])
     return JSONResponse(content=result["result"], headers={"Cache-Control": "no-store, private"})
