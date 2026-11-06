@@ -21,8 +21,10 @@ import httpx
 import numpy as np
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.responses import JSONResponse
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field
+from app.click_it_privacy import anonymize_click_it_image, detector_configuration
 from starlette import status
 from urllib.parse import urlsplit
 
@@ -39,6 +41,14 @@ SHA256 = re.compile(r"^[0-9a-fA-F]{64}$")
 SUPPORTED_MIME = {"image/jpeg", "image/png", "image/webp"}
 bearer = HTTPBearer(auto_error=False)
 app = FastAPI(title="Cirvanna Vision Intelligence", version="0.1.0")
+
+
+@app.middleware("http")
+async def click_it_no_store(request, call_next):
+    response = await call_next(request)
+    if request.url.path == "/v1/click-it/scan":
+        response.headers["Cache-Control"] = "no-store, private"
+    return response
 
 _CLIP_MODEL = None
 _CLIP_PROCESSOR = None
@@ -413,11 +423,30 @@ async def _live_offers() -> tuple[list[dict[str, Any]], bool]:
             "category": product.get("category"),
             "brand": product.get("brand"),
             "attributes": product.get("attributes") or {},
-            "image_urls": product.get("image_urls") or [],
+            "image_urls": [],
         }
+        # Do not propagate legacy offer/product URLs without an asset-bound
+        # publication receipt from the trusted Vision privacy attestation service.
+        merged["image_urls"] = []
         merged["search_text"] = _offer_description(merged, product)
         joined.append(merged)
     return joined, truncated
+
+
+def _withhold_unattested_image_urls(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep visual results metadata-only until every asset has a verified mask receipt."""
+    safe_results: list[dict[str, Any]] = []
+    for candidate in results:
+        if not isinstance(candidate, dict):
+            continue
+        safe_candidate = dict(candidate)
+        safe_candidate["image_urls"] = []
+        if isinstance(safe_candidate.get("product"), dict):
+            safe_product = dict(safe_candidate["product"])
+            safe_product["image_urls"] = []
+            safe_candidate["product"] = safe_product
+        safe_results.append(safe_candidate)
+    return safe_results
 
 
 def _rank_offers(query_vector: list[float], offers: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
@@ -498,8 +527,9 @@ def readiness() -> dict[str, Any]:
     catalog_configured = bool(os.getenv("CATALOG_API_URL", "").strip()) and bool(
         os.getenv("CATALOG_API_TOKEN", "").strip() or os.getenv("CATALOG_READ_TOKEN", "").strip()
     )
+    privacy_detector_configured, privacy_detector_reason = detector_configuration()
     models_loaded = _CLIP_MODEL is not None and _CLIP_PROCESSOR is not None and _POSE_LANDMARKER is not None
-    configured = clip_configured and pose_configured and token_configured and commerce_configured and catalog_configured
+    configured = clip_configured and pose_configured and token_configured and commerce_configured and catalog_configured and privacy_detector_configured
     ready = configured and models_loaded
     result = {
         "status": "ready" if ready else "not_ready",
@@ -519,6 +549,10 @@ def readiness() -> dict[str, Any]:
         "pose_model_startup_error": _MODEL_LOAD_ERRORS.get("pose"),
         "marketplace_services_configured": commerce_configured and catalog_configured,
         "worker_auth_configured": token_configured,
+        "privacy_face_detector_configured": privacy_detector_configured,
+        "privacy_face_detector_reason": privacy_detector_reason,
+        "face_recognition": False,
+        "age_estimation": False,
         "input_persistence": False,
         "product_image_fetching": False,
         "results_are_live_active_offers": True,
@@ -549,6 +583,9 @@ def capabilities() -> dict[str, Any]:
         "product_image_fetching": False,
         "similarity_scores_calibrated": False,
         "model_revision_pinned": clip_configured,
+        "click_it_face_masking_configured": detector_configuration()[0],
+        "facial_recognition": False,
+        "image_persistence": False,
     }
 
 
@@ -564,7 +601,7 @@ async def search_by_description(payload: TextSearchRequest) -> dict[str, Any]:
             or str((item.get("product") or {}).get("category", "")).casefold() == category
         ]
     query_vector = _text_embedding("A marketplace product matching this description: " + query)
-    results = _rank_offers(query_vector, offers, payload.limit)
+    results = _withhold_unattested_image_urls(_rank_offers(query_vector, offers, payload.limit))
     return {
         "status": "complete",
         "query": query,
@@ -582,52 +619,85 @@ async def click_it_scan(
     consent_image_processing: Annotated[bool, Form()],
     consent_click_it: Annotated[bool, Form()],
     image: Annotated[UploadFile, File()],
+    photographed_people_status: Annotated[str, Form()] = "unknown",
     category: Annotated[str | None, Form()] = None,
     limit: Annotated[int, Form(ge=1, le=25)] = 10,
 ) -> dict[str, Any]:
     if not consent_image_processing or not consent_click_it:
         await image.close()
         raise HTTPException(403, detail={"code": "EXPLICIT_CLICK_IT_CONSENT_REQUIRED"})
+    if photographed_people_status not in {"no_people", "adults_only", "contains_minor"}:
+        await image.close()
+        raise HTTPException(403, detail={"code": "CHILD_SAFETY_STATUS_UNCONFIRMED"})
     content_type = image.content_type or ""
     try:
         data = await image.read(MAX_IMAGE_BYTES + 1)
     finally:
         await image.close()
     decoded = _decode_image(data, content_type)
-    quality = evaluate_image_quality(decoded)
-    if not quality["passed"]:
+    del data  # Discard the original upload byte buffer after decoding.
+    # The original image is never used for quality scoring, embedding, or retrieval.
+    # Privacy detection and masking must complete first.
+    privacy_ready, privacy_reason = detector_configuration()
+    if not privacy_ready:
+        decoded.close()
         raise HTTPException(
-            422,
-            detail={
-                "code": "IMAGE_QUALITY_REJECTED",
-                "quality": quality,
-                "message": "Retake the photo with better lighting, focus, contrast, and the product clearly in frame.",
-            },
+            503,
+            detail={"code": "CLICK_IT_PRIVACY_DETECTOR_NOT_READY", "reason": privacy_reason},
         )
-    query_vector = _image_embedding(decoded)
-    offers, truncated = await _live_offers()
-    if category and category.strip():
-        selected = category.strip().casefold()
-        offers = [
-            item for item in offers
-            if str(item.get("category", "")).casefold() == selected
-            or str((item.get("product") or {}).get("category", "")).casefold() == selected
-        ]
-    results = _rank_offers(query_vector, offers, limit)
-    return {
-        "status": "complete",
-        "scan_id": str(uuid.uuid4()),
-        "search_mode": "image_to_catalog_text_similarity",
-        "image_quality": quality,
-        "candidate_count": len(results),
-        "catalog_offer_count": len(offers),
-        "results": results,
-        "catalog_truncated": truncated,
-        "model": {"id": MODEL_ID, "revision": os.getenv("CLIP_MODEL_REVISION")},
-        "scores_are_probabilities": False,
-        "warning": "Scores rank the live catalog but are not calibrated match probabilities; visually verify the result before buying.",
-        "image_persisted": False,
-    }
+    try:
+        privacy_safe_image, faces_masked = anonymize_click_it_image(decoded)
+    finally:
+        decoded.close()  # Drop the unmasked decoded image even when masking fails.
+    # A caller who declares people in frame must receive a positive face detection
+    # and masking result. Zero detections are not treated as proof of a safe image.
+    if photographed_people_status in {"adults_only", "contains_minor"} and faces_masked < 1:
+        privacy_safe_image.close()
+        raise HTTPException(503, detail={"code": "CLICK_IT_PRIVACY_DETECTION_UNCERTAIN"})
+    try:
+        quality = evaluate_image_quality(privacy_safe_image)
+        if not quality["passed"]:
+            raise HTTPException(
+                422,
+                detail={
+                    "code": "IMAGE_QUALITY_REJECTED",
+                    "quality": quality,
+                    "message": "Retake the photo with better lighting, focus, contrast, and the product clearly in frame.",
+                },
+            )
+        query_vector = _image_embedding(privacy_safe_image)
+        offers, truncated = await _live_offers()
+        if category and category.strip():
+            selected = category.strip().casefold()
+            offers = [
+                item for item in offers
+                if str(item.get("category", "")).casefold() == selected
+                or str((item.get("product") or {}).get("category", "")).casefold() == selected
+            ]
+        results = _withhold_unattested_image_urls(_rank_offers(query_vector, offers, limit))
+        response_payload = {
+            "status": "complete",
+            "scan_id": str(uuid.uuid4()),
+            "search_mode": "image_to_catalog_text_similarity",
+            "image_quality": quality,
+            "privacy": {
+                "face_detection": "completed",
+                "faces_masked": faces_masked,
+                "face_recognition": False,
+                "original_image_persisted": False,
+            },
+            "candidate_count": len(results),
+            "catalog_offer_count": len(offers),
+            "results": results,
+            "catalog_truncated": truncated,
+            "model": {"id": MODEL_ID, "revision": os.getenv("CLIP_MODEL_REVISION")},
+            "scores_are_probabilities": False,
+            "warning": "Scores rank the live catalog but are not calibrated match probabilities; visually verify the result before buying.",
+            "image_persisted": False,
+        }
+    finally:
+        privacy_safe_image.close()  # Release the masked working image on success and every failure path.
+    return JSONResponse(content=response_payload, headers={"Cache-Control": "no-store, private"})
 
 
 @app.post("/v1/twin/infer", dependencies=[Depends(require_worker_auth)], tags=["virtual-twin"])

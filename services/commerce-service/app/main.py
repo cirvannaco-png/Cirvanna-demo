@@ -1079,7 +1079,7 @@ def list_offers(db: Annotated[Session, Depends(get_db)], q: str | None = Query(N
     rows = db.execute(stmt.order_by(Listing.created_at.desc(), Variant.id).offset(offset).limit(limit)).all()
     return {"items": [{"variant_id": v.id, "listing_id": l.id, "merchant_id": m.id, "merchant_name": m.display_name,
         "catalog_product_id": l.catalog_product_id, "product_name": l.product_name, "category": l.category,
-        "image_urls": l.image_urls, "sku": v.sku, "options": v.options, "price_minor": v.price_minor, "currency": v.currency,
+        "image_urls": [], "sku": v.sku, "options": v.options, "price_minor": v.price_minor, "currency": v.currency,
         "available_stock": v.on_hand - v.reserved_qty, "canonical_variant_id": v.canonical_variant_id,
         "observed_at": v.observed_at.isoformat() if v.observed_at else None,
         "is_fresh": offer_is_fresh(v.observed_at),

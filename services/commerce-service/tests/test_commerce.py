@@ -339,7 +339,7 @@ def test_merchant_listing_snapshots_only_trusted_catalog_images(client, monkeypa
     assert variant.status_code == 201
     offers = client.get("/marketplace/offers")
     matching = next(item for item in offers.json()["items"] if item["listing_id"] == response.json()["listing_id"])
-    assert matching["image_urls"] == response.json()["image_urls"]
+    assert matching["image_urls"] == []  # Public imagery stays withheld until asset-bound masking attestation.
 
 
 def test_persistent_cart_is_account_scoped_and_rechecks_available_stock(client):

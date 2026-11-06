@@ -25,7 +25,7 @@ The adapters intentionally **fail closed** until these configurations and matchi
 - VIRTUAL_TWIN_API_TOKEN: internal API bearer secret. Never place it in a browser.
 - VISION_INTELLIGENCE_API_URL: private trusted HTTPS base URL of services/vision-intelligence.
 - VISION_INTELLIGENCE_API_TOKEN: internal worker token, at least 32 bytes, identical to VISION_WORKER_TOKEN on that service.
-- CONSENT_API_URL and CONSENT_API_TOKEN: trusted identity/consent service and internal token. This service calls POST /internal/v1/consents/verify with subject_id, consent_id, required_scopes, and (for Click It) resource_id. It requires JSON containing verified=true, active=true, the same subject_id and consent_id, granted_scopes covering every requested scope, and the same resource_id when one was supplied. Consent must be revocable and checked at request time.
+- PRIVACY_GOVERNANCE_API_URL and PRIVACY_GOVERNANCE_API_TOKEN: trusted identity/consent service and internal token. This service calls POST /internal/v1/consents/verify with subject_id, consent_id, required_scopes, and (for Click It) resource_id. It requires JSON containing verified=true, active=true, the same subject_id and consent_id, granted_scopes covering every requested scope, and the same resource_id when one was supplied. Consent must be revocable and checked at request time.
 - TWIN_REGISTRY_API_URL and TWIN_REGISTRY_API_TOKEN: trusted Twin registry. This service calls POST /internal/v1/twins/authorize with subject_id and twin_id, and requires authorized=true, active=true, and matching IDs.
 
 No existing deployed consent or Twin-registry endpoint was found in the repository, so these adapter contracts do not imply that those services are live. Do not expose the service until those contracts are implemented and tested against the actual identity provider and persistent Twin store. A user-supplied subject_id is not authentication; only trusted server-side callers may call this service.
@@ -38,6 +38,12 @@ No existing deployed consent or Twin-registry endpoint was found in the reposito
 - 502: a downstream response is malformed or inference fails unexpectedly.
 
 Failure payloads use stable opaque codes and do not forward bearer secrets, full upstream bodies, local paths or stack traces. The API does not silently return demo products or fake Twin geometry.
+
+## Click It Privacy Governance integration
+
+Configure one `PRIVACY_GOVERNANCE_API_URL` and `PRIVACY_GOVERNANCE_API_TOKEN` pair for both consent verification and jurisdiction policy evaluation. The token must match the service's `PRIVACY_GOVERNANCE_INTERNAL_TOKEN` and be distributed through the approved secret manager. The consent adapter verifies purpose-bound scopes, subject binding, resource binding and guardian-authority evidence. The policy adapter requires a current signed receipt covering every trusted applicable jurisdiction.
+
+The capture-country hint remains unverified input; the separate jurisdiction resolver must determine controller/processor establishments, capture context, processing/storage regions and transfer paths. Missing or conflicting jurisdiction, absent policy signatures, denied lawful basis/transfer or missing guardian scope results in BLOCK/REVIEW.
 
 ## Remaining release gates
 

@@ -121,6 +121,13 @@
       "status": "api-schema-and-signed-evidence-implemented",
       "purpose": "Persist explicit cultural declarations, versioned confirmation records, hard/soft requirement attributes, auditable retraction events and candidate-bound signed policy snapshots.",
       "promotionGate": "Deploy PostgreSQL and migrations, enforce end-user identity binding at trusted ingress, prove key rotation and signature verification end-to-end, and complete culturally informed catalog governance."
+    },
+    {
+      "id": "privacy-governance",
+      "target": "services/privacy-governance-service",
+      "status": "implementation-scaffold",
+      "purpose": "Internal consent receipts, legally signed jurisdiction policies, and photographed-person image-rights case workflow for Click It.",
+      "promotionGate": "Deploy and independently verify guardian-authority, jurisdiction resolver, content-lifecycle quarantine/deletion, counsel-signed jurisdiction bundles, database backup/restore, staffed privacy review and end-to-end rights propagation before production enablement."
     }
   ],
   "sourceSnapshots": [

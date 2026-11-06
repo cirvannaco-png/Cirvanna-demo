@@ -26,6 +26,8 @@ def client():
 def configure_upstreams(monkeypatch):
     monkeypatch.setenv("CATALOG_API_URL", "https://catalog.example.test")
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_URL", "https://privacy.example.test")
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_TOKEN", "privacy-governance-test-token-at-least-32-bytes")
 
 
 def test_page_bootstraps_same_origin_live_offers_not_demo_data(client):
@@ -45,12 +47,14 @@ def test_public_offers_are_proxied_without_exposing_catalog_credentials(client, 
     def fake_get(url, **kwargs):
         seen["url"] = url
         seen.update(kwargs)
-        return FakeResponse({"items": [{"variant_id": "v1"}], "total": 1, "offset": 0, "limit": 20})
+        return FakeResponse({"items": [{"variant_id": "v1", "image_urls": ["https://cdn.example.test/unmasked.jpg"], "product": {"image_urls": ["https://cdn.example.test/nested.jpg"]}}], "total": 1, "offset": 0, "limit": 20})
 
     monkeypatch.setattr(main.httpx, "get", fake_get)
     response = client.get("/api/commerce/marketplace/offers?q=linen&category=Fashion&offset=20&limit=10")
     assert response.status_code == 200
     assert response.json()["total"] == 1
+    assert response.json()["items"][0]["image_urls"] == []
+    assert response.json()["items"][0]["product"]["image_urls"] == []
     assert seen["url"] == "https://commerce.example.test/marketplace/offers"
     assert seen["params"] == {"offset": 20, "limit": 10, "q": "linen", "category": "Fashion"}
     assert "Authorization" not in seen["headers"]
@@ -211,6 +215,8 @@ def test_click_it_uses_verified_commerce_subject_and_returns_only_pending_candid
             "consent_id": "consent-record-1234",
             "consent_image_processing": "true",
             "consent_click_it": "true",
+            "photographed_people_status": "adults_only",
+            "capture_jurisdiction_hint": "Unverified Capture Region",
         },
         files={"product_image": ("dress.png", b"validated-photo-bytes", "image/png")},
     )
@@ -222,6 +228,8 @@ def test_click_it_uses_verified_commerce_subject_and_returns_only_pending_candid
     assert fake.calls[0][1] == "https://commerce.example.test/me"
     assert fake.calls[1][1] == "https://virtual-twin.example.test/click-it"
     assert fake.calls[1][2]["data"]["subject_id"] == "signed-user-42"
+    assert fake.calls[1][2]["data"]["photographed_people_status"] == "adults_only"
+    assert fake.calls[1][2]["data"]["capture_jurisdiction_hint"] == "Unverified Capture Region"
     assert "subject_id" not in response.request.content.decode(errors="ignore")
     assert fake.calls[1][2]["files"]["product_image"][1] == b"validated-photo-bytes"
 
@@ -234,6 +242,7 @@ def test_click_it_rejects_unsupported_image_before_calling_services(client, monk
             "consent_id": "consent-record-1234",
             "consent_image_processing": "true",
             "consent_click_it": "true",
+            "photographed_people_status": "no_people",
         },
         files={"product_image": ("payload.bin", b"x", "application/octet-stream")},
     )
@@ -250,6 +259,20 @@ def test_marketplace_ui_has_xari_description_search_and_mobile_click_it_capture(
     assert 'id="clickItConsentId"' in response.text
     assert 'id="clickItImageConsent"' in response.text
     assert 'id="clickItSearchConsent"' in response.text
+    assert 'id="clickItPeopleStatus"' in response.text
+    assert 'id="clickItGuardianVerificationRef"' in response.text
+    assert 'id="clickItPeopleConsent"' in response.text
+    assert 'photographed_people_consent_confirmed:$("clickItPeopleConsent").checked' in response.text
+    assert 'id="clickItRevokeConsentBtn"' in response.text
+    assert 'const twinResourceAllowed=photographedPeopleStatus!=="contains_minor"' in response.text
+    assert 'if(twinId&&twinResourceAllowed)consentPayload.twin_id=twinId' in response.text
+    assert 'form.append("consent_id",$("clickItConsentId").value.trim())' not in response.text
+    assert 'fetch("/api/privacy/consents"' in response.text
+    assert 'id="clickItCaptureJurisdiction"' in response.text
+    assert 'id="imageRightsForm"' in response.text
+    assert 'fetch("/api/privacy/image-requests"' in response.text
+    assert 'id="imageRightsStatusForm"' in response.text
+    assert 'X-Privacy-Request-Token' in response.text
     assert 'fetch("/api/vision/marketplace-search"' in response.text
     assert 'fetch("/api/vision/click-it"' in response.text
     assert "display_authorized===true" in response.text
@@ -375,7 +398,10 @@ def test_wardrobe_recommendations_forward_verified_token_to_cal_decision_gateway
         FakeResponse({
             "request_id": "req-1",
             "ranked_candidate_count": 0,
-            "displayable_products": [],
+            "displayable_products": [{
+                "product": {"product_id": "p1", "image_urls": ["https://cdn.example.test/unmasked-product.jpg"]},
+                "offer": {"variant_id": "v1", "image_urls": ["https://cdn.example.test/unmasked-offer.jpg"]},
+            }],
             "withheld_candidate_ids": [],
             "display_authority": "CaTaCaCi/CAL",
         }),
@@ -400,6 +426,8 @@ def test_wardrobe_recommendations_forward_verified_token_to_cal_decision_gateway
     assert sent["json"]["use_wardrobe_context"] is True
     assert sent["json"]["context"]["location_source"] == "user_declared"
     assert sent["json"]["context"]["climate_source"] == "user_declared"
+    assert response.json()["displayable_products"][0]["product"]["image_urls"] == []
+    assert response.json()["displayable_products"][0]["offer"]["image_urls"] == []
     assert "Authorization" not in response.text
 
 
@@ -507,3 +535,324 @@ def test_wardrobe_consent_listing_allows_closet_browse_when_learning_provider_ab
     assert response.json()["learning_configured"] is False
     assert response.json()["items"] == []
     assert len(fake.calls) == 1
+
+
+def test_image_rights_request_can_be_submitted_without_uploader_login_and_quarantines_urgent_report(client, monkeypatch):
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_URL", "https://privacy-rights.example.test")
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_TOKEN", "privacy-rights-internal-token-at-least-32-bytes")
+    fake = FakeAsyncClient([FakeResponse({
+        "request_id": "rights-request-0001",
+        "status": "quarantined",
+        "quarantined": True,
+        "status_token": "opaque-request-status-token-0001",
+    }, status_code=202)])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post("/api/privacy/image-requests", json={
+        "asset_reference": "cirvanna-share-1234",
+        "request_type": "report",
+        "reason_code": "possible_minor",
+        "requester_relationship": "parent_guardian",
+        "jurisdiction_hint": "Example Region",
+    })
+    assert response.status_code == 202
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.json()["quarantined"] is True
+    assert len(response.json()["status_token"]) >= 24
+    assert fake.calls[0][1].endswith("/internal/v1/image-rights/requests")
+    payload = fake.calls[0][2]["json"]
+    assert payload["jurisdiction_hint_is_unverified"] is True
+    assert payload["asset_reference"] == "cirvanna-share-1234"
+    assert "image_bytes" not in payload
+    assert "identity_document" not in payload
+
+
+def test_image_rights_urgent_report_is_not_accepted_without_quarantine_confirmation(client, monkeypatch):
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_URL", "https://privacy-rights.example.test")
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_TOKEN", "privacy-rights-internal-token-at-least-32-bytes")
+    fake = FakeAsyncClient([FakeResponse({
+        "request_id": "rights-request-0002",
+        "status": "accepted",
+        "quarantined": False,
+    }, status_code=202)])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post("/api/privacy/image-requests", json={
+        "asset_reference": "cirvanna-share-5678",
+        "request_type": "removal",
+        "reason_code": "unmasked_face",
+        "requester_relationship": "photographed_person",
+    })
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "IMAGE_RIGHTS_QUARANTINE_NOT_CONFIRMED"
+
+
+def test_image_rights_intake_fails_closed_when_provider_is_not_configured(client, monkeypatch):
+    monkeypatch.delenv("PRIVACY_GOVERNANCE_API_URL", raising=False)
+    monkeypatch.delenv("PRIVACY_GOVERNANCE_API_TOKEN", raising=False)
+    response = client.post("/api/privacy/image-requests", json={
+        "asset_reference": "cirvanna-share-9012",
+        "request_type": "removal",
+        "reason_code": "privacy_concern",
+        "requester_relationship": "photographed_person",
+    })
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "PRIVACY_GOVERNANCE_API_URL_NOT_CONFIGURED"
+
+
+def test_image_rights_intake_rejects_arbitrary_urls_and_unknown_fields(client):
+    response = client.post("/api/privacy/image-requests", json={
+        "asset_reference": "https://attacker.example/image.jpg",
+        "request_type": "removal",
+        "reason_code": "privacy_concern",
+        "requester_relationship": "photographed_person",
+        "image_bytes": "should-not-be-accepted",
+    })
+    assert response.status_code == 422
+
+
+
+def test_image_rights_status_uses_private_token_without_uploader_account(client, monkeypatch):
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_URL", "https://privacy-rights.example.test")
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_TOKEN", "privacy-rights-internal-token-at-least-32-bytes")
+    fake = FakeAsyncClient([FakeResponse({
+        "request_id": "rights-request-0001",
+        "status": "under_review",
+        "quarantined": True,
+        "updated_at": "2026-11-05T05:00:00Z",
+        "triage_due_at": "2026-11-05T09:00:00Z",
+        "legal_response_due_at": None,
+        "deadline_basis": "jurisdiction_unresolved_platform_triage",
+        "applicable_jurisdictions": [],
+        "resolution_code": None,
+        "requester_identity": "must-not-be-forwarded",
+    })])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get(
+        "/api/privacy/image-requests/rights-request-0001",
+        headers={"X-Privacy-Request-Token": "opaque-request-status-token-123456"},
+    )
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.json()["status"] == "under_review"
+    assert response.json()["quarantined"] is True
+    assert response.json()["triage_due_at"] == "2026-11-05T09:00:00Z"
+    assert response.json()["legal_response_due_at"] is None
+    assert "requester_identity" not in response.text
+    assert fake.calls[0][1] == "https://privacy-rights.example.test/internal/v1/image-rights/requests/rights-request-0001"
+    assert fake.calls[0][2]["headers"]["X-Requester-Status-Token"] == "opaque-request-status-token-123456"
+
+
+def test_image_rights_status_rejects_invalid_request_id(client):
+    response = client.get(
+        "/api/privacy/image-requests/bad.request.id",
+        headers={"X-Privacy-Request-Token": "opaque-request-status-token-123456"},
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "IMAGE_RIGHTS_REQUEST_NOT_FOUND"
+
+
+def test_image_rights_status_rejects_invalid_or_missing_status_token(client, monkeypatch):
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_URL", "https://privacy-rights.example.test")
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_TOKEN", "privacy-rights-internal-token-at-least-32-bytes")
+    response = client.get("/api/privacy/image-requests/rights-request-0001")
+    assert response.status_code == 422
+
+
+def test_image_rights_status_does_not_disclose_request_when_provider_rejects_token(client, monkeypatch):
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_URL", "https://privacy-rights.example.test")
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_TOKEN", "privacy-rights-internal-token-at-least-32-bytes")
+    fake = FakeAsyncClient([FakeResponse({"detail": "not found"}, status_code=403)])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get(
+        "/api/privacy/image-requests/rights-request-0001",
+        headers={"X-Privacy-Request-Token": "wrong-private-status-token-123456"},
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "IMAGE_RIGHTS_REQUEST_NOT_FOUND"
+
+
+def test_click_it_consent_is_created_from_verified_commerce_subject(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_URL", "https://privacy.example.test")
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_TOKEN", "privacy-governance-internal-token-at-least-32-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-customer-42"}),
+        FakeResponse({
+            "consent_id": "e340b1e2-7c6b-4cc2-9c0b-16dbf2e2a225",
+            "active": True,
+            "granted_scopes": ["image_processing", "click_it", "photographed_people_adult_attestation"],
+            "photographed_people_status": "adults_only",
+            "guardian_authority_verified": False,
+            "consent_version": "click-it-privacy-v1",
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/privacy/consents",
+        headers={"Authorization": "Bearer signed-shopper-token"},
+        json={
+            "consent_image_processing": True,
+            "consent_click_it": True,
+            "photographed_people_status": "adults_only",
+            "photographed_people_consent_confirmed": True,
+            "consent_version": "click-it-privacy-v1",
+            "twin_id": "twin-123",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["active"] is True
+    assert fake.calls[0][1] == "https://commerce.example.test/me"
+    assert fake.calls[1][1] == "https://privacy.example.test/internal/v1/consents/grant"
+    assert fake.calls[1][2]["json"]["subject_id"] == "signed-customer-42"
+    assert fake.calls[1][2]["json"]["resource_id"] == "twin-123"
+    assert "subject_id" not in response.text
+
+
+def test_click_it_consent_can_only_grant_guardian_scope_via_external_reference(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_URL", "https://privacy.example.test")
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_TOKEN", "privacy-governance-internal-token-at-least-32-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-parent-42"}),
+        FakeResponse({
+            "consent_id": "e340b1e2-7c6b-4cc2-9c0b-16dbf2e2a226",
+            "active": True,
+            "granted_scopes": ["image_processing", "click_it", "photographed_people_minor_attestation", "guardian_authorized"],
+            "photographed_people_status": "contains_minor",
+            "guardian_authority_verified": True,
+            "consent_version": "click-it-privacy-v1",
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/privacy/consents",
+        headers={"Authorization": "Bearer signed-parent-token"},
+        json={
+            "consent_image_processing": True,
+            "consent_click_it": True,
+            "photographed_people_status": "contains_minor",
+            "photographed_people_consent_confirmed": True,
+            "consent_version": "click-it-privacy-v1",
+            "guardian_verification_reference": "verified-guardian-case-123",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["guardian_authority_verified"] is True
+    assert fake.calls[1][2]["json"]["guardian_verification_reference"] == "verified-guardian-case-123"
+
+
+def test_click_it_consent_requires_signed_account_and_both_explicit_acceptances(client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: calls.append(kwargs))
+    response = client.post(
+        "/api/privacy/consents",
+        json={
+            "consent_image_processing": True,
+            "consent_click_it": True,
+            "photographed_people_status": "adults_only",
+            "photographed_people_consent_confirmed": True,
+            "consent_version": "click-it-privacy-v1",
+        },
+    )
+    assert response.status_code == 401
+    assert not calls
+    response = client.post(
+        "/api/privacy/consents",
+        headers={"Authorization": "Bearer signed-shopper-token"},
+        json={
+            "consent_image_processing": True,
+            "consent_click_it": False,
+            "photographed_people_status": "adults_only",
+            "photographed_people_consent_confirmed": True,
+            "consent_version": "click-it-privacy-v1",
+        },
+    )
+    assert response.status_code == 403
+    assert not calls
+
+
+
+def test_readiness_reports_click_it_privacy_provider_separately(client, monkeypatch):
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_URL", "https://privacy.example.test")
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_TOKEN", "privacy-governance-internal-token-at-least-32-bytes")
+    monkeypatch.setattr(main, "_upstream_ready", lambda base: base == "https://privacy.example.test")
+    monkeypatch.setattr(main, "_upstream_base", lambda key: {
+        "CATALOG_API_URL": "https://catalog.example.test",
+        "COMMERCE_API_URL": "https://commerce.example.test",
+        "PRIVACY_GOVERNANCE_API_URL": "https://privacy.example.test",
+    }[key])
+    response = client.get("/ready")
+    assert response.status_code == 503  # catalog/Commerce are intentionally not ready in this test
+    assert response.json()["detail"]["privacy_governance_configured"] is True
+    assert response.json()["detail"]["privacy_governance_ready"] is True
+
+
+def test_consent_revocation_is_subject_bound_to_verified_commerce_session(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_URL", "https://privacy.example.test")
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_TOKEN", "privacy-governance-internal-token-at-least-32-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-customer-42"}),
+        FakeResponse({"consent_id": "e340b1e2-7c6b-4cc2-9c0b-16dbf2e2a227", "active": False, "revoked": True}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/privacy/consents/e340b1e2-7c6b-4cc2-9c0b-16dbf2e2a227/revoke",
+        headers={"Authorization": "Bearer signed-shopper-token"},
+        json={"reason_code": "user_request"},
+    )
+    assert response.status_code == 200
+    assert response.json()["revoked"] is True
+    assert fake.calls[1][1] == "https://privacy.example.test/internal/v1/consents/e340b1e2-7c6b-4cc2-9c0b-16dbf2e2a227/revoke"
+    assert fake.calls[1][2]["json"]["subject_id"] == "signed-customer-42"
+
+
+def test_consent_revocation_rejects_missing_user_auth_before_upstream(client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: calls.append(kwargs))
+    response = client.post(
+        "/api/privacy/consents/e340b1e2-7c6b-4cc2-9c0b-16dbf2e2a227/revoke",
+        json={"reason_code": "user_request"},
+    )
+    assert response.status_code == 401
+    assert not calls
+
+
+
+def test_click_it_refuses_to_bind_a_minor_photo_to_any_virtual_twin(client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: calls.append(kwargs))
+    response = client.post(
+        "/api/privacy/consents",
+        headers={"Authorization": "Bearer signed-parent-token"},
+        json={
+            "consent_image_processing": True,
+            "consent_click_it": True,
+            "photographed_people_status": "contains_minor",
+            "consent_version": "click-it-privacy-v1",
+            "twin_id": "twin-123",
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "CHILD_TWIN_PERSONALIZATION_DISABLED"
+    assert not calls
+
+
+
+def test_click_it_rejects_unknown_people_status_before_buffering_or_upstream_calls(client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: calls.append(kwargs))
+    response = client.post(
+        "/api/vision/click-it",
+        headers={"Authorization": "Bearer signed-user-token"},
+        data={
+            "consent_id": "consent-record-1234",
+            "consent_image_processing": "true",
+            "consent_click_it": "true",
+            "photographed_people_status": "unknown",
+        },
+        files={"product_image": ("photo.png", b"photo-bytes", "image/png")},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "CHILD_SAFETY_STATUS_UNCONFIRMED"
+    assert not calls
+

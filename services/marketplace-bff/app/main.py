@@ -15,7 +15,7 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 import httpx
-from fastapi import Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import Body, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -55,6 +55,8 @@ async def security_headers(request: Request, call_next):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
     response.headers.setdefault("X-Frame-Options", "DENY")
+    if request.url.path == "/api/vision/click-it" or request.url.path.startswith("/api/privacy/"):
+        response.headers["Cache-Control"] = "no-store, private"
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
     return response
 
@@ -108,6 +110,31 @@ def _xari_internal_service() -> tuple[str, str]:
     if len(token.encode("utf-8")) < 32:
         raise HTTPException(status_code=503, detail={"code": "XARI_API_TOKEN_NOT_CONFIGURED"})
     return base, token
+
+
+class ImageRightsRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    asset_reference: str = Field(min_length=8, max_length=160, pattern=r"^[A-Za-z0-9_-]+$")
+    request_type: Literal["report", "removal"]
+    reason_code: Literal["unmasked_face", "possible_minor", "nonconsensual", "privacy_concern", "other"]
+    requester_relationship: Literal["photographed_person", "parent_guardian", "authorized_representative", "other"]
+    jurisdiction_hint: str | None = Field(default=None, max_length=100)
+
+
+class ClickItConsentGrant(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    consent_image_processing: bool
+    consent_click_it: bool
+    photographed_people_status: Literal["no_people", "adults_only", "contains_minor"]
+    photographed_people_consent_confirmed: bool = False
+    consent_version: str = Field(min_length=1, max_length=80)
+    twin_id: str | None = Field(default=None, min_length=3, max_length=160)
+    guardian_verification_reference: str | None = Field(default=None, min_length=12, max_length=200)
+
+
+class ClickItConsentRevoke(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    reason_code: Literal["user_request", "guardian_request", "account_closure"] = "user_request"
 
 
 class MarketplaceSearchIn(BaseModel):
@@ -530,7 +557,20 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
     # The decision gateway returns product/offer details only for CAL SHOW.
     if not isinstance(data, dict) or not isinstance(data.get("displayable_products"), list):
         raise HTTPException(502, detail={"code": "WARDROBE_RECOMMENDATIONS_RESPONSE_INVALID"})
-    return _private_json_response(data)
+    safe_data = dict(data)
+    safe_displayable = []
+    for entry in data["displayable_products"]:
+        if not isinstance(entry, dict):
+            raise HTTPException(502, detail={"code": "WARDROBE_RECOMMENDATIONS_RESPONSE_INVALID"})
+        safe_entry = dict(entry)
+        for key in ("product", "offer"):
+            if isinstance(safe_entry.get(key), dict):
+                safe_media_record = dict(safe_entry[key])
+                safe_media_record["image_urls"] = []
+                safe_entry[key] = safe_media_record
+        safe_displayable.append(safe_entry)
+    safe_data["displayable_products"] = safe_displayable
+    return _private_json_response(safe_data)
 
 
 
@@ -541,6 +581,8 @@ async def marketplace_click_it(
     consent_image_processing: bool = Form(),
     consent_click_it: bool = Form(),
     product_image: UploadFile = File(...),
+    photographed_people_status: str = Form(default="unknown"),
+    capture_jurisdiction_hint: str | None = Form(default=None, max_length=100),
     twin_id: str | None = Form(default=None, min_length=3, max_length=128),
     category: str | None = Form(default=None, max_length=80),
     limit: int = Form(default=10, ge=1, le=25),
@@ -556,7 +598,14 @@ async def marketplace_click_it(
     if scheme.lower() != "bearer" or not user_token.strip():
         raise HTTPException(401, detail={"code": "USER_BEARER_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
     if not consent_image_processing or not consent_click_it:
+        await product_image.close()
         raise HTTPException(400, detail={"code": "EXPLICIT_CLICK_IT_CONSENT_REQUIRED"})
+    if photographed_people_status not in {"no_people", "adults_only", "contains_minor"}:
+        await product_image.close()
+        raise HTTPException(403, detail={"code": "CHILD_SAFETY_STATUS_UNCONFIRMED"})
+    if photographed_people_status == "contains_minor" and twin_id:
+        await product_image.close()
+        raise HTTPException(403, detail={"code": "CHILD_TWIN_PERSONALIZATION_DISABLED"})
     content_type = product_image.content_type or ""
     if content_type not in {"image/jpeg", "image/png", "image/webp"}:
         await product_image.close()
@@ -601,6 +650,8 @@ async def marketplace_click_it(
                 "consent_id": consent_id.strip(),
                 "consent_image_processing": "true",
                 "consent_click_it": "true",
+                "photographed_people_status": photographed_people_status,
+                "capture_jurisdiction_hint": capture_jurisdiction_hint or "",
                 "limit": str(limit),
             }
             if twin_id and twin_id.strip():
@@ -669,6 +720,14 @@ def readiness() -> dict:
     commerce_configured = bool(os.getenv("COMMERCE_API_URL"))
     catalog_ready = False
     commerce_ready = False
+    privacy_governance_configured = bool(os.getenv("PRIVACY_GOVERNANCE_API_URL")) and len(os.getenv("PRIVACY_GOVERNANCE_API_TOKEN", "").encode()) >= 32
+    privacy_governance_ready = False
+    try:
+        privacy_base = _upstream_base("PRIVACY_GOVERNANCE_API_URL")
+        if privacy_governance_configured:
+            privacy_governance_ready = _upstream_ready(privacy_base)
+    except HTTPException:
+        privacy_governance_ready = False
     try:
         catalog_base = _upstream_base("CATALOG_API_URL")
         if catalog_configured:
@@ -680,7 +739,7 @@ def readiness() -> dict:
         commerce_ready = _upstream_ready(commerce_base)
     except HTTPException:
         commerce_ready = False
-    ready = catalog_configured and commerce_configured and catalog_ready and commerce_ready
+    ready = catalog_configured and commerce_configured and catalog_ready and commerce_ready and privacy_governance_configured and privacy_governance_ready
     result = {
         "status": "ready" if ready else "not_ready",
         "service": SERVICE,
@@ -688,6 +747,9 @@ def readiness() -> dict:
         "catalog_ready": catalog_ready,
         "commerce_url_configured": commerce_configured,
         "commerce_ready": commerce_ready,
+        "privacy_governance_configured": privacy_governance_configured,
+        "privacy_governance_ready": privacy_governance_ready,
+        "click_it_privacy_ready": privacy_governance_ready,
         "ready": ready,
     }
     if not ready:
@@ -743,7 +805,22 @@ def public_offers(
         and isinstance(payload.get("total"), int)
     ):
         raise HTTPException(status_code=502, detail={"code": "INVALID_COMMERCE_RESPONSE"})
-    return payload
+    safe_payload = dict(payload)
+    safe_items = []
+    for offer in payload["items"]:
+        if not isinstance(offer, dict):
+            raise HTTPException(status_code=502, detail={"code": "INVALID_COMMERCE_RESPONSE"})
+        safe_offer = dict(offer)
+        # Defense in depth: public image URLs remain hidden until the asset is
+        # bound to a verified Vision masking attestation by the publication gate.
+        safe_offer["image_urls"] = []
+        if isinstance(safe_offer.get("product"), dict):
+            safe_product = dict(safe_offer["product"])
+            safe_product["image_urls"] = []
+            safe_offer["product"] = safe_product
+        safe_items.append(safe_offer)
+    safe_payload["items"] = safe_items
+    return safe_payload
 
 
 def _authorized_commerce_path(method: str, path: str) -> bool:
@@ -759,6 +836,252 @@ def _authorized_commerce_path(method: str, path: str) -> bool:
     if len(parts) == 2 and parts[0] == "orders" and UUID_RE.fullmatch(parts[1]):
         return method == "GET"
     return False
+
+
+@app.post("/api/privacy/consents")
+async def create_click_it_consent(payload: ClickItConsentGrant, request: Request) -> Response:
+    """Create purpose-bound consent only for the verified Commerce subject."""
+    authorization = request.headers.get("authorization", "")
+    scheme, _, user_token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not user_token.strip():
+        raise HTTPException(401, detail={"code": "USER_BEARER_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
+    if not payload.consent_image_processing or not payload.consent_click_it:
+        raise HTTPException(403, detail={"code": "EXPLICIT_CLICK_IT_CONSENT_REQUIRED"})
+    if payload.photographed_people_status == "contains_minor" and payload.twin_id:
+        raise HTTPException(403, detail={"code": "CHILD_TWIN_PERSONALIZATION_DISABLED"})
+    commerce_base = _upstream_base("COMMERCE_API_URL")
+    privacy_base, privacy_token = _internal_service("PRIVACY_GOVERNANCE_API_URL", "PRIVACY_GOVERNANCE_API_TOKEN")
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(8.0, connect=2.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            identity = await client.get(
+                commerce_base + "/me",
+                headers={"Authorization": "Bearer " + user_token, "Accept": "application/json"},
+            )
+            if identity.status_code in {401, 403}:
+                raise HTTPException(401, detail={"code": "USER_AUTHENTICATION_FAILED"})
+            if identity.status_code != 200:
+                raise HTTPException(503, detail={"code": "USER_IDENTITY_UNAVAILABLE"})
+            actor = identity.json()
+            subject_id = actor.get("user_id") if isinstance(actor, dict) else None
+            if not isinstance(subject_id, str) or not subject_id.strip():
+                raise HTTPException(502, detail={"code": "INVALID_USER_IDENTITY_RESPONSE"})
+            grant_body = {
+                "subject_id": subject_id,
+                "consent_image_processing": payload.consent_image_processing,
+                "consent_click_it": payload.consent_click_it,
+                "photographed_people_status": payload.photographed_people_status,
+                "photographed_people_consent_confirmed": payload.photographed_people_consent_confirmed,
+                "consent_version": payload.consent_version,
+            }
+            if payload.twin_id:
+                grant_body["resource_id"] = payload.twin_id
+            if payload.guardian_verification_reference:
+                grant_body["guardian_verification_reference"] = payload.guardian_verification_reference
+            upstream = await client.post(
+                privacy_base + "/internal/v1/consents/grant",
+                headers={"Authorization": "Bearer " + privacy_token, "Accept": "application/json"},
+                json=grant_body,
+            )
+    except HTTPException:
+        raise
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "CONSENT_CREATION_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "PRIVACY_GOVERNANCE_UNAVAILABLE"}) from exc
+    if upstream.status_code != 200:
+        try:
+            detail = upstream.json().get("detail", {})
+        except ValueError:
+            detail = {}
+        code = detail.get("code") if isinstance(detail, dict) else None
+        if upstream.status_code in {400, 403, 409, 422}:
+            raise HTTPException(upstream.status_code, detail={"code": code if isinstance(code, str) else "CONSENT_CREATION_REJECTED"})
+        raise HTTPException(503, detail={"code": code if isinstance(code, str) else "CONSENT_CREATION_UNAVAILABLE"})
+    try:
+        receipt = upstream.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "CONSENT_CREATION_INVALID_RESPONSE"}) from exc
+    if not (
+        isinstance(receipt, dict)
+        and isinstance(receipt.get("consent_id"), str)
+        and receipt.get("active") is True
+        and isinstance(receipt.get("granted_scopes"), list)
+    ):
+        raise HTTPException(502, detail={"code": "CONSENT_CREATION_INVALID_RESPONSE"})
+    safe = {
+        "consent_id": receipt["consent_id"],
+        "active": True,
+        "granted_scopes": receipt["granted_scopes"],
+        "photographed_people_status": receipt.get("photographed_people_status"),
+        "guardian_authority_verified": receipt.get("guardian_authority_verified") is True,
+        "consent_version": receipt.get("consent_version"),
+    }
+    return JSONResponse(content=safe, headers={"Cache-Control": "no-store, private"})
+
+
+@app.post("/api/privacy/consents/{consent_id}/revoke")
+async def revoke_click_it_consent(consent_id: str, payload: ClickItConsentRevoke, request: Request) -> Response:
+    authorization = request.headers.get("authorization", "")
+    scheme, _, user_token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not user_token.strip():
+        raise HTTPException(401, detail={"code": "USER_BEARER_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
+    if not re.fullmatch(r"[0-9a-fA-F-]{36}", consent_id):
+        raise HTTPException(404, detail={"code": "CONSENT_NOT_FOUND"})
+    commerce_base = _upstream_base("COMMERCE_API_URL")
+    privacy_base, privacy_token = _internal_service("PRIVACY_GOVERNANCE_API_URL", "PRIVACY_GOVERNANCE_API_TOKEN")
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(8.0, connect=2.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            identity = await client.get(
+                commerce_base + "/me",
+                headers={"Authorization": "Bearer " + user_token, "Accept": "application/json"},
+            )
+            if identity.status_code in {401, 403}:
+                raise HTTPException(401, detail={"code": "USER_AUTHENTICATION_FAILED"})
+            if identity.status_code != 200:
+                raise HTTPException(503, detail={"code": "USER_IDENTITY_UNAVAILABLE"})
+            actor = identity.json()
+            subject_id = actor.get("user_id") if isinstance(actor, dict) else None
+            if not isinstance(subject_id, str) or not subject_id.strip():
+                raise HTTPException(502, detail={"code": "INVALID_USER_IDENTITY_RESPONSE"})
+            upstream = await client.post(
+                privacy_base + "/internal/v1/consents/" + consent_id + "/revoke",
+                headers={"Authorization": "Bearer " + privacy_token, "Accept": "application/json"},
+                json={"subject_id": subject_id, "reason_code": payload.reason_code},
+            )
+    except HTTPException:
+        raise
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "CONSENT_REVOCATION_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "PRIVACY_GOVERNANCE_UNAVAILABLE"}) from exc
+    if upstream.status_code in {401, 403, 404}:
+        raise HTTPException(404, detail={"code": "CONSENT_NOT_FOUND"})
+    if upstream.status_code != 200:
+        raise HTTPException(503, detail={"code": "CONSENT_REVOCATION_UNAVAILABLE"})
+    return JSONResponse(content={"consent_id": consent_id, "active": False, "revoked": True}, headers={"Cache-Control": "no-store, private"})
+
+
+@app.post("/api/privacy/image-requests")
+async def submit_image_rights_request(payload: ImageRightsRequest) -> Response:
+    """Public privacy-rights intake; the rights service verifies authority and manages quarantine."""
+    base, token = _internal_service("PRIVACY_GOVERNANCE_API_URL", "PRIVACY_GOVERNANCE_API_TOKEN")
+    request_body = payload.model_dump(exclude_none=True)
+    request_body["jurisdiction_hint_is_unverified"] = True
+    request_body["requester_authentication"] = "verification_required"
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(12.0, connect=2.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            upstream = await client.post(
+                base + "/internal/v1/image-rights/requests",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json=request_body,
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "IMAGE_RIGHTS_INTAKE_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "IMAGE_RIGHTS_SERVICE_UNAVAILABLE"}) from exc
+    if upstream.status_code not in {200, 202}:
+        raise HTTPException(503, detail={"code": "IMAGE_RIGHTS_INTAKE_REJECTED"})
+    try:
+        receipt = upstream.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "IMAGE_RIGHTS_RESPONSE_INVALID"}) from exc
+    urgent = payload.reason_code in {"unmasked_face", "possible_minor", "nonconsensual"}
+    valid = (
+        isinstance(receipt, dict)
+        and isinstance(receipt.get("request_id"), str)
+        and bool(receipt.get("request_id").strip())
+        and receipt.get("status") in {"under_review", "quarantined"}
+        and isinstance(receipt.get("status_token"), str)
+        and 24 <= len(receipt.get("status_token")) <= 512
+        and (not urgent or receipt.get("quarantined") is True)
+    )
+    if not valid:
+        code = "IMAGE_RIGHTS_QUARANTINE_NOT_CONFIRMED" if urgent else "IMAGE_RIGHTS_RESPONSE_INVALID"
+        raise HTTPException(503, detail={"code": code})
+    safe_receipt = {
+        "request_id": receipt["request_id"],
+        "status": receipt["status"],
+        "quarantined": receipt.get("quarantined") is True,
+        "status_token": receipt["status_token"],
+    }
+    return JSONResponse(status_code=202, content=safe_receipt, headers={"Cache-Control": "no-store, private"})
+
+
+@app.get("/api/privacy/image-requests/{request_id}")
+async def get_image_rights_request_status(
+    request_id: str,
+    status_token: str = Header(alias="X-Privacy-Request-Token", min_length=24, max_length=512),
+) -> Response:
+    """Let a photographed person track their request without an uploader account."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{8,160}", request_id):
+        raise HTTPException(404, detail={"code": "IMAGE_RIGHTS_REQUEST_NOT_FOUND"})
+    base, token = _internal_service("PRIVACY_GOVERNANCE_API_URL", "PRIVACY_GOVERNANCE_API_TOKEN")
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(8.0, connect=2.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            upstream = await client.get(
+                base + "/internal/v1/image-rights/requests/" + request_id,
+                headers={
+                    "Authorization": "Bearer " + token,
+                    "X-Requester-Status-Token": status_token,
+                    "Accept": "application/json",
+                },
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "IMAGE_RIGHTS_STATUS_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "IMAGE_RIGHTS_SERVICE_UNAVAILABLE"}) from exc
+    if upstream.status_code in {401, 403, 404}:
+        raise HTTPException(404, detail={"code": "IMAGE_RIGHTS_REQUEST_NOT_FOUND"})
+    if upstream.status_code != 200:
+        raise HTTPException(503, detail={"code": "IMAGE_RIGHTS_STATUS_UNAVAILABLE"})
+    try:
+        receipt = upstream.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "IMAGE_RIGHTS_STATUS_INVALID"}) from exc
+    valid = (
+        isinstance(receipt, dict)
+        and receipt.get("request_id") == request_id
+        and receipt.get("status") in {"accepted", "quarantined", "under_review", "completed", "rejected", "escalated"}
+        and isinstance(receipt.get("updated_at"), str)
+        and isinstance(receipt.get("triage_due_at"), str)
+        and (receipt.get("legal_response_due_at") is None or isinstance(receipt.get("legal_response_due_at"), str))
+        and receipt.get("deadline_basis") in {
+            "resolved_signed_jurisdiction_policy",
+            "jurisdiction_policy_missing_platform_triage",
+            "jurisdiction_unresolved_platform_triage",
+        }
+        and isinstance(receipt.get("applicable_jurisdictions"), list)
+    )
+    if not valid:
+        raise HTTPException(502, detail={"code": "IMAGE_RIGHTS_STATUS_INVALID"})
+    safe = {
+        "request_id": request_id,
+        "status": receipt["status"],
+        "quarantined": receipt.get("quarantined") is True,
+        "updated_at": receipt["updated_at"],
+        "triage_due_at": receipt["triage_due_at"],
+        "legal_response_due_at": receipt.get("legal_response_due_at"),
+        "deadline_basis": receipt["deadline_basis"],
+        "applicable_jurisdictions": receipt["applicable_jurisdictions"],
+        "resolution_code": receipt.get("resolution_code") if isinstance(receipt.get("resolution_code"), str) else None,
+    }
+    return JSONResponse(content=safe, headers={"Cache-Control": "no-store, private"})
 
 
 @app.api_route("/api/commerce/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])

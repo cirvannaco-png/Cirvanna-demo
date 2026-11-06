@@ -151,6 +151,12 @@
       "owner": "Xari",
       "status": "implementation-scaffold",
       "scope": "Canonical optional assistant/orchestration surface; Tari/Xyra remain legacy source labels."
+    },
+    {
+      "path": "services/privacy-governance-service",
+      "owner": "Privacy Governance",
+      "status": "implementation-scaffold",
+      "scope": "Internal purpose-bound consent, signed jurisdiction policy evaluation and image-rights case state. External guardian, jurisdiction and content-lifecycle providers remain mandatory release dependencies."
     }
   ],
   "quarantined_roots": [

@@ -299,7 +299,7 @@ def test_explicit_hard_cultural_requirement_blocks_without_inference(client, mon
 
 
 def test_show_requires_all_required_gates_and_a_calibrated_fit_result(client, monkeypatch):
-    monkeypatch.setattr(main, "fetch_product", lambda _: product())
+    monkeypatch.setattr(main, "fetch_product", lambda _: product(image_urls=["https://cdn.example.test/unmasked.jpg"]))
     monkeypatch.setattr(main, "_safety_signal", pass_safety)
     monkeypatch.setattr(main, "_fit_estimate", calibrated_fit)
     monkeypatch.setattr(
