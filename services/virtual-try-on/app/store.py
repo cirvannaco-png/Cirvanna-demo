@@ -19,6 +19,11 @@ class TryOnJobRow(Base):
     payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     twin_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     product_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    person_image_asset_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    garment_image_asset_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    garment_asset_purpose: Mapped[str] = mapped_column(String(40), nullable=False)
+    garment_asset_parent_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    garment_category: Mapped[str] = mapped_column(String(32), nullable=False)
     look_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     look_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     wardrobe_snapshot_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -68,6 +73,11 @@ class TryOnStore:
             return {
                 "request_id": row.request_id, "subject_id": row.subject_id,
                 "twin_id": row.twin_id, "product_id": row.product_id,
+                "person_image_asset_id": row.person_image_asset_id,
+                "garment_image_asset_id": row.garment_image_asset_id,
+                "garment_asset_purpose": row.garment_asset_purpose,
+                "garment_asset_parent_id": row.garment_asset_parent_id,
+                "garment_category": row.garment_category,
                 "look_id": row.look_id, "look_version": row.look_version,
                 "wardrobe_snapshot_version": row.wardrobe_snapshot_version,
                 "output_asset_id": row.output_asset_id, "renderer_id": row.renderer_id,
