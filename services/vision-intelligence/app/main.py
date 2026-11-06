@@ -420,6 +420,23 @@ async def _live_offers() -> tuple[list[dict[str, Any]], bool]:
     return joined, truncated
 
 
+
+def _withhold_unattested_image_urls(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remove public image references until each exact asset has a verified privacy receipt."""
+    safe_results: list[dict[str, Any]] = []
+    for result in results:
+        if not isinstance(result, dict):
+            raise HTTPException(502, detail={"code": "INVALID_MARKETPLACE_RESPONSE"})
+        safe = dict(result)
+        safe["image_urls"] = []
+        if isinstance(safe.get("product"), dict):
+            product = dict(safe["product"])
+            product["image_urls"] = []
+            safe["product"] = product
+        safe_results.append(safe)
+    return safe_results
+
+
 def _rank_offers(query_vector: list[float], offers: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
     if not offers:
         return []
@@ -564,7 +581,7 @@ async def search_by_description(payload: TextSearchRequest) -> dict[str, Any]:
             or str((item.get("product") or {}).get("category", "")).casefold() == category
         ]
     query_vector = _text_embedding("A marketplace product matching this description: " + query)
-    results = _rank_offers(query_vector, offers, payload.limit)
+    results = _withhold_unattested_image_urls(_rank_offers(query_vector, offers, payload.limit))
     return {
         "status": "complete",
         "query": query,
@@ -613,7 +630,7 @@ async def click_it_scan(
             if str(item.get("category", "")).casefold() == selected
             or str((item.get("product") or {}).get("category", "")).casefold() == selected
         ]
-    results = _rank_offers(query_vector, offers, limit)
+    results = _withhold_unattested_image_urls(_rank_offers(query_vector, offers, limit))
     return {
         "status": "complete",
         "scan_id": str(uuid.uuid4()),

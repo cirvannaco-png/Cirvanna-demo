@@ -108,6 +108,8 @@ def test_description_search_uses_live_offers_and_never_fabricates_results(client
     monkeypatch.setattr(main, "_text_embedding", lambda _text: [1.0, 0.0])
     monkeypatch.setattr(main, "_rank_offers", lambda _query, _offers, limit: [{
         "variant_id": "v1", "product_name": "linen wrap dress",
+        "image_urls": ["https://cdn.example.test/unmasked.jpg"],
+        "product": {"image_urls": ["https://cdn.example.test/nested.jpg"]},
         "match_score": 0.25, "match_score_type": "cosine_similarity_not_probability",
     }][:limit])
     response = client.post("/v1/search/text", headers=auth(), json={"query": "linen wrap dress"})
@@ -115,6 +117,8 @@ def test_description_search_uses_live_offers_and_never_fabricates_results(client
     body = response.json()
     assert body["candidate_count"] == 1
     assert body["results"][0]["variant_id"] == "v1"
+    assert body["results"][0]["image_urls"] == []
+    assert body["results"][0]["product"]["image_urls"] == []
     assert body["scores_are_probabilities"] is False
 
 
@@ -132,6 +136,8 @@ def test_click_it_returns_ranked_live_marketplace_results_without_persisting_ima
     monkeypatch.setattr(main, "_image_embedding", lambda _image: [0.25, 0.75])
     monkeypatch.setattr(main, "_rank_offers", lambda _query, _offers, limit: [{
         "variant_id": "v1", "product_name": "red woven top",
+        "image_urls": ["https://cdn.example.test/unmasked.jpg"],
+        "product": {"image_urls": ["https://cdn.example.test/nested.jpg"]},
         "match_score": 0.31, "match_score_type": "cosine_similarity_not_probability",
     }][:limit])
     response = client.post(

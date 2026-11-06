@@ -45,12 +45,14 @@ def test_public_offers_are_proxied_without_exposing_catalog_credentials(client, 
     def fake_get(url, **kwargs):
         seen["url"] = url
         seen.update(kwargs)
-        return FakeResponse({"items": [{"variant_id": "v1"}], "total": 1, "offset": 0, "limit": 20})
+        return FakeResponse({"items": [{"variant_id": "v1", "image_urls": ["https://cdn.example.test/unmasked.jpg"], "product": {"image_urls": ["https://cdn.example.test/nested.jpg"]}}], "total": 1, "offset": 0, "limit": 20})
 
     monkeypatch.setattr(main.httpx, "get", fake_get)
     response = client.get("/api/commerce/marketplace/offers?q=linen&category=Fashion&offset=20&limit=10")
     assert response.status_code == 200
     assert response.json()["total"] == 1
+    assert response.json()["items"][0]["image_urls"] == []
+    assert response.json()["items"][0]["product"]["image_urls"] == []
     assert seen["url"] == "https://commerce.example.test/marketplace/offers"
     assert seen["params"] == {"offset": 20, "limit": 10, "q": "linen", "category": "Fashion"}
     assert "Authorization" not in seen["headers"]
