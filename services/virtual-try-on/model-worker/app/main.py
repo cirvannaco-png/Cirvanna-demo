@@ -6,6 +6,7 @@ persisting the validated output under a new opaque asset ID.
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
 import io
 import os
@@ -36,6 +37,34 @@ app = FastAPI(title="Cirvanna Private VTON GPU Worker", version="0.1.0")
 _PIPELINE = None
 
 
+def _weights_manifest_valid(weights_dir: Path) -> bool:
+    """Verify every mounted weight file against the artifact's SHA256SUMS."""
+    manifest = Path(os.getenv("FASHN_VTON_WEIGHTS_MANIFEST", str(weights_dir / "SHA256SUMS")))
+    try:
+        root = weights_dir.resolve(strict=True)
+        manifest_path = manifest.resolve(strict=True)
+        if not manifest_path.is_file() or not manifest_path.is_relative_to(root):
+            return False
+        entries = 0
+        for raw in manifest_path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split(maxsplit=1)
+            if len(parts) != 2 or not re.fullmatch(r"[0-9a-fA-F]{64}", parts[0]):
+                return False
+            target = (root / parts[1].lstrip("*").strip()).resolve(strict=True)
+            if not target.is_file() or not target.is_relative_to(root):
+                return False
+            actual = hashlib.sha256(target.read_bytes()).hexdigest()
+            if not hmac.compare_digest(actual, parts[0].lower()):
+                return False
+            entries += 1
+        return entries > 0
+    except (OSError, ValueError):
+        return False
+
+
 def _configured() -> tuple[bool, str]:
     token = os.getenv("VTON_WORKER_TOKEN", "")
     weights = os.getenv("FASHN_VTON_WEIGHTS_DIR", "")
@@ -46,6 +75,8 @@ def _configured() -> tuple[bool, str]:
         return False, "pinned_source_commit_required"
     if not weights or not Path(weights).is_dir():
         return False, "model_weights_directory_missing"
+    if not _weights_manifest_valid(Path(weights)):
+        return False, "model_weights_checksum_manifest_invalid"
     try:
         import torch
         if not torch.cuda.is_available():
@@ -135,6 +166,14 @@ def ready() -> dict[str, object]:
     configured, reason = _configured()
     if not configured:
         raise HTTPException(503, detail={"status": "not_ready", "service": SERVICE, "ready": False, "reason": reason})
+    try:
+        # Readiness proves the actual pinned inference pipeline loads its weights.
+        _pipeline()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"status": "not_ready", "service": SERVICE, "ready": False, "reason": "model_initialization_failed"},
+        ) from exc
     return {"status": "ready", "service": SERVICE, "ready": True, "source_commit": os.environ["FASHN_VTON_SOURCE_REF"]}
 
 
