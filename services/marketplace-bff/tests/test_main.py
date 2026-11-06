@@ -323,7 +323,7 @@ def test_wardrobe_items_are_bound_to_verified_commerce_subject(client, monkeypat
         FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
         FakeResponse({
             "owner_user_id": "signed-user-42",
-            "items": [{"owner_user_id": "signed-user-42", "item_id": "closet-1", "status": "active"}],
+            "items": [{"owner_user_id": "signed-user-42", "item_id": "closet-1", "status": "active", "image_asset_id": "private-asset-1", "image_url": "https://cdn.example.test/private.jpg", "assets": [{"url": "https://cdn.example.test/nested.jpg", "storage_key": "private-key"}]}],
         }),
     ])
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
@@ -331,6 +331,10 @@ def test_wardrobe_items_are_bound_to_verified_commerce_subject(client, monkeypat
     assert response.status_code == 200, response.text
     assert response.headers["cache-control"] == "no-store, private"
     assert response.json()["items"][0]["item_id"] == "closet-1"
+    assert response.json()["items"][0]["image_asset_id"] is None
+    assert response.json()["items"][0]["image_url"] is None
+    assert response.json()["items"][0]["assets"][0]["url"] is None
+    assert response.json()["items"][0]["assets"][0]["storage_key"] is None
     assert fake.calls[0][1] == "https://commerce.example.test/me"
     assert fake.calls[1][1] == "https://wardrobe.example.test/v1/items"
     assert fake.calls[1][2]["params"]["owner_user_id"] == "signed-user-42"
@@ -516,7 +520,8 @@ def test_wardrobe_manual_item_creation_binds_verified_owner_and_activates(client
         }}, status_code=201),
         FakeResponse({"item": {
             "owner_user_id": "signed-user-42", "item_id": "33333333-3333-4333-8333-333333333333",
-            "version": 2, "status": "active",
+            "version": 2, "status": "active", "image_asset_id": "unverified-asset-2",
+            "thumbnail_url": "https://cdn.example.test/preview.jpg",
         }}),
     ])
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
@@ -531,6 +536,8 @@ def test_wardrobe_manual_item_creation_binds_verified_owner_and_activates(client
     )
     assert response.status_code == 201, response.text
     assert response.json()["item"]["status"] == "active"
+    assert response.json()["item"]["image_asset_id"] is None
+    assert response.json()["item"]["thumbnail_url"] is None
     created = fake.calls[1][2]["json"]
     transition = fake.calls[2][2]["json"]
     assert created["owner_user_id"] == "signed-user-42"
