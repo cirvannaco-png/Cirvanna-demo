@@ -1,15 +1,17 @@
 # Public image publication inventory and fail-closed contract
 
 **Audit snapshot:** 6 November 2026.
-**Status:** the known public marketplace image leak is fixed on main by merged PR #112. The broader gate has digest-bound, human-review requirements in draft PR #111. Global publication safety is NOT certified because no Content Lifecycle service or complete publish/restore/share route inventory exists.
+**Status:** known public marketplace and API Gateway image leaks are fixed on main by merged PRs #112 and #114. Click It uploads are temporarily disabled before decode by merged PR #113. The broader gate has digest-bound, human-review requirements in draft PR #111. Global publication safety is NOT certified because no Content Lifecycle service or complete publish/restore/share route inventory exists.
 
 ## Known image-bearing boundaries
 
 | Surface | Current behavior | Evidence / release condition |
 |---|---|---|
-| API Gateway marketplace discovery, POST /v1/discover | CAL-authorized product and offer payloads return empty image_urls; tests inject unmasked Catalog and Commerce URLs and assert both are removed. | services/api-gateway/app/main.py; services/api-gateway/tests/test_marketplace_discovery.py |
+| API Gateway marketplace discovery, POST /v1/discover | Recursively removes top-level and nested image URL fields from CAL-authorized product and offer payloads. | Merged PR #114; services/api-gateway/app/main.py; services/api-gateway/tests/test_marketplace_discovery.py |
+| API Gateway decisions, POST /v1/decisions | Always returns image_urls=[] regardless of CAL SHOW; CAL authorizes product display, not media publication. | Merged PR #114; services/api-gateway/app/main.py; services/api-gateway/tests/test_main.py |
 | Commerce marketplace offers, GET /marketplace/offers | Returns image_urls as an empty list. This fix is merged to main in PR #112. | services/commerce-service/app/main.py; services/commerce-service/tests/test_commerce.py |
-| Marketplace BFF public offers | Independently strips top-level and nested product image URLs even if upstream regresses. Merged to main in PR #112. | services/marketplace-bff/app/main.py; services/marketplace-bff/tests/test_main.py |
+| Marketplace BFF public offers | Independently strips top-level and nested product image URLs even if upstream regresses. | Merged PR #112; services/marketplace-bff/app/main.py; services/marketplace-bff/tests/test_main.py |
+| Marketplace BFF wardrobe recommendations, Xari search and Click It responses | Recursively strips image URL fields from product/offer objects and nested candidates before returning to the browser. | Merged PR #114; services/marketplace-bff/app/main.py; services/marketplace-bff/tests/test_main.py |
 | Vision text search | Removes top-level and nested image URLs from ranked candidates on main. | services/vision-intelligence/app/main.py; services/vision-intelligence/tests/test_api.py |
 | Vision Click It upload | Main now returns 503 before decoding, scoring, embedding or catalog retrieval; PR #113 merged this temporary fail-closed stop because main had no masking stage. The masked pipeline exists in the unmerged #107/#111 branches, but is not active on main. | services/vision-intelligence/app/main.py on main; PR #113; masked candidate pipeline in #107/#111 |
 | Catalog product CRUD and batch reads | Image URLs remain in Catalog records, but endpoints require internal Catalog credentials. They are not public publication routes and must never be exposed directly by a gateway. | services/catalog-service/app/main.py |
