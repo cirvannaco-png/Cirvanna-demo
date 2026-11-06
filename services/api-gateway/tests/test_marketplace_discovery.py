@@ -53,6 +53,31 @@ def offer(pid, variant, price):
     }
 
 
+def test_discovery_media_redaction_is_recursive_and_keeps_catalog_metadata():
+    payload = {
+        "displayable_products": [{
+            "product_id": P1,
+            "name": "Linen shirt",
+            "image_urls": ["https://cdn.example.test/unmasked.jpg"],
+            "media": {"render_url": "https://cdn.example.test/render.jpg"},
+            "seller": {"avatar_url": "https://cdn.example.test/seller.jpg"},
+            "attributes": {"material": "linen"},
+            "price_minor": 2500,
+        }],
+        "wardrobe_context": {"used": True},
+    }
+    safe = main._redact_unattested_media(payload)
+    item = safe["displayable_products"][0]
+    assert item["product_id"] == P1
+    assert item["name"] == "Linen shirt"
+    assert item["attributes"] == {"material": "linen"}
+    assert item["price_minor"] == 2500
+    assert item["image_urls"] == []
+    assert item["media"]["render_url"] is None
+    assert item["seller"]["avatar_url"] is None
+    assert safe["wardrobe_context"]["used"] is True
+
+
 def test_discovery_returns_only_products_authorized_by_cal(client, monkeypatch):
     from usi import StylePreference, USIProfile
     products = [product(P1, "Minimal shirt", {"style": "minimal", "material": "cotton"}), product(P2, "Classic shirt", {"style": "classic", "material": "cotton"})]
