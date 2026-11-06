@@ -455,13 +455,16 @@ MEDIA_REFERENCE_FIELDS = frozenset({
 
 
 MEDIA_CONTAINER_FIELDS = frozenset({
-    "media", "gallery", "image_metadata", "photo_metadata",
-    "avatar_metadata", "thumbnail_metadata", "render_metadata",
+    "media", "assets", "asset", "gallery", "galleries", "attachments",
+    "sources", "image_metadata", "photo_metadata", "avatar_metadata",
+    "thumbnail_metadata", "render_metadata", "preview_metadata",
 })
 MEDIA_CONTEXT_REFERENCE_FIELDS = frozenset({
-    "url", "uri", "src", "href", "path", "file", "file_name",
+    "url", "uri", "src", "srcset", "href", "path", "file", "file_name",
     "filename", "key", "id", "asset", "asset_id", "asset_reference",
-    "asset_key", "data", "base64", "bytes", "storage_key",
+    "asset_key", "data", "base64", "bytes", "storage_key", "source",
+    "source_url", "download_url", "download_uri", "stream_url",
+    "preview_url", "original_url",
 })
 
 
