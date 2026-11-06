@@ -244,10 +244,15 @@ def test_persistent_twin_create_read_and_delete_is_owner_scoped(tmp_path, monkey
         assert subject_id == SUBJECT
         assert asset_id == "5e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d"
 
+    async def delete_all_assets(subject_id, twin_id):
+        assert subject_id == SUBJECT
+        assert twin_id == "twin-123"
+
     monkeypatch.setattr(main, "_verify_consent", verify)
     monkeypatch.setattr(main, "_upload_twin_asset", upload)
     monkeypatch.setattr(main, "_run_vision", infer)
     monkeypatch.setattr(main, "_delete_twin_asset", delete_asset)
+    monkeypatch.setattr(main, "_delete_twin_assets", delete_all_assets)
 
     created = client.post(
         "/v1/twins",
