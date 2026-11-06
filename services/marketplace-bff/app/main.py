@@ -98,13 +98,19 @@ def _internal_service(url_key: str, token_key: str) -> tuple[str, str]:
         raise HTTPException(status_code=503, detail={"code": f"{token_key}_NOT_CONFIGURED"})
     return base, token
 
-def _xari_internal_service() -> tuple[str, str]:
-    """Prefer Xari environment names; retain TARI_* only as legacy Xari credential aliases."""
+def _pnelly_internal_service() -> tuple[str, str]:
+    """Prefer PNELLY; retain XARI then TARI environment names as compatibility aliases."""
+    pnelly_url = os.getenv("PNELLY_API_URL", "").strip()
     xari_url = os.getenv("XARI_API_URL", "").strip()
-    legacy_assistant_url = os.getenv("TARI_API_URL", "").strip()
-    url_key = "XARI_API_URL" if xari_url else "TARI_API_URL"
-    token = os.getenv("XARI_API_TOKEN", "").strip() or os.getenv("TARI_API_TOKEN", "").strip()
-    if not xari_url and not legacy_assistant_url:
+    tari_url = os.getenv("TARI_API_URL", "").strip()
+    url_key = "PNELLY_API_URL" if pnelly_url else ("XARI_API_URL" if xari_url else "TARI_API_URL")
+    token = (
+        os.getenv("PNELLY_API_TOKEN", "").strip()
+        or os.getenv("XARI_API_TOKEN", "").strip()
+        or os.getenv("TARI_API_TOKEN", "").strip()
+    )
+    if not pnelly_url and not xari_url and not tari_url:
+        # Keep the historic v1 error code stable during the alias migration.
         raise HTTPException(status_code=503, detail={"code": "XARI_API_URL_NOT_CONFIGURED"})
     base = _upstream_base(url_key)
     if len(token.encode("utf-8")) < 32:
@@ -162,7 +168,7 @@ async def _safe_json_post(
 @app.post("/api/vision/marketplace-search")
 async def marketplace_description_search(payload: MarketplaceSearchIn) -> dict:
     """Search marketplace candidates by description without exposing Xari credentials."""
-    base, token = _xari_internal_service()
+    base, token = _pnelly_internal_service()
     request_body = {"query": payload.normalized_query, "limit": payload.limit}
     if payload.category and payload.category.strip():
         request_body["category"] = payload.category.strip()
