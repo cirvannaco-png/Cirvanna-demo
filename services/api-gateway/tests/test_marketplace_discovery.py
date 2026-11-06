@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -194,6 +196,7 @@ def test_discovery_uses_verified_wardrobe_and_suppresses_owned_catalog_product(c
         captured["context"] = request.context
         return main.DecisionResponse(schema_version="1.0", request_id="req-wardrobe", created_at="2026-11-05T00:00:00Z", candidates=[show])
     monkeypatch.setattr(main, "evaluate_decisions", decisions)
+    observed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     request = {
         **payload(),
         "use_wardrobe_context": True,
@@ -201,13 +204,13 @@ def test_discovery_uses_verified_wardrobe_and_suppresses_owned_catalog_product(c
             "age_years": 25,
             "location": "Subukia",
             "location_source": "user_declared",
-            "location_observed_at": "2026-11-05T03:00:00Z",
+            "location_observed_at": observed_at,
             "occasion": "everyday",
             "occasion_source": "user_declared",
-            "occasion_observed_at": "2026-11-05T03:00:00Z",
+            "occasion_observed_at": observed_at,
             "climate": "warm",
             "climate_source": "user_declared",
-            "climate_observed_at": "2026-11-05T03:00:00Z",
+            "climate_observed_at": observed_at,
         },
     }
     response = client.post("/v1/discover", headers=auth(), json=request)
