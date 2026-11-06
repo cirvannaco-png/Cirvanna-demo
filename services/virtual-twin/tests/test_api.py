@@ -43,6 +43,9 @@ def test_capabilities_do_not_claim_mesh_measurement_or_cal_is_available(monkeypa
     response = client.get("/capabilities")
     assert response.status_code == 200
     data = response.json()
+    assert data["twin_generation"] is False
+    assert data["persistent_twin_available"] is False
+    assert data["pose_skeleton_inference"] is False
     assert data["body_reconstruction"] is False
     assert data["full_surface_mesh"] is False
     assert data["calibrated_body_measurements"] is False
