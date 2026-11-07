@@ -26,12 +26,17 @@ def auth():
     return {"Authorization": f"Bearer {TOKEN}"}
 
 
-def consent(client, subject="user-verified-1", scope="style_learning", receipt="receipt-style-0001"):
+def consent(client, subject="user-verified-1", scope="style_learning", receipt="receipt-style-0001", consent_id=None, resource_id=None):
+    body = {"receipt_id": receipt, "scope": scope, "consent_version": "2026-11-01", "granted": True}
+    if consent_id is not None:
+        body["consent_id"] = consent_id
+    if resource_id is not None:
+        body["resource_id"] = resource_id
     return client.post(
         "/v1/tal/consents",
         params={"subject_id": subject},
         headers=auth(),
-        json={"receipt_id": receipt, "scope": scope, "consent_version": "2026-11-01", "granted": True},
+        json=body,
     )
 
 
