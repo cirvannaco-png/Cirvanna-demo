@@ -223,6 +223,30 @@ class PNELLYDailyLooksRequest(BaseModel):
     occasion: str | None = Field(default=None, max_length=120)
     climate: str | None = Field(default=None, max_length=80)
     wardrobe_items: list[dict[str, Any]] = Field(max_length=150)
+    # Rotation state is supplied only by the trusted same-origin BFF after reading
+    # the owner-scoped Wardrobe record. Browser input is never forwarded directly.
+    rotation_seen_item_ids: list[str] = Field(default_factory=list, max_length=150)
+    rotation_cycle_started_at: str | None = Field(default=None, min_length=10, max_length=10)
+    rotation_cycle_number: int = Field(default=1, ge=1)
+
+    @field_validator("rotation_seen_item_ids")
+    @classmethod
+    def unique_rotation_ids(cls, values: list[str]) -> list[str]:
+        normalized = [value.strip() for value in values]
+        if any(not value or len(value) > 128 for value in normalized) or len(normalized) != len(set(normalized)):
+            raise ValueError("rotation item IDs must be non-empty and unique")
+        return normalized
+
+    @field_validator("rotation_cycle_started_at")
+    @classmethod
+    def valid_rotation_start(cls, value: str | None) -> str | None:
+        if value is not None:
+            from datetime import date
+            try:
+                date.fromisoformat(value)
+            except ValueError as exc:
+                raise ValueError("rotation_cycle_started_at must be an ISO calendar date") from exc
+        return value
 
     @field_validator("request_id", "user_id")
     @classmethod
@@ -776,6 +800,38 @@ def _pnelly_daily_looks(payload: PNELLYDailyLooksRequest, style_signals: list[st
         preview = look.get("virtual_twin_preview")
         if not isinstance(preview, dict) or preview.get("status") != "unavailable":
             raise HTTPException(502, detail={"code": "PNELLY_TWIN_PREVIEW_STATE_INVALID"})
+
+    rotation = result.get("wardrobe_rotation")
+    next_state = rotation.get("next_state") if isinstance(rotation, dict) else None
+    seen_ids = next_state.get("seen_item_ids") if isinstance(next_state, dict) else None
+    queue_ids = rotation.get("revival_queue_item_ids") if isinstance(rotation, dict) else None
+    try:
+        from datetime import date
+        if not isinstance(next_state, dict) or not isinstance(rotation, dict):
+            raise ValueError("rotation state is missing")
+        next_cycle = next_state.get("cycle_number")
+        next_started = next_state.get("cycle_started_at")
+        if isinstance(next_cycle, bool) or not isinstance(next_cycle, int) or next_cycle < 1:
+            raise ValueError("rotation cycle number is invalid")
+        if not isinstance(next_started, str):
+            raise ValueError("rotation cycle start is invalid")
+        date.fromisoformat(next_started)
+        if not isinstance(seen_ids, list) or len(seen_ids) != len(set(seen_ids)):
+            raise ValueError("rotation seen item set is invalid")
+        if not isinstance(queue_ids, list) or len(queue_ids) != len(set(queue_ids)):
+            raise ValueError("rotation queue is invalid")
+        if any(not isinstance(item_id, str) or item_id not in owned_ids for item_id in seen_ids + queue_ids):
+            raise ValueError("rotation item is outside the active wardrobe")
+        if not isinstance(rotation.get("cycle_complete"), bool) or not isinstance(rotation.get("cycle_overdue"), bool):
+            raise ValueError("rotation completion flags are invalid")
+        if rotation["cycle_complete"]:
+            if next_cycle != payload.rotation_cycle_number + 1 or seen_ids:
+                raise ValueError("completed rotation did not reset immediately")
+        elif next_cycle != payload.rotation_cycle_number:
+            raise ValueError("incomplete rotation changed cycle number")
+    except (TypeError, ValueError):
+        raise HTTPException(502, detail={"code": "PNELLY_ROTATION_RESPONSE_INVALID"})
+
     return {
         "schema_version": "1.0",
         "request_id": payload.request_id,
