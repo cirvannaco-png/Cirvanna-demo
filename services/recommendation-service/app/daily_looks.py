@@ -35,9 +35,14 @@ _CATEGORY_ALIASES = {
     "heels": "footwear", "flats": "footwear",
     "jacket": "outerwear", "coat": "outerwear", "blazer": "outerwear",
     "cardigan": "outerwear", "outerwear": "outerwear",
-    "bag": "accessory", "belt": "accessory", "watch": "accessory",
-    "scarf": "accessory", "hat": "accessory", "jewellery": "accessory",
-    "jewelry": "accessory", "accessory": "accessory", "accessories": "accessory",
+    "bag": "accessory", "bags": "accessory", "belt": "accessory", "belts": "accessory",
+    "watch": "accessory", "watches": "accessory", "scarf": "accessory", "scarves": "accessory",
+    "hat": "accessory", "hats": "accessory", "jewellery": "accessory", "jewelry": "accessory",
+    "tie": "accessory", "ties": "accessory", "eyewear": "accessory", "glasses": "accessory",
+    "sunglasses": "accessory", "frames": "accessory", "hair_accessories": "accessory",
+    "hair accessory": "accessory", "socks": "accessory", "makeup": "accessory",
+    "fragrance": "accessory", "haircare": "accessory",
+    "accessory": "accessory", "accessories": "accessory",
 }
 _ROLE_TERMS = {
     "everyday": ("casual", "daily", "everyday", "comfortable", "relaxed"),
