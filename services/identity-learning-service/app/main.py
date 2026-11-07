@@ -381,8 +381,6 @@ def verify_media_consent(payload: ConsentVerifyInput, db: Annotated[Session, Dep
     granted_scopes = sorted({row.scope for row in active})
     if not set(payload.required_scopes).issubset(set(granted_scopes)):
         raise HTTPException(403, detail={"code": "CONSENT_NOT_VERIFIED"})
-    if payload.resource_id is not None and any(row.resource_id != payload.resource_id for row in active if row.scope in payload.required_scopes):
-        raise HTTPException(403, detail={"code": "CONSENT_RESOURCE_MISMATCH"})
     return {
         "verified": True,
         "active": True,
