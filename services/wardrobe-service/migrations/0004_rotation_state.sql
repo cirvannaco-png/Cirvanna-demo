@@ -7,6 +7,8 @@ CREATE TABLE IF NOT EXISTS wardrobe_rotation_states (
     surfaced_item_ids JSONB NOT NULL DEFAULT '[]'::jsonb
         CHECK (jsonb_typeof(surfaced_item_ids) = 'array'),
     version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
+    last_request_id VARCHAR(128),
+    last_request_hash VARCHAR(64),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
