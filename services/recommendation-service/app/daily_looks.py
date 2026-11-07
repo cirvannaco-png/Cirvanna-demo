@@ -12,6 +12,8 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
+from app.wardrobe_rotation import build_rotation_state, wear_history_index
+
 POLICY_VERSION = "pnelly-daily-looks-v1"
 ROLES = ("everyday", "elevated", "explore")
 
@@ -67,8 +69,14 @@ def _item_text(item: dict[str, Any]) -> str:
     return _normalise(" ".join(fields))
 
 
-def _stable_tie(user_id: str, local_date: str, role: str, ids: Iterable[str]) -> str:
-    raw = "|".join((user_id, local_date, role, *sorted(ids)))
+def _stable_tie(
+    user_id: str,
+    local_date: str,
+    role: str,
+    ids: Iterable[str],
+    cycle_number: int = 1,
+) -> str:
+    raw = "|".join((user_id, local_date, role, f"cycle:{cycle_number}", *sorted(ids)))
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -191,6 +199,7 @@ def _add_optional_item(
     feedback_signals: tuple[str, ...],
     occasion: str | None,
     climate: str | None,
+    cycle_number: int = 1,
 ) -> list[dict[str, Any]]:
     """Mirror the live composer's single safe complementary-item step."""
     chosen = list(candidate)
@@ -203,7 +212,7 @@ def _add_optional_item(
                 pool,
                 key=lambda item: (
                     _score([item], role, style_signals, feedback_signals, occasion, climate),
-                    _stable_tie(user_id, local_date, role, [item["item_id"]]),
+                    _stable_tie(user_id, local_date, role, [item["item_id"]], cycle_number),
                 ),
             ))
     if optional_candidates:
@@ -211,7 +220,7 @@ def _add_optional_item(
             optional_candidates,
             key=lambda item: (
                 _score([item], role, style_signals, feedback_signals, occasion, climate),
-                _stable_tie(user_id, local_date, role, [item["item_id"]]),
+                _stable_tie(user_id, local_date, role, [item["item_id"]], cycle_number),
             ),
         )
         chosen.append(optional)
@@ -572,6 +581,10 @@ def build_daily_looks(
     hard_excluded_item_ids: Iterable[str] = (),
     evaluation_trace_enabled: bool = False,
     evaluation_secret: str | None = None,
+    rotation_seen_item_ids: Iterable[str] = (),
+    rotation_cycle_started_at: str | None = None,
+    rotation_cycle_number: int = 1,
+    wear_history: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build exactly three distinct look roles from verified wardrobe records."""
     if not request_id.strip() or not user_id.strip():
@@ -587,11 +600,26 @@ def build_daily_looks(
     if evaluation_trace_enabled and (not isinstance(evaluation_secret, str) or len(evaluation_secret.encode("utf-8")) < 32):
         raise ValueError("evaluation trace requires a 32-byte pseudonymization secret")
     excluded_ids = {value.strip() for value in hard_excluded_item_ids if isinstance(value, str) and value.strip()}
+    active = [item for item in active if item["item_id"] not in excluded_ids]
     classified = _classify_items(active)
     candidates, _ = _base_candidates(classified)
 
     signals = tuple(_normalise(value) for value in style_signals if isinstance(value, str) and value.strip())[:40]
     feedback = tuple(_normalise(value) for value in feedback_signals if isinstance(value, str) and value.strip())[:40]
+    if isinstance(rotation_cycle_number, bool) or not isinstance(rotation_cycle_number, int) or rotation_cycle_number < 1:
+        raise ValueError("rotation_cycle_number must be a positive integer")
+    rotation_seen = tuple(rotation_seen_item_ids)
+    rotation_seen_set = {value for value in rotation_seen if isinstance(value, str)}
+    active_item_ids = {item["item_id"] for item in active}
+    completed_before_request = bool(active_item_ids) and active_item_ids.issubset(rotation_seen_set)
+    effective_cycle_number = rotation_cycle_number + int(completed_before_request)
+    if completed_before_request:
+        rotation_seen_set = set()  # begin the next cycle immediately on full coverage
+    normalized_wear = wear_history_index(active, wear_history)
+    wear_by_id = {
+        item_id: {"last_worn_at": values[0], "wear_count": values[1]}
+        for item_id, values in normalized_wear.items()
+    }
     selected_base: set[frozenset[str]] = set()
     selected_item_ids: set[str] = set()
     looks: list[dict[str, Any]] = []
@@ -625,9 +653,11 @@ def build_daily_looks(
         candidate = max(
             available,
             key=lambda group: (
+                -sum(1 for item in group if item["item_id"] in rotation_seen_set or item["item_id"] in selected_item_ids),
+                -sum((wear_by_id.get(item["item_id"]) or {}).get("wear_count", 0) for item in group),
                 _score(group, role, signals, feedback, occasion, climate),
-                -sum(len(set(x["item_id"] for x in group) & selected_item_ids) for _ in (0,)),
-                _stable_tie(user_id, local_date, role, (x["item_id"] for x in group)),
+                -sum(1 for item in group if (wear_by_id.get(item["item_id"]) or {}).get("last_worn_at")),
+                _stable_tie(user_id, local_date, role, (x["item_id"] for x in group), effective_cycle_number),
             ),
         )
         base_ids = frozenset(x["item_id"] for x in candidate)
@@ -639,6 +669,7 @@ def build_daily_looks(
         chosen = _add_optional_item(
             candidate, classified, role=role, user_id=user_id, local_date=local_date,
             style_signals=signals, feedback_signals=feedback, occasion=occasion, climate=climate,
+            cycle_number=effective_cycle_number,
         )
         used = {item["item_id"] for item in chosen}
 
@@ -660,6 +691,9 @@ def build_daily_looks(
         })
 
     ready_count = sum(look["status"] == "ready" for look in looks)
+    surfaced_today = sorted({item_id for look in looks if look["status"] == "ready" for item_id in look["item_ids"]})
+    rotation = build_rotation_state(items=active, local_date=local_date, seen_item_ids=rotation_seen, cycle_started_at=rotation_cycle_started_at, cycle_number=rotation_cycle_number, wear_history=wear_history, surfaced_item_ids=surfaced_today)
+    rotation["combination_cycle_number"] = effective_cycle_number
     output = {
         "schema_version": "1.0",
         "policy_version": POLICY_VERSION,
@@ -669,6 +703,7 @@ def build_daily_looks(
         "look_count": 3,
         "ready_count": ready_count,
         "looks": looks,
+        "wardrobe_rotation": rotation,
         "personalization": {
             "style_signals_used": bool(signals),
             "style_signal_count": len(signals),

@@ -169,6 +169,11 @@ class PNELLYDailyLooksRequest(StrictModel):
     wardrobe_items: list[WardrobeItemForDailyLook] = Field(max_length=150)
     style_signals: list[str] = Field(default_factory=list, max_length=40)
     feedback_signals: list[str] = Field(default_factory=list, max_length=40)
+    # Trusted BFF persists this state between requests; browser clients cannot call this service.
+    rotation_seen_item_ids: list[str] = Field(default_factory=list, max_length=150)
+    rotation_cycle_started_at: str | None = Field(default=None, max_length=10)
+    rotation_cycle_number: int = Field(default=1, ge=1)
+    wear_history: list[dict[str, object]] = Field(default_factory=list, max_length=150)
     # Gateway-only fields. Public BFF input is ignored and these are populated server-side.
     evaluation_wardrobe_items: list[WardrobeItemForDailyLook] = Field(default_factory=list, max_length=150)
     hard_excluded_item_ids: list[str] = Field(default_factory=list, max_length=150)
@@ -310,6 +315,10 @@ def pnelly_daily_looks(request: PNELLYDailyLooksRequest) -> dict[str, object]:
             climate=request.climate,
             style_signals=request.style_signals,
             feedback_signals=request.feedback_signals,
+            rotation_seen_item_ids=request.rotation_seen_item_ids,
+            rotation_cycle_started_at=request.rotation_cycle_started_at,
+            rotation_cycle_number=request.rotation_cycle_number,
+            wear_history=request.wear_history,
             evaluation_wardrobe_items=(
                 [item.model_dump() for item in request.evaluation_wardrobe_items]
                 if trace_enabled else None
