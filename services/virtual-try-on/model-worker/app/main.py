@@ -10,6 +10,7 @@ import hmac
 import io
 import os
 import re
+import threading
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
@@ -18,6 +19,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from PIL import Image, UnidentifiedImageError
+from starlette.concurrency import run_in_threadpool
 
 SERVICE = "cirvanna-vton-gpu-worker"
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
@@ -31,6 +33,9 @@ CATEGORY_MAP = {
     "full_outfit": "one-pieces",
 }
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
+PINNED_FASHN_VTON_COMMIT = "7c0f10af3f91ad4048fe9729c470a13ef905d25a"
+REQUIRED_WEIGHT_FILES = ("model.safetensors", "dwpose/yolox_l.onnx", "dwpose/dw-ll_ucoco_384.onnx")
+_RENDER_SLOT = threading.BoundedSemaphore(value=1)
 bearer = HTTPBearer(auto_error=False)
 app = FastAPI(title="Cirvanna Private VTON GPU Worker", version="0.1.0")
 _PIPELINE = None
@@ -42,16 +47,30 @@ def _configured() -> tuple[bool, str]:
     source_ref = os.getenv("FASHN_VTON_SOURCE_REF", "")
     if len(token.encode()) < 32:
         return False, "worker_token_not_configured"
-    if not SHA40.fullmatch(source_ref):
-        return False, "pinned_source_commit_required"
+    if not SHA40.fullmatch(source_ref) or source_ref != PINNED_FASHN_VTON_COMMIT:
+        return False, "unexpected_or_unpinned_source_commit"
     if not weights or not Path(weights).is_dir():
         return False, "model_weights_directory_missing"
+    missing = [
+        relative for relative in REQUIRED_WEIGHT_FILES
+        if not (Path(weights) / relative).is_file()
+        or (Path(weights) / relative).stat().st_size <= 0
+    ]
+    if missing:
+        return False, "required_model_artifacts_missing"
     try:
         import torch
         if not torch.cuda.is_available():
             return False, "cuda_gpu_unavailable"
+        import onnxruntime
+        if "CUDAExecutionProvider" not in onnxruntime.get_available_providers():
+            return False, "onnx_cuda_provider_unavailable"
     except Exception:
-        return False, "pytorch_runtime_unavailable"
+        return False, "gpu_runtime_unavailable"
+    try:
+        _pipeline()
+    except Exception:
+        return False, "model_initialization_failed"
     return True, "ready"
 
 
@@ -68,10 +87,11 @@ def require_worker_auth(
 def _pipeline():
     global _PIPELINE
     if _PIPELINE is None:
-        # Heavy import is deferred so health and contract tests do not load model weights.
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
         from fashn_vton import TryOnPipeline
         weights = os.environ["FASHN_VTON_WEIGHTS_DIR"]
-        _PIPELINE = TryOnPipeline(weights_dir=weights)
+        _PIPELINE = TryOnPipeline(weights_dir=weights, device="cuda")
     return _PIPELINE
 
 
@@ -146,8 +166,9 @@ def capabilities() -> dict[str, object]:
         "input_persistence": False,
         "output_persistence": False,
         "remote_urls_accepted": False,
-        "consent_enforced": True,
-        "model_source_pinned": bool(SHA40.fullmatch(os.getenv("FASHN_VTON_SOURCE_REF", ""))),
+        "consent_enforced_by_worker": False,
+        "consent_assertions_required": True,
+        "model_source_pinned": os.getenv("FASHN_VTON_SOURCE_REF", "") == PINNED_FASHN_VTON_COMMIT,
     }
 
 
@@ -176,7 +197,12 @@ async def render(
         await garment_image.close()
     person = _decode_image(person_bytes, person_type)
     garment = _decode_image(garment_bytes, garment_type)
-    output = _render(person, garment, category)
+    if not _RENDER_SLOT.acquire(blocking=False):
+        raise HTTPException(429, detail={"code": "GPU_WORKER_BUSY", "retryable": True})
+    try:
+        output = await run_in_threadpool(_render, person, garment, category)
+    finally:
+        _RENDER_SLOT.release()
     return Response(
         content=output,
         media_type="image/png",
