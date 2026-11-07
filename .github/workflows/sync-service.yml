@@ -1,7 +1,7 @@
 name: Commerce to Wardrobe sync worker checks
 on:
   push:
-    branches: ["main", "feature/**", "engineering/**"]
+    branches: ["main", "feature/**", "feat/**", "engineering/**"]
     paths:
       - "services/sync-service/**"
       - ".github/workflows/sync-service.yml"
