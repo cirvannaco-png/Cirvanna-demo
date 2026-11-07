@@ -96,7 +96,7 @@ def test_duplicate_ids_and_invalid_dates_are_rejected(monkeypatch):
     client = TestClient(app)
     response = client.post(
         "/v1/pnelly/daily-looks",
-        headers={"Authorization": f"Bearer {TOKEN}"},
+        headers={"Authorization": f"Bearer {token}"},
         json={
             "request_id": "daily-006",
             "user_id": "user-123",
@@ -290,7 +290,8 @@ def test_evaluation_trace_requires_a_sufficient_pseudonymization_secret():
 
 
 def test_evaluation_trace_api_is_server_flagged_and_fails_closed_without_secret(monkeypatch):
-    monkeypatch.setenv("COMPLEMENTER_SERVICE_TOKEN", TOKEN)
+    token = "pnelly-evaluation-api-test-token-with-more-than-32-bytes"
+    monkeypatch.setenv("COMPLEMENTER_SERVICE_TOKEN", token)
     monkeypatch.setenv("PNELLY_EVALUATION_TRACE_ENABLED", "true")
     monkeypatch.delenv("PNELLY_EVALUATION_TRACE_HMAC_SECRET", raising=False)
     client = TestClient(app)
