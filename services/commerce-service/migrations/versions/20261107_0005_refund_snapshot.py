@@ -13,28 +13,36 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "commerce_orders",
-        sa.Column("refund_state", sa.String(16), nullable=False, server_default="none"),
-    )
-    op.add_column(
-        "commerce_orders",
-        sa.Column("amount_refunded_minor", sa.Integer(), nullable=False, server_default="0"),
-    )
-    op.add_column(
-        "commerce_orders",
-        sa.Column("payment_intent_id", sa.String(180), nullable=True),
-    )
-    op.create_index(
-        "uq_commerce_order_payment_intent",
-        "commerce_orders",
-        ["payment_intent_id"],
-        unique=True,
-    )
+    with op.batch_alter_table("commerce_orders") as batch:
+        batch.add_column(
+            sa.Column("refund_state", sa.String(16), nullable=False, server_default="none"),
+        )
+        batch.add_column(
+            sa.Column("amount_refunded_minor", sa.Integer(), nullable=False, server_default="0"),
+        )
+        batch.add_column(
+            sa.Column("payment_intent_id", sa.String(180), nullable=True),
+        )
+        batch.create_check_constraint(
+            "ck_commerce_order_refunded_nonnegative",
+            "amount_refunded_minor >= 0 AND amount_refunded_minor <= subtotal_minor",
+        )
+        batch.create_check_constraint(
+            "ck_commerce_order_refund_state",
+            "refund_state IN ('none', 'partial_refund', 'refunded')",
+        )
+        batch.create_index(
+            "uq_commerce_order_payment_intent",
+            ["payment_intent_id"],
+            unique=True,
+        )
 
 
 def downgrade() -> None:
-    op.drop_index("uq_commerce_order_payment_intent", table_name="commerce_orders")
-    op.drop_column("commerce_orders", "payment_intent_id")
-    op.drop_column("commerce_orders", "amount_refunded_minor")
-    op.drop_column("commerce_orders", "refund_state")
+    with op.batch_alter_table("commerce_orders") as batch:
+        batch.drop_index("uq_commerce_order_payment_intent")
+        batch.drop_constraint("ck_commerce_order_refund_state", type_="check")
+        batch.drop_constraint("ck_commerce_order_refunded_nonnegative", type_="check")
+        batch.drop_column("payment_intent_id")
+        batch.drop_column("amount_refunded_minor")
+        batch.drop_column("refund_state")
