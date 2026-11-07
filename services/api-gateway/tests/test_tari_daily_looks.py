@@ -200,6 +200,7 @@ def test_pnelly_evaluation_trace_inventory_and_npl_blocks_are_gateway_populated(
     monkeypatch.setattr(main, "_resolve_verified_subject", lambda _header: "signed-user-42")
     monkeypatch.setattr(main, "_load_verified_usi_profile", lambda *_args, **_kwargs: SimpleNamespace(preferences=[]))
     monkeypatch.setattr(main, "_pnelly_npl_provider_configured", lambda: True)
+    monkeypatch.setattr(main, "_has_active_pnelly_evaluation_consent", lambda **_kwargs: True)
     captured = {}
     def filter_items(*, request_id, user_id, wardrobe_items):
         captured["filter_input"] = wardrobe_items
@@ -211,6 +212,7 @@ def test_pnelly_evaluation_trace_inventory_and_npl_blocks_are_gateway_populated(
     monkeypatch.setattr(main, "_load_consent_aware_wardrobe_likes", lambda _subject: {})
     monkeypatch.setattr(main, "_pnelly_daily_looks", compose)
     body = request_body()
+    body["evaluation_consent_receipt_id"] = "active-style"
     body["evaluation_wardrobe_items"] = [{
         "item_id": "attacker-item", "owner_user_id": "signed-user-42",
         "display_name": "attacker", "category": "tops", "attributes": [], "status": "active",
@@ -277,3 +279,24 @@ def test_identity_consent_helper_accepts_only_active_style_learning_receipts(mon
     assert main._has_active_pnelly_evaluation_consent(user_id="signed-user-42", receipt_id="revoked-style") is False
     assert main._has_active_pnelly_evaluation_consent(user_id="signed-user-42", receipt_id="wrong-scope") is False
     assert main._has_active_pnelly_evaluation_consent(user_id="signed-user-42", receipt_id=None) is False
+
+
+
+def test_pnelly_evaluation_trace_requires_active_user_consent(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_API_TOKEN", GATEWAY_TOKEN)
+    monkeypatch.setenv("NPL_SERVICE_URL", "https://npl.example.test")
+    monkeypatch.setenv("NPL_SERVICE_TOKEN", "npl-internal-token-more-than-thirty-two-bytes")
+    monkeypatch.setenv("NPL_EVIDENCE_HMAC_SECRET", "npl-evidence-secret-more-than-thirty-two-bytes")
+    monkeypatch.setenv("PNELLY_EVALUATION_TRACE_ENABLED", "true")
+    monkeypatch.setenv("PNELLY_EVALUATION_TRACE_HMAC_SECRET", "trace-secret-with-at-least-thirty-two-bytes")
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda _header: "signed-user-42")
+    monkeypatch.setattr(main, "_load_verified_usi_profile", lambda *_args, **_kwargs: SimpleNamespace(preferences=[]))
+    monkeypatch.setattr(main, "_pnelly_npl_provider_configured", lambda: True)
+    monkeypatch.setattr(main, "_has_active_pnelly_evaluation_consent", lambda **_kwargs: False)
+    response = TestClient(main.app).post(
+        "/v1/pnelly/daily-looks",
+        headers={"Authorization": f"Bearer {GATEWAY_TOKEN}", "X-End-User-Authorization": END_USER},
+        json=request_body(),
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "PNELLY_EVALUATION_CONSENT_REQUIRED"
