@@ -2,7 +2,7 @@
 
 **Status:** authenticated API and SQLAlchemy persistence contract implemented; production database and object-storage deletion worker still require deployment and validation.
 
-The service owns user wardrobe item records and saved outfit compositions. Item records include lifecycle, catalog-product references, user-authorized opaque image asset IDs, explicit photo-storage consent, optimistic version checks and a durable asset-deletion outbox. Saved outfits contain references to active, owner-scoped wardrobe items; they do not copy Catalog facts or make unpurchased marketplace products owned. The PostgreSQL schema is applied through ordered migrations `0001_initial.sql`, `0002_wardrobe_learning_events.sql`, `0003_saved_outfits.sql` and `0004_rotation_state.sql`. The application does not automatically create the production schema. SQLite is test-only.
+The service owns user wardrobe item records and saved outfit compositions. Item records include lifecycle, catalog-product references, user-authorized opaque image asset IDs, explicit photo-storage consent, optimistic version checks and a durable asset-deletion outbox. Saved outfits contain references to active, owner-scoped wardrobe items; they do not copy Catalog facts or make unpurchased marketplace products owned. The PostgreSQL schema is applied through ordered migrations `0001_initial.sql`, `0002_wardrobe_learning_events.sql`, `0003_saved_outfits.sql`, `0004_rotation_state.sql`, `0005_verified_purchase_ownership.sql` and `0006_outfit_wear_history.sql`. The application does not automatically create the production schema. SQLite is test-only.
 
 ## Configuration
 
