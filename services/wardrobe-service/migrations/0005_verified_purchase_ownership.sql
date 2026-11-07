@@ -25,10 +25,10 @@ BEGIN
                  AND purchase_paid_at IS NULL)
                 OR
                 (commerce_order_id IS NOT NULL AND commerce_order_item_id IS NOT NULL
-                 AND purchase_event_id IS NOT NULL AND purchase_quantity >= 1
-                 AND purchase_currency IS NOT NULL AND purchase_unit_price_minor >= 0
+                 AND purchase_event_id IS NOT NULL AND purchase_quantity IS NOT NULL AND purchase_quantity >= 1
+                 AND purchase_currency IS NOT NULL AND purchase_unit_price_minor IS NOT NULL AND purchase_unit_price_minor >= 0
                  AND purchase_paid_at IS NOT NULL)
             );
     END IF;
-END
+END;
 $purchase_provenance$;
