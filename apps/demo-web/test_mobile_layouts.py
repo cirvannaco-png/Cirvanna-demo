@@ -29,6 +29,8 @@ def test_demo_pages_have_no_horizontal_overflow_on_mobile_and_landscape():
             for page_path in PAGES:
                 assert page_path.is_file(), f"missing demo page: {page_path}"
                 page = browser.new_page()
+                page_errors: list[str] = []
+                page.on("pageerror", lambda error: page_errors.append(str(error)))
                 page.goto(page_path.resolve().as_uri(), wait_until="domcontentloaded")
                 for width, height in VIEWPORTS:
                     page.set_viewport_size({"width": width, "height": height})
@@ -44,6 +46,7 @@ def test_demo_pages_have_no_horizontal_overflow_on_mobile_and_landscape():
                     assert geometry["body"] <= width + 1, (
                         f"{page_path} body overflows horizontally at {width}x{height}: {geometry}"
                     )
+                assert not page_errors, f"{page_path} raised JavaScript errors: {page_errors}"
                 page.close()
         finally:
             browser.close()
