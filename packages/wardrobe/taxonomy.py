@@ -60,7 +60,7 @@ _ALIASES = {
 
 
 def normalize_category(value: str) -> str:
-    """Return a stable category key or reject an unsupported category."""
+    """Return a stable key; preserve valid custom keys for forward compatibility."""
     if not isinstance(value, str) or not value.strip():
         raise ValueError("category must not be empty")
     key = value.strip().casefold().replace("-", "_").replace(" ", "_")
