@@ -38,6 +38,30 @@ def test_health_is_liveness_only():
     assert response.json() == {"status": "alive", "service": "cirvanna-virtual-twin"}
 
 
+def test_capabilities_never_claim_persistent_twin_for_ephemeral_pose_inference(monkeypatch):
+    monkeypatch.setattr(main, "_vision_worker_ready", lambda: _true())
+    monkeypatch.setattr(
+        main,
+        "_internal_config",
+        lambda url_name, token_name: ("https://provider.example.test", "x" * 40)
+        if url_name in {"CONSENT_API_URL", "TWIN_REGISTRY_API_URL"} else None,
+    )
+    response = client.get("/capabilities")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["pose_skeleton_inference"] is True
+    assert data["twin_generation"] is False
+    assert data["persistent_twin_generation"] is False
+    assert data["persistent_twin_preview"] is False
+    assert data["body_reconstruction"] is False
+    assert data["full_surface_mesh"] is False
+    assert data["calibrated_body_measurements"] is False
+
+
+async def _true():
+    return True
+
+
 def test_capabilities_do_not_claim_mesh_measurement_or_cal_is_available(monkeypatch):
     monkeypatch.setattr(main, "_vision_worker_ready", lambda: _false())
     response = client.get("/capabilities")
