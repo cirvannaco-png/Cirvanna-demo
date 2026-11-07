@@ -496,6 +496,134 @@ def test_verified_purchase_rejects_untrusted_event_semantics(client, field, valu
     assert response.status_code == 422
 
 
+def refund_snapshot_body(**overrides):
+    body = {
+        "event_id": "523e4567-e89b-42d3-a456-426614174000",
+        "provider_event_id": "evt_refund_snapshot_0001",
+        "event_type": "commerce.order.refund.updated",
+        "schema_version": 1,
+        "ownership_authority": "verified_stripe_charge_refund",
+        "owner_user_id": "buyer-1",
+        "order_id": "123e4567-e89b-42d3-a456-426614174001",
+        "payment_intent_id": "pi_test_purchase_0001",
+        "charge_id": "ch_test_purchase_0001",
+        "currency": "KES",
+        "order_total_minor": 500000,
+        "amount_refunded_minor": 250000,
+        "refund_state": "partial_refund",
+        "refunded_at": "2026-11-07T12:00:00Z",
+        "physical_return_confirmed": False,
+        "ownership_effect": "financial_status_only",
+    }
+    body.update(overrides)
+    return body
+
+
+def test_refund_snapshot_is_order_scoped_monotonic_and_does_not_change_items(client):
+    purchase = client.post(
+        "/v1/purchases/verified", headers=auth(), json=verified_purchase_body()
+    )
+    assert purchase.status_code == 201, purchase.text
+    item_id = purchase.json()["item"]["item_id"]
+
+    body = refund_snapshot_body()
+    first = client.post("/v1/purchases/refund-status", headers=auth(), json=body)
+    replay = client.post("/v1/purchases/refund-status", headers=auth(), json=body)
+    assert first.status_code == 200, first.text
+    assert first.json()["status"] == "recorded"
+    assert first.json()["wardrobe_items_unchanged"] is True
+    assert replay.status_code == 200
+    assert replay.json()["status"] == "replayed"
+
+    stale = client.post(
+        "/v1/purchases/refund-status", headers=auth(),
+        json=refund_snapshot_body(
+            event_id="623e4567-e89b-42d3-a456-426614174000",
+            provider_event_id="evt_refund_snapshot_stale",
+            amount_refunded_minor=100000,
+        ),
+    )
+    assert stale.status_code == 200
+    assert stale.json()["status"] == "stale_snapshot_ignored"
+
+    full = client.post(
+        "/v1/purchases/refund-status", headers=auth(),
+        json=refund_snapshot_body(
+            event_id="723e4567-e89b-42d3-a456-426614174000",
+            provider_event_id="evt_refund_snapshot_full",
+            amount_refunded_minor=500000,
+            refund_state="refunded",
+        ),
+    )
+    assert full.status_code == 200
+    assert full.json()["refund_state"] == "refunded"
+    assert full.json()["amount_refunded_minor"] == 500000
+
+    snapshot = client.get(
+        "/v1/purchases/refund-status", headers=auth(),
+        params={"owner_user_id": "buyer-1", "order_id": body["order_id"]},
+    )
+    assert snapshot.status_code == 200
+    assert snapshot.json()["refund_status"] == "refunded"
+    assert snapshot.json()["physical_return_confirmed"] is False
+    assert snapshot.json()["ownership_effect"] == "financial_status_only"
+
+    items = client.get(
+        "/v1/items", headers=auth(), params={"owner_user_id": "buyer-1"}
+    ).json()["items"]
+    assert len(items) == 1
+    assert items[0]["item_id"] == item_id
+    assert items[0]["status"] == "active"
+
+
+def test_refund_snapshot_rejects_cross_owner_resource_and_invalid_return_claims(client):
+    purchase = client.post(
+        "/v1/purchases/verified", headers=auth(), json=verified_purchase_body()
+    )
+    assert purchase.status_code == 201
+
+    cross_owner = client.post(
+        "/v1/purchases/refund-status", headers=auth(),
+        json=refund_snapshot_body(owner_user_id="buyer-2"),
+    )
+    assert cross_owner.status_code == 404
+
+    wrong_total = client.post(
+        "/v1/purchases/refund-status", headers=auth(),
+        json=refund_snapshot_body(
+            event_id="823e4567-e89b-42d3-a456-426614174000",
+            provider_event_id="evt_refund_bad_total",
+            order_total_minor=400000,
+        ),
+    )
+    assert wrong_total.status_code == 409
+
+    no_longer_owned = client.post(
+        "/v1/purchases/refund-status", headers=auth(),
+        json=refund_snapshot_body(
+            event_id="923e4567-e89b-42d3-a456-426614174000",
+            provider_event_id="evt_refund_claim_return",
+            physical_return_confirmed=True,
+        ),
+    )
+    assert no_longer_owned.status_code == 422
+
+    changed_intent = client.post(
+        "/v1/purchases/refund-status", headers=auth(),
+        json=refund_snapshot_body(
+            event_id="a23e4567-e89b-42d3-a456-426614174000",
+            provider_event_id="evt_refund_wrong_pi",
+            payment_intent_id="pi_other_order",
+        ),
+    )
+    assert changed_intent.status_code == 422 or changed_intent.status_code == 409
+
+
+def test_refund_snapshot_requires_internal_auth(client):
+    response = client.post("/v1/purchases/refund-status", json=refund_snapshot_body())
+    assert response.status_code == 401
+
+
 def test_verified_purchase_requires_internal_auth(client):
     response = client.post("/v1/purchases/verified", json=verified_purchase_body())
     assert response.status_code == 401
