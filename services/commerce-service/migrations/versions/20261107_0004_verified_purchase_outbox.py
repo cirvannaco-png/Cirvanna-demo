@@ -24,6 +24,10 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("delivered_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("attempts", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("next_attempt_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column("lease_until", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("lease_owner", sa.String(128), nullable=True),
+        sa.Column("dead_letter_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("last_error", sa.String(500), nullable=True),
         sa.UniqueConstraint("aggregate_type", "aggregate_id", "event_type",
                             name="uq_commerce_outbox_aggregate_event"),
@@ -31,7 +35,7 @@ def upgrade() -> None:
     op.create_index("ix_commerce_outbox_events_aggregate_id",
                     "commerce_outbox_events", ["aggregate_id"], unique=False)
     op.create_index("ix_commerce_outbox_pending",
-                    "commerce_outbox_events", ["delivered_at", "created_at"], unique=False)
+                    "commerce_outbox_events", ["delivered_at", "dead_letter_at", "next_attempt_at"], unique=False)
 
 
 def downgrade() -> None:
