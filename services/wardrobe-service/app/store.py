@@ -16,6 +16,7 @@ class WardrobeRow(Base):
     __table_args__ = (
         UniqueConstraint("owner_user_id", "last_command_id", name="uq_wardrobe_owner_command"),
         Index("ix_wardrobe_owner_status", "owner_user_id", "status"),
+        UniqueConstraint("owner_user_id", "commerce_order_item_id", name="uq_wardrobe_owner_commerce_line"),
     )
     owner_user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     item_id: Mapped[str] = mapped_column(String(128), primary_key=True)
@@ -23,6 +24,10 @@ class WardrobeRow(Base):
     category: Mapped[str] = mapped_column(String(80), nullable=False)
     attributes: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     catalog_product_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    commerce_order_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    commerce_order_item_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    purchase_event_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    purchase_quantity: Mapped[int | None] = mapped_column(Integer, nullable=True)
     image_asset_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
     image_storage_consent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
@@ -128,6 +133,8 @@ def _row_to_domain(row: WardrobeRow) -> WardrobeItem:
         attributes=tuple(row.attributes or ()), catalog_product_id=row.catalog_product_id,
         image_asset_id=row.image_asset_id, image_storage_consent=row.image_storage_consent,
         status=WardrobeItemStatus(row.status), version=row.version, last_command_id=row.last_command_id,
+        commerce_order_id=row.commerce_order_id, commerce_order_item_id=row.commerce_order_item_id,
+        purchase_event_id=row.purchase_event_id, purchase_quantity=row.purchase_quantity,
     )
 
 class WardrobeStore:
