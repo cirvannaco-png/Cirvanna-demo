@@ -325,7 +325,9 @@ async def capabilities() -> dict[str, object]:
     twin_registry_configured = _internal_config("TWIN_REGISTRY_API_URL", "TWIN_REGISTRY_API_TOKEN") is not None
     return {
         "service": SERVICE_NAME,
-        "twin_generation": vision_ready and consent_configured,
+        "twin_generation": False,
+        "persistent_twin_generation": False,
+        "persistent_twin_preview": False,
         "pose_skeleton_inference": vision_ready and consent_configured,
         "body_reconstruction": False,
         "full_surface_mesh": False,
