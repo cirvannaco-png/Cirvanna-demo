@@ -18,7 +18,7 @@ An Apache-2.0 top-level model does not make the complete inference stack commerc
 4. Readiness loads the actual pipeline after verifying configuration and artifacts. A directory existing is not sufficient evidence that inference can run.
 5. Worker consent flags are transport-level assertions only. The trusted orchestrator remains authoritative for server-side consent receipt verification, resource ownership, revocation, and output access. The worker must not advertise itself as the consent authority.
 6. Production mode remains blocked unless Cirvanna has written commercial permission for the FASHN Human Parser/SegFormer model or replaces it with a commercially cleared parser. The approval environment flag is an auditable deployment gate, not a substitute for obtaining the rights.
-7. The human-parser Hugging Face model cache is not yet revision-pinned or covered by the core artifact manifest. This is an explicit unresolved release gate; a future change must stage a fixed parser revision and verify its checksum before enabling production.
+7. The human-parser Hugging Face model cache is not yet revision-pinned or covered by the core artifact manifest. This is an explicit unresolved release gate; a future change must stage a fixed parser revision and verify its checksum before enabling production.\n8. A possible replacement candidate, `pirocheto/schp-atr-18`, advertises MIT model metadata and an 18-class ATR parser, but its wrapper repository was archived in August 2026. The original ATR dataset provenance/licensing and the checkpoint's complete rights chain still require verification; its label schema also differs from FASHN's parser contract. It is a research candidate only, not an approved commercial replacement.
 
 ## Consequences
 
@@ -31,4 +31,4 @@ An Apache-2.0 top-level model does not make the complete inference stack commerc
 
 - FASHN VTON 1.5 repository: https://github.com/fashn-AI/fashn-vton-1.5
 - FASHN Human Parser repository: https://github.com/fashn-AI/fashn-human-parser
-- NVIDIA SegFormer repository and license notice: https://github.com/NVlabs/SegFormer
+- NVIDIA SegFormer repository and license notice: https://github.com/NVlabs/SegFormer\n- Candidate SCHP parser: https://huggingface.co/pirocheto/schp-atr-18\n- SCHP wrapper repository: https://github.com/pirocheto/schp-human-parsing
