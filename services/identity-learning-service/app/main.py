@@ -30,7 +30,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 SERVICE = "cirvanna-identity-learning-service"
 bearer = HTTPBearer(auto_error=False)
 SUBJECT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$")
-SCOPES = {"personalization", "style_learning", "profile_storage", "image_processing", "body_measurements", "twin_storage", "virtual_try_on", "click_it"}
+SCOPES = {"personalization", "style_learning", "profile_storage", "image_processing", "body_measurements", "virtual_twin_storage", "virtual_try_on", "click_it"}
 
 
 def utcnow() -> datetime:
@@ -148,7 +148,7 @@ class ConsentPut(StrictModel):
     receipt_id: str = Field(min_length=8, max_length=128)
     consent_id: str | None = Field(default=None, min_length=8, max_length=128)
     resource_id: str | None = Field(default=None, min_length=3, max_length=160)
-    scope: Literal["personalization", "style_learning", "profile_storage", "image_processing", "body_measurements", "twin_storage", "virtual_try_on", "click_it"]
+    scope: Literal["personalization", "style_learning", "profile_storage", "image_processing", "body_measurements", "virtual_twin_storage", "virtual_try_on", "click_it"]
     consent_version: str = Field(min_length=1, max_length=80)
     granted: bool
 
@@ -166,7 +166,7 @@ class ConsentPut(StrictModel):
 class ConsentVerifyInput(StrictModel):
     subject_id: str = Field(min_length=1, max_length=128)
     consent_id: str = Field(min_length=8, max_length=128)
-    required_scopes: list[Literal["personalization", "style_learning", "profile_storage", "image_processing", "body_measurements", "twin_storage", "virtual_try_on", "click_it"]] = Field(min_length=1, max_length=8)
+    required_scopes: list[Literal["personalization", "style_learning", "profile_storage", "image_processing", "body_measurements", "virtual_twin_storage", "virtual_try_on", "click_it"]] = Field(min_length=1, max_length=8)
     resource_id: str | None = Field(default=None, min_length=3, max_length=160)
 
     @model_validator(mode="after")
