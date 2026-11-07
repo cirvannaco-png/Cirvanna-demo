@@ -146,6 +146,11 @@ def prepare_cases(
                 for row in case_exposures
             ]
             case.setdefault("adjudications", [])
+            try:
+                from evaluate_outfits import _validate_case
+                _validate_case(case)
+            except Exception as exc:
+                raise ValueError(f"{case_id}: prepared case violates the frozen evaluator contract: {exc}") from exc
             cases.append(case)
 
     if reviews_by_case:
