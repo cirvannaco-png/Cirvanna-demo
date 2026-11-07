@@ -1272,7 +1272,11 @@ def test_pnelly_daily_looks_reloads_and_recomposes_after_rotation_compare_and_sw
         }),
     ])
     original_post = fake.post
+    gateway_request_snapshots = []
     async def echo_local_dates(url, **kwargs):
+        if url == "https://decision.example.test/v1/pnelly/daily-looks":
+            import copy
+            gateway_request_snapshots.append(copy.deepcopy(kwargs["json"]))
         response = await original_post(url, **kwargs)
         if url == "https://decision.example.test/v1/pnelly/daily-looks":
             body = kwargs["json"]
@@ -1295,9 +1299,9 @@ def test_pnelly_daily_looks_reloads_and_recomposes_after_rotation_compare_and_sw
     rotation_writes = [call for call in fake.calls if call[0] == "PUT"]
     assert len(gateway_calls) == 2
     assert len(rotation_writes) == 2
-    assert gateway_calls[0][2]["json"]["rotation_seen_item_ids"] == ["shirt-001"]
-    assert gateway_calls[1][2]["json"]["rotation_seen_item_ids"] == ["shirt-001", "pants-001"]
-    assert gateway_calls[1][2]["json"]["rotation_cycle_number"] == 1
+    assert gateway_request_snapshots[0]["rotation_seen_item_ids"] == ["shirt-001"]
+    assert gateway_request_snapshots[1]["rotation_seen_item_ids"] == ["shirt-001", "pants-001"]
+    assert gateway_request_snapshots[1]["rotation_cycle_number"] == 1
     assert rotation_writes[0][2]["json"]["expected_version"] == 1
     assert rotation_writes[1][2]["json"]["expected_version"] == 2
     assert rotation_writes[1][2]["json"]["cycle_number"] == 2
