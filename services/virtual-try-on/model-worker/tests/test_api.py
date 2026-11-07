@@ -206,7 +206,7 @@ def _configured_worker(monkeypatch, tmp_path, *, vram=8 * 1024**3, providers=("C
     monkeypatch.setenv("CIRVANNA_DEPLOYMENT_MODE", "research")
     monkeypatch.setattr(
         main.subprocess, "run",
-        lambda *args, **kwargs: SimpleNamespace(stdout=(checkout or pin) + "\\n"),
+        lambda *args, **kwargs: SimpleNamespace(stdout=(checkout or pin) + "\n"),
     )
     fake_torch = SimpleNamespace(
         cuda=SimpleNamespace(
