@@ -28,7 +28,6 @@ class WardrobeRow(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     last_command_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    last_command_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.current_timestamp())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
 
@@ -46,6 +45,7 @@ class WardrobeOutfitRow(Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     last_command_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    last_command_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.current_timestamp())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
 
