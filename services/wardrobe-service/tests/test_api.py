@@ -312,6 +312,13 @@ def test_saved_outfit_piece_add_remove_and_version_conflict(client):
     })
     assert added.status_code == 201, added.text
     assert added.json()["outfit"]["version"] == 2
+    add_replay = client.post("/v1/outfits/outfit-002/pieces", headers=auth(), json={
+        "owner_user_id": "user-1", "expected_version": 1,
+        "command_id": "add-bottom-001", "slot_id": "bottom-slot",
+        "wardrobe_item_id": "trouser-002",
+    })
+    assert add_replay.status_code == 201
+    assert add_replay.json()["status"] == "replayed"
     removed = client.patch("/v1/outfits/outfit-002/pieces/top-slot", headers=auth(), json={
         "owner_user_id": "user-1", "expected_version": 2,
         "command_id": "remove-top-001", "wardrobe_item_id": None,
@@ -325,6 +332,11 @@ def test_saved_outfit_piece_add_remove_and_version_conflict(client):
     })
     assert replay.status_code == 200
     assert replay.json()["status"] == "replayed"
+    missing_action = client.patch("/v1/outfits/outfit-002/pieces/bottom-slot", headers=auth(), json={
+        "owner_user_id": "user-1", "expected_version": 3, "command_id": "missing-action-001",
+    })
+    assert missing_action.status_code == 422
+    assert missing_action.json()["detail"]["code"] == "OUTFIT_PIECE_ACTION_REQUIRED"
     stale = client.post("/v1/outfits/outfit-002/pieces", headers=auth(), json={
         "owner_user_id": "user-1", "expected_version": 1,
         "command_id": "stale-add-001", "slot_id": "shoe-slot",
