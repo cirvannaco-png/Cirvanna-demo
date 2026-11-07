@@ -213,6 +213,12 @@ class WardrobeRecommendationIn(BaseModel):
     climate: str | None = Field(default=None, max_length=120)
     exclude_owned_products: bool = True
 
+class WardrobePreferenceRetractionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    correction_event_id: str = Field(min_length=8, max_length=128)
+
+
+
 
 
 async def _verified_commerce_subject(client: httpx.AsyncClient, request: Request) -> tuple[str, str]:
@@ -550,6 +556,186 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
         raise HTTPException(502, detail={"code": "WARDROBE_RECOMMENDATIONS_RESPONSE_INVALID"})
     return _private_json_response(_withhold_unverified_media(data))
 
+
+
+@app.get("/api/wardrobe/learning/export")
+async def export_wardrobe_learning_data(request: Request) -> Response:
+    """Return the signed-in user's TAL, NPL and Wardrobe feedback records."""
+    async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, user_token = await _verified_commerce_subject(client, request)
+        gateway_base, gateway_token = _decision_gateway()
+        try:
+            gateway_response = await client.get(
+                gateway_base + "/v1/me/learning/export",
+                headers={
+                    "Authorization": "Bearer " + gateway_token,
+                    "X-End-User-Authorization": "Bearer " + user_token,
+                    "Accept": "application/json",
+                },
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "LEARNING_EXPORT_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "LEARNING_EXPORT_UNAVAILABLE"}) from exc
+        if gateway_response.status_code != 200:
+            try:
+                detail = gateway_response.json().get("detail", {})
+                code = detail.get("code") if isinstance(detail, dict) else None
+            except ValueError:
+                code = None
+            raise HTTPException(
+                gateway_response.status_code if gateway_response.status_code in {401, 403} else 503,
+                detail={"code": code or "LEARNING_EXPORT_UNAVAILABLE"},
+            )
+        try:
+            learning = gateway_response.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "LEARNING_EXPORT_RESPONSE_INVALID"}) from exc
+        if (
+            not isinstance(learning, dict)
+            or learning.get("subject_id") != subject
+            or not isinstance(learning.get("tal"), dict)
+            or not isinstance(learning.get("npl"), dict)
+            or learning["npl"].get("user_id") != subject
+        ):
+            raise HTTPException(502, detail={"code": "LEARNING_EXPORT_SCOPE_MISMATCH"})
+
+        wardrobe_base, wardrobe_token = _wardrobe_service()
+        try:
+            wardrobe_response = await client.get(
+                wardrobe_base + "/v1/feedback",
+                params={"owner_user_id": subject},
+                headers={"Authorization": "Bearer " + wardrobe_token, "Accept": "application/json"},
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "WARDROBE_FEEDBACK_EXPORT_UNAVAILABLE"}) from exc
+        if wardrobe_response.status_code != 200:
+            raise HTTPException(503, detail={"code": "WARDROBE_FEEDBACK_EXPORT_UNAVAILABLE"})
+        try:
+            wardrobe_data = wardrobe_response.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "WARDROBE_FEEDBACK_EXPORT_INVALID"}) from exc
+        if (
+            not isinstance(wardrobe_data, dict)
+            or wardrobe_data.get("owner_user_id") != subject
+            or not isinstance(wardrobe_data.get("items"), list)
+        ):
+            raise HTTPException(502, detail={"code": "WARDROBE_FEEDBACK_EXPORT_SCOPE_MISMATCH"})
+
+    return _private_json_response({
+        "subject_id": subject,
+        "export_version": 1,
+        "tal": learning["tal"],
+        "npl": learning["npl"],
+        "wardrobe_feedback": wardrobe_data["items"],
+    })
+
+
+@app.post("/api/wardrobe/preferences/{preference_id}/retract")
+async def retract_wardrobe_preference(
+    preference_id: str,
+    request: Request,
+    payload: WardrobePreferenceRetractionIn = Body(...),
+) -> Response:
+    """Apply an explicit, subject-bound correction to one NPL preference."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", preference_id):
+        raise HTTPException(422, detail={"code": "INVALID_NPL_PREFERENCE_ID"})
+    async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        _, user_token = await _verified_commerce_subject(client, request)
+        gateway_base, gateway_token = _decision_gateway()
+        try:
+            response = await client.post(
+                gateway_base + f"/v1/me/npl/preferences/{preference_id}/retract",
+                headers={
+                    "Authorization": "Bearer " + gateway_token,
+                    "X-End-User-Authorization": "Bearer " + user_token,
+                    "Accept": "application/json",
+                },
+                json={"correction_event_id": payload.correction_event_id.strip()},
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "NPL_CORRECTION_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "NPL_CORRECTION_UNAVAILABLE"}) from exc
+    if response.status_code in {400, 401, 403, 404, 409, 422}:
+        try:
+            detail = response.json().get("detail", {})
+            code = detail.get("code") if isinstance(detail, dict) else None
+        except ValueError:
+            code = None
+        raise HTTPException(response.status_code, detail={"code": code or "NPL_CORRECTION_REJECTED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "NPL_CORRECTION_UNAVAILABLE"})
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "NPL_CORRECTION_RESPONSE_INVALID"}) from exc
+    return _private_json_response(result)
+
+
+@app.delete("/api/wardrobe/learning")
+async def delete_wardrobe_learning_data(request: Request) -> Response:
+    """Delete canonical learning first, then the Wardrobe service's local audit mirror."""
+    async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, user_token = await _verified_commerce_subject(client, request)
+        gateway_base, gateway_token = _decision_gateway()
+        try:
+            learning_response = await client.delete(
+                gateway_base + "/v1/me/learning/data",
+                headers={
+                    "Authorization": "Bearer " + gateway_token,
+                    "X-End-User-Authorization": "Bearer " + user_token,
+                    "Accept": "application/json",
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "LEARNING_DELETE_UNAVAILABLE"}) from exc
+        if learning_response.status_code != 200:
+            try:
+                detail = learning_response.json().get("detail", {})
+                code = detail.get("code") if isinstance(detail, dict) else None
+            except ValueError:
+                code = None
+            raise HTTPException(
+                learning_response.status_code if learning_response.status_code in {401, 403} else 503,
+                detail={"code": code or "LEARNING_DELETION_INCOMPLETE"},
+            )
+
+        wardrobe_base, wardrobe_token = _wardrobe_service()
+        try:
+            wardrobe_response = await client.delete(
+                wardrobe_base + "/v1/feedback",
+                params={"owner_user_id": subject},
+                headers={"Authorization": "Bearer " + wardrobe_token, "Accept": "application/json"},
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                503,
+                detail={"code": "LEARNING_DELETION_PARTIAL", "identity_and_npl_deleted": True, "wardrobe_audit_deleted": False},
+            ) from exc
+        if wardrobe_response.status_code != 200:
+            raise HTTPException(
+                503,
+                detail={"code": "LEARNING_DELETION_PARTIAL", "identity_and_npl_deleted": True, "wardrobe_audit_deleted": False},
+            )
+        try:
+            wardrobe_result = wardrobe_response.json()
+        except ValueError as exc:
+            raise HTTPException(
+                502,
+                detail={"code": "LEARNING_DELETION_PARTIAL", "identity_and_npl_deleted": True, "wardrobe_audit_deleted": False},
+            ) from exc
+    if not isinstance(wardrobe_result, dict) or wardrobe_result.get("status") != "deleted":
+        raise HTTPException(
+            502,
+            detail={"code": "LEARNING_DELETION_PARTIAL", "identity_and_npl_deleted": True, "wardrobe_audit_deleted": False},
+        )
+    return _private_json_response({
+        "status": "deleted",
+        "identity_and_npl_deleted": True,
+        "wardrobe_audit_deleted": True,
+        "deleted_wardrobe_feedback_events": wardrobe_result.get("deleted_feedback_events", 0),
+    })
 
 
 @app.post("/api/vision/click-it")
