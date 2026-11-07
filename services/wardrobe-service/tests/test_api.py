@@ -608,6 +608,10 @@ def test_refund_snapshot_rejects_cross_owner_resource_and_invalid_return_claims(
     )
     assert no_longer_owned.status_code == 422
 
+    first = client.post(
+        "/v1/purchases/refund-status", headers=auth(), json=refund_snapshot_body()
+    )
+    assert first.status_code == 200
     changed_intent = client.post(
         "/v1/purchases/refund-status", headers=auth(),
         json=refund_snapshot_body(
@@ -616,7 +620,7 @@ def test_refund_snapshot_rejects_cross_owner_resource_and_invalid_return_claims(
             payment_intent_id="pi_other_order",
         ),
     )
-    assert changed_intent.status_code == 422 or changed_intent.status_code == 409
+    assert changed_intent.status_code == 409
 
 
 def test_refund_snapshot_requires_internal_auth(client):
