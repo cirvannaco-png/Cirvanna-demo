@@ -62,6 +62,71 @@ def _index_records(records: Iterable[dict[str, Any]], kind: str) -> dict[str, li
     return indexed
 
 
+def _review_schema_fields() -> tuple[str, str, str, set[str], set[str]]:
+    schema_path = Path(__file__).resolve().parents[2] / "data" / "evaluation" / "outfit-review.schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    item_schema = schema["properties"]["human_reviews"]["items"]
+    properties = set(item_schema.get("properties", {}))
+    required = set(item_schema.get("required", []))
+
+    def choose(aliases: tuple[str, ...], label: str) -> str:
+        for name in aliases:
+            if name in properties:
+                return name
+        raise ValueError(f"review schema is missing a supported {label} field")
+
+    reviewer_field = choose(("reviewer_key", "reviewer_id", "reviewer_code"), "reviewer identity")
+    relevance_field = choose(("relevance", "relevance_score", "rating", "score"), "relevance")
+    exclusion_field = choose(
+        ("exclusion_violation", "hard_exclusion_violation", "violates_exclusion", "exclusion_violations"),
+        "exclusion violation",
+    )
+    return reviewer_field, relevance_field, exclusion_field, properties, required
+
+
+def _schema_review(
+    *,
+    record: dict[str, Any],
+    case_id: str,
+    look_id: str,
+    reviewer_key: str,
+    relevance: int,
+    exclusion_violation: bool,
+) -> dict[str, Any]:
+    reviewer_field, relevance_field, exclusion_field, properties, required = _review_schema_fields()
+    values: dict[str, Any] = {
+        "case_id": case_id,
+        "look_id": look_id,
+        "reviewer_key": reviewer_key,
+        "reviewer_id": reviewer_key,
+        "reviewer_code": reviewer_key,
+        "relevance": relevance,
+        "relevance_score": relevance,
+        "rating": relevance,
+        "score": relevance,
+        "exclusion_violation": exclusion_violation,
+        "hard_exclusion_violation": exclusion_violation,
+        "violates_exclusion": exclusion_violation,
+        "exclusion_violations": exclusion_violation,
+        "reviewed_at": record.get("reviewed_at"),
+    }
+    output = {
+        key: values[key]
+        for key in properties
+        if key in values and values[key] is not None
+    }
+    output[reviewer_field] = reviewer_key
+    output[relevance_field] = relevance
+    output[exclusion_field] = exclusion_violation
+    # A schema may bind the review to its case as well as its look.
+    if "case_id" in properties:
+        output["case_id"] = case_id
+    missing = required - set(output)
+    if missing:
+        raise ValueError(f"review schema has unsupported required fields: {sorted(missing)}")
+    return output
+
+
 def prepare_cases(
     trace_rows: list[dict[str, Any]],
     review_rows: list[dict[str, Any]],
@@ -133,12 +198,14 @@ def prepare_cases(
                     raise ValueError(f"{case_id}: relevance must be an integer from 1 to 5")
                 if not isinstance(exclusion_violation, bool):
                     raise ValueError(f"{case_id}: exclusion_violation must be boolean")
-                reviews_for_look[look_id].append({
-                    "look_id": look_id,
-                    "reviewer_key": reviewer_key.strip(),
-                    "relevance": relevance,
-                    "exclusion_violation": exclusion_violation,
-                })
+                reviews_for_look[look_id].append(_schema_review(
+                    record=record,
+                    case_id=case_id,
+                    look_id=look_id,
+                    reviewer_key=reviewer_key.strip(),
+                    relevance=relevance,
+                    exclusion_violation=exclusion_violation,
+                ))
             for look_id in candidate_ids:
                 ratings = reviews_for_look.get(look_id, [])
                 reviewers = {row["reviewer_key"] for row in ratings}
