@@ -145,6 +145,10 @@ class FakeAsyncClient:
         self.calls.append(("PATCH", url, kwargs))
         return self.responses.pop(0)
 
+    async def put(self, url, **kwargs):
+        self.calls.append(("PUT", url, kwargs))
+        return self.responses.pop(0)
+
     async def delete(self, url, **kwargs):
         self.calls.append(("DELETE", url, kwargs))
         return self.responses.pop(0)
@@ -971,3 +975,127 @@ def test_pnelly_daily_looks_hides_server_side_evaluation_trace_from_browser(clie
     assert "evaluation_trace" not in response.json()["recommendation"]
     assert "participant_do_not_expose" not in response.text
     assert "case_do_not_expose" not in response.text
+
+
+def test_style_desk_page_is_available_and_distinguishes_preference_from_analysis(client):
+    response = client.get("/style-desk")
+    assert response.status_code == 200
+    assert "Your colour profile" in response.text
+    assert "liked_colors" in response.text
+    assert "disliked_colors" in response.text
+    assert "feel_best_colors" in response.text
+    assert "Not yet enabled" in response.text
+
+
+def test_style_desk_colour_profile_reads_only_the_verified_users_usi_profile(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://gateway.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({
+            "subject_id": "signed-user-42", "profile_version": 7,
+            "preferences": [
+                {"preference_id": "style-1", "attribute": "style:editorial", "weight": 0.8, "active": True},
+                {"preference_id": "like-1", "attribute": "color_profile:liked:Teal", "weight": 1.0, "active": True},
+                {"preference_id": "dislike-1", "attribute": "color_profile:disliked:Neon orange", "weight": 1.0, "active": False},
+                {"preference_id": "best-1", "attribute": "color_profile:feel_best:Deep blue", "weight": 1.0, "active": True},
+            ],
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get("/api/style-desk/colour-profile", headers={"Authorization": "Bearer signed-session"})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["profile_version"] == 7
+    assert body["liked_colors"] == ["Teal"]
+    assert body["disliked_colors"] == ["Neon orange"]
+    assert body["feel_best_colors"] == ["Deep blue"]
+    assert body["preference_source"] == "user_declared"
+    assert fake.calls[1][1] == "https://gateway.example.test/v1/me/style-profile"
+    assert fake.calls[1][2]["headers"]["X-End-User-Authorization"] == "Bearer signed-session"
+
+
+def test_style_desk_colour_profile_preserves_other_usi_preferences_and_version(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://gateway.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-token-more-than-thirty-two-bytes")
+    existing = {
+        "subject_id": "signed-user-42", "profile_version": 7,
+        "preferences": [
+            {"preference_id": "style-1", "attribute": "style:editorial", "weight": 0.8, "active": True},
+            {"preference_id": "old-like", "attribute": "color_profile:liked:Old blue", "weight": 1.0, "active": True},
+        ],
+    }
+    saved = {
+        "subject_id": "signed-user-42", "profile_version": 8,
+        "preferences": [
+            {"preference_id": "style-1", "attribute": "style:editorial", "weight": 0.8, "active": True},
+            {"preference_id": "new-like", "attribute": "color_profile:liked:Teal", "weight": 1.0, "active": True},
+            {"preference_id": "new-dislike", "attribute": "color_profile:disliked:Neon orange", "weight": 1.0, "active": False},
+            {"preference_id": "new-best", "attribute": "color_profile:feel_best:Deep blue", "weight": 1.0, "active": True},
+        ],
+    }
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse(existing),
+        FakeResponse(saved),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.put(
+        "/api/style-desk/colour-profile",
+        headers={"Authorization": "Bearer signed-session"},
+        json={
+            "expected_profile_version": 7,
+            "liked_colors": ["Teal"],
+            "disliked_colors": ["Neon orange"],
+            "feel_best_colors": ["Deep blue"],
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["profile_version"] == 8
+    assert fake.calls[2][0] == "PUT"
+    body = fake.calls[2][2]["json"]
+    assert body["expected_version"] == 7
+    by_attribute = {item["attribute"]: item for item in body["preferences"]}
+    assert "style:editorial" in by_attribute
+    assert "color_profile:liked:Old blue" not in by_attribute
+    assert by_attribute["color_profile:disliked:Neon orange"]["active"] is False
+
+
+def test_style_desk_colour_profile_rejects_stale_profile_version_and_spoofed_fields(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://gateway.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"subject_id": "signed-user-42", "profile_version": 8, "preferences": []}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    conflict = client.put(
+        "/api/style-desk/colour-profile",
+        headers={"Authorization": "Bearer signed-session"},
+        json={"expected_profile_version": 7, "liked_colors": ["Teal"]},
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["code"] == "USI_PROFILE_VERSION_CONFLICT"
+    spoof = client.put(
+        "/api/style-desk/colour-profile",
+        headers={"Authorization": "Bearer signed-session"},
+        json={"expected_profile_version": 8, "user_id": "another-user", "liked_colors": ["Teal"]},
+    )
+    assert spoof.status_code == 422
+
+
+def test_style_desk_profile_storage_consent_is_enforced_by_identity_gateway(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://gateway.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"detail": {"code": "ACTIVE_PROFILE_STORAGE_CONSENT_REQUIRED"}}, status_code=403),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get("/api/style-desk/colour-profile", headers={"Authorization": "Bearer signed-session"})
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "ACTIVE_PROFILE_STORAGE_CONSENT_REQUIRED"
