@@ -1,3 +1,3 @@
-# Empty template: add one JSON object per reviewed candidate row.
+# Empty template. Add one JSON object per candidate after two independent reviews and adjudication.
 # Example shape only; remove this comment and replace values with actual reviewed data.
-# {"session_id":"session-random-001","user_pseudonym":"user-random-001","outfit_id":"outfit-opaque-001","algorithm_rank":1,"human_relevance":4,"hard_exclusion_violation":false,"edited":false,"rejected":false,"occasion_match":true,"preference_match_count":2,"garment_categories":["top","trousers","shoes"],"style_tags":["minimal","smart-casual"],"human_reviewed":true,"reviewer_id":"reviewer-random-001"}
+# {"session_id":"session-random-001","user_pseudonym":"user-random-001","outfit_id":"outfit-opaque-001","algorithm_rank":1,"human_relevance":4,"hard_exclusion_violation":false,"edited":false,"rejected":false,"occasion_match":true,"preference_match_count":2,"garment_categories":["top","trousers","shoes"],"style_tags":["minimal","smart-casual"],"human_reviewed":true,"reviewer_ids":["reviewer-random-001","reviewer-random-002"],"review_rubric_version":"v1"}
