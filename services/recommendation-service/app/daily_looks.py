@@ -12,6 +12,8 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
+from app.wardrobe_rotation import build_rotation_state
+
 POLICY_VERSION = "pnelly-daily-looks-v1"
 ROLES = ("everyday", "elevated", "explore")
 
@@ -330,6 +332,9 @@ def _build_evaluation_trace(
     full_classified = _classify_items(evaluation_items)
     eligible_candidates, eligible_truncated = _base_candidates(eligible_classified)
     full_candidates, full_truncated = _base_candidates(full_classified)
+    rotation_seen = tuple(rotation_seen_item_ids)
+    rotation_seen_set = {value for value in rotation_seen if isinstance(value, str)}
+    wear_by_id = {entry.get("item_id"): entry for entry in (wear_history or []) if isinstance(entry, dict)}
     selected_base: set[frozenset[str]] = set()
     selected_item_ids: set[str] = set()
     cases: list[dict[str, Any]] = []
@@ -572,6 +577,10 @@ def build_daily_looks(
     hard_excluded_item_ids: Iterable[str] = (),
     evaluation_trace_enabled: bool = False,
     evaluation_secret: str | None = None,
+    rotation_seen_item_ids: Iterable[str] = (),
+    rotation_cycle_started_at: str | None = None,
+    rotation_cycle_number: int = 1,
+    wear_history: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Build exactly three distinct look roles from verified wardrobe records."""
     if not request_id.strip() or not user_id.strip():
@@ -626,6 +635,9 @@ def build_daily_looks(
             available,
             key=lambda group: (
                 _score(group, role, signals, feedback, occasion, climate),
+                -sum(1 for item in group if item["item_id"] in rotation_seen_set),
+                -sum((wear_by_id.get(item["item_id"]) or {}).get("wear_count", 0) for item in group),
+                -sum(1 for item in group if (wear_by_id.get(item["item_id"]) or {}).get("last_worn_at")),
                 -sum(len(set(x["item_id"] for x in group) & selected_item_ids) for _ in (0,)),
                 _stable_tie(user_id, local_date, role, (x["item_id"] for x in group)),
             ),
@@ -660,6 +672,8 @@ def build_daily_looks(
         })
 
     ready_count = sum(look["status"] == "ready" for look in looks)
+    surfaced_today = sorted({item_id for look in looks if look["status"] == "ready" for item_id in look["item_ids"]})
+    rotation = build_rotation_state(items=active, local_date=local_date, seen_item_ids=rotation_seen, cycle_started_at=rotation_cycle_started_at, cycle_number=rotation_cycle_number, wear_history=wear_history, surfaced_item_ids=surfaced_today)
     output = {
         "schema_version": "1.0",
         "policy_version": POLICY_VERSION,
@@ -669,6 +683,7 @@ def build_daily_looks(
         "look_count": 3,
         "ready_count": ready_count,
         "looks": looks,
+        "wardrobe_rotation": rotation,
         "personalization": {
             "style_signals_used": bool(signals),
             "style_signal_count": len(signals),
