@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import DateTime, Integer, JSON, String, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Mapped, Session, mapped_column
 
 from app.store import Base, WardrobeRow, engine_for_url
@@ -156,6 +157,9 @@ def put_rotation_state(payload: RotationStateWrite) -> dict[str, object]:
             return {"state": _json(row, active_ids), "version": row.version, "status": "created" if current_version == 0 else "updated"}
     except HTTPException:
         raise
+    except IntegrityError as exc:
+        # Two first writes can race before a row exists to lock; force a reload/retry.
+        raise HTTPException(409, detail={"code": "WARDROBE_ROTATION_VERSION_CONFLICT", "current_version": 1}) from exc
     except Exception as exc:
         raise HTTPException(503, detail={"code": "WARDROBE_ROTATION_STORE_UNAVAILABLE"}) from exc
 
