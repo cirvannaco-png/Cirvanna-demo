@@ -22,12 +22,13 @@ Run tests:
 - `IDENTITY_DATABASE_URL`: existing shared managed Postgres URL in staging/production; SQLite is local/test only.
 - `IDENTITY_SERVICE_TOKEN`: internal gateway bearer token, at least 32 bytes.
 - `IDENTITY_CRON_TOKEN`: separate retention-job token, at least 32 bytes.
-- `IDENTITY_AUTO_CREATE_SCHEMA`: local/test only. Must be false in production; apply reviewed SQL migration instead.
+- `IDENTITY_AUTO_CREATE_SCHEMA`: local/test only. Must be false in production; apply reviewed SQL migrations `0001_identity_tal.sql` then `0002_resource_bound_consent.sql`.
 
 ## Contracts
 
 - Versioned USI profile upsert with optimistic concurrency (`expected_version`).
-- Versioned consent receipts. A denial or revocation withdraws every active grant for the same subject and scope; a later grant requires a new receipt. Revoked receipts cannot be reused.
+- Versioned consent receipts grouped by `consent_id` and optionally bound to an exact `resource_id`. A resource-bound revocation withdraws every active scope in that consent group for that resource; legacy/global revocation retains scope-wide withdrawal semantics. A later grant requires a new receipt. Revoked receipts cannot be reused.
+- `POST /internal/v1/consents/verify` verifies the subject, grouped consent ID, exact resource ID (including explicit null/global scope), and complete set of required scopes at request time. It returns `verified=false` when any required scope is missing or revoked.
 - Event writes require an active `personalization` or `style_learning` receipt; USI profile reads and writes require active `profile_storage` consent.
 - TAL append supports event-ID and per-subject idempotency; changed replay payloads return 409.
 - Corrections are append-only, must belong to the same subject and feature, and point to the superseded event.
