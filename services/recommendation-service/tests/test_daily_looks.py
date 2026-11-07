@@ -451,7 +451,10 @@ def test_rotation_seven_day_boundary_keeps_unseen_items_without_reset():
         "display_name": "Unclassified vintage piece", "category": "other",
         "attributes": [], "status": "active",
     }]
-    seen = [item["item_id"] for item in items if item["item_id"] != "unclassified-001"]
+    seen = sorted(
+        item["item_id"] for item in items
+        if item.get("status") == "active" and item["item_id"] != "unclassified-001"
+    )
 
     at_six_days = build_daily_looks(
         request_id="rotation-six-days", user_id="user-123", wardrobe_items=items,
