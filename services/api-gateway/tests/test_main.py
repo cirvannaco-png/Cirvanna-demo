@@ -371,3 +371,79 @@ def test_duplicate_product_ids_are_rejected_by_schema(client):
     body = request_body(product_ids=[PRODUCT_ID, PRODUCT_ID])
     response = client.post("/v1/decisions", json=body, headers=auth_headers())
     assert response.status_code == 422
+
+
+
+def test_my_learning_export_combines_only_the_verified_subject(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_API_TOKEN", TOKEN)
+    calls = []
+    monkeypatch.setattr(main, "_verified_actor_from_header", lambda value: "signed-user-42")
+    def identity(method, path, subject, payload=None):
+        calls.append(("identity", method, path, subject, payload))
+        return {"subject_id": subject, "events": [{"event_id": "tal-1"}]}
+    def npl(method, path, payload=None):
+        calls.append(("npl", method, path, payload))
+        return {"user_id": "signed-user-42", "preferences": [{"preference_id": "avoid-blue"}]}
+    monkeypatch.setattr(main, "_identity_service_request", identity)
+    monkeypatch.setattr(main, "_npl_service_request", npl)
+    response = TestClient(main.app).get(
+        "/v1/me/learning/export",
+        headers={**auth_headers(), "X-End-User-Authorization": "Bearer signed-session"},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["subject_id"] == "signed-user-42"
+    assert data["tal"]["events"][0]["event_id"] == "tal-1"
+    assert data["npl"]["preferences"][0]["preference_id"] == "avoid-blue"
+    assert calls[0][0:4] == ("identity", "GET", "/v1/tal/export/signed-user-42", "signed-user-42")
+    assert calls[1][0:3] == ("npl", "GET", "/v1/users/signed-user-42/export")
+
+
+def test_my_npl_retraction_binds_owner_server_side(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_API_TOKEN", TOKEN)
+    monkeypatch.setattr(main, "_verified_actor_from_header", lambda value: "signed-user-42")
+    seen = {}
+    def npl(method, path, payload=None):
+        seen.update({"method": method, "path": path, "payload": payload})
+        return {"retracted": True, "correction_event_id": payload["correction_event_id"]}
+    monkeypatch.setattr(main, "_npl_service_request", npl)
+    response = TestClient(main.app).post(
+        "/v1/me/npl/preferences/avoid-blue/retract",
+        headers={**auth_headers(), "X-End-User-Authorization": "Bearer signed-session"},
+        json={"correction_event_id": "correction-123"},
+    )
+    assert response.status_code == 200, response.text
+    assert seen == {
+        "method": "POST",
+        "path": "/v1/preferences/avoid-blue/retract",
+        "payload": {"user_id": "signed-user-42", "correction_event_id": "correction-123"},
+    }
+
+
+def test_my_learning_delete_reports_partial_failure_and_never_claims_complete(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_API_TOKEN", TOKEN)
+    monkeypatch.setattr(main, "_verified_actor_from_header", lambda value: "signed-user-42")
+    calls = []
+    monkeypatch.setattr(
+        main, "_identity_service_request",
+        lambda method, path, subject, payload=None: calls.append(("tal", method, path, subject)) or {"status": "deleted"},
+    )
+    def fail_npl(method, path, payload=None):
+        calls.append(("npl", method, path, payload))
+        raise main.HTTPException(503, detail={"code": "NPL_SERVICE_UNAVAILABLE"})
+    monkeypatch.setattr(main, "_npl_service_request", fail_npl)
+    response = TestClient(main.app).delete(
+        "/v1/me/learning/data",
+        headers={**auth_headers(), "X-End-User-Authorization": "Bearer signed-session"},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "LEARNING_DELETION_PARTIAL"
+    assert response.json()["detail"]["tal_deleted"] is True
+    assert response.json()["detail"]["npl_deleted"] is False
+    assert calls[0] == ("tal", "DELETE", "/v1/tal/users/signed-user-42", "signed-user-42")
+
+
+def test_my_learning_export_requires_verified_end_user_bearer(client):
+    monkeypatch = None
+    response = client.get("/v1/me/learning/export", headers=auth_headers())
+    assert response.status_code == 401
