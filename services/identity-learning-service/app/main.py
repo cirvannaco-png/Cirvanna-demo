@@ -30,7 +30,12 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 SERVICE = "cirvanna-identity-learning-service"
 bearer = HTTPBearer(auto_error=False)
 SUBJECT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$")
-SCOPES = {"personalization", "style_learning", "profile_storage"}
+SCOPES = {
+    "personalization", "style_learning", "profile_storage",
+    "image_processing", "body_measurements", "virtual_twin_storage",
+    "virtual_try_on", "click_it", "look_it", "skin_analysis",
+    "wardrobe_photo_storage",
+}
 
 
 def utcnow() -> datetime:
@@ -89,9 +94,14 @@ class ColorProfileRow(Base):
 
 class ConsentReceipt(Base):
     __tablename__ = "identity_tal_consent_receipts"
-    __table_args__ = (Index("ix_identity_tal_consent_subject_scope", "subject_id", "scope", "granted"),)
+    __table_args__ = (
+        Index("ix_identity_tal_consent_subject_scope", "subject_id", "scope", "granted"),
+        Index("ix_identity_tal_consent_bundle", "subject_id", "consent_id", "resource_id", "granted"),
+    )
     receipt_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     subject_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    consent_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    resource_id: Mapped[str | None] = mapped_column(String(160))
     scope: Mapped[str] = mapped_column(String(40), nullable=False)
     consent_version: Mapped[str] = mapped_column(String(80), nullable=False)
     granted: Mapped[bool] = mapped_column(Boolean, nullable=False)
@@ -172,9 +182,58 @@ class ColorProfilePut(StrictModel):
 
 class ConsentPut(StrictModel):
     receipt_id: str = Field(min_length=8, max_length=128)
-    scope: Literal["personalization", "style_learning", "profile_storage"]
+    scope: Literal[
+        "personalization", "style_learning", "profile_storage",
+        "image_processing", "body_measurements", "virtual_twin_storage",
+        "virtual_try_on", "click_it", "look_it", "skin_analysis",
+        "wardrobe_photo_storage",
+    ]
     consent_version: str = Field(min_length=1, max_length=80)
     granted: bool
+    consent_id: str | None = Field(default=None, min_length=8, max_length=128)
+    resource_id: str | None = Field(default=None, min_length=3, max_length=160)
+
+    @field_validator("receipt_id", "consent_id", "resource_id", mode="before")
+    @classmethod
+    def normalize_identifiers(cls, value):
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("consent identifiers must be strings")
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("consent identifiers must not be empty")
+        return normalized
+
+
+class ConsentVerify(StrictModel):
+    subject_id: str = Field(min_length=1, max_length=128)
+    consent_id: str = Field(min_length=8, max_length=128)
+    required_scopes: list[str] = Field(min_length=1, max_length=10)
+    resource_id: str | None = Field(default=None, min_length=3, max_length=160)
+
+    @field_validator("subject_id", "consent_id", "resource_id", mode="before")
+    @classmethod
+    def normalize_verification_identifiers(cls, value):
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("verification identifiers must be strings")
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("verification identifiers must not be empty")
+        return normalized
+
+    @field_validator("required_scopes")
+    @classmethod
+    def validate_required_scopes(cls, values):
+        normalized = [value.strip() for value in values if isinstance(value, str)]
+        if len(normalized) != len(values) or not normalized or len(normalized) != len(set(normalized)):
+            raise ValueError("required scopes must be non-empty, unique strings")
+        unknown = set(normalized) - SCOPES
+        if unknown:
+            raise ValueError("unknown consent scope")
+        return normalized
 
 
 class EventPut(StrictModel):
@@ -419,34 +478,53 @@ def put_consent(subject_id: str = Query(min_length=1, max_length=128), payload: 
     subject = subject_or_404(subject_id)
     if payload is None:
         raise HTTPException(422, detail={"code": "CONSENT_RECEIPT_REQUIRED"})
+    consent_id = payload.consent_id or payload.receipt_id
     existing = db.get(ConsentReceipt, payload.receipt_id)
     if existing is not None:
-        if existing.subject_id != subject or existing.scope != payload.scope or existing.consent_version != payload.consent_version or existing.granted != payload.granted:
+        if (
+            existing.subject_id != subject
+            or existing.scope != payload.scope
+            or existing.consent_version != payload.consent_version
+            or existing.granted != payload.granted
+            or existing.consent_id != consent_id
+            or existing.resource_id != payload.resource_id
+        ):
             raise HTTPException(409, detail={"code": "CONSENT_RECEIPT_IMMUTABLE"})
-        return {"receipt_id": existing.receipt_id, "status": "replayed", "granted": existing.granted}
+        return {
+            "receipt_id": existing.receipt_id, "consent_id": existing.consent_id,
+            "resource_id": existing.resource_id, "status": "replayed", "granted": existing.granted,
+        }
 
     now = utcnow()
     if not payload.granted:
-        # A withdrawal is scope-wide: no older grant may keep authorizing writes.
-        db.execute(
-            update(ConsentReceipt)
-            .where(
-                ConsentReceipt.subject_id == subject,
-                ConsentReceipt.scope == payload.scope,
-                ConsentReceipt.granted.is_(True),
-                ConsentReceipt.revoked_at.is_(None),
-            )
-            .values(revoked_at=now)
+        # A denial withdraws the specific resource bundle when one is supplied.
+        # Legacy/global withdrawals retain their scope-wide behavior.
+        statement = update(ConsentReceipt).where(
+            ConsentReceipt.subject_id == subject,
+            ConsentReceipt.granted.is_(True),
+            ConsentReceipt.revoked_at.is_(None),
         )
+        if payload.resource_id is not None:
+            statement = statement.where(
+                ConsentReceipt.consent_id == consent_id,
+                ConsentReceipt.resource_id == payload.resource_id,
+            )
+        else:
+            statement = statement.where(ConsentReceipt.scope == payload.scope)
+        db.execute(statement.values(revoked_at=now))
     row = ConsentReceipt(
-        receipt_id=payload.receipt_id, subject_id=subject, scope=payload.scope,
+        receipt_id=payload.receipt_id, subject_id=subject, consent_id=consent_id,
+        resource_id=payload.resource_id, scope=payload.scope,
         consent_version=payload.consent_version, granted=payload.granted,
         granted_at=now if payload.granted else None,
         revoked_at=None if payload.granted else now,
     )
     db.add(row)
     db.commit()
-    return {"receipt_id": row.receipt_id, "status": "recorded", "granted": row.granted}
+    return {
+        "receipt_id": row.receipt_id, "consent_id": row.consent_id,
+        "resource_id": row.resource_id, "status": "recorded", "granted": row.granted,
+    }
 
 
 @app.post("/v1/tal/consents/{receipt_id}/revoke", dependencies=[Depends(require_internal_token)])
@@ -459,26 +537,72 @@ def revoke_consent(
     receipt = db.get(ConsentReceipt, receipt_id)
     if receipt is None or receipt.subject_id != subject:
         raise HTTPException(404, detail={"code": "CONSENT_RECEIPT_NOT_FOUND"})
-    if receipt.granted:
-        # Revoke every active receipt for this scope so parallel grants cannot
-        # silently preserve consent after the user withdraws it.
+    if receipt.granted and receipt.revoked_at is None:
         revoked_at = utcnow()
-        db.execute(
-            update(ConsentReceipt)
-            .where(
-                ConsentReceipt.subject_id == subject,
-                ConsentReceipt.scope == receipt.scope,
-                ConsentReceipt.granted.is_(True),
-                ConsentReceipt.revoked_at.is_(None),
-            )
-            .values(revoked_at=revoked_at)
+        statement = update(ConsentReceipt).where(
+            ConsentReceipt.subject_id == subject,
+            ConsentReceipt.granted.is_(True),
+            ConsentReceipt.revoked_at.is_(None),
         )
+        if receipt.resource_id is not None:
+            # Resource-bound withdrawal revokes every scope in this exact bundle
+            # for this one resource, but never another Twin/resource.
+            statement = statement.where(
+                ConsentReceipt.consent_id == receipt.consent_id,
+                ConsentReceipt.resource_id == receipt.resource_id,
+            )
+        else:
+            # Preserve legacy/global withdrawal semantics.
+            statement = statement.where(
+                ConsentReceipt.scope == receipt.scope,
+                ConsentReceipt.resource_id.is_(None),
+            )
+        db.execute(statement.values(revoked_at=revoked_at))
         db.commit()
         db.refresh(receipt)
     return {
         "receipt_id": receipt_id,
-        "status": "revoked" if receipt.granted else "already_denied",
+        "consent_id": receipt.consent_id,
+        "resource_id": receipt.resource_id,
+        "status": "revoked" if receipt.revoked_at is not None else "already_denied",
         "revoked_at": receipt.revoked_at.isoformat() if receipt.revoked_at else None,
+    }
+
+
+@app.post("/internal/v1/consents/verify", dependencies=[Depends(require_internal_token)])
+def verify_resource_bound_consent(payload: ConsentVerify, db: Annotated[Session, Depends(get_db)]):
+    """Verify a complete consent bundle for one trusted subject and exact resource."""
+    subject = subject_or_404(payload.subject_id)
+    statement = select(ConsentReceipt).where(
+        ConsentReceipt.subject_id == subject,
+        ConsentReceipt.consent_id == payload.consent_id,
+        ConsentReceipt.granted.is_(True),
+        ConsentReceipt.revoked_at.is_(None),
+    )
+    if payload.resource_id is None:
+        statement = statement.where(ConsentReceipt.resource_id.is_(None))
+    else:
+        statement = statement.where(ConsentReceipt.resource_id == payload.resource_id)
+    rows = list(db.scalars(statement).all())
+    granted = {row.scope for row in rows}
+    missing = sorted(set(payload.required_scopes) - granted)
+    if missing:
+        raise HTTPException(
+            403,
+            detail={"code": "CONSENT_BUNDLE_INCOMPLETE", "missing_scopes": missing},
+        )
+    versions = {row.consent_version for row in rows if row.scope in payload.required_scopes}
+    if len(versions) != 1:
+        raise HTTPException(403, detail={"code": "CONSENT_VERSION_MISMATCH"})
+    return {
+        "verified": True,
+        "active": True,
+        "subject_id": subject,
+        "consent_id": payload.consent_id,
+        "resource_id": payload.resource_id,
+        "consent_version": next(iter(versions)),
+        "granted_scopes": sorted(granted),
+        "receipt_ids": sorted(row.receipt_id for row in rows if row.scope in payload.required_scopes),
     }
 
 
@@ -533,7 +657,13 @@ def export_events(subject_id: str, db: Annotated[Session, Depends(get_db)]):
         "subject_id": subject,
         "profile": {"profile_version": profile.profile_version, "preferences": profile.preferences} if profile else None,
         "color_profile": {"profile_version": color_profile.profile_version, "liked_colors": color_profile.liked_colors, "disliked_colors": color_profile.disliked_colors, "best_version_colors": color_profile.best_version_colors} if color_profile else None,
-        "consent_receipts": [{"receipt_id": x.receipt_id, "scope": x.scope, "consent_version": x.consent_version, "granted": x.granted, "granted_at": x.granted_at.isoformat() if x.granted_at else None, "revoked_at": x.revoked_at.isoformat() if x.revoked_at else None} for x in consents],
+        "consent_receipts": [{
+            "receipt_id": x.receipt_id, "consent_id": x.consent_id,
+            "resource_id": x.resource_id, "scope": x.scope,
+            "consent_version": x.consent_version, "granted": x.granted,
+            "granted_at": x.granted_at.isoformat() if x.granted_at else None,
+            "revoked_at": x.revoked_at.isoformat() if x.revoked_at else None,
+        } for x in consents],
         "events": [{"event_id": x.event_id, "feature_key": x.feature_key, "value": x.value, "event_kind": x.event_kind, "supersedes_event_id": x.supersedes_event_id, "observed_at": x.observed_at.isoformat(), "expires_at": x.expires_at.isoformat() if x.expires_at else None, "consent_receipt_id": x.consent_receipt_id} for x in events],
     }
 
@@ -573,4 +703,10 @@ def purge_expired(db: Annotated[Session, Depends(get_db)], cron_token: Annotated
 def list_consents(subject_id: str, db: Annotated[Session, Depends(get_db)]):
     subject = subject_or_404(subject_id)
     rows = list(db.scalars(select(ConsentReceipt).where(ConsentReceipt.subject_id == subject).order_by(ConsentReceipt.created_at)).all())
-    return [{"receipt_id": x.receipt_id, "scope": x.scope, "consent_version": x.consent_version, "granted": x.granted, "granted_at": x.granted_at.isoformat() if x.granted_at else None, "revoked_at": x.revoked_at.isoformat() if x.revoked_at else None} for x in rows]
+    return [{
+        "receipt_id": x.receipt_id, "consent_id": x.consent_id,
+        "resource_id": x.resource_id, "scope": x.scope,
+        "consent_version": x.consent_version, "granted": x.granted,
+        "granted_at": x.granted_at.isoformat() if x.granted_at else None,
+        "revoked_at": x.revoked_at.isoformat() if x.revoked_at else None,
+    } for x in rows]
