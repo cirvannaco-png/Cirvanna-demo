@@ -200,6 +200,58 @@ def test_feedback_audit_is_user_scoped(client, monkeypatch):
     assert other.json()["items"] == []
 
 
+
+def test_feedback_audit_deletion_is_user_scoped_and_idempotent(client):
+    from datetime import datetime, timezone
+    from sqlalchemy.orm import Session
+    from app.store import WardrobeFeedbackEventRow
+    from app.main import store
+
+    engine = store().engine
+    with Session(engine) as session, session.begin():
+        session.add_all([
+            WardrobeFeedbackEventRow(
+                owner_user_id="user-1", event_id="feedback-user-1", item_id="item-1",
+                item_version=1, signal="like", target_type=None, target_value=None,
+                consent_receipt_id="receipt-style-1", payload_hash="a" * 64,
+                delivery_state="delivered", delivery_result={"tal_status": "recorded"},
+                error_code=None, observed_at=datetime.now(timezone.utc),
+            ),
+            WardrobeFeedbackEventRow(
+                owner_user_id="user-2", event_id="feedback-user-2", item_id="item-2",
+                item_version=1, signal="avoid", target_type="item", target_value="item-2",
+                consent_receipt_id="receipt-style-2", payload_hash="b" * 64,
+                delivery_state="delivered", delivery_result={"npl": {"hard_veto": True}},
+                error_code=None, observed_at=datetime.now(timezone.utc),
+            ),
+        ])
+
+    deleted = client.delete(
+        "/v1/feedback",
+        headers=auth(),
+        params={"owner_user_id": "user-1"},
+    )
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["deleted_feedback_events"] == 1
+    repeated = client.delete(
+        "/v1/feedback",
+        headers=auth(),
+        params={"owner_user_id": "user-1"},
+    )
+    assert repeated.status_code == 200
+    assert repeated.json()["deleted_feedback_events"] == 0
+    own = client.get("/v1/feedback", headers=auth(), params={"owner_user_id": "user-1"})
+    other = client.get("/v1/feedback", headers=auth(), params={"owner_user_id": "user-2"})
+    assert own.json()["items"] == []
+    assert len(other.json()["items"]) == 1
+    assert other.json()["items"][0]["event_id"] == "feedback-user-2"
+
+
+def test_feedback_audit_deletion_requires_internal_auth(client):
+    response = client.delete("/v1/feedback", params={"owner_user_id": "user-1"})
+    assert response.status_code == 401
+
+
 def test_edit_one_wardrobe_item_updates_only_selected_item_and_increments_version(client):
     create(client)
     response = client.patch("/v1/items/item-001", headers=auth(), json={
