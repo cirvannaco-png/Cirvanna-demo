@@ -61,9 +61,15 @@ def main() -> int:
     if args.k < 1:
         raise ValueError("--k must be positive")
     records = read_cases(args.cases)
-    if not records:
-        raise ValueError("no evaluator cases found")
-    report = evaluate_by_role(records, k=args.k)
+    if records:
+        report = evaluate_by_role(records, k=args.k)
+    else:
+        report = {
+            "status": "insufficient_human_review_cases",
+            "overall": None,
+            "by_role": {},
+            "case_count": 0,
+        }
     summary_path = Path(args.summary) if args.summary else Path(str(args.cases) + ".summary.json")
     if summary_path.is_file():
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
