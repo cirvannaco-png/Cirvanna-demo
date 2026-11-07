@@ -653,11 +653,10 @@ def build_daily_looks(
         candidate = max(
             available,
             key=lambda group: (
-                -sum(1 for item in group if item["item_id"] in rotation_seen_set),
+                -sum(1 for item in group if item["item_id"] in rotation_seen_set or item["item_id"] in selected_item_ids),
                 -sum((wear_by_id.get(item["item_id"]) or {}).get("wear_count", 0) for item in group),
                 _score(group, role, signals, feedback, occasion, climate),
                 -sum(1 for item in group if (wear_by_id.get(item["item_id"]) or {}).get("last_worn_at")),
-                -sum(len(set(x["item_id"] for x in group) & selected_item_ids) for _ in (0,)),
                 _stable_tie(user_id, local_date, role, (x["item_id"] for x in group), effective_cycle_number),
             ),
         )
