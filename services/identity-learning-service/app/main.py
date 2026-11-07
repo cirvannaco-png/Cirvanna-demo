@@ -528,10 +528,11 @@ def export_events(subject_id: str, db: Annotated[Session, Depends(get_db)]):
     events = list(db.scalars(select(TALEvent).where(TALEvent.subject_id == subject).order_by(TALEvent.observed_at, TALEvent.event_id)).all())
     consents = list(db.scalars(select(ConsentReceipt).where(ConsentReceipt.subject_id == subject).order_by(ConsentReceipt.created_at)).all())
     profile = db.get(USIProfileRow, subject)
+    color_profile = db.get(ColorProfileRow, subject)
     return {
         "subject_id": subject,
         "profile": {"profile_version": profile.profile_version, "preferences": profile.preferences} if profile else None,
-        "color_profile": (lambda row: {"profile_version": row.profile_version, "liked_colors": row.liked_colors, "disliked_colors": row.disliked_colors, "best_version_colors": row.best_version_colors})(db.get(ColorProfileRow, subject)) if db.get(ColorProfileRow, subject) else None,
+        "color_profile": {"profile_version": color_profile.profile_version, "liked_colors": color_profile.liked_colors, "disliked_colors": color_profile.disliked_colors, "best_version_colors": color_profile.best_version_colors} if color_profile else None,
         "consent_receipts": [{"receipt_id": x.receipt_id, "scope": x.scope, "consent_version": x.consent_version, "granted": x.granted, "granted_at": x.granted_at.isoformat() if x.granted_at else None, "revoked_at": x.revoked_at.isoformat() if x.revoked_at else None} for x in consents],
         "events": [{"event_id": x.event_id, "feature_key": x.feature_key, "value": x.value, "event_kind": x.event_kind, "supersedes_event_id": x.supersedes_event_id, "observed_at": x.observed_at.isoformat(), "expires_at": x.expires_at.isoformat() if x.expires_at else None, "consent_receipt_id": x.consent_receipt_id} for x in events],
     }
@@ -555,7 +556,7 @@ def delete_user_data(subject_id: str, db: Annotated[Session, Depends(get_db)]):
     )
     db.add(receipt)
     db.commit()
-    return {"status": "deleted", "deleted_events": len(event_ids), "deleted_profile": profile is not None, "deletion_receipt_id": receipt.receipt_id}
+    return {"status": "deleted", "deleted_events": len(event_ids), "deleted_profile": profile is not None, "deleted_color_profile": color_profile is not None, "deletion_receipt_id": receipt.receipt_id}
 
 
 @app.post("/internal/retention/purge", dependencies=[Depends(require_internal_token)])
