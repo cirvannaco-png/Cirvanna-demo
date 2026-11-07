@@ -22,6 +22,9 @@ class ColorPreferenceProfileTests(unittest.TestCase):
         restored = ColorPreferenceProfile.from_style_preferences("user-1", 4, records)
         self.assertEqual(restored, profile)
         self.assertTrue(all(record["attribute"].startswith("color_profile:") for record in records))
+        by_attribute = {record["attribute"]: record["active"] for record in records}
+        self.assertFalse(by_attribute["color_profile:disliked:Neon orange"])
+        self.assertTrue(by_attribute["color_profile:liked:Teal"])
 
     def test_merge_replaces_only_colour_namespace_and_preserves_other_preferences(self):
         existing = USIProfile(
