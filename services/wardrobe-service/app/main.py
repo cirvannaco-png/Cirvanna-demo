@@ -493,8 +493,11 @@ def add_outfit_piece(outfit_id: str, payload: AddOutfitPiece) -> dict[str, objec
                 raise HTTPException(409, detail={"code": "SAVED_OUTFIT_NOT_ACTIVE"})
             pieces = list(row.pieces or [])
             desired = {"slot_id": payload.slot_id.strip(), "wardrobe_item_id": payload.wardrobe_item_id.strip()}
+            fingerprint = hashlib.sha256(json.dumps({
+                "action": "add", "outfit_id": outfit_id, **desired,
+            }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
             if payload.expected_version != row.version:
-                if row.last_command_id == payload.command_id and desired in pieces:
+                if row.last_command_id == payload.command_id and row.last_command_hash == fingerprint:
                     return {"outfit": _outfit_json(session, row), "status": "replayed"}
                 raise HTTPException(409, detail={"code": "SAVED_OUTFIT_VERSION_CONFLICT", "current_version": row.version})
             if any(p["slot_id"] == desired["slot_id"] for p in pieces):
@@ -505,6 +508,7 @@ def add_outfit_piece(outfit_id: str, payload: AddOutfitPiece) -> dict[str, objec
             row.pieces = pieces + [desired]
             row.version += 1
             row.last_command_id = payload.command_id.strip()
+            row.last_command_hash = fingerprint
             row.updated_at = datetime.now(timezone.utc)
             session.flush()
             return {"outfit": _outfit_json(session, row), "status": "updated"}
@@ -528,15 +532,18 @@ def edit_outfit_piece(outfit_id: str, slot_id: str, payload: EditOutfitPiece) ->
             if row.status != "active":
                 raise HTTPException(409, detail={"code": "SAVED_OUTFIT_NOT_ACTIVE"})
             pieces = list(row.pieces or [])
+            desired = None if payload.wardrobe_item_id is None else payload.wardrobe_item_id.strip()
+            fingerprint = hashlib.sha256(json.dumps({
+                "action": "edit_piece", "outfit_id": outfit_id, "slot_id": slot_id,
+                "wardrobe_item_id": desired,
+            }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+            if payload.expected_version != row.version:
+                if row.last_command_id == payload.command_id and row.last_command_hash == fingerprint:
+                    return {"outfit": _outfit_json(session, row), "status": "replayed"}
+                raise HTTPException(409, detail={"code": "SAVED_OUTFIT_VERSION_CONFLICT", "current_version": row.version})
             index = next((i for i, p in enumerate(pieces) if p["slot_id"] == slot_id), None)
             if index is None:
                 raise HTTPException(404, detail={"code": "SAVED_OUTFIT_PIECE_NOT_FOUND"})
-            desired = None if payload.wardrobe_item_id is None else payload.wardrobe_item_id.strip()
-            if payload.expected_version != row.version:
-                current_id = pieces[index]["wardrobe_item_id"]
-                if row.last_command_id == payload.command_id and current_id == desired:
-                    return {"outfit": _outfit_json(session, row), "status": "replayed"}
-                raise HTTPException(409, detail={"code": "SAVED_OUTFIT_VERSION_CONFLICT", "current_version": row.version})
             if desired is not None:
                 _require_active_outfit_item(session, owner, desired)
                 if any(i != index and p["wardrobe_item_id"] == desired for i, p in enumerate(pieces)):
@@ -549,6 +556,7 @@ def edit_outfit_piece(outfit_id: str, slot_id: str, payload: EditOutfitPiece) ->
             row.pieces = pieces
             row.version += 1
             row.last_command_id = payload.command_id.strip()
+            row.last_command_hash = fingerprint
             row.updated_at = datetime.now(timezone.utc)
             session.flush()
             return {"outfit": _outfit_json(session, row), "status": "updated"}
