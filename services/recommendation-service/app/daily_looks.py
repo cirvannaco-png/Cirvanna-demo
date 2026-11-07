@@ -596,6 +596,7 @@ def build_daily_looks(
     if evaluation_trace_enabled and (not isinstance(evaluation_secret, str) or len(evaluation_secret.encode("utf-8")) < 32):
         raise ValueError("evaluation trace requires a 32-byte pseudonymization secret")
     excluded_ids = {value.strip() for value in hard_excluded_item_ids if isinstance(value, str) and value.strip()}
+    active = [item for item in active if item["item_id"] not in excluded_ids]
     classified = _classify_items(active)
     candidates, _ = _base_candidates(classified)
 
@@ -634,8 +635,8 @@ def build_daily_looks(
         candidate = max(
             available,
             key=lambda group: (
-                _score(group, role, signals, feedback, occasion, climate),
                 -sum(1 for item in group if item["item_id"] in rotation_seen_set),
+                _score(group, role, signals, feedback, occasion, climate),
                 -sum((wear_by_id.get(item["item_id"]) or {}).get("wear_count", 0) for item in group),
                 -sum(1 for item in group if (wear_by_id.get(item["item_id"]) or {}).get("last_worn_at")),
                 -sum(len(set(x["item_id"] for x in group) & selected_item_ids) for _ in (0,)),
