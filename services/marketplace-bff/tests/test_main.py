@@ -709,6 +709,14 @@ def test_pnelly_daily_looks_hides_server_side_evaluation_trace_from_browser(clie
         FakeResponse({"owner_user_id": "signed-user-42", "items": [item]}),
         FakeResponse({"mode": "pnelly_wardrobe_daily_looks", "recommendation": recommendation}),
     ])
+    original_post = fake.post
+    async def post_with_gateway_envelope(url, **kwargs):
+        response = await original_post(url, **kwargs)
+        body = response.json()
+        body["schema_version"] = "1.0"
+        body["request_id"] = kwargs["json"]["request_id"]
+        return FakeResponse(body, status_code=response.status_code)
+    fake.post = post_with_gateway_envelope
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.post(
         "/api/wardrobe/pnelly/daily-looks",
