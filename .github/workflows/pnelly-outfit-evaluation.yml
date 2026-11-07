@@ -46,4 +46,5 @@ jobs:
         run: |
           python -m pytest -q \
             scripts/evaluation/test_evaluate_outfits.py \
-            scripts/evaluation/test_prepare_pnelly_cases.py
+            scripts/evaluation/test_prepare_pnelly_cases.py \
+            scripts/evaluation/test_evaluate_pnelly_cases.py
