@@ -31,6 +31,24 @@ class WardrobeRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.current_timestamp())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
 
+class WardrobeOutfitRow(Base):
+    """Saved outfit is a user-owned composition of references to active wardrobe items."""
+    __tablename__ = "wardrobe_outfits"
+    __table_args__ = (
+        UniqueConstraint("owner_user_id", "last_command_id", name="uq_wardrobe_outfit_owner_command"),
+        Index("ix_wardrobe_outfit_owner_status", "owner_user_id", "status"),
+    )
+    owner_user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    outfit_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    pieces: Mapped[list[dict[str, str]]] = mapped_column(JSON, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    last_command_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.current_timestamp())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+
 class AssetDeletionOutboxRow(Base):
     __tablename__ = "wardrobe_asset_deletion_outbox"
     __table_args__ = (
