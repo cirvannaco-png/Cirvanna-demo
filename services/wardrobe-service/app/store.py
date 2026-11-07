@@ -48,6 +48,9 @@ class PurchaseRefundSnapshotRow(Base):
         Index("ix_wardrobe_purchase_refund_order", "order_id"),
         CheckConstraint("order_total_minor > 0", name="ck_wardrobe_refund_order_total_positive"),
         CheckConstraint("amount_refunded_minor > 0 AND amount_refunded_minor <= order_total_minor", name="ck_wardrobe_refund_amount_bounds"),
+        CheckConstraint("refund_state IN ('partial_refund', 'refunded')", name="ck_wardrobe_refund_state"),
+        CheckConstraint("physical_return_confirmed = FALSE", name="ck_wardrobe_refund_not_a_return"),
+        CheckConstraint("ownership_effect = 'financial_status_only'", name="ck_wardrobe_refund_financial_only"),
     )
     owner_user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     order_id: Mapped[str] = mapped_column(String(36), primary_key=True)
