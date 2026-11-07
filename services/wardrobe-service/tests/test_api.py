@@ -499,3 +499,50 @@ def test_verified_purchase_rejects_untrusted_event_semantics(client, field, valu
 def test_verified_purchase_requires_internal_auth(client):
     response = client.post("/v1/purchases/verified", json=verified_purchase_body())
     assert response.status_code == 401
+
+
+def test_outfit_wear_history_records_immutable_snapshot_and_replays(client, monkeypatch):
+    from datetime import datetime, timezone
+    create_active(client, "wear-shirt-001", "Blue shirt")
+    created = client.post("/v1/outfits", headers=auth(), json={
+        "owner_user_id": "user-1", "outfit_id": "wear-outfit-001",
+        "name": "Monday look",
+        "pieces": [{"slot_id": "top", "wardrobe_item_id": "wear-shirt-001"}],
+    })
+    assert created.status_code == 201, created.text
+    calls = []
+    monkeypatch.setattr(main, "deliver_learning_event", lambda **kwargs: calls.append(kwargs) or {"tal_status": "recorded"})
+    body = {
+        "owner_user_id": "user-1", "event_id": "outfit-wear-event-001",
+        "expected_outfit_version": 1, "consent_receipt_id": "receipt-style-001",
+        "observed_at": "2026-11-07T09:30:00Z", "context": {"occasion": "work"},
+    }
+    first = client.post("/v1/outfits/wear-outfit-001/wear", headers=auth(), json=body)
+    replay = client.post("/v1/outfits/wear-outfit-001/wear", headers=auth(), json=body)
+    conflict = client.post("/v1/outfits/wear-outfit-001/wear", headers=auth(), json={**body, "context": {"occasion": "party"}})
+    assert first.status_code == 201, first.text
+    assert replay.status_code == 201 and replay.json()["status"] == "replayed"
+    assert conflict.status_code == 409
+    assert len(calls) == 1
+    history = client.get("/v1/wear-history", headers=auth(), params={"owner_user_id": "user-1"})
+    assert len(history.json()["items"]) == 1
+    assert history.json()["items"][0]["items"][0]["item_id"] == "wear-shirt-001"
+
+
+def test_outfit_wear_requires_current_outfit_version_and_consent_delivery(client, monkeypatch):
+    create_active(client, "wear-shirt-002", "White shirt")
+    created = client.post("/v1/outfits", headers=auth(), json={
+        "owner_user_id": "user-1", "outfit_id": "wear-outfit-002",
+        "name": "Office look",
+        "pieces": [{"slot_id": "top", "wardrobe_item_id": "wear-shirt-002"}],
+    })
+    assert created.status_code == 201
+    calls = []
+    monkeypatch.setattr(main, "deliver_learning_event", lambda **kwargs: calls.append(kwargs) or {"tal_status": "recorded"})
+    response = client.post("/v1/outfits/wear-outfit-002/wear", headers=auth(), json={
+        "owner_user_id": "user-1", "event_id": "outfit-wear-event-002",
+        "expected_outfit_version": 2, "consent_receipt_id": "receipt-style-001",
+        "observed_at": "2026-11-07T09:30:00Z",
+    })
+    assert response.status_code == 409
+    assert calls == []
