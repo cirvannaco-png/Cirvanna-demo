@@ -43,7 +43,7 @@ def main() -> None:
     manifest = {"schema_version": 1, "source_commit": args.source_commit, "artifacts": artifacts}
     destination = root / "manifest.json"
     temporary = root / ".manifest.json.tmp"
-    temporary.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+    temporary.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     temporary.replace(destination)
     print(f"Wrote verified artifact manifest: {destination}")
 
