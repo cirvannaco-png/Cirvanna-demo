@@ -116,7 +116,7 @@ def test_unconfigured_database_fails_readiness_closed(client, monkeypatch):
 
 
 def test_user_export_is_scoped_and_contains_correction_history(client):
-    create_preference(client, user="user-1", preference="avoid-blue", source="user_declared")
+    create_preference(client, user="user-1", preference="avoid-blue", source="learned_rejection")
     create_preference(client, user="user-2", preference="avoid-red", source="user_declared")
     rejection(client, "avoid-blue", "reject-blue-1", user="user-1")
     correction = client.post(
@@ -143,7 +143,7 @@ def test_user_export_is_scoped_and_contains_correction_history(client):
 
 
 def test_user_deletion_removes_all_npl_rows_and_keeps_only_digest_receipt(client):
-    create_preference(client, user="user-1", preference="avoid-blue", source="user_declared")
+    create_preference(client, user="user-1", preference="avoid-blue", source="learned_rejection")
     rejection(client, "avoid-blue", "reject-blue-1", user="user-1")
     correction = client.post(
         "/v1/preferences/avoid-blue/retract",
