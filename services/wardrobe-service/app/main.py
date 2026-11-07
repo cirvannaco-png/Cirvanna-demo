@@ -7,13 +7,13 @@ from typing import Annotated, Literal
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/"packages"))
 from wardrobe import WardrobeItem, WardrobeItemStatus
-from app.store import Base, WardrobeConflict, WardrobeNotFound, WardrobeStore, WardrobeDeletionQueue, WardrobeFeedbackEventRow, engine_for_url
+from app.store import Base, WardrobeConflict, WardrobeNotFound, WardrobeStore, WardrobeDeletionQueue, WardrobeFeedbackEventRow, WardrobeRow, engine_for_url
 from app.learning import LearningIntegrationError, deliver_learning_event
 
 SERVICE="cirvanna-wardrobe-service"
@@ -50,6 +50,15 @@ class TransitionItem(StrictModel):
     expected_version:int=Field(ge=1)
     target_status:Literal["active","archived","deleted"]
     command_id:str=Field(min_length=3,max_length=128)
+
+class EditItem(StrictModel):
+    """Version-checked edits to user-owned garment metadata; Catalog facts remain canonical."""
+    owner_user_id: str = Field(min_length=1, max_length=128)
+    expected_version: int = Field(ge=1)
+    command_id: str = Field(min_length=3, max_length=128)
+    display_name: str | None = Field(default=None, min_length=1, max_length=200)
+    category: str | None = Field(default=None, min_length=1, max_length=80)
+    attributes: list[str] | None = Field(default=None, max_length=100)
 
 def require_internal_token(credentials:Annotated[HTTPAuthorizationCredentials|None,Depends(bearer)])->None:
     expected=os.getenv("WARDROBE_SERVICE_TOKEN","")
@@ -289,3 +298,65 @@ def transition(item_id:str,payload:TransitionItem)->dict[str,object]:
     except (WardrobeNotFound,WardrobeConflict,PermissionError,ValueError) as exc: domain_error(exc)
     except HTTPException: raise
     except Exception as exc: raise HTTPException(503,detail={"code":"WARDROBE_STORE_UNAVAILABLE"}) from exc
+
+
+@app.patch("/v1/items/{item_id}", dependencies=[Depends(require_internal_token)], tags=["wardrobe"])
+def edit_item(item_id: str, payload: EditItem) -> dict[str, object]:
+    """Edit one owned wardrobe item with optimistic concurrency and replay safety."""
+    owner = payload.owner_user_id.strip()
+    changes = payload.model_dump(exclude={"owner_user_id", "expected_version", "command_id"}, exclude_unset=True)
+    if not changes or all(value is None for value in changes.values()):
+        raise HTTPException(422, detail={"code": "WARDROBE_EDIT_EMPTY"})
+    if "display_name" in changes and changes["display_name"] is not None:
+        changes["display_name"] = changes["display_name"].strip()
+    if "category" in changes and changes["category"] is not None:
+        changes["category"] = changes["category"].strip()
+    if "attributes" in changes and changes["attributes"] is not None:
+        changes["attributes"] = [value.strip() for value in changes["attributes"]]
+    try:
+        with Session(store().engine) as session, session.begin():
+            row = session.scalar(select(WardrobeRow).where(
+                WardrobeRow.owner_user_id == owner,
+                WardrobeRow.item_id == item_id,
+            ).with_for_update())
+            if row is None:
+                raise HTTPException(404, detail={"code": "WARDROBE_ITEM_NOT_FOUND"})
+            if row.status == WardrobeItemStatus.DELETED.value:
+                raise HTTPException(409, detail={"code": "WARDROBE_ITEM_DELETED"})
+            if row.version != payload.expected_version:
+                same_command = row.last_command_id == payload.command_id
+                same_values = all(getattr(row, key) == value for key, value in changes.items())
+                if same_command and same_values:
+                    return {"item": model_json(WardrobeItem(
+                        item_id=row.item_id, owner_user_id=row.owner_user_id,
+                        display_name=row.display_name, category=row.category,
+                        attributes=tuple(row.attributes or ()), catalog_product_id=row.catalog_product_id,
+                        image_asset_id=row.image_asset_id, image_storage_consent=row.image_storage_consent,
+                        status=WardrobeItemStatus(row.status), version=row.version,
+                        last_command_id=row.last_command_id,
+                    )), "status": "replayed"}
+                raise HTTPException(409, detail={"code": "WARDROBE_VERSION_CONFLICT", "current_version": row.version})
+            candidate = WardrobeItem(
+                item_id=row.item_id, owner_user_id=row.owner_user_id,
+                display_name=changes.get("display_name", row.display_name) or row.display_name,
+                category=changes.get("category", row.category) or row.category,
+                attributes=tuple(changes.get("attributes", row.attributes or ())),
+                catalog_product_id=row.catalog_product_id, image_asset_id=row.image_asset_id,
+                image_storage_consent=row.image_storage_consent,
+                status=WardrobeItemStatus(row.status), version=row.version + 1,
+                last_command_id=payload.command_id.strip(),
+            )
+            row.display_name = candidate.display_name
+            row.category = candidate.category
+            row.attributes = list(candidate.attributes)
+            row.version = candidate.version
+            row.last_command_id = candidate.last_command_id
+            row.updated_at = datetime.now(timezone.utc)
+            session.flush()
+            return {"item": model_json(candidate), "status": "updated"}
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(422, detail={"code": "INVALID_WARDROBE_EDIT", "detail": str(exc)}) from exc
+    except Exception as exc:
+        raise HTTPException(503, detail={"code": "WARDROBE_STORE_UNAVAILABLE"}) from exc
