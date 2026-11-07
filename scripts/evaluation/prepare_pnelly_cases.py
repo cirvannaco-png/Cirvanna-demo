@@ -171,6 +171,9 @@ def prepare_cases(
         if trace.get("trace_version") != "1.0":
             raise ValueError("unsupported or missing PNELLY trace_version")
         _assert_trace_contains_no_raw_identity_or_assets(trace)
+        consent = trace.get("consent", {})
+        if consent.get("required") is not True or consent.get("validated_by_gateway") is not True:
+            raise ValueError("evaluation trace is missing its validated user-consent assertion")
         privacy = trace.get("privacy", {})
         for key in ("raw_user_id_included", "raw_wardrobe_item_ids_included",
                     "display_names_included", "image_assets_included"):
