@@ -96,7 +96,7 @@
 - [ ] Calibrate fit evidence against real garment sizing/construction/brand size charts and observed outcomes, with no recommendation if evidence is inadequate.
 
 ### 2.4 Wardrobe intelligence, PNELLY, NPL, CFRP/CRFP and learning
-- [~] PNELLY daily-look composition is implemented and CI-verified in merged PR #139 from authenticated Wardrobe snapshots through Decision Gateway to Complementer, with a Wardrobe UI. Marketplace, persistent Twin and multi-product try-on context handoff remain open.
+- [~] PNELLY daily-look composition is implemented and CI-verified in merged PR #139 from authenticated Wardrobe snapshots through Decision Gateway to Complementer, with a Wardrobe UI. The expanded Wardrobe taxonomy now classifies bags, jewellery, ties, eyewear, watches, hair accessories, makeup, fragrance and haircare as PNELLY look complements. Marketplace, persistent Twin and multi-product try-on context handoff remain open.
 - [~] Merged PR #139 records explicit worn/not-my-style feedback only with active style-learning consent; modify/save/search/purchase/return event coverage and durable outfit-graph attribution remain open.
 - [~] Merged PR #139 keeps PNELLY soft feedback separate from NPL hard exclusions and adds user retraction; full end-to-end tests across every recommendation surface remain open.
 - [ ] Connect wardrobe feedback to NPL and the repository's canonical fit/recommendation pipeline (CFRP/CRFP naming must follow the approved repository contract, not create a second system).
