@@ -771,6 +771,26 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
       return;
     }
     try {
+      if (signal === "wear") {
+        const eventId = crypto.randomUUID();
+        const itemIds = lookItems.map(item => item.item_id);
+        const observedAt = new Date().toISOString();
+        await api("/api/wardrobe/looks/wear", {
+          method:"POST",
+          body:JSON.stringify({
+            item_ids:itemIds,
+            event_id:eventId,
+            consent_receipt_id:styleReceipt,
+            observed_at:observedAt,
+            name:"PNELLY " + look.role + " " + observedAt.slice(0, 10),
+            context:{
+              occasion: $("pnellyOccasion").value || "unspecified"
+            }
+          })
+        });
+        status("pnellyStatus", "Recorded your confirmation that " + look.role + " was worn. This updates factual outfit history separately from recommendation exposure.", "good");
+        return;
+      }
       for (const item of lookItems) {
         await api("/api/wardrobe/feedback", {method:"POST", body:JSON.stringify({
           item_id:item.item_id,
@@ -779,9 +799,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
           consent_receipt_id:styleReceipt
         })});
       }
-      status("pnellyStatus", signal === "wear"
-        ? "Marked " + look.role + " as worn. Your consented feedback can inform future suggestions."
-        : "Recorded that " + look.role + " was not your style. This is a soft observation, not an immediate permanent exclusion.", "good");
+      status("pnellyStatus", "Recorded that " + look.role + " was not your style. This is a soft observation, not an immediate permanent exclusion.", "good");
     } catch (error) {
       status("pnellyStatus", error.message, "error");
     }
