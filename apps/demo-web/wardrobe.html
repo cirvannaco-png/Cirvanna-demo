@@ -60,6 +60,17 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
 <div class="status" id="learningStatus" role="status">Connect your session to manage permissions.</div>
 </section>
 
+<section class="panel hidden" id="learningDataPanel">
+<h2>Your learning data</h2>
+<p class="small">Review or export your wardrobe feedback, temporal learning events and negative preferences. You can retract an exclusion or delete learning data. Deletion removes learned preferences, consent receipts and feedback history; it does not delete your garments, account or orders.</p>
+<div class="row">
+<button class="btn" id="exportLearning">Review / export learning data</button>
+<button class="btn danger" id="deleteLearning">Delete learning data</button>
+</div>
+<div class="status" id="learningDataStatus" role="status">Learning data controls are available after you connect your session.</div>
+<div id="learningDataResults"></div>
+</section>
+
 <section class="panel hidden" id="closetPanel">
 <div class="row" style="justify-content:space-between"><div><div class="eyebrow">Your active pieces</div><h2>Wardrobe</h2></div><button class="btn" id="refresh">Refresh wardrobe</button></div>
 <p class="small">Feedback is explicit. A dislike is learned through NPL's three-distinct-rejection threshold. “Avoid” records a declared exclusion immediately. You can later change your mind through the supported preference correction flow.</p>
@@ -185,6 +196,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     profileReceipt = activeReceipts.find(x => x.scope === "profile_storage")?.receipt_id || null;
     updateConsentState();
     $("learningPanel").classList.remove("hidden");
+    $("learningDataPanel").classList.remove("hidden");
     $("closetPanel").classList.remove("hidden");
     $("recommendPanel").classList.remove("hidden");
     $("connectPanel").classList.add("hidden");
@@ -284,6 +296,94 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
       root.append(card);
     }
   };
+  const renderLearningData = data => {
+    const root = $("learningDataResults");
+    root.replaceChildren();
+    const preferences = data?.npl?.preferences || [];
+    root.append(text("h3", "Negative preferences", "eyebrow"));
+    if (!preferences.length) root.append(text("p", "No saved negative preferences.", "small"));
+    for (const preference of preferences) {
+      const card = document.createElement("article");
+      card.className = "rec-card";
+      card.append(text("h3", preference.target_value || preference.preference_id));
+      card.append(text("p",
+        (preference.target_type || "target") + " · " + (preference.source || "unknown source")
+        + " · " + (preference.rejection_count ?? (preference.rejection_event_ids || []).length) + " rejection(s)"
+      ));
+      card.append(text("p", preference.active ? (preference.is_hard_veto ? "Active hard exclusion" : "Active preference") : "Retracted"));
+      if (preference.active === true) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "btn";
+        button.textContent = "Retract this exclusion";
+        button.addEventListener("click", async () => {
+          button.disabled = true;
+          try {
+            await api("/api/wardrobe/preferences/" + encodeURIComponent(preference.preference_id) + "/retract", {
+              method: "POST",
+              body: JSON.stringify({correction_event_id: crypto.randomUUID()})
+            });
+            await loadLearningData();
+            status("learningDataStatus", "Preference retracted. It will no longer act as an active NPL exclusion.", "good");
+          } catch (error) {
+            status("learningDataStatus", error.message, "error");
+            button.disabled = false;
+          }
+        });
+        card.append(button);
+      }
+      root.append(card);
+    }
+    const events = data?.tal?.events || [];
+    root.append(text("h3", "Temporal learning events", "eyebrow"));
+    root.append(text("p", events.length + " event(s) in the USI/TAL export.", "small"));
+    for (const event of events.slice(0, 50)) {
+      root.append(text("p",
+        [event.feature_key, event.event_kind, event.observed_at, event.event_id].filter(Boolean).join(" · "),
+        "small"
+      ));
+    }
+    const feedback = data?.wardrobe_feedback || [];
+    root.append(text("h3", "Wardrobe feedback audit", "eyebrow"));
+    root.append(text("p", feedback.length + " recorded wardrobe interaction(s).", "small"));
+  };
+
+  const loadLearningData = async () => {
+    status("learningDataStatus", "Loading your learning records…");
+    const data = await api("/api/wardrobe/learning/export");
+    renderLearningData(data);
+    status("learningDataStatus", "Export prepared from your verified account. Only you can access this response.", "good");
+  };
+
+  const deleteLearningData = async () => {
+    if (!confirm("Delete your saved learning events, negative preferences, consent receipts and Wardrobe feedback history? Your garments, account and orders will remain.")) return;
+    $("deleteLearning").disabled = true;
+    try {
+      const result = await api("/api/wardrobe/learning", {method: "DELETE"});
+      styleReceipt = null;
+      profileReceipt = null;
+      updateConsentState();
+      $("learningDataResults").replaceChildren();
+      status("learningDataStatus",
+        "Learning data deleted. " + (result.deleted_wardrobe_feedback_events || 0) + " Wardrobe feedback record(s) removed. Your garments remain.",
+        "good"
+      );
+      status("learningStatus", "Learning consent was removed with the learning data. Grant it again before recording new feedback.");
+    } catch (error) {
+      status("learningDataStatus", error.message, "error");
+    } finally {
+      $("deleteLearning").disabled = false;
+    }
+  };
+
+  $("exportLearning").addEventListener("click", async () => {
+    $("exportLearning").disabled = true;
+    try { await loadLearningData(); }
+    catch (error) { status("learningDataStatus", error.message, "error"); }
+    finally { $("exportLearning").disabled = false; }
+  });
+  $("deleteLearning").addEventListener("click", deleteLearningData);
+
   $("connect").addEventListener("click", async () => {
     try { await connect(); }
     catch (error) { status("connectionStatus",error.message,"error"); }
