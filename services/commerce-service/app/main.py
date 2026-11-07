@@ -1467,7 +1467,10 @@ def fail_outbox_event(event_id: str, payload: OutboxFailureIn) -> dict[str, obje
             raise HTTPException(404, detail={"code": "COMMERCE_OUTBOX_EVENT_NOT_FOUND"})
         if event.delivered_at is not None:
             return {"status": "already_delivered", "event_id": event_id}
-        if event.lease_owner != payload.worker_id.strip() or event.lease_until is None or event.lease_until < current:
+        lease_until = event.lease_until
+        if lease_until is not None and lease_until.tzinfo is None:
+            lease_until = lease_until.replace(tzinfo=timezone.utc)
+        if event.lease_owner != payload.worker_id.strip() or lease_until is None or lease_until < current:
             raise HTTPException(409, detail={"code": "COMMERCE_OUTBOX_LEASE_LOST"})
         event.last_error = payload.error_code.strip()[:500]
         event.lease_owner = None
