@@ -516,3 +516,19 @@ Start with the [Source of truth and contributor guide](docs/architecture/source-
 ---
 
 **Final principle:** the README describes the system honestly; executable code and reproducible evidence establish what is built. Cirvanna should grow through clear ownership, validated contracts, integrated user journeys, and measured outcomes—not feature labels that outrun the software.
+
+
+## PNELLY research trace controls
+
+The live three-look composer supports a private evaluation trace only when
+`PNELLY_EVALUATION_TRACE_ENABLED=true` and a 32-byte-or-longer
+`PNELLY_EVALUATION_TRACE_HMAC_SECRET` are configured on both the API Gateway
+and Recommendation Service. Keep the flag false in ordinary production traffic.
+The HMAC key is a deployment secret; never commit its value or return it to a
+browser. The Marketplace BFF strips the internal trace from its public response.
+
+The trace includes role-specific candidate pools/rankings and NPL hard-exclusion
+context using keyed pseudonyms. It excludes account IDs, raw wardrobe item IDs,
+display names and image/asset references. Truncated pools are explicitly marked
+and are not eligible for benchmark claims. Human review and live exposure data
+must be collected separately; this trace alone is not evidence of model quality.
