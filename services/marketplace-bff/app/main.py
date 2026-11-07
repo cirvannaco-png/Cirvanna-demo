@@ -303,8 +303,12 @@ def _withhold_unverified_media(value):
     return value
 
 
-def _private_json_response(data: dict) -> JSONResponse:
-    return JSONResponse(content=_withhold_unverified_media(data), headers={"Cache-Control": "no-store, private"})
+def _private_json_response(data: dict, *, status_code: int = 200) -> JSONResponse:
+    return JSONResponse(
+        content=_withhold_unverified_media(data),
+        headers={"Cache-Control": "no-store, private"},
+        status_code=status_code,
+    )
 
 
 @app.get("/wardrobe", response_class=HTMLResponse)
@@ -467,7 +471,7 @@ async def create_wardrobe_outfit(request: Request, payload: CreateWardrobeOutfit
     outfit = data.get("outfit") if isinstance(data, dict) else None
     if not isinstance(outfit, dict) or outfit.get("owner_user_id") != subject:
         raise HTTPException(502, detail={"code": "WARDROBE_OUTFIT_SCOPE_MISMATCH"})
-    return _private_json_response(data)
+    return _private_json_response(data, status_code=201)
 
 
 @app.post("/api/wardrobe/outfits/{outfit_id}/pieces", status_code=201)
@@ -497,7 +501,7 @@ async def add_wardrobe_outfit_piece(request: Request, outfit_id: str, payload: A
     outfit = data.get("outfit") if isinstance(data, dict) else None
     if not isinstance(outfit, dict) or outfit.get("owner_user_id") != subject:
         raise HTTPException(502, detail={"code": "WARDROBE_OUTFIT_SCOPE_MISMATCH"})
-    return _private_json_response(data)
+    return _private_json_response(data, status_code=201)
 
 
 @app.patch("/api/wardrobe/outfits/{outfit_id}/pieces/{slot_id}")
