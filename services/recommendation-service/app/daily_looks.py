@@ -332,9 +332,6 @@ def _build_evaluation_trace(
     full_classified = _classify_items(evaluation_items)
     eligible_candidates, eligible_truncated = _base_candidates(eligible_classified)
     full_candidates, full_truncated = _base_candidates(full_classified)
-    rotation_seen = tuple(rotation_seen_item_ids)
-    rotation_seen_set = {value for value in rotation_seen if isinstance(value, str)}
-    wear_by_id = {entry.get("item_id"): entry for entry in (wear_history or []) if isinstance(entry, dict)}
     selected_base: set[frozenset[str]] = set()
     selected_item_ids: set[str] = set()
     cases: list[dict[str, Any]] = []
@@ -597,11 +594,15 @@ def build_daily_looks(
         raise ValueError("evaluation trace requires a 32-byte pseudonymization secret")
     excluded_ids = {value.strip() for value in hard_excluded_item_ids if isinstance(value, str) and value.strip()}
     active = [item for item in active if item["item_id"] not in excluded_ids]
+    active = [item for item in active if item["item_id"] not in excluded_ids]
     classified = _classify_items(active)
     candidates, _ = _base_candidates(classified)
 
     signals = tuple(_normalise(value) for value in style_signals if isinstance(value, str) and value.strip())[:40]
     feedback = tuple(_normalise(value) for value in feedback_signals if isinstance(value, str) and value.strip())[:40]
+    rotation_seen = tuple(rotation_seen_item_ids)
+    rotation_seen_set = {value for value in rotation_seen if isinstance(value, str)}
+    wear_by_id = {entry.get("item_id"): entry for entry in (wear_history or []) if isinstance(entry, dict)}
     selected_base: set[frozenset[str]] = set()
     selected_item_ids: set[str] = set()
     looks: list[dict[str, Any]] = []
@@ -636,8 +637,8 @@ def build_daily_looks(
             available,
             key=lambda group: (
                 -sum(1 for item in group if item["item_id"] in rotation_seen_set),
-                _score(group, role, signals, feedback, occasion, climate),
                 -sum((wear_by_id.get(item["item_id"]) or {}).get("wear_count", 0) for item in group),
+                _score(group, role, signals, feedback, occasion, climate),
                 -sum(1 for item in group if (wear_by_id.get(item["item_id"]) or {}).get("last_worn_at")),
                 -sum(len(set(x["item_id"] for x in group) & selected_item_ids) for _ in (0,)),
                 _stable_tie(user_id, local_date, role, (x["item_id"] for x in group)),
