@@ -205,22 +205,14 @@ def test_click_it_requires_signed_user_token_before_upstream_calls(client, monke
     assert response.json()["detail"]["code"] == "USER_BEARER_REQUIRED"
 
 
-def test_click_it_uses_verified_commerce_subject_and_returns_only_pending_candidates(client, monkeypatch):
-    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
-    monkeypatch.setenv("VIRTUAL_TWIN_API_URL", "https://virtual-twin.example.test")
-    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", "virtual-twin-internal-token-at-least-thirty-two-bytes")
-    fake = FakeAsyncClient([
-        FakeResponse({"user_id": "signed-user-42", "role": "customer", "email": None}),
-        FakeResponse({
-            "status": "complete",
-            "candidates": [{"variant_id": "variant-3", "product_name": "linen shirt", "image_urls": ["https://cdn.example.test/unverified.jpg"], "product": {"image_urls": ["https://cdn.example.test/nested.jpg"]}}],
-            "candidate_count": 1,
-            "display_authorized": False,
-            "decision_status": "PENDING_CAL",
-            "image_persisted": False,
-        }),
-    ])
-    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+def test_click_it_fails_closed_before_reading_or_forwarding_the_uploaded_photo(client, monkeypatch):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Click It must not call upstream services while masking is unreleased")
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", forbidden)
+    monkeypatch.setattr(main, "_upstream_base", forbidden)
+    monkeypatch.setattr(main, "_internal_service", forbidden)
+
     response = client.post(
         "/api/vision/click-it",
         headers={"Authorization": "Bearer signed-user-token"},
@@ -229,23 +221,21 @@ def test_click_it_uses_verified_commerce_subject_and_returns_only_pending_candid
             "consent_image_processing": "true",
             "consent_click_it": "true",
         },
-        files={"product_image": ("dress.png", b"validated-photo-bytes", "image/png")},
+        files={"product_image": ("dress.png", b"unmasked-private-photo-bytes", "image/png")},
     )
-    assert response.status_code == 200, response.text
-    assert response.headers["cache-control"] == "no-store, private"
-    assert response.json()["display_authorized"] is False
-    assert response.json()["candidates"][0]["variant_id"] == "variant-3"
-    assert response.json()["candidates"][0]["image_urls"] == []
-    assert response.json()["candidates"][0]["product"]["image_urls"] == []
-    assert len(fake.calls) == 2
-    assert fake.calls[0][1] == "https://commerce.example.test/me"
-    assert fake.calls[1][1] == "https://virtual-twin.example.test/click-it"
-    assert fake.calls[1][2]["data"]["subject_id"] == "signed-user-42"
-    assert "subject_id" not in response.request.content.decode(errors="ignore")
-    assert fake.calls[1][2]["files"]["product_image"][1] == b"validated-photo-bytes"
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "CLICK_IT_PRIVACY_PIPELINE_NOT_RELEASED"
+    assert response.headers["cache-control"] == "no-store"
 
 
-def test_click_it_rejects_unsupported_image_before_calling_services(client, monkeypatch):
+def test_click_it_fails_closed_for_every_upload_type_without_content_inspection(client, monkeypatch):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Click It must stop before content inspection or upstream calls")
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", forbidden)
+    monkeypatch.setattr(main, "_upstream_base", forbidden)
+    monkeypatch.setattr(main, "_internal_service", forbidden)
+
     response = client.post(
         "/api/vision/click-it",
         headers={"Authorization": "Bearer signed-user-token"},
@@ -254,10 +244,32 @@ def test_click_it_rejects_unsupported_image_before_calling_services(client, monk
             "consent_image_processing": "true",
             "consent_click_it": "true",
         },
-        files={"product_image": ("payload.bin", b"x", "application/octet-stream")},
+        files={"product_image": ("payload.bin", b"opaque-bytes", "application/octet-stream")},
     )
-    assert response.status_code == 415
-    assert response.json()["detail"]["code"] == "UNSUPPORTED_PRODUCT_IMAGE_TYPE"
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "CLICK_IT_PRIVACY_PIPELINE_NOT_RELEASED"
+
+
+def test_click_it_route_is_registered_exactly_once(client):
+    routes = [
+        route for route in main.app.routes
+        if getattr(route, "path", None) == "/api/vision/click-it"
+        and "POST" in (getattr(route, "methods", set()) or set())
+    ]
+    assert len(routes) == 1
+
+
+def test_bff_has_no_duplicate_method_path_route_registrations(client):
+    counts = {}
+    for route in main.app.routes:
+        path = getattr(route, "path", None)
+        methods = getattr(route, "methods", set()) or set()
+        for method in methods:
+            key = (method, path)
+            counts[key] = counts.get(key, 0) + 1
+    duplicates = {key: count for key, count in counts.items() if count > 1}
+    assert duplicates == {}
+
 
 def test_marketplace_ui_has_xari_description_search_and_mobile_click_it_capture(client):
     response = client.get("/")
