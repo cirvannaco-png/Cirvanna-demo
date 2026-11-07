@@ -993,7 +993,11 @@ async def export_wardrobe_learning_data(request: Request) -> Response:
                 or not isinstance(event.get("outfit_id"), str)
                 or not isinstance(event.get("items"), list)
                 or any(
-                    not isinstance(piece, dict) or piece.get("item_id") not in active_ids
+                    not isinstance(piece, dict)
+                    or not isinstance(piece.get("item_id"), str)
+                    or isinstance(piece.get("item_version"), bool)
+                    or not isinstance(piece.get("item_version"), int)
+                    or piece.get("item_version") < 1
                     for piece in event.get("items", [])
                 )
                 for event in wear_history_data.get("items", [])
