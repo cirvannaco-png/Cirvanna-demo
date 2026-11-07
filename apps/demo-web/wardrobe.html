@@ -87,7 +87,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
 <div class="consent" style="margin-top:14px;border-top:1px solid var(--line);padding-top:14px"><div><strong>Add a garment</strong><div class="small">Text-only entry. Photo upload and automated visual observation stay disabled until private asset storage and consent controls are deployed.</div></div></div>
 <form id="addItemForm" class="grid">
 <div class="field"><label for="itemName">Garment name</label><input id="itemName" required minlength="1" maxlength="200" placeholder="e.g. Blue linen shirt"></div>
-<div class="field"><label for="itemCategory">Category</label><select id="itemCategory"><option value="tops">Tops</option><option value="outerwear">Outerwear</option><option value="lower_body">Bottoms</option><option value="dress">Dresses</option><option value="shoes">Shoes</option><option value="accessories">Accessories</option></select></div>
+<div class="field"><label for="itemCategory">Category</label><select id="itemCategory"><option value="tops">Tops</option></select></div>
 <div class="field"><label for="itemAttributes">Attributes (comma-separated)</label><input id="itemAttributes" maxlength="500" placeholder="blue, linen, relaxed, casual"></div>
 <div class="field"><label>&nbsp;</label><button class="btn primary" type="submit" id="addItem">Add to wardrobe</button></div>
 </form>
@@ -500,6 +500,28 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
       $("createOutfit").disabled = false;
     }
   };
+  const loadWardrobeCategories = async () => {
+    const data = await api("/api/wardrobe/categories");
+    if (!Array.isArray(data.categories) || !data.taxonomy_version) {
+      throw new Error("WARDROBE_CATEGORY_RESPONSE_INVALID");
+    }
+    const select = $("itemCategory");
+    select.replaceChildren();
+    const groups = new Map();
+    for (const category of data.categories) {
+      if (!category || typeof category.id !== "string" || typeof category.label !== "string" || typeof category.group !== "string") {
+        throw new Error("WARDROBE_CATEGORY_RESPONSE_INVALID");
+      }
+      if (!groups.has(category.group)) {
+        const group = document.createElement("optgroup");
+        group.label = category.group[0].toUpperCase() + category.group.slice(1);
+        groups.set(category.group, group);
+        select.append(group);
+      }
+      groups.get(category.group).append(new Option(category.label, category.id));
+    }
+    if ([...select.options].some(option => option.value === "tops")) select.value = "tops";
+  };
   const loadWardrobe = async () => {
     const data = await api("/api/wardrobe/items");
     items = data.items || [];
@@ -510,6 +532,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     token = $("token").value.trim();
     if (!token) throw new Error("Enter a signed Commerce token.");
     // Identity is verified server-side by the BFF on every personal-data request.
+    await loadWardrobeCategories();
     await loadWardrobe();
     const consentData = await api("/api/wardrobe/consents");
     const activeReceipts = (consentData.items || []).filter(x => x && x.granted === true && !x.revoked_at);
