@@ -948,12 +948,9 @@ def test_pnelly_daily_looks_uses_verified_wardrobe_and_gateway_subject(client, m
     monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
 
     active_item = {
-        "owner_user_id": "signed-user-42",
-        "item_id": "shirt-001",
-        "display_name": "Blue linen shirt",
-        "category": "tops",
-        "attributes": ["blue", "linen"],
-        "status": "active",
+        "owner_user_id": "signed-user-42", "item_id": "shirt-001",
+        "display_name": "Blue linen shirt", "category": "tops",
+        "attributes": ["blue", "linen"], "status": "active",
         "image_asset_id": "private-asset-must-not-be-forwarded",
     }
     recommendation = {
@@ -964,27 +961,47 @@ def test_pnelly_daily_looks_uses_verified_wardrobe_and_gateway_subject(client, m
              "virtual_twin_preview": {"status": "unavailable"}}
             for role in ("everyday", "elevated", "explore")
         ],
+        "wardrobe_rotation": {
+            "policy_version": "wardrobe-revival-v1",
+            "cycle_complete": False,
+            "cycle_overdue": False,
+            "revival_queue_item_ids": ["shirt-001"],
+            "next_state": {
+                "cycle_number": 1,
+                "cycle_started_at": "2026-11-07",
+                "seen_item_ids": [],
+            },
+        },
     }
+    gateway_response = FakeResponse({
+        "schema_version": "1.0",
+        "request_id": "will-be-uuid",
+        "mode": "pnelly_wardrobe_daily_looks",
+        "recommendation": recommendation,
+    })
     fake = FakeAsyncClient([
         FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
         FakeResponse({"owner_user_id": "signed-user-42", "items": [active_item]}),
+        FakeResponse({"state": None, "version": 0}),
+        gateway_response,
         FakeResponse({
-            "schema_version": "1.0",
-            "request_id": "will-be-uuid",
-            "mode": "pnelly_wardrobe_daily_looks",
-            "recommendation": recommendation,
+            "state": {
+                "owner_user_id": "signed-user-42", "cycle_number": 1,
+                "surfaced_item_ids": [], "version": 1,
+            },
+            "version": 1, "status": "created",
         }),
     ])
 
-    # The BFF generates the request ID; mirror it in the fake upstream result.
     original_post = fake.post
-
-    async def post_with_request_echo(url, **kwargs):
+    async def post_with_rotation_date(url, **kwargs):
         if url == "https://decision.example.test/v1/pnelly/daily-looks":
-            fake.responses[0]._payload["request_id"] = kwargs["json"]["request_id"]
+            request_body = kwargs["json"]
+            gateway_response._payload["request_id"] = request_body["request_id"]
+            gateway_response._payload["recommendation"]["wardrobe_rotation"]["next_state"]["cycle_started_at"] = request_body["local_date"]
         return await original_post(url, **kwargs)
 
-    fake.post = post_with_request_echo
+    fake.post = post_with_rotation_date
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.post(
         "/api/wardrobe/pnelly/daily-looks",
@@ -993,16 +1010,25 @@ def test_pnelly_daily_looks_uses_verified_wardrobe_and_gateway_subject(client, m
     )
     assert response.status_code == 200, response.text
     assert response.headers["cache-control"] == "no-store, private"
-    call = fake.calls[2]
-    assert call[1] == "https://decision.example.test/v1/pnelly/daily-looks"
-    assert call[2]["headers"]["X-End-User-Authorization"] == "Bearer signed-session"
-    sent_items = call[2]["json"]["wardrobe_items"]
+    gateway_call = fake.calls[3]
+    assert gateway_call[1] == "https://decision.example.test/v1/pnelly/daily-looks"
+    assert gateway_call[2]["headers"]["X-End-User-Authorization"] == "Bearer signed-session"
+    sent_items = gateway_call[2]["json"]["wardrobe_items"]
     assert sent_items[0]["owner_user_id"] == "signed-user-42"
     assert "image_asset_id" not in sent_items[0]
-    assert call[2]["json"]["occasion"] == "work"
-    assert call[2]["json"]["climate"] == "hot_dry"
-    assert call[2]["json"]["local_date"]
+    assert gateway_call[2]["json"]["occasion"] == "work"
+    assert gateway_call[2]["json"]["climate"] == "hot_dry"
+    assert gateway_call[2]["json"]["rotation_seen_item_ids"] == []
+    assert gateway_call[2]["json"]["rotation_cycle_started_at"] is None
+    assert gateway_call[2]["json"]["rotation_cycle_number"] == 1
+    put_call = fake.calls[4]
+    assert put_call[0] == "PUT"
+    assert put_call[1] == "https://wardrobe.example.test/v1/rotation-state"
+    assert put_call[2]["json"]["request_id"] == gateway_call[2]["json"]["request_id"]
+    assert put_call[2]["json"]["expected_version"] == 0
+    assert put_call[2]["json"]["surfaced_item_ids"] == []
     assert "DECISION_GATEWAY_TOKEN" not in response.text
+
 
 def test_pnelly_daily_looks_rejects_cross_subject_wardrobe_data(client, monkeypatch):
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
@@ -1044,6 +1070,7 @@ def test_pnelly_daily_looks_rejects_gateway_response_with_missing_or_reordered_r
     fake = FakeAsyncClient([
         FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
         FakeResponse({"owner_user_id": "signed-user-42", "items": []}),
+        FakeResponse({"state": None, "version": 0}),
         FakeResponse(malformed),
     ])
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
@@ -1082,6 +1109,7 @@ def test_pnelly_daily_looks_rejects_unverified_twin_preview_claims(client, monke
     fake = FakeAsyncClient([
         FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
         FakeResponse({"owner_user_id": "signed-user-42", "items": []}),
+        FakeResponse({"state": None, "version": 0}),
         FakeResponse(forged_preview),
     ])
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
@@ -1123,11 +1151,25 @@ def test_pnelly_daily_looks_hides_server_side_evaluation_trace_from_browser(clie
             "participant_key": "participant_do_not_expose",
             "cases": [{"case_id": "case_do_not_expose"}],
         },
+        "wardrobe_rotation": {
+            "policy_version": "wardrobe-revival-v1",
+            "cycle_complete": False,
+            "cycle_overdue": False,
+            "revival_queue_item_ids": ["shirt-001"],
+            "next_state": {"cycle_number": 1, "cycle_started_at": "2026-11-07", "seen_item_ids": []},
+        },
     }
+    gateway_response = FakeResponse({"mode": "pnelly_wardrobe_daily_looks", "recommendation": recommendation})
     fake = FakeAsyncClient([
         FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
         FakeResponse({"owner_user_id": "signed-user-42", "items": [item]}),
-        FakeResponse({"mode": "pnelly_wardrobe_daily_looks", "recommendation": recommendation}),
+        FakeResponse({"state": None, "version": 0}),
+        gateway_response,
+        FakeResponse({
+            "state": {"owner_user_id": "signed-user-42", "cycle_number": 1,
+                      "surfaced_item_ids": [], "version": 1},
+            "version": 1, "status": "created",
+        }),
     ])
     original_post = fake.post
     async def post_with_gateway_envelope(url, **kwargs):
@@ -1135,6 +1177,7 @@ def test_pnelly_daily_looks_hides_server_side_evaluation_trace_from_browser(clie
         body = response.json()
         body["schema_version"] = "1.0"
         body["request_id"] = kwargs["json"]["request_id"]
+        body["recommendation"]["wardrobe_rotation"]["next_state"]["cycle_started_at"] = kwargs["json"]["local_date"]
         return FakeResponse(body, status_code=response.status_code)
     fake.post = post_with_gateway_envelope
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
@@ -1147,3 +1190,5 @@ def test_pnelly_daily_looks_hides_server_side_evaluation_trace_from_browser(clie
     assert "evaluation_trace" not in response.json()["recommendation"]
     assert "participant_do_not_expose" not in response.text
     assert "case_do_not_expose" not in response.text
+
+
