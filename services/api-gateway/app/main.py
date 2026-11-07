@@ -642,10 +642,10 @@ def _pnelly_npl_provider_configured() -> bool:
 
 def _filter_npl_blocked_wardrobe_items(
     *, request_id: str, user_id: str, wardrobe_items: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], int]:
-    """Apply the persistent NPL hard-veto kernel to each owner-scoped closet item."""
+) -> tuple[list[dict[str, Any]], int, list[str]]:
+    """Apply NPL hard vetoes and return blocked opaque item IDs for internal evaluation traces."""
     if not wardrobe_items:
-        return [], 0
+        return [], 0, []
 
     def evaluate_item(item: dict[str, Any]) -> tuple[dict[str, Any], bool]:
         attributes = tuple(
@@ -664,7 +664,8 @@ def _filter_npl_blocked_wardrobe_items(
     with ThreadPoolExecutor(max_workers=min(5, len(wardrobe_items))) as executor:
         evaluated = list(executor.map(evaluate_item, wardrobe_items))
     allowed = [item for item, blocked in evaluated if not blocked]
-    return allowed, len(evaluated) - len(allowed)
+    blocked_ids = [item["item_id"] for item, blocked in evaluated if blocked]
+    return allowed, len(blocked_ids), blocked_ids
 
 
 def _pnelly_daily_looks(payload: PNELLYDailyLooksRequest, style_signals: list[str], feedback_signals: list[str]) -> dict[str, Any]:
@@ -1816,12 +1817,21 @@ def compose_pnelly_daily_looks(
     ]
     if payload.wardrobe_items and not _pnelly_npl_provider_configured():
         raise HTTPException(503, detail={"code": "PNELLY_NPL_PROVIDER_NOT_CONFIGURED"})
-    eligible_items, npl_excluded_count = _filter_npl_blocked_wardrobe_items(
+    trace_enabled = os.getenv("PNELLY_EVALUATION_TRACE_ENABLED", "").lower() == "true"
+    trace_secret = os.getenv("PNELLY_EVALUATION_TRACE_HMAC_SECRET", "").strip()
+    if trace_enabled and len(trace_secret.encode("utf-8")) < 32:
+        raise HTTPException(503, detail={"code": "PNELLY_EVALUATION_TRACE_SIGNING_NOT_CONFIGURED"})
+    eligible_items, npl_excluded_count, blocked_item_ids = _filter_npl_blocked_wardrobe_items(
         request_id=payload.request_id,
         user_id=subject,
         wardrobe_items=payload.wardrobe_items,
     )
-    safe_payload = payload.model_copy(update={"wardrobe_items": eligible_items})
+    # Client-supplied values for these gateway-only fields are overwritten.
+    safe_payload = payload.model_copy(update={
+        "wardrobe_items": eligible_items,
+        "evaluation_wardrobe_items": payload.wardrobe_items if trace_enabled else [],
+        "hard_excluded_item_ids": blocked_item_ids if trace_enabled else [],
+    })
     positive_feedback = _load_consent_aware_wardrobe_likes(subject)
     feedback_signals = [
         f"feedback:{attribute}"
