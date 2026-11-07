@@ -311,14 +311,20 @@ def test_evaluation_trace_api_is_server_flagged_and_fails_closed_without_secret(
 
 
 def test_rotation_prioritizes_unseen_items_and_exposes_revival_queue():
+    items = wardrobe() + [{
+        "item_id": "other-001", "owner_user_id": "user-123",
+        "display_name": "Unclassified vintage piece", "category": "other",
+        "attributes": [], "status": "active",
+    }]
     result = build_daily_looks(
-        request_id="rotation-001", user_id="user-123", wardrobe_items=wardrobe(),
+        request_id="rotation-001", user_id="user-123", wardrobe_items=items,
         local_date="2026-11-07",
-        rotation_seen_item_ids=["top-001", "top-002", "top-003", "bottom-01", "bottom-02"],
+        rotation_seen_item_ids=["top-001", "top-003", "bottom-01", "bottom-02", "shoe-001"],
         wear_history=[{"item_id": "top-003", "last_worn_at": "2026-11-06T08:00:00Z", "wear_count": 8}],
     )
     rotation = result["wardrobe_rotation"]
-    assert "shoe-001" in rotation["revival_queue_item_ids"]
+    assert "top-002" in result["looks"][0]["item_ids"]
+    assert rotation["revival_queue_item_ids"] == ["other-001"]
     assert rotation["rules"]["recent_wear_is_not_exclusion"] is True
 
 
@@ -353,11 +359,14 @@ def test_overdue_cycle_keeps_unseen_items_prioritized_without_reset():
 
 
 def test_rotation_never_marks_recent_wear_as_a_hard_exclusion():
+    items = wardrobe()[:1] + wardrobe()[3:4]
     result = build_daily_looks(
-        request_id="rotation-004", user_id="user-123", wardrobe_items=wardrobe(),
+        request_id="rotation-004", user_id="user-123", wardrobe_items=items,
         local_date="2026-11-07",
         wear_history=[{"item_id": "top-001", "last_worn_at": "2026-11-06T08:00:00Z", "wear_count": 20}],
     )
+    assert result["ready_count"] == 1
+    assert "top-001" in result["looks"][0]["item_ids"]
     assert result["wardrobe_rotation"]["rules"]["recent_wear_is_not_exclusion"] is True
 
 
@@ -368,3 +377,47 @@ def test_explicit_hard_exclusions_are_removed_from_looks_and_revival_queue():
     )
     assert all("top-001" not in look["item_ids"] for look in result["looks"])
     assert "top-001" not in result["wardrobe_rotation"]["revival_queue_item_ids"]
+
+
+
+def test_rotation_queue_excludes_items_surfaced_in_the_current_response():
+    items = wardrobe()[:1] + wardrobe()[3:4] + wardrobe()[5:6]
+    result = build_daily_looks(
+        request_id="rotation-006", user_id="user-123", wardrobe_items=items,
+        local_date="2026-11-07",
+    )
+    rotation = result["wardrobe_rotation"]
+    assert rotation["cycle_complete"] is True
+    assert rotation["revival_queue_item_ids"] == []
+    assert rotation["next_state"]["cycle_number"] == 2
+    assert rotation["next_state"]["seen_item_ids"] == []
+
+
+def test_combinations_change_deterministically_between_rotation_cycles():
+    items = [
+        {"item_id": "top-a", "owner_user_id": "user-123", "display_name": "Top A", "category": "tops", "attributes": [], "status": "active"},
+        {"item_id": "top-b", "owner_user_id": "user-123", "display_name": "Top B", "category": "tops", "attributes": [], "status": "active"},
+        {"item_id": "bottom-a", "owner_user_id": "user-123", "display_name": "Bottom A", "category": "trousers", "attributes": [], "status": "active"},
+        {"item_id": "bottom-b", "owner_user_id": "user-123", "display_name": "Bottom B", "category": "trousers", "attributes": [], "status": "active"},
+    ]
+    first = build_daily_looks(
+        request_id="rotation-cycle-1", user_id="user-123", wardrobe_items=items,
+        local_date="2026-11-07", rotation_cycle_number=1,
+    )
+    second = build_daily_looks(
+        request_id="rotation-cycle-2", user_id="user-123", wardrobe_items=items,
+        local_date="2026-11-07", rotation_cycle_number=2,
+    )
+    assert first["looks"][0]["item_ids"] != second["looks"][0]["item_ids"]
+    assert first["wardrobe_rotation"]["combination_cycle_number"] == 1
+    assert second["wardrobe_rotation"]["combination_cycle_number"] == 2
+
+
+def test_rotation_rejects_malformed_wear_history_instead_of_silently_ranking_it():
+    with pytest.raises(ValueError, match="ISO-8601"):
+        build_daily_looks(
+            request_id="rotation-invalid-wear", user_id="user-123",
+            wardrobe_items=wardrobe()[:1] + wardrobe()[3:4],
+            local_date="2026-11-07",
+            wear_history=[{"item_id": "top-001", "last_worn_at": 123, "wear_count": 1}],
+        )
