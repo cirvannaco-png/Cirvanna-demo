@@ -87,7 +87,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
 <div class="consent" style="margin-top:14px;border-top:1px solid var(--line);padding-top:14px"><div><strong>Add a wardrobe item</strong><div class="small">Text-only entry. Photo upload and automated visual observation stay disabled until private asset storage and consent controls are deployed.</div></div></div>
 <form id="addItemForm" class="grid">
 <div class="field"><label for="itemName">Item name</label><input id="itemName" required minlength="1" maxlength="200" placeholder="e.g. Blue linen shirt"></div>
-<div class="field"><label for="itemCategory">Category</label><select id="itemCategory"><option value="tops">Tops</option><option value="outerwear">Outerwear</option><option value="lower_body">Bottoms</option><option value="dress">Dresses</option><option value="shoes">Shoes</option><option value="accessories">Accessories</option></select></div>
+<div class="field"><label for="itemCategory">Category</label><select id="itemCategory"><option value="tops">Tops</option></select><input id="itemCustomCategory" hidden maxlength="80" placeholder="Enter item type, e.g. nail polish"></div>
 <div class="field"><label for="itemAttributes">Attributes (comma-separated)</label><input id="itemAttributes" maxlength="500" placeholder="blue, linen, relaxed, casual"></div>
 <div class="field"><label>&nbsp;</label><button class="btn primary" type="submit" id="addItem">Add to wardrobe</button></div>
 </form>
@@ -586,11 +586,14 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     try {
       const data = await api("/api/wardrobe/items", {method:"POST", body:JSON.stringify({
         display_name:$("itemName").value.trim(),
-        category:$("itemCategory").value,
+        category: (() => { const selected = $("itemCategory").value; const custom = $("itemCustomCategory").value.trim(); if (selected === "other" && !custom) throw new Error("ENTER_CUSTOM_WARDROBE_CATEGORY"); return selected === "other" ? custom : selected; })(),
         attributes:$("itemAttributes").value.split(",").map(x=>x.trim()).filter(Boolean)
       })});
       $("itemName").value = "";
       $("itemAttributes").value = "";
+      $("itemCustomCategory").value = "";
+      $("itemCategory").value = "tops";
+      $("itemCustomCategory").hidden = true;
       await loadWardrobe();
       status("feedbackStatus","Added " + data.item.display_name + " to your wardrobe.", "good");
     } catch (error) {
@@ -763,7 +766,8 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     try { await connect(); }
     catch (error) { status("connectionStatus",error.message,"error"); }
   });
-  $("addItemForm").addEventListener("submit", addWardrobeItem);\n  $("createOutfitForm").addEventListener("submit", createOutfit);
+  $("addItemForm").addEventListener("submit", addWardrobeItem);
+  $("itemCategory").addEventListener("change", () => { const custom = $("itemCategory").value === "other"; $("itemCustomCategory").hidden = !custom; $("itemCustomCategory").required = custom; });\n  $("createOutfitForm").addEventListener("submit", createOutfit);
   $("colorProfileForm").addEventListener("submit", saveColorProfile);
   $("refresh").addEventListener("click", async () => {
     try { await loadWardrobe(); }
