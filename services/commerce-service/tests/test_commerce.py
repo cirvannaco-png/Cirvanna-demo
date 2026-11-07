@@ -553,6 +553,7 @@ def test_verified_charge_refund_is_monotonic_and_does_not_change_order_or_wardro
 
 
 def test_refund_webhook_rejects_unknown_payment_intent_and_amount_mismatch(client, monkeypatch):
+    configure_stripe(monkeypatch, session_id="cs_test_refund_unknown")
     unknown = {
         "id": "evt_refund_unknown",
         "type": "charge.refunded",
