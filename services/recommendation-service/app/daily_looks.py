@@ -602,6 +602,8 @@ def build_daily_looks(
     feedback = tuple(_normalise(value) for value in feedback_signals if isinstance(value, str) and value.strip())[:40]
     rotation_seen = tuple(rotation_seen_item_ids)
     rotation_seen_set = {value for value in rotation_seen if isinstance(value, str)}
+    if {item["item_id"] for item in active}.issubset(rotation_seen_set):
+        rotation_seen_set = set()  # begin the next cycle immediately on full coverage
     wear_by_id = {entry.get("item_id"): entry for entry in (wear_history or []) if isinstance(entry, dict)}
     selected_base: set[frozenset[str]] = set()
     selected_item_ids: set[str] = set()
