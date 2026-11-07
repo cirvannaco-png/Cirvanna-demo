@@ -1,6 +1,6 @@
 # Cirvanna master product and engineering checklist
 
-**Baseline:** `main` at `ace2c733995a441f893f48478ad4c3bb15e5bd80` (7 November 2026; after merges #124, #127 and #117)  
+**Code baseline audited:** `main` at `327d8316c69eee911bc1697e60e1d6357eb463da` (7 November 2026; includes #124, #127, #117, #154 and #155)  
 **Status:** Active; the product requirements are captured below. This is not a production-readiness declaration.
 
 ## Operating rules
@@ -161,7 +161,7 @@
 - [x] Saved-outfit piece editing is implemented in merged PR #135; the user-declared colour preference profile is implemented in merged PR #137. PNELLY wardrobe companion, complete personal outfit graph, human-reviewed dataset, multi-product try-on, and end-to-end marketplace-to-wardrobe/Twin flows remain to be integrated and verified.
 - [x] Merged PR #139 ports the PNELLY daily-look Decision Gateway route and consent/NPL checks onto current main; Decision Gateway tests passed.
 - [x] Privacy/learning-data controls from stale PR #130 are integrated through PR #139. Confirm deployed migrations, deletion retry behaviour and production evidence before release.
-- [~] Open-PR/branch reconciliation is in progress: PRs #124 (private assets), #127 (VTON provenance/license gate) and #117 (human-review evaluation harness) were merged after green targeted CI. Remaining open PRs were audited; conflicted/stale duplicates are not force-merged. A commit-pinned reconciliation report and final branch disposition are still required.
+- [~] Open-PR/branch reconciliation has been narrowed: PRs #124 (private assets), #127 (VTON provenance/license gate), #117 (human-review evaluation harness) and #155 (Twin capability truthfulness) were merged after green targeted CI; PR #154 reconciled this checklist. Seven superseded/stale PRs were closed with explanations. Remaining conflicted feature PRs are retained for controlled port/rebase, and historical branch refs are preserved pending a safe branch-retention review.
 
 ## Required evidence for every completed checklist item
 
