@@ -84,3 +84,35 @@ Do not promote outfit ranking based on model-only metrics or synthetic data. Req
 - separate privacy review for the dataset and its retention/deletion policy.
 
 A failing exclusion gate blocks promotion even when relevance or engagement improves.
+
+
+## PNELLY runtime trace handoff
+
+The internal Recommendation Service can emit an opt-in `evaluation_trace` when
+`PNELLY_EVALUATION_TRACE_ENABLED=true` and
+`PNELLY_EVALUATION_TRACE_HMAC_SECRET` is configured with at least 32 bytes.
+The trace is not returned by the public Marketplace BFF. A controlled study
+collector may retrieve it through the authenticated API Gateway.
+
+Each trace contains one case per role (Everyday, Elevated, Explore), the
+candidate pool for that role, the Cirvanna role ranking, per-candidate score,
+NPL-blocked candidate IDs, and keyed pseudonyms for participants and garments.
+It deliberately excludes account IDs, raw wardrobe item IDs, display names,
+images, and asset references. Candidate-pool truncation is recorded; truncated
+traces must not be used for comparative claims.
+
+Use `scripts/evaluation/prepare_pnelly_cases.py` to join trace JSONL with
+two independent blinded reviews per candidate and any verified exposure log.
+The resulting JSONL follows the benchmark schema and can be passed to
+`scripts/evaluation/evaluate_outfits.py`. Use
+`scripts/evaluation/evaluate_pnelly_cases.py` for role-stratified reports.
+
+The offline `apps/demo-web/outfit-review.html` reviewer tool randomizes candidate
+presentation and hides system assignment and ranking. It currently evaluates
+declared metadata only; it does not measure visual appeal, garment fit, skin
+appearance, or virtual try-on realism. Those require a separately governed
+visual-review workflow.
+
+No human ratings or live exposure events are included by this code change.
+Two real independent reviewers and verified edit/rejection logs are still
+required before the benchmark can make an empirical performance claim.
