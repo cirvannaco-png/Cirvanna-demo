@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "packages"))
 
-from wardrobe import WardrobeItem, WardrobeItemStatus, transition_item  # noqa: E402
+from wardrobe import WardrobeItem, WardrobeItemStatus, WARDROBE_CATEGORIES, TAXONOMY_VERSION, transition_item  # noqa: E402
 
 class WardrobeDomainTests(unittest.TestCase):
     def item(self, **overrides):
@@ -22,6 +22,24 @@ class WardrobeDomainTests(unittest.TestCase):
         }
         values.update(overrides)
         return WardrobeItem(**values)
+
+    def test_category_aliases_normalize_to_stable_taxonomy_ids(self):
+        self.assertEqual(self.item(category="Footwear").category, "shoes")
+        self.assertEqual(self.item(category="jewellery").category, "jewelry")
+        self.assertEqual(self.item(category="Sunglasses").category, "eyewear")
+        self.assertEqual(self.item(category="Bottoms").category, "lower_body")
+
+    def test_category_taxonomy_covers_beauty_and_accessory_items(self):
+        category_ids = {entry["id"] for entry in WARDROBE_CATEGORIES}
+        self.assertEqual(TAXONOMY_VERSION, "1.0.0")
+        self.assertTrue({"makeup", "skincare", "haircare", "fragrance", "shoes", "bags", "ties", "eyewear", "watches"} <= category_ids)
+
+    def test_valid_custom_category_keys_are_preserved_for_extensibility(self):
+        self.assertEqual(self.item(category="custom_nail_art").category, "custom_nail_art")
+
+    def test_malformed_category_keys_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "invalid wardrobe category key"):
+            self.item(category="not a valid category!")
 
     def test_create_requires_consent_for_persisted_image(self):
         with self.assertRaises(ValueError):
