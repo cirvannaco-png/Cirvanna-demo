@@ -851,7 +851,7 @@ def test_wardrobe_learning_export_combines_verified_tal_npl_feedback_and_rotatio
         }),
         FakeResponse({"owner_user_id": "signed-user-42", "items": [
             {"event_id": "wear-001", "outfit_id": "outfit-001",
-             "items": [{"item_id": "shirt-001", "item_version": 1}],
+             "items": [{"item_id": "archived-shirt-001", "item_version": 1}],
              "context": {"occasion": "work"}, "observed_at": "2026-11-07T15:00:00+00:00"},
         ]}),
     ])
@@ -866,7 +866,7 @@ def test_wardrobe_learning_export_combines_verified_tal_npl_feedback_and_rotatio
     assert data["wardrobe_rotation"]["version"] == 4
     assert data["wardrobe_rotation"]["seen_item_ids"] == ["shirt-001"]
     assert data["wardrobe_wear_history"][0]["event_id"] == "wear-001"
-    assert data["wardrobe_wear_history"][0]["items"][0]["item_id"] == "shirt-001"
+    assert data["wardrobe_wear_history"][0]["items"][0]["item_id"] == "archived-shirt-001"
     assert fake.calls[1][1] == "https://decision.example.test/v1/me/learning/export"
     assert fake.calls[2][1] == "https://wardrobe.example.test/v1/feedback"
     assert fake.calls[3][1] == "https://wardrobe.example.test/v1/items"
