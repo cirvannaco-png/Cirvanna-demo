@@ -1444,100 +1444,34 @@ async def marketplace_click_it(
     category: str | None = Form(default=None, max_length=80),
     limit: int = Form(default=10, ge=1, le=25),
 ) -> Response:
-    """Bind Click It to a verified Commerce identity and keep all service tokens private.
+    """Fail closed until the trusted face-masking and publication pipeline is released.
 
-    The browser may supply consent flags and an opaque consent reference, but the
-    Virtual Twin service verifies the durable, active record with the consent
-    provider. This endpoint cannot treat a checkbox alone as durable consent.
+    The browser-facing service must not read, copy or forward a raw Click It image
+    while the masking and asset-bound privacy-attestation providers are unavailable.
     """
+    del consent_id, twin_id, category, limit
     authorization = request.headers.get("authorization", "")
     scheme, _, user_token = authorization.partition(" ")
     if scheme.lower() != "bearer" or not user_token.strip():
-        raise HTTPException(401, detail={"code": "USER_BEARER_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
+        await product_image.close()
+        raise HTTPException(
+            401,
+            detail={"code": "USER_BEARER_REQUIRED"},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     if not consent_image_processing or not consent_click_it:
+        await product_image.close()
         raise HTTPException(400, detail={"code": "EXPLICIT_CLICK_IT_CONSENT_REQUIRED"})
-    content_type = product_image.content_type or ""
-    if content_type not in {"image/jpeg", "image/png", "image/webp"}:
-        await product_image.close()
-        raise HTTPException(415, detail={"code": "UNSUPPORTED_PRODUCT_IMAGE_TYPE"})
-    if product_image.size is not None and product_image.size > MAX_VISION_IMAGE_BYTES:
-        await product_image.close()
-        raise HTTPException(413, detail={"code": "PRODUCT_IMAGE_SIZE_LIMIT_EXCEEDED"})
-    content = b""
-    try:
-        content = await product_image.read(MAX_VISION_IMAGE_BYTES + 1)
-    finally:
-        await product_image.close()
-    if not content:
-        raise HTTPException(400, detail={"code": "EMPTY_PRODUCT_IMAGE"})
-    if len(content) > MAX_VISION_IMAGE_BYTES:
-        raise HTTPException(413, detail={"code": "PRODUCT_IMAGE_SIZE_LIMIT_EXCEEDED", "maximum_bytes": MAX_VISION_IMAGE_BYTES})
-
-    commerce_base = _upstream_base("COMMERCE_API_URL")
-    twin_base, twin_token = _internal_service("VIRTUAL_TWIN_API_URL", "VIRTUAL_TWIN_API_TOKEN")
-    try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(8.0, connect=2.0),
-            trust_env=False,
-            follow_redirects=False,
-        ) as client:
-            # /me derives subject_id from a signed/verified Commerce token. Never
-            # trust a subject_id submitted by browser JavaScript.
-            identity = await client.get(
-                commerce_base + "/me",
-                headers={"Authorization": "Bearer " + user_token, "Accept": "application/json"},
-            )
-            if identity.status_code in {401, 403}:
-                raise HTTPException(401, detail={"code": "USER_AUTHENTICATION_FAILED"})
-            if identity.status_code != 200:
-                raise HTTPException(503, detail={"code": "USER_IDENTITY_UNAVAILABLE"})
-            actor = identity.json()
-            subject_id = actor.get("user_id") if isinstance(actor, dict) else None
-            if not isinstance(subject_id, str) or not subject_id.strip():
-                raise HTTPException(502, detail={"code": "INVALID_USER_IDENTITY_RESPONSE"})
-            fields = {
-                "subject_id": subject_id,
-                "consent_id": consent_id.strip(),
-                "consent_image_processing": "true",
-                "consent_click_it": "true",
-                "limit": str(limit),
-            }
-            if twin_id and twin_id.strip():
-                fields["twin_id"] = twin_id.strip()
-            if category and category.strip():
-                fields["category"] = category.strip()
-            response = await client.post(
-                twin_base + "/click-it",
-                headers={"Authorization": "Bearer " + twin_token, "Accept": "application/json"},
-                data=fields,
-                files={"product_image": (product_image.filename or "click-it-image", content, content_type)},
-            )
-    except HTTPException:
-        raise
-    except httpx.TimeoutException as exc:
-        raise HTTPException(504, detail={"code": "CLICK_IT_TIMEOUT"}) from exc
-    except httpx.HTTPError as exc:
-        raise HTTPException(503, detail={"code": "CLICK_IT_UNAVAILABLE"}) from exc
-    try:
-        data = response.json()
-    except ValueError as exc:
-        raise HTTPException(502, detail={"code": "CLICK_IT_INVALID_RESPONSE"}) from exc
-    if response.status_code == 200 and isinstance(data, dict):
-        return JSONResponse(content=_withhold_unverified_media(data), headers={"Cache-Control": "no-store, private"})
-    detail = data.get("detail", {}) if isinstance(data, dict) else {}
-    code = detail.get("code") if isinstance(detail, dict) else None
-    safe = {"code": code if isinstance(code, str) else "CLICK_IT_REQUEST_FAILED"}
-    if isinstance(detail, dict):
-        for key in ("quality", "message", "maximum_bytes", "visibility"):
-            if key in detail:
-                safe[key] = detail[key]
-    if response.status_code in {400, 403, 413, 415, 422}:
-        raise HTTPException(response.status_code, detail=safe)
-    if response.status_code == 504:
-        raise HTTPException(504, detail={"code": "CLICK_IT_TIMEOUT"})
-    if response.status_code in {502, 503}:
-        raise HTTPException(503 if response.status_code == 503 else 502, detail=safe)
-    raise HTTPException(502, detail={"code": "CLICK_IT_FAILED"})
+    # Close the spooled upload without calling read() or forwarding its bytes.
+    await product_image.close()
+    raise HTTPException(
+        503,
+        detail={
+            "code": "CLICK_IT_PRIVACY_PIPELINE_NOT_RELEASED",
+            "message": "Click It is unavailable until verified face masking, resource-bound consent and publication attestation are released.",
+        },
+        headers={"Cache-Control": "no-store"},
+    )
 
 
 def _page_html() -> str:
@@ -1947,113 +1881,6 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
         raise HTTPException(502, detail={"code": "WARDROBE_RECOMMENDATIONS_RESPONSE_INVALID"})
     return _private_json_response(_withhold_unverified_media(data))
 
-
-
-@app.post("/api/vision/click-it")
-async def marketplace_click_it(
-    request: Request,
-    consent_id: str = Form(min_length=8, max_length=160),
-    consent_image_processing: bool = Form(),
-    consent_click_it: bool = Form(),
-    product_image: UploadFile = File(...),
-    twin_id: str | None = Form(default=None, min_length=3, max_length=128),
-    category: str | None = Form(default=None, max_length=80),
-    limit: int = Form(default=10, ge=1, le=25),
-) -> Response:
-    """Bind Click It to a verified Commerce identity and keep all service tokens private.
-
-    The browser may supply consent flags and an opaque consent reference, but the
-    Virtual Twin service verifies the durable, active record with the consent
-    provider. This endpoint cannot treat a checkbox alone as durable consent.
-    """
-    authorization = request.headers.get("authorization", "")
-    scheme, _, user_token = authorization.partition(" ")
-    if scheme.lower() != "bearer" or not user_token.strip():
-        raise HTTPException(401, detail={"code": "USER_BEARER_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
-    if not consent_image_processing or not consent_click_it:
-        raise HTTPException(400, detail={"code": "EXPLICIT_CLICK_IT_CONSENT_REQUIRED"})
-    content_type = product_image.content_type or ""
-    if content_type not in {"image/jpeg", "image/png", "image/webp"}:
-        await product_image.close()
-        raise HTTPException(415, detail={"code": "UNSUPPORTED_PRODUCT_IMAGE_TYPE"})
-    if product_image.size is not None and product_image.size > MAX_VISION_IMAGE_BYTES:
-        await product_image.close()
-        raise HTTPException(413, detail={"code": "PRODUCT_IMAGE_SIZE_LIMIT_EXCEEDED"})
-    content = b""
-    try:
-        content = await product_image.read(MAX_VISION_IMAGE_BYTES + 1)
-    finally:
-        await product_image.close()
-    if not content:
-        raise HTTPException(400, detail={"code": "EMPTY_PRODUCT_IMAGE"})
-    if len(content) > MAX_VISION_IMAGE_BYTES:
-        raise HTTPException(413, detail={"code": "PRODUCT_IMAGE_SIZE_LIMIT_EXCEEDED", "maximum_bytes": MAX_VISION_IMAGE_BYTES})
-
-    commerce_base = _upstream_base("COMMERCE_API_URL")
-    twin_base, twin_token = _internal_service("VIRTUAL_TWIN_API_URL", "VIRTUAL_TWIN_API_TOKEN")
-    try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(8.0, connect=2.0),
-            trust_env=False,
-            follow_redirects=False,
-        ) as client:
-            # /me derives subject_id from a signed/verified Commerce token. Never
-            # trust a subject_id submitted by browser JavaScript.
-            identity = await client.get(
-                commerce_base + "/me",
-                headers={"Authorization": "Bearer " + user_token, "Accept": "application/json"},
-            )
-            if identity.status_code in {401, 403}:
-                raise HTTPException(401, detail={"code": "USER_AUTHENTICATION_FAILED"})
-            if identity.status_code != 200:
-                raise HTTPException(503, detail={"code": "USER_IDENTITY_UNAVAILABLE"})
-            actor = identity.json()
-            subject_id = actor.get("user_id") if isinstance(actor, dict) else None
-            if not isinstance(subject_id, str) or not subject_id.strip():
-                raise HTTPException(502, detail={"code": "INVALID_USER_IDENTITY_RESPONSE"})
-            fields = {
-                "subject_id": subject_id,
-                "consent_id": consent_id.strip(),
-                "consent_image_processing": "true",
-                "consent_click_it": "true",
-                "limit": str(limit),
-            }
-            if twin_id and twin_id.strip():
-                fields["twin_id"] = twin_id.strip()
-            if category and category.strip():
-                fields["category"] = category.strip()
-            response = await client.post(
-                twin_base + "/click-it",
-                headers={"Authorization": "Bearer " + twin_token, "Accept": "application/json"},
-                data=fields,
-                files={"product_image": (product_image.filename or "click-it-image", content, content_type)},
-            )
-    except HTTPException:
-        raise
-    except httpx.TimeoutException as exc:
-        raise HTTPException(504, detail={"code": "CLICK_IT_TIMEOUT"}) from exc
-    except httpx.HTTPError as exc:
-        raise HTTPException(503, detail={"code": "CLICK_IT_UNAVAILABLE"}) from exc
-    try:
-        data = response.json()
-    except ValueError as exc:
-        raise HTTPException(502, detail={"code": "CLICK_IT_INVALID_RESPONSE"}) from exc
-    if response.status_code == 200 and isinstance(data, dict):
-        return JSONResponse(content=_withhold_unverified_media(data), headers={"Cache-Control": "no-store, private"})
-    detail = data.get("detail", {}) if isinstance(data, dict) else {}
-    code = detail.get("code") if isinstance(detail, dict) else None
-    safe = {"code": code if isinstance(code, str) else "CLICK_IT_REQUEST_FAILED"}
-    if isinstance(detail, dict):
-        for key in ("quality", "message", "maximum_bytes", "visibility"):
-            if key in detail:
-                safe[key] = detail[key]
-    if response.status_code in {400, 403, 413, 415, 422}:
-        raise HTTPException(response.status_code, detail=safe)
-    if response.status_code == 504:
-        raise HTTPException(504, detail={"code": "CLICK_IT_TIMEOUT"})
-    if response.status_code in {502, 503}:
-        raise HTTPException(503 if response.status_code == 503 else 502, detail=safe)
-    raise HTTPException(502, detail={"code": "CLICK_IT_FAILED"})
 
 
 def _page_html() -> str:
