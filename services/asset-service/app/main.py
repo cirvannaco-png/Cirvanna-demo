@@ -267,7 +267,7 @@ def authorize_asset(
             or not isinstance(asset_ids, list) or not asset_ids
             or any(not isinstance(x, str) or not x.strip() for x in asset_ids)
             or len(set(asset_ids)) != len(asset_ids)
-            or (parent_id is not None and (not isinstance(parent_id, str) or not parent_id.strip()))
+            or not isinstance(parent_id, str) or not parent_id.strip()
         ):
             raise HTTPException(422, detail={"code": "ASSET_AUTHORIZATION_INPUT_INVALID"})
         rows = []
@@ -277,7 +277,7 @@ def authorize_asset(
                 raise HTTPException(404, detail={"code": "ASSET_NOT_FOUND"})
             if row.purpose not in {"twin_source_image", "twin_person_image", "twin_representation"}:
                 raise HTTPException(404, detail={"code": "ASSET_NOT_FOUND"})
-            if parent_id is not None and row.parent_id != parent_id.strip():
+            if row.parent_id != parent_id.strip():
                 raise HTTPException(404, detail={"code": "ASSET_NOT_FOUND"})
             row = _owned_asset(db, row.asset_id, owner.strip(), row.purpose, row.parent_id)
             rows.append(row)
@@ -356,12 +356,14 @@ def delete_assets(
     purpose = payload.get("purpose")
     cascade = payload.get("cascade_derived_assets")
     idempotency_key = payload.get("idempotency_key")
+    parent_id = payload.get("parent_id")
     if (
         not isinstance(owner, str) or not owner.strip()
         or not isinstance(asset_ids, list) or not asset_ids
         or any(not isinstance(x, str) or not x.strip() for x in asset_ids)
         or len(set(asset_ids)) != len(asset_ids)
         or purpose != "virtual_twin_deletion" or cascade is not True
+        or not isinstance(parent_id, str) or not parent_id.strip()
         or not isinstance(idempotency_key, str) or len(idempotency_key.strip()) < 8
     ):
         raise HTTPException(422, detail={"code": "ASSET_DELETION_INPUT_INVALID"})
@@ -370,9 +372,9 @@ def delete_assets(
     if len(rows) != len(requested) or any(row.owner_user_id != owner.strip() for row in rows):
         raise HTTPException(404, detail={"code": "ASSET_NOT_FOUND"})
     parents = {row.parent_id for row in rows}
-    if len(parents) != 1:
+    if len(parents) != 1 or next(iter(parents)) != parent_id.strip():
         raise HTTPException(404, detail={"code": "ASSET_PARENT_MISMATCH"})
-    parent_id = next(iter(parents))
+    parent_id = parent_id.strip()
     parent_rows = list(db.scalars(select(AssetRow).where(
         AssetRow.owner_user_id == owner.strip(), AssetRow.parent_id == parent_id,
     )).all())
