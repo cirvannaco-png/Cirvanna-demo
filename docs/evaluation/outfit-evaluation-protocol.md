@@ -116,3 +116,6 @@ visual-review workflow.
 No human ratings or live exposure events are included by this code change.
 Two real independent reviewers and verified edit/rejection logs are still
 required before the benchmark can make an empirical performance claim.
+
+
+**Experiment status:** this trace is a single live Cirvanna arm. The simple baseline is replayed offline against the same candidate pool; participants are not yet randomized between live Cirvanna and baseline experiences. The composer also does not collect look-level exposures, edits, or rejections. Therefore this instrumentation supports offline human-relevance/diversity/exclusion evaluation, but does not yet support causal live-arm comparisons or measured edit/rejection rates. Those are separate release gates.
