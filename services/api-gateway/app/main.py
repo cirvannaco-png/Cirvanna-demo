@@ -720,6 +720,7 @@ def _pnelly_daily_looks(payload: PNELLYDailyLooksRequest, style_signals: list[st
         raise HTTPException(503, detail={"code": "PNELLY_PROVIDER_CONFIGURATION_INVALID"})
 
     body = payload.model_dump(mode="json")
+    body.pop("evaluation_consent_receipt_id", None)
     body["style_signals"] = style_signals[:40]
     body["feedback_signals"] = feedback_signals[:40]
     try:
@@ -1897,6 +1898,10 @@ def compose_pnelly_daily_looks(
     trace_secret = os.getenv("PNELLY_EVALUATION_TRACE_HMAC_SECRET", "").strip()
     if trace_enabled and len(trace_secret.encode("utf-8")) < 32:
         raise HTTPException(503, detail={"code": "PNELLY_EVALUATION_TRACE_SIGNING_NOT_CONFIGURED"})
+    if trace_enabled and not _has_active_pnelly_evaluation_consent(
+        user_id=subject, receipt_id=payload.evaluation_consent_receipt_id
+    ):
+        raise HTTPException(403, detail={"code": "PNELLY_EVALUATION_CONSENT_REQUIRED"})
     if trace_enabled and not _has_active_pnelly_evaluation_consent(
         user_id=subject, receipt_id=payload.evaluation_consent_receipt_id
     ):
