@@ -6,11 +6,12 @@ persisting the validated output under a new opaque asset ID.
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
 import io
+import json
 import os
 import re
-from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -36,16 +37,62 @@ app = FastAPI(title="Cirvanna Private VTON GPU Worker", version="0.1.0")
 _PIPELINE = None
 
 
+REQUIRED_ARTIFACTS = (
+    "model.safetensors",
+    "dwpose/yolox_l.onnx",
+    "dwpose/dw-ll_ucoco_384.onnx",
+)
+
+
+def _verify_artifact_manifest(weights_dir: Path, source_ref: str) -> tuple[bool, str]:
+    """Require a source-bound SHA-256 manifest for every downloaded core weight."""
+    manifest_path = weights_dir / "manifest.json"
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return False, "model_artifact_manifest_missing_or_invalid"
+    if not isinstance(manifest, dict) or manifest.get("source_commit") != source_ref:
+        return False, "model_artifact_source_mismatch"
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, dict):
+        return False, "model_artifact_manifest_invalid"
+    for relative in REQUIRED_ARTIFACTS:
+        expected = artifacts.get(relative)
+        if not isinstance(expected, str) or not re.fullmatch(r"[0-9a-f]{64}", expected):
+            return False, "model_artifact_checksum_missing"
+        target = (weights_dir / relative).resolve()
+        if weights_dir.resolve() not in target.parents:
+            return False, "model_artifact_path_invalid"
+        if not target.is_file():
+            return False, "model_artifact_missing"
+        digest = hashlib.sha256(target.read_bytes()).hexdigest()
+        if not hmac.compare_digest(digest, expected):
+            return False, "model_artifact_checksum_mismatch"
+    return True, "verified"
+
+
 def _configured() -> tuple[bool, str]:
     token = os.getenv("VTON_WORKER_TOKEN", "")
     weights = os.getenv("FASHN_VTON_WEIGHTS_DIR", "")
     source_ref = os.getenv("FASHN_VTON_SOURCE_REF", "")
+    built_ref = os.getenv("FASHN_VTON_BUILT_SOURCE_REF", "")
+    usage_mode = os.getenv("CIRVANNA_DEPLOYMENT_MODE", "production").strip().lower()
+    parser_license_approved = os.getenv("FASHN_HUMAN_PARSER_COMMERCIAL_LICENSE_APPROVED", "").lower() == "true"
     if len(token.encode()) < 32:
         return False, "worker_token_not_configured"
     if not SHA40.fullmatch(source_ref):
         return False, "pinned_source_commit_required"
+    if built_ref != source_ref:
+        return False, "built_source_commit_mismatch"
+    if usage_mode not in {"research", "production"}:
+        return False, "invalid_deployment_mode"
+    if usage_mode == "production" and not parser_license_approved:
+        return False, "human_parser_commercial_license_not_cleared"
     if not weights or not Path(weights).is_dir():
         return False, "model_weights_directory_missing"
+    verified, reason = _verify_artifact_manifest(Path(weights), source_ref)
+    if not verified:
+        return False, reason
     try:
         import torch
         if not torch.cuda.is_available():
@@ -135,6 +182,11 @@ def ready() -> dict[str, object]:
     configured, reason = _configured()
     if not configured:
         raise HTTPException(503, detail={"status": "not_ready", "service": SERVICE, "ready": False, "reason": reason})
+    try:
+        # Readiness must prove all model components load, not just that files exist.
+        _pipeline()
+    except Exception:
+        raise HTTPException(503, detail={"status": "not_ready", "service": SERVICE, "ready": False, "reason": "model_load_failed"})
     return {"status": "ready", "service": SERVICE, "ready": True, "source_commit": os.environ["FASHN_VTON_SOURCE_REF"]}
 
 
@@ -146,8 +198,11 @@ def capabilities() -> dict[str, object]:
         "input_persistence": False,
         "output_persistence": False,
         "remote_urls_accepted": False,
-        "consent_enforced": True,
+        "consent_flags_required": True,
+        "consent_authority": "trusted_orchestrator_server_side_receipt",
         "model_source_pinned": bool(SHA40.fullmatch(os.getenv("FASHN_VTON_SOURCE_REF", ""))),
+        "artifact_manifest_required": True,
+        "commercial_license_gate": os.getenv("FASHN_HUMAN_PARSER_COMMERCIAL_LICENSE_APPROVED", "").lower() == "true",
     }
 
 
