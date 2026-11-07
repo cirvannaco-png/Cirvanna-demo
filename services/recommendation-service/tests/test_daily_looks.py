@@ -300,7 +300,6 @@ def test_evaluation_trace_api_is_server_flagged_and_fails_closed_without_secret(
         "user_id": "user-123",
         "local_date": "2026-11-05",
         "wardrobe_items": wardrobe(),
-        "evaluation_trace_enabled": True,
     }
     response = client.post(
         "/v1/pnelly/daily-looks",
