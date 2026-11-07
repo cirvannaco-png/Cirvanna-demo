@@ -1,5 +1,7 @@
 from __future__ import annotations
+import hashlib
 import io
+import json
 from PIL import Image
 import pytest
 from fastapi.testclient import TestClient
@@ -38,6 +40,9 @@ def test_capabilities_do_not_claim_persistence_or_remote_urls(client):
     assert result["input_persistence"] is False
     assert result["output_persistence"] is False
     assert result["remote_urls_accepted"] is False
+    assert result["consent_flags_required"] is True
+    assert result["consent_authority"] == "trusted_orchestrator_server_side_receipt"
+    assert result["artifact_manifest_required"] is True
 
 def test_authentication_required(client):
     assert post(client,headers={}).status_code==401
@@ -93,3 +98,73 @@ def test_readiness_requires_gpu_source_pin_and_weights(monkeypatch):
     with TestClient(main.app) as client:
         response=client.get("/ready")
     assert response.status_code==503
+
+
+def test_artifact_manifest_requires_all_core_weights_and_exact_hashes(tmp_path):
+    weights = tmp_path
+    hashes = {}
+    for relative in main.REQUIRED_ARTIFACTS:
+        target = weights / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(("artifact:" + relative).encode())
+        hashes[relative] = hashlib.sha256(target.read_bytes()).hexdigest()
+    manifest = {"schema_version": 1, "source_commit": "a" * 40, "artifacts": hashes}
+    (weights / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    assert main._verify_artifact_manifest(weights, "a" * 40) == (True, "verified")
+    assert main._verify_artifact_manifest(weights, "b" * 40) == (False, "model_artifact_source_mismatch")
+
+
+def test_artifact_manifest_detects_tampered_weights(tmp_path):
+    weights = tmp_path
+    hashes = {}
+    for relative in main.REQUIRED_ARTIFACTS:
+        target = weights / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(("artifact:" + relative).encode())
+        hashes[relative] = hashlib.sha256(target.read_bytes()).hexdigest()
+    (weights / "manifest.json").write_text(
+        json.dumps({"schema_version": 1, "source_commit": "a" * 40, "artifacts": hashes}),
+        encoding="utf-8",
+    )
+    (weights / "model.safetensors").write_bytes(b"tampered")
+    assert main._verify_artifact_manifest(weights, "a" * 40) == (False, "model_artifact_checksum_mismatch")
+
+
+def test_artifact_manifest_rejects_missing_model_files(tmp_path):
+    (tmp_path / "manifest.json").write_text(
+        json.dumps({"schema_version": 1, "source_commit": "a" * 40, "artifacts": {}}),
+        encoding="utf-8",
+    )
+    assert main._verify_artifact_manifest(tmp_path, "a" * 40) == (False, "model_artifact_checksum_missing")
+
+
+def test_readiness_requires_model_pipeline_to_load(monkeypatch):
+    monkeypatch.setenv("VTON_WORKER_TOKEN", TOKEN)
+    monkeypatch.setenv("FASHN_VTON_SOURCE_REF", "a" * 40)
+    monkeypatch.setattr(main, "_configured", lambda: (True, "ready"))
+    monkeypatch.setattr(main, "_pipeline", lambda: (_ for _ in ()).throw(RuntimeError("load failed")))
+    with TestClient(main.app) as client:
+        response = client.get("/ready")
+    assert response.status_code == 503
+    assert response.json()["detail"]["reason"] == "model_load_failed"
+
+
+def test_production_readiness_is_blocked_without_parser_commercial_rights(monkeypatch):
+    monkeypatch.setenv("VTON_WORKER_TOKEN", TOKEN)
+    monkeypatch.setenv("FASHN_VTON_SOURCE_REF", "a" * 40)
+    monkeypatch.setenv("FASHN_VTON_BUILT_SOURCE_REF", "a" * 40)
+    monkeypatch.setenv("CIRVANNA_DEPLOYMENT_MODE", "production")
+    monkeypatch.delenv("FASHN_HUMAN_PARSER_COMMERCIAL_LICENSE_APPROVED", raising=False)
+    ready, reason = main._configured()
+    assert ready is False
+    assert reason == "human_parser_commercial_license_not_cleared"
+
+
+def test_runtime_source_must_match_built_image_source(monkeypatch):
+    monkeypatch.setenv("VTON_WORKER_TOKEN", TOKEN)
+    monkeypatch.setenv("FASHN_VTON_SOURCE_REF", "a" * 40)
+    monkeypatch.setenv("FASHN_VTON_BUILT_SOURCE_REF", "b" * 40)
+    monkeypatch.setenv("CIRVANNA_DEPLOYMENT_MODE", "research")
+    ready, reason = main._configured()
+    assert ready is False
+    assert reason == "built_source_commit_mismatch"

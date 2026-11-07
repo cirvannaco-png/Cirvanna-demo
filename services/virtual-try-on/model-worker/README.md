@@ -1,6 +1,6 @@
 # Private Virtual Try-On GPU worker
 
-**Status:** inference boundary and mock-tested rendering contract implemented. Real model inference is not yet verified or deployed.
+**Status:** inference boundary and mock-tested rendering contract implemented. Artifact provenance and model-load readiness are now enforced. Real model inference is not yet verified or deployed. Commercial release is blocked by the human-parser model license until NVIDIA grants suitable written rights or the parser is replaced.
 
 This is a private service. It accepts multipart image bytes only from the trusted orchestration layer, requires a worker bearer token and both consent scopes, validates decodable image content/dimensions, maps categories explicitly, invokes the pinned FASHN VTON pipeline, validates the encoded output, and returns PNG bytes with `Cache-Control: no-store`. It never accepts URLs, does not persist input/output images, and does not decide whether the subject is authorized to use either asset. The orchestrator must verify server-side consent and asset ownership before calling this worker and must persist the result under an opaque asset ID after validating it.
 
@@ -29,12 +29,22 @@ docker build -f services/virtual-try-on/model-worker/Dockerfile \
   -t cirvanna-vton-gpu-worker .
 ```
 
-Mount weights from a controlled model artifact store; do not bake private/user assets or model weights into source control. The build intentionally fails if the source revision is missing or mutable. Review the upstream model and every transitive dependency's licensing, including the human-parser package, before distribution or commercial deployment.
+Mount weights from a controlled model artifact store; do not bake private/user assets or model weights into source control. After downloading the pinned FASHN and DWPose artifacts into the mounted directory, generate the manifest:
+
+```sh
+python services/virtual-try-on/model-worker/scripts/build_artifact_manifest.py \
+  --weights-dir /path/to/fashn-vton-1.5 \
+  --source-commit 7c0f10af3f91ad4048fe9729c470a13ef905d25a
+```
+
+The worker verifies SHA-256 for all three core files, requires the manifest to name the same source commit as the built image, and loads the actual pipeline during readiness. This does not yet pin or checksum the human-parser's auto-downloaded Hugging Face cache; that remains a separate release gate. The build intentionally fails if the source revision is missing or mutable.
+
+**Commercial license blocker:** the FASHN human-parser README states that its model inherits the NVIDIA SegFormer license and is for non-commercial research/evaluation only. Cirvanna is a commercial product, so do not deploy this stack for production or customer-facing inference without written NVIDIA commercial permission or a replacement parser whose model weights and code are cleared for commercial use. The readiness gate defaults to blocking production. See ADR-0011.
 
 ## API
 
 - `GET /health`: process liveness only.
-- `GET /ready`: 503 unless token, exact source pin, model weights and CUDA are available.
+- `GET /ready`: 503 unless token, matching built/runtime source pins, source-bound artifact manifest, verified model weights, CUDA, successful model load, and production license gate are satisfied.
 - `GET /capabilities`: describes supported categories and no-persistence behavior.
 - `POST /v1/render`: authenticated multipart person/garment images, category and both explicit consent flags; returns validated `image/png`.
 
@@ -48,4 +58,4 @@ cd services/virtual-try-on/model-worker
 python -m pytest -q
 ```
 
-CI uses a mock pipeline and does not install PyTorch, download weights, or claim image quality. Before enabling rendering, test the actual pinned pipeline against a consented evaluation set covering diverse body types, skin tones, garment categories, occlusions and difficult poses; inspect artifact leakage; measure latency, VRAM, cost, failure rate and output quality; then connect the orchestrator's real consent/asset/storage adapters. A successful mock test is not evidence of real inference quality.
+CI uses a mock pipeline and does not install PyTorch, download weights, or claim image quality. Artifact-manifest unit tests verify missing, tampered and mismatched artifacts; only a real GPU load and inference test proves actual model operation. Before enabling rendering, test the actual pinned pipeline against a consented evaluation set covering diverse body types, skin tones, garment categories, occlusions and difficult poses; inspect artifact leakage; measure latency, VRAM, cost, failure rate and output quality; then connect the orchestrator's real consent/asset/storage adapters. A successful mock test is not evidence of real inference quality.
