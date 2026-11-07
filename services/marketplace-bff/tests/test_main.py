@@ -824,7 +824,7 @@ def test_wardrobe_page_exposes_personal_color_profile_and_analysis_boundary(clie
     assert "Objective skin-tone and undertone analysis is not yet available" in response.text
 
 
-def test_wardrobe_learning_export_combines_verified_tal_npl_and_feedback(client, monkeypatch):
+def test_wardrobe_learning_export_combines_verified_tal_npl_feedback_and_rotation(client, monkeypatch):
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
     monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
     monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
@@ -838,6 +838,17 @@ def test_wardrobe_learning_export_combines_verified_tal_npl_and_feedback(client,
             "npl": {"user_id": "signed-user-42", "preferences": [{"preference_id": "avoid-blue"}]},
         }),
         FakeResponse({"owner_user_id": "signed-user-42", "items": [{"event_id": "wardrobe-event-1"}]}),
+        FakeResponse({"owner_user_id": "signed-user-42", "items": [
+            {"owner_user_id": "signed-user-42", "item_id": "shirt-001", "status": "active"},
+        ]}),
+        FakeResponse({
+            "state": {
+                "owner_user_id": "signed-user-42", "cycle_number": 2,
+                "cycle_started_at": "2026-11-07T00:00:00+00:00",
+                "surfaced_item_ids": ["shirt-001"], "version": 4,
+            },
+            "version": 4,
+        }),
     ])
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.get("/api/wardrobe/learning/export", headers={"Authorization": "Bearer signed-session"})
@@ -847,11 +858,14 @@ def test_wardrobe_learning_export_combines_verified_tal_npl_and_feedback(client,
     assert data["tal"]["events"][0]["event_id"] == "tal-event-1"
     assert data["npl"]["preferences"][0]["preference_id"] == "avoid-blue"
     assert data["wardrobe_feedback"][0]["event_id"] == "wardrobe-event-1"
-    assert fake.calls[1][0] == "GET"
+    assert data["wardrobe_rotation"]["version"] == 4
+    assert data["wardrobe_rotation"]["seen_item_ids"] == ["shirt-001"]
     assert fake.calls[1][1] == "https://decision.example.test/v1/me/learning/export"
-    assert fake.calls[1][2]["headers"]["X-End-User-Authorization"] == "Bearer signed-session"
     assert fake.calls[2][1] == "https://wardrobe.example.test/v1/feedback"
-    assert fake.calls[2][2]["params"]["owner_user_id"] == "signed-user-42"
+    assert fake.calls[3][1] == "https://wardrobe.example.test/v1/items"
+    assert fake.calls[4][1] == "https://wardrobe.example.test/v1/rotation-state"
+
+
 
 def test_wardrobe_learning_export_rejects_cross_subject_npl_payload(client, monkeypatch):
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
@@ -898,7 +912,7 @@ def test_wardrobe_preference_retraction_rejects_client_subject_override(client, 
     )
     assert response.status_code == 422
 
-def test_wardrobe_learning_delete_erases_gateway_and_local_audit_records(client, monkeypatch):
+def test_wardrobe_learning_delete_erases_gateway_audit_and_rotation_state(client, monkeypatch):
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
     monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
     monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
@@ -908,6 +922,7 @@ def test_wardrobe_learning_delete_erases_gateway_and_local_audit_records(client,
         FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
         FakeResponse({"status": "deleted", "tal": {}, "npl": {}}),
         FakeResponse({"status": "deleted", "deleted_feedback_events": 3}),
+        FakeResponse({"status": "deleted", "owner_user_id": "signed-user-42"}),
     ])
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.delete("/api/wardrobe/learning", headers={"Authorization": "Bearer signed-session"})
@@ -916,11 +931,17 @@ def test_wardrobe_learning_delete_erases_gateway_and_local_audit_records(client,
     assert result["status"] == "deleted"
     assert result["identity_and_npl_deleted"] is True
     assert result["wardrobe_audit_deleted"] is True
+    assert result["wardrobe_rotation_state_deleted"] is True
     assert result["deleted_wardrobe_feedback_events"] == 3
     assert fake.calls[1][0] == "DELETE"
     assert fake.calls[1][1] == "https://decision.example.test/v1/me/learning/data"
     assert fake.calls[2][0] == "DELETE"
     assert fake.calls[2][2]["params"]["owner_user_id"] == "signed-user-42"
+    assert fake.calls[3][0] == "DELETE"
+    assert fake.calls[3][1] == "https://wardrobe.example.test/v1/rotation-state"
+    assert fake.calls[3][2]["params"]["owner_user_id"] == "signed-user-42"
+
+
 
 def test_wardrobe_learning_delete_reports_partial_erasure_without_deleting_local_audit(client, monkeypatch):
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
