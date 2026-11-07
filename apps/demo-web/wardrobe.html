@@ -772,9 +772,9 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     }
     try {
       if (signal === "wear") {
-        const eventId = crypto.randomUUID();
+        const eventId = look.wearEventId || (look.wearEventId = crypto.randomUUID());
         const itemIds = lookItems.map(item => item.item_id);
-        const observedAt = new Date().toISOString();
+        const observedAt = look.wearObservedAt || (look.wearObservedAt = new Date().toISOString());
         await api("/api/wardrobe/looks/wear", {
           method:"POST",
           body:JSON.stringify({
