@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/"packages"))
 from wardrobe import WardrobeItem, WardrobeItemStatus
-from app.store import Base, WardrobeConflict, WardrobeNotFound, WardrobeStore, WardrobeDeletionQueue, WardrobeFeedbackEventRow, WardrobeOutfitRow, WardrobeRow, engine_for_url
+from app.store import Base, WardrobeConflict, WardrobeNotFound, WardrobeStore, WardrobeDeletionQueue, WardrobeFeedbackEventRow, WardrobeOutfitRow, WardrobeOutfitWearEventRow, WardrobeRow, engine_for_url
 from app.learning import LearningIntegrationError, deliver_learning_event
 
 SERVICE="cirvanna-wardrobe-service"
