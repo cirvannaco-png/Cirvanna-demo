@@ -186,7 +186,7 @@ def test_runtime_source_must_match_built_image_source(monkeypatch):
 def _configured_worker(monkeypatch, tmp_path, *, vram=8 * 1024**3, providers=("CUDAExecutionProvider", "CPUExecutionProvider"), checkout=None):
     pin = main.PINNED_FASHN_VTON_COMMIT
     source = tmp_path / "source"
-    (source / ".git").mkdir(parents=True)
+    (source / ".git").mkdir(parents=True, exist_ok=True)
     weights = tmp_path / "weights"
     hashes = {}
     for relative in main.REQUIRED_ARTIFACTS:
