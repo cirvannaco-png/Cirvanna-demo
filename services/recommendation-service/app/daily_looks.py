@@ -447,6 +447,11 @@ def _build_evaluation_trace(
         "user_exposure_state": "not_collected_by_composer",
         "assignment_policy": "cirvanna_only_live_arm",
         "baseline_comparison": "offline_replay_on_identical_candidate_pool",
+        "consent": {
+            "required": True,
+            "validated_by_gateway": True,
+            "scope": "style_learning_or_personalization",
+        },
         "privacy": {
             "raw_user_id_included": False,
             "raw_wardrobe_item_ids_included": False,
