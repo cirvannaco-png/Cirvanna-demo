@@ -209,6 +209,16 @@ class AddWardrobeOutfitPieceIn(BaseModel):
     wardrobe_item_id: str = Field(min_length=3, max_length=128)
 
 
+class RecordPNELLYLookWearIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    item_ids: list[str] = Field(min_length=1, max_length=20)
+    event_id: str = Field(min_length=8, max_length=128)
+    consent_receipt_id: str = Field(min_length=8, max_length=128)
+    observed_at: str = Field(min_length=20, max_length=64)
+    name: str = Field(min_length=1, max_length=160)
+    context: dict[str, str] = Field(default_factory=dict, max_length=8)
+
+
 class EditWardrobeOutfitPieceIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expected_version: int = Field(ge=1)
@@ -653,6 +663,156 @@ async def create_wardrobe_outfit(request: Request, payload: CreateWardrobeOutfit
     if not isinstance(outfit, dict) or outfit.get("owner_user_id") != subject:
         raise HTTPException(502, detail={"code": "WARDROBE_OUTFIT_SCOPE_MISMATCH"})
     return _private_json_response(data, status_code=201)
+
+
+@app.post("/api/wardrobe/looks/wear", status_code=201)
+async def record_pnelly_look_worn(request: Request, payload: RecordPNELLYLookWearIn) -> Response:
+    """Persist a user-confirmed look wear event; never infer wear from recommendation exposure."""
+    item_ids = [value.strip() for value in payload.item_ids]
+    if any(not item_id for item_id in item_ids) or len(set(item_ids)) != len(item_ids):
+        raise HTTPException(422, detail={"code": "PNELLY_WEAR_ITEM_IDS_INVALID"})
+    if not payload.name.strip():
+        raise HTTPException(422, detail={"code": "PNELLY_WEAR_OUTFIT_NAME_REQUIRED"})
+    async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        wardrobe_base, wardrobe_token = _wardrobe_service()
+        headers = {"Authorization": "Bearer " + wardrobe_token, "Accept": "application/json"}
+        try:
+            items_response = await client.get(
+                wardrobe_base + "/v1/items",
+                params={"owner_user_id": subject, "include_archived": "false"},
+                headers=headers,
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "PNELLY_WEAR_WARDROBE_UNAVAILABLE"}) from exc
+        if items_response.status_code != 200:
+            raise HTTPException(503, detail={"code": "PNELLY_WEAR_WARDROBE_UNAVAILABLE"})
+        try:
+            items_data = items_response.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "PNELLY_WEAR_WARDROBE_INVALID"}) from exc
+        if (
+            not isinstance(items_data, dict)
+            or items_data.get("owner_user_id") != subject
+            or not isinstance(items_data.get("items"), list)
+        ):
+            raise HTTPException(502, detail={"code": "PNELLY_WEAR_WARDROBE_SCOPE_MISMATCH"})
+        active_items = {
+            item.get("item_id"): item for item in items_data["items"]
+            if isinstance(item, dict)
+            and item.get("owner_user_id") == subject
+            and item.get("status") == "active"
+            and isinstance(item.get("item_id"), str)
+        }
+        if any(item_id not in active_items for item_id in item_ids):
+            raise HTTPException(422, detail={"code": "PNELLY_WEAR_ITEM_NOT_ACTIVE_OR_NOT_OWNED"})
+
+        # Stable outfit and slot IDs make repeated client submissions idempotent.
+        outfit_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cirvanna:pnelly-wear:{subject}:{payload.event_id}"))
+        pieces = [
+            {
+                "slot_id": str(uuid.uuid5(uuid.NAMESPACE_URL, f"cirvanna:pnelly-wear-slot:{subject}:{payload.event_id}:{item_id}")),
+                "wardrobe_item_id": item_id,
+            }
+            for item_id in item_ids
+        ]
+        create_body = {
+            "owner_user_id": subject,
+            "outfit_id": outfit_id,
+            "name": payload.name.strip(),
+            "pieces": pieces,
+        }
+        try:
+            create_response = await client.post(
+                wardrobe_base + "/v1/outfits", headers=headers, json=create_body,
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "PNELLY_WEAR_OUTFIT_CREATE_UNAVAILABLE"}) from exc
+
+        if create_response.status_code == 201:
+            try:
+                outfit_data = create_response.json().get("outfit")
+            except (ValueError, AttributeError) as exc:
+                raise HTTPException(502, detail={"code": "PNELLY_WEAR_OUTFIT_RESPONSE_INVALID"}) from exc
+        elif create_response.status_code == 409:
+            # A retry may arrive after the deterministic outfit was created.
+            try:
+                list_response = await client.get(
+                    wardrobe_base + "/v1/outfits",
+                    params={"owner_user_id": subject},
+                    headers=headers,
+                )
+                listed = list_response.json() if list_response.status_code == 200 else None
+                existing = next(
+                    (outfit for outfit in listed.get("outfits", [])
+                     if isinstance(outfit, dict) and outfit.get("outfit_id") == outfit_id),
+                    None,
+                ) if isinstance(listed, dict) else None
+            except (httpx.HTTPError, ValueError) as exc:
+                raise HTTPException(503, detail={"code": "PNELLY_WEAR_OUTFIT_RELOAD_UNAVAILABLE"}) from exc
+            if not isinstance(existing, dict):
+                raise HTTPException(409, detail={"code": "PNELLY_WEAR_OUTFIT_CREATE_CONFLICT"})
+            existing_ids = [
+                piece.get("wardrobe_item_id") for piece in existing.get("pieces", [])
+                if isinstance(piece, dict)
+            ]
+            if existing.get("owner_user_id") != subject or existing_ids != item_ids:
+                raise HTTPException(409, detail={"code": "PNELLY_WEAR_OUTFIT_IDEMPOTENCY_CONFLICT"})
+            outfit_data = existing
+        else:
+            raise HTTPException(503, detail={"code": "PNELLY_WEAR_OUTFIT_CREATE_UNAVAILABLE"})
+
+        if (
+            not isinstance(outfit_data, dict)
+            or outfit_data.get("owner_user_id") != subject
+            or outfit_data.get("outfit_id") != outfit_id
+            or not isinstance(outfit_data.get("version"), int)
+            or outfit_data["version"] < 1
+        ):
+            raise HTTPException(502, detail={"code": "PNELLY_WEAR_OUTFIT_SCOPE_MISMATCH"})
+        wear_body = {
+            "owner_user_id": subject,
+            "event_id": payload.event_id.strip(),
+            "expected_outfit_version": outfit_data["version"],
+            "consent_receipt_id": payload.consent_receipt_id.strip(),
+            "observed_at": payload.observed_at,
+            "context": payload.context,
+        }
+        try:
+            wear_response = await client.post(
+                wardrobe_base + f"/v1/outfits/{outfit_id}/wear",
+                headers=headers, json=wear_body,
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "PNELLY_WEAR_EVENT_UNAVAILABLE"}) from exc
+    if wear_response.status_code in {401, 403, 404, 409, 422}:
+        try:
+            detail = wear_response.json().get("detail", {})
+        except ValueError:
+            detail = {"code": "PNELLY_WEAR_EVENT_REJECTED"}
+        raise HTTPException(wear_response.status_code, detail=detail)
+    if wear_response.status_code != 201:
+        raise HTTPException(503, detail={"code": "PNELLY_WEAR_EVENT_UNAVAILABLE"})
+    try:
+        wear_data = wear_response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "PNELLY_WEAR_EVENT_RESPONSE_INVALID"}) from exc
+    snapshot = wear_data.get("items") if isinstance(wear_data, dict) else None
+    if (
+        not isinstance(wear_data, dict)
+        or wear_data.get("event_id") != payload.event_id
+        or not isinstance(snapshot, list)
+        or [item.get("item_id") for item in snapshot if isinstance(item, dict)] != item_ids
+    ):
+        raise HTTPException(502, detail={"code": "PNELLY_WEAR_EVENT_SCOPE_MISMATCH"})
+    return _private_json_response({
+        "status": wear_data.get("status", "recorded"),
+        "event_id": payload.event_id,
+        "outfit_id": outfit_id,
+        "outfit_version": wear_data.get("outfit_version", outfit_data["version"]),
+        "items": snapshot,
+        "delivery": wear_data.get("delivery", []),
+    }, status_code=201)
 
 
 @app.post("/api/wardrobe/outfits/{outfit_id}/pieces", status_code=201)
