@@ -16,10 +16,10 @@ Required fields:
 - `occasion_match`, `preference_match_count`: grounded in declared request and consented preferences only.
 - `garment_categories`, `style_tags`: normalized non-sensitive labels for diversity.
 - `human_reviewed`: must be true.
-- `reviewer_ids`: at least two distinct pseudonymous reviewer IDs.
+- `reviewer_scores`: exactly two objects, each containing a distinct `reviewer_id`, raw `human_relevance` score (1–5), and raw `hard_exclusion_violation` boolean.
 - `review_rubric_version`: non-empty rubric version used for independent scoring and adjudication.
 
-Two reviewers independently assess relevance and exclusion violations while blinded to algorithm rank. A documented adjudication resolves disagreements into the two adjudicated label fields. The evaluator validates that two distinct reviewers are recorded; it cannot independently prove that the review process occurred.
+Two reviewers independently assess relevance and exclusion violations while blinded to algorithm rank. A documented adjudication resolves disagreements into the row's `human_relevance` and `hard_exclusion_violation` fields. The evaluator validates and reports raw reviewer agreement, quadratic-weighted Cohen's kappa for relevance, and Cohen's kappa for hard exclusions. Kappa is reported as null when expected disagreement is zero; inspect the underlying distributions. The evaluator cannot independently prove that the review process occurred.
 
 ## Sampling and split protocol
 
@@ -39,7 +39,7 @@ Two reviewers independently assess relevance and exclusion violations while blin
 
 The simple baseline is deterministic and safety-first: hard-exclusion-violating outfits rank last, then occasion match, then explicit preference overlap, then outfit ID. This order is intentional; safety cannot be traded for preference relevance.
 
-The evaluator reports percentile-bootstrap 95% confidence intervals over sessions for session-level metrics and paired algorithm-minus-baseline intervals. These intervals are descriptive, not proof of generalization, especially for small samples. The evaluator does not calculate inter-rater reliability; retain reviewer-level scores and report agreement separately before adjudication.
+The evaluator reports percentile-bootstrap 95% confidence intervals over sessions for session-level metrics and paired algorithm-minus-baseline intervals. These intervals are descriptive, not proof of generalization, especially for small samples. It also reports reviewer agreement and Cohen kappa from the retained raw reviewer scores; do not discard the reviewer-level labels after adjudication.
 
 ## Run
 
