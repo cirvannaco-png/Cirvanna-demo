@@ -35,7 +35,7 @@ def test_rotation_state_round_trip_is_owner_scoped_and_versioned(monkeypatch, tm
     assert initial.json() == {"state": None, "version": 0}
 
     payload = {
-        "owner_user_id": "user-a", "expected_version": 0, "cycle_number": 1,
+        "owner_user_id": "user-a", "request_id": "rotation-request-001", "expected_version": 0, "cycle_number": 1,
         "cycle_started_at": "2026-11-07T00:00:00Z", "surfaced_item_ids": ["shirt-a"],
     }
     created = client.put("/v1/rotation-state", headers=headers, json=payload)
@@ -52,24 +52,45 @@ def test_rotation_state_round_trip_is_owner_scoped_and_versioned(monkeypatch, tm
 def test_rotation_state_rejects_stale_writes_and_unowned_items(monkeypatch, tmp_path):
     client, headers = configured_client(monkeypatch, tmp_path)
     payload = {
-        "owner_user_id": "user-a", "expected_version": 0, "cycle_number": 1,
+        "owner_user_id": "user-a", "request_id": "rotation-request-002", "expected_version": 0, "cycle_number": 1,
         "cycle_started_at": "2026-11-07T00:00:00Z", "surfaced_item_ids": ["shirt-a"],
     }
     assert client.put("/v1/rotation-state", headers=headers, json=payload).status_code == 200
-    stale = client.put("/v1/rotation-state", headers=headers, json=payload)
+    stale = client.put("/v1/rotation-state", headers=headers, json={**payload, "request_id": "rotation-request-stale"})
     assert stale.status_code == 409
     assert stale.json()["detail"]["code"] == "WARDROBE_ROTATION_VERSION_CONFLICT"
 
-    foreign = {**payload, "expected_version": 1, "surfaced_item_ids": ["shirt-b"]}
+    foreign = {**payload, "request_id": "rotation-request-foreign", "expected_version": 1, "surfaced_item_ids": ["shirt-b"]}
     rejected = client.put("/v1/rotation-state", headers=headers, json=foreign)
     assert rejected.status_code == 422
     assert rejected.json()["detail"]["code"] == "ROTATION_ITEMS_NOT_ACTIVE_OR_NOT_OWNED"
 
 
+
+def test_rotation_put_replays_identical_request_without_incrementing_version(monkeypatch, tmp_path):
+    client, headers = configured_client(monkeypatch, tmp_path)
+    payload = {
+        "owner_user_id": "user-a", "request_id": "rotation-request-replay",
+        "expected_version": 0, "cycle_number": 1,
+        "cycle_started_at": "2026-11-07T00:00:00Z", "surfaced_item_ids": ["shirt-a"],
+    }
+    created = client.put("/v1/rotation-state", headers=headers, json=payload)
+    replayed = client.put("/v1/rotation-state", headers=headers, json=payload)
+    assert created.status_code == 200
+    assert replayed.status_code == 200
+    assert replayed.json()["status"] == "replayed"
+    assert replayed.json()["version"] == 1
+
+    changed = {**payload, "surfaced_item_ids": []}
+    conflict = client.put("/v1/rotation-state", headers=headers, json=changed)
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["code"] == "WARDROBE_ROTATION_IDEMPOTENCY_CONFLICT"
+
+
 def test_rotation_state_requires_timezone_and_supports_erasure(monkeypatch, tmp_path):
     client, headers = configured_client(monkeypatch, tmp_path)
     payload = {
-        "owner_user_id": "user-a", "expected_version": 0, "cycle_number": 1,
+        "owner_user_id": "user-a", "request_id": "rotation-request-003", "expected_version": 0, "cycle_number": 1,
         "cycle_started_at": "2026-11-07T00:00:00", "surfaced_item_ids": [],
     }
     invalid = client.put("/v1/rotation-state", headers=headers, json=payload)
