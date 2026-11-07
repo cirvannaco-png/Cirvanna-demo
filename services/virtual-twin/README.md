@@ -52,3 +52,11 @@ Failure payloads use stable opaque codes and do not forward bearer secrets, full
 Xari may be offered as an optional conversational guide from the Virtual Twin experience. Complementer may be invoked through Xari, or surfaced as an explicit optional styling action, for advisory look coordination. Both remain outside this service's ownership: the Twin service owns its consent-gated representation and authorization; Complementer owns styling advice; Catalog/Commerce own product truth; FCI owns calibrated fit evidence; CAL owns display authorization.
 
 The present pose-skeleton response is not a persistent full Twin. Do not present it as a saved avatar or enable marketplace Try-On until a user-scoped Twin registry, persistent asset authorization and the separate Virtual Try-On renderer are operational.
+
+## Persistent Twin registry foundation
+
+The service includes an owner-scoped metadata registry for a validated `full_body_mesh` and opaque private asset references. The registry has a PostgreSQL migration and stores no image bytes. Registration is denied unless the trusted consent verifier, independent mesh validator and asset authorization provider all confirm the same subject, Twin, asset set and model version. The internal authorization route is used by Click It to confirm that a persistent Twin belongs to the authenticated subject.
+
+This is a **guarded persistence foundation**, not a Twin generator or live Try-On service. The current pose endpoint still returns an ephemeral pose skeleton. No production persistent Twin can be registered until the real consent provider, full-body mesh generation/validation and private asset authorization/deletion providers are deployed and independently tested. Keep Virtual Try-On disabled until its renderer and output validation gates also pass.
+
+Migration: `services/virtual-twin/migrations/0001_virtual_twin_registry.sql`. Apply through the approved PostgreSQL migration process and verify backup/restore before any production promotion.

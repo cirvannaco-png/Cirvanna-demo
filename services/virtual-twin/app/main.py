@@ -18,6 +18,8 @@ from pydantic import BaseModel, Field
 from starlette.responses import JSONResponse
 from starlette import status
 
+from app.registry import router as twin_registry_router
+
 SERVICE_NAME = "cirvanna-virtual-twin"
 # Adapter code is implemented; availability remains gated on a real worker, consent
 # verifier and (for Click It) a user-scoped Twin registry integration.
@@ -35,6 +37,8 @@ app = FastAPI(
         "measurements and skin analysis remain separately gated."
     ),
 )
+
+app.include_router(twin_registry_router)
 bearer = HTTPBearer(auto_error=False)
 
 
