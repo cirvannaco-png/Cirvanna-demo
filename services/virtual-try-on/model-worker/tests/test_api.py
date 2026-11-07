@@ -105,7 +105,7 @@ def test_readiness_requires_gpu_source_pin_and_weights(monkeypatch):
     monkeypatch.setenv("VTON_WORKER_TOKEN",TOKEN)
     monkeypatch.setenv("FASHN_VTON_SOURCE_REF","mutable-main")
     monkeypatch.setenv("FASHN_VTON_WEIGHTS_DIR","/missing")
-    monkeypatch.setattr(main,"_configured",lambda:(False,"pinned_source_commit_required"))
+    monkeypatch.setattr(main,"_configured",lambda:(False,"source_checkout_does_not_match_pin"))
     with TestClient(main.app) as client:
         response=client.get("/ready")
     assert response.status_code==503
