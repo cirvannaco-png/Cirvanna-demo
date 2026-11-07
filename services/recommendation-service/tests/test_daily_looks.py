@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from app.daily_looks import build_daily_looks
+from app.daily_looks import build_daily_looks, _kind
 from app.main import app
 
 
@@ -21,6 +21,15 @@ def wardrobe():
         {"item_id": "shoe-001", "owner_user_id": owner, "display_name": "Leather flats", "category": "footwear", "attributes": ["black"], "status": "active"},
         {"item_id": "archived-1", "owner_user_id": owner, "display_name": "Old jacket", "category": "outerwear", "attributes": [], "status": "archived"},
     ]
+
+
+def test_expanded_wardrobe_accessories_are_classified_as_look_complements():
+    for category in (
+        "bags", "jewelry", "ties", "eyewear", "watches", "belts",
+        "scarves", "hats", "hair_accessories", "socks", "makeup",
+        "fragrance", "haircare",
+    ):
+        assert _kind({"category": category, "attributes": []}) == "accessory"
 
 
 def test_builds_exactly_three_distinct_looks_from_active_owner_items():
