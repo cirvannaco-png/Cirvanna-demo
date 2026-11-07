@@ -1,6 +1,6 @@
 # Cirvanna master product and engineering checklist
 
-**Baseline:** `main` at `5604cf57cd7f0805e28b5af33e7011d7da596d06` (7 November 2026)  
+**Baseline:** `main` at `ace2c733995a441f893f48478ad4c3bb15e5bd80` (7 November 2026; after merges #124, #127 and #117)  
 **Status:** Active; the product requirements are captured below. This is not a production-readiness declaration.
 
 ## Operating rules
@@ -35,21 +35,21 @@
 - [x] Merge the versioned, owner-scoped single-item edit API (PR #128); its Wardrobe persistence and architecture checks passed.
 - [x] Connect single-item editing to the authenticated BFF and Wardrobe UI; edit one selected garment/accessory without changing other items, with stale-version conflict handling and reload. User-facing undo remains open.
 - [x] Saved-outfit piece editing implemented in PR #135: create/list saved looks from owned items; add, replace or remove one piece with optimistic versioning and command replay protection; the UI preserves unaffected pieces. Deployment migration and device QA remain release gates.
-- [~] Implement a versioned shared Wardrobe taxonomy for clothing, footwear, accessories and beauty items; expose it through authenticated Wardrobe API/BFF, normalize legacy aliases, preserve valid custom keys, reject malformed keys, and populate the UI from the canonical list. Current-main cross-service CI is required before merge; PostgreSQL deployment migration and device QA remain release gates.
+- [x] Implement the versioned shared Wardrobe taxonomy for clothing, footwear, accessories and beauty items; expose it through the authenticated Wardrobe API/BFF, normalize legacy aliases, preserve valid custom keys, reject malformed keys, and populate the UI from the canonical list. Merged current-main implementation and cross-service CI are verified (PR #153); deployment and physical-device evidence remain separate release gates.
 - [ ] Support user-added items with explicit provenance, optional photos, metadata correction and appropriate consent; do not silently turn image guesses into facts.
 - [ ] Support safe archive, restore and deletion; ensure image/asset deletion is actually completed by the storage worker, not merely queued.
 - [ ] Add import/bulk-add, duplicate detection and item merge/correction without silently merging distinct variants.
 
 ### 1.3 Wardrobe sync, purchase ownership and source-of-truth rules
 - [ ] Define near-real-time sync for user-added/edited items and authorized brand/catalog changes, with explicit source, version, last-synced time and conflict handling.
-- [ ] Sync a marketplace item into the personal wardrobe only after verified purchase/ownership confirmation; browsing, saved, cart, unpurchased or try-on products must never appear as owned.
-- [ ] Reconcile purchase sync on payment confirmation, partial/full cancellation, refund, return and chargeback; preserve a truthful ownership/purchase state.
+- [~] Verified purchase-to-Wardrobe ownership source is implemented: Commerce emits a paid-order outbox event and the authenticated worker materializes owner-scoped purchase provenance idempotently (PR #151 / #145). Production webhook delivery, live event replay and operational monitoring remain unverified; browsing, saved, cart, unpurchased or try-on products must never appear as owned.
+- [ ] Complete ownership reconciliation for partial/full cancellation, refund, return and chargeback. Commerce currently does not implement refunds/returns; no purchase reversal may be inferred from an unverified client action or unsupported event.
 - [ ] Keep Catalog product facts canonical; Wardrobe stores canonical product/variant references plus user-specific notes and preferences, not a competing copy of merchant facts.
-- [ ] Add replayable webhook/event tests for duplicate, delayed, out-of-order and failed sync events.
+- [~] Duplicate delivery, idempotency, retry and worker failure paths have source/CI coverage (PR #145/#151). Delayed/out-of-order event ordering, live Stripe webhook delivery and refund/return replay still require provider-backed staging verification.
 - [ ] Provide optional marketplace notifications for unowned products that complement an outfit; label them as suggestions/available-to-buy, never wardrobe items.
 
 ### 1.4 Commerce and marketplace transaction integrity
-- [~] Commerce documents immutable checkout line snapshots, idempotent orders, inventory reservation and verified settlement; full customer cancellation/refund/return behaviour and deployed reconciliation still require verification.
+- [~] Commerce implements immutable checkout line snapshots, idempotent orders, inventory reservation, signed Stripe paid-event verification and a transactional ownership outbox. Refunds/returns, partial cancellation, live Stripe test-mode reconciliation, price/shipping/tax completeness and deployed operational controls remain open.
 - [ ] Enforce price integrity: merchant changes to a listing affect future offers only; checkout must bind an explicit quoted offer/version/expiry and revalidate before payment; once an order is accepted/paid, merchant edits must not rewrite the order's agreed line price or terms.
 - [ ] Implement customer cancellation windows and state transitions, including partial cancellation where supported, stock release, payment void/refund, audit trail and clear merchant/customer permissions.
 - [ ] Implement refunds, returns, disputes and webhook reconciliation without treating a browser redirect as proof of payment.
@@ -59,7 +59,7 @@
 - [ ] Keep product display gated by the canonical CAL decision; no search, sponsored, try-on or recommendation path may bypass BLOCK/REVIEW or missing evidence.
 
 ### 1.5 Consent, privacy and learning data rights
-- [ ] Complete one coherent consent lifecycle for profile learning, wardrobe photos, skin analysis, body measurement, Twin storage, try-on rendering and image publication, with scope/purpose/resource binding.
+- [~] Profile-learning consent, owner/purpose/parent-bound private asset contracts and the persistent Twin registry are present in main. The full resource-bound media/Twin consent verifier is still in conflicted PR #123; deployed consent-provider, real bucket policy, masking/publication routes and revocation/deletion evidence remain release gates.
 - [x] User-facing export, NPL correction/retraction and deletion across USI/TAL, NPL and Wardrobe are implemented and CI-verified in merged PR #139. Production migration, retry/failure-injection and deployed deletion evidence remain release gates.
 - [ ] Ensure consent is checked server-side on every relevant read/write/processing path; a UI checkbox alone is not authorization.
 - [ ] Ensure no raw face/body photos, tokens, secrets or unnecessary sensitive information are written to logs/analytics.
@@ -101,10 +101,10 @@
 - [~] Merged PR #139 keeps PNELLY soft feedback separate from NPL hard exclusions and adds user retraction; full end-to-end tests across every recommendation surface remain open.
 - [ ] Connect wardrobe feedback to NPL and the repository's canonical fit/recommendation pipeline (CFRP/CRFP naming must follow the approved repository contract, not create a second system).
 - [ ] Use explicit profile and wardrobe evidence to personalise recommendations; explain the reason, source and uncertainty.
-- [ ] Implement a personal outfit graph: items, outfit combinations, times worn, last worn, frequency, user ratings and context, with privacy/consent controls.
-- [ ] Use that graph to reduce repeated outfits and repeated combinations, improve wardrobe utilisation and rotate items fairly; never force an unsuitable outfit just to maximize usage.
+- [~] Wardrobe now stores owner-scoped saved outfit snapshots and explicit wear events with item snapshots, outfit version and consent provenance (PR #151); rotation-cycle state and revival logic are persistent (PR #149). A complete cross-surface outfit graph, user-rating/context coverage and production learning telemetry remain open.
+- [~] Persistent wardrobe rotation prioritizes unseen eligible items, resets immediately after a completed cycle and uses recent wear as a ranking signal rather than a permanent exclusion (PR #146/#149). Cross-surface outfit-level evaluation and real-user utilisation outcomes remain unmeasured.
 - [ ] Add deterministic anti-repeat tests (same outfit, near-duplicate combination, cooldown, wardrobe changes, seasonal/context changes) plus a human-reviewed relevance/diversity baseline.
-- [ ] Establish the human-reviewed outfit evaluation dataset; compare against a transparent baseline and measure relevance, diversity, exclusion violations, user edits, rejection and repeated-rejection rates.
+- [~] A human-reviewed PNELLY benchmark, strict JSONL contract, transparent baseline, evaluator and CI workflow are merged (PR #117). The dataset is still empty: no real human-reviewed records, live candidate trace linkage, blinded reviewer operations or algorithm-vs-baseline result exists.
 - [ ] Measure whether recommendations improve user satisfaction and wardrobe utilisation; do not equate clicks or exposure with preference.
 
 ### 2.5 Complementer: suggestions and “Upgrade my look”
@@ -116,8 +116,8 @@
 - [ ] Recommend actual marketplace products only from canonical Catalog/Commerce data and only after CAL authorization; never fabricate brand, SKU, price, inventory or delivery.
 
 ### 2.6 Connected Virtual Twin and multi-product try-on
-- [ ] Establish one persistent, owner-scoped Virtual Twin registry, media-asset lifecycle, exact resource-bound consent and user deletion path.
-- [ ] Distinguish pose-skeleton inference, body reconstruction, persistent Twin generation and preview as separate capabilities; report only what is actually available.
+- [~] Owner-scoped persistent Twin registry and provider-neutral private asset service are merged (PR #152/#124), with authorization, integrity, parent-scoped deletion and lifecycle contracts. Actual private S3/PostgreSQL providers, the resource-bound consent verifier, validated full-body mesh generation and end-to-end deletion confirmation are not provisioned.
+- [~] The API and registry distinguish ephemeral pose-skeleton inference from a validated full-body mesh registration; a pose skeleton is not a persistent Twin. Real full-body generation/validation and persisted visual preview remain unavailable.
 - [ ] Connect Wardrobe, PNELLY and Marketplace bidirectionally to the same Twin and try-on session without duplicate stores or user identity paths.
 - [ ] Permit product selection from Marketplace and wardrobe selection from the personal closet; support searching for an exact product or a canonical purchasable variant in the Marketplace.
 - [ ] Support multi-item try-on from either source (e.g. top + trousers + shoes + accessories) with slot validation, product/variant provenance and independent removal/replacement.
@@ -126,8 +126,8 @@
 - [ ] Allow users to modify one selected piece in a saved look without regenerating or silently changing the rest.
 - [ ] Integrate optional Complementer suggestions and Upgrade my look mode into Twin/try-on with per-item acceptance and comparison.
 - [ ] Reduce latency through measured budgets, caching keyed by safe/versioned assets, progressive rendering and bounded worker queues; never serve one user's private render to another.
-- [ ] Verify pinned model/source revisions, full weight manifests and SHA-256, licenses, runtime/provider availability, GPU/CPU behaviour, offline dependencies and image-size limits.
-- [ ] Complete physical Android QA for camera permission, lifecycle/backgrounding, tracking stability, thermal/load behaviour, memory, low-end devices and network loss.
+- [~] The private VTON worker now enforces source/artifact provenance, model-file integrity, runtime readiness and a commercial-license gate (PR #127). Model weights are not provisioned, the inherited human-parser license blocks commercial use absent written permission or a cleared replacement, and no real GPU inference is verified.
+- [!] Physical Android QA remains blocked. Browser/fake-camera CI is not device evidence; the Android 10 TECNO KB8 and low-/mid-/high-range device matrix still require hands-on runs with camera, lifecycle, FPS, memory, thermal and network measurements (issue #70).
 
 ### 2.7 Marketplace recommendations and product discovery
 - [ ] Give each product a concise, evidence-backed assessment of fit with the user's declared style profile, colour preferences, wardrobe, context and constraints.
@@ -143,10 +143,10 @@
 - [ ] Add contract, unit, integration, security, privacy, regression and end-to-end tests for all user flows and ownership boundaries.
 - [ ] Add latency SLOs for Twin and multi-product try-on; measure p50/p95/p99 on defined device/network cohorts.
 - [ ] Run dependency, source/artifact license, secret and supply-chain scans; verify CSP, HTTPS, CORS, object-storage access and API auth.
-- [ ] Validate migrations, backup/restore, idempotent event replay, queue retry/DLQ and deletion completion in a non-production environment.
+- [~] PostgreSQL migration reapplication and isolated dump/restore are covered in CI for the Wardrobe persistence path; this is not a production database backup/restore drill. Other service migrations, live webhook replay, queue/DLQ operations and provider-backed deletion completion remain unverified.
 - [ ] Run actual Android-device acceptance tests in addition to browser automation.
 - [ ] Add observability with privacy-minimized event IDs, reason codes and model/runtime provenance; never log raw image payloads or credentials.
-- [ ] Produce a release evidence pack listing exact commit, tests, workflow run results, deployed environment, model versions, known limitations and rollback path.
+- [~] The machine-readable release-gate registry and repository evidence instructions exist; this checklist update records the current source/CI state. A complete release evidence pack with deployed environment, production restore drill, live payment, provider/model manifests, operational ownership and rollback evidence is still outstanding.
 - [ ] Do not declare Cirvanna production-ready until the critical provider, dataset, model, privacy, payment, migration, storage and device gates pass.
 
 ## Current verified baseline and immediate work
@@ -154,14 +154,14 @@
 - [x] Repository inspected on 7 November 2026; active monorepo and service boundaries identified.
 - [x] Versioned single-item Wardrobe edit API and authenticated UI controls merged in PR #128; its Wardrobe persistence and architecture checks passed.
 - [~] DermalSight has a fail-closed ONNX adapter and signed release-evidence gate, but the trained/validated model and dataset are absent.
-- [~] Commerce documents immutable checkout line snapshots and transactional payment/stock controls; cancellation/refund and deployment-level price-integrity verification remain open.
-- [~] Wardrobe has authenticated persistence and feedback contracts; durable production DB, storage deletion worker and end-to-end integrations remain gated.
+- [~] Commerce implements immutable line snapshots, transactional stock reservation and verified Stripe paid settlement; refund/return support, full landed-cost checkout, price-integrity verification and live production reconciliation remain open.
+- [~] Wardrobe has authenticated persistence, persistent rotation, explicit wear-history and verified-purchase ownership contracts; the production database/restore, production event delivery, physical UI QA and real object-store deletion path remain gated.
 - [~] FCI contract exists; no independently validated calibrated provider or proven 4% measurement accuracy.
-- [~] Virtual Twin exposes truthful capability boundaries; its persistent registry/asset/consent work is in open PRs and not yet a production capability.
+- [~] Virtual Twin registry and private asset-service source are merged; a real mesh generator/validator, live consent verifier, private object-store configuration and persistent render provider are not operational. The API correctly reports pose-skeleton inference separately from a persistent user Twin.
 - [x] Saved-outfit piece editing is implemented in merged PR #135; the user-declared colour preference profile is implemented in merged PR #137. PNELLY wardrobe companion, complete personal outfit graph, human-reviewed dataset, multi-product try-on, and end-to-end marketplace-to-wardrobe/Twin flows remain to be integrated and verified.
 - [x] Merged PR #139 ports the PNELLY daily-look Decision Gateway route and consent/NPL checks onto current main; Decision Gateway tests passed.
 - [x] Privacy/learning-data controls from stale PR #130 are integrated through PR #139. Confirm deployed migrations, deletion retry behaviour and production evidence before release.
-- [ ] Reconcile existing open PRs and branches before creating parallel implementations. Preserve reviewable feature branches and never bypass CI or domain ownership.
+- [~] Open-PR/branch reconciliation is in progress: PRs #124 (private assets), #127 (VTON provenance/license gate) and #117 (human-review evaluation harness) were merged after green targeted CI. Remaining open PRs were audited; conflicted/stale duplicates are not force-merged. A commit-pinned reconciliation report and final branch disposition are still required.
 
 ## Required evidence for every completed checklist item
 
