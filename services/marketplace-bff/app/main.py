@@ -674,7 +674,13 @@ async def wardrobe_daily_looks(request: Request, payload: DailyLooksIn = Body(de
         )
     ):
         raise HTTPException(502, detail={"code": "PNELLY_RECOMMENDATION_SCHEMA_INVALID"})
-    return _private_json_response(result)
+    # Internal evaluation traces are available only to the server-side study
+    # collector through the authenticated API Gateway, never to browser sessions.
+    public_result = dict(result)
+    public_recommendation = dict(recommendation)
+    public_recommendation.pop("evaluation_trace", None)
+    public_result["recommendation"] = public_recommendation
+    return _private_json_response(public_result)
 
 
 @app.post("/api/vision/click-it")
