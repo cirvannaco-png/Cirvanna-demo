@@ -7,6 +7,7 @@ an outfit to fill the response.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import re
 from collections.abc import Iterable
 from typing import Any
@@ -98,6 +99,344 @@ _CLIMATE_TERMS = {
     },
     "temperate": {"positive": (), "negative": ()},
 }
+
+
+_EVALUATION_STYLE_WORDS = {
+    "minimal", "minimalist", "classic", "elegant", "romantic", "bold",
+    "bohemian", "streetwear", "editorial", "natural", "casual", "formal",
+    "relaxed", "tailored", "sporty", "smart", "vintage", "preppy",
+}
+_EVALUATION_COLOR_WORDS = {
+    "black", "white", "blue", "navy", "red", "green", "pink", "purple",
+    "yellow", "orange", "brown", "beige", "cream", "gray", "grey",
+    "silver", "gold", "teal", "maroon", "burgundy", "khaki", "ivory",
+}
+_EVALUATION_OCCASION_WORDS = set(_OCCASION_TERMS) | {
+    "casual", "daily", "everyday", "work", "office", "meeting",
+    "evening", "date", "formal", "travel", "sport",
+}
+
+
+def _normalise_active_items(wardrobe_items: list[dict[str, Any]], user_id: str) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    active: list[dict[str, Any]] = []
+    for item in wardrobe_items:
+        if not isinstance(item, dict):
+            raise ValueError("wardrobe item must be an object")
+        item_id = item.get("item_id")
+        if not isinstance(item_id, str) or not item_id.strip():
+            raise ValueError("wardrobe item id is required")
+        if item.get("owner_user_id") != user_id:
+            raise PermissionError("wardrobe item belongs to another subject")
+        if item_id in seen:
+            raise ValueError("duplicate wardrobe item id")
+        seen.add(item_id)
+        if item.get("status") != "active":
+            continue
+        if not isinstance(item.get("display_name"), str) or not isinstance(item.get("category"), str):
+            raise ValueError("active wardrobe item is missing display name or category")
+        attributes = item.get("attributes", [])
+        if not isinstance(attributes, list) or any(not isinstance(x, str) for x in attributes):
+            raise ValueError("wardrobe item attributes must be a list of strings")
+        # The evaluator receives only canonical tags and keyed garment tokens.
+        active.append({
+            "item_id": item_id,
+            "display_name": item["display_name"],
+            "category": item["category"],
+            "attributes": attributes,
+        })
+    return active
+
+
+def _classify_items(items: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    classified: dict[str, list[dict[str, Any]]] = {
+        "top": [], "bottom": [], "one_piece": [], "footwear": [],
+        "outerwear": [], "accessory": [],
+    }
+    for item in items:
+        kind = _kind(item)
+        if kind:
+            classified[kind].append(item)
+    return classified
+
+
+def _base_candidates(classified: dict[str, list[dict[str, Any]]], limit: int = 500) -> tuple[list[list[dict[str, Any]]], bool]:
+    candidates: list[list[dict[str, Any]]] = []
+    truncated = False
+    for item in classified["one_piece"]:
+        if len(candidates) >= limit:
+            truncated = True
+            break
+        candidates.append([item])
+    if not truncated:
+        for top in classified["top"]:
+            for bottom in classified["bottom"]:
+                if len(candidates) >= limit:
+                    truncated = True
+                    break
+                candidates.append([top, bottom])
+            if truncated:
+                break
+    return candidates, truncated
+
+
+def _add_optional_item(
+    candidate: list[dict[str, Any]],
+    classified: dict[str, list[dict[str, Any]]],
+    *,
+    role: str,
+    user_id: str,
+    local_date: str,
+    style_signals: tuple[str, ...],
+    feedback_signals: tuple[str, ...],
+    occasion: str | None,
+    climate: str | None,
+) -> list[dict[str, Any]]:
+    """Mirror the live composer's single safe complementary-item step."""
+    chosen = list(candidate)
+    used = {item["item_id"] for item in chosen}
+    optional_candidates: list[dict[str, Any]] = []
+    for kind in ("footwear", "outerwear", "accessory"):
+        pool = [item for item in classified[kind] if item["item_id"] not in used]
+        if pool:
+            optional_candidates.append(max(
+                pool,
+                key=lambda item: (
+                    _score([item], role, style_signals, feedback_signals, occasion, climate),
+                    _stable_tie(user_id, local_date, role, [item["item_id"]]),
+                ),
+            ))
+    if optional_candidates:
+        optional = max(
+            optional_candidates,
+            key=lambda item: (
+                _score([item], role, style_signals, feedback_signals, occasion, climate),
+                _stable_tie(user_id, local_date, role, [item["item_id"]]),
+            ),
+        )
+        chosen.append(optional)
+    return chosen
+
+
+def _trace_token(secret: str, namespace: str, value: str) -> str:
+    digest = hmac.new(
+        secret.encode("utf-8"),
+        (namespace + "|" + value).encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()[:32]
+    return namespace + "_" + digest
+
+
+def _safe_attribute_tags(items: list[dict[str, Any]]) -> dict[str, list[str]]:
+    style: set[str] = set()
+    colors: set[str] = set()
+    occasions: set[str] = set()
+    for item in items:
+        for raw in item.get("attributes", []):
+            value = _normalise(str(raw))
+            if not value:
+                continue
+            key, separator, tagged_value = value.partition(":")
+            if separator:
+                tag = re.sub(r"[^a-z0-9_-]", "", tagged_value.replace(" ", "_"))[:40]
+                if not tag:
+                    continue
+                if key in {"style", "aesthetic", "silhouette", "pattern"}:
+                    style.add(tag)
+                elif key in {"color", "colour"}:
+                    colors.add(tag)
+                elif key == "occasion":
+                    occasions.add(tag)
+            else:
+                safe = re.sub(r"[^a-z0-9_-]", "", value.replace(" ", "_"))[:40]
+                if safe in _EVALUATION_STYLE_WORDS:
+                    style.add(safe)
+                if safe in _EVALUATION_COLOR_WORDS:
+                    colors.add(safe)
+                if safe in _EVALUATION_OCCASION_WORDS:
+                    occasions.add(safe)
+    return {
+        "style_tags": sorted(style),
+        "color_tags": sorted(colors),
+        "occasion_tags": sorted(occasions),
+    }
+
+
+def _preferred_trace_tags(style_signals: tuple[str, ...]) -> tuple[list[str], list[str]]:
+    styles: set[str] = set()
+    colors: set[str] = set()
+    for raw in style_signals:
+        key, separator, value = raw.partition(":")
+        if not separator:
+            continue
+        normalized = re.sub(r"[^a-z0-9_-]", "", _normalise(value).replace(" ", "_"))[:40]
+        if not normalized:
+            continue
+        if key in {"style", "aesthetic", "silhouette", "pattern"}:
+            styles.add(normalized)
+        elif key in {"color", "colour"}:
+            colors.add(normalized)
+    return sorted(styles), sorted(colors)
+
+
+def _evaluation_candidate(
+    items: list[dict[str, Any]],
+    *,
+    secret: str,
+) -> dict[str, Any]:
+    raw_ids = sorted({item["item_id"] for item in items})
+    garment_ids = sorted(_trace_token(secret, "garment", item_id) for item_id in raw_ids)
+    look_id = _trace_token(secret, "look", "|".join(garment_ids))
+    tags = _safe_attribute_tags(items)
+    categories = sorted({kind for item in items if (kind := _kind(item))})
+    return {
+        "look_id": look_id,
+        "garment_ids": garment_ids,
+        "category_tags": categories,
+        "style_tags": tags["style_tags"],
+        "color_tags": tags["color_tags"],
+        "occasion_tags": tags["occasion_tags"],
+        "exclusion_tags": [],
+    }
+
+
+def _build_evaluation_trace(
+    *,
+    request_id: str,
+    user_id: str,
+    local_date: str,
+    eligible_items: list[dict[str, Any]],
+    evaluation_items: list[dict[str, Any]],
+    excluded_item_ids: set[str],
+    occasion: str | None,
+    climate: str | None,
+    style_signals: tuple[str, ...],
+    feedback_signals: tuple[str, ...],
+    secret: str,
+) -> dict[str, Any]:
+    """Create pseudonymous, role-specific candidate/ranking cases for offline review."""
+    eligible_classified = _classify_items(eligible_items)
+    full_classified = _classify_items(evaluation_items)
+    eligible_candidates, eligible_truncated = _base_candidates(eligible_classified)
+    full_candidates, full_truncated = _base_candidates(full_classified)
+    selected_base: set[frozenset[str]] = set()
+    selected_item_ids: set[str] = set()
+    cases: list[dict[str, Any]] = []
+    rankings_by_role: dict[str, list[dict[str, Any]]] = {}
+    blocked_by_role: dict[str, list[str]] = {}
+
+    for role in ROLES:
+        eligible_available = [
+            candidate for candidate in eligible_candidates
+            if frozenset(item["item_id"] for item in candidate) not in selected_base
+        ]
+        full_available = [
+            candidate for candidate in full_candidates
+            if frozenset(item["item_id"] for item in candidate) not in selected_base
+        ]
+
+        def rank_key(candidate: list[dict[str, Any]]) -> tuple[int, int, str]:
+            ids = {item["item_id"] for item in candidate}
+            return (
+                _score(candidate, role, style_signals, feedback_signals, occasion, climate),
+                -len(ids & selected_item_ids),
+                _stable_tie(user_id, local_date, role, ids),
+            )
+
+        candidate_docs: dict[str, dict[str, Any]] = {}
+        candidate_raw_ids: dict[str, set[str]] = {}
+        for base_candidate in full_available:
+            complete = _add_optional_item(
+                base_candidate, eligible_classified, role=role, user_id=user_id,
+                local_date=local_date, style_signals=style_signals,
+                feedback_signals=feedback_signals, occasion=occasion, climate=climate,
+            )
+            document = _evaluation_candidate(complete, secret=secret)
+            candidate_docs[document["look_id"]] = document
+            candidate_raw_ids[document["look_id"]] = {item["item_id"] for item in base_candidate}
+
+        ranked = sorted(eligible_available, key=rank_key, reverse=True)
+        ranking_rows: list[dict[str, Any]] = []
+        ranked_ids: list[str] = []
+        for index, base_candidate in enumerate(ranked, start=1):
+            complete = _add_optional_item(
+                base_candidate, eligible_classified, role=role, user_id=user_id,
+                local_date=local_date, style_signals=style_signals,
+                feedback_signals=feedback_signals, occasion=occasion, climate=climate,
+            )
+            document = _evaluation_candidate(complete, secret=secret)
+            candidate_docs.setdefault(document["look_id"], document)
+            ranked_ids.append(document["look_id"])
+            ranking_rows.append({
+                "look_id": document["look_id"],
+                "rank": index,
+                "score": rank_key(base_candidate)[0],
+            })
+
+        blocked_ids = sorted(
+            look_id for look_id, raw_ids in candidate_raw_ids.items()
+            if raw_ids & excluded_item_ids
+        )
+        style_tags, color_tags = _preferred_trace_tags(style_signals)
+        case_id = _trace_token(secret, "case", request_id + "|" + role)
+        cases.append({
+            "schema_version": "1.0",
+            "case_id": case_id,
+            "participant_key": _trace_token(secret, "participant", user_id),
+            "session_id": _trace_token(secret, "session", request_id),
+            "assigned_system": "cirvanna",
+            "context": {
+                "role": role,
+                "required_categories": [],
+                "preferred_style_tags": style_tags,
+                "preferred_color_tags": color_tags,
+                "occasion": occasion,
+                "climate": climate,
+                "hard_excluded_item_ids": sorted(
+                    _trace_token(secret, "garment", item_id) for item_id in excluded_item_ids
+                ),
+                "hard_excluded_tags": [],
+            },
+            "candidate_outfits": [candidate_docs[key] for key in sorted(candidate_docs)],
+            "cirvanna_ranked_look_ids": ranked_ids,
+            "human_reviews": [],
+            "adjudications": [],
+            "exposures": [],
+        })
+        rankings_by_role[role] = ranking_rows
+        blocked_by_role[role] = blocked_ids
+
+        if ranked:
+            selected = ranked[0]
+            selected_base.add(frozenset(item["item_id"] for item in selected))
+            complete_selected = _add_optional_item(
+                selected, eligible_classified, role=role, user_id=user_id,
+                local_date=local_date, style_signals=style_signals,
+                feedback_signals=feedback_signals, occasion=occasion, climate=climate,
+            )
+            selected_item_ids.update(item["item_id"] for item in complete_selected)
+
+    return {
+        "trace_version": "1.0",
+        "policy_version": POLICY_VERSION,
+        "participant_key": _trace_token(secret, "participant", user_id),
+        "session_id": _trace_token(secret, "session", request_id),
+        "candidate_pool_limit": 500,
+        "candidate_pool_truncated": bool(eligible_truncated or full_truncated),
+        "candidate_pool_source": "owner_scoped_active_wardrobe_metadata",
+        "ranking_trace_by_role": rankings_by_role,
+        "hard_excluded_candidate_ids_by_role": blocked_by_role,
+        "cases": cases,
+        "human_review_state": "awaiting_two_independent_reviewers_per_candidate",
+        "user_exposure_state": "not_collected_by_composer",
+        "privacy": {
+            "raw_user_id_included": False,
+            "raw_wardrobe_item_ids_included": False,
+            "display_names_included": False,
+            "image_assets_included": False,
+            "pseudonyms_are_stable_within_study_key": True,
+        },
+    }
 
 
 def _context_terms(value: str | None, mapping: dict[str, tuple[str, ...]]) -> tuple[str, ...]:
@@ -206,6 +545,10 @@ def build_daily_looks(
     climate: str | None = None,
     style_signals: Iterable[str] = (),
     feedback_signals: Iterable[str] = (),
+    evaluation_wardrobe_items: list[dict[str, Any]] | None = None,
+    hard_excluded_item_ids: Iterable[str] = (),
+    evaluation_trace_enabled: bool = False,
+    evaluation_secret: str | None = None,
 ) -> dict[str, Any]:
     """Build exactly three distinct look roles from verified wardrobe records."""
     if not request_id.strip() or not user_id.strip():
@@ -213,52 +556,14 @@ def build_daily_looks(
     if len(wardrobe_items) > 150:
         raise ValueError("wardrobe snapshot exceeds 150 items")
 
-    seen: set[str] = set()
-    active: list[dict[str, Any]] = []
-    for item in wardrobe_items:
-        if not isinstance(item, dict):
-            raise ValueError("wardrobe item must be an object")
-        item_id = item.get("item_id")
-        if not isinstance(item_id, str) or not item_id.strip():
-            raise ValueError("wardrobe item id is required")
-        if item.get("owner_user_id") != user_id:
-            raise PermissionError("wardrobe item belongs to another subject")
-        if item_id in seen:
-            raise ValueError("duplicate wardrobe item id")
-        seen.add(item_id)
-        if item.get("status") != "active":
-            continue
-        if not isinstance(item.get("display_name"), str) or not isinstance(item.get("category"), str):
-            raise ValueError("active wardrobe item is missing display name or category")
-        attributes = item.get("attributes", [])
-        if not isinstance(attributes, list) or any(not isinstance(x, str) for x in attributes):
-            raise ValueError("wardrobe item attributes must be a list of strings")
-        # Explicit allowlist: do not pass image asset IDs or storage metadata.
-        active.append({
-            "item_id": item_id,
-            "display_name": item["display_name"],
-            "category": item["category"],
-            "attributes": attributes,
-        })
-
-    classified: dict[str, list[dict[str, Any]]] = {
-        "top": [], "bottom": [], "one_piece": [], "footwear": [],
-        "outerwear": [], "accessory": [],
-    }
-    for item in active:
-        kind = _kind(item)
-        if kind:
-            classified[kind].append(item)
-
-    candidates: list[list[dict[str, Any]]] = []
-    candidates.extend([[item] for item in classified["one_piece"]])
-    for top in classified["top"]:
-        for bottom in classified["bottom"]:
-            candidates.append([top, bottom])
-            if len(candidates) >= 500:
-                break
-        if len(candidates) >= 500:
-            break
+    active = _normalise_active_items(wardrobe_items, user_id)
+    evaluation_source = evaluation_wardrobe_items if evaluation_wardrobe_items is not None else wardrobe_items
+    evaluation_active = _normalise_active_items(evaluation_source, user_id) if evaluation_trace_enabled else active
+    if evaluation_trace_enabled and (not isinstance(evaluation_secret, str) or len(evaluation_secret.encode("utf-8")) < 32):
+        raise ValueError("evaluation trace requires a 32-byte pseudonymization secret")
+    excluded_ids = {value.strip() for value in hard_excluded_item_ids if isinstance(value, str) and value.strip()}
+    classified = _classify_items(active)
+    candidates, _ = _base_candidates(classified)
 
     signals = tuple(_normalise(value) for value in style_signals if isinstance(value, str) and value.strip())[:40]
     feedback = tuple(_normalise(value) for value in feedback_signals if isinstance(value, str) and value.strip())[:40]
@@ -305,31 +610,12 @@ def build_daily_looks(
         chosen = list(candidate)
         used = {x["item_id"] for x in chosen}
 
-        # Add one complementary item from a different category, when available.
-        optional_kinds = ("footwear", "outerwear", "accessory")
-        optional_candidates: list[dict[str, Any]] = []
-        for kind in optional_kinds:
-            pool = [x for x in classified[kind] if x["item_id"] not in used]
-            if pool:
-                optional_candidates.append(max(
-                    pool,
-                    key=lambda x: (
-                        _score([x], role, signals, feedback, occasion, climate),
-                        _stable_tie(user_id, local_date, role, [x["item_id"]]),
-                    ),
-                ))
-        # Footwear is helpful but not required; add no more than one optional item
-        # to keep the first slice conservative and avoid over-completing a look.
-        if optional_candidates:
-            optional = max(
-                optional_candidates,
-                key=lambda x: (
-                    _score([x], role, signals, feedback, occasion, climate),
-                    _stable_tie(user_id, local_date, role, [x["item_id"]]),
-                ),
-            )
-            chosen.append(optional)
-            used.add(optional["item_id"])
+        # Footwear is helpful but not required; add at most one safe complement.
+        chosen = _add_optional_item(
+            candidate, classified, role=role, user_id=user_id, local_date=local_date,
+            style_signals=signals, feedback_signals=feedback, occasion=occasion, climate=climate,
+        )
+        used = {item["item_id"] for item in chosen}
 
         selected_item_ids.update(used)
         looks.append({
@@ -349,7 +635,7 @@ def build_daily_looks(
         })
 
     ready_count = sum(look["status"] == "ready" for look in looks)
-    return {
+    output = {
         "schema_version": "1.0",
         "policy_version": POLICY_VERSION,
         "request_id": request_id,
@@ -375,3 +661,18 @@ def build_daily_looks(
             "Marketplace candidates, prices, stock and product-display authorization are not part of this response.",
         ],
     }
+    if evaluation_trace_enabled:
+        output["evaluation_trace"] = _build_evaluation_trace(
+            request_id=request_id,
+            user_id=user_id,
+            local_date=local_date,
+            eligible_items=active,
+            evaluation_items=evaluation_active,
+            excluded_item_ids=excluded_ids,
+            occasion=occasion,
+            climate=climate,
+            style_signals=signals,
+            feedback_signals=feedback,
+            secret=evaluation_secret or "",
+        )
+    return output
