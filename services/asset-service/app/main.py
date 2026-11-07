@@ -253,10 +253,46 @@ def authorize_asset(
     db: Annotated[Session, Depends(get_db)],
 ):
     owner = payload.get("subject_id")
-    asset_id = payload.get("asset_id")
     purpose = payload.get("purpose")
+    if not isinstance(owner, str) or not owner.strip() or not isinstance(purpose, str):
+        raise HTTPException(422, detail={"code": "ASSET_AUTHORIZATION_INPUT_INVALID"})
+
+    # Twin registry bulk contract. Asset purpose is checked independently from
+    # the consent purpose, and all references must belong to one parent record.
+    if "asset_ids" in payload:
+        asset_ids = payload.get("asset_ids")
+        parent_id = payload.get("parent_id")
+        if (
+            purpose != "virtual_twin_storage"
+            or not isinstance(asset_ids, list) or not asset_ids
+            or any(not isinstance(x, str) or not x.strip() for x in asset_ids)
+            or len(set(asset_ids)) != len(asset_ids)
+            or (parent_id is not None and (not isinstance(parent_id, str) or not parent_id.strip()))
+        ):
+            raise HTTPException(422, detail={"code": "ASSET_AUTHORIZATION_INPUT_INVALID"})
+        rows = []
+        for asset_id in asset_ids:
+            row = db.get(AssetRow, asset_id.strip())
+            if row is None or row.owner_user_id != owner.strip() or row.status != "active":
+                raise HTTPException(404, detail={"code": "ASSET_NOT_FOUND"})
+            if row.purpose not in {"twin_source_image", "twin_person_image", "twin_representation"}:
+                raise HTTPException(404, detail={"code": "ASSET_NOT_FOUND"})
+            if parent_id is not None and row.parent_id != parent_id.strip():
+                raise HTTPException(404, detail={"code": "ASSET_NOT_FOUND"})
+            row = _owned_asset(db, row.asset_id, owner.strip(), row.purpose, row.parent_id)
+            rows.append(row)
+        parents = {row.parent_id for row in rows}
+        if len(parents) != 1:
+            raise HTTPException(404, detail={"code": "ASSET_NOT_FOUND"})
+        return {
+            "authorized": True, "subject_id": owner.strip(),
+            "authorized_asset_ids": sorted(row.asset_id for row in rows),
+            "parent_id": next(iter(parents)), "purpose": purpose,
+        }
+
+    asset_id = payload.get("asset_id")
     parent_id = payload.get("parent_id")
-    if not all(isinstance(x, str) and x.strip() for x in (owner, asset_id, purpose, parent_id)):
+    if not all(isinstance(x, str) and x.strip() for x in (asset_id, parent_id)):
         raise HTTPException(422, detail={"code": "ASSET_AUTHORIZATION_INPUT_INVALID"})
     row = _owned_asset(db, asset_id.strip(), owner.strip(), purpose.strip(), parent_id.strip())
     return {
@@ -307,6 +343,75 @@ def delete_asset(
     row.deleted_at = datetime.now(timezone.utc)
     db.commit()
     return Response(status_code=204)
+
+
+@app.post("/internal/v1/assets/delete", dependencies=[Depends(require_internal_token)])
+def delete_assets(
+    payload: dict,
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Idempotently delete all Twin and derived assets for one owner-scoped parent."""
+    owner = payload.get("subject_id")
+    asset_ids = payload.get("asset_ids")
+    purpose = payload.get("purpose")
+    cascade = payload.get("cascade_derived_assets")
+    idempotency_key = payload.get("idempotency_key")
+    if (
+        not isinstance(owner, str) or not owner.strip()
+        or not isinstance(asset_ids, list) or not asset_ids
+        or any(not isinstance(x, str) or not x.strip() for x in asset_ids)
+        or len(set(asset_ids)) != len(asset_ids)
+        or purpose != "virtual_twin_deletion" or cascade is not True
+        or not isinstance(idempotency_key, str) or len(idempotency_key.strip()) < 8
+    ):
+        raise HTTPException(422, detail={"code": "ASSET_DELETION_INPUT_INVALID"})
+    requested = sorted(x.strip() for x in asset_ids)
+    rows = list(db.scalars(select(AssetRow).where(AssetRow.asset_id.in_(requested))).all())
+    if len(rows) != len(requested) or any(row.owner_user_id != owner.strip() for row in rows):
+        raise HTTPException(404, detail={"code": "ASSET_NOT_FOUND"})
+    parents = {row.parent_id for row in rows}
+    if len(parents) != 1:
+        raise HTTPException(404, detail={"code": "ASSET_PARENT_MISMATCH"})
+    parent_id = next(iter(parents))
+    parent_rows = list(db.scalars(select(AssetRow).where(
+        AssetRow.owner_user_id == owner.strip(), AssetRow.parent_id == parent_id,
+    )).all())
+    allowed_purposes = {
+        "twin_source_image", "twin_person_image", "twin_representation", "try_on_output",
+    }
+    if any(row.purpose not in allowed_purposes for row in parent_rows):
+        raise HTTPException(409, detail={"code": "ASSET_PARENT_CONTAINS_UNRELATED_PURPOSE"})
+    client, bucket = _object_store()
+    now = datetime.now(timezone.utc)
+    deleted_ids: list[str] = []
+    failed_ids: list[str] = []
+    for row in parent_rows:
+        if row.status == "deleted":
+            deleted_ids.append(row.asset_id)
+            continue
+        if row.status != "active":
+            failed_ids.append(row.asset_id)
+            continue
+        try:
+            client.delete_object(Bucket=bucket, Key=row.object_key)
+        except (BotoCoreError, ClientError):
+            failed_ids.append(row.asset_id)
+            continue
+        row.status = "deleted"
+        row.deleted_at = now
+        deleted_ids.append(row.asset_id)
+    db.commit()
+    if failed_ids or not set(requested).issubset(set(deleted_ids)):
+        raise HTTPException(503, detail={
+            "code": "ASSET_PARENT_DELETE_INCOMPLETE",
+            "deleted_asset_ids": sorted(deleted_ids),
+            "failed_asset_ids": sorted(failed_ids),
+        })
+    return {
+        "deleted": True, "subject_id": owner.strip(),
+        "deleted_asset_ids": sorted(deleted_ids),
+        "idempotency_key": idempotency_key.strip(),
+    }
 
 
 @app.delete("/internal/v1/assets/by-parent/{parent_id}", dependencies=[Depends(require_internal_token)])
