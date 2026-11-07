@@ -46,3 +46,6 @@ Internal endpoint POST /v1/feedback records a clear user interaction against an 
 - Configure IDENTITY_SERVICE_URL, IDENTITY_SERVICE_TOKEN, NPL_SERVICE_URL, and NPL_SERVICE_TOKEN in the service secret manager. Missing providers or consent fail closed.
 
 Apply migrations in order: `0001_initial.sql`, `0002_wardrobe_learning_events.sql`, then `0003_saved_outfits.sql`, then `0004_verified_purchase_ownership.sql`, then `0005_outfit_wear_history.sql`. The learning table is an audit mirror; USI/TAL and NPL remain the authoritative stores. Service readiness now requires the `wardrobe_outfits` table as well as the existing item, learning and deletion-outbox schema.
+
+
+Outfit wear events are an auditable history foundation, not yet a recommendation-ranking policy. Anti-repeat cooldowns, frequency balancing, context-aware diversity, user-edit/rejection metrics and offline evaluation must be implemented and validated separately before enabling automatic look rotation.
