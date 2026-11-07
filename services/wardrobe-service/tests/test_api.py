@@ -245,3 +245,13 @@ def test_edit_rejects_empty_duplicate_attributes_and_deleted_items(client):
         "display_name": "Should not edit",
     })
     assert deleted_edit.status_code == 409
+
+ 
+def test_edit_rejects_whitespace_only_fields(client):
+    create(client)
+    for field in ("display_name", "category"):
+        response = client.patch("/v1/items/item-001", headers=auth(), json={
+            "owner_user_id": "user-1", "expected_version": 1,
+            "command_id": "edit-empty-" + field, field: "   ",
+        })
+        assert response.status_code == 422
