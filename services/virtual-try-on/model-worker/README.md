@@ -28,7 +28,7 @@ Build from the repository root only after verifying the upstream source commit a
 
 ```sh
 docker build -f services/virtual-try-on/model-worker/Dockerfile \
-  --build-arg FASHN_VTON_GIT_REF=<verified-40-character-commit> \
+  --build-arg FASHN_VTON_GIT_REF=7c0f10af3f91ad4048fe9729c470a13ef905d25a \
   -t cirvanna-vton-gpu-worker .
 ```
 
@@ -51,7 +51,7 @@ The worker verifies SHA-256 for all three core model/DWPose files and binds the 
 - `GET /capabilities`: describes supported categories and no-persistence behavior.
 - `POST /v1/render`: authenticated multipart person/garment images, category and `garment_photo_type` (`model` or `flat-lay`, default `flat-lay`); no consent booleans are accepted or trusted. The worker serializes GPU inference and returns retryable `429 GPU_WORKER_BUSY` when occupied.
 
-This worker is not exposed to the public internet. It must be deployed on a private network with bounded concurrency, request-size limits at ingress, rate limits, timeouts, ephemeral storage, and no image-payload logging. Do not treat worker consent booleans as the authoritative consent record.
+The worker must never be exposed to the public internet. Deploy it on a private network reachable only from the trusted orchestrator, with request-size limits at ingress, rate limits, timeouts, one active render per worker, ephemeral storage and no image-payload logging. Consent is verified by the orchestrator, not by worker form fields.
 
 ## Validation
 
