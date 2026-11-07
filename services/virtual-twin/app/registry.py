@@ -328,7 +328,7 @@ async def _verify_mesh_artifact(
         raise HTTPException(403, detail={"code": "TWIN_MESH_NOT_VALIDATED"})
 
 
-async def _authorize_assets(subject_id: str, asset_ids: list[str]) -> None:
+async def _authorize_assets(subject_id: str, twin_id: str, asset_ids: list[str]) -> None:
     config = _trusted_config("TWIN_ASSET_API_URL", "TWIN_ASSET_API_TOKEN")
     if config is None:
         raise HTTPException(503, detail={"code": "TWIN_ASSET_AUTHORIZER_NOT_CONFIGURED"})
@@ -341,7 +341,7 @@ async def _authorize_assets(subject_id: str, asset_ids: list[str]) -> None:
             response = await client.post(
                 base + "/internal/v1/assets/authorize",
                 headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
-                json={"subject_id": subject_id, "asset_ids": requested, "purpose": "virtual_twin_storage"},
+                json={"subject_id": subject_id, "asset_ids": requested, "purpose": "virtual_twin_storage", "parent_id": twin_id},
             )
     except httpx.TimeoutException as exc:
         raise HTTPException(504, detail={"code": "TWIN_ASSET_AUTHORIZATION_TIMEOUT"}) from exc
@@ -366,7 +366,7 @@ async def _authorize_assets(subject_id: str, asset_ids: list[str]) -> None:
         raise HTTPException(403, detail={"code": "TWIN_ASSET_ACCESS_DENIED"})
 
 
-async def _delete_assets(subject_id: str, asset_ids: list[str], idempotency_key: str) -> None:
+async def _delete_assets(subject_id: str, twin_id: str, asset_ids: list[str], idempotency_key: str) -> None:
     config = _trusted_config("TWIN_ASSET_API_URL", "TWIN_ASSET_API_TOKEN")
     if config is None:
         raise HTTPException(503, detail={"code": "TWIN_ASSET_DELETION_NOT_CONFIGURED"})
@@ -382,6 +382,7 @@ async def _delete_assets(subject_id: str, asset_ids: list[str], idempotency_key:
                 json={
                     "subject_id": subject_id,
                     "asset_ids": requested,
+                    "parent_id": twin_id,
                     "purpose": "virtual_twin_deletion",
                     "cascade_derived_assets": True,
                     "idempotency_key": idempotency_key,
@@ -447,7 +448,7 @@ async def register_twin(
     """Register only a validated full-body mesh; pose skeletons are rejected."""
     await _verify_consent(payload.subject_id, payload.consent_id, payload.consent_version)
     await _verify_mesh_artifact(payload.subject_id, payload.twin_id, payload.artifact_asset_id, payload.model_version, payload.validation_receipt_id)
-    await _authorize_assets(payload.subject_id, [payload.artifact_asset_id, *payload.source_image_asset_ids])
+    await _authorize_assets(payload.subject_id, payload.twin_id, [payload.artifact_asset_id, *payload.source_image_asset_ids])
     digest = _request_hash(payload)
     existing = db.scalar(
         select(TwinRecord).where(
@@ -514,7 +515,7 @@ async def authorize_twin(
         raise HTTPException(403, detail={"code": "TWIN_ACCESS_DENIED"})
     await _verify_consent(record.subject_id, record.consent_id, record.consent_version)
     await _verify_mesh_artifact(record.subject_id, record.twin_id, record.artifact_asset_id, record.model_version, record.validation_receipt_id)
-    await _authorize_assets(record.subject_id, _asset_ids(record))
+    await _authorize_assets(record.subject_id, record.twin_id, _asset_ids(record))
     return {
         "authorized": True,
         "active": True,
@@ -594,7 +595,7 @@ def dispatch_twin_deletions(
             # The asset provider must treat this key idempotently and cascade to
             # every derived artifact belonging to the subject/Twin.
             import anyio
-            anyio.run(_delete_assets, item.subject_id, list(item.asset_ids), "twin-delete:" + item.outbox_id)
+            anyio.run(_delete_assets, item.subject_id, item.twin_id, list(item.asset_ids), "twin-delete:" + item.outbox_id)
             item.status = "complete"
             item.last_error_code = None
             item.completed_at = utcnow()
