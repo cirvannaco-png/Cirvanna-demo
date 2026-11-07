@@ -849,6 +849,11 @@ def test_wardrobe_learning_export_combines_verified_tal_npl_feedback_and_rotatio
             },
             "version": 4,
         }),
+        FakeResponse({"owner_user_id": "signed-user-42", "items": [
+            {"event_id": "wear-001", "outfit_id": "outfit-001",
+             "items": [{"item_id": "shirt-001", "item_version": 1}],
+             "context": {"occasion": "work"}, "observed_at": "2026-11-07T15:00:00+00:00"},
+        ]}),
     ])
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.get("/api/wardrobe/learning/export", headers={"Authorization": "Bearer signed-session"})
@@ -860,10 +865,13 @@ def test_wardrobe_learning_export_combines_verified_tal_npl_feedback_and_rotatio
     assert data["wardrobe_feedback"][0]["event_id"] == "wardrobe-event-1"
     assert data["wardrobe_rotation"]["version"] == 4
     assert data["wardrobe_rotation"]["seen_item_ids"] == ["shirt-001"]
+    assert data["wardrobe_wear_history"][0]["event_id"] == "wear-001"
+    assert data["wardrobe_wear_history"][0]["items"][0]["item_id"] == "shirt-001"
     assert fake.calls[1][1] == "https://decision.example.test/v1/me/learning/export"
     assert fake.calls[2][1] == "https://wardrobe.example.test/v1/feedback"
     assert fake.calls[3][1] == "https://wardrobe.example.test/v1/items"
     assert fake.calls[4][1] == "https://wardrobe.example.test/v1/rotation-state"
+    assert fake.calls[5][1] == "https://wardrobe.example.test/v1/wear-history"
 
 
 
@@ -923,6 +931,7 @@ def test_wardrobe_learning_delete_erases_gateway_audit_and_rotation_state(client
         FakeResponse({"status": "deleted", "tal": {}, "npl": {}}),
         FakeResponse({"status": "deleted", "deleted_feedback_events": 3}),
         FakeResponse({"status": "deleted", "owner_user_id": "signed-user-42"}),
+        FakeResponse({"status": "deleted", "owner_user_id": "signed-user-42", "deleted_wear_events": 2}),
     ])
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.delete("/api/wardrobe/learning", headers={"Authorization": "Bearer signed-session"})
@@ -932,7 +941,9 @@ def test_wardrobe_learning_delete_erases_gateway_audit_and_rotation_state(client
     assert result["identity_and_npl_deleted"] is True
     assert result["wardrobe_audit_deleted"] is True
     assert result["wardrobe_rotation_state_deleted"] is True
+    assert result["wardrobe_wear_history_deleted"] is True
     assert result["deleted_wardrobe_feedback_events"] == 3
+    assert result["deleted_wear_events"] == 2
     assert fake.calls[1][0] == "DELETE"
     assert fake.calls[1][1] == "https://decision.example.test/v1/me/learning/data"
     assert fake.calls[2][0] == "DELETE"
@@ -940,6 +951,8 @@ def test_wardrobe_learning_delete_erases_gateway_audit_and_rotation_state(client
     assert fake.calls[3][0] == "DELETE"
     assert fake.calls[3][1] == "https://wardrobe.example.test/v1/rotation-state"
     assert fake.calls[3][2]["params"]["owner_user_id"] == "signed-user-42"
+    assert fake.calls[4][1] == "https://wardrobe.example.test/v1/wear-history"
+    assert fake.calls[4][2]["params"]["owner_user_id"] == "signed-user-42"
 
 
 
@@ -1327,5 +1340,71 @@ def test_pnelly_daily_looks_reloads_and_recomposes_after_rotation_compare_and_sw
     assert rotation_writes[1][2]["json"]["expected_version"] == 2
     assert rotation_writes[1][2]["json"]["cycle_number"] == 2
     assert rotation_writes[1][2]["json"]["surfaced_item_ids"] == []
+
+
+
+
+
+def test_pnelly_mark_worn_creates_stable_owned_outfit_and_records_factual_wear(client, monkeypatch):
+    import uuid
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    event_id = "wear-event-frontend-001"
+    outfit_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cirvanna:pnelly-wear:signed-user-42:{event_id}"))
+    items = [
+        {"owner_user_id": "signed-user-42", "item_id": "shirt-001",
+         "display_name": "Linen shirt", "category": "tops", "attributes": ["linen"], "status": "active"},
+        {"owner_user_id": "signed-user-42", "item_id": "pants-001",
+         "display_name": "Cotton trousers", "category": "trousers", "attributes": ["cotton"], "status": "active"},
+    ]
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"owner_user_id": "signed-user-42", "items": items}),
+        FakeResponse({
+            "outfit": {
+                "owner_user_id": "signed-user-42", "outfit_id": outfit_id,
+                "version": 1, "pieces": [
+                    {"wardrobe_item_id": "shirt-001"}, {"wardrobe_item_id": "pants-001"},
+                ],
+            },
+            "status": "created",
+        }, status_code=201),
+        FakeResponse({
+            "status": "recorded", "event_id": event_id, "outfit_id": outfit_id,
+            "outfit_version": 1,
+            "items": [
+                {"item_id": "shirt-001", "item_version": 1},
+                {"item_id": "pants-001", "item_version": 1},
+            ],
+            "delivery": [{"item_id": "shirt-001"}, {"item_id": "pants-001"}],
+        }, status_code=201),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/looks/wear",
+        headers={"Authorization": "Bearer signed-session"},
+        json={
+            "item_ids": ["shirt-001", "pants-001"], "event_id": event_id,
+            "consent_receipt_id": "active-style-receipt",
+            "observed_at": "2026-11-07T18:00:00+03:00",
+            "name": "PNELLY Everyday 2026-11-07",
+            "context": {"occasion": "work"},
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["event_id"] == event_id
+    assert response.json()["items"][0]["item_id"] == "shirt-001"
+    assert fake.calls[0][1] == "https://commerce.example.test/me"
+    assert fake.calls[1][2]["params"]["owner_user_id"] == "signed-user-42"
+    create_body = fake.calls[2][2]["json"]
+    assert create_body["owner_user_id"] == "signed-user-42"
+    assert create_body["outfit_id"] == outfit_id
+    assert [piece["wardrobe_item_id"] for piece in create_body["pieces"]] == ["shirt-001", "pants-001"]
+    wear_call = fake.calls[3]
+    assert wear_call[1] == "https://wardrobe.example.test/v1/outfits/" + outfit_id + "/wear"
+    assert wear_call[2]["json"]["owner_user_id"] == "signed-user-42"
+    assert wear_call[2]["json"]["event_id"] == event_id
+    assert wear_call[2]["json"]["expected_outfit_version"] == 1
 
 
