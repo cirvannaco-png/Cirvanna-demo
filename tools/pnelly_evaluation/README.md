@@ -1,71 +1,50 @@
 # PNELLY outfit evaluation dataset
 
-This directory contains the evaluation contract and evaluator, not fabricated
-training/evaluation labels. Populate the JSONL only with consented, de-identified
-sessions reviewed by trained human evaluators. Keep identity, contact details,
-photos, and raw free-text out of this benchmark.
+This is an evaluation contract and evaluator, not a dataset or evidence of ranking quality. Populate the JSONL only with consented, de-identified sessions and trained reviewers. Do not include identity, contact details, raw photos, exact location, or free-text personal data.
 
-## One row per candidate outfit per recommendation session
+## One adjudicated row per candidate outfit per recommendation session
 
 Required fields:
 
-- `session_id`: random evaluation-session identifier; no account ID.
-- `user_pseudonym`: stable random pseudonym for repeated-rejection measurement.
-- `outfit_id`: stable opaque outfit ID, not a person identifier.
-- `algorithm_rank`: algorithm's original 1-based rank.
-- `human_relevance`: blinded human rating 1–5 against the declared occasion,
-  weather/context, wardrobe constraints and style request.
-- `hard_exclusion_violation`: reviewer-confirmed violation of a user-declared
-  hard exclusion, cultural constraint, dress-code requirement or other hard rule.
-- `edited`: user changed garment(s) in the displayed outfit.
-- `rejected`: user explicitly rejected the outfit.
-- `occasion_match`: whether the outfit satisfies the declared occasion.
-- `preference_match_count`: count of explicit, consented preference matches;
-  do not derive sensitive traits or infer preferences from exposure alone.
-- `garment_categories`, `style_tags`: normalized, non-sensitive labels used
-  only to calculate within-session diversity.
+- `session_id`: random session identifier; no account ID.
+- `user_pseudonym`: stable random pseudonym for measuring repeated rejection.
+- `outfit_id`: opaque outfit ID.
+- `algorithm_rank`: original 1-based algorithm rank.
+- `human_relevance`: adjudicated blinded rating 1–5 against the declared occasion, user constraints and style request.
+- `hard_exclusion_violation`: adjudicated reviewer finding for a user-declared hard exclusion, cultural constraint, dress code or other hard rule.
+- `edited`, `rejected`: explicit user events, not reviewer guesses.
+- `occasion_match`, `preference_match_count`: grounded in declared request and consented preferences only.
+- `garment_categories`, `style_tags`: normalized non-sensitive labels for diversity.
 - `human_reviewed`: must be true.
-- `reviewer_id`: pseudonymous reviewer identifier.
+- `reviewer_ids`: at least two distinct pseudonymous reviewer IDs.
+- `review_rubric_version`: non-empty rubric version used for independent scoring and adjudication.
 
-Optional metadata may include locale, climate freshness bucket, catalog version,
-wardrobe snapshot version, algorithm version, and review disagreement. Do not
-include raw images or exact location. Record the review rubric/version separately.
+Two reviewers independently assess relevance and exclusion violations while blinded to algorithm rank. A documented adjudication resolves disagreements into the two adjudicated label fields. The evaluator validates that two distinct reviewers are recorded; it cannot independently prove that the review process occurred.
 
-## Review protocol
+## Sampling and split protocol
 
-1. Sample sessions across occasions, weather/context availability, wardrobe
-   completeness, price bands, body/fit constraints supplied by the user, and
-   target markets. Do not collapse subgroup failures into one average.
-2. Two reviewers independently score relevance and exclusion violations while
-   blinded to algorithm rank. Adjudicate disagreements; record reviewer IDs and
-   rubric version. Any hard-exclusion violation is release-blocking.
-3. Keep a chronological holdout split by user pseudonym. No user may appear in
-   both development and final holdout partitions.
-4. Capture edits and rejections as explicit events. A repeated rejection means
-   the same user pseudonym rejects the same outfit ID in at least two distinct
-   sessions. Do not count repeated impressions as independent people.
-5. Report the algorithm and baseline on exactly the same sessions and candidate
-   sets. Baseline is intentionally simple: occasion match first, then explicit
-   preference overlap, with hard-exclusion violations ranked last.
-6. Report sample size and confidence intervals before making product claims.
-   A zero-violation observed sample is not proof of zero risk.
+1. Sample across occasions, climate/context availability, wardrobe completeness, price bands, fit constraints explicitly supplied by the user, and target markets. Report subgroup failures separately.
+2. Keep a chronological holdout split by user pseudonym. No user may appear in both development and final holdout partitions.
+3. Report algorithm and baseline on identical candidate sets and sessions. Do not use evaluation labels for training or tuning.
+4. A repeated rejection is the same user pseudonym rejecting the same outfit ID in at least two distinct sessions. Duplicate events within one session do not count twice.
+5. Never infer sensitive traits or preferences from exposure. Do not treat impressions as consent or rejection.
 
-## Metrics
+## Metrics at K (default K=3)
 
-- Human relevance@3: mean blinded 1–5 score for the top three.
-- Diversity@3: mean pairwise Jaccard distance across garment categories and
-  style tags in the top three.
-- Hard-exclusion violation@3: share of top-three looks violating a hard rule.
-- User edit@3 and explicit rejection@3: shares of top-three looks edited/rejected.
-- Repeated rejection: share of unique rejected user/outfit pairs rejected in
-  two or more distinct sessions.
+- Human relevance: mean adjudicated 1–5 score in top K.
+- Diversity: mean pairwise Jaccard distance over garment categories and style tags in top K.
+- Hard-exclusion violation: share of top-K candidates violating a hard rule. Any violation is release-blocking.
+- User edit and explicit rejection rates: shares of top-K looks with those explicit events.
+- Repeated rejection: share of unique rejected user/outfit pairs rejected in two or more distinct sessions.
 
-Run:
+The simple baseline is deterministic and safety-first: hard-exclusion-violating outfits rank last, then occasion match, then explicit preference overlap, then outfit ID. This order is intentional; safety cannot be traded for preference relevance.
+
+The evaluator reports percentile-bootstrap 95% confidence intervals over sessions for session-level metrics and paired algorithm-minus-baseline intervals. These intervals are descriptive, not proof of generalization, especially for small samples. The evaluator does not calculate inter-rater reliability; retain reviewer-level scores and report agreement separately before adjudication.
+
+## Run
 
 ```sh
 python tools/pnelly_evaluation/evaluate_outfits.py path/to/reviewed.jsonl --k 3
 ```
 
-The repository intentionally ships an empty dataset template. Do not report
-algorithm quality or claim an improvement until a real human-reviewed dataset
-has been collected and the same-session baseline comparison has been run.
+The committed template is empty. Do not claim quality, improvement, or market readiness until a real human-reviewed dataset exists, the locked chronological holdout is evaluated, subgroup results are inspected, and safety gates pass.
