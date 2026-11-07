@@ -335,7 +335,12 @@ def _parse_rotation_snapshot(data: object, *, subject: str, active_item_ids: set
     seen = state.get("surfaced_item_ids")
     if isinstance(cycle_number, bool) or not isinstance(cycle_number, int) or cycle_number < 1:
         raise HTTPException(502, detail={"code": "PNELLY_ROTATION_STATE_RESPONSE_INVALID"})
-    if not isinstance(started, str) or not isinstance(seen, list) or len(seen) != len(set(seen)):
+    if (
+        not isinstance(started, str)
+        or not isinstance(seen, list)
+        or any(not isinstance(item_id, str) for item_id in seen)
+        or len(seen) != len(set(seen))
+    ):
         raise HTTPException(502, detail={"code": "PNELLY_ROTATION_STATE_RESPONSE_INVALID"})
     try:
         from datetime import date
