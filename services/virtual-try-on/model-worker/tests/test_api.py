@@ -147,3 +147,24 @@ def test_readiness_requires_model_pipeline_to_load(monkeypatch):
         response = client.get("/ready")
     assert response.status_code == 503
     assert response.json()["detail"]["reason"] == "model_load_failed"
+
+
+def test_production_readiness_is_blocked_without_parser_commercial_rights(monkeypatch):
+    monkeypatch.setenv("VTON_WORKER_TOKEN", TOKEN)
+    monkeypatch.setenv("FASHN_VTON_SOURCE_REF", "a" * 40)
+    monkeypatch.setenv("FASHN_VTON_BUILT_SOURCE_REF", "a" * 40)
+    monkeypatch.setenv("CIRVANNA_DEPLOYMENT_MODE", "production")
+    monkeypatch.delenv("FASHN_HUMAN_PARSER_COMMERCIAL_LICENSE_APPROVED", raising=False)
+    ready, reason = main._configured()
+    assert ready is False
+    assert reason == "human_parser_commercial_license_not_cleared"
+
+
+def test_runtime_source_must_match_built_image_source(monkeypatch):
+    monkeypatch.setenv("VTON_WORKER_TOKEN", TOKEN)
+    monkeypatch.setenv("FASHN_VTON_SOURCE_REF", "a" * 40)
+    monkeypatch.setenv("FASHN_VTON_BUILT_SOURCE_REF", "b" * 40)
+    monkeypatch.setenv("CIRVANNA_DEPLOYMENT_MODE", "research")
+    ready, reason = main._configured()
+    assert ready is False
+    assert reason == "built_source_commit_mismatch"
