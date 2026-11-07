@@ -149,6 +149,10 @@ class FakeAsyncClient:
         self.calls.append(("PUT", url, kwargs))
         return self.responses.pop(0)
 
+    async def delete(self, url, **kwargs):
+        self.calls.append(("DELETE", url, kwargs))
+        return self.responses.pop(0)
+
 
 
 def test_description_search_fails_closed_without_xari_or_legacy_secret(client, monkeypatch):
