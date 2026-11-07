@@ -11,7 +11,7 @@ on:
       - "services/vision-intelligence/**"
       - ".github/workflows/container-image-builds.yml"
   push:
-    branches: [main]
+    branches: [main, "feature/**", "engineering/**"]
     paths:
       - "services/catalog-service/**"
       - "services/commerce-service/**"
