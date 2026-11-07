@@ -2,7 +2,7 @@
 
 **Status:** authenticated API and SQLAlchemy persistence contract implemented; production database and object-storage deletion worker still require deployment and validation.
 
-The service owns user wardrobe item records and saved outfit compositions. Item records include lifecycle, catalog-product references, user-authorized opaque image asset IDs, explicit photo-storage consent, optimistic version checks and a durable asset-deletion outbox. Saved outfits contain references to active, owner-scoped wardrobe items; they do not copy Catalog facts or make unpurchased marketplace products owned. The PostgreSQL schema is applied through ordered migrations `0001_initial.sql`, `0002_wardrobe_learning_events.sql` and `0003_saved_outfits.sql`. The application does not automatically create the production schema. SQLite is test-only.
+The service owns user wardrobe item records and saved outfit compositions. Item records include lifecycle, catalog-product references, user-authorized opaque image asset IDs, explicit photo-storage consent, optimistic version checks and a durable asset-deletion outbox. Saved outfits contain references to active, owner-scoped wardrobe items; they do not copy Catalog facts or make unpurchased marketplace products owned. The PostgreSQL schema is applied through ordered migrations `0001_initial.sql`, `0002_wardrobe_learning_events.sql` and `0003_saved_outfits.sql` and `0004_verified_purchase_ownership.sql`. The application does not automatically create the production schema. SQLite is test-only.
 
 ## Configuration
 
@@ -12,7 +12,7 @@ The service owns user wardrobe item records and saved outfit compositions. Item 
 
 ## API
 
-- `POST /v1/items` creates an owner-scoped item.
+- `POST /v1/items` creates an owner-scoped user-added item.\n- `POST /v1/purchases/verified` accepts only a trusted internal `commerce.order.paid` event with `ownership_authority=verified_payment`; it creates one owner-scoped purchased line item and deduplicates by Commerce order-line ID. The record retains order/event provenance, quantity, currency, agreed unit price and paid timestamp. Missing product taxonomy is explicitly marked `other` for user correction, not guessed.
 - `GET /v1/items?owner_user_id=...` lists only the requested owner's items.
 - `GET /v1/items/{item_id}?owner_user_id=...` gets an owner-scoped item.
 - `POST /v1/items/{item_id}/transition` applies a version-checked lifecycle command.
@@ -45,4 +45,4 @@ Internal endpoint POST /v1/feedback records a clear user interaction against an 
 - The Wardrobe service does not import the quarantined CFRP V6 candidate or emit the unverified CRFP concept. See ADR-0002 and issue #76; neither is authorized in runtime.
 - Configure IDENTITY_SERVICE_URL, IDENTITY_SERVICE_TOKEN, NPL_SERVICE_URL, and NPL_SERVICE_TOKEN in the service secret manager. Missing providers or consent fail closed.
 
-Apply migrations in order: `0001_initial.sql`, `0002_wardrobe_learning_events.sql`, then `0003_saved_outfits.sql`. The learning table is an audit mirror; USI/TAL and NPL remain the authoritative stores. Service readiness now requires the `wardrobe_outfits` table as well as the existing item, learning and deletion-outbox schema.
+Apply migrations in order: `0001_initial.sql`, `0002_wardrobe_learning_events.sql`, then `0003_saved_outfits.sql`, then `0004_verified_purchase_ownership.sql`. The learning table is an audit mirror; USI/TAL and NPL remain the authoritative stores. Service readiness now requires the `wardrobe_outfits` table as well as the existing item, learning and deletion-outbox schema.
