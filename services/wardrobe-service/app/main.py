@@ -126,7 +126,7 @@ def ready()->dict[str,object]:
         engine=engine_for_url(url)
         with engine.connect() as conn: conn.execute(text("SELECT 1"))
         tables=set(inspect(engine).get_table_names())
-        schema_ready={"wardrobe_items","wardrobe_asset_deletion_outbox","wardrobe_learning_events","wardrobe_outfits"}.issubset(tables)
+        schema_ready={"wardrobe_items","wardrobe_asset_deletion_outbox","wardrobe_learning_events","wardrobe_outfits", "wardrobe_rotation_states"}.issubset(tables)
         db_ready=schema_ready
     except Exception as exc: db_error=type(exc).__name__
     worker_enabled=os.getenv("WARDROBE_ASSET_DELETION_READY","").lower()=="true"
