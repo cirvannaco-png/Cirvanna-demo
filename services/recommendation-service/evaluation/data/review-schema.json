@@ -1,0 +1,242 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cirvanna.invalid/schemas/human-reviewed-outfit-evaluation-v1.json",
+  "title": "Human-reviewed outfit evaluation record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "dataset_version",
+    "case_id",
+    "split",
+    "scenario",
+    "candidate_outfits",
+    "human_reviews"
+  ],
+  "properties": {
+    "dataset_version": {
+      "const": "1.0"
+    },
+    "case_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "split": {
+      "enum": [
+        "development",
+        "locked_test"
+      ]
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "context_tags",
+        "style_preferences",
+        "hard_exclusions"
+      ],
+      "properties": {
+        "context_tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "style_preferences": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "hard_exclusions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "candidate_outfits": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "outfit_id",
+          "item_ids",
+          "categories",
+          "colors",
+          "style_tags",
+          "context_tags",
+          "algorithm_score"
+        ],
+        "properties": {
+          "outfit_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "item_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "colors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "style_tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "context_tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "algorithm_score": {
+            "type": "number"
+          },
+          "hard_exclusion_hits": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "human_reviews": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "reviewer_key",
+          "outfit_id",
+          "relevance",
+          "coherence",
+          "context_fit",
+          "exclusion_violation",
+          "disposition"
+        ],
+        "properties": {
+          "reviewer_key": {
+            "type": "string",
+            "minLength": 1
+          },
+          "outfit_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "relevance": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "coherence": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "context_fit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "exclusion_violation": {
+            "type": "boolean"
+          },
+          "exclusion_reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "disposition": {
+            "enum": [
+              "accept",
+              "reject",
+              "edit"
+            ]
+          },
+          "proposed_item_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "user_outcomes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "subject_key",
+          "event_id",
+          "ranker_id",
+          "outfit_id",
+          "event_type",
+          "occurred_at",
+          "exposure_id"
+        ],
+        "properties": {
+          "subject_key": {
+            "type": "string",
+            "minLength": 1
+          },
+          "event_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "ranker_id": {
+            "enum": [
+              "algorithm",
+              "simple_baseline"
+            ]
+          },
+          "outfit_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "event_type": {
+            "enum": [
+              "exposed",
+              "accepted",
+              "rejected",
+              "edited"
+            ]
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "edited_item_count": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "exposure_id": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    }
+  }
+}

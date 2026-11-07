@@ -52,6 +52,14 @@ Do not expose the request's `user_id` as a public trust boundary. The gateway mu
 - A rejection is reversible and non-binding; an explicit user hard exclusion remains owned by NPL.
 - Users must be able to inspect, correct and delete durable preferences through the canonical identity/profile owner before this is exposed as a persistent-memory feature.
 
+## Human-reviewed outfit evaluation
+
+The paired algorithm-versus-baseline evaluation contract lives in [`evaluation/README.md`](evaluation/README.md). It requires two blind human reviews per candidate and reports relevance/NDCG, coherence, context fit, diversity, exclusion violations, user edits and repeated rejections. The baseline is a deterministic 50/30/20 combination of category completeness, context-tag overlap and declared-style overlap.
+
+**Important limitation:** the active service still emits advisory look-completion guidance, not ranked complete-outfit candidates or a calibrated `algorithm_score`. The evaluation tool is ready to consume a future three-look candidate capture, but this is not evidence that Daily Looks is already an evaluated ranker. Outfit-level user-exposure, edit and rejection telemetry also needs a consented production event contract; item-level Wardrobe feedback must not be misrepresented as outfit-level behavior.
+
+The evaluation data directory contains only a blank annotation template and schema. No synthetic human labels or user photos are checked in. See the dataset intake and reviewer protocol before collecting labels.
+
 ## Validation
 
 From this directory:
