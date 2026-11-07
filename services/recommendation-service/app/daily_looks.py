@@ -322,6 +322,7 @@ def _build_evaluation_trace(
     selected_base: set[frozenset[str]] = set()
     selected_item_ids: set[str] = set()
     cases: list[dict[str, Any]] = []
+    no_result_roles: list[str] = []
     rankings_by_role: dict[str, list[dict[str, Any]]] = {}
     blocked_by_role: dict[str, list[str]] = {}
 
@@ -379,14 +380,15 @@ def _build_evaluation_trace(
         )
         style_tags, color_tags = _preferred_trace_tags(style_signals)
         case_id = _trace_token(secret, "case", request_id + "|" + role)
-        cases.append({
-            "schema_version": "1.0",
+        if ranked_ids and candidate_docs:
+            cases.append({
+                "schema_version": "1.0",
             "case_id": case_id,
             "participant_key": _trace_token(secret, "participant", user_id),
             "session_id": _trace_token(secret, "session", request_id),
             "assigned_system": "cirvanna",
-            "context": {
-                "role": role,
+                "context": {
+                    "role": role,
                 "required_categories": [],
                 "preferred_style_tags": style_tags,
                 "preferred_color_tags": color_tags,
@@ -397,12 +399,14 @@ def _build_evaluation_trace(
                 ),
                 "hard_excluded_tags": [],
             },
-            "candidate_outfits": [candidate_docs[key] for key in sorted(candidate_docs)],
-            "cirvanna_ranked_look_ids": ranked_ids,
-            "human_reviews": [],
-            "adjudications": [],
-            "exposures": [],
-        })
+                "candidate_outfits": [candidate_docs[key] for key in sorted(candidate_docs)],
+                "cirvanna_ranked_look_ids": ranked_ids,
+                "human_reviews": [],
+                "adjudications": [],
+                "exposures": [],
+            })
+        else:
+            no_result_roles.append(role)
         rankings_by_role[role] = ranking_rows
         blocked_by_role[role] = blocked_ids
 
@@ -426,6 +430,7 @@ def _build_evaluation_trace(
         "candidate_pool_source": "owner_scoped_active_wardrobe_metadata",
         "ranking_trace_by_role": rankings_by_role,
         "hard_excluded_candidate_ids_by_role": blocked_by_role,
+        "no_result_roles": no_result_roles,
         "cases": cases,
         "human_review_state": "awaiting_two_independent_reviewers_per_candidate",
         "user_exposure_state": "not_collected_by_composer",
