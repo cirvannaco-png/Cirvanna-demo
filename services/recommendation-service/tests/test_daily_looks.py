@@ -308,3 +308,54 @@ def test_evaluation_trace_api_is_server_flagged_and_fails_closed_without_secret(
     )
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "PNELLY_EVALUATION_TRACE_SIGNING_NOT_CONFIGURED"
+
+
+def test_rotation_prioritizes_unseen_items_and_exposes_revival_queue():
+    result = build_daily_looks(
+        request_id="rotation-001", user_id="user-123", wardrobe_items=wardrobe(),
+        local_date="2026-11-07",
+        rotation_seen_item_ids=["top-001", "top-002", "top-003", "bottom-01", "bottom-02"],
+        wear_history=[{"item_id": "top-003", "last_worn_at": "2026-11-06T08:00:00Z", "wear_count": 8}],
+    )
+    rotation = result["wardrobe_rotation"]
+    assert "shoe-001" in rotation["revival_queue_item_ids"]
+    assert rotation["rules"]["recent_wear_is_not_exclusion"] is True
+
+
+def test_rotation_restarts_immediately_when_all_eligible_items_were_seen():
+    items = wardrobe()[:6]
+    result = build_daily_looks(
+        request_id="rotation-002", user_id="user-123", wardrobe_items=items,
+        local_date="2026-11-07",
+        rotation_seen_item_ids=[item["item_id"] for item in items],
+        rotation_cycle_started_at="2026-11-01", rotation_cycle_number=3,
+    )
+    rotation = result["wardrobe_rotation"]
+    assert rotation["cycle_complete"] is True
+    assert rotation["next_state"]["cycle_number"] == 4
+    assert rotation["next_state"]["cycle_started_at"] == "2026-11-07"
+    assert rotation["next_state"]["seen_item_ids"] == []
+
+
+def test_overdue_cycle_keeps_unseen_items_prioritized_without_reset():
+    items = wardrobe()
+    seen = [item["item_id"] for item in items if item["item_id"] != "shoe-001"]
+    result = build_daily_looks(
+        request_id="rotation-003", user_id="user-123", wardrobe_items=items,
+        local_date="2026-11-15", rotation_seen_item_ids=seen,
+        rotation_cycle_started_at="2026-11-01",
+    )
+    rotation = result["wardrobe_rotation"]
+    assert rotation["cycle_overdue"] is True
+    assert rotation["cycle_complete"] is False
+    assert rotation["revival_queue_item_ids"][0] == "shoe-001"
+    assert rotation["next_state"]["cycle_number"] == 1
+
+
+def test_rotation_never_marks_recent_wear_as_a_hard_exclusion():
+    result = build_daily_looks(
+        request_id="rotation-004", user_id="user-123", wardrobe_items=wardrobe(),
+        local_date="2026-11-07",
+        wear_history=[{"item_id": "top-001", "last_worn_at": "2026-11-06T08:00:00Z", "wear_count": 20}],
+    )
+    assert result["wardrobe_rotation"]["rules"]["recent_wear_is_not_exclusion"] is True
