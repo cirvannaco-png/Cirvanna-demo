@@ -522,9 +522,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
       }
     };
     populate($("itemCategory"), false);
-    populate($("category"), true);
     $("itemCategory").value = "tops";
-    $("category").value = "";
   };
   const loadWardrobe = async () => {
     const data = await api("/api/wardrobe/items");
