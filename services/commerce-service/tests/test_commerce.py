@@ -178,7 +178,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
         ))
         connection.execute(
             text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
-            {"revision": "20261104_0003"},
+            {"revision": "20261107_0004"},
         )
 
     ready = client.get("/ready")
@@ -191,7 +191,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
     assert payload["payment_configured"] is True
     assert payload["migrations_required"] is True
     assert payload["migrations_applied"] is True
-    assert payload["schema_revision"] == "20261104_0003"
+    assert payload["schema_revision"] == "20261107_0004"
     assert payload["ready"] is True
 
 
@@ -432,6 +432,17 @@ def test_checkout_reserves_stock_idempotently_and_only_signed_paid_webhook_settl
     orders = client.get("/orders", headers=buyer).json()
     assert orders["total"] == 1 and orders["items"][0]["status"] == "paid"
     assert client.get("/cart", headers=buyer).json()["items"] == []
+    # Ownership sync is driven only by a durable event emitted in the paid
+    # settlement transaction; cart/save/try-on state cannot create this event.
+    db = TEST_SESSION()
+    outbox = db.query(main.CommerceOutboxEvent).filter_by(aggregate_id=order["order_id"]).all()
+    assert len(outbox) == 1
+    assert outbox[0].event_type == "commerce.order.paid"
+    assert outbox[0].payload["buyer_user_id"] == "buyer-checkout"
+    assert outbox[0].payload["ownership_authority"] == "verified_payment"
+    assert outbox[0].payload["items"][0]["catalog_product_id"] == offer["catalog_product_id"]
+    assert outbox[0].payload["items"][0]["quantity"] == 2
+    db.close()
     replay = client.post("/webhooks/stripe", content=raw, headers={"Stripe-Signature": sig, "Content-Type": "application/json"})
     assert replay.status_code == 200 and replay.json()["duplicate"] is True
 
@@ -594,3 +605,53 @@ def test_inventory_adjustment_refreshes_server_observation_timestamp(client, mon
     assert response.status_code == 200, response.text
     assert response.json()["observed_at"]
     assert response.json()["on_hand"] == 9
+
+
+def test_commerce_outbox_requires_sync_token_and_leases_events(client, monkeypatch):
+    token = "commerce-sync-token-with-at-least-32-bytes"
+    monkeypatch.setenv("COMMERCE_SYNC_TOKEN", token)
+    db = TEST_SESSION()
+    event_id = str(uuid.uuid4())
+    db.add(main.CommerceOutboxEvent(
+        event_id=event_id, aggregate_type="commerce_order", aggregate_id=str(uuid.uuid4()),
+        event_type="commerce.order.paid", schema_version=1,
+        payload={"event_id": event_id, "ownership_authority": "verified_payment"},
+    ))
+    db.commit()
+    db.close()
+    unauth = client.post("/internal/outbox/claim", json={"worker_id": "sync-worker"})
+    assert unauth.status_code == 401
+    headers = {"X-Commerce-Sync-Token": token}
+    claimed = client.post("/internal/outbox/claim", headers=headers, json={"worker_id": "sync-worker"})
+    assert claimed.status_code == 200, claimed.text
+    assert claimed.json()["events"][0]["event_id"] == event_id
+    assert claimed.json()["events"][0]["attempt"] == 1
+    wrong_worker = client.post(f"/internal/outbox/{event_id}/ack", headers=headers, json={"worker_id": "other-worker"})
+    assert wrong_worker.status_code == 409
+    ack = client.post(f"/internal/outbox/{event_id}/ack", headers=headers, json={"worker_id": "sync-worker"})
+    replay = client.post(f"/internal/outbox/{event_id}/ack", headers=headers, json={"worker_id": "sync-worker"})
+    assert ack.status_code == 200 and ack.json()["status"] == "delivered"
+    assert replay.status_code == 200 and replay.json()["status"] == "already_delivered"
+
+
+def test_commerce_outbox_failure_schedules_retry_and_dead_letters_after_limit(client, monkeypatch):
+    token = "commerce-sync-token-with-at-least-32-bytes"
+    monkeypatch.setenv("COMMERCE_SYNC_TOKEN", token)
+    db = TEST_SESSION()
+    event_id = str(uuid.uuid4())
+    db.add(main.CommerceOutboxEvent(
+        event_id=event_id, aggregate_type="commerce_order", aggregate_id=str(uuid.uuid4()),
+        event_type="commerce.order.paid", schema_version=1, attempts=7,
+        payload={"event_id": event_id},
+    ))
+    db.commit()
+    db.close()
+    headers = {"X-Commerce-Sync-Token": token}
+    claim = client.post("/internal/outbox/claim", headers=headers, json={"worker_id": "sync-worker"})
+    assert claim.status_code == 200
+    failed = client.post(f"/internal/outbox/{event_id}/fail", headers=headers,
+                         json={"worker_id": "sync-worker", "error_code": "WARDROBE_UNAVAILABLE"})
+    assert failed.status_code == 200
+    assert failed.json()["status"] == "dead_lettered"
+    row = TEST_SESSION().get(main.CommerceOutboxEvent, event_id)
+    assert row.dead_letter_at is not None

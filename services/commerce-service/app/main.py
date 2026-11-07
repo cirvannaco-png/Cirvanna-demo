@@ -37,7 +37,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 
 
 SERVICE = "cirvanna-commerce-service"
-EXPECTED_SCHEMA_REVISION = "20261104_0003"
+EXPECTED_SCHEMA_REVISION = "20261107_0004"
 MAX_QTY = 50
 RESERVATION_MINUTES = 60
 SKU_RE = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,79}$")
@@ -228,6 +228,51 @@ class StockReservation(Base):
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     state: Mapped[str] = mapped_column(String(16), nullable=False, default="reserved", index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class CommerceOutboxEvent(Base):
+    """Durable domain event; consumers must deduplicate by event_id."""
+    __tablename__ = "commerce_outbox_events"
+    __table_args__ = (
+        UniqueConstraint("aggregate_type", "aggregate_id", "event_type", name="uq_commerce_outbox_aggregate_event"),
+        Index("ix_commerce_outbox_pending", "delivered_at", "dead_letter_at", "next_attempt_at"),
+    )
+    event_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    aggregate_type: Mapped[str] = mapped_column(String(48), nullable=False)
+    aggregate_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(96), nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lease_owner: Mapped[str | None] = mapped_column(String(128))
+    dead_letter_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(String(500))
+
+
+class OutboxClaimIn(BaseModel):
+    worker_id: str = Field(min_length=3, max_length=128)
+    limit: int = Field(default=20, ge=1, le=100)
+
+
+class OutboxLeaseIn(BaseModel):
+    worker_id: str = Field(min_length=3, max_length=128)
+
+
+class OutboxFailureIn(BaseModel):
+    worker_id: str = Field(min_length=3, max_length=128)
+    error_code: str = Field(min_length=1, max_length=120)
+
+
+def require_sync_token(token: Annotated[str | None, Header(alias="X-Commerce-Sync-Token")] = None) -> None:
+    expected = os.getenv("COMMERCE_SYNC_TOKEN", "")
+    if len(expected.encode()) < 32:
+        raise HTTPException(503, detail={"code": "COMMERCE_SYNC_TOKEN_NOT_CONFIGURED"})
+    if not token or not hmac.compare_digest(token, expected):
+        raise HTTPException(401, detail={"code": "COMMERCE_SYNC_AUTH_FAILED"})
 
 
 class PaymentWebhookEvent(Base):
@@ -759,6 +804,28 @@ def settle_paid(db: Session, order: CommerceOrder, amount_total: int, currency: 
         db.add(InventoryMovement(id=str(uuid.uuid4()), variant_id=r.variant_id,
             actor_user_id="system:payment-webhook", delta=-r.quantity, reason=f"sale:{order.order_number}"))
     order.state, order.payment_state, order.paid_at, order.updated_at = "paid", "paid", now(), now()
+    # Insert the ownership-intent event in the SAME transaction as settlement.
+    # A stable event ID and unique aggregate/type constraint make webhook replay safe.
+    lines = list(db.scalars(select(OrderItem).where(OrderItem.order_id == order.id).order_by(OrderItem.id)).all())
+    event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cirvanna:order-paid:{order.id}"))
+    db.add(CommerceOutboxEvent(
+        event_id=event_id, aggregate_type="commerce_order", aggregate_id=order.id,
+        event_type="commerce.order.paid", schema_version=1,
+        payload={
+            "event_id": event_id, "event_type": "commerce.order.paid", "schema_version": 1,
+            "occurred_at": now().isoformat(), "order_id": order.id, "order_number": order.order_number,
+            "buyer_user_id": order.buyer_user_id, "currency": order.currency,
+            "paid_at": order.paid_at.isoformat() if order.paid_at else None,
+            "items": [{
+                "order_item_id": item.id, "catalog_product_id": item.catalog_product_id,
+                "merchant_id": item.merchant_id, "merchant_variant_id": item.variant_id,
+                "sku": item.sku, "product_name": item.product_name, "options": item.options,
+                "quantity": item.quantity, "unit_price_minor": item.unit_price_minor,
+                "currency": order.currency,
+            } for item in lines],
+            "ownership_authority": "verified_payment",
+        },
+    ))
     cart = db.scalar(select(Cart).where(Cart.user_id == order.buyer_user_id))
     if cart:
         ids = [r.variant_id for r in reservations]
@@ -1339,3 +1406,80 @@ def inventory_audit(actor: Annotated[Actor, Depends(require_actor)], db: Annotat
         (Variant.on_hand < 0) | (Variant.reserved_qty < 0) | (Variant.reserved_qty > Variant.on_hand))).all())
     return {"ok": not bad, "violations": [{"variant_id": v.id, "on_hand": v.on_hand,
         "reserved_qty": v.reserved_qty, "version": v.version} for v in bad]}
+
+
+@app.post("/internal/outbox/claim", dependencies=[Depends(require_sync_token)], tags=["internal event delivery"])
+def claim_outbox_events(payload: OutboxClaimIn) -> dict[str, object]:
+    """Lease pending outbox events for the authenticated Sync worker."""
+    current = now()
+    try:
+        with SessionLocal() as db, db.begin():
+            events = list(db.scalars(select(CommerceOutboxEvent).where(
+                CommerceOutboxEvent.delivered_at.is_(None),
+                CommerceOutboxEvent.dead_letter_at.is_(None),
+                CommerceOutboxEvent.next_attempt_at <= current,
+                (CommerceOutboxEvent.lease_until.is_(None) | (CommerceOutboxEvent.lease_until < current)),
+            ).order_by(CommerceOutboxEvent.created_at, CommerceOutboxEvent.event_id)
+              .with_for_update(skip_locked=True).limit(payload.limit)).all())
+            for event in events:
+                event.attempts += 1
+                event.lease_owner = payload.worker_id.strip()
+                event.lease_until = current + timedelta(seconds=90)
+            db.flush()
+            return {"worker_id": payload.worker_id.strip(), "events": [{
+                "event_id": event.event_id, "event_type": event.event_type,
+                "schema_version": event.schema_version, "payload": event.payload,
+                "attempt": event.attempts, "lease_until": event.lease_until.isoformat(),
+            } for event in events]}
+    except Exception as exc:
+        raise HTTPException(503, detail={"code": "COMMERCE_OUTBOX_CLAIM_FAILED"}) from exc
+
+
+@app.post("/internal/outbox/{event_id}/ack", dependencies=[Depends(require_sync_token)], tags=["internal event delivery"])
+def acknowledge_outbox_event(event_id: str, payload: OutboxLeaseIn) -> dict[str, object]:
+    current = now()
+    with SessionLocal() as db, db.begin():
+        event = db.scalar(select(CommerceOutboxEvent).where(
+            CommerceOutboxEvent.event_id == event_id).with_for_update())
+        if event is None:
+            raise HTTPException(404, detail={"code": "COMMERCE_OUTBOX_EVENT_NOT_FOUND"})
+        if event.delivered_at is not None:
+            return {"status": "already_delivered", "event_id": event_id}
+        lease_until = event.lease_until
+        if lease_until is not None and lease_until.tzinfo is None:
+            lease_until = lease_until.replace(tzinfo=timezone.utc)
+        if event.lease_owner != payload.worker_id.strip() or lease_until is None or lease_until < current:
+            raise HTTPException(409, detail={"code": "COMMERCE_OUTBOX_LEASE_LOST"})
+        event.delivered_at = current
+        event.lease_owner = None
+        event.lease_until = None
+        event.last_error = None
+        return {"status": "delivered", "event_id": event_id}
+
+
+@app.post("/internal/outbox/{event_id}/fail", dependencies=[Depends(require_sync_token)], tags=["internal event delivery"])
+def fail_outbox_event(event_id: str, payload: OutboxFailureIn) -> dict[str, object]:
+    current = now()
+    with SessionLocal() as db, db.begin():
+        event = db.scalar(select(CommerceOutboxEvent).where(
+            CommerceOutboxEvent.event_id == event_id).with_for_update())
+        if event is None:
+            raise HTTPException(404, detail={"code": "COMMERCE_OUTBOX_EVENT_NOT_FOUND"})
+        if event.delivered_at is not None:
+            return {"status": "already_delivered", "event_id": event_id}
+        lease_until = event.lease_until
+        if lease_until is not None and lease_until.tzinfo is None:
+            lease_until = lease_until.replace(tzinfo=timezone.utc)
+        if event.lease_owner != payload.worker_id.strip() or lease_until is None or lease_until < current:
+            raise HTTPException(409, detail={"code": "COMMERCE_OUTBOX_LEASE_LOST"})
+        event.last_error = payload.error_code.strip()[:500]
+        event.lease_owner = None
+        event.lease_until = None
+        if event.attempts >= 8:
+            event.dead_letter_at = current
+            return {"status": "dead_lettered", "event_id": event_id, "attempts": event.attempts}
+        delay = min(15 * (2 ** max(event.attempts - 1, 0)), 900)
+        event.next_attempt_at = current + timedelta(seconds=delay)
+        return {"status": "retry_scheduled", "event_id": event_id, "retry_after_seconds": delay}
+
+
