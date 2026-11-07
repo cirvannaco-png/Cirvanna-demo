@@ -34,7 +34,7 @@
 ### 1.2 Wardrobe domain and item lifecycle
 - [x] Merge the versioned, owner-scoped single-item edit API (PR #128); its Wardrobe persistence and architecture checks passed. **Scope limitation:** this verifies the backend endpoint only; user-facing edit controls and saved-outfit piece editing are not complete.
 - [ ] Connect single-item editing to the authenticated BFF and wardrobe UI; support editing one selected garment/accessory without changing other items, with stale-version conflict handling and undo/correction.
-- [ ] Add saved-outfit editing at piece level: replace, remove or add an item while preserving unaffected pieces; revalidate compatibility and update only the selected slot.
+- [x] Saved-outfit piece editing implemented in PR #135: create/list saved looks from owned items; add, replace or remove one piece with optimistic versioning and command replay protection; the UI preserves unaffected pieces. Deployment migration and device QA remain release gates.
 - [ ] Expand and validate an extensible category taxonomy for clothing, shoes/footwear, bags, jewellery, ties, glasses/frames, watches, accessories, makeup and other user-owned beauty products.
 - [ ] Support user-added items with explicit provenance, optional photos, metadata correction and appropriate consent; do not silently turn image guesses into facts.
 - [ ] Support safe archive, restore and deletion; ensure image/asset deletion is actually completed by the storage worker, not merely queued.
@@ -69,8 +69,8 @@
 ## Step 2 — Intelligence, connected experience and measurable quality
 
 ### 2.1 Personal colour profile (independent Style Desk product)
-- [ ] Create a user-owned, editable colour profile separate from clothing catalogue colour metadata.
-- [ ] Capture colours the user likes, dislikes, avoids, and personally feels bring out their best version; allow explicit overrides of any system suggestion.
+- [~] User-owned, editable Style Desk colour profile implemented on a feature branch in USI/TAL, separate from catalogue colour metadata; merge, CI and deployment migration remain pending.
+- [~] The profile captures user-declared liked, disliked and “brings out my best version” colours with optimistic versioning and profile-storage consent. Objective analysis is explicitly marked unavailable; no skin-tone inference is fabricated.
 - [ ] Store colour observations separately from user preference: undertone/contrast/palette hypotheses must be evidence-labelled, confidence-aware and correctable.
 - [ ] Define a controlled capture protocol (neutral lighting guidance, exposure/white-balance checks, camera/device metadata, reference calibration where appropriate) and detect unsuitable lighting before analysis.
 - [ ] Evaluate colour analysis across skin tones, devices, lighting conditions and regions. Report subgroup performance and uncertainty; do not collapse preference into an objective “best colour”.
@@ -158,7 +158,7 @@
 - [~] Wardrobe has authenticated persistence and feedback contracts; durable production DB, storage deletion worker and end-to-end integrations remain gated.
 - [~] FCI contract exists; no independently validated calibrated provider or proven 4% measurement accuracy.
 - [~] Virtual Twin exposes truthful capability boundaries; its persistent registry/asset/consent work is in open PRs and not yet a production capability.
-- [ ] PNELLY wardrobe companion, complete personal outfit graph, human-reviewed dataset, saved-outfit piece editing, multi-product try-on, and end-to-end marketplace-to-wardrobe/Twin flows remain to be integrated and verified.
+- [~] Saved-outfit piece editing is implemented in merged PR #135. The user-declared colour preference profile is under review on a separate feature branch. PNELLY wardrobe companion, complete personal outfit graph, human-reviewed dataset, multi-product try-on, and end-to-end marketplace-to-wardrobe/Twin flows remain to be integrated and verified.
 - [ ] Resolve PR #130 on a fresh base before integrating its privacy data-rights work; do not merge stale conflicting branch state.
 - [ ] Reconcile existing open PRs and branches before creating parallel implementations. Preserve reviewable feature branches and never bypass CI or domain ownership.
 

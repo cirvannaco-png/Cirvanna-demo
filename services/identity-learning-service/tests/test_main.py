@@ -269,3 +269,67 @@ def test_delete_user_data_removes_profile_consents_and_events(client):
     assert deleted.json()["deleted_events"] == 1
     assert client.get("/v1/tal/export/user-verified-1", headers=auth()).json()["profile"] is None
     assert client.get("/v1/tal/consents/user-verified-1", headers=auth()).json() == []
+
+
+def test_personal_color_profile_is_user_declared_versioned_and_consent_gated(client):
+    denied = client.get("/v1/color-profiles/user-verified-1", headers=auth())
+    assert denied.status_code == 403
+    consent(client, scope="profile_storage", receipt="receipt-color-profile")
+    empty = client.get("/v1/color-profiles/user-verified-1", headers=auth())
+    assert empty.status_code == 200
+    assert empty.json()["profile_version"] == 0
+    assert empty.json()["analysis"]["status"] == "unavailable"
+    assert empty.json()["analysis"]["reason_code"] == "NO_VALIDATED_COLOR_ANALYSIS_MODEL"
+
+    body = {
+        "expected_version": 0,
+        "liked_colors": [" Emerald ", "Cobalt"],
+        "disliked_colors": ["Neon Yellow"],
+        "best_version_colors": ["Burgundy", "emerald"],
+    }
+    saved = client.put("/v1/color-profiles/user-verified-1", headers=auth(), json=body)
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["profile_version"] == 1
+    assert saved.json()["liked_colors"] == ["emerald", "cobalt"]
+    assert saved.json()["disliked_colors"] == ["neon yellow"]
+    assert saved.json()["best_version_colors"] == ["burgundy", "emerald"]
+    assert saved.json()["analysis"]["status"] == "unavailable"
+
+    conflict = client.put("/v1/color-profiles/user-verified-1", headers=auth(), json=body)
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["code"] == "COLOR_PROFILE_VERSION_CONFLICT"
+
+
+def test_personal_color_profile_rejects_duplicate_values_and_revoked_consent(client):
+    consent(client, scope="profile_storage", receipt="receipt-color-profile")
+    duplicate = client.put("/v1/color-profiles/user-verified-1", headers=auth(), json={
+        "expected_version": 0,
+        "liked_colors": ["Emerald", " emerald "],
+    })
+    assert duplicate.status_code == 422
+    revoked = client.post(
+        "/v1/tal/consents/receipt-color-profile/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert revoked.status_code == 200
+    denied = client.put("/v1/color-profiles/user-verified-1", headers=auth(), json={
+        "expected_version": 0, "liked_colors": ["emerald"],
+    })
+    assert denied.status_code == 403
+
+
+def test_personal_color_profile_is_included_in_export_and_deleted_with_user_data(client):
+    consent(client, scope="profile_storage", receipt="receipt-color-profile")
+    saved = client.put("/v1/color-profiles/user-verified-1", headers=auth(), json={
+        "expected_version": 0,
+        "liked_colors": ["teal"],
+        "disliked_colors": ["neon pink"],
+        "best_version_colors": ["deep plum"],
+    })
+    assert saved.status_code == 200
+    exported = client.get("/v1/tal/export/user-verified-1", headers=auth()).json()
+    assert exported["color_profile"]["liked_colors"] == ["teal"]
+    deleted = client.delete("/v1/tal/users/user-verified-1", headers=auth())
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted_color_profile"] is True
+    assert client.get("/v1/color-profiles/user-verified-1", headers=auth()).status_code == 403

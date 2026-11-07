@@ -74,6 +74,21 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
 </form>
 </section>
 
+<section class="panel hidden" id="colorProfilePanel">
+<div class="eyebrow">Style Desk · Personal colour profile</div><h2>Colours that feel like you</h2>
+<p class="small">Keep your preferences separate: colours you like, colours you dislike, and colours you feel bring out your best version. Your choices are personal declarations, not a machine verdict.</p>
+<form id="colorProfileForm">
+<div class="grid">
+<div class="field"><label for="likedColors">Colours I like</label><input id="likedColors" maxlength="1200" placeholder="e.g. emerald, cream, cobalt"></div>
+<div class="field"><label for="dislikedColors">Colours I dislike</label><input id="dislikedColors" maxlength="1200" placeholder="e.g. neon yellow, dusty beige"></div>
+<div class="field"><label for="bestVersionColors">Colours that bring out my best version</label><input id="bestVersionColors" maxlength="1200" placeholder="e.g. burgundy, forest green, ivory"></div>
+</div>
+<div class="row"><button class="btn primary" type="submit" id="saveColorProfile" disabled>Save colour profile</button></div>
+</form>
+<div class="status" id="colorProfileStatus" role="status">Connect your account and enable profile storage to edit this profile.</div>
+<div class="small" id="colorAnalysisStatus">Objective skin-tone and undertone analysis is not yet available. Lighting-aware analysis will remain disabled until a validated model and representative evaluation data pass release gates.</div>
+</section>
+
 <section class="panel hidden" id="outfitsPanel">
 <div class="eyebrow">Saved looks</div><h2>Build and edit outfits</h2>
 <p class="small">Create a look from items you own. Replace or remove one piece without changing the rest. Marketplace products that you have not purchased are not added to your wardrobe by this feature.</p>
@@ -113,6 +128,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
   let token = "";
   let styleReceipt = null;
   let profileReceipt = null;
+  let colorProfileVersion = 0;
   let items = [];
   const api = async (path, options = {}) => {
     const response = await fetch(path, {
@@ -261,6 +277,52 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
       actions.append(editButton);
       card.append(actions, editor);
       root.append(card);
+    }
+  };
+  const parseColorList = value => [...new Set(value.split(",").map(item => item.trim().toLowerCase()).filter(Boolean))];
+  const loadColorProfile = async () => {
+    if (!profileReceipt) {
+      status("colorProfileStatus", "Enable profile storage consent before loading or saving your personal colour preferences.");
+      $("saveColorProfile").disabled = true;
+      return;
+    }
+    const data = await api("/api/style/color-profile");
+    colorProfileVersion = data.profile_version || 0;
+    $("likedColors").value = (data.liked_colors || []).join(", ");
+    $("dislikedColors").value = (data.disliked_colors || []).join(", ");
+    $("bestVersionColors").value = (data.best_version_colors || []).join(", ");
+    $("saveColorProfile").disabled = false;
+    const analysis = data.analysis || {};
+    $("colorAnalysisStatus").textContent = analysis.message || "Objective colour analysis is unavailable.";
+    status("colorProfileStatus", "Loaded your declared colour preferences · profile v" + colorProfileVersion + ".", "good");
+  };
+  const saveColorProfile = async event => {
+    event.preventDefault();
+    if (!profileReceipt) {
+      status("colorProfileStatus", "Grant profile storage consent before saving.", "error");
+      return;
+    }
+    $("saveColorProfile").disabled = true;
+    try {
+      const data = await api("/api/style/color-profile", {
+        method:"PUT",
+        body:JSON.stringify({
+          expected_version:colorProfileVersion,
+          liked_colors:parseColorList($("likedColors").value),
+          disliked_colors:parseColorList($("dislikedColors").value),
+          best_version_colors:parseColorList($("bestVersionColors").value)
+        })
+      });
+      colorProfileVersion = data.profile_version;
+      $("colorAnalysisStatus").textContent = data.analysis?.message || "Objective colour analysis remains unavailable.";
+      status("colorProfileStatus", "Saved your colour preferences · profile v" + colorProfileVersion + ".", "good");
+    } catch (error) {
+      status("colorProfileStatus", error.message, "error");
+      if (error.message.includes("COLOR_PROFILE_VERSION_CONFLICT")) {
+        try { await loadColorProfile(); } catch (_) { /* keep the conflict visible */ }
+      }
+    } finally {
+      $("saveColorProfile").disabled = !profileReceipt;
     }
   };
   const wardrobeOption = (item, selected = false) => {
@@ -423,6 +485,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     styleReceipt = activeReceipts.find(x => x.scope === "style_learning" || x.scope === "personalization")?.receipt_id || null;
     profileReceipt = activeReceipts.find(x => x.scope === "profile_storage")?.receipt_id || null;
     updateConsentState();
+    if (profileReceipt) await loadColorProfile();
     $("learningPanel").classList.remove("hidden");
     $("closetPanel").classList.remove("hidden");
     $("recommendPanel").classList.remove("hidden");
@@ -432,7 +495,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
   const createConsent = async scope => {
     const data = await api("/api/wardrobe/consents", {method:"POST", body:JSON.stringify({scope,granted:true})});
     if (scope === "style_learning") styleReceipt = data.receipt_id;
-    if (scope === "profile_storage") profileReceipt = data.receipt_id;
+    if (scope === "profile_storage") { profileReceipt = data.receipt_id; await loadColorProfile(); }
     renderItems();
     updateConsentState();
     status("learningStatus", scope + " consent recorded.", "good");
@@ -442,7 +505,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     if (!receipt) return;
     await api("/api/wardrobe/consents/" + encodeURIComponent(receipt) + "/revoke", {method:"POST"});
     if (scope === "style_learning") styleReceipt = null;
-    if (scope === "profile_storage") profileReceipt = null;
+    if (scope === "profile_storage") { profileReceipt = null; $("saveColorProfile").disabled = true; status("colorProfileStatus", "Profile storage consent revoked. Further profile reads and writes are blocked."); }
     renderItems();
     updateConsentState();
     status("learningStatus", scope + " consent revoked. New learning writes are blocked.", "good");
@@ -528,6 +591,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     catch (error) { status("connectionStatus",error.message,"error"); }
   });
   $("addItemForm").addEventListener("submit", addWardrobeItem);\n  $("createOutfitForm").addEventListener("submit", createOutfit);
+  $("colorProfileForm").addEventListener("submit", saveColorProfile);
   $("refresh").addEventListener("click", async () => {
     try { await loadWardrobe(); }
     catch (error) { status("feedbackStatus",error.message,"error"); }
