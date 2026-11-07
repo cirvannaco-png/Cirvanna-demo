@@ -432,6 +432,17 @@ def test_checkout_reserves_stock_idempotently_and_only_signed_paid_webhook_settl
     orders = client.get("/orders", headers=buyer).json()
     assert orders["total"] == 1 and orders["items"][0]["status"] == "paid"
     assert client.get("/cart", headers=buyer).json()["items"] == []
+    # Ownership sync is driven only by a durable event emitted in the paid
+    # settlement transaction; cart/save/try-on state cannot create this event.
+    db = TEST_SESSION()
+    outbox = db.query(main.CommerceOutboxEvent).filter_by(aggregate_id=order["order_id"]).all()
+    assert len(outbox) == 1
+    assert outbox[0].event_type == "commerce.order.paid"
+    assert outbox[0].payload["buyer_user_id"] == "buyer-checkout"
+    assert outbox[0].payload["ownership_authority"] == "verified_payment"
+    assert outbox[0].payload["items"][0]["catalog_product_id"] == offer["catalog_product_id"]
+    assert outbox[0].payload["items"][0]["quantity"] == 2
+    db.close()
     replay = client.post("/webhooks/stripe", content=raw, headers={"Stripe-Signature": sig, "Content-Type": "application/json"})
     assert replay.status_code == 200 and replay.json()["duplicate"] is True
 
