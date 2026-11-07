@@ -255,3 +255,135 @@ def test_edit_rejects_whitespace_only_fields(client):
             "command_id": "edit-empty-" + field, field: "   ",
         })
         assert response.status_code == 422
+
+
+def create_active(client, item_id, display_name):
+    response = client.post("/v1/items", headers=auth(), json={
+        "owner_user_id": "user-1", "item_id": item_id,
+        "display_name": display_name, "category": "tops", "attributes": ["cotton"],
+    })
+    assert response.status_code == 201, response.text
+    active = client.post(f"/v1/items/{item_id}/transition", headers=auth(), json={
+        "owner_user_id": "user-1", "expected_version": 1,
+        "target_status": "active", "command_id": "activate-" + item_id,
+    })
+    assert active.status_code == 200, active.text
+
+
+def test_saved_outfit_piece_edit_replaces_only_selected_piece(client):
+    create_active(client, "shirt-001", "Blue shirt")
+    create_active(client, "trouser-001", "Black trousers")
+    create_active(client, "shoe-001", "White shoes")
+    created = client.post("/v1/outfits", headers=auth(), json={
+        "owner_user_id": "user-1", "outfit_id": "outfit-001", "name": "Weekend",
+        "pieces": [
+            {"slot_id": "top-slot", "wardrobe_item_id": "shirt-001"},
+            {"slot_id": "bottom-slot", "wardrobe_item_id": "trouser-001"},
+        ],
+    })
+    assert created.status_code == 201, created.text
+    outfit = created.json()["outfit"]
+    changed = client.patch("/v1/outfits/outfit-001/pieces/top-slot", headers=auth(), json={
+        "owner_user_id": "user-1", "expected_version": 1,
+        "command_id": "replace-top-001", "wardrobe_item_id": "shoe-001",
+    })
+    assert changed.status_code == 200, changed.text
+    result = changed.json()["outfit"]
+    assert result["version"] == 2
+    assert result["pieces"][0]["wardrobe_item_id"] == "shoe-001"
+    assert result["pieces"][0]["item"]["display_name"] == "White shoes"
+    assert result["pieces"][1]["wardrobe_item_id"] == "trouser-001"
+    assert result["pieces"][1]["item"]["display_name"] == "Black trousers"
+
+
+def test_saved_outfit_piece_add_remove_and_version_conflict(client):
+    create_active(client, "shirt-002", "White shirt")
+    create_active(client, "trouser-002", "Grey trousers")
+    create_active(client, "shoe-002", "Brown shoes")
+    created = client.post("/v1/outfits", headers=auth(), json={
+        "owner_user_id": "user-1", "outfit_id": "outfit-002", "name": "Work",
+        "pieces": [{"slot_id": "top-slot", "wardrobe_item_id": "shirt-002"}],
+    })
+    assert created.status_code == 201
+    added = client.post("/v1/outfits/outfit-002/pieces", headers=auth(), json={
+        "owner_user_id": "user-1", "expected_version": 1,
+        "command_id": "add-bottom-001", "slot_id": "bottom-slot",
+        "wardrobe_item_id": "trouser-002",
+    })
+    assert added.status_code == 201, added.text
+    assert added.json()["outfit"]["version"] == 2
+    add_replay = client.post("/v1/outfits/outfit-002/pieces", headers=auth(), json={
+        "owner_user_id": "user-1", "expected_version": 1,
+        "command_id": "add-bottom-001", "slot_id": "bottom-slot",
+        "wardrobe_item_id": "trouser-002",
+    })
+    assert add_replay.status_code == 201
+    assert add_replay.json()["status"] == "replayed"
+    removed = client.patch("/v1/outfits/outfit-002/pieces/top-slot", headers=auth(), json={
+        "owner_user_id": "user-1", "expected_version": 2,
+        "command_id": "remove-top-001", "wardrobe_item_id": None,
+    })
+    assert removed.status_code == 200, removed.text
+    assert len(removed.json()["outfit"]["pieces"]) == 1
+    assert removed.json()["outfit"]["pieces"][0]["wardrobe_item_id"] == "trouser-002"
+    replay = client.patch("/v1/outfits/outfit-002/pieces/top-slot", headers=auth(), json={
+        "owner_user_id": "user-1", "expected_version": 2,
+        "command_id": "remove-top-001", "wardrobe_item_id": None,
+    })
+    assert replay.status_code == 200
+    assert replay.json()["status"] == "replayed"
+    missing_action = client.patch("/v1/outfits/outfit-002/pieces/bottom-slot", headers=auth(), json={
+        "owner_user_id": "user-1", "expected_version": 3, "command_id": "missing-action-001",
+    })
+    assert missing_action.status_code == 422
+    assert missing_action.json()["detail"]["code"] == "OUTFIT_PIECE_ACTION_REQUIRED"
+    stale = client.post("/v1/outfits/outfit-002/pieces", headers=auth(), json={
+        "owner_user_id": "user-1", "expected_version": 1,
+        "command_id": "stale-add-001", "slot_id": "shoe-slot",
+        "wardrobe_item_id": "shoe-002",
+    })
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["code"] == "SAVED_OUTFIT_VERSION_CONFLICT"
+
+
+def test_saved_outfit_rejects_foreign_or_inactive_items_and_duplicate_pieces(client):
+    create(client)
+    create_active(client, "shirt-003", "Linen shirt")
+    create(client, owner_user_id="user-2", item_id="foreign-001")
+    response = client.post("/v1/outfits", headers=auth(), json={
+        "owner_user_id": "user-1", "outfit_id": "outfit-003", "name": "Invalid",
+        "pieces": [{"slot_id": "foreign-slot", "wardrobe_item_id": "foreign-001"}],
+    })
+    assert response.status_code == 404
+    duplicate = client.post("/v1/outfits", headers=auth(), json={
+        "owner_user_id": "user-1", "outfit_id": "outfit-004", "name": "Duplicate",
+        "pieces": [
+            {"slot_id": "one-slot", "wardrobe_item_id": "shirt-003"},
+            {"slot_id": "two-slot", "wardrobe_item_id": "shirt-003"},
+        ],
+    })
+    assert duplicate.status_code == 422
+    inactive = client.post("/v1/outfits", headers=auth(), json={
+        "owner_user_id": "user-1", "outfit_id": "outfit-005", "name": "Draft item",
+        "pieces": [{"slot_id": "draft-slot", "wardrobe_item_id": "item-001"}],
+    })
+    assert inactive.status_code == 409
+
+
+def test_saved_outfits_are_owner_scoped_and_list_hydrates_current_item_details(client):
+    create_active(client, "shirt-004", "Original shirt")
+    created = client.post("/v1/outfits", headers=auth(), json={
+        "owner_user_id": "user-1", "outfit_id": "outfit-006", "name": "Daily",
+        "pieces": [{"slot_id": "top-slot", "wardrobe_item_id": "shirt-004"}],
+    })
+    assert created.status_code == 201
+    edit = client.patch("/v1/items/shirt-004", headers=auth(), json={
+        "owner_user_id": "user-1", "expected_version": 2,
+        "command_id": "rename-shirt-004", "display_name": "Updated shirt",
+    })
+    assert edit.status_code == 200
+    own = client.get("/v1/outfits", headers=auth(), params={"owner_user_id": "user-1"})
+    other = client.get("/v1/outfits", headers=auth(), params={"owner_user_id": "user-2"})
+    assert own.status_code == 200 and len(own.json()["outfits"]) == 1
+    assert own.json()["outfits"][0]["pieces"][0]["item"]["display_name"] == "Updated shirt"
+    assert other.status_code == 200 and other.json()["outfits"] == []

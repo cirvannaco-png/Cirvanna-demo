@@ -74,6 +74,18 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
 </form>
 </section>
 
+<section class="panel hidden" id="outfitsPanel">
+<div class="eyebrow">Saved looks</div><h2>Build and edit outfits</h2>
+<p class="small">Create a look from items you own. Replace or remove one piece without changing the rest. Marketplace products that you have not purchased are not added to your wardrobe by this feature.</p>
+<form id="createOutfitForm" class="grid">
+<div class="field"><label for="outfitName">Outfit name</label><input id="outfitName" required maxlength="160" placeholder="e.g. Weekend linen look"></div>
+<div class="field"><label for="outfitPieces">Choose wardrobe pieces</label><select id="outfitPieces" multiple size="5" required></select><span class="small">Use Ctrl/⌘ or multi-select on your device.</span></div>
+<div class="field"><label>&nbsp;</label><button class="btn primary" type="submit" id="createOutfit">Save outfit</button></div>
+</form>
+<div class="status" id="outfitStatus" role="status">Saved outfits will appear here.</div>
+<div id="savedOutfits"></div>
+</section>
+
 <section class="panel hidden" id="recommendPanel">
 <div class="eyebrow">Outfit and wardrobe discovery</div><h2>What goes with what you own?</h2>
 <p class="small">PNELLY uses the closet's declared categories and attributes, plus your consented style signals. Product facts, offer prices and stock come from Catalog and Commerce. Only CAL-authorized products are returned.</p>
@@ -251,6 +263,146 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
       root.append(card);
     }
   };
+  const wardrobeOption = (item, selected = false) => {
+    const option = document.createElement("option");
+    option.value = item.item_id;
+    option.textContent = item.display_name + " · " + item.category;
+    option.selected = selected;
+    return option;
+  };
+  const refreshOutfitPicker = () => {
+    const picker = $("outfitPieces");
+    const selected = new Set([...picker.selectedOptions].map(option => option.value));
+    picker.replaceChildren();
+    for (const item of items) picker.append(wardrobeOption(item, selected.has(item.item_id)));
+  };
+  const renderOutfits = outfits => {
+    const root = $("savedOutfits");
+    root.replaceChildren();
+    if (!outfits.length) {
+      root.append(text("div", "No saved outfits yet. Choose pieces above to create your first look.", "empty"));
+      return;
+    }
+    for (const outfit of outfits) {
+      const card = document.createElement("article");
+      card.className = "item";
+      card.append(text("h3", outfit.name + " · v" + outfit.version));
+      const pieces = document.createElement("div");
+      pieces.className = "grid";
+      for (const piece of outfit.pieces || []) {
+        const slot = document.createElement("div");
+        slot.className = "panel";
+        const current = piece.item;
+        slot.append(text("div", current ? current.category.toUpperCase() : "UNAVAILABLE PIECE", "eyebrow"));
+        slot.append(text("strong", current ? current.display_name : "This wardrobe item is no longer active."));
+        const replaceLabel = text("label", "Replace this piece");
+        const replacement = document.createElement("select");
+        replacement.append(wardrobeOption({item_id:"",display_name:"Choose a replacement",category:""}));
+        for (const item of items) {
+          if (item.item_id !== piece.wardrobe_item_id && !(outfit.pieces || []).some(other => other.slot_id !== piece.slot_id && other.wardrobe_item_id === item.item_id)) {
+            replacement.append(wardrobeOption(item));
+          }
+        }
+        replacement.addEventListener("change", async () => {
+          if (!replacement.value) return;
+          replacement.disabled = true;
+          try {
+            await api("/api/wardrobe/outfits/" + encodeURIComponent(outfit.outfit_id) + "/pieces/" + encodeURIComponent(piece.slot_id), {
+              method:"PATCH", body:JSON.stringify({
+                expected_version:outfit.version, command_id:crypto.randomUUID(), wardrobe_item_id:replacement.value
+              })
+            });
+            await loadOutfits();
+            status("outfitStatus", "Updated one piece in " + outfit.name + ". Other pieces were preserved.", "good");
+          } catch (error) {
+            status("outfitStatus", error.message, "error");
+            await loadOutfits();
+          }
+        });
+        slot.append(replaceLabel, replacement);
+        const remove = document.createElement("button");
+        remove.type = "button";
+        remove.className = "btn subtle";
+        remove.textContent = "Remove piece";
+        remove.disabled = (outfit.pieces || []).length <= 1;
+        remove.addEventListener("click", async () => {
+          remove.disabled = true;
+          try {
+            await api("/api/wardrobe/outfits/" + encodeURIComponent(outfit.outfit_id) + "/pieces/" + encodeURIComponent(piece.slot_id), {
+              method:"PATCH", body:JSON.stringify({
+                expected_version:outfit.version, command_id:crypto.randomUUID(), wardrobe_item_id:null
+              })
+            });
+            await loadOutfits();
+            status("outfitStatus", "Removed one piece from " + outfit.name + ". Remaining pieces were preserved.", "good");
+          } catch (error) {
+            status("outfitStatus", error.message, "error");
+            await loadOutfits();
+          }
+        });
+        slot.append(remove);
+        pieces.append(slot);
+      }
+      card.append(pieces);
+      const addRow = document.createElement("div");
+      addRow.className = "row";
+      const addSelect = document.createElement("select");
+      addSelect.append(wardrobeOption({item_id:"",display_name:"Add a wardrobe item",category:""}));
+      const used = new Set((outfit.pieces || []).map(piece => piece.wardrobe_item_id));
+      for (const item of items) if (!used.has(item.item_id)) addSelect.append(wardrobeOption(item));
+      const add = document.createElement("button");
+      add.type = "button";
+      add.className = "btn";
+      add.textContent = "Add piece";
+      add.disabled = addSelect.options.length <= 1;
+      add.addEventListener("click", async () => {
+        if (!addSelect.value) return;
+        add.disabled = true;
+        try {
+          await api("/api/wardrobe/outfits/" + encodeURIComponent(outfit.outfit_id) + "/pieces", {
+            method:"POST", body:JSON.stringify({
+              expected_version:outfit.version, command_id:crypto.randomUUID(), wardrobe_item_id:addSelect.value
+            })
+          });
+          await loadOutfits();
+          status("outfitStatus", "Added one piece to " + outfit.name + ".", "good");
+        } catch (error) {
+          status("outfitStatus", error.message, "error");
+          await loadOutfits();
+        }
+      });
+      addRow.append(addSelect, add);
+      card.append(addRow);
+      root.append(card);
+    }
+  };
+  const loadOutfits = async () => {
+    const data = await api("/api/wardrobe/outfits");
+    renderOutfits(data.outfits || []);
+    refreshOutfitPicker();
+  };
+  const createOutfit = async event => {
+    event.preventDefault();
+    const selected = [...$("outfitPieces").selectedOptions].map(option => option.value).filter(Boolean);
+    if (!selected.length) {
+      status("outfitStatus", "Choose at least one wardrobe piece.", "error");
+      return;
+    }
+    $("createOutfit").disabled = true;
+    try {
+      const data = await api("/api/wardrobe/outfits", {
+        method:"POST", body:JSON.stringify({name:$("outfitName").value.trim(), wardrobe_item_ids:selected})
+      });
+      $("outfitName").value = "";
+      $("outfitPieces").selectedIndex = -1;
+      await loadOutfits();
+      status("outfitStatus", "Saved " + data.outfit.name + " with " + data.outfit.pieces.length + " pieces.", "good");
+    } catch (error) {
+      status("outfitStatus", error.message, "error");
+    } finally {
+      $("createOutfit").disabled = false;
+    }
+  };
   const loadWardrobe = async () => {
     const data = await api("/api/wardrobe/items");
     items = data.items || [];
@@ -375,7 +527,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     try { await connect(); }
     catch (error) { status("connectionStatus",error.message,"error"); }
   });
-  $("addItemForm").addEventListener("submit", addWardrobeItem);
+  $("addItemForm").addEventListener("submit", addWardrobeItem);\n  $("createOutfitForm").addEventListener("submit", createOutfit);
   $("refresh").addEventListener("click", async () => {
     try { await loadWardrobe(); }
     catch (error) { status("feedbackStatus",error.message,"error"); }

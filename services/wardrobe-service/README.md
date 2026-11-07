@@ -2,7 +2,7 @@
 
 **Status:** authenticated API and SQLAlchemy persistence contract implemented; production database and object-storage deletion worker still require deployment and validation.
 
-The service owns user wardrobe item records, including item lifecycle, catalog-product references, user-authorized opaque image asset IDs, explicit photo-storage consent, optimistic version checks and a durable asset-deletion outbox. The PostgreSQL schema is in `migrations/0001_initial.sql`. The application does not automatically create the production schema. SQLite is test-only.
+The service owns user wardrobe item records and saved outfit compositions. Item records include lifecycle, catalog-product references, user-authorized opaque image asset IDs, explicit photo-storage consent, optimistic version checks and a durable asset-deletion outbox. Saved outfits contain references to active, owner-scoped wardrobe items; they do not copy Catalog facts or make unpurchased marketplace products owned. The PostgreSQL schema is applied through ordered migrations `0001_initial.sql`, `0002_wardrobe_learning_events.sql` and `0003_saved_outfits.sql`. The application does not automatically create the production schema. SQLite is test-only.
 
 ## Configuration
 
@@ -16,6 +16,11 @@ The service owns user wardrobe item records, including item lifecycle, catalog-p
 - `GET /v1/items?owner_user_id=...` lists only the requested owner's items.
 - `GET /v1/items/{item_id}?owner_user_id=...` gets an owner-scoped item.
 - `POST /v1/items/{item_id}/transition` applies a version-checked lifecycle command.
+- `PATCH /v1/items/{item_id}` edits only one owned item with optimistic concurrency and command replay protection.
+- `POST /v1/outfits` creates a saved outfit from active items owned by the same user.
+- `GET /v1/outfits?owner_user_id=...` lists that user's saved outfits and hydrates each piece from its current wardrobe item record.
+- `POST /v1/outfits/{outfit_id}/pieces` adds one owned item to an outfit.
+- `PATCH /v1/outfits/{outfit_id}/pieces/{slot_id}` replaces or removes one piece; every unaffected piece remains unchanged. Mutations require expected version and command ID.
 - Moving an image-bearing item to deleted records a pending asset deletion in the same transaction. This confirms enqueueing only; it does not mean an object has been physically purged.
 
 All routes are internal. The trusted ingress must bind the caller's authenticated user to `owner_user_id`; do not pass through an arbitrary client-supplied owner ID from public ingress without comparing it to the verified identity. Catalog remains the owner of product metadata; Wardrobe stores only catalog IDs.
@@ -40,4 +45,4 @@ Internal endpoint POST /v1/feedback records a clear user interaction against an 
 - The Wardrobe service does not import the quarantined CFRP V6 candidate or emit the unverified CRFP concept. See ADR-0002 and issue #76; neither is authorized in runtime.
 - Configure IDENTITY_SERVICE_URL, IDENTITY_SERVICE_TOKEN, NPL_SERVICE_URL, and NPL_SERVICE_TOKEN in the service secret manager. Missing providers or consent fail closed.
 
-Apply migrations/0002_wardrobe_learning_events.sql after 0001_initial.sql. This table is an audit mirror; USI/TAL and NPL remain the authoritative stores.
+Apply migrations in order: `0001_initial.sql`, `0002_wardrobe_learning_events.sql`, then `0003_saved_outfits.sql`. The learning table is an audit mirror; USI/TAL and NPL remain the authoritative stores. Service readiness now requires the `wardrobe_outfits` table as well as the existing item, learning and deletion-outbox schema.
