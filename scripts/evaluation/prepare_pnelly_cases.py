@@ -2,7 +2,9 @@
 """Join pseudonymous PNELLY candidate traces with blinded human reviews.
 
 Input files are JSONL. Trace rows may be raw Gateway responses or objects
-containing evaluation_trace directly. Reviews use:
+containing evaluation_trace directly. The coordinator must verify reviewer
+identities outside this tool; this script enforces distinct reviewer keys only.
+Reviews use:
   case_id, look_id, reviewer_key, relevance (1..5), exclusion_violation (bool)
 Exposure rows are passed through to the evaluator after their case/look IDs
 are checked. No participant or garment identifiers are resolved here.
@@ -169,7 +171,8 @@ def prepare_cases(
         "candidate_pool_truncated_trace_count": truncated_count,
         "no_result_roles_by_role": dict(no_result_roles),
         "assigned_systems": sorted({case["assigned_system"] for case in cases}),
-        "human_labels_are_real_input": True,
+        "review_data_source": "external_reviewer_file",
+        "reviewer_identity_provenance_verified": False,
     }
     return cases, summary
 
