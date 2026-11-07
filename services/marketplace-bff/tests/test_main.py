@@ -1147,3 +1147,48 @@ def test_pnelly_daily_looks_hides_server_side_evaluation_trace_from_browser(clie
     assert "evaluation_trace" not in response.json()["recommendation"]
     assert "participant_do_not_expose" not in response.text
     assert "case_do_not_expose" not in response.text
+
+
+def test_wardrobe_category_bff_uses_verified_session_and_validates_taxonomy(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42"}),
+        FakeResponse({
+            "taxonomy_version": "1.0.0",
+            "categories": [
+                {"id": "shoes", "label": "Shoes and footwear", "group": "footwear"},
+                {"id": "makeup", "label": "Makeup", "group": "beauty"},
+            ],
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get("/api/wardrobe/categories", headers={"Authorization": "Bearer signed-session"})
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.json()["taxonomy_version"] == "1.0.0"
+    assert {item["id"] for item in response.json()["categories"]} == {"shoes", "makeup"}
+    assert fake.calls[1][1] == "https://wardrobe.example.test/v1/categories"
+
+
+def test_wardrobe_category_bff_rejects_malformed_upstream_taxonomy(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42"}),
+        FakeResponse({"taxonomy_version": "1.0.0", "categories": [{"id": "shoes"}]}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get("/api/wardrobe/categories", headers={"Authorization": "Bearer signed-session"})
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "WARDROBE_CATEGORY_RESPONSE_INVALID"
+
+
+def test_wardrobe_page_loads_shared_category_taxonomy(client):
+    response = client.get("/wardrobe")
+    assert response.status_code == 200
+    assert 'api("/api/wardrobe/categories")' in response.text
+    assert 'populate($("itemCategory"), false)' in response.text
+    assert 'populate($("category"), true)' in response.text
