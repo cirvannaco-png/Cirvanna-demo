@@ -10,6 +10,7 @@ Status is intentionally evidence-based. A code path or automated emulation is no
 - [x] Evaluation trace is disabled by default and fails closed when its HMAC key is missing or too short.
 - [x] The trace carries role-specific candidate pools, ranking order/scores, NPL-blocked candidate references, and keyed pseudonyms.
 - [x] The public BFF strips the internal evaluation trace before returning a browser response.
+- [x] The Gateway emits a research trace only after verifying an active Identity `style_learning` or `personalization` receipt; without it, Daily Looks continues with no trace.
 - [x] The trace handoff includes a two-reviewer joiner, schema validation, a blinded metadata-review page, role-level evaluation, and no-result rates.
 - [x] Baseline comparison is replayed offline against the same candidate pool; it is not represented as a randomized live experiment.
 - [x] CI includes responsive Chromium viewport checks for the demo Marketplace/Wardrobe pages, including a dedicated Living Filters page if one exists.
