@@ -44,6 +44,14 @@ REQUIRED_ARTIFACTS = (
 )
 
 
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def _verify_artifact_manifest(weights_dir: Path, source_ref: str) -> tuple[bool, str]:
     """Require a source-bound SHA-256 manifest for every downloaded core weight."""
     manifest_path = weights_dir / "manifest.json"
@@ -51,7 +59,9 @@ def _verify_artifact_manifest(weights_dir: Path, source_ref: str) -> tuple[bool,
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError):
         return False, "model_artifact_manifest_missing_or_invalid"
-    if not isinstance(manifest, dict) or manifest.get("source_commit") != source_ref:
+    if not isinstance(manifest, dict) or manifest.get("schema_version") != 1:
+        return False, "model_artifact_manifest_invalid"
+    if manifest.get("source_commit") != source_ref:
         return False, "model_artifact_source_mismatch"
     artifacts = manifest.get("artifacts")
     if not isinstance(artifacts, dict):
@@ -65,7 +75,10 @@ def _verify_artifact_manifest(weights_dir: Path, source_ref: str) -> tuple[bool,
             return False, "model_artifact_path_invalid"
         if not target.is_file():
             return False, "model_artifact_missing"
-        digest = hashlib.sha256(target.read_bytes()).hexdigest()
+        try:
+            digest = _sha256_file(target)
+        except OSError:
+            return False, "model_artifact_unreadable"
         if not hmac.compare_digest(digest, expected):
             return False, "model_artifact_checksum_mismatch"
     return True, "verified"
