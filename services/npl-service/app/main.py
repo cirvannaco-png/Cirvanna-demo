@@ -141,11 +141,13 @@ def export_user_data(user_id: str) -> dict[str, object]:
     if not normalized:
         raise HTTPException(422, detail={"code": "INVALID_NPL_USER_ID"})
     try:
-        values = _store().list_preferences(normalized)
+        exported = _store().export_user_data(normalized)
         return {
             "user_id": normalized,
             "export_version": 1,
-            "preferences": [_preference_json(value) for value in values],
+            "preferences": [_preference_json(value) for value in exported["preferences"]],
+            "rejection_events": exported["rejection_events"],
+            "correction_events": exported["correction_events"],
         }
     except HTTPException:
         raise
