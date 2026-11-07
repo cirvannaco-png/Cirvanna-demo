@@ -160,7 +160,94 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
         button.addEventListener("click", () => sendFeedback(item, signal));
         actions.append(button);
       }
-      card.append(actions);
+      const editButton = document.createElement("button");
+      editButton.type = "button";
+      editButton.className = "btn";
+      editButton.textContent = "Edit piece";
+      const editor = document.createElement("form");
+      editor.className = "item-editor hidden";
+      const nameField = document.createElement("div");
+      nameField.className = "field";
+      const nameLabel = text("label", "Item name");
+      const nameInput = document.createElement("input");
+      nameInput.type = "text";
+      nameInput.required = true;
+      nameInput.maxLength = 200;
+      nameInput.value = item.display_name || "";
+      nameField.append(nameLabel, nameInput);
+      const categoryField = document.createElement("div");
+      categoryField.className = "field";
+      const categoryLabel = text("label", "Category");
+      const categoryInput = document.createElement("select");
+      for (const [value,label] of [
+        ["tops","Tops"],["outerwear","Outerwear"],["lower_body","Bottoms"],
+        ["dress","Dresses"],["shoes","Shoes"],["accessories","Accessories"],
+        ["makeup","Makeup"],["jewellery","Jewellery"],["glasses","Glasses / frames"],
+        ["ties","Ties"],["bags","Bags"],["watches","Watches"],["other","Other"]
+      ]) {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = label;
+        categoryInput.append(option);
+      }
+      if (![...categoryInput.options].some(option => option.value === item.category)) {
+        const option = document.createElement("option");
+        option.value = item.category;
+        option.textContent = item.category;
+        categoryInput.append(option);
+      }
+      categoryInput.value = item.category || "other";
+      categoryField.append(categoryLabel, categoryInput);
+      const attributesField = document.createElement("div");
+      attributesField.className = "field";
+      const attributesLabel = text("label", "Attributes (comma-separated)");
+      const attributesInput = document.createElement("input");
+      attributesInput.type = "text";
+      attributesInput.maxLength = 500;
+      attributesInput.value = (item.attributes || []).join(", ");
+      attributesField.append(attributesLabel, attributesInput);
+      const save = document.createElement("button");
+      save.type = "submit";
+      save.className = "btn primary";
+      save.textContent = "Save this piece";
+      const cancel = document.createElement("button");
+      cancel.type = "button";
+      cancel.className = "btn subtle";
+      cancel.textContent = "Cancel";
+      cancel.addEventListener("click", () => editor.classList.add("hidden"));
+      const editorStatus = text("div", "Only this item will be changed.", "small");
+      editor.append(nameField, categoryField, attributesField, save, cancel, editorStatus);
+      editButton.addEventListener("click", () => editor.classList.toggle("hidden"));
+      editor.addEventListener("submit", async event => {
+        event.preventDefault();
+        save.disabled = true;
+        editorStatus.textContent = "Saving this item…";
+        try {
+          const result = await api("/api/wardrobe/items/" + encodeURIComponent(item.item_id), {
+            method: "PATCH",
+            body: JSON.stringify({
+              expected_version: item.version,
+              command_id: crypto.randomUUID(),
+              display_name: nameInput.value.trim(),
+              category: categoryInput.value,
+              attributes: attributesInput.value.split(",").map(value => value.trim()).filter(Boolean)
+            })
+          });
+          items = items.map(current => current.item_id === item.item_id ? result.item : current);
+          renderItems();
+          status("feedbackStatus", "Updated " + result.item.display_name + ". Other wardrobe items were left unchanged.", "good");
+        } catch (error) {
+          editorStatus.textContent = error.message;
+          status("feedbackStatus", error.message, "error");
+          if (error.message.includes("WARDROBE_VERSION_CONFLICT")) {
+            try { await loadWardrobe(); } catch (_) { /* preserve the original conflict for the user */ }
+          }
+        } finally {
+          save.disabled = false;
+        }
+      });
+      actions.append(editButton);
+      card.append(actions, editor);
       root.append(card);
     }
   };
