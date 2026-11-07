@@ -818,3 +818,328 @@ def test_wardrobe_page_exposes_personal_color_profile_and_analysis_boundary(clie
     assert 'api("/api/style/color-profile")' in response.text
     assert "NO_VALIDATED_COLOR_ANALYSIS_MODEL" not in response.text
     assert "Objective skin-tone and undertone analysis is not yet available" in response.text
+
+
+def test_wardrobe_learning_export_combines_verified_tal_npl_and_feedback(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({
+            "subject_id": "signed-user-42",
+            "tal": {"events": [{"event_id": "tal-event-1"}]},
+            "npl": {"user_id": "signed-user-42", "preferences": [{"preference_id": "avoid-blue"}]},
+        }),
+        FakeResponse({"owner_user_id": "signed-user-42", "items": [{"event_id": "wardrobe-event-1"}]}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get("/api/wardrobe/learning/export", headers={"Authorization": "Bearer signed-session"})
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["subject_id"] == "signed-user-42"
+    assert data["tal"]["events"][0]["event_id"] == "tal-event-1"
+    assert data["npl"]["preferences"][0]["preference_id"] == "avoid-blue"
+    assert data["wardrobe_feedback"][0]["event_id"] == "wardrobe-event-1"
+    assert fake.calls[1][0] == "GET"
+    assert fake.calls[1][1] == "https://decision.example.test/v1/me/learning/export"
+    assert fake.calls[1][2]["headers"]["X-End-User-Authorization"] == "Bearer signed-session"
+    assert fake.calls[2][1] == "https://wardrobe.example.test/v1/feedback"
+    assert fake.calls[2][2]["params"]["owner_user_id"] == "signed-user-42"
+
+def test_wardrobe_learning_export_rejects_cross_subject_npl_payload(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({
+            "subject_id": "signed-user-42",
+            "tal": {"events": []},
+            "npl": {"user_id": "another-user", "preferences": []},
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get("/api/wardrobe/learning/export", headers={"Authorization": "Bearer signed-session"})
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "LEARNING_EXPORT_SCOPE_MISMATCH"
+    assert len(fake.calls) == 2
+
+def test_wardrobe_preference_retraction_uses_gateway_verified_subject(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"preference": {"preference_id": "avoid-blue", "active": False}, "retracted": True}, status_code=200),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/preferences/avoid-blue/retract",
+        headers={"Authorization": "Bearer signed-session"},
+        json={"correction_event_id": "correction-123"},
+    )
+    assert response.status_code == 200, response.text
+    assert fake.calls[1][1] == "https://decision.example.test/v1/me/npl/preferences/avoid-blue/retract"
+    assert fake.calls[1][2]["json"] == {"correction_event_id": "correction-123"}
+    assert fake.calls[1][2]["headers"]["X-End-User-Authorization"] == "Bearer signed-session"
+
+def test_wardrobe_preference_retraction_rejects_client_subject_override(client, monkeypatch):
+    response = client.post(
+        "/api/wardrobe/preferences/avoid-blue/retract",
+        headers={"Authorization": "Bearer signed-session"},
+        json={"correction_event_id": "correction-123", "user_id": "another-user"},
+    )
+    assert response.status_code == 422
+
+def test_wardrobe_learning_delete_erases_gateway_and_local_audit_records(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"status": "deleted", "tal": {}, "npl": {}}),
+        FakeResponse({"status": "deleted", "deleted_feedback_events": 3}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.delete("/api/wardrobe/learning", headers={"Authorization": "Bearer signed-session"})
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["status"] == "deleted"
+    assert result["identity_and_npl_deleted"] is True
+    assert result["wardrobe_audit_deleted"] is True
+    assert result["deleted_wardrobe_feedback_events"] == 3
+    assert fake.calls[1][0] == "DELETE"
+    assert fake.calls[1][1] == "https://decision.example.test/v1/me/learning/data"
+    assert fake.calls[2][0] == "DELETE"
+    assert fake.calls[2][2]["params"]["owner_user_id"] == "signed-user-42"
+
+def test_wardrobe_learning_delete_reports_partial_erasure_without_deleting_local_audit(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"detail": {"code": "LEARNING_DELETION_PARTIAL"}}, status_code=503),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.delete("/api/wardrobe/learning", headers={"Authorization": "Bearer signed-session"})
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "LEARNING_DELETION_PARTIAL"
+    assert len(fake.calls) == 2
+
+def test_wardrobe_learning_export_requires_signed_session(client):
+    response = client.get("/api/wardrobe/learning/export")
+    assert response.status_code == 401
+
+def test_pnelly_daily_looks_uses_verified_wardrobe_and_gateway_subject(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+
+    active_item = {
+        "owner_user_id": "signed-user-42",
+        "item_id": "shirt-001",
+        "display_name": "Blue linen shirt",
+        "category": "tops",
+        "attributes": ["blue", "linen"],
+        "status": "active",
+        "image_asset_id": "private-asset-must-not-be-forwarded",
+    }
+    recommendation = {
+        "look_count": 3,
+        "looks": [
+            {"role": role, "status": "needs_input", "item_ids": [], "items": [],
+             "missing": ["a top and a bottom, or a one-piece outfit"],
+             "virtual_twin_preview": {"status": "unavailable"}}
+            for role in ("everyday", "elevated", "explore")
+        ],
+    }
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"owner_user_id": "signed-user-42", "items": [active_item]}),
+        FakeResponse({
+            "schema_version": "1.0",
+            "request_id": "will-be-uuid",
+            "mode": "pnelly_wardrobe_daily_looks",
+            "recommendation": recommendation,
+        }),
+    ])
+
+    # The BFF generates the request ID; mirror it in the fake upstream result.
+    original_post = fake.post
+
+    async def post_with_request_echo(url, **kwargs):
+        if url == "https://decision.example.test/v1/pnelly/daily-looks":
+            fake.responses[0]._payload["request_id"] = kwargs["json"]["request_id"]
+        return await original_post(url, **kwargs)
+
+    fake.post = post_with_request_echo
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/pnelly/daily-looks",
+        headers={"Authorization": "Bearer signed-session"},
+        json={"occasion": "work", "climate": "hot_dry", "timezone": "Africa/Nairobi"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store, private"
+    call = fake.calls[2]
+    assert call[1] == "https://decision.example.test/v1/pnelly/daily-looks"
+    assert call[2]["headers"]["X-End-User-Authorization"] == "Bearer signed-session"
+    sent_items = call[2]["json"]["wardrobe_items"]
+    assert sent_items[0]["owner_user_id"] == "signed-user-42"
+    assert "image_asset_id" not in sent_items[0]
+    assert call[2]["json"]["occasion"] == "work"
+    assert call[2]["json"]["climate"] == "hot_dry"
+    assert call[2]["json"]["local_date"]
+    assert "DECISION_GATEWAY_TOKEN" not in response.text
+
+def test_pnelly_daily_looks_rejects_cross_subject_wardrobe_data(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({
+            "owner_user_id": "signed-user-42",
+            "items": [{"owner_user_id": "another-user", "item_id": "foreign-001", "status": "active"}],
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/pnelly/daily-looks",
+        headers={"Authorization": "Bearer signed-session"},
+        json={"timezone": "Africa/Nairobi"},
+    )
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "PNELLY_WARDROBE_SCOPE_MISMATCH"
+
+def test_pnelly_daily_looks_rejects_gateway_response_with_missing_or_reordered_roles(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+    malformed = {
+        "mode": "pnelly_wardrobe_daily_looks",
+        "recommendation": {
+            "look_count": 3,
+            "looks": [
+                {"role": "everyday"},
+                {"role": "explore"},
+                {"role": "elevated"},
+            ],
+        },
+    }
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"owner_user_id": "signed-user-42", "items": []}),
+        FakeResponse(malformed),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/pnelly/daily-looks",
+        headers={"Authorization": "Bearer signed-session"},
+        json={"timezone": "Africa/Nairobi"},
+    )
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "PNELLY_RECOMMENDATION_SCHEMA_INVALID"
+
+def test_pnelly_daily_looks_rejects_unverified_twin_preview_claims(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+    forged_preview = {
+        "mode": "pnelly_wardrobe_daily_looks",
+        "recommendation": {
+            "look_count": 3,
+            "looks": [
+                {
+                    "role": role,
+                    "status": "ready",
+                    "items": [],
+                    "virtual_twin_preview": {
+                        "status": "available",
+                        "output_asset_id": "unverified-render-asset-001",
+                    },
+                }
+                for role in ("everyday", "elevated", "explore")
+            ],
+        },
+    }
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"owner_user_id": "signed-user-42", "items": []}),
+        FakeResponse(forged_preview),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/pnelly/daily-looks",
+        headers={"Authorization": "Bearer signed-session"},
+        json={"timezone": "Africa/Nairobi"},
+    )
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "PNELLY_RECOMMENDATION_SCHEMA_INVALID"
+
+def test_legacy_daily_looks_bff_route_is_hidden_compatibility_alias(client):
+    response = client.get("/openapi.json")
+    assert response.status_code == 200
+    paths = response.json()["paths"]
+    assert "/api/wardrobe/pnelly/daily-looks" in paths
+    assert "/api/wardrobe/daily-looks" not in paths
+
+def test_pnelly_daily_looks_hides_server_side_evaluation_trace_from_browser(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+    item = {
+        "owner_user_id": "signed-user-42", "item_id": "shirt-001",
+        "display_name": "Blue linen shirt", "category": "tops",
+        "attributes": ["blue", "linen"], "status": "active",
+    }
+    recommendation = {
+        "look_count": 3,
+        "looks": [
+            {"role": role, "status": "needs_input", "item_ids": [], "items": [],
+             "missing": ["a top and a bottom"], "virtual_twin_preview": {"status": "unavailable"}}
+            for role in ["everyday", "elevated", "explore"]
+        ],
+        "evaluation_trace": {
+            "trace_version": "1.0",
+            "participant_key": "participant_do_not_expose",
+            "cases": [{"case_id": "case_do_not_expose"}],
+        },
+    }
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"owner_user_id": "signed-user-42", "items": [item]}),
+        FakeResponse({"mode": "pnelly_wardrobe_daily_looks", "recommendation": recommendation}),
+    ])
+    original_post = fake.post
+    async def post_with_gateway_envelope(url, **kwargs):
+        response = await original_post(url, **kwargs)
+        body = response.json()
+        body["schema_version"] = "1.0"
+        body["request_id"] = kwargs["json"]["request_id"]
+        return FakeResponse(body, status_code=response.status_code)
+    fake.post = post_with_gateway_envelope
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/pnelly/daily-looks",
+        headers={"Authorization": "Bearer signed-session"},
+        json={"occasion": "work", "timezone": "Africa/Nairobi"},
+    )
+    assert response.status_code == 200, response.text
+    assert "evaluation_trace" not in response.json()["recommendation"]
+    assert "participant_do_not_expose" not in response.text
+    assert "case_do_not_expose" not in response.text
