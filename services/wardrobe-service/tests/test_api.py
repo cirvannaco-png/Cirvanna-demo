@@ -319,6 +319,12 @@ def test_saved_outfit_piece_add_remove_and_version_conflict(client):
     assert removed.status_code == 200, removed.text
     assert len(removed.json()["outfit"]["pieces"]) == 1
     assert removed.json()["outfit"]["pieces"][0]["wardrobe_item_id"] == "trouser-002"
+    replay = client.patch("/v1/outfits/outfit-002/pieces/top-slot", headers=auth(), json={
+        "owner_user_id": "user-1", "expected_version": 2,
+        "command_id": "remove-top-001", "wardrobe_item_id": None,
+    })
+    assert replay.status_code == 200
+    assert replay.json()["status"] == "replayed"
     stale = client.post("/v1/outfits/outfit-002/pieces", headers=auth(), json={
         "owner_user_id": "user-1", "expected_version": 1,
         "command_id": "stale-add-001", "slot_id": "shoe-slot",
