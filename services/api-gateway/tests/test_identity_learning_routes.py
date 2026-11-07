@@ -42,7 +42,9 @@ def test_consent_and_tal_event_are_bound_to_verified_subject(client, monkeypatch
         calls.append((method, path, subject, payload)) or {"status": "recorded"}
     ))
     consent = client.post("/v1/me/consents", headers=headers(), json={
-        "receipt_id": "receipt-0001", "scope": "style_learning", "consent_version": "2026-11-02", "granted": True,
+        "receipt_id": "receipt-0001", "scope": "style_learning",
+        "consent_id": "bundle-0001", "resource_id": "twin-resource-1",
+        "consent_version": "2026-11-02", "granted": True,
     })
     event = client.post("/v1/me/tal/events", headers=headers(), json={
         "event_id": "event-0001", "idempotency_key": "idempotency-0001",
@@ -52,6 +54,8 @@ def test_consent_and_tal_event_are_bound_to_verified_subject(client, monkeypatch
     assert consent.status_code == 200
     assert event.status_code == 200
     assert all(call[2] == "commerce-verified-subject" for call in calls)
+    assert calls[0][3]["consent_id"] == "bundle-0001"
+    assert calls[0][3]["resource_id"] == "twin-resource-1"
 
 
 def test_export_and_deletion_use_verified_subject(client, monkeypatch):

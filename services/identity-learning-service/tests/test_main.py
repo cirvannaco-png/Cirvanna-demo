@@ -52,6 +52,10 @@ def event_body(**overrides):
 def test_internal_auth_is_required(client):
     assert client.get("/ready").status_code == 401
     assert client.get("/v1/profiles/user-verified-1", headers=auth()).status_code == 403
+    assert client.post(
+        "/internal/v1/consents/verify",
+        json={"subject_id": "user-verified-1", "consent_id": "bundle-0001", "required_scopes": ["image_processing"]},
+    ).status_code == 401
 
 
 def test_usi_profile_requires_consent_and_uses_optimistic_version(client):
@@ -181,6 +185,139 @@ def test_scope_revocation_revokes_every_active_grant(client):
     active = [item for item in receipts if item["scope"] == "style_learning" and item["granted"]]
     assert len(active) == 2
     assert all(item["revoked_at"] for item in active)
+
+
+
+def _grant_resource_consent(client, *, subject, bundle, resource, scope, receipt):
+    return client.post(
+        "/v1/tal/consents",
+        params={"subject_id": subject},
+        headers=auth(),
+        json={
+            "receipt_id": receipt,
+            "consent_id": bundle,
+            "resource_id": resource,
+            "scope": scope,
+            "consent_version": "media-2026-11-v1",
+            "granted": True,
+        },
+    )
+
+
+def _verify_resource_consent(client, *, subject, bundle, resource, scopes=None, version="media-2026-11-v1"):
+    return client.post(
+        "/internal/v1/consents/verify",
+        headers=auth(),
+        json={
+            "subject_id": subject,
+            "consent_id": bundle,
+            "consent_version": version,
+            "resource_id": resource,
+            "required_scopes": scopes or ["image_processing", "body_measurements", "virtual_twin_storage"],
+        },
+    )
+
+
+def test_resource_bound_verifier_requires_complete_subject_and_resource_bundle(client):
+    scopes = ["image_processing", "body_measurements", "virtual_twin_storage"]
+    for index, scope in enumerate(scopes):
+        response = _grant_resource_consent(
+            client, subject="user-verified-1", bundle="bundle-twin-a",
+            resource="twin-resource-a", scope=scope, receipt=f"media-receipt-{index:02d}",
+        )
+        assert response.status_code == 200, response.text
+
+    verified = _verify_resource_consent(
+        client, subject="user-verified-1", bundle="bundle-twin-a", resource="twin-resource-a",
+    )
+    assert verified.status_code == 200, verified.text
+    assert verified.json()["verified"] is True
+    assert verified.json()["active"] is True
+    assert set(verified.json()["granted_scopes"]) == set(scopes)
+
+    wrong_resource = _verify_resource_consent(
+        client, subject="user-verified-1", bundle="bundle-twin-a", resource="twin-resource-b",
+    )
+    wrong_subject = _verify_resource_consent(
+        client, subject="another-user", bundle="bundle-twin-a", resource="twin-resource-a",
+    )
+    wrong_version = _verify_resource_consent(
+        client, subject="user-verified-1", bundle="bundle-twin-a",
+        resource="twin-resource-a", version="older-version",
+    )
+    missing_resource = client.post(
+        "/internal/v1/consents/verify", headers=auth(),
+        json={"subject_id": "user-verified-1", "consent_id": "bundle-twin-a", "required_scopes": scopes},
+    )
+    assert wrong_resource.status_code == 403
+    assert wrong_subject.status_code == 403
+    assert wrong_version.status_code == 403
+    assert missing_resource.status_code == 403
+
+
+def test_resource_bound_receipt_replay_cannot_change_resource_or_bundle(client):
+    created = _grant_resource_consent(
+        client, subject="user-verified-1", bundle="bundle-immutable",
+        resource="twin-resource-immutable", scope="image_processing",
+        receipt="receipt-immutable-01",
+    )
+    assert created.status_code == 200
+    changed = client.post(
+        "/v1/tal/consents", params={"subject_id": "user-verified-1"},
+        headers=auth(), json={
+            "receipt_id": "receipt-immutable-01", "consent_id": "bundle-immutable",
+            "resource_id": "twin-resource-other", "scope": "image_processing",
+            "consent_version": "media-2026-11-v1", "granted": True,
+        },
+    )
+    assert changed.status_code == 409
+    assert changed.json()["detail"]["code"] == "CONSENT_RECEIPT_IMMUTABLE"
+
+
+def test_resource_bound_verifier_fails_closed_when_any_scope_is_missing(client):
+    for index, scope in enumerate(["image_processing", "body_measurements"]):
+        assert _grant_resource_consent(
+            client, subject="user-verified-1", bundle="bundle-incomplete",
+            resource="twin-incomplete", scope=scope, receipt=f"incomplete-receipt-{index:02d}",
+        ).status_code == 200
+    response = _verify_resource_consent(
+        client, subject="user-verified-1", bundle="bundle-incomplete", resource="twin-incomplete",
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "CONSENT_BUNDLE_INCOMPLETE"
+    assert response.json()["detail"]["missing_scopes"] == ["virtual_twin_storage"]
+
+
+def test_resource_specific_revocation_does_not_revoke_another_twin_bundle(client):
+    scopes = ["image_processing", "body_measurements", "virtual_twin_storage"]
+    receipts_a = []
+    for index, scope in enumerate(scopes):
+        receipt = f"twin-a-receipt-{index:02d}"
+        receipts_a.append(receipt)
+        assert _grant_resource_consent(
+            client, subject="user-verified-1", bundle="bundle-twin-a",
+            resource="twin-resource-a", scope=scope, receipt=receipt,
+        ).status_code == 200
+        assert _grant_resource_consent(
+            client, subject="user-verified-1", bundle="bundle-twin-b",
+            resource="twin-resource-b", scope=scope, receipt=f"twin-b-receipt-{index:02d}",
+        ).status_code == 200
+
+    revoked = client.post(
+        f"/v1/tal/consents/{receipts_a[0]}/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert revoked.status_code == 200
+    assert revoked.json()["status"] == "revoked"
+
+    denied = _verify_resource_consent(
+        client, subject="user-verified-1", bundle="bundle-twin-a", resource="twin-resource-a",
+    )
+    allowed = _verify_resource_consent(
+        client, subject="user-verified-1", bundle="bundle-twin-b", resource="twin-resource-b",
+    )
+    assert denied.status_code == 403
+    assert allowed.status_code == 200
 
 
 def test_denial_receipt_withdraws_prior_scope_grants(client):
