@@ -52,6 +52,10 @@ def event_body(**overrides):
 def test_internal_auth_is_required(client):
     assert client.get("/ready").status_code == 401
     assert client.get("/v1/profiles/user-verified-1", headers=auth()).status_code == 403
+    assert client.post(
+        "/internal/v1/consents/verify",
+        json={"subject_id": "user-verified-1", "consent_id": "bundle-0001", "required_scopes": ["image_processing"]},
+    ).status_code == 401
 
 
 def test_usi_profile_requires_consent_and_uses_optimistic_version(client):
@@ -249,6 +253,25 @@ def test_resource_bound_verifier_requires_complete_subject_and_resource_bundle(c
     assert wrong_subject.status_code == 403
     assert wrong_version.status_code == 403
     assert missing_resource.status_code == 403
+
+
+def test_resource_bound_receipt_replay_cannot_change_resource_or_bundle(client):
+    created = _grant_resource_consent(
+        client, subject="user-verified-1", bundle="bundle-immutable",
+        resource="twin-resource-immutable", scope="image_processing",
+        receipt="receipt-immutable-01",
+    )
+    assert created.status_code == 200
+    changed = client.post(
+        "/v1/tal/consents", params={"subject_id": "user-verified-1"},
+        headers=auth(), json={
+            "receipt_id": "receipt-immutable-01", "consent_id": "bundle-immutable",
+            "resource_id": "twin-resource-other", "scope": "image_processing",
+            "consent_version": "media-2026-11-v1", "granted": True,
+        },
+    )
+    assert changed.status_code == 409
+    assert changed.json()["detail"]["code"] == "CONSENT_RECEIPT_IMMUTABLE"
 
 
 def test_resource_bound_verifier_fails_closed_when_any_scope_is_missing(client):
