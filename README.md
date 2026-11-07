@@ -532,3 +532,6 @@ context using keyed pseudonyms. It excludes account IDs, raw wardrobe item IDs,
 display names and image/asset references. Truncated pools are explicitly marked
 and are not eligible for benchmark claims. Human review and live exposure data
 must be collected separately; this trace alone is not evidence of model quality.
+
+
+Evaluation traces are generated only for users whose signed-in session supplies an active Identity consent receipt with `style_learning` or `personalization` scope. The API Gateway validates the receipt against Identity/TAL before it sends the extra inventory snapshot or enables trace generation. Missing/revoked/invalid consent suppresses the trace while ordinary Daily Looks continues.
