@@ -81,3 +81,16 @@ def test_prepare_rejects_raw_identity_in_trace_envelope():
     trace["subject_id"] = "real-user-123"
     with pytest.raises(ValueError, match="raw user/account identifier"):
         prepare_cases([trace], _two_reviews())
+
+
+def test_prepare_preserves_all_no_result_runs_without_fabricating_review_cases():
+    trace = _trace()
+    trace["evaluation_trace"]["cases"] = []
+    trace["evaluation_trace"]["no_result_roles"] = ["everyday", "elevated", "explore"]
+    cases, summary = prepare_cases([trace], [])
+    assert cases == []
+    assert summary["trace_count"] == 1
+    assert summary["case_count"] == 0
+    assert summary["no_result_roles_by_role"] == {
+        "everyday": 1, "elevated": 1, "explore": 1
+    }
