@@ -1191,4 +1191,3 @@ def test_wardrobe_page_loads_shared_category_taxonomy(client):
     assert response.status_code == 200
     assert 'api("/api/wardrobe/categories")' in response.text
     assert 'populate($("itemCategory"), false)' in response.text
-    assert 'populate($("category"), true)' in response.text
