@@ -1,4 +1,6 @@
-"""Cirvanna User Style Index explicit-alignment contract."""
+"""Cirvanna User Style Index and Style Desk colour preference contracts."""
+from .color_profile import ColorPreferenceProfile
+
 from .core import (
     CONTRACT_VERSION,
     DEFAULT_MIN_ALIGNMENT_SCORE,
@@ -10,6 +12,7 @@ from .core import (
 )
 
 __all__ = [
+    "ColorPreferenceProfile",
     "CONTRACT_VERSION",
     "DEFAULT_MIN_ALIGNMENT_SCORE",
     "StylePreference",
