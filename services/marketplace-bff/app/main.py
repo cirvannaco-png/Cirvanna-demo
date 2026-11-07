@@ -195,6 +195,14 @@ class EditWardrobeItemIn(BaseModel):
     attributes: list[str] | None = Field(default=None, max_length=100)
 
 
+class ColorProfileIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_version: int = Field(ge=0)
+    liked_colors: list[str] = Field(default_factory=list, max_length=40)
+    disliked_colors: list[str] = Field(default_factory=list, max_length=40)
+    best_version_colors: list[str] = Field(default_factory=list, max_length=40)
+
+
 class WardrobeFeedbackIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     item_id: str = Field(min_length=3, max_length=128)
@@ -294,6 +302,65 @@ def wardrobe_page() -> HTMLResponse:
     except OSError as exc:
         raise HTTPException(status_code=503, detail={"code": "WARDROBE_PAGE_UNAVAILABLE"}) from exc
     return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/style/color-profile")
+async def get_style_color_profile(request: Request) -> Response:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        base, token = _identity_learning_service()
+        try:
+            response = await client.get(
+                base + f"/v1/color-profiles/{subject}",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "COLOR_PROFILE_SERVICE_UNAVAILABLE"}) from exc
+    if response.status_code in {401, 403, 404}:
+        try:
+            detail = response.json().get("detail", {})
+        except ValueError:
+            detail = {"code": "COLOR_PROFILE_ACCESS_DENIED"}
+        raise HTTPException(response.status_code, detail=detail)
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "COLOR_PROFILE_SERVICE_UNAVAILABLE"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "COLOR_PROFILE_RESPONSE_INVALID"}) from exc
+    if not isinstance(data, dict) or data.get("subject_id") != subject:
+        raise HTTPException(502, detail={"code": "COLOR_PROFILE_SCOPE_MISMATCH"})
+    return _private_json_response(data)
+
+
+@app.put("/api/style/color-profile")
+async def put_style_color_profile(request: Request, payload: ColorProfileIn) -> Response:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        base, token = _identity_learning_service()
+        try:
+            response = await client.put(
+                base + f"/v1/color-profiles/{subject}",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json=payload.model_dump(),
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "COLOR_PROFILE_SAVE_UNAVAILABLE"}) from exc
+    if response.status_code in {400, 403, 404, 409, 422}:
+        try:
+            detail = response.json().get("detail", {})
+        except ValueError:
+            detail = {"code": "COLOR_PROFILE_SAVE_REJECTED"}
+        raise HTTPException(response.status_code, detail=detail)
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "COLOR_PROFILE_SAVE_UNAVAILABLE"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "COLOR_PROFILE_RESPONSE_INVALID"}) from exc
+    if not isinstance(data, dict) or data.get("subject_id") != subject:
+        raise HTTPException(502, detail={"code": "COLOR_PROFILE_SCOPE_MISMATCH"})
+    return _private_json_response(data)
 
 
 @app.get("/api/wardrobe/items")
