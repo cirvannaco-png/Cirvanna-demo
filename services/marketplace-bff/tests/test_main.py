@@ -1408,3 +1408,76 @@ def test_pnelly_mark_worn_creates_stable_owned_outfit_and_records_factual_wear(c
     assert wear_call[2]["json"]["expected_outfit_version"] == 1
 
 
+
+
+
+def test_pnelly_mark_worn_retries_after_outfit_creation_without_duplicate_events(client, monkeypatch):
+    import uuid
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    event_id = "wear-event-retry-001"
+    outfit_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cirvanna:pnelly-wear:signed-user-42:{event_id}"))
+    existing = {
+        "owner_user_id": "signed-user-42", "outfit_id": outfit_id, "version": 1,
+        "pieces": [{"slot_id": "top", "wardrobe_item_id": "shirt-001"}],
+    }
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"owner_user_id": "signed-user-42", "items": [
+            {"owner_user_id": "signed-user-42", "item_id": "shirt-001",
+             "display_name": "Linen shirt", "category": "tops", "attributes": ["linen"], "status": "active"},
+        ]}),
+        FakeResponse({"detail": {"code": "WARDROBE_OUTFIT_STORE_UNAVAILABLE"}}, status_code=503),
+        FakeResponse({"owner_user_id": "signed-user-42", "outfits": [existing]}),
+        FakeResponse({
+            "status": "replayed", "event_id": event_id, "outfit_id": outfit_id,
+            "items": [{"item_id": "shirt-001", "item_version": 1}], "delivery": [],
+        }, status_code=201),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/looks/wear",
+        headers={"Authorization": "Bearer signed-session"},
+        json={
+            "item_ids": ["shirt-001"], "event_id": event_id,
+            "consent_receipt_id": "active-style-receipt",
+            "observed_at": "2026-11-07T18:00:00+03:00",
+            "name": "PNELLY Everyday", "context": {"occasion": "work"},
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["status"] == "replayed"
+    assert fake.calls[2][0] == "POST"
+    assert fake.calls[3][0] == "GET"
+    assert fake.calls[3][1] == "https://wardrobe.example.test/v1/outfits"
+    assert fake.calls[4][1] == "https://wardrobe.example.test/v1/outfits/" + outfit_id + "/wear"
+
+
+def test_pnelly_mark_worn_rejects_another_users_wardrobe_item(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"owner_user_id": "signed-user-42", "items": [
+            {"owner_user_id": "another-user", "item_id": "foreign-shirt",
+             "display_name": "Foreign shirt", "category": "tops", "attributes": [], "status": "active"},
+        ]}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/looks/wear",
+        headers={"Authorization": "Bearer signed-session"},
+        json={
+            "item_ids": ["foreign-shirt"], "event_id": "wear-cross-user-001",
+            "consent_receipt_id": "active-style-receipt",
+            "observed_at": "2026-11-07T18:00:00+03:00",
+            "name": "PNELLY work", "context": {},
+        },
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "PNELLY_WEAR_ITEM_NOT_ACTIVE_OR_NOT_OWNED"
+    assert len(fake.calls) == 2
+
+
