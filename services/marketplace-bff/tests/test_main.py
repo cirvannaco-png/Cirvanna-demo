@@ -677,3 +677,45 @@ def test_legacy_daily_looks_bff_route_is_hidden_compatibility_alias(client):
     paths = response.json()["paths"]
     assert "/api/wardrobe/pnelly/daily-looks" in paths
     assert "/api/wardrobe/daily-looks" not in paths
+
+
+
+def test_pnelly_daily_looks_hides_server_side_evaluation_trace_from_browser(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+    item = {
+        "owner_user_id": "signed-user-42", "item_id": "shirt-001",
+        "display_name": "Blue linen shirt", "category": "tops",
+        "attributes": ["blue", "linen"], "status": "active",
+    }
+    recommendation = {
+        "look_count": 3,
+        "looks": [
+            {"role": role, "status": "needs_input", "item_ids": [], "items": [],
+             "missing": ["a top and a bottom"], "virtual_twin_preview": {"status": "unavailable"}}
+            for role in ["everyday", "elevated", "explore"]
+        ],
+        "evaluation_trace": {
+            "trace_version": "1.0",
+            "participant_key": "participant_do_not_expose",
+            "cases": [{"case_id": "case_do_not_expose"}],
+        },
+    }
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"owner_user_id": "signed-user-42", "items": [item]}),
+        FakeResponse({"mode": "pnelly_wardrobe_daily_looks", "recommendation": recommendation}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/pnelly/daily-looks",
+        headers={"Authorization": "Bearer signed-session"},
+        json={"occasion": "work", "timezone": "Africa/Nairobi"},
+    )
+    assert response.status_code == 200, response.text
+    assert "evaluation_trace" not in response.json()["recommendation"]
+    assert "participant_do_not_expose" not in response.text
+    assert "case_do_not_expose" not in response.text
