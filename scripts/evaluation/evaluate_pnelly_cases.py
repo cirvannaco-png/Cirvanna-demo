@@ -55,6 +55,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cases", required=True, help="Prepared JSONL from prepare_pnelly_cases.py")
     parser.add_argument("--output", required=True, help="JSON report path")
+    parser.add_argument("--summary", help="Optional trace summary from prepare_pnelly_cases.py")
     parser.add_argument("--k", type=int, default=3)
     args = parser.parse_args()
     if args.k < 1:
@@ -63,6 +64,19 @@ def main() -> int:
     if not records:
         raise ValueError("no evaluator cases found")
     report = evaluate_by_role(records, k=args.k)
+    summary_path = Path(args.summary) if args.summary else Path(str(args.cases) + ".summary.json")
+    if summary_path.is_file():
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        trace_count = int(summary.get("trace_count", 0))
+        no_results = summary.get("no_result_roles_by_role", {})
+        report["trace_summary"] = summary
+        report["no_result_rate_by_role"] = {
+            role: (int(no_results.get(role, 0)) / trace_count if trace_count else None)
+            for role in ("everyday", "elevated", "explore")
+        }
+    else:
+        report["trace_summary"] = None
+        report["no_result_rate_by_role"] = None
     Path(args.output).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps({"status": report["status"], "case_count": report["case_count"]}, sort_keys=True))
     return 0
