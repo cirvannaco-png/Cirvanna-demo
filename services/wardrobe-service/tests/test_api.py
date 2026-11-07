@@ -440,3 +440,31 @@ def test_feedback_audit_deletion_requires_internal_auth(client):
     assert response.status_code == 401
 
 
+
+
+def test_category_taxonomy_requires_internal_auth_and_includes_full_item_groups(client):
+    unauthorized = client.get("/v1/categories")
+    assert unauthorized.status_code == 401
+    response = client.get("/v1/categories", headers=auth())
+    assert response.status_code == 200
+    data = response.json()
+    assert data["taxonomy_version"] == "1.0.0"
+    categories = {entry["id"]: entry for entry in data["categories"]}
+    assert categories["shoes"]["group"] == "footwear"
+    assert categories["makeup"]["group"] == "beauty"
+    assert categories["eyewear"]["label"] == "Glasses and sunglasses"
+
+
+def test_item_create_normalizes_known_category_alias_and_rejects_unknown(client):
+    created = client.post("/v1/items", headers=auth(), json={
+        "owner_user_id": "user-1", "item_id": "shoe-alias-001",
+        "display_name": "Leather shoes", "category": "Footwear",
+    })
+    assert created.status_code == 201, created.text
+    assert created.json()["item"]["category"] == "shoes"
+    invalid = client.post("/v1/items", headers=auth(), json={
+        "owner_user_id": "user-1", "item_id": "unknown-category-001",
+        "display_name": "Unknown item", "category": "unverified-special-type",
+    })
+    assert invalid.status_code == 422
+    assert invalid.json()["detail"]["code"] == "INVALID_WARDROBE_COMMAND"
