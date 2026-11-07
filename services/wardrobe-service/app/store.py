@@ -28,6 +28,9 @@ class WardrobeRow(Base):
     commerce_order_item_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     purchase_event_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     purchase_quantity: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    purchase_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    purchase_unit_price_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    purchase_paid_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
     image_asset_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
     image_storage_consent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
@@ -135,6 +138,8 @@ def _row_to_domain(row: WardrobeRow) -> WardrobeItem:
         status=WardrobeItemStatus(row.status), version=row.version, last_command_id=row.last_command_id,
         commerce_order_id=row.commerce_order_id, commerce_order_item_id=row.commerce_order_item_id,
         purchase_event_id=row.purchase_event_id, purchase_quantity=row.purchase_quantity,
+        purchase_currency=row.purchase_currency, purchase_unit_price_minor=row.purchase_unit_price_minor,
+        purchase_paid_at=row.purchase_paid_at,
     )
 
 class WardrobeStore:
