@@ -240,8 +240,8 @@ def prepare_cases(
         raise ValueError("review file contains case IDs absent from trace input")
     if exposures_by_case:
         raise ValueError("exposure file contains case IDs absent from trace input")
-    if not cases:
-        raise ValueError("no reviewable PNELLY cases found")
+    if trace_count == 0:
+        raise ValueError("no PNELLY evaluation traces found")
 
     summary = {
         "trace_count": trace_count,
