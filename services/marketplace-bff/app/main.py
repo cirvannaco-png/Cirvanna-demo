@@ -734,8 +734,10 @@ async def record_pnelly_look_worn(request: Request, payload: RecordPNELLYLookWea
                 outfit_data = create_response.json().get("outfit")
             except (ValueError, AttributeError) as exc:
                 raise HTTPException(502, detail={"code": "PNELLY_WEAR_OUTFIT_RESPONSE_INVALID"}) from exc
-        elif create_response.status_code == 409:
-            # A retry may arrive after the deterministic outfit was created.
+        elif create_response.status_code in {409, 503}:
+            # A retry may arrive after the deterministic outfit was created. The
+            # Wardrobe service may surface a duplicate-key write as 503; only an
+            # owner-matched persisted outfit allows this request to be replayed.
             try:
                 list_response = await client.get(
                     wardrobe_base + "/v1/outfits",
