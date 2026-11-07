@@ -96,7 +96,7 @@ def test_duplicate_ids_and_invalid_dates_are_rejected(monkeypatch):
     client = TestClient(app)
     response = client.post(
         "/v1/pnelly/daily-looks",
-        headers={"Authorization": f"Bearer {token}"},
+        headers={"Authorization": f"Bearer {TOKEN}"},
         json={
             "request_id": "daily-006",
             "user_id": "user-123",
@@ -304,7 +304,7 @@ def test_evaluation_trace_api_is_server_flagged_and_fails_closed_without_secret(
     }
     response = client.post(
         "/v1/pnelly/daily-looks",
-        headers={"Authorization": f"Bearer {TOKEN}"},
+        headers={"Authorization": f"Bearer {token}"},
         json=body,
     )
     assert response.status_code == 503
