@@ -21,3 +21,10 @@ python scripts/validate_architecture.py
 ```
 
 Production promotion requires profile persistence/versioning, preference correction lifecycle, threshold validation against user outcomes, bias checks, and end-to-end CAL tests.
+
+
+## Style Desk colour preference profile
+
+The `ColorPreferenceProfile` contract stores three separate, user-declared groups: liked colours, disliked colours and colours the user says make them feel their best. Values are namespaced in USI so colour-profile updates replace only their own entries and preserve style/material preferences.
+
+This is a preference record, not a colour-harmony or skin-tone assessment. Objective colour-analysis results require a separately validated capture protocol, lighting checks, model provenance and subgroup evaluation; they must never overwrite the user's own preferences.
