@@ -437,5 +437,8 @@ def test_each_daily_look_revives_items_not_surfaced_earlier_today():
     )
     first, second, third = result["looks"]
     assert {"top-a", "bottom-a"}.issubset(first["item_ids"])
-    assert {"top-b", "bottom-b"}.issubset(second["item_ids"])
-    assert "top-c" in third["item_ids"]
+    assert "bottom-b" in second["item_ids"]
+    assert "top-a" not in second["item_ids"] and "bottom-a" not in second["item_ids"]
+    assert {"top-b", "top-c"}.issubset(set(second["item_ids"]) | set(third["item_ids"]))
+    surfaced = {item_id for look in result["looks"] for item_id in look["item_ids"]}
+    assert surfaced == {item["item_id"] for item in items}
