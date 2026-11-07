@@ -12,7 +12,7 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
-from app.wardrobe_rotation import build_rotation_state
+from app.wardrobe_rotation import build_rotation_state, wear_history_index
 
 POLICY_VERSION = "pnelly-daily-looks-v1"
 ROLES = ("everyday", "elevated", "explore")
