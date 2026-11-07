@@ -11,6 +11,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.complementer import compose_complementary_look
+from app.daily_looks import build_daily_looks
 from app.intelligence.learning import build_learning_event
 
 SERVICE = "cirvanna-complementer-agent"
@@ -150,6 +151,47 @@ class RecommendationRequest(StrictModel):
         return value
 
 
+class WardrobeItemForDailyLook(StrictModel):
+    item_id: str = Field(min_length=3, max_length=128)
+    owner_user_id: str = Field(min_length=1, max_length=128)
+    display_name: str = Field(min_length=1, max_length=200)
+    category: str = Field(min_length=1, max_length=80)
+    attributes: list[str] = Field(default_factory=list, max_length=100)
+    status: Literal["draft", "active", "archived", "deleted"]
+
+
+class PNELLYDailyLooksRequest(StrictModel):
+    request_id: str = Field(min_length=1, max_length=128)
+    user_id: str = Field(min_length=1, max_length=128)
+    local_date: str = Field(min_length=10, max_length=10)
+    occasion: str | None = Field(default=None, max_length=120)
+    climate: str | None = Field(default=None, max_length=80)
+    wardrobe_items: list[WardrobeItemForDailyLook] = Field(max_length=150)
+    style_signals: list[str] = Field(default_factory=list, max_length=40)
+    feedback_signals: list[str] = Field(default_factory=list, max_length=40)
+    # Gateway-only fields. Public BFF input is ignored and these are populated server-side.
+    evaluation_wardrobe_items: list[WardrobeItemForDailyLook] = Field(default_factory=list, max_length=150)
+    hard_excluded_item_ids: list[str] = Field(default_factory=list, max_length=150)
+
+    @field_validator("request_id", "user_id")
+    @classmethod
+    def trim_daily_look_identifiers(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("identifier must not be blank")
+        return cleaned
+
+    @field_validator("local_date")
+    @classmethod
+    def valid_local_date(cls, value: str) -> str:
+        from datetime import date
+        try:
+            date.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError("local_date must be an ISO calendar date") from exc
+        return value
+
+
 class FeedbackRequest(StrictModel):
     feedback_id: str = Field(min_length=1, max_length=128)
     user_id: str = Field(min_length=1, max_length=128)
@@ -220,6 +262,10 @@ def capabilities() -> dict[str, object]:
         "jewellery_and_accessories": True,
         "aesthetic_direction": True,
         "look_completion": True,
+        "pnelly_daily_look_orchestration": True,
+        "pnelly_daily_look_roles": ["everyday", "elevated", "explore"],
+        "evaluation_trace_opt_in": os.getenv("PNELLY_EVALUATION_TRACE_ENABLED", "").lower() == "true",
+        "virtual_twin_preview_enabled": False,
         "feedback_event_contract": True,
         "durable_personal_memory": False,
         "catalog_product_intelligence_integration": False,
@@ -235,6 +281,47 @@ def capabilities() -> dict[str, object]:
 )
 def recommend(request: RecommendationRequest) -> dict[str, object]:
     return compose_complementary_look(request.model_dump())
+
+
+@app.post(
+    "/v1/tari/daily-looks",
+    include_in_schema=False,
+    tags=["legacy compatibility"],
+    dependencies=[Depends(require_internal_token)],
+)
+@app.post(
+    "/v1/pnelly/daily-looks",
+    tags=["pnelly daily looks"],
+    dependencies=[Depends(require_internal_token)],
+)
+def pnelly_daily_looks(request: PNELLYDailyLooksRequest) -> dict[str, object]:
+    """Compose exactly three role slots from an authenticated BFF's wardrobe snapshot."""
+    trace_enabled = os.getenv("PNELLY_EVALUATION_TRACE_ENABLED", "").lower() == "true"
+    trace_secret = os.getenv("PNELLY_EVALUATION_TRACE_HMAC_SECRET", "").strip()
+    if trace_enabled and len(trace_secret.encode("utf-8")) < 32:
+        raise HTTPException(503, detail={"code": "PNELLY_EVALUATION_TRACE_SIGNING_NOT_CONFIGURED"})
+    try:
+        return build_daily_looks(
+            request_id=request.request_id,
+            user_id=request.user_id,
+            wardrobe_items=[item.model_dump() for item in request.wardrobe_items],
+            local_date=request.local_date,
+            occasion=request.occasion,
+            climate=request.climate,
+            style_signals=request.style_signals,
+            feedback_signals=request.feedback_signals,
+            evaluation_wardrobe_items=(
+                [item.model_dump() for item in request.evaluation_wardrobe_items]
+                if trace_enabled else None
+            ),
+            hard_excluded_item_ids=request.hard_excluded_item_ids if trace_enabled else (),
+            evaluation_trace_enabled=trace_enabled,
+            evaluation_secret=trace_secret if trace_enabled else None,
+        )
+    except PermissionError as exc:
+        raise HTTPException(403, detail={"code": "WARDROBE_SUBJECT_MISMATCH"}) from exc
+    except ValueError as exc:
+        raise HTTPException(422, detail={"code": "INVALID_DAILY_LOOK_REQUEST"}) from exc
 
 
 @app.post(
