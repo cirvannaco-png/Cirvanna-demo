@@ -338,3 +338,106 @@ def test_personal_color_profile_is_included_in_export_and_deleted_with_user_data
     assert deleted.status_code == 200
     assert deleted.json()["deleted_color_profile"] is True
     assert client.get("/v1/color-profiles/user-verified-1", headers=auth()).status_code == 403
+
+
+def test_internal_consent_verification_is_grouped_and_resource_bound(client):
+    group = "consent-group-twin-0001"
+    resource = "twin-create-resource-001"
+    assert consent(client, scope="image_processing", receipt="receipt-image-0001",
+                   consent_id=group, resource_id=resource).status_code == 200
+    assert consent(client, scope="body_measurements", receipt="receipt-body-0001",
+                   consent_id=group, resource_id=resource).status_code == 200
+
+    verified = client.post("/internal/v1/consents/verify", headers=auth(), json={
+        "subject_id": "user-verified-1", "consent_id": group,
+        "required_scopes": ["image_processing", "body_measurements"],
+        "resource_id": resource,
+    })
+    assert verified.status_code == 200
+    assert verified.json()["verified"] is True
+    assert set(verified.json()["granted_scopes"]) == {"image_processing", "body_measurements"}
+
+    wrong_resource = client.post("/internal/v1/consents/verify", headers=auth(), json={
+        "subject_id": "user-verified-1", "consent_id": group,
+        "required_scopes": ["image_processing"], "resource_id": "another-resource-001",
+    })
+    assert wrong_resource.status_code == 200
+    assert wrong_resource.json()["verified"] is False
+
+    wrong_subject = client.post("/internal/v1/consents/verify", headers=auth(), json={
+        "subject_id": "user-verified-2", "consent_id": group,
+        "required_scopes": ["image_processing", "body_measurements"],
+        "resource_id": resource,
+    })
+    assert wrong_subject.status_code == 200
+    assert wrong_subject.json()["verified"] is False
+
+
+def test_internal_consent_verification_requires_service_auth(client):
+    response = client.post("/internal/v1/consents/verify", json={
+        "subject_id": "user-verified-1", "consent_id": "consent-group-0001",
+        "required_scopes": ["virtual_try_on"],
+    })
+    assert response.status_code == 401
+
+
+def test_media_consent_bundle_verifies_only_active_scopes_for_subject_and_resource(client):
+    for scope in ("image_processing", "body_measurements", "virtual_twin_storage", "click_it"):
+        response = consent(
+            client, scope=scope, receipt=f"receipt-{scope}-001",
+            consent_id="media-bundle-0001", resource_id="twin-user-1",
+        )
+        assert response.status_code == 200
+    verified = client.post("/internal/v1/consents/verify", headers=auth(), json={
+        "subject_id": "user-verified-1", "consent_id": "media-bundle-0001",
+        "required_scopes": ["image_processing", "click_it"], "resource_id": "twin-user-1",
+    })
+    assert verified.status_code == 200
+    assert verified.json()["verified"] is True
+    assert set(verified.json()["granted_scopes"]) == {
+        "image_processing", "body_measurements", "virtual_twin_storage", "click_it",
+    }
+    for resource_id in ("twin-other-user", None):
+        body = {
+            "subject_id": "user-verified-1", "consent_id": "media-bundle-0001",
+            "required_scopes": ["image_processing", "click_it"],
+        }
+        if resource_id is not None:
+            body["resource_id"] = resource_id
+        denied = client.post("/internal/v1/consents/verify", headers=auth(), json=body)
+        assert denied.status_code == 200
+        assert denied.json()["verified"] is False
+
+
+def test_resource_bound_revocation_invalidates_every_scope_in_consent_bundle(client):
+    for scope in ("image_processing", "virtual_try_on", "virtual_twin_storage"):
+        assert consent(
+            client, scope=scope, receipt=f"receipt-{scope}-002",
+            consent_id="tryon-bundle-0002", resource_id="twin-user-2",
+        ).status_code == 200
+    revoked = client.post(
+        "/v1/tal/consents/receipt-virtual_try_on-002/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert revoked.status_code == 200
+    denied = client.post("/internal/v1/consents/verify", headers=auth(), json={
+        "subject_id": "user-verified-1", "consent_id": "tryon-bundle-0002",
+        "required_scopes": ["image_processing", "virtual_try_on"],
+        "resource_id": "twin-user-2",
+    })
+    assert denied.status_code == 200
+    assert denied.json()["verified"] is False
+
+
+def test_global_legacy_consent_does_not_authorize_a_resource_bound_request(client):
+    assert consent(client, scope="image_processing", receipt="receipt-global-image-001").status_code == 200
+    global_check = client.post("/internal/v1/consents/verify", headers=auth(), json={
+        "subject_id": "user-verified-1", "consent_id": "receipt-global-image-001",
+        "required_scopes": ["image_processing"],
+    })
+    resource_check = client.post("/internal/v1/consents/verify", headers=auth(), json={
+        "subject_id": "user-verified-1", "consent_id": "receipt-global-image-001",
+        "required_scopes": ["image_processing"], "resource_id": "twin-user-3",
+    })
+    assert global_check.status_code == 200 and global_check.json()["verified"] is True
+    assert resource_check.status_code == 200 and resource_check.json()["verified"] is False
