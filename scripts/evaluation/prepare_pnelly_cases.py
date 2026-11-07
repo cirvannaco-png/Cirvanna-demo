@@ -66,6 +66,14 @@ def _review_schema_fields() -> tuple[str, str, str, set[str], set[str]]:
     schema_path = Path(__file__).resolve().parents[2] / "data" / "evaluation" / "outfit-review.schema.json"
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
     item_schema = schema["properties"]["human_reviews"]["items"]
+    while isinstance(item_schema, dict) and "$ref" in item_schema:
+        reference = item_schema["$ref"]
+        if not isinstance(reference, str) or not reference.startswith("#/"):
+            raise ValueError("review schema uses an unsupported external reference")
+        target: Any = schema
+        for part in reference[2:].split("/"):
+            target = target[part.replace("~1", "/").replace("~0", "~")]
+        item_schema = target
     properties = set(item_schema.get("properties", {}))
     required = set(item_schema.get("required", []))
 
@@ -75,10 +83,10 @@ def _review_schema_fields() -> tuple[str, str, str, set[str], set[str]]:
                 return name
         raise ValueError(f"review schema is missing a supported {label} field")
 
-    reviewer_field = choose(("reviewer_key", "reviewer_id", "reviewer_code"), "reviewer identity")
-    relevance_field = choose(("relevance", "relevance_score", "rating", "score"), "relevance")
+    reviewer_field = choose(("reviewer_key", "reviewer_id", "reviewer_code", "annotator_id", "reviewer"), "reviewer identity")
+    relevance_field = choose(("relevance", "relevance_score", "relevance_rating", "relevance_1_to_5", "rating", "score"), "relevance")
     exclusion_field = choose(
-        ("exclusion_violation", "hard_exclusion_violation", "violates_exclusion", "exclusion_violations"),
+        ("exclusion_violation", "hard_exclusion_violation", "violates_exclusion", "exclusion_violations", "exclusion_violation_flag"),
         "exclusion violation",
     )
     return reviewer_field, relevance_field, exclusion_field, properties, required
