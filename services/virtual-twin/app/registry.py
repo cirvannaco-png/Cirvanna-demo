@@ -227,7 +227,9 @@ def _trusted_config(url_name: str, token_name: str) -> tuple[str, str] | None:
     return raw, token
 
 
-async def _verify_consent(subject_id: str, consent_id: str, consent_version: str) -> None:
+async def _verify_consent(
+    subject_id: str, consent_id: str, consent_version: str, resource_id: str
+) -> None:
     config = _trusted_config("CONSENT_API_URL", "CONSENT_API_TOKEN")
     if config is None:
         raise HTTPException(503, detail={"code": "CONSENT_PROVIDER_NOT_CONFIGURED"})
@@ -244,7 +246,7 @@ async def _verify_consent(subject_id: str, consent_id: str, consent_version: str
                     "consent_id": consent_id,
                     "consent_version": consent_version,
                     "required_scopes": TWIN_CONSENT_SCOPES,
-                    "purpose": "virtual_twin_persistence",
+                    "resource_id": resource_id,
                 },
             )
     except httpx.TimeoutException as exc:
@@ -446,7 +448,7 @@ async def register_twin(
     db: Annotated[Session, Depends(get_db)],
 ) -> dict[str, object]:
     """Register only a validated full-body mesh; pose skeletons are rejected."""
-    await _verify_consent(payload.subject_id, payload.consent_id, payload.consent_version)
+    await _verify_consent(payload.subject_id, payload.consent_id, payload.consent_version, payload.twin_id)
     await _verify_mesh_artifact(payload.subject_id, payload.twin_id, payload.artifact_asset_id, payload.model_version, payload.validation_receipt_id)
     await _authorize_assets(payload.subject_id, payload.twin_id, [payload.artifact_asset_id, *payload.source_image_asset_ids])
     digest = _request_hash(payload)
@@ -513,7 +515,7 @@ async def authorize_twin(
     record = db.get(TwinRecord, payload.twin_id)
     if record is None or record.subject_id != payload.subject_id or record.status != "active":
         raise HTTPException(403, detail={"code": "TWIN_ACCESS_DENIED"})
-    await _verify_consent(record.subject_id, record.consent_id, record.consent_version)
+    await _verify_consent(record.subject_id, record.consent_id, record.consent_version, record.twin_id)
     await _verify_mesh_artifact(record.subject_id, record.twin_id, record.artifact_asset_id, record.model_version, record.validation_receipt_id)
     await _authorize_assets(record.subject_id, record.twin_id, _asset_ids(record))
     return {
