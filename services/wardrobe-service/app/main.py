@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/"packages"))
-from wardrobe import WardrobeItem, WardrobeItemStatus
+from wardrobe import WardrobeItem, WardrobeItemStatus, list_categories
 from app.store import Base, WardrobeConflict, WardrobeNotFound, WardrobeStore, WardrobeDeletionQueue, WardrobeFeedbackEventRow, WardrobeOutfitRow, WardrobeOutfitWearEventRow, WardrobeRow, engine_for_url
 from app.learning import LearningIntegrationError, deliver_learning_event
 
@@ -137,6 +137,12 @@ def domain_error(exc:Exception):
     if isinstance(exc,PermissionError): raise HTTPException(403,detail={"code":"WARDROBE_FORBIDDEN"}) from exc
     if isinstance(exc,ValueError): raise HTTPException(422,detail={"code":"INVALID_WARDROBE_COMMAND","detail":str(exc)}) from exc
     raise exc
+
+@app.get("/v1/categories", dependencies=[Depends(require_internal_token)], tags=["wardrobe"])
+def wardrobe_categories() -> dict[str, object]:
+    return list_categories()
+
+
 
 @app.get("/health",tags=["operations"])
 def health()->dict[str,str]: return {"status":"alive","service":SERVICE}

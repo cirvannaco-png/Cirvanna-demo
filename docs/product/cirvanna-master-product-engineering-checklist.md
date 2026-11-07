@@ -35,7 +35,7 @@
 - [x] Merge the versioned, owner-scoped single-item edit API (PR #128); its Wardrobe persistence and architecture checks passed.
 - [x] Connect single-item editing to the authenticated BFF and Wardrobe UI; edit one selected garment/accessory without changing other items, with stale-version conflict handling and reload. User-facing undo remains open.
 - [x] Saved-outfit piece editing implemented in PR #135: create/list saved looks from owned items; add, replace or remove one piece with optimistic versioning and command replay protection; the UI preserves unaffected pieces. Deployment migration and device QA remain release gates.
-- [ ] Expand and validate an extensible category taxonomy for clothing, shoes/footwear, bags, jewellery, ties, glasses/frames, watches, accessories, makeup and other user-owned beauty products.
+- [~] Implement a versioned shared Wardrobe taxonomy for clothing, footwear, accessories and beauty items; expose it through authenticated Wardrobe API/BFF, normalize legacy aliases, preserve valid custom keys, reject malformed keys, and populate the UI from the canonical list. Current-main cross-service CI is required before merge; PostgreSQL deployment migration and device QA remain release gates.
 - [ ] Support user-added items with explicit provenance, optional photos, metadata correction and appropriate consent; do not silently turn image guesses into facts.
 - [ ] Support safe archive, restore and deletion; ensure image/asset deletion is actually completed by the storage worker, not merely queued.
 - [ ] Add import/bulk-add, duplicate detection and item merge/correction without silently merging distinct variants.

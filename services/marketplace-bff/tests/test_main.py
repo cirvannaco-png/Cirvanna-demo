@@ -1481,3 +1481,42 @@ def test_pnelly_mark_worn_rejects_another_users_wardrobe_item(client, monkeypatc
     assert len(fake.calls) == 2
 
 
+
+
+
+def test_wardrobe_category_bff_uses_verified_session_and_validates_taxonomy(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42"}),
+        FakeResponse({
+            "taxonomy_version": "1.0.0",
+            "categories": [
+                {"id": "shoes", "label": "Shoes and footwear", "group": "footwear"},
+                {"id": "makeup", "label": "Makeup", "group": "beauty"},
+            ],
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get("/api/wardrobe/categories", headers={"Authorization": "Bearer signed-session"})
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.json()["taxonomy_version"] == "1.0.0"
+    assert {item["id"] for item in response.json()["categories"]} == {"shoes", "makeup"}
+    assert fake.calls[1][1] == "https://wardrobe.example.test/v1/categories"
+
+
+def test_wardrobe_category_bff_rejects_malformed_upstream_taxonomy(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42"}),
+        FakeResponse({"taxonomy_version": "1.0.0", "categories": [{"id": "shoes"}]}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get("/api/wardrobe/categories", headers={"Authorization": "Bearer signed-session"})
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "WARDROBE_CATEGORY_RESPONSE_INVALID"
+

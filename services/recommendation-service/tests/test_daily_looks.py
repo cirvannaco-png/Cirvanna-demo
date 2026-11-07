@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from app.daily_looks import build_daily_looks
+from app.daily_looks import build_daily_looks, _kind
 from app.main import app
 
 
@@ -476,4 +476,15 @@ def test_rotation_seven_day_boundary_keeps_unseen_items_without_reset():
     assert at_seven_days["revival_queue_item_ids"] == ["unclassified-001"]
     assert at_seven_days["next_state"]["cycle_number"] == 4
     assert at_seven_days["next_state"]["seen_item_ids"] == seen
+
+
+
+
+def test_expanded_wardrobe_accessories_are_classified_as_look_complements():
+    for category in (
+        "bags", "jewelry", "ties", "eyewear", "watches", "belts",
+        "scarves", "hats", "hair_accessories", "socks", "makeup",
+        "fragrance", "haircare",
+    ):
+        assert _kind({"category": category, "attributes": []}) == "accessory"
 
