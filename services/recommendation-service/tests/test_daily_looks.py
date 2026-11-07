@@ -421,3 +421,21 @@ def test_rotation_rejects_malformed_wear_history_instead_of_silently_ranking_it(
             local_date="2026-11-07",
             wear_history=[{"item_id": "top-001", "last_worn_at": 123, "wear_count": 1}],
         )
+
+
+def test_each_daily_look_revives_items_not_surfaced_earlier_today():
+    items = [
+        {"item_id": "top-a", "owner_user_id": "user-123", "display_name": "Casual formal top", "category": "tops", "attributes": ["casual", "formal"], "status": "active"},
+        {"item_id": "top-b", "owner_user_id": "user-123", "display_name": "Neutral top B", "category": "tops", "attributes": [], "status": "active"},
+        {"item_id": "top-c", "owner_user_id": "user-123", "display_name": "Neutral top C", "category": "tops", "attributes": [], "status": "active"},
+        {"item_id": "bottom-a", "owner_user_id": "user-123", "display_name": "Casual formal bottom", "category": "trousers", "attributes": ["casual", "formal"], "status": "active"},
+        {"item_id": "bottom-b", "owner_user_id": "user-123", "display_name": "Neutral bottom B", "category": "trousers", "attributes": [], "status": "active"},
+    ]
+    result = build_daily_looks(
+        request_id="rotation-within-day", user_id="user-123", wardrobe_items=items,
+        local_date="2026-11-07",
+    )
+    first, second, third = result["looks"]
+    assert {"top-a", "bottom-a"}.issubset(first["item_ids"])
+    assert {"top-b", "bottom-b"}.issubset(second["item_ids"])
+    assert "top-c" in third["item_ids"]
