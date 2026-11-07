@@ -445,6 +445,8 @@ def _build_evaluation_trace(
         "cases": cases,
         "human_review_state": "awaiting_two_independent_reviewers_per_candidate",
         "user_exposure_state": "not_collected_by_composer",
+        "assignment_policy": "cirvanna_only_live_arm",
+        "baseline_comparison": "offline_replay_on_identical_candidate_pool",
         "privacy": {
             "raw_user_id_included": False,
             "raw_wardrobe_item_ids_included": False,
