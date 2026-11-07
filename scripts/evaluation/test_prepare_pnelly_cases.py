@@ -74,3 +74,10 @@ def test_prepare_rejects_truncated_pool_and_raw_identity():
     trace["evaluation_trace"]["privacy"]["raw_user_id_included"] = True
     with pytest.raises(ValueError, match="privacy gate"):
         prepare_cases([trace], _two_reviews())
+
+
+def test_prepare_rejects_raw_identity_in_trace_envelope():
+    trace = _trace()
+    trace["subject_id"] = "real-user-123"
+    with pytest.raises(ValueError, match="raw user/account identifier"):
+        prepare_cases([trace], _two_reviews())
