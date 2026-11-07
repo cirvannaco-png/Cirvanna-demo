@@ -780,12 +780,49 @@ async def export_wardrobe_learning_data(request: Request) -> Response:
         ):
             raise HTTPException(502, detail={"code": "WARDROBE_FEEDBACK_EXPORT_SCOPE_MISMATCH"})
 
+        try:
+            items_response = await client.get(
+                wardrobe_base + "/v1/items",
+                params={"owner_user_id": subject, "include_archived": "false"},
+                headers={"Authorization": "Bearer " + wardrobe_token, "Accept": "application/json"},
+            )
+            rotation_response = await client.get(
+                wardrobe_base + "/v1/rotation-state",
+                params={"owner_user_id": subject},
+                headers={"Authorization": "Bearer " + wardrobe_token, "Accept": "application/json"},
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "WARDROBE_ROTATION_EXPORT_UNAVAILABLE"}) from exc
+        if items_response.status_code != 200 or rotation_response.status_code != 200:
+            raise HTTPException(503, detail={"code": "WARDROBE_ROTATION_EXPORT_UNAVAILABLE"})
+        try:
+            items_data = items_response.json()
+            rotation_data = rotation_response.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "WARDROBE_ROTATION_EXPORT_INVALID"}) from exc
+        if (
+            not isinstance(items_data, dict)
+            or items_data.get("owner_user_id") != subject
+            or not isinstance(items_data.get("items"), list)
+            or any(
+                not isinstance(item, dict) or item.get("owner_user_id") != subject
+                or item.get("status") != "active" or not isinstance(item.get("item_id"), str)
+                for item in items_data.get("items", [])
+            )
+        ):
+            raise HTTPException(502, detail={"code": "WARDROBE_ROTATION_EXPORT_SCOPE_MISMATCH"})
+        active_ids = {item["item_id"] for item in items_data["items"]}
+        rotation_snapshot = _parse_rotation_snapshot(
+            rotation_data, subject=subject, active_item_ids=active_ids,
+        )
+
     return _private_json_response({
         "subject_id": subject,
         "export_version": 1,
         "tal": learning["tal"],
         "npl": learning["npl"],
         "wardrobe_feedback": wardrobe_data["items"],
+        "wardrobe_rotation": rotation_snapshot,
     })
 
 
@@ -881,17 +918,46 @@ async def delete_wardrobe_learning_data(request: Request) -> Response:
         except ValueError as exc:
             raise HTTPException(
                 502,
-                detail={"code": "LEARNING_DELETION_PARTIAL", "identity_and_npl_deleted": True, "wardrobe_audit_deleted": False},
+                detail={"code": "LEARNING_DELETION_PARTIAL", "identity_and_npl_deleted": True, "wardrobe_audit_deleted": False, "wardrobe_rotation_state_deleted": False},
             ) from exc
-    if not isinstance(wardrobe_result, dict) or wardrobe_result.get("status") != "deleted":
-        raise HTTPException(
-            502,
-            detail={"code": "LEARNING_DELETION_PARTIAL", "identity_and_npl_deleted": True, "wardrobe_audit_deleted": False},
-        )
+        if not isinstance(wardrobe_result, dict) or wardrobe_result.get("status") != "deleted":
+            raise HTTPException(
+                502,
+                detail={"code": "LEARNING_DELETION_PARTIAL", "identity_and_npl_deleted": True, "wardrobe_audit_deleted": False, "wardrobe_rotation_state_deleted": False},
+            )
+        try:
+            rotation_delete = await client.delete(
+                wardrobe_base + "/v1/rotation-state",
+                params={"owner_user_id": subject},
+                headers={"Authorization": "Bearer " + wardrobe_token, "Accept": "application/json"},
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                503,
+                detail={"code": "LEARNING_DELETION_PARTIAL", "identity_and_npl_deleted": True, "wardrobe_audit_deleted": True, "wardrobe_rotation_state_deleted": False},
+            ) from exc
+        if rotation_delete.status_code != 200:
+            raise HTTPException(
+                503,
+                detail={"code": "LEARNING_DELETION_PARTIAL", "identity_and_npl_deleted": True, "wardrobe_audit_deleted": True, "wardrobe_rotation_state_deleted": False},
+            )
+        try:
+            rotation_result = rotation_delete.json()
+        except ValueError as exc:
+            raise HTTPException(
+                502,
+                detail={"code": "LEARNING_DELETION_PARTIAL", "identity_and_npl_deleted": True, "wardrobe_audit_deleted": True, "wardrobe_rotation_state_deleted": False},
+            ) from exc
+        if not isinstance(rotation_result, dict) or rotation_result.get("status") != "deleted" or rotation_result.get("owner_user_id") != subject:
+            raise HTTPException(
+                502,
+                detail={"code": "LEARNING_DELETION_PARTIAL", "identity_and_npl_deleted": True, "wardrobe_audit_deleted": True, "wardrobe_rotation_state_deleted": False},
+            )
     return _private_json_response({
         "status": "deleted",
         "identity_and_npl_deleted": True,
         "wardrobe_audit_deleted": True,
+        "wardrobe_rotation_state_deleted": True,
         "deleted_wardrobe_feedback_events": wardrobe_result.get("deleted_feedback_events", 0),
     })
 
