@@ -1,0 +1,1 @@
+"""Cirvanna event synchronization worker."""
