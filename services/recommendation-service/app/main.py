@@ -169,6 +169,9 @@ class PNELLYDailyLooksRequest(StrictModel):
     wardrobe_items: list[WardrobeItemForDailyLook] = Field(max_length=150)
     style_signals: list[str] = Field(default_factory=list, max_length=40)
     feedback_signals: list[str] = Field(default_factory=list, max_length=40)
+    # Gateway-only fields. Public BFF input is ignored and these are populated server-side.
+    evaluation_wardrobe_items: list[WardrobeItemForDailyLook] = Field(default_factory=list, max_length=150)
+    hard_excluded_item_ids: list[str] = Field(default_factory=list, max_length=150)
 
     @field_validator("request_id", "user_id")
     @classmethod
@@ -261,6 +264,7 @@ def capabilities() -> dict[str, object]:
         "look_completion": True,
         "pnelly_daily_look_orchestration": True,
         "pnelly_daily_look_roles": ["everyday", "elevated", "explore"],
+        "evaluation_trace_opt_in": os.getenv("PNELLY_EVALUATION_TRACE_ENABLED", "").lower() == "true",
         "virtual_twin_preview_enabled": False,
         "feedback_event_contract": True,
         "durable_personal_memory": False,
@@ -292,6 +296,10 @@ def recommend(request: RecommendationRequest) -> dict[str, object]:
 )
 def pnelly_daily_looks(request: PNELLYDailyLooksRequest) -> dict[str, object]:
     """Compose exactly three role slots from an authenticated BFF's wardrobe snapshot."""
+    trace_enabled = os.getenv("PNELLY_EVALUATION_TRACE_ENABLED", "").lower() == "true"
+    trace_secret = os.getenv("PNELLY_EVALUATION_TRACE_HMAC_SECRET", "").strip()
+    if trace_enabled and len(trace_secret.encode("utf-8")) < 32:
+        raise HTTPException(503, detail={"code": "PNELLY_EVALUATION_TRACE_SIGNING_NOT_CONFIGURED"})
     try:
         return build_daily_looks(
             request_id=request.request_id,
@@ -302,6 +310,13 @@ def pnelly_daily_looks(request: PNELLYDailyLooksRequest) -> dict[str, object]:
             climate=request.climate,
             style_signals=request.style_signals,
             feedback_signals=request.feedback_signals,
+            evaluation_wardrobe_items=(
+                [item.model_dump() for item in request.evaluation_wardrobe_items]
+                if trace_enabled else None
+            ),
+            hard_excluded_item_ids=request.hard_excluded_item_ids if trace_enabled else (),
+            evaluation_trace_enabled=trace_enabled,
+            evaluation_secret=trace_secret if trace_enabled else None,
         )
     except PermissionError as exc:
         raise HTTPException(403, detail={"code": "WARDROBE_SUBJECT_MISMATCH"}) from exc
