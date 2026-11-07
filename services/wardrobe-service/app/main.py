@@ -89,6 +89,15 @@ class CreateOutfit(StrictModel):
     pieces: list[OutfitPieceInput] = Field(min_length=1, max_length=20)
 
 
+class RecordOutfitWear(StrictModel):
+    owner_user_id: str = Field(min_length=1, max_length=128)
+    event_id: str = Field(min_length=8, max_length=128)
+    expected_outfit_version: int = Field(ge=1)
+    consent_receipt_id: str = Field(min_length=8, max_length=128)
+    observed_at: str = Field(min_length=20, max_length=64)
+    context: dict[str, str] = Field(default_factory=dict, max_length=8)
+
+
 class AddOutfitPiece(StrictModel):
     owner_user_id: str = Field(min_length=1, max_length=128)
     expected_version: int = Field(ge=1)
@@ -143,7 +152,7 @@ def ready()->dict[str,object]:
         engine=engine_for_url(url)
         with engine.connect() as conn: conn.execute(text("SELECT 1"))
         tables=set(inspect(engine).get_table_names())
-        required_tables={"wardrobe_items","wardrobe_asset_deletion_outbox","wardrobe_learning_events","wardrobe_outfits"}
+        required_tables={"wardrobe_items","wardrobe_asset_deletion_outbox","wardrobe_learning_events","wardrobe_outfits","wardrobe_outfit_wear_events"}
         wardrobe_columns={column["name"] for column in inspect(engine).get_columns("wardrobe_items")} if "wardrobe_items" in tables else set()
         required_purchase_columns={"commerce_order_id","commerce_order_item_id","purchase_event_id","purchase_quantity","purchase_currency","purchase_unit_price_minor","purchase_paid_at"}
         schema_ready=required_tables.issubset(tables) and required_purchase_columns.issubset(wardrobe_columns)
@@ -679,3 +688,106 @@ def edit_outfit_piece(outfit_id: str, slot_id: str, payload: EditOutfitPiece) ->
         raise
     except Exception as exc:
         raise HTTPException(503, detail={"code": "WARDROBE_OUTFIT_STORE_UNAVAILABLE"}) from exc
+
+
+@app.post("/v1/outfits/{outfit_id}/wear", status_code=201, dependencies=[Depends(require_internal_token)], tags=["outfit history"])
+def record_outfit_wear(outfit_id: str, payload: RecordOutfitWear) -> dict[str, object]:
+    """Record a user-declared wear event and deliver item-level wear signals under consent."""
+    owner = payload.owner_user_id.strip()
+    event_id = payload.event_id.strip()
+    try:
+        observed = datetime.fromisoformat(payload.observed_at.replace("Z", "+00:00"))
+        if observed.tzinfo is None:
+            raise ValueError("observed_at requires timezone")
+        observed = observed.astimezone(timezone.utc)
+    except ValueError as exc:
+        raise HTTPException(422, detail={"code": "INVALID_OUTFIT_WEAR_TIMESTAMP"}) from exc
+    context = {str(k).strip(): str(v).strip() for k, v in payload.context.items()}
+    if any(not k or not v or len(k) > 32 or len(v) > 80 for k, v in context.items()):
+        raise HTTPException(422, detail={"code": "INVALID_OUTFIT_WEAR_CONTEXT"})
+    document = {
+        "owner_user_id": owner, "event_id": event_id, "outfit_id": outfit_id,
+        "expected_outfit_version": payload.expected_outfit_version,
+        "consent_receipt_id": payload.consent_receipt_id.strip(),
+        "observed_at": observed.isoformat(), "context": context,
+    }
+    digest = hashlib.sha256(json.dumps(document, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    try:
+        wardrobe = store()
+        with Session(wardrobe.engine) as session:
+            existing = session.get(WardrobeOutfitWearEventRow, (owner, event_id))
+            if existing is not None:
+                if existing.payload_hash != digest:
+                    raise HTTPException(409, detail={"code": "OUTFIT_WEAR_EVENT_CONFLICT"})
+                return {"status": "replayed", "event_id": event_id, "items": existing.items_snapshot,
+                        "delivery": existing.delivery_result}
+            outfit = session.scalar(select(WardrobeOutfitRow).where(
+                WardrobeOutfitRow.owner_user_id == owner, WardrobeOutfitRow.outfit_id == outfit_id,
+                WardrobeOutfitRow.status == "active",
+            ))
+            if outfit is None:
+                raise HTTPException(404, detail={"code": "SAVED_OUTFIT_NOT_FOUND"})
+            if outfit.version != payload.expected_outfit_version:
+                raise HTTPException(409, detail={"code": "SAVED_OUTFIT_VERSION_CONFLICT", "current_version": outfit.version})
+            items_snapshot = []
+            items = []
+            for piece in outfit.pieces or []:
+                item = session.scalar(select(WardrobeRow).where(
+                    WardrobeRow.owner_user_id == owner, WardrobeRow.item_id == piece["wardrobe_item_id"],
+                ))
+                if item is None or item.status != "active":
+                    raise HTTPException(409, detail={"code": "OUTFIT_CONTAINS_INACTIVE_ITEM"})
+                items.append(item)
+                items_snapshot.append({
+                    "slot_id": piece["slot_id"], "item_id": item.item_id, "item_version": item.version,
+                    "display_name": item.display_name, "category": item.category,
+                    "catalog_product_id": item.catalog_product_id,
+                })
+        deliveries = []
+        for item in items:
+            item_event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cirvanna:outfit-wear:{owner}:{event_id}:{item.item_id}"))
+            result = deliver_learning_event(
+                owner_user_id=owner, item_id=item.item_id, item_version=item.version,
+                display_name=item.display_name, category=item.category, attributes=list(item.attributes or []),
+                event_id=item_event_id, signal="wear", target_type=None, target_value=None,
+                consent_receipt_id=payload.consent_receipt_id.strip(), observed_at=observed,
+            )
+            deliveries.append({"item_id": item.item_id, "event_id": item_event_id, "result": result})
+        with Session(wardrobe.engine) as session, session.begin():
+            existing = session.get(WardrobeOutfitWearEventRow, (owner, event_id))
+            if existing is None:
+                session.add(WardrobeOutfitWearEventRow(
+                    owner_user_id=owner, event_id=event_id, outfit_id=outfit_id,
+                    outfit_version=payload.expected_outfit_version, items_snapshot=items_snapshot,
+                    context=context, consent_receipt_id=payload.consent_receipt_id.strip(),
+                    payload_hash=digest, delivery_result=deliveries, observed_at=observed,
+                ))
+            elif existing.payload_hash != digest:
+                raise HTTPException(409, detail={"code": "OUTFIT_WEAR_EVENT_CONFLICT"})
+        return {"status": "recorded", "event_id": event_id, "outfit_id": outfit_id,
+                "outfit_version": payload.expected_outfit_version, "items": items_snapshot,
+                "delivery": deliveries}
+    except HTTPException:
+        raise
+    except LearningIntegrationError as exc:
+        raise HTTPException(exc.status_code, detail={"code": exc.code}) from exc
+    except Exception as exc:
+        raise HTTPException(503, detail={"code": "OUTFIT_WEAR_HISTORY_UNAVAILABLE"}) from exc
+
+
+@app.get("/v1/wear-history", dependencies=[Depends(require_internal_token)], tags=["outfit history"])
+def list_wear_history(owner_user_id: Annotated[str, Query(min_length=1, max_length=128)],
+                      limit: int = Query(default=50, ge=1, le=100)) -> dict[str, object]:
+    owner = owner_user_id.strip()
+    try:
+        with Session(store().engine) as session:
+            rows = session.scalars(select(WardrobeOutfitWearEventRow)
+                .where(WardrobeOutfitWearEventRow.owner_user_id == owner)
+                .order_by(WardrobeOutfitWearEventRow.observed_at.desc()).limit(limit)).all()
+            return {"owner_user_id": owner, "items": [{
+                "event_id": row.event_id, "outfit_id": row.outfit_id,
+                "outfit_version": row.outfit_version, "items": row.items_snapshot,
+                "context": row.context, "observed_at": row.observed_at.isoformat(),
+            } for row in rows]}
+    except Exception as exc:
+        raise HTTPException(503, detail={"code": "OUTFIT_WEAR_HISTORY_UNAVAILABLE"}) from exc
