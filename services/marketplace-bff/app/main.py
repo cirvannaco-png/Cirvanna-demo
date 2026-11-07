@@ -195,6 +195,26 @@ class EditWardrobeItemIn(BaseModel):
     attributes: list[str] | None = Field(default=None, max_length=100)
 
 
+class CreateWardrobeOutfitIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=160)
+    wardrobe_item_ids: list[str] = Field(min_length=1, max_length=20)
+
+
+class AddWardrobeOutfitPieceIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_version: int = Field(ge=1)
+    command_id: str = Field(min_length=8, max_length=128)
+    wardrobe_item_id: str = Field(min_length=3, max_length=128)
+
+
+class EditWardrobeOutfitPieceIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_version: int = Field(ge=1)
+    command_id: str = Field(min_length=8, max_length=128)
+    wardrobe_item_id: str | None = Field(default=None, min_length=3, max_length=128)
+
+
 class WardrobeFeedbackIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     item_id: str = Field(min_length=3, max_length=128)
@@ -383,6 +403,128 @@ async def edit_wardrobe_item(request: Request, item_id: str, payload: EditWardro
     if not isinstance(item, dict) or item.get("owner_user_id") != subject or item.get("item_id") != item_id:
         raise HTTPException(502, detail={"code": "WARDROBE_ITEM_EDIT_SCOPE_MISMATCH"})
     return _private_json_response({"item": item, "status": data.get("status", "updated")})
+
+
+@app.get("/api/wardrobe/outfits")
+async def list_wardrobe_outfits(request: Request) -> Response:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        base, token = _wardrobe_service()
+        try:
+            response = await client.get(
+                base + "/v1/outfits", params={"owner_user_id": subject},
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "WARDROBE_OUTFIT_SERVICE_UNAVAILABLE"}) from exc
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "WARDROBE_OUTFIT_SERVICE_UNAVAILABLE"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "WARDROBE_OUTFIT_RESPONSE_INVALID"}) from exc
+    outfits = data.get("outfits") if isinstance(data, dict) else None
+    if data.get("owner_user_id") != subject or not isinstance(outfits, list) or any(
+        not isinstance(outfit, dict) or outfit.get("owner_user_id") != subject
+        or not isinstance(outfit.get("pieces"), list)
+        for outfit in outfits
+    ):
+        raise HTTPException(502, detail={"code": "WARDROBE_OUTFIT_SCOPE_MISMATCH"})
+    return _private_json_response(data)
+
+
+@app.post("/api/wardrobe/outfits", status_code=201)
+async def create_wardrobe_outfit(request: Request, payload: CreateWardrobeOutfitIn) -> Response:
+    item_ids = [value.strip() for value in payload.wardrobe_item_ids]
+    if len(set(item_ids)) != len(item_ids):
+        raise HTTPException(422, detail={"code": "OUTFIT_ITEM_DUPLICATE"})
+    body = {
+        "outfit_id": str(uuid.uuid4()),
+        "name": payload.name.strip(),
+        "pieces": [{"slot_id": str(uuid.uuid4()), "wardrobe_item_id": item_id} for item_id in item_ids],
+    }
+    if not body["name"]:
+        raise HTTPException(422, detail={"code": "OUTFIT_NAME_EMPTY"})
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        base, token = _wardrobe_service()
+        body["owner_user_id"] = subject
+        try:
+            response = await client.post(base + "/v1/outfits", headers={"Authorization": "Bearer " + token}, json=body)
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "WARDROBE_OUTFIT_CREATE_UNAVAILABLE"}) from exc
+    if response.status_code in {400, 403, 404, 409, 422}:
+        try:
+            detail = response.json().get("detail", {})
+        except ValueError:
+            detail = {"code": "WARDROBE_OUTFIT_CREATE_REJECTED"}
+        raise HTTPException(response.status_code, detail=detail)
+    if response.status_code != 201:
+        raise HTTPException(503, detail={"code": "WARDROBE_OUTFIT_CREATE_UNAVAILABLE"})
+    data = response.json()
+    outfit = data.get("outfit") if isinstance(data, dict) else None
+    if not isinstance(outfit, dict) or outfit.get("owner_user_id") != subject:
+        raise HTTPException(502, detail={"code": "WARDROBE_OUTFIT_SCOPE_MISMATCH"})
+    return _private_json_response(data)
+
+
+@app.post("/api/wardrobe/outfits/{outfit_id}/pieces", status_code=201)
+async def add_wardrobe_outfit_piece(request: Request, outfit_id: str, payload: AddWardrobeOutfitPieceIn) -> Response:
+    body = payload.model_dump()
+    body["slot_id"] = str(uuid.uuid4())
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        base, token = _wardrobe_service()
+        body["owner_user_id"] = subject
+        try:
+            response = await client.post(
+                base + f"/v1/outfits/{outfit_id}/pieces",
+                headers={"Authorization": "Bearer " + token}, json=body,
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "WARDROBE_OUTFIT_EDIT_UNAVAILABLE"}) from exc
+    if response.status_code in {400, 403, 404, 409, 422}:
+        try:
+            detail = response.json().get("detail", {})
+        except ValueError:
+            detail = {"code": "WARDROBE_OUTFIT_EDIT_REJECTED"}
+        raise HTTPException(response.status_code, detail=detail)
+    if response.status_code != 201:
+        raise HTTPException(503, detail={"code": "WARDROBE_OUTFIT_EDIT_UNAVAILABLE"})
+    data = response.json()
+    outfit = data.get("outfit") if isinstance(data, dict) else None
+    if not isinstance(outfit, dict) or outfit.get("owner_user_id") != subject:
+        raise HTTPException(502, detail={"code": "WARDROBE_OUTFIT_SCOPE_MISMATCH"})
+    return _private_json_response(data)
+
+
+@app.patch("/api/wardrobe/outfits/{outfit_id}/pieces/{slot_id}")
+async def edit_wardrobe_outfit_piece(request: Request, outfit_id: str, slot_id: str, payload: EditWardrobeOutfitPieceIn) -> Response:
+    body = payload.model_dump()
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        base, token = _wardrobe_service()
+        body["owner_user_id"] = subject
+        try:
+            response = await client.patch(
+                base + f"/v1/outfits/{outfit_id}/pieces/{slot_id}",
+                headers={"Authorization": "Bearer " + token}, json=body,
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "WARDROBE_OUTFIT_EDIT_UNAVAILABLE"}) from exc
+    if response.status_code in {400, 403, 404, 409, 422}:
+        try:
+            detail = response.json().get("detail", {})
+        except ValueError:
+            detail = {"code": "WARDROBE_OUTFIT_EDIT_REJECTED"}
+        raise HTTPException(response.status_code, detail=detail)
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "WARDROBE_OUTFIT_EDIT_UNAVAILABLE"})
+    data = response.json()
+    outfit = data.get("outfit") if isinstance(data, dict) else None
+    if not isinstance(outfit, dict) or outfit.get("owner_user_id") != subject:
+        raise HTTPException(502, detail={"code": "WARDROBE_OUTFIT_SCOPE_MISMATCH"})
+    return _private_json_response(data)
 
 
 @app.post("/api/wardrobe/items", status_code=201)
