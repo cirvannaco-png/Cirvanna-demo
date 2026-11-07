@@ -355,7 +355,7 @@ def put_consent(subject_id: str = Query(min_length=1, max_length=128), payload: 
     )
     db.add(row)
     db.commit()
-    return {"receipt_id": row.receipt_id, "status": "recorded", "granted": row.granted}
+    return {"receipt_id": row.receipt_id, "consent_id": row.consent_id, "resource_id": row.resource_id, "status": "recorded", "granted": row.granted}
 
 
 @app.post("/v1/tal/consents/{receipt_id}/revoke", dependencies=[Depends(require_internal_token)])
@@ -467,7 +467,7 @@ def export_events(subject_id: str, db: Annotated[Session, Depends(get_db)]):
     return {
         "subject_id": subject,
         "profile": {"profile_version": profile.profile_version, "preferences": profile.preferences} if profile else None,
-        "consent_receipts": [{"receipt_id": x.receipt_id, "scope": x.scope, "consent_version": x.consent_version, "granted": x.granted, "granted_at": x.granted_at.isoformat() if x.granted_at else None, "revoked_at": x.revoked_at.isoformat() if x.revoked_at else None} for x in consents],
+        "consent_receipts": [{"receipt_id": x.receipt_id, "consent_id": x.consent_id, "resource_id": x.resource_id, "scope": x.scope, "consent_version": x.consent_version, "granted": x.granted, "granted_at": x.granted_at.isoformat() if x.granted_at else None, "revoked_at": x.revoked_at.isoformat() if x.revoked_at else None} for x in consents],
         "events": [{"event_id": x.event_id, "feature_key": x.feature_key, "value": x.value, "event_kind": x.event_kind, "supersedes_event_id": x.supersedes_event_id, "observed_at": x.observed_at.isoformat(), "expires_at": x.expires_at.isoformat() if x.expires_at else None, "consent_receipt_id": x.consent_receipt_id} for x in events],
     }
 
