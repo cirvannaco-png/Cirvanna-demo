@@ -19,7 +19,7 @@ REQUIRED = {
     "session_id", "user_pseudonym", "outfit_id", "algorithm_rank",
     "human_relevance", "hard_exclusion_violation", "edited", "rejected",
     "occasion_match", "preference_match_count", "garment_categories",
-    "style_tags", "human_reviewed", "reviewer_ids", "review_rubric_version",
+    "style_tags", "human_reviewed", "reviewer_scores", "review_rubric_version",
 }
 METRICS = (
     "mean_human_relevance_at_k",
@@ -51,14 +51,25 @@ def load_rows(path: Path) -> list[dict[str, Any]]:
             raise ValueError(f"{path}:{line_no}: missing fields: {', '.join(sorted(missing))}")
         if row["human_reviewed"] is not True:
             raise ValueError(f"{path}:{line_no}: every row must be human-reviewed")
-        reviewers = row["reviewer_ids"]
-        if (
-            not isinstance(reviewers, list)
-            or len(reviewers) < 2
-            or any(not isinstance(x, str) or not x.strip() for x in reviewers)
-            or len(set(reviewers)) != len(reviewers)
-        ):
-            raise ValueError(f"{path}:{line_no}: reviewer_ids must contain at least two distinct reviewers")
+        reviewer_scores = row["reviewer_scores"]
+        if not isinstance(reviewer_scores, list) or len(reviewer_scores) != 2:
+            raise ValueError(f"{path}:{line_no}: reviewer_scores must contain exactly two independent reviews")
+        reviewer_ids: list[str] = []
+        for review in reviewer_scores:
+            if not isinstance(review, dict):
+                raise ValueError(f"{path}:{line_no}: each reviewer score must be an object")
+            reviewer_id = review.get("reviewer_id")
+            relevance = review.get("human_relevance")
+            exclusion = review.get("hard_exclusion_violation")
+            if not isinstance(reviewer_id, str) or not reviewer_id.strip():
+                raise ValueError(f"{path}:{line_no}: reviewer_id must be non-empty")
+            if not isinstance(relevance, int) or isinstance(relevance, bool) or not 1 <= relevance <= 5:
+                raise ValueError(f"{path}:{line_no}: reviewer human_relevance must be an integer from 1 to 5")
+            if not isinstance(exclusion, bool):
+                raise ValueError(f"{path}:{line_no}: reviewer hard_exclusion_violation must be boolean")
+            reviewer_ids.append(reviewer_id)
+        if len(set(reviewer_ids)) != 2:
+            raise ValueError(f"{path}:{line_no}: reviewer_scores must contain two distinct reviewers")
         if not isinstance(row["review_rubric_version"], str) or not row["review_rubric_version"].strip():
             raise ValueError(f"{path}:{line_no}: review_rubric_version must be non-empty")
         if not isinstance(row["human_relevance"], int) or isinstance(row["human_relevance"], bool) or not 1 <= row["human_relevance"] <= 5:
@@ -181,6 +192,52 @@ def summarize(metrics_by_session: dict[str, dict[str, float]], rows: list[dict[s
     }
 
 
+def inter_rater_agreement(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Report raw agreement and Cohen kappa from the two blinded reviewer scores."""
+    relevance_pairs: list[tuple[int, int]] = []
+    exclusion_pairs: list[tuple[bool, bool]] = []
+    for row in rows:
+        first, second = row["reviewer_scores"]
+        relevance_pairs.append((first["human_relevance"], second["human_relevance"]))
+        exclusion_pairs.append((first["hard_exclusion_violation"], second["hard_exclusion_violation"]))
+
+    n = len(rows)
+    exact_relevance = sum(a == b for a, b in relevance_pairs) / n
+    exact_exclusion = sum(a == b for a, b in exclusion_pairs) / n
+
+    observed_relevance_disagreement = sum((a - b) ** 2 for a, b in relevance_pairs) / (16 * n)
+    first_relevance = [sum(a == score for a, _ in relevance_pairs) / n for score in range(1, 6)]
+    second_relevance = [sum(b == score for _, b in relevance_pairs) / n for score in range(1, 6)]
+    expected_relevance_disagreement = sum(
+        first_relevance[i] * second_relevance[j] * ((i - j) ** 2 / 16)
+        for i in range(5) for j in range(5)
+    )
+    weighted_kappa = (
+        1.0 - observed_relevance_disagreement / expected_relevance_disagreement
+        if expected_relevance_disagreement > 0 else None
+    )
+
+    first_positive = sum(a for a, _ in exclusion_pairs) / n
+    second_positive = sum(b for _, b in exclusion_pairs) / n
+    observed_exclusion_disagreement = 1.0 - exact_exclusion
+    expected_exclusion_disagreement = (
+        first_positive * (1 - second_positive)
+        + (1 - first_positive) * second_positive
+    )
+    exclusion_kappa = (
+        1.0 - observed_exclusion_disagreement / expected_exclusion_disagreement
+        if expected_exclusion_disagreement > 0 else None
+    )
+    return {
+        "adjudicated_candidate_rows": n,
+        "exact_relevance_agreement_rate": round(exact_relevance, 4),
+        "hard_exclusion_agreement_rate": round(exact_exclusion, 4),
+        "quadratic_weighted_relevance_cohen_kappa": round(weighted_kappa, 4) if weighted_kappa is not None else None,
+        "hard_exclusion_cohen_kappa": round(exclusion_kappa, 4) if exclusion_kappa is not None else None,
+        "kappa_note": "null means expected disagreement was zero and kappa is undefined; inspect raw reviewer distributions.",
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("dataset", type=Path, help="Adjudicated human-reviewed JSONL dataset")
@@ -204,6 +261,7 @@ def main() -> int:
         "algorithm": summarize(algorithm_sessions, rows, args.k, 1),
         "simple_baseline": summarize(baseline_sessions, rows, args.k, 2),
         "paired_algorithm_minus_baseline_ci_95": paired_delta,
+        "inter_rater_agreement": inter_rater_agreement(rows),
         "interpretation": {
             "higher_is_better": ["mean_human_relevance_at_k", "mean_diversity_at_k"],
             "lower_is_better": ["hard_exclusion_violation_rate_at_k", "user_edit_rate_at_k", "user_rejection_rate_at_k", "repeated_rejection_rate"],
