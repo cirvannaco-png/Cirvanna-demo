@@ -1,6 +1,6 @@
 # Cirvanna master product and engineering checklist
 
-**Code baseline audited:** `main` at `327d8316c69eee911bc1697e60e1d6357eb463da` (7 November 2026; includes #124, #127, #117, #154 and #155)  
+**Code baseline audited:** `main` at `8133e9c92671c01dd7bcd08dc27f0328b445e7c8` (7 November 2026; includes resource-bound consent #158 and Commerce refund reconciliation #159)  
 **Status:** Active; the product requirements are captured below. This is not a production-readiness declaration.
 
 ## Operating rules
@@ -9,7 +9,7 @@
 - Keep the two-step product plan: **Step 1 — foundation and ownership**; **Step 2 — intelligence and connected experience**. Workstreams may progress simultaneously when contracts and dependencies permit.
 - Do not make the personal wardrobe the universal source of truth. A new user with an empty wardrobe still receives useful, non-fabricated recommendations from their declared identity/style profile and context. Once the user adds items, the wardrobe is authoritative for what they own and wear.
 - Preserve domain ownership: Identity/USI owns declared style profile; Wardrobe owns user-owned item records and wear history; Catalog owns canonical product identity and product facts; Commerce owns merchant offers, prices, stock, orders and payment state; NPL owns hard exclusions; USI/TAL owns positive preference/learning observations; the canonical decision/CAL layer owns final product display authorization; Virtual Twin owns the user's authorized Twin record/assets; DermalSight owns non-diagnostic cosmetic skin signals.
-- A product being browsed, saved, shortlisted, placed in a cart, recommended or tried on is **not** wardrobe ownership. A confirmed purchase may be synchronized to the wardrobe only through a verified Commerce event and an idempotent ownership handoff; cancellations/refunds must reconcile the wardrobe state.
+- A product being browsed, saved, shortlisted, placed in a cart, recommended or tried on is **not** wardrobe ownership. A confirmed purchase may be synchronized to the wardrobe only through a verified Commerce event and an idempotent ownership handoff. A payment refund updates financial state only; it does not prove a physical return or automatically remove the garment from Wardrobe. Any ownership reversal requires a separate verified return/possession workflow.
 - Never infer sensitive identity, culture, skin tone, body shape, health status or preferences from a name, location or face when the relevant data must instead be user-declared or evidence-validated.
 - Fail closed when consent, ownership, model provenance, product evidence, fit evidence or display authorization is missing. Return explicit UNKNOWN / REVIEW / unavailable states instead of fabricated confidence.
 - AI suggestions are advisory. Users can accept, reject, modify, undo and correct learned information. Hard exclusions remain distinct from soft rejection observations.
@@ -43,16 +43,16 @@
 ### 1.3 Wardrobe sync, purchase ownership and source-of-truth rules
 - [ ] Define near-real-time sync for user-added/edited items and authorized brand/catalog changes, with explicit source, version, last-synced time and conflict handling.
 - [~] Verified purchase-to-Wardrobe ownership source is implemented: Commerce emits a paid-order outbox event and the authenticated worker materializes owner-scoped purchase provenance idempotently (PR #151 / #145). Production webhook delivery, live event replay and operational monitoring remain unverified; browsing, saved, cart, unpurchased or try-on products must never appear as owned.
-- [ ] Complete ownership reconciliation for partial/full cancellation, refund, return and chargeback. Commerce currently does not implement refunds/returns; no purchase reversal may be inferred from an unverified client action or unsupported event.
+- [~] Commerce now processes signed Stripe `charge.refunded` events, maps them to a paid order through its PaymentIntent, validates cumulative amount/currency and emits an idempotent `commerce.order.refund.updated` outbox event (PR #159). Wardrobe stores an owner/order-scoped financial snapshot and deliberately leaves item ownership unchanged. Physical return, restocking, cancellation reversal, disputes/chargebacks and item-level refund allocation remain open.
 - [ ] Keep Catalog product facts canonical; Wardrobe stores canonical product/variant references plus user-specific notes and preferences, not a competing copy of merchant facts.
-- [~] Duplicate delivery, idempotency, retry and worker failure paths have source/CI coverage (PR #145/#151). Delayed/out-of-order event ordering, live Stripe webhook delivery and refund/return replay still require provider-backed staging verification.
+- [~] Paid and refund event source paths have duplicate/replay, monotonic cumulative refund, retry, owner isolation and PostgreSQL restore CI coverage (PR #145/#151/#159). Live Stripe webhook delivery, worker deployment/monitoring, provider replay and physical-return event handling still require staging/production evidence.
 - [ ] Provide optional marketplace notifications for unowned products that complement an outfit; label them as suggestions/available-to-buy, never wardrobe items.
 
 ### 1.4 Commerce and marketplace transaction integrity
-- [~] Commerce implements immutable checkout line snapshots, idempotent orders, inventory reservation, signed Stripe paid-event verification and a transactional ownership outbox. Refunds/returns, partial cancellation, live Stripe test-mode reconciliation, price/shipping/tax completeness and deployed operational controls remain open.
+- [~] Commerce implements immutable checkout line snapshots, idempotent orders, inventory reservation, signed Stripe paid-event verification, transactional paid-order outbox and cumulative charge-refund snapshot/outbox (PR #159). Physical returns, chargebacks/disputes, partial cancellations, live Stripe test-mode reconciliation, landed-cost completeness and deployed operational controls remain open.
 - [ ] Enforce price integrity: merchant changes to a listing affect future offers only; checkout must bind an explicit quoted offer/version/expiry and revalidate before payment; once an order is accepted/paid, merchant edits must not rewrite the order's agreed line price or terms.
 - [ ] Implement customer cancellation windows and state transitions, including partial cancellation where supported, stock release, payment void/refund, audit trail and clear merchant/customer permissions.
-- [ ] Implement refunds, returns, disputes and webhook reconciliation without treating a browser redirect as proof of payment.
+- [~] Signed Stripe charge-refund webhook reconciliation and downstream financial snapshot delivery are implemented in source/CI (PR #159); no browser redirect is trusted. Physical returns, disputes/chargebacks, item-level allocation and inventory restocking remain unimplemented.
 - [ ] Apply market, currency, tax, shipping/delivery fee, stock, seller eligibility, size/variant availability and fulfilment constraints to recommendations and checkout.
 - [ ] Support the configured local discovery radius (30 km initial radius, user-expandable) without implying delivery availability; show delivery/transport fees and estimated availability where verified.
 - [ ] Add offer freshness, price-history/provenance and stale-quote tests; preserve canonical product and cross-merchant variant identity.
@@ -143,7 +143,7 @@
 - [ ] Add contract, unit, integration, security, privacy, regression and end-to-end tests for all user flows and ownership boundaries.
 - [ ] Add latency SLOs for Twin and multi-product try-on; measure p50/p95/p99 on defined device/network cohorts.
 - [ ] Run dependency, source/artifact license, secret and supply-chain scans; verify CSP, HTTPS, CORS, object-storage access and API auth.
-- [~] PostgreSQL migration reapplication and isolated dump/restore are covered in CI for the Wardrobe persistence path; this is not a production database backup/restore drill. Other service migrations, live webhook replay, queue/DLQ operations and provider-backed deletion completion remain unverified.
+- [~] PostgreSQL 17 migration application and custom dump/restore CI cover Wardrobe rotation, wear history, purchase provenance and refund snapshots (PR #159), plus Identity consent bundles (PR #158). These are isolated CI databases, not production backup/restore drills. Production migrations, live webhook replay, queue/DLQ operations and provider-backed deletion completion remain unverified.
 - [ ] Run actual Android-device acceptance tests in addition to browser automation.
 - [ ] Add observability with privacy-minimized event IDs, reason codes and model/runtime provenance; never log raw image payloads or credentials.
 - [~] The machine-readable release-gate registry and repository evidence instructions exist; this checklist update records the current source/CI state. A complete release evidence pack with deployed environment, production restore drill, live payment, provider/model manifests, operational ownership and rollback evidence is still outstanding.
@@ -154,14 +154,14 @@
 - [x] Repository inspected on 7 November 2026; active monorepo and service boundaries identified.
 - [x] Versioned single-item Wardrobe edit API and authenticated UI controls merged in PR #128; its Wardrobe persistence and architecture checks passed.
 - [~] DermalSight has a fail-closed ONNX adapter and signed release-evidence gate, but the trained/validated model and dataset are absent.
-- [~] Commerce implements immutable line snapshots, transactional stock reservation and verified Stripe paid settlement; refund/return support, full landed-cost checkout, price-integrity verification and live production reconciliation remain open.
+- [~] Commerce implements immutable line snapshots, transactional stock reservation, verified Stripe settlement and cumulative signed charge-refund reconciliation (PR #159). Refund snapshots flow through Sync to Wardrobe's separate financial ledger without changing garment ownership. Physical returns/chargebacks, landed-cost checkout, complete price-integrity verification and live production reconciliation remain open.
 - [~] Wardrobe has authenticated persistence, persistent rotation, explicit wear-history and verified-purchase ownership contracts; the production database/restore, production event delivery, physical UI QA and real object-store deletion path remain gated.
 - [~] FCI contract exists; no independently validated calibrated provider or proven 4% measurement accuracy.
 - [~] Virtual Twin registry and private asset-service source are merged; a real mesh generator/validator, live consent verifier, private object-store configuration and persistent render provider are not operational. The API correctly reports pose-skeleton inference separately from a persistent user Twin.
 - [x] Saved-outfit piece editing is implemented in merged PR #135; the user-declared colour preference profile is implemented in merged PR #137. PNELLY wardrobe companion, complete personal outfit graph, human-reviewed dataset, multi-product try-on, and end-to-end marketplace-to-wardrobe/Twin flows remain to be integrated and verified.
 - [x] Merged PR #139 ports the PNELLY daily-look Decision Gateway route and consent/NPL checks onto current main; Decision Gateway tests passed.
 - [x] Privacy/learning-data controls from stale PR #130 are integrated through PR #139. Confirm deployed migrations, deletion retry behaviour and production evidence before release.
-- [~] Open-PR/branch reconciliation has been narrowed: PRs #124 (private assets), #127 (VTON provenance/license gate), #117 (human-review evaluation harness) and #155 (Twin capability truthfulness) were merged after green targeted CI; PR #154 reconciled this checklist. Seven superseded/stale PRs were closed with explanations. Remaining conflicted feature PRs are retained for controlled port/rebase, and historical branch refs are preserved pending a safe branch-retention review.
+- [~] Open-PR/branch reconciliation is documented in merged PR #157. PRs #158 (resource-bound consent verifier and PostgreSQL migration/restore CI) and #159 (Commerce refund reconciliation through Sync to Wardrobe, PostgreSQL migration/restore and five green CI workflows) are merged. The remaining 19 open PRs are inventoried with dispositions; historical refs are preserved pending a reviewed retention plan.
 
 ## Required evidence for every completed checklist item
 
