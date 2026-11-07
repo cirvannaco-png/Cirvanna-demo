@@ -103,7 +103,7 @@ traces must not be used for comparative claims.
 
 Use `scripts/evaluation/prepare_pnelly_cases.py` to join trace JSONL with
 two independent blinded reviews per candidate and any verified exposure log.
-The resulting JSONL follows the benchmark schema and can be passed to
+The coordinator must verify the two reviewer identities and assign distinct reviewer keys; this tool can only check key uniqueness, not human identity. The resulting JSONL follows the benchmark schema and can be passed to
 `scripts/evaluation/evaluate_outfits.py`. Use
 `scripts/evaluation/evaluate_pnelly_cases.py` for role-stratified reports.
 
