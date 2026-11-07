@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
+from sqlalchemy.orm import Session
 from app import main
-from app.store import Base, engine_for_url
+from app.store import Base, NPLDeletionReceiptRow, NPLStore, engine_for_url
 
 TOKEN = "npl-service-test-token-with-more-than-32-bytes"
 SECRET = "npl-evidence-test-secret-with-more-than-32-bytes"
@@ -109,3 +112,67 @@ def test_unconfigured_database_fails_readiness_closed(client, monkeypatch):
     monkeypatch.delenv("NPL_DATABASE_URL", raising=False)
     response = client.get("/ready")
     assert response.status_code == 503 and response.json()["detail"]["ready"] is False
+
+
+
+def test_user_export_is_scoped_and_contains_correction_history(client):
+    create_preference(client, user="user-1", preference="avoid-blue", source="user_declared")
+    create_preference(client, user="user-2", preference="avoid-red", source="user_declared")
+    rejection(client, "avoid-blue", "reject-blue-1", user="user-1")
+    correction = client.post(
+        "/v1/preferences/avoid-blue/retract",
+        headers=auth(),
+        json={"user_id": "user-1", "correction_event_id": "correct-blue-1"},
+    )
+    assert correction.status_code == 200, correction.text
+
+    exported = client.get("/v1/users/user-1/export", headers=auth())
+    assert exported.status_code == 200, exported.text
+    payload = exported.json()
+    assert payload["user_id"] == "user-1"
+    assert payload["export_version"] == 1
+    assert len(payload["preferences"]) == 1
+    preference = payload["preferences"][0]
+    assert preference["preference_id"] == "avoid-blue"
+    assert preference["rejection_event_ids"] == ["reject-blue-1"]
+    assert preference["correction_event_id"] == "correct-blue-1"
+    assert preference["active"] is False
+    assert "avoid-red" not in exported.text
+
+
+def test_user_deletion_removes_all_npl_rows_and_keeps_only_digest_receipt(client):
+    create_preference(client, user="user-1", preference="avoid-blue", source="user_declared")
+    rejection(client, "avoid-blue", "reject-blue-1", user="user-1")
+    correction = client.post(
+        "/v1/preferences/avoid-blue/retract",
+        headers=auth(),
+        json={"user_id": "user-1", "correction_event_id": "correct-blue-1"},
+    )
+    assert correction.status_code == 200, correction.text
+
+    response = client.delete("/v1/users/user-1", headers=auth())
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["status"] == "deleted"
+    assert result["deleted_preferences"] == 1
+    assert result["deleted_rejection_events"] == 1
+    assert result["deleted_correction_events"] == 1
+    assert "user-1" not in response.text
+
+    remaining = client.get("/v1/preferences", headers=auth(), params={"user_id": "user-1"})
+    assert remaining.status_code == 200
+    assert remaining.json()["preferences"] == []
+    from app.store import CorrectionEventRow, PreferenceRow, RejectionEventRow
+    engine = engine_for_url(os.environ["NPL_DATABASE_URL"])
+    with Session(engine) as session:
+        receipt = session.get(NPLDeletionReceiptRow, result["deletion_receipt_id"])
+        assert receipt is not None
+        assert receipt.subject_digest == hashlib.sha256(b"user-1").hexdigest()
+        assert session.scalar(select(PreferenceRow).where(PreferenceRow.user_id == "user-1")) is None
+        assert session.scalar(select(RejectionEventRow).where(RejectionEventRow.user_id == "user-1")) is None
+        assert session.scalar(select(CorrectionEventRow).where(CorrectionEventRow.user_id == "user-1")) is None
+
+
+def test_user_export_and_delete_require_internal_auth(client):
+    assert client.get("/v1/users/user-1/export").status_code == 401
+    assert client.delete("/v1/users/user-1").status_code == 401
