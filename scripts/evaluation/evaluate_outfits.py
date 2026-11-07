@@ -302,6 +302,8 @@ def evaluate(records: list[dict[str, Any]], k: int = 3) -> dict[str, Any]:
     empty_slates = {system: 0 for system in SYSTEMS}
     top_k_fill = {system: [] for system in SYSTEMS}
     assigned_exposures = {system: [] for system in SYSTEMS}
+    case_metrics = {system: defaultdict(list) for system in SYSTEMS}
+    paired_case_metrics: dict[str, list[dict[str, float | None]]] = defaultdict(list)
     seen_case_ids: set[str] = set()
     participant_assignments: dict[str, str] = {}
     for record in records:
@@ -315,6 +317,7 @@ def evaluate(records: list[dict[str, Any]], k: int = 3) -> dict[str, Any]:
         if previous_assignment != assigned_system:
             raise ValueError("participant must remain in one randomized system arm across sessions")
         candidates, context, rankings, labels = _validate_case(record, k)
+        per_case: dict[str, dict[str, float | None]] = {}
         for system, ranking in rankings.items():
             selected = ranking[:k]
             top_k_fill[system].append(len(selected) / k)
@@ -330,6 +333,23 @@ def evaluate(records: list[dict[str, Any]], k: int = 3) -> dict[str, Any]:
             accum[system]["diversity"].append(_diversity(ranking, candidates, k))
             if violations:
                 accum[system]["violations"].append(sum(violations) / len(violations))
+            per_case[system] = {
+                "no_result_rate": 1.0 if not selected else 0.0,
+                "top_k_fill_rate": len(selected) / k,
+                "mean_human_relevance_top_k": statistics.mean(relevance) if relevance else 0.0,
+                "ndcg_at_k": _ndcg(ranking, labels, k),
+                "intra_list_diversity": _diversity(ranking, candidates, k),
+                "hard_exclusion_violation_rate": sum(violations) / len(violations) if violations else None,
+            }
+            case_metrics[system][participant_key].append(per_case[system])
+        paired_case_metrics[participant_key].append({
+            metric: (
+                per_case["cirvanna"][metric] - per_case["baseline"][metric]
+                if per_case["cirvanna"][metric] is not None and per_case["baseline"][metric] is not None
+                else None
+            )
+            for metric in RANKING_CI_METRICS
+        })
         system = record["assigned_system"]
         for exposure in record.get("exposures", []):
             candidate = candidates[exposure["look_id"]]
@@ -366,7 +386,18 @@ def evaluate(records: list[dict[str, Any]], k: int = 3) -> dict[str, Any]:
             "repeated_rejection_signature_rate": round(repeated_count / len(rejected_by_session), 4) if rejected_by_session else None,
             "rejected_unique_look_signatures": len(rejected_by_session),
             "repeatedly_rejected_look_signatures": repeated_count,
+            "confidence_intervals_95": {
+                metric: _cluster_bootstrap_ci(
+                    case_metrics[system], metric,
+                    BOOTSTRAP_SEED + (0 if system == "cirvanna" else 1) + offset,
+                )
+                for offset, metric in enumerate(RANKING_CI_METRICS)
+            },
         }
+    paired_ci = {
+        metric: _cluster_bootstrap_ci(paired_case_metrics, metric, BOOTSTRAP_SEED + 100 + offset)
+        for offset, metric in enumerate(RANKING_CI_METRICS)
+    }
     deltas = {}
     for metric in ("mean_human_relevance_top_k", "ndcg_at_k", "intra_list_diversity", "hard_exclusion_violation_rate"):
         left, right = output["cirvanna"][metric], output["baseline"][metric]
@@ -377,7 +408,10 @@ def evaluate(records: list[dict[str, Any]], k: int = 3) -> dict[str, Any]:
         "k": k,
         "systems": output,
         "cirvanna_minus_baseline": deltas,
-        "warning": "Offline metrics are descriptive. User behaviour is measured only for the randomized live arm. Pre-register sample size, confidence intervals and subgroup analysis before claiming superiority.",
+        "paired_cirvanna_minus_baseline_confidence_intervals_95": paired_ci,
+        "inter_rater_agreement": _inter_rater_agreement(records),
+        "confidence_interval_method": "Percentile cluster bootstrap over participant_key; 2,000 resamples; fixed seed. Descriptive intervals do not replace a pre-registered study analysis.",
+        "warning": "Offline metrics are descriptive. User behaviour is measured only for the randomized live arm. Pre-register sample size and subgroup analysis before claiming superiority.",
     }
 
 
