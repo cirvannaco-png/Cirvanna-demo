@@ -173,6 +173,10 @@ class WardrobeStore:
             attributes=list(item.attributes), catalog_product_id=item.catalog_product_id,
             image_asset_id=item.image_asset_id, image_storage_consent=item.image_storage_consent,
             status=item.status.value, version=item.version, last_command_id=item.last_command_id,
+            commerce_order_id=item.commerce_order_id, commerce_order_item_id=item.commerce_order_item_id,
+            purchase_event_id=item.purchase_event_id, purchase_quantity=item.purchase_quantity,
+            purchase_currency=item.purchase_currency, purchase_unit_price_minor=item.purchase_unit_price_minor,
+            purchase_paid_at=item.purchase_paid_at,
         )
         try:
             with Session(self.engine) as session, session.begin():
