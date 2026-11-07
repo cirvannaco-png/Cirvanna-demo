@@ -34,8 +34,7 @@ def apply_postgres_migrations():
         "0004_rotation_state.sql",
         "0005_verified_purchase_ownership.sql",
         "0006_outfit_wear_history.sql",
-        "0005_verified_purchase_ownership.sql",
-        "0006_outfit_wear_history.sql",
+        "0007_purchase_refund_snapshots.sql",
     ):
         subprocess.run(
             ["psql", POSTGRES_DSN, "-v", "ON_ERROR_STOP=1", "-f", str(migration_dir / name)],
@@ -65,6 +64,7 @@ def test_postgres_migrations_are_idempotent_and_custom_dump_restores_rotation_st
         "0004_rotation_state.sql",
         "0005_verified_purchase_ownership.sql",
         "0006_outfit_wear_history.sql",
+        "0007_purchase_refund_snapshots.sql",
     ):
         subprocess.run(
             ["psql", POSTGRES_DSN, "-v", "ON_ERROR_STOP=1", "-f", str(migration_dir / name)],
@@ -79,6 +79,7 @@ def test_postgres_migrations_are_idempotent_and_custom_dump_restores_rotation_st
     order_id = str(uuid.uuid4())
     order_item_id = str(uuid.uuid4())
     purchase_event_id = str(uuid.uuid4())
+    refund_event_id = str(uuid.uuid4())
     with psycopg.connect(POSTGRES_DSN) as conn:
         conn.execute(
             """
@@ -91,6 +92,20 @@ def test_postgres_migrations_are_idempotent_and_custom_dump_restores_rotation_st
             (
                 owner, item_id, "Backup linen shirt", "tops", Json(["linen", "blue"]),
                 order_id, order_item_id, purchase_event_id,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO wardrobe_purchase_refund_snapshots
+                (owner_user_id, order_id, event_id, provider_event_id, payment_intent_id,
+                 charge_id, currency, order_total_minor, amount_refunded_minor, refund_state,
+                 payload_hash, refunded_at, physical_return_confirmed, ownership_effect)
+            VALUES (%s, %s, %s, %s, %s, %s, 'KES', 120000, 60000, 'partial_refund',
+                    %s, TIMESTAMPTZ '2026-11-07 09:00:00+00', FALSE, 'financial_status_only')
+            """,
+            (
+                owner, order_id, refund_event_id, "evt_restore_refund_0001",
+                "pi_restore_0001", "ch_restore_0001", "d" * 64,
             ),
         )
         conn.execute(
@@ -141,6 +156,7 @@ def test_postgres_migrations_are_idempotent_and_custom_dump_restores_rotation_st
             }
             assert "wardrobe_rotation_states" in tables
             assert "wardrobe_outfit_wear_events" in tables
+            assert "wardrobe_purchase_refund_snapshots" in tables
             item_columns = {
                 row[0] for row in restored.execute(
                     "SELECT column_name FROM information_schema.columns WHERE table_name = 'wardrobe_items'"
@@ -165,6 +181,16 @@ def test_postgres_migrations_are_idempotent_and_custom_dump_restores_rotation_st
                 (owner,),
             ).fetchone()
             assert row == (3, [item_id], 9, request_id, "a" * 64)
+            refund = restored.execute(
+                """
+                SELECT amount_refunded_minor, order_total_minor, refund_state,
+                       physical_return_confirmed, ownership_effect
+                FROM wardrobe_purchase_refund_snapshots
+                WHERE owner_user_id = %s AND order_id = %s
+                """,
+                (owner, order_id),
+            ).fetchone()
+            assert refund == (60000, 120000, "partial_refund", False, "financial_status_only")
             item = restored.execute(
                 "SELECT display_name, attributes FROM wardrobe_items WHERE owner_user_id = %s AND item_id = %s",
                 (owner, item_id),
