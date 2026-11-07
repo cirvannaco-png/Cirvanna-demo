@@ -35,9 +35,12 @@ class WardrobeDomainTests(unittest.TestCase):
         self.assertEqual(TAXONOMY_VERSION, "1.0.0")
         self.assertTrue({"makeup", "skincare", "haircare", "shoes", "bags", "ties", "eyewear", "watches"} <= category_ids)
 
-    def test_unknown_category_is_rejected_instead_of_silently_misclassified(self):
-        with self.assertRaisesRegex(ValueError, "unsupported wardrobe category"):
-            self.item(category="unverified-special-type")
+    def test_valid_custom_category_keys_are_preserved_for_extensibility(self):
+        self.assertEqual(self.item(category="custom_nail_art").category, "custom_nail_art")
+
+    def test_malformed_category_keys_are_rejected(self):
+        with self.assertRaisesRegex(ValueError, "invalid wardrobe category key"):
+            self.item(category="not a valid category!")
 
     def test_create_requires_consent_for_persisted_image(self):
         with self.assertRaises(ValueError):
