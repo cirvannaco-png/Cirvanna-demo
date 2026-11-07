@@ -1,5 +1,4 @@
-# Build with --build-arg FASHN_VTON_GIT_REF=<verified-40-character-upstream-commit>.
-# A missing/unpinned source revision deliberately fails the build.
+# FASHN_VTON_GIT_REF is fixed to the reviewed upstream commit below.
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 ARG FASHN_VTON_GIT_REF=7c0f10af3f91ad4048fe9729c470a13ef905d25a
 ENV DEBIAN_FRONTEND=noninteractive \
