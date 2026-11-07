@@ -5,28 +5,102 @@
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "schema_version", "case_id", "participant_key", "session_id",
-    "assigned_system", "context", "candidate_outfits",
-    "cirvanna_ranked_look_ids", "human_reviews", "exposures"
+    "schema_version",
+    "case_id",
+    "participant_key",
+    "session_id",
+    "assigned_system",
+    "context",
+    "candidate_outfits",
+    "cirvanna_ranked_look_ids",
+    "human_reviews",
+    "exposures"
   ],
   "properties": {
-    "schema_version": {"const": "1.0"},
-    "case_id": {"type": "string", "minLength": 6},
-    "participant_key": {"type": "string", "minLength": 6, "description": "Random pseudonymous study key; never an account ID or contact detail."},
-    "session_id": {"type": "string", "minLength": 6},
-    "assigned_system": {"enum": ["cirvanna", "baseline"]},
+    "schema_version": {
+      "const": "1.0"
+    },
+    "case_id": {
+      "type": "string",
+      "minLength": 6
+    },
+    "participant_key": {
+      "type": "string",
+      "minLength": 6,
+      "description": "Random pseudonymous study key; never an account ID or contact detail."
+    },
+    "session_id": {
+      "type": "string",
+      "minLength": 6
+    },
+    "assigned_system": {
+      "enum": [
+        "cirvanna",
+        "baseline"
+      ]
+    },
     "context": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["required_categories", "preferred_style_tags", "preferred_color_tags", "hard_excluded_item_ids", "hard_excluded_tags"],
+      "required": [
+        "required_categories",
+        "preferred_style_tags",
+        "preferred_color_tags",
+        "hard_excluded_item_ids",
+        "hard_excluded_tags"
+      ],
       "properties": {
-        "required_categories": {"type": "array", "items": {"type": "string"}},
-        "preferred_style_tags": {"type": "array", "items": {"type": "string"}},
-        "preferred_color_tags": {"type": "array", "items": {"type": "string"}},
-        "occasion": {"type": ["string", "null"]},
-        "climate": {"type": ["string", "null"], "description": "Optional declared context only; never infer from a photograph."},
-        "hard_excluded_item_ids": {"type": "array", "items": {"type": "string"}},
-        "hard_excluded_tags": {"type": "array", "items": {"type": "string"}}
+        "required_categories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "preferred_style_tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "preferred_color_tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "occasion": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "climate": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "description": "Optional declared context only; never infer from a photograph."
+        },
+        "hard_excluded_item_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "hard_excluded_tags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "everyday",
+            "elevated",
+            "explore"
+          ]
+        }
       }
     },
     "candidate_outfits": {
@@ -35,31 +109,96 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["look_id", "garment_ids", "category_tags", "style_tags", "color_tags", "occasion_tags", "exclusion_tags"],
+        "required": [
+          "look_id",
+          "garment_ids",
+          "category_tags",
+          "style_tags",
+          "color_tags",
+          "occasion_tags",
+          "exclusion_tags"
+        ],
         "properties": {
-          "look_id": {"type": "string", "minLength": 1},
-          "garment_ids": {"type": "array", "minItems": 1, "items": {"type": "string"}},
-          "category_tags": {"type": "array", "items": {"type": "string"}},
-          "style_tags": {"type": "array", "items": {"type": "string"}},
-          "color_tags": {"type": "array", "items": {"type": "string"}},
-          "occasion_tags": {"type": "array", "items": {"type": "string"}},
-          "exclusion_tags": {"type": "array", "items": {"type": "string"}}
+          "look_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "garment_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            }
+          },
+          "category_tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "style_tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "color_tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "occasion_tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "exclusion_tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
         }
       }
     },
-    "cirvanna_ranked_look_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
+    "cirvanna_ranked_look_ids": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "string"
+      }
+    },
     "human_reviews": {
       "type": "array",
       "description": "Exactly two independent, blinded reviewers per candidate look; the evaluator enforces exactly two distinct reviewer keys per look.",
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["look_id", "reviewer_key", "relevance", "exclusion_violation"],
+        "required": [
+          "look_id",
+          "reviewer_key",
+          "relevance",
+          "exclusion_violation"
+        ],
         "properties": {
-          "look_id": {"type": "string"},
-          "reviewer_key": {"type": "string", "minLength": 3},
-          "relevance": {"type": "integer", "minimum": 1, "maximum": 5},
-          "exclusion_violation": {"type": "boolean"}
+          "look_id": {
+            "type": "string"
+          },
+          "reviewer_key": {
+            "type": "string",
+            "minLength": 3
+          },
+          "relevance": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "exclusion_violation": {
+            "type": "boolean"
+          }
         }
       }
     },
@@ -68,12 +207,28 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["look_id", "adjudicator_key", "relevance", "exclusion_violation"],
+        "required": [
+          "look_id",
+          "adjudicator_key",
+          "relevance",
+          "exclusion_violation"
+        ],
         "properties": {
-          "look_id": {"type": "string"},
-          "adjudicator_key": {"type": "string", "minLength": 3},
-          "relevance": {"type": "integer", "minimum": 1, "maximum": 5},
-          "exclusion_violation": {"type": "boolean"}
+          "look_id": {
+            "type": "string"
+          },
+          "adjudicator_key": {
+            "type": "string",
+            "minLength": 3
+          },
+          "relevance": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5
+          },
+          "exclusion_violation": {
+            "type": "boolean"
+          }
         }
       }
     },
@@ -83,11 +238,28 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["look_id", "action", "edit_count"],
+        "required": [
+          "look_id",
+          "action",
+          "edit_count"
+        ],
         "properties": {
-          "look_id": {"type": "string"},
-          "action": {"enum": ["accepted", "edited", "rejected", "no_action"]},
-          "edit_count": {"type": "integer", "minimum": 0, "maximum": 50}
+          "look_id": {
+            "type": "string"
+          },
+          "action": {
+            "enum": [
+              "accepted",
+              "edited",
+              "rejected",
+              "no_action"
+            ]
+          },
+          "edit_count": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 50
+          }
         }
       }
     }
