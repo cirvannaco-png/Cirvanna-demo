@@ -141,6 +141,11 @@ class FakeAsyncClient:
         self.calls.append(("POST", url, kwargs))
         return self.responses.pop(0)
 
+    async def patch(self, url, **kwargs):
+        self.calls.append(("PATCH", url, kwargs))
+        return self.responses.pop(0)
+
+
 
 def test_description_search_fails_closed_without_xari_or_legacy_secret(client, monkeypatch):
     monkeypatch.delenv("TARI_API_URL", raising=False)
@@ -425,6 +430,9 @@ def test_wardrobe_page_exposes_feedback_and_consent_controls(client):
     assert "Avoid" in response.text
     assert "/api/wardrobe/recommendations" in response.text
     assert "profile_storage" in response.text
+    assert "Edit piece" in response.text
+    assert "/api/wardrobe/items/" in response.text
+    assert 'method:"PATCH"' in response.text
 
 
 def test_wardrobe_consent_listing_is_subject_scoped(client, monkeypatch):
@@ -521,3 +529,96 @@ def test_wardrobe_consent_listing_allows_closet_browse_when_learning_provider_ab
     assert response.json()["learning_configured"] is False
     assert response.json()["items"] == []
     assert len(fake.calls) == 1
+
+
+
+def test_wardrobe_item_edit_binds_verified_owner_and_updates_only_requested_item(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"item": {
+            "item_id": "item-001", "owner_user_id": "signed-user-42",
+            "display_name": "Updated linen shirt", "category": "tops",
+            "attributes": ["blue", "linen"], "version": 2, "status": "active",
+        }, "status": "updated"}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.patch(
+        "/api/wardrobe/items/item-001",
+        headers={"Authorization": "Bearer signed-session"},
+        json={
+            "expected_version": 1, "command_id": "edit-command-001",
+            "display_name": "Updated linen shirt", "attributes": ["blue", "linen"],
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["item"]["version"] == 2
+    assert fake.calls[1][0] == "PATCH"
+    assert fake.calls[1][1] == "https://wardrobe.example.test/v1/items/item-001"
+    sent = fake.calls[1][2]["json"]
+    assert sent["owner_user_id"] == "signed-user-42"
+    assert sent["expected_version"] == 1
+    assert sent["command_id"] == "edit-command-001"
+    assert sent["display_name"] == "Updated linen shirt"
+    assert "owner_user_id" not in response.request.content.decode()
+
+
+def test_wardrobe_item_edit_rejects_client_supplied_owner_and_empty_change(client, monkeypatch):
+    response = client.patch(
+        "/api/wardrobe/items/item-001",
+        headers={"Authorization": "Bearer signed-session"},
+        json={
+            "owner_user_id": "attacker", "expected_version": 1, "command_id": "edit-command-002",
+            "display_name": "Forged edit",
+        },
+    )
+    assert response.status_code == 422
+    empty = client.patch(
+        "/api/wardrobe/items/item-001",
+        headers={"Authorization": "Bearer signed-session"},
+        json={"expected_version": 1, "command_id": "edit-command-003"},
+    )
+    assert empty.status_code == 422
+    assert empty.json()["detail"]["code"] == "WARDROBE_EDIT_EMPTY"
+
+
+def test_wardrobe_item_edit_preserves_version_conflict(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"detail": {"code": "WARDROBE_VERSION_CONFLICT", "current_version": 3}}, status_code=409),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.patch(
+        "/api/wardrobe/items/item-001",
+        headers={"Authorization": "Bearer signed-session"},
+        json={"expected_version": 1, "command_id": "edit-command-004", "category": "outerwear"},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "WARDROBE_VERSION_CONFLICT"
+    assert response.json()["detail"]["current_version"] == 3
+
+
+def test_wardrobe_item_edit_rejects_mismatched_upstream_owner(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"item": {
+            "item_id": "item-001", "owner_user_id": "another-user",
+            "display_name": "Not yours", "category": "tops", "attributes": [], "version": 2,
+        }}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.patch(
+        "/api/wardrobe/items/item-001",
+        headers={"Authorization": "Bearer signed-session"},
+        json={"expected_version": 1, "command_id": "edit-command-005", "display_name": "Changed"},
+    )
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "WARDROBE_ITEM_EDIT_SCOPE_MISMATCH"
