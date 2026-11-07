@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Cirvanna · Style Desk</title>
+<style>
+:root{--bg:#0b0b10;--panel:#15151d;--line:#2c2b38;--text:#f1edf4;--muted:#aaa4b2;--accent:#c7a6d9;--good:#94cfad;--warn:#e7c58c;--bad:#e5a1a1}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.55 Inter,system-ui,sans-serif}
+main{max-width:920px;margin:0 auto;padding:30px 18px 70px}
+a{color:var(--accent)}h1,h2{font-family:Georgia,serif;font-weight:400;line-height:1.15}
+h1{font-size:clamp(36px,7vw,58px);margin:8px 0 12px}
+h2{font-size:27px;margin:0 0 8px}
+p{color:var(--muted)}.eyebrow{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent)}
+.panel{background:var(--panel);border:1px solid var(--line);padding:22px;margin:18px 0;border-radius:6px}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.field{display:flex;flex-direction:column;gap:6px;margin:12px 0}
+label{font-size:13px;color:#d8d1df}
+input,textarea{width:100%;background:#0d0d13;color:var(--text);border:1px solid var(--line);border-radius:4px;padding:12px;font:inherit}
+textarea{min-height:95px;resize:vertical}
+button{border:1px solid var(--line);background:#292333;color:var(--text);padding:11px 16px;border-radius:4px;font:inherit;cursor:pointer}
+button.primary{background:var(--accent);color:#170f1d;border-color:var(--accent);font-weight:650}
+button:disabled{opacity:.55;cursor:wait}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+.status{min-height:26px;font-size:13px;color:var(--muted);margin:10px 0}
+.status.good{color:var(--good)}.status.warn{color:var(--warn)}.status.error{color:var(--bad)}
+.hidden{display:none!important}.small{font-size:12px}
+.version{font-variant-numeric:tabular-nums;color:var(--muted);font-size:12px}
+.pill{display:inline-block;border:1px solid var(--line);border-radius:30px;padding:3px 9px;color:var(--muted);font-size:11px}
+.notice{border-left:2px solid var(--accent);padding:8px 12px;background:#17141d;margin:12px 0}
+@media(max-width:650px){.grid{grid-template-columns:1fr}main{padding:22px 14px 50px}.panel{padding:17px}}
+</style>
+</head>
+<body>
+<main>
+  <nav><a href="/wardrobe">← Personal wardrobe</a></nav>
+  <div class="eyebrow">Cirvanna · Style Desk</div>
+  <h1>Your colour profile</h1>
+  <p>Tell Cirvanna which colours you love, which you avoid, and which colours make you feel most like yourself. Your preferences are yours; the system must not overrule them.</p>
+
+  <section class="panel">
+    <div class="eyebrow">Private profile access</div>
+    <h2>Connect your account</h2>
+    <p class="small">Use your signed Cirvanna Commerce session. This page never asks for or stores your password.</p>
+    <div class="field"><label for="token">Signed session token</label><input id="token" type="password" autocomplete="off" placeholder="Paste your signed session token"></div>
+    <div class="actions"><button class="primary" id="connect">Connect</button></div>
+    <div id="connectionStatus" class="status" role="status"></div>
+  </section>
+
+  <section class="panel hidden" id="consentPanel">
+    <div class="eyebrow">Your control</div>
+    <h2>Choose how your profile is used</h2>
+    <p>Profile storage saves the preferences you enter. Personalization is a separate, optional permission that lets Cirvanna use these preferences in recommendations. You can revoke either permission later.</p>
+    <div class="actions">
+      <button class="primary" id="enableStorage">Enable profile storage</button>
+      <button id="enablePersonalization">Allow personalized recommendations</button>
+    </div>
+    <div id="consentStatus" class="status" role="status"></div>
+  </section>
+
+  <section class="panel hidden" id="profilePanel">
+    <div class="eyebrow">User-declared preferences <span class="pill">Not AI-inferred</span></div>
+    <h2>What feels right to you?</h2>
+    <p>Enter colour names separated by commas. You can use everyday names, shades or descriptions such as “deep teal”, “warm ivory” or a hex code.</p>
+    <form id="colourForm">
+      <div class="grid">
+        <div class="field"><label for="liked">Colours I like</label><textarea id="liked" maxlength="1600" placeholder="Teal, cream, burgundy"></textarea></div>
+        <div class="field"><label for="disliked">Colours I dislike</label><textarea id="disliked" maxlength="1600" placeholder="Neon orange, icy grey"></textarea></div>
+      </div>
+      <div class="field"><label for="best">Colours that bring out my best version</label><textarea id="best" maxlength="1600" placeholder="Deep blue, warm gold, forest green"></textarea></div>
+      <div class="actions"><button class="primary" type="submit" id="save">Save colour profile</button><button type="button" id="reload">Reload saved profile</button></div>
+    </form>
+    <div class="version" id="version">Profile version: 0</div>
+    <div id="profileStatus" class="status" role="status"></div>
+  </section>
+
+  <section class="panel">
+    <div class="eyebrow">A separate intelligence layer</div>
+    <h2>Objective colour analysis</h2>
+    <p>Not yet enabled. Cirvanna will only show an analysed palette after it can verify capture quality, lighting and white balance, and validate results across different skin tones and devices. This user-declared profile will remain separate and will never be overwritten by an AI estimate.</p>
+    <div class="notice small">Skin observations such as spots, freckles and blemishes belong to cosmetic skin analysis; they are not substitutes for personal colour analysis.</div>
+  </section>
+
+  <section class="panel hidden" id="permissionsPanel">
+    <div class="eyebrow">Permissions</div>
+    <h2>Manage your choices</h2>
+    <div class="actions"><button id="revokeStorage">Revoke profile storage</button><button id="revokePersonalization">Revoke personalization</button></div>
+    <div id="permissionStatus" class="status" role="status"></div>
+  </section>
+</main>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  let token = "";
+  let version = 0;
+  let receipts = {profile_storage:null,personalization:null};
+  const setStatus = (id,message,kind="") => { const el=$(id); el.textContent=message; el.className="status "+kind; };
+  const api = async (path, options={}) => {
+    const response = await fetch(path,{...options,headers:{"Authorization":"Bearer "+token,"Content-Type":"application/json",...(options.headers||{})},cache:"no-store"});
+    let data={};try{data=await response.json();}catch(_){}
+    if(!response.ok){const detail=data.detail||{};const code=typeof detail==="string"?detail:(detail.code||"REQUEST_FAILED");throw new Error(code+(detail.current_version!==undefined?" (current version "+detail.current_version+")":""));}
+    return data;
+  };
+  const parse = id => $(id).value.split(",").map(value=>value.trim()).filter(Boolean);
+  const latest = items => items.filter(item=>item&&item.granted===true&&!item.revoked_at).sort((a,b)=>String(b.created_at||"").localeCompare(String(a.created_at||"")))[0]||null;
+  const loadPermissions = async () => {
+    const data=await api("/api/wardrobe/consents");
+    receipts.profile_storage=latest((data.items||[]).filter(x=>x.scope==="profile_storage"));
+    receipts.personalization=latest((data.items||[]).filter(x=>x.scope==="personalization"));
+    $("consentPanel").classList.toggle("hidden",!!receipts.profile_storage);
+    $("profilePanel").classList.toggle("hidden",!receipts.profile_storage);
+    $("permissionsPanel").classList.toggle("hidden",!receipts.profile_storage&&!receipts.personalization);
+    $("enableStorage").disabled=!!receipts.profile_storage;
+    $("enablePersonalization").disabled=!!receipts.personalization;
+  };
+  const loadProfile = async () => {
+    const data=await api("/api/style-desk/colour-profile");
+    version=data.profile_version;
+    $("liked").value=(data.liked_colors||[]).join(", ");
+    $("disliked").value=(data.disliked_colors||[]).join(", ");
+    $("best").value=(data.feel_best_colors||[]).join(", ");
+    $("version").textContent="Profile version: "+version;
+    setStatus("profileStatus","Your declared colour preferences are loaded.","good");
+  };
+  const grant = async scope => {
+    const data=await api("/api/wardrobe/consents",{method:"POST",body:JSON.stringify({scope,granted:true})});
+    setStatus("consentStatus",scope.replace("_"," ")+" permission saved.","good");
+    return data;
+  };
+  $("connect").addEventListener("click",async()=>{
+    token=$("token").value.trim();
+    if(!token){setStatus("connectionStatus","Enter your signed Commerce session token.","error");return;}
+    try{
+      await loadPermissions();
+      if(receipts.profile_storage)await loadProfile();
+      setStatus("connectionStatus","Account connected. Your permission choices are shown below.","good");
+    }catch(error){setStatus("connectionStatus",error.message,"error");}
+  });
+  $("enableStorage").addEventListener("click",async()=>{
+    try{await grant("profile_storage");await loadPermissions();await loadProfile();}
+    catch(error){setStatus("consentStatus",error.message,"error");}
+  });
+  $("enablePersonalization").addEventListener("click",async()=>{
+    try{await grant("personalization");await loadPermissions();}
+    catch(error){setStatus("consentStatus",error.message,"error");}
+  });
+  $("colourForm").addEventListener("submit",async event=>{
+    event.preventDefault();
+    $("save").disabled=true;
+    try{
+      const data=await api("/api/style-desk/colour-profile",{method:"PUT",body:JSON.stringify({
+        expected_profile_version:version,liked_colors:parse("liked"),disliked_colors:parse("disliked"),feel_best_colors:parse("best")
+      })});
+      version=data.profile_version;
+      $("version").textContent="Profile version: "+version;
+      setStatus("profileStatus","Saved. Other style preferences were preserved.","good");
+    }catch(error){
+      setStatus("profileStatus",error.message,"error");
+      if(error.message.includes("VERSION_CONFLICT"))try{await loadProfile();}catch(_){}
+    }finally{$("save").disabled=false;}
+  });
+  $("reload").addEventListener("click",async()=>{try{await loadProfile();}catch(error){setStatus("profileStatus",error.message,"error");}});
+  const revoke=async(scope)=>{
+    const receipt=receipts[scope];
+    if(!receipt){return;}
+    try{
+      await api("/api/wardrobe/consents/"+encodeURIComponent(receipt.receipt_id)+"/revoke",{method:"POST",body:"{}"});
+      setStatus("permissionStatus",scope.replace("_"," ")+" permission revoked.","good");
+      receipts[scope]=null;
+      if(scope==="profile_storage"){
+        $("profilePanel").classList.add("hidden");
+        $("liked").value="";$("disliked").value="";$("best").value="";
+      }
+      await loadPermissions();
+    }catch(error){setStatus("permissionStatus",error.message,"error");}
+  };
+  $("revokeStorage").addEventListener("click",()=>revoke("profile_storage"));
+  $("revokePersonalization").addEventListener("click",()=>revoke("personalization"));
+})();
+</script>
+</body>
+</html>
