@@ -546,3 +546,36 @@ def test_outfit_wear_requires_current_outfit_version_and_consent_delivery(client
     })
     assert response.status_code == 409
     assert calls == []
+
+
+
+def test_wear_history_deletion_is_owner_scoped_and_requires_internal_auth(client, monkeypatch):
+    from datetime import datetime, timezone
+    from sqlalchemy.orm import Session
+    from app.store import WardrobeOutfitWearEventRow
+
+    engine = main.store().engine
+    with Session(engine) as session, session.begin():
+        for owner, event_id in (("user-1", "wear-owner-one"), ("user-2", "wear-owner-two")):
+            session.add(WardrobeOutfitWearEventRow(
+                owner_user_id=owner, event_id=event_id, outfit_id="outfit-" + owner,
+                outfit_version=1, items_snapshot=[{"item_id": "shirt-" + owner}],
+                context={"occasion": "work"}, consent_receipt_id="receipt-style-001",
+                payload_hash=("a" if owner == "user-1" else "b") * 64,
+                delivery_result=[], observed_at=datetime.now(timezone.utc),
+            ))
+    denied = client.delete("/v1/wear-history", params={"owner_user_id": "user-1"})
+    assert denied.status_code == 401
+
+    deleted = client.delete(
+        "/v1/wear-history", headers=auth(), params={"owner_user_id": "user-1"},
+    )
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted_wear_events"] == 1
+    own = client.get("/v1/wear-history", headers=auth(), params={"owner_user_id": "user-1"})
+    other = client.get("/v1/wear-history", headers=auth(), params={"owner_user_id": "user-2"})
+    assert own.json()["items"] == []
+    assert len(other.json()["items"]) == 1
+    assert other.json()["items"][0]["event_id"] == "wear-owner-two"
+
+
