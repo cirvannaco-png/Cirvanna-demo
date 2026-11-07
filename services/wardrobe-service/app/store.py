@@ -89,6 +89,26 @@ class WorkerHeartbeatRow(Base):
 
 
 
+class WardrobeOutfitWearEventRow(Base):
+    """Consent-gated, immutable snapshot of an outfit the owner says they wore."""
+    __tablename__ = "wardrobe_outfit_wear_events"
+    __table_args__ = (
+        Index("ix_wardrobe_outfit_wear_owner_observed", "owner_user_id", "observed_at"),
+        Index("ix_wardrobe_outfit_wear_outfit", "owner_user_id", "outfit_id"),
+    )
+    owner_user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    event_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    outfit_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    outfit_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    items_snapshot: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
+    context: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
+    consent_receipt_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    delivery_result: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.current_timestamp())
+
+
 class WardrobeFeedbackEventRow(Base):
     """Local audit mirror of a user-authorized learning event; source of truth remains USI/TAL and NPL."""
     __tablename__ = "wardrobe_learning_events"
