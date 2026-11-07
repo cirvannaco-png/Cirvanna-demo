@@ -76,6 +76,9 @@ def test_postgres_migrations_are_idempotent_and_custom_dump_restores_rotation_st
     owner = f"backup-owner-{uuid.uuid4().hex[:12]}"
     item_id = f"backup-item-{uuid.uuid4().hex[:12]}"
     request_id = f"backup-request-{uuid.uuid4().hex[:12]}"
+    order_id = str(uuid.uuid4())
+    order_item_id = str(uuid.uuid4())
+    purchase_event_id = str(uuid.uuid4())
     with psycopg.connect(POSTGRES_DSN) as conn:
         conn.execute(
             """
@@ -87,7 +90,7 @@ def test_postgres_migrations_are_idempotent_and_custom_dump_restores_rotation_st
             """,
             (
                 owner, item_id, "Backup linen shirt", "tops", Json(["linen", "blue"]),
-                str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4()),
+                order_id, order_item_id, purchase_event_id,
             ),
         )
         conn.execute(
@@ -167,6 +170,17 @@ def test_postgres_migrations_are_idempotent_and_custom_dump_restores_rotation_st
                 (owner, item_id),
             ).fetchone()
             assert item == ("Backup linen shirt", ["linen", "blue"])
+            provenance = restored.execute(
+                """
+                SELECT commerce_order_id, commerce_order_item_id, purchase_event_id,
+                       purchase_quantity, purchase_currency, purchase_unit_price_minor, purchase_paid_at
+                FROM wardrobe_items WHERE owner_user_id = %s AND item_id = %s
+                """,
+                (owner, item_id),
+            ).fetchone()
+            assert provenance == (
+                order_id, order_item_id, purchase_event_id, 1, "KES", 120000, "2026-11-07T08:00:00Z",
+            )
     finally:
         with psycopg.connect(POSTGRES_DSN, autocommit=True) as admin:
             admin.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(backup_db)))
