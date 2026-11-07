@@ -375,7 +375,9 @@ def verify_media_consent(payload: ConsentVerifyInput, db: Annotated[Session, Dep
         ConsentReceipt.granted.is_(True),
         ConsentReceipt.revoked_at.is_(None),
     )).all())
-    active = [row for row in rows if payload.resource_id is None or row.resource_id == payload.resource_id]
+    # Exact equality is intentional: omitting a resource ID must not turn a
+    # resource-bound grant into a broader subject-wide authorization.
+    active = [row for row in rows if row.resource_id == payload.resource_id]
     granted_scopes = sorted({row.scope for row in active})
     if not set(payload.required_scopes).issubset(set(granted_scopes)):
         raise HTTPException(403, detail={"code": "CONSENT_NOT_VERIFIED"})
