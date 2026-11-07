@@ -174,9 +174,16 @@ class USIProfileUpdateInput(BaseModel):
 class ConsentReceiptInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     receipt_id: str = Field(min_length=8, max_length=128)
-    scope: Literal["personalization", "style_learning", "profile_storage"]
+    scope: Literal[
+        "personalization", "style_learning", "profile_storage",
+        "image_processing", "body_measurements", "virtual_twin_storage",
+        "virtual_try_on", "click_it", "look_it", "skin_analysis",
+        "wardrobe_photo_storage",
+    ]
     consent_version: str = Field(min_length=1, max_length=80)
     granted: bool
+    consent_id: str | None = Field(default=None, min_length=8, max_length=128)
+    resource_id: str | None = Field(default=None, min_length=3, max_length=160)
 
 
 class TALObservationInput(BaseModel):
