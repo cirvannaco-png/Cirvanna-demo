@@ -159,13 +159,14 @@ def test_pnelly_filters_explicit_npl_hard_vetoes_from_wardrobe(monkeypatch):
         {"item_id": "red-skirt", "display_name": "Red skirt", "category": "skirts", "attributes": ["red"]},
         {"item_id": "navy-trousers", "display_name": "Navy trousers", "category": "trousers", "attributes": ["navy"]},
     ]
-    allowed, excluded = main._filter_npl_blocked_wardrobe_items(
+    allowed, excluded_count, excluded_ids = main._filter_npl_blocked_wardrobe_items(
         request_id="pnelly-npl-001",
         user_id="signed-user-42",
         wardrobe_items=items,
     )
     assert [item["item_id"] for item in allowed] == ["navy-trousers"]
-    assert excluded == 2
+    assert excluded_count == 2
+    assert excluded_ids == ["shirt-001", "red-skirt"]
 
 
 def test_pnelly_fails_closed_when_persistent_npl_is_not_configured(monkeypatch):
@@ -189,3 +190,61 @@ def test_legacy_tari_gateway_route_is_hidden_compatibility_alias(monkeypatch):
     # The canonical handler is registered at both paths during one migration window.
     assert "/v1/pnelly/daily-looks" in main.app.openapi()["paths"]
     assert "/v1/tari/daily-looks" not in main.app.openapi()["paths"]
+
+
+
+def test_pnelly_evaluation_trace_inventory_and_npl_blocks_are_gateway_populated(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_API_TOKEN", GATEWAY_TOKEN)
+    monkeypatch.setenv("PNELLY_EVALUATION_TRACE_ENABLED", "true")
+    monkeypatch.setenv("PNELLY_EVALUATION_TRACE_HMAC_SECRET", "trace-secret-with-at-least-thirty-two-bytes")
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda _header: "signed-user-42")
+    monkeypatch.setattr(main, "_load_verified_usi_profile", lambda *_args, **_kwargs: SimpleNamespace(preferences=[]))
+    monkeypatch.setattr(main, "_pnelly_npl_provider_configured", lambda: True)
+    captured = {}
+    def filter_items(*, request_id, user_id, wardrobe_items):
+        captured["filter_input"] = wardrobe_items
+        return wardrobe_items[1:], 1, [wardrobe_items[0]["item_id"]]
+    def compose(payload, style_signals, feedback_signals):
+        captured["payload"] = payload
+        return {"request_id": payload.request_id, "recommendation": {"evaluation_trace": {"trace_version": "1.0"}}}
+    monkeypatch.setattr(main, "_filter_npl_blocked_wardrobe_items", filter_items)
+    monkeypatch.setattr(main, "_load_consent_aware_wardrobe_likes", lambda _subject: {})
+    monkeypatch.setattr(main, "_pnelly_daily_looks", compose)
+    body = request_body()
+    body["evaluation_wardrobe_items"] = [{
+        "item_id": "attacker-item", "owner_user_id": "signed-user-42",
+        "display_name": "attacker", "category": "tops", "attributes": [], "status": "active",
+    }]
+    body["hard_excluded_item_ids"] = ["attacker-item"]
+    response = TestClient(main.app).post(
+        "/v1/pnelly/daily-looks",
+        headers={"Authorization": f"Bearer {GATEWAY_TOKEN}", "X-End-User-Authorization": END_USER},
+        json=body,
+    )
+    assert response.status_code == 200, response.text
+    safe = captured["payload"]
+    assert [item["item_id"] for item in safe.wardrobe_items] == [
+        item["item_id"] for item in body["wardrobe_items"][1:]
+    ]
+    assert [item["item_id"] for item in safe.evaluation_wardrobe_items] == [
+        item["item_id"] for item in body["wardrobe_items"]
+    ]
+    assert safe.hard_excluded_item_ids == [body["wardrobe_items"][0]["item_id"]]
+    assert "attacker-item" not in [item["item_id"] for item in safe.evaluation_wardrobe_items]
+
+
+def test_pnelly_evaluation_trace_fails_closed_without_hmac_secret(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_API_TOKEN", GATEWAY_TOKEN)
+    monkeypatch.setenv("PNELLY_EVALUATION_TRACE_ENABLED", "true")
+    monkeypatch.delenv("PNELLY_EVALUATION_TRACE_HMAC_SECRET", raising=False)
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda _header: "signed-user-42")
+    monkeypatch.setattr(main, "_load_verified_usi_profile", lambda *_args, **_kwargs: SimpleNamespace(preferences=[]))
+    monkeypatch.setattr(main, "_pnelly_npl_provider_configured", lambda: True)
+    client = TestClient(main.app)
+    response = client.post(
+        "/v1/pnelly/daily-looks",
+        headers={"Authorization": f"Bearer {GATEWAY_TOKEN}", "X-End-User-Authorization": END_USER},
+        json=request_body(),
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "PNELLY_EVALUATION_TRACE_SIGNING_NOT_CONFIGURED"
