@@ -12,7 +12,7 @@ The service owns user wardrobe item records and saved outfit compositions. Item 
 
 ## API
 
-- `POST /v1/items` creates an owner-scoped user-added item.\n- `POST /v1/purchases/verified` accepts only a trusted internal `commerce.order.paid` event with `ownership_authority=verified_payment`; it creates one owner-scoped purchased line item and deduplicates by Commerce order-line ID. Missing product taxonomy is explicitly marked `other` for user correction, not guessed.
+- `POST /v1/items` creates an owner-scoped user-added item.\n- `POST /v1/purchases/verified` accepts only a trusted internal `commerce.order.paid` event with `ownership_authority=verified_payment`; it creates one owner-scoped purchased line item and deduplicates by Commerce order-line ID. The record retains order/event provenance, quantity, currency, agreed unit price and paid timestamp. Missing product taxonomy is explicitly marked `other` for user correction, not guessed.
 - `GET /v1/items?owner_user_id=...` lists only the requested owner's items.
 - `GET /v1/items/{item_id}?owner_user_id=...` gets an owner-scoped item.
 - `POST /v1/items/{item_id}/transition` applies a version-checked lifecycle command.
