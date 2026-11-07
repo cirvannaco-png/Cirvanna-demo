@@ -43,6 +43,7 @@ class PurchaseRefundSnapshotRow(Base):
     """Order-level financial refund snapshot; never asserts physical return or item deletion."""
     __tablename__ = "wardrobe_purchase_refund_snapshots"
     __table_args__ = (
+        UniqueConstraint("event_id", name="uq_wardrobe_purchase_refund_event"),
         Index("ix_wardrobe_purchase_refund_order", "order_id"),
         CheckConstraint("order_total_minor > 0", name="ck_wardrobe_refund_order_total_positive"),
         CheckConstraint("amount_refunded_minor > 0 AND amount_refunded_minor <= order_total_minor", name="ck_wardrobe_refund_amount_bounds"),
