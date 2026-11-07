@@ -27,7 +27,8 @@ Run tests:
 ## Contracts
 
 - Versioned USI profile upsert with optimistic concurrency (`expected_version`).
-- Versioned consent receipts. A denial or revocation withdraws every active grant for the same subject and scope; a later grant requires a new receipt. Revoked receipts cannot be reused.
+- Versioned consent receipts and consent bundles. Multiple scope receipts may share one consent ID; each receipt can be bound to an exact resource ID. Verification checks subject, bundle, every required scope, current revocation state and exact resource equality (including rejecting an omitted resource ID for a bound grant).
+- `POST /internal/v1/consents/verify` is the server-side media-consent authority used by Virtual Twin and Click It. It requires the service bearer token and never trusts client consent booleans.
 - Event writes require an active `personalization` or `style_learning` receipt; USI profile reads and writes require active `profile_storage` consent.
 - TAL append supports event-ID and per-subject idempotency; changed replay payloads return 409.
 - Corrections are append-only, must belong to the same subject and feature, and point to the superseded event.
@@ -39,4 +40,4 @@ All endpoints except `/health` require internal bearer authentication. Retention
 
 ## Production gates
 
-Before deployment: provision the service on the selected existing Render workspace; configure its database URL to the already approved Postgres instance; apply `migrations/0001_identity_tal.sql`; set independently rotated service and cron tokens; verify database backup/restore and deletion behavior; then enable gateway hydration. No production credentials or live identity-provider assertion are embedded here.
+Before deployment: provision the service on the selected existing Render workspace; configure its database URL to the already approved Postgres instance; apply `migrations/0001_identity_tal.sql` and `migrations/0002_resource_bound_media_consent.sql`; set independently rotated service and cron tokens; verify database backup/restore and deletion behavior; then enable gateway hydration. No production credentials or live identity-provider assertion are embedded here.

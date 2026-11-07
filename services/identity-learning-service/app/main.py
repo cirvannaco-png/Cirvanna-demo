@@ -30,7 +30,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 SERVICE = "cirvanna-identity-learning-service"
 bearer = HTTPBearer(auto_error=False)
 SUBJECT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$")
-SCOPES = {"personalization", "style_learning", "profile_storage"}
+SCOPES = {"personalization", "style_learning", "profile_storage", "image_processing", "body_measurements", "virtual_twin_storage", "virtual_try_on", "click_it"}
 
 
 def utcnow() -> datetime:
@@ -80,6 +80,8 @@ class ConsentReceipt(Base):
     __tablename__ = "identity_tal_consent_receipts"
     __table_args__ = (Index("ix_identity_tal_consent_subject_scope", "subject_id", "scope", "granted"),)
     receipt_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    consent_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    resource_id: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
     subject_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     scope: Mapped[str] = mapped_column(String(40), nullable=False)
     consent_version: Mapped[str] = mapped_column(String(80), nullable=False)
@@ -144,9 +146,34 @@ class ProfilePut(StrictModel):
 
 class ConsentPut(StrictModel):
     receipt_id: str = Field(min_length=8, max_length=128)
-    scope: Literal["personalization", "style_learning", "profile_storage"]
+    consent_id: str | None = Field(default=None, min_length=8, max_length=128)
+    resource_id: str | None = Field(default=None, min_length=3, max_length=160)
+    scope: Literal["personalization", "style_learning", "profile_storage", "image_processing", "body_measurements", "virtual_twin_storage", "virtual_try_on", "click_it"]
     consent_version: str = Field(min_length=1, max_length=80)
     granted: bool
+
+    @field_validator("consent_id", "resource_id")
+    @classmethod
+    def normalize_optional_ids(cls, value):
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("optional identifiers must not be blank")
+        return normalized
+
+
+class ConsentVerifyInput(StrictModel):
+    subject_id: str = Field(min_length=1, max_length=128)
+    consent_id: str = Field(min_length=8, max_length=128)
+    required_scopes: list[Literal["personalization", "style_learning", "profile_storage", "image_processing", "body_measurements", "virtual_twin_storage", "virtual_try_on", "click_it"]] = Field(min_length=1, max_length=8)
+    resource_id: str | None = Field(default=None, min_length=3, max_length=160)
+
+    @model_validator(mode="after")
+    def unique_scopes(self):
+        if len(self.required_scopes) != len(set(self.required_scopes)):
+            raise ValueError("required_scopes must be unique")
+        return self
 
 
 class EventPut(StrictModel):
@@ -309,7 +336,7 @@ def put_consent(subject_id: str = Query(min_length=1, max_length=128), payload: 
         raise HTTPException(422, detail={"code": "CONSENT_RECEIPT_REQUIRED"})
     existing = db.get(ConsentReceipt, payload.receipt_id)
     if existing is not None:
-        if existing.subject_id != subject or existing.scope != payload.scope or existing.consent_version != payload.consent_version or existing.granted != payload.granted:
+        if existing.subject_id != subject or existing.scope != payload.scope or existing.consent_version != payload.consent_version or existing.granted != payload.granted or existing.consent_id != (payload.consent_id or payload.receipt_id) or existing.resource_id != payload.resource_id:
             raise HTTPException(409, detail={"code": "CONSENT_RECEIPT_IMMUTABLE"})
         return {"receipt_id": existing.receipt_id, "status": "replayed", "granted": existing.granted}
 
@@ -327,7 +354,8 @@ def put_consent(subject_id: str = Query(min_length=1, max_length=128), payload: 
             .values(revoked_at=now)
         )
     row = ConsentReceipt(
-        receipt_id=payload.receipt_id, subject_id=subject, scope=payload.scope,
+        receipt_id=payload.receipt_id, consent_id=payload.consent_id or payload.receipt_id,
+        resource_id=payload.resource_id, subject_id=subject, scope=payload.scope,
         consent_version=payload.consent_version, granted=payload.granted,
         granted_at=now if payload.granted else None,
         revoked_at=None if payload.granted else now,
@@ -335,6 +363,32 @@ def put_consent(subject_id: str = Query(min_length=1, max_length=128), payload: 
     db.add(row)
     db.commit()
     return {"receipt_id": row.receipt_id, "status": "recorded", "granted": row.granted}
+
+
+@app.post("/internal/v1/consents/verify", dependencies=[Depends(require_internal_token)])
+def verify_media_consent(payload: ConsentVerifyInput, db: Annotated[Session, Depends(get_db)]):
+    """Verify a consent bundle at request time; client booleans are never authority."""
+    subject = subject_or_404(payload.subject_id)
+    rows = list(db.scalars(select(ConsentReceipt).where(
+        ConsentReceipt.subject_id == subject,
+        ConsentReceipt.consent_id == payload.consent_id,
+        ConsentReceipt.granted.is_(True),
+        ConsentReceipt.revoked_at.is_(None),
+    )).all())
+    # Exact equality is intentional: omitting a resource ID must not turn a
+    # resource-bound grant into a broader subject-wide authorization.
+    active = [row for row in rows if row.resource_id == payload.resource_id]
+    granted_scopes = sorted({row.scope for row in active})
+    if not set(payload.required_scopes).issubset(set(granted_scopes)):
+        raise HTTPException(403, detail={"code": "CONSENT_NOT_VERIFIED"})
+    return {
+        "verified": True,
+        "active": True,
+        "subject_id": subject,
+        "consent_id": payload.consent_id,
+        "granted_scopes": granted_scopes,
+        "resource_id": payload.resource_id,
+    }
 
 
 @app.post("/v1/tal/consents/{receipt_id}/revoke", dependencies=[Depends(require_internal_token)])
@@ -419,7 +473,7 @@ def export_events(subject_id: str, db: Annotated[Session, Depends(get_db)]):
     return {
         "subject_id": subject,
         "profile": {"profile_version": profile.profile_version, "preferences": profile.preferences} if profile else None,
-        "consent_receipts": [{"receipt_id": x.receipt_id, "scope": x.scope, "consent_version": x.consent_version, "granted": x.granted, "granted_at": x.granted_at.isoformat() if x.granted_at else None, "revoked_at": x.revoked_at.isoformat() if x.revoked_at else None} for x in consents],
+        "consent_receipts": [{"receipt_id": x.receipt_id, "consent_id": x.consent_id, "resource_id": x.resource_id, "scope": x.scope, "consent_version": x.consent_version, "granted": x.granted, "granted_at": x.granted_at.isoformat() if x.granted_at else None, "revoked_at": x.revoked_at.isoformat() if x.revoked_at else None} for x in consents],
         "events": [{"event_id": x.event_id, "feature_key": x.feature_key, "value": x.value, "event_kind": x.event_kind, "supersedes_event_id": x.supersedes_event_id, "observed_at": x.observed_at.isoformat(), "expires_at": x.expires_at.isoformat() if x.expires_at else None, "consent_receipt_id": x.consent_receipt_id} for x in events],
     }
 
@@ -456,4 +510,4 @@ def purge_expired(db: Annotated[Session, Depends(get_db)], cron_token: Annotated
 def list_consents(subject_id: str, db: Annotated[Session, Depends(get_db)]):
     subject = subject_or_404(subject_id)
     rows = list(db.scalars(select(ConsentReceipt).where(ConsentReceipt.subject_id == subject).order_by(ConsentReceipt.created_at)).all())
-    return [{"receipt_id": x.receipt_id, "scope": x.scope, "consent_version": x.consent_version, "granted": x.granted, "granted_at": x.granted_at.isoformat() if x.granted_at else None, "revoked_at": x.revoked_at.isoformat() if x.revoked_at else None} for x in rows]
+    return [{"receipt_id": x.receipt_id, "consent_id": x.consent_id, "resource_id": x.resource_id, "scope": x.scope, "consent_version": x.consent_version, "granted": x.granted, "granted_at": x.granted_at.isoformat() if x.granted_at else None, "revoked_at": x.revoked_at.isoformat() if x.revoked_at else None} for x in rows]
