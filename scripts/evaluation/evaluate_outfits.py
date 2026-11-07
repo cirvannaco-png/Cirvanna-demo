@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import math
+import random
 import statistics
 import sys
 from collections import defaultdict
@@ -97,8 +98,8 @@ def _resolve_reviews(record: dict[str, Any], look_ids: set[str]) -> dict[str, di
     for look_id in look_ids:
         reviews = by_look.get(look_id, [])
         reviewer_keys = [str(item["reviewer_key"]).strip() for item in reviews]
-        if len(reviews) < 2 or len(set(reviewer_keys)) < 2:
-            raise ValueError(f"{look_id}: at least two independent reviewers are required")
+        if len(reviews) != 2 or len(set(reviewer_keys)) != 2:
+            raise ValueError(f"{look_id}: exactly two independent reviewers are required; duplicate reviewer rows are invalid")
         labels = {(item["relevance"], item["exclusion_violation"]) for item in reviews}
         if len(labels) == 1:
             relevance, violation = next(iter(labels))
@@ -181,9 +182,14 @@ def _validate_case(record: dict[str, Any], k: int):
     if not isinstance(exposures, list):
         raise ValueError("exposures must be an array")
     assigned_top = set(rankings[assigned][:k])
+    seen_exposure_looks: set[str] = set()
     for exposure in exposures:
         if not isinstance(exposure, dict) or exposure.get("look_id") not in assigned_top:
             raise ValueError("exposure must reference a look in assigned system's top-k")
+        exposure_look_id = exposure["look_id"]
+        if exposure_look_id in seen_exposure_looks:
+            raise ValueError("duplicate exposure outcome for the same look in one session")
+        seen_exposure_looks.add(exposure_look_id)
         if exposure.get("action") not in ACTIONS:
             raise ValueError("invalid exposure action")
         edit_count = exposure.get("edit_count", 0)
@@ -199,6 +205,87 @@ def _validate_case(record: dict[str, Any], k: int):
 def _mean(values: list[float]) -> float | None:
     return round(statistics.mean(values), 4) if values else None
 
+
+BOOTSTRAP_SAMPLES = 2000
+BOOTSTRAP_SEED = 20261107
+RANKING_CI_METRICS = (
+    "no_result_rate", "top_k_fill_rate", "mean_human_relevance_top_k",
+    "ndcg_at_k", "intra_list_diversity", "hard_exclusion_violation_rate",
+)
+
+def _cluster_bootstrap_ci(clusters: dict[str, list[dict[str, Any]]], metric: str, seed: int) -> list[float] | None:
+    """Percentile CI resampling participant clusters, preserving repeated sessions."""
+    keys = sorted(clusters)
+    observed = [row[metric] for key in keys for row in clusters[key] if row.get(metric) is not None]
+    if not observed:
+        return None
+    point = statistics.mean(observed)
+    if len(keys) < 2:
+        return [round(point, 4), round(point, 4)]
+    rng = random.Random(seed)
+    estimates = []
+    for _ in range(BOOTSTRAP_SAMPLES):
+        sampled_keys = [rng.choice(keys) for _ in keys]
+        sample = [row[metric] for key in sampled_keys for row in clusters[key] if row.get(metric) is not None]
+        if sample:
+            estimates.append(statistics.mean(sample))
+    if not estimates:
+        return None
+    estimates.sort()
+    low = estimates[int(0.025 * (len(estimates) - 1))]
+    high = estimates[int(0.975 * (len(estimates) - 1))]
+    return [round(low, 4), round(high, 4)]
+
+def _weighted_cohen_kappa(pairs: list[tuple[int, int]]) -> float | None:
+    if not pairs:
+        return None
+    n = len(pairs)
+    observed = sum((left - right) ** 2 / 16 for left, right in pairs) / n
+    first = [sum(a == score for a, _ in pairs) / n for score in range(1, 6)]
+    second = [sum(b == score for _, b in pairs) / n for score in range(1, 6)]
+    expected = sum(first[i] * second[j] * ((i - j) ** 2 / 16) for i in range(5) for j in range(5))
+    return 1.0 - observed / expected if expected > 0 else None
+
+def _nominal_cohen_kappa(pairs: list[tuple[bool, bool]]) -> float | None:
+    if not pairs:
+        return None
+    n = len(pairs)
+    observed = sum(left != right for left, right in pairs) / n
+    p1 = sum(left for left, _ in pairs) / n
+    p2 = sum(right for _, right in pairs) / n
+    expected = p1 * (1 - p2) + (1 - p1) * p2
+    return 1.0 - observed / expected if expected > 0 else None
+
+def _inter_rater_agreement(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Report raw agreement and kappa within stable pseudonymous reviewer pairs."""
+    groups: dict[tuple[str, str], dict[str, list[tuple[Any, Any]]]] = defaultdict(lambda: {"relevance": [], "exclusion": []})
+    for record in records:
+        by_look: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for review in record.get("human_reviews", []):
+            by_look[str(review["look_id"])].append(review)
+        for reviews in by_look.values():
+            ordered = sorted(reviews, key=lambda item: str(item["reviewer_key"]))
+            key = (str(ordered[0]["reviewer_key"]), str(ordered[1]["reviewer_key"]))
+            groups[key]["relevance"].append((ordered[0]["relevance"], ordered[1]["relevance"]))
+            groups[key]["exclusion"].append((ordered[0]["exclusion_violation"], ordered[1]["exclusion_violation"]))
+    relevance = [pair for group in groups.values() for pair in group["relevance"]]
+    exclusion = [pair for group in groups.values() for pair in group["exclusion"]]
+    relevance_kappas = [(len(g["relevance"]), v) for g in groups.values() if (v := _weighted_cohen_kappa(g["relevance"])) is not None]
+    exclusion_kappas = [(len(g["exclusion"]), v) for g in groups.values() if (v := _nominal_cohen_kappa(g["exclusion"])) is not None]
+    def weighted_mean(values):
+        total = sum(weight for weight, _ in values)
+        return round(sum(weight * value for weight, value in values) / total, 4) if total else None
+    return {
+        "candidate_review_pairs": len(relevance),
+        "reviewer_pair_groups": len(groups),
+        "exact_relevance_agreement_rate": round(sum(a == b for a, b in relevance) / len(relevance), 4) if relevance else None,
+        "hard_exclusion_agreement_rate": round(sum(a == b for a, b in exclusion) / len(exclusion), 4) if exclusion else None,
+        "weighted_relevance_kappa_across_reviewer_pairs": weighted_mean(relevance_kappas),
+        "hard_exclusion_kappa_across_reviewer_pairs": weighted_mean(exclusion_kappas),
+        "relevance_kappa_defined_reviewer_pairs": len(relevance_kappas),
+        "exclusion_kappa_defined_reviewer_pairs": len(exclusion_kappas),
+        "kappa_note": "Kappa is calculated within stable pseudonymous reviewer pairs and weighted by reviewed candidates. Null means expected disagreement was zero or no pair had sufficient variation.",
+    }
 
 def evaluate(records: list[dict[str, Any]], k: int = 3) -> dict[str, Any]:
     if k < 1:
