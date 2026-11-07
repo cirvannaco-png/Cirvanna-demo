@@ -23,6 +23,22 @@ class WardrobeDomainTests(unittest.TestCase):
         values.update(overrides)
         return WardrobeItem(**values)
 
+    def test_category_aliases_normalize_to_stable_taxonomy_ids(self):
+        self.assertEqual(self.item(category="Footwear").category, "shoes")
+        self.assertEqual(self.item(category="jewellery").category, "jewelry")
+        self.assertEqual(self.item(category="Sunglasses").category, "eyewear")
+        self.assertEqual(self.item(category="Bottoms").category, "lower_body")
+
+    def test_category_taxonomy_covers_beauty_and_accessory_items(self):
+        from wardrobe import WARDROBE_CATEGORIES, TAXONOMY_VERSION
+        category_ids = {entry["id"] for entry in WARDROBE_CATEGORIES}
+        self.assertEqual(TAXONOMY_VERSION, "1.0.0")
+        self.assertTrue({"makeup", "skincare", "haircare", "shoes", "bags", "ties", "eyewear", "watches"} <= category_ids)
+
+    def test_unknown_category_is_rejected_instead_of_silently_misclassified(self):
+        with self.assertRaisesRegex(ValueError, "unsupported wardrobe category"):
+            self.item(category="unverified-special-type")
+
     def test_create_requires_consent_for_persisted_image(self):
         with self.assertRaises(ValueError):
             self.item(image_storage_consent=False)
