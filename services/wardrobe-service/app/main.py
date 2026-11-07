@@ -307,10 +307,16 @@ def edit_item(item_id: str, payload: EditItem) -> dict[str, object]:
     changes = payload.model_dump(exclude={"owner_user_id", "expected_version", "command_id"}, exclude_unset=True)
     if not changes or all(value is None for value in changes.values()):
         raise HTTPException(422, detail={"code": "WARDROBE_EDIT_EMPTY"})
+    if not payload.command_id.strip():
+        raise HTTPException(422, detail={"code": "WARDROBE_EDIT_COMMAND_ID_EMPTY"})
     if "display_name" in changes and changes["display_name"] is not None:
         changes["display_name"] = changes["display_name"].strip()
+        if not changes["display_name"]:
+            raise HTTPException(422, detail={"code": "WARDROBE_DISPLAY_NAME_EMPTY"})
     if "category" in changes and changes["category"] is not None:
         changes["category"] = changes["category"].strip()
+        if not changes["category"]:
+            raise HTTPException(422, detail={"code": "WARDROBE_CATEGORY_EMPTY"})
     if "attributes" in changes and changes["attributes"] is not None:
         changes["attributes"] = [value.strip() for value in changes["attributes"]]
     try:
