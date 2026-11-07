@@ -16,6 +16,7 @@ class WardrobeRow(Base):
     __table_args__ = (
         UniqueConstraint("owner_user_id", "last_command_id", name="uq_wardrobe_owner_command"),
         Index("ix_wardrobe_owner_status", "owner_user_id", "status"),
+        UniqueConstraint("owner_user_id", "commerce_order_item_id", name="uq_wardrobe_owner_commerce_line"),
     )
     owner_user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     item_id: Mapped[str] = mapped_column(String(128), primary_key=True)
@@ -23,6 +24,13 @@ class WardrobeRow(Base):
     category: Mapped[str] = mapped_column(String(80), nullable=False)
     attributes: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     catalog_product_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    commerce_order_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    commerce_order_item_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    purchase_event_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    purchase_quantity: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    purchase_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    purchase_unit_price_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    purchase_paid_at: Mapped[str | None] = mapped_column(String(64), nullable=True)
     image_asset_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
     image_storage_consent: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
@@ -81,6 +89,26 @@ class WorkerHeartbeatRow(Base):
 
 
 
+class WardrobeOutfitWearEventRow(Base):
+    """Consent-gated, immutable snapshot of an outfit the owner says they wore."""
+    __tablename__ = "wardrobe_outfit_wear_events"
+    __table_args__ = (
+        Index("ix_wardrobe_outfit_wear_owner_observed", "owner_user_id", "observed_at"),
+        Index("ix_wardrobe_outfit_wear_outfit", "owner_user_id", "outfit_id"),
+    )
+    owner_user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    event_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    outfit_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    outfit_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    items_snapshot: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False)
+    context: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
+    consent_receipt_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    delivery_result: Mapped[list[dict[str, Any]]] = mapped_column(JSON, nullable=False, default=list)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.current_timestamp())
+
+
 class WardrobeFeedbackEventRow(Base):
     """Local audit mirror of a user-authorized learning event; source of truth remains USI/TAL and NPL."""
     __tablename__ = "wardrobe_learning_events"
@@ -128,6 +156,10 @@ def _row_to_domain(row: WardrobeRow) -> WardrobeItem:
         attributes=tuple(row.attributes or ()), catalog_product_id=row.catalog_product_id,
         image_asset_id=row.image_asset_id, image_storage_consent=row.image_storage_consent,
         status=WardrobeItemStatus(row.status), version=row.version, last_command_id=row.last_command_id,
+        commerce_order_id=row.commerce_order_id, commerce_order_item_id=row.commerce_order_item_id,
+        purchase_event_id=row.purchase_event_id, purchase_quantity=row.purchase_quantity,
+        purchase_currency=row.purchase_currency, purchase_unit_price_minor=row.purchase_unit_price_minor,
+        purchase_paid_at=row.purchase_paid_at,
     )
 
 class WardrobeStore:
@@ -141,6 +173,10 @@ class WardrobeStore:
             attributes=list(item.attributes), catalog_product_id=item.catalog_product_id,
             image_asset_id=item.image_asset_id, image_storage_consent=item.image_storage_consent,
             status=item.status.value, version=item.version, last_command_id=item.last_command_id,
+            commerce_order_id=item.commerce_order_id, commerce_order_item_id=item.commerce_order_item_id,
+            purchase_event_id=item.purchase_event_id, purchase_quantity=item.purchase_quantity,
+            purchase_currency=item.purchase_currency, purchase_unit_price_minor=item.purchase_unit_price_minor,
+            purchase_paid_at=item.purchase_paid_at,
         )
         try:
             with Session(self.engine) as session, session.begin():

@@ -32,6 +32,10 @@ def apply_postgres_migrations():
         "0002_wardrobe_learning_events.sql",
         "0003_saved_outfits.sql",
         "0004_rotation_state.sql",
+        "0005_verified_purchase_ownership.sql",
+        "0006_outfit_wear_history.sql",
+        "0005_verified_purchase_ownership.sql",
+        "0006_outfit_wear_history.sql",
     ):
         subprocess.run(
             ["psql", POSTGRES_DSN, "-v", "ON_ERROR_STOP=1", "-f", str(migration_dir / name)],
@@ -59,6 +63,8 @@ def test_postgres_migrations_are_idempotent_and_custom_dump_restores_rotation_st
         "0002_wardrobe_learning_events.sql",
         "0003_saved_outfits.sql",
         "0004_rotation_state.sql",
+        "0005_verified_purchase_ownership.sql",
+        "0006_outfit_wear_history.sql",
     ):
         subprocess.run(
             ["psql", POSTGRES_DSN, "-v", "ON_ERROR_STOP=1", "-f", str(migration_dir / name)],
@@ -70,14 +76,35 @@ def test_postgres_migrations_are_idempotent_and_custom_dump_restores_rotation_st
     owner = f"backup-owner-{uuid.uuid4().hex[:12]}"
     item_id = f"backup-item-{uuid.uuid4().hex[:12]}"
     request_id = f"backup-request-{uuid.uuid4().hex[:12]}"
+    order_id = str(uuid.uuid4())
+    order_item_id = str(uuid.uuid4())
+    purchase_event_id = str(uuid.uuid4())
     with psycopg.connect(POSTGRES_DSN) as conn:
         conn.execute(
             """
             INSERT INTO wardrobe_items
-                (owner_user_id, item_id, display_name, category, attributes, status, version)
-            VALUES (%s, %s, %s, %s, %s, 'active', 1)
+                (owner_user_id, item_id, display_name, category, attributes, status, version,
+                 commerce_order_id, commerce_order_item_id, purchase_event_id,
+                 purchase_quantity, purchase_currency, purchase_unit_price_minor, purchase_paid_at)
+            VALUES (%s, %s, %s, %s, %s, 'active', 1, %s, %s, %s, 1, 'KES', 120000, '2026-11-07T08:00:00Z')
             """,
-            (owner, item_id, "Backup linen shirt", "tops", Json(["linen", "blue"])),
+            (
+                owner, item_id, "Backup linen shirt", "tops", Json(["linen", "blue"]),
+                order_id, order_item_id, purchase_event_id,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO wardrobe_outfit_wear_events
+                (owner_user_id, event_id, outfit_id, outfit_version, items_snapshot,
+                 context, consent_receipt_id, payload_hash, delivery_result, observed_at)
+            VALUES (%s, %s, %s, 1, %s, %s, %s, %s, %s, TIMESTAMPTZ '2026-11-07 08:30:00+00')
+            """,
+            (
+                owner, f"wear-{uuid.uuid4().hex[:16]}", f"outfit-{uuid.uuid4().hex[:16]}",
+                Jsonb([{"item_id": item_id, "item_version": 1}]), Jsonb({"occasion": "work"}),
+                "receipt-restore-001", "c" * 64, Jsonb([{"item_id": item_id, "status": "recorded"}]),
+            ),
         )
         conn.execute(
             """
@@ -113,6 +140,23 @@ def test_postgres_migrations_are_idempotent_and_custom_dump_restores_rotation_st
                 ).fetchall()
             }
             assert "wardrobe_rotation_states" in tables
+            assert "wardrobe_outfit_wear_events" in tables
+            item_columns = {
+                row[0] for row in restored.execute(
+                    "SELECT column_name FROM information_schema.columns WHERE table_name = 'wardrobe_items'"
+                ).fetchall()
+            }
+            assert {
+                "commerce_order_id", "commerce_order_item_id", "purchase_event_id",
+                "purchase_quantity", "purchase_currency", "purchase_unit_price_minor", "purchase_paid_at",
+            }.issubset(item_columns)
+            wear = restored.execute(
+                "SELECT items_snapshot, context, consent_receipt_id FROM wardrobe_outfit_wear_events WHERE owner_user_id = %s",
+                (owner,),
+            ).fetchone()
+            assert wear[0] == [{"item_id": item_id, "item_version": 1}]
+            assert wear[1] == {"occasion": "work"}
+            assert wear[2] == "receipt-restore-001"
             row = restored.execute(
                 """
                 SELECT cycle_number, surfaced_item_ids, version, last_request_id, last_request_hash
@@ -126,6 +170,17 @@ def test_postgres_migrations_are_idempotent_and_custom_dump_restores_rotation_st
                 (owner, item_id),
             ).fetchone()
             assert item == ("Backup linen shirt", ["linen", "blue"])
+            provenance = restored.execute(
+                """
+                SELECT commerce_order_id, commerce_order_item_id, purchase_event_id,
+                       purchase_quantity, purchase_currency, purchase_unit_price_minor, purchase_paid_at
+                FROM wardrobe_items WHERE owner_user_id = %s AND item_id = %s
+                """,
+                (owner, item_id),
+            ).fetchone()
+            assert provenance == (
+                order_id, order_item_id, purchase_event_id, 1, "KES", 120000, "2026-11-07T08:00:00Z",
+            )
     finally:
         with psycopg.connect(POSTGRES_DSN, autocommit=True) as admin:
             admin.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(backup_db)))
