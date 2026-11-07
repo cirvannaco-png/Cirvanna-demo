@@ -145,6 +145,10 @@ class FakeAsyncClient:
         self.calls.append(("PATCH", url, kwargs))
         return self.responses.pop(0)
 
+    async def put(self, url, **kwargs):
+        self.calls.append(("PUT", url, kwargs))
+        return self.responses.pop(0)
+
 
 
 def test_description_search_fails_closed_without_xari_or_legacy_secret(client, monkeypatch):
@@ -751,3 +755,66 @@ def test_saved_outfit_bff_requires_explicit_replace_or_remove(client):
     )
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "OUTFIT_PIECE_ACTION_REQUIRED"
+
+def test_style_color_profile_bff_binds_verified_subject_and_reads_profile(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42"}),
+        FakeResponse({
+            "subject_id": "signed-user-42", "profile_version": 1,
+            "liked_colors": ["emerald"], "disliked_colors": ["neon yellow"],
+            "best_version_colors": ["burgundy"],
+            "analysis": {"status": "unavailable", "reason_code": "NO_VALIDATED_COLOR_ANALYSIS_MODEL"},
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get("/api/style/color-profile", headers={"Authorization": "Bearer signed-session"})
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.json()["liked_colors"] == ["emerald"]
+    assert fake.calls[1][1] == "https://identity.example.test/v1/color-profiles/signed-user-42"
+    assert fake.calls[1][2]["headers"]["Authorization"] == "Bearer identity-internal-token-more-than-thirty-two-bytes"
+
+
+def test_style_color_profile_bff_saves_only_for_verified_subject(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42"}),
+        FakeResponse({
+            "subject_id": "signed-user-42", "profile_version": 2,
+            "liked_colors": ["emerald", "cobalt"], "disliked_colors": [],
+            "best_version_colors": ["burgundy"],
+            "analysis": {"status": "unavailable"},
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.put(
+        "/api/style/color-profile",
+        headers={"Authorization": "Bearer signed-session"},
+        json={
+            "expected_version": 1, "liked_colors": ["emerald", "cobalt"],
+            "disliked_colors": [], "best_version_colors": ["burgundy"],
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert fake.calls[1][0] == "PUT"
+    assert fake.calls[1][1] == "https://identity.example.test/v1/color-profiles/signed-user-42"
+    assert fake.calls[1][2]["json"]["expected_version"] == 1
+    assert "subject_id" not in fake.calls[1][2]["json"]
+    assert "owner_user_id" not in response.request.content.decode(errors="ignore")
+
+
+def test_wardrobe_page_exposes_personal_color_profile_and_analysis_boundary(client):
+    response = client.get("/wardrobe")
+    assert response.status_code == 200
+    assert 'id="colorProfilePanel"' in response.text
+    assert 'id="likedColors"' in response.text
+    assert 'id="dislikedColors"' in response.text
+    assert 'id="bestVersionColors"' in response.text
+    assert 'api("/api/style/color-profile")' in response.text
+    assert "NO_VALIDATED_COLOR_ANALYSIS_MODEL" not in response.text
+    assert "Objective skin-tone and undertone analysis is not yet available" in response.text
