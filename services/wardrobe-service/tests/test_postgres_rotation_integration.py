@@ -34,6 +34,8 @@ def apply_postgres_migrations():
         "0004_rotation_state.sql",
         "0005_verified_purchase_ownership.sql",
         "0006_outfit_wear_history.sql",
+        "0005_verified_purchase_ownership.sql",
+        "0006_outfit_wear_history.sql",
     ):
         subprocess.run(
             ["psql", POSTGRES_DSN, "-v", "ON_ERROR_STOP=1", "-f", str(migration_dir / name)],
@@ -61,6 +63,8 @@ def test_postgres_migrations_are_idempotent_and_custom_dump_restores_rotation_st
         "0002_wardrobe_learning_events.sql",
         "0003_saved_outfits.sql",
         "0004_rotation_state.sql",
+        "0005_verified_purchase_ownership.sql",
+        "0006_outfit_wear_history.sql",
     ):
         subprocess.run(
             ["psql", POSTGRES_DSN, "-v", "ON_ERROR_STOP=1", "-f", str(migration_dir / name)],
