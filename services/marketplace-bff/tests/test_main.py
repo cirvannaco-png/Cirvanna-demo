@@ -1192,3 +1192,115 @@ def test_pnelly_daily_looks_hides_server_side_evaluation_trace_from_browser(clie
     assert "case_do_not_expose" not in response.text
 
 
+
+
+
+def test_pnelly_daily_looks_reloads_and_recomposes_after_rotation_compare_and_swap_conflict(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+    items = [
+        {"owner_user_id": "signed-user-42", "item_id": "shirt-001",
+         "display_name": "Linen shirt", "category": "tops", "attributes": ["linen"], "status": "active"},
+        {"owner_user_id": "signed-user-42", "item_id": "pants-001",
+         "display_name": "Cotton trousers", "category": "trousers", "attributes": ["cotton"], "status": "active"},
+    ]
+    initial_state = {
+        "state": {
+            "owner_user_id": "signed-user-42", "cycle_number": 1,
+            "cycle_started_at": "2026-11-07T00:00:00+00:00",
+            "surfaced_item_ids": ["shirt-001"], "version": 1,
+        },
+        "version": 1,
+    }
+    refreshed_state = {
+        "state": {
+            "owner_user_id": "signed-user-42", "cycle_number": 1,
+            "cycle_started_at": "2026-11-07T00:00:00+00:00",
+            "surfaced_item_ids": ["shirt-001", "pants-001"], "version": 2,
+        },
+        "version": 2,
+    }
+    roles = ["everyday", "elevated", "explore"]
+    def recommendation(*, complete, cycle, start, seen, queue):
+        return {
+            "look_count": 3,
+            "looks": [
+                {"role": role, "status": "needs_input", "item_ids": [], "items": [],
+                 "missing": ["a complete outfit"], "virtual_twin_preview": {"status": "unavailable"}}
+                for role in roles
+            ],
+            "wardrobe_rotation": {
+                "policy_version": "wardrobe-revival-v1",
+                "cycle_complete": complete, "cycle_overdue": False,
+                "revival_queue_item_ids": queue,
+                "next_state": {
+                    "cycle_number": cycle, "cycle_started_at": start,
+                    "seen_item_ids": seen,
+                },
+            },
+        }
+    first_gateway = FakeResponse({
+        "mode": "pnelly_wardrobe_daily_looks",
+        "recommendation": recommendation(
+            complete=False, cycle=1, start="2026-11-07", seen=["shirt-001"], queue=["pants-001"],
+        ),
+    })
+    second_gateway = FakeResponse({
+        "mode": "pnelly_wardrobe_daily_looks",
+        "recommendation": recommendation(
+            complete=True, cycle=2, start="2026-11-07", seen=[], queue=[],
+        ),
+    })
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"owner_user_id": "signed-user-42", "items": items}),
+        FakeResponse(initial_state),
+        first_gateway,
+        FakeResponse({"detail": {"code": "WARDROBE_ROTATION_VERSION_CONFLICT"}}, status_code=409),
+        FakeResponse(refreshed_state),
+        second_gateway,
+        FakeResponse({
+            "state": {
+                "owner_user_id": "signed-user-42", "cycle_number": 2,
+                "cycle_started_at": "2026-11-07T00:00:00+00:00",
+                "surfaced_item_ids": [], "version": 3,
+            },
+            "version": 3, "status": "updated",
+        }),
+    ])
+    original_post = fake.post
+    async def echo_local_dates(url, **kwargs):
+        response = await original_post(url, **kwargs)
+        if url == "https://decision.example.test/v1/pnelly/daily-looks":
+            body = kwargs["json"]
+            response._payload["request_id"] = body["request_id"]
+            rotation = response._payload["recommendation"]["wardrobe_rotation"]
+            if rotation["cycle_complete"]:
+                rotation["next_state"]["cycle_started_at"] = body["local_date"]
+            else:
+                rotation["next_state"]["cycle_started_at"] = body["rotation_cycle_started_at"]
+        return response
+    fake.post = echo_local_dates
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/pnelly/daily-looks",
+        headers={"Authorization": "Bearer signed-session"},
+        json={"timezone": "Africa/Nairobi"},
+    )
+    assert response.status_code == 200, response.text
+    gateway_calls = [call for call in fake.calls if call[0] == "POST"]
+    rotation_writes = [call for call in fake.calls if call[0] == "PUT"]
+    assert len(gateway_calls) == 2
+    assert len(rotation_writes) == 2
+    assert gateway_calls[0][2]["json"]["rotation_seen_item_ids"] == ["shirt-001"]
+    assert gateway_calls[1][2]["json"]["rotation_seen_item_ids"] == ["shirt-001", "pants-001"]
+    assert gateway_calls[1][2]["json"]["rotation_cycle_number"] == 1
+    assert rotation_writes[0][2]["json"]["expected_version"] == 1
+    assert rotation_writes[1][2]["json"]["expected_version"] == 2
+    assert rotation_writes[1][2]["json"]["cycle_number"] == 2
+    assert rotation_writes[1][2]["json"]["surfaced_item_ids"] == []
+
+
