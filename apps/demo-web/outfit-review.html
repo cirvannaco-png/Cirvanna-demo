@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blinded Outfit Review — Cirvanna Research</title>
+<style>
+:root{color-scheme:light;--ink:#1d2028;--muted:#667085;--line:#d9dde5;--panel:#fff;--bg:#f4f5f8;--accent:#6652a3;--warning:#9a4b12}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,sans-serif}
+main{max-width:980px;margin:auto;padding:22px 16px 48px}h1,h2,h3{line-height:1.2}h1{font-size:27px;margin:0 0 8px}h2{font-size:19px;margin:0 0 8px}
+.lead,.hint{color:var(--muted)}.panel,.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;margin:14px 0}
+.row{display:flex;gap:12px;align-items:end;flex-wrap:wrap}.field{display:flex;flex-direction:column;gap:5px;flex:1;min-width:220px}
+input,button{font:inherit}input[type=text],input[type=file]{padding:10px;border:1px solid var(--line);border-radius:6px;background:#fff}
+button{padding:10px 14px;border:1px solid var(--line);border-radius:6px;background:#fff;cursor:pointer}button.primary{background:var(--accent);border-color:var(--accent);color:#fff}button:disabled{opacity:.45;cursor:not-allowed}
+.status{padding:10px;background:#eef0f5;border-radius:6px;color:var(--muted);white-space:pre-wrap}.card{margin:12px 0}.meta{color:var(--muted);font-size:12px}.tags{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0}.tag{background:#eef0f5;border-radius:20px;padding:3px 8px;font-size:12px}
+.rating{display:flex;gap:10px;flex-wrap:wrap;margin:12px 0}.rating label{display:inline-flex;gap:5px;align-items:center;padding:7px 9px;border:1px solid var(--line);border-radius:6px}
+.exclusion{display:flex;gap:12px;flex-wrap:wrap}.warning{color:var(--warning);font-size:12px;font-weight:600}
+.hidden{display:none!important}
+</style>
+</head>
+<body>
+<main>
+<section class="panel">
+  <div class="meta">OFFLINE / DOUBLE-BLIND / LOCAL FILE PROCESSING</div>
+  <h1>Blinded Outfit Review</h1>
+  <p class="lead">Rate outfit relevance and whether the candidate conflicts with an explicit exclusion. Candidate order is randomized. System assignment, ranking scores and live rank are not shown.</p>
+  <p class="hint">This version is metadata-only: it does not evaluate visual appeal, garment fit, skin appearance or virtual try-on realism. Do not add names, account IDs, photos or other personal data to review notes; this tool has no free-text notes.</p>
+  <div class="row">
+    <div class="field"><label for="reviewerKey">Reviewer key (pseudonymous)</label><input id="reviewerKey" type="text" maxlength="80" placeholder="e.g. REVIEWER_01"></div>
+    <div class="field"><label for="traceFile">Trace JSONL file</label><input id="traceFile" type="file" accept=".jsonl,.ndjson,.txt"></div>
+    <button class="primary" id="load" disabled>Load cases</button>
+  </div>
+  <div id="status" class="status">Choose a trace file and enter your reviewer key. Data stays in this browser tab.</div>
+</section>
+<section id="reviewPanel" class="hidden">
+  <div class="panel">
+    <div class="row">
+      <div><div class="meta" id="casePosition"></div><h2 id="caseTitle"></h2><div class="hint" id="caseContext"></div></div>
+      <div style="margin-left:auto"><button id="previous">Previous case</button> <button id="next">Next case</button></div>
+    </div>
+  </div>
+  <div id="candidateCards"></div>
+  <div class="panel row">
+    <button id="export" class="primary">Export this reviewer's JSONL</button>
+    <span class="hint" id="progress"></span>
+  </div>
+</section>
+</main>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  let cases = [];
+  let current = 0;
+  let answers = new Map();
+  let shuffledCases = [];
+  const setStatus = message => $("status").textContent = message;
+  const randomOrder = values => {
+    const copy = values.slice();
+    for (let i = copy.length - 1; i > 0; i--) {
+      const random = new Uint32Array(1);
+      crypto.getRandomValues(random);
+      const j = random[0] % (i + 1);
+      [copy[i], copy[j]] = [copy[j], copy[i]];
+    }
+    return copy;
+  };
+  const traceFrom = row => row?.evaluation_trace || row?.recommendation?.evaluation_trace || null;
+  const load = async () => {
+    const file = $("traceFile").files[0];
+    if (!file) return;
+    if (!$("reviewerKey").value.trim()) { setStatus("Enter a reviewer key before loading."); return; }
+    const content = await file.text();
+    const rows = content.split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line));
+    const found = [];
+    for (const row of rows) {
+      const trace = traceFrom(row);
+      if (!trace || trace.trace_version !== "1.0" || trace.candidate_pool_truncated) continue;
+      const privacy = trace.privacy || {};
+      if (privacy.raw_user_id_included !== false || privacy.raw_wardrobe_item_ids_included !== false
+          || privacy.display_names_included !== false || privacy.image_assets_included !== false) {
+        throw new Error("Trace failed the privacy gate.");
+      }
+      for (const item of (trace.cases || [])) {
+        if (!Array.isArray(item.candidate_outfits) || !item.candidate_outfits.length) continue;
+        if (!Array.isArray(item.cirvanna_ranked_look_ids) || !item.cirvanna_ranked_look_ids.length) continue;
+        found.push(item);
+      }
+    }
+    if (!found.length) { setStatus("No complete, non-truncated review cases were found."); return; }
+    cases = found;
+    current = 0;
+    answers = new Map();
+    shuffledCases = cases.map(item => ({caseData:item, order:randomOrder(item.candidate_outfits)}));
+    $("reviewPanel").classList.remove("hidden");
+    renderCase();
+    setStatus(cases.length + " case(s) loaded. Candidate order is blinded and randomized.");
+  };
+  const renderCase = () => {
+    const entry = shuffledCases[current];
+    const item = entry.caseData;
+    const context = item.context || {};
+    $("casePosition").textContent = "CASE " + (current + 1) + " OF " + shuffledCases.length;
+    $("caseTitle").textContent = (context.role || "outfit") + " · " + (context.occasion || "unspecified occasion");
+    $("caseContext").textContent = "Climate: " + (context.climate || "not specified")
+      + " · Preferred styles: " + ((context.preferred_style_tags || []).join(", ") || "none")
+      + " · Preferred colors: " + ((context.preferred_color_tags || []).join(", ") || "none");
+    const root = $("candidateCards");
+    root.replaceChildren();
+    entry.order.forEach((candidate, index) => {
+      const card = document.createElement("article");
+      card.className = "card";
+      const h = document.createElement("h3");
+      h.textContent = "Candidate " + (index + 1);
+      card.append(h);
+      const excluded = (candidate.garment_ids || []).some(id => (context.hard_excluded_item_ids || []).includes(id));
+      if (excluded) {
+        const warning = document.createElement("div");
+        warning.className = "warning";
+        warning.textContent = "Contains an item flagged by the explicit-exclusion filter";
+        card.append(warning);
+      }
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = "Categories: " + ((candidate.category_tags || []).join(", ") || "not tagged");
+      card.append(meta);
+      for (const [label,key] of [["Style","style_tags"],["Color","color_tags"],["Occasion","occasion_tags"],["Exclusion tags","exclusion_tags"]]) {
+        const values = candidate[key] || [];
+        if (!values.length) continue;
+        const line = document.createElement("div");
+        line.className = "tags";
+        const prefix = document.createElement("span");
+        prefix.className = "meta";
+        prefix.textContent = label + ":";
+        line.append(prefix);
+        for (const value of values) {
+          const tag = document.createElement("span");
+          tag.className = "tag";
+          tag.textContent = value;
+          line.append(tag);
+        }
+        card.append(line);
+      }
+      const rating = document.createElement("div");
+      rating.className = "rating";
+      const existing = answers.get(item.case_id + "|" + candidate.look_id);
+      for (let score=1; score<=5; score++) {
+        const label = document.createElement("label");
+        const radio = document.createElement("input");
+        radio.type = "radio";
+        radio.name = "rating-" + item.case_id + "-" + candidate.look_id;
+        radio.value = String(score);
+        radio.checked = existing?.relevance === score;
+        radio.addEventListener("change", () => updateAnswer(item, candidate, {relevance:score}));
+        label.append(radio, document.createTextNode(String(score)));
+        rating.append(label);
+      }
+      card.append(document.createTextNode("Relevance (1 = irrelevant, 5 = highly relevant)"));
+      card.append(rating);
+      const exclude = document.createElement("div");
+      exclude.className = "exclusion";
+      exclude.append(document.createTextNode("Does this outfit violate an explicit exclusion?"));
+      for (const value of [false,true]) {
+        const label = document.createElement("label");
+        const radio = document.createElement("input");
+        radio.type = "radio";
+        radio.name = "exclusion-" + item.case_id + "-" + candidate.look_id;
+        radio.value = String(value);
+        radio.checked = existing?.exclusion_violation === value;
+        radio.addEventListener("change", () => updateAnswer(item, candidate, {exclusion_violation:value}));
+        label.append(radio, document.createTextNode(value ? "Yes" : "No"));
+        exclude.append(label);
+      }
+      card.append(exclude);
+      root.append(card);
+    });
+    $("previous").disabled = current === 0;
+    $("next").disabled = current === shuffledCases.length - 1;
+    updateProgress();
+  };
+  const updateAnswer = (item,candidate,change) => {
+    const key = item.case_id + "|" + candidate.look_id;
+    const currentAnswer = answers.get(key) || {};
+    answers.set(key,{...currentAnswer,...change,case_id:item.case_id,look_id:candidate.look_id});
+    updateProgress();
+  };
+  const updateProgress = () => {
+    let complete=0,total=0;
+    for(const entry of shuffledCases) for(const candidate of entry.caseData.candidate_outfits) {
+      total++;
+      const answer=answers.get(entry.caseData.case_id+"|"+candidate.look_id);
+      if(answer && Number.isInteger(answer.relevance) && typeof answer.exclusion_violation==="boolean") complete++;
+    }
+    $("progress").textContent=complete+" / "+total+" candidates rated";
+  };
+  const exportReviews = () => {
+    const reviewer = $("reviewerKey").value.trim();
+    if(!reviewer){setStatus("Reviewer key is required.");return;}
+    const rows=[];
+    for(const entry of shuffledCases) {
+      const item=entry.caseData;
+      for(const candidate of item.candidate_outfits) {
+        const answer=answers.get(item.case_id+"|"+candidate.look_id);
+        if(!answer || !Number.isInteger(answer.relevance) || typeof answer.exclusion_violation!=="boolean") {
+          setStatus("Complete every candidate before exporting.");
+          return;
+        }
+        rows.push({
+          case_id:item.case_id,
+          look_id:candidate.look_id,
+          reviewer_key:reviewer,
+          relevance:answer.relevance,
+          exclusion_violation:answer.exclusion_violation,
+          reviewed_at:new Date().toISOString()
+        });
+      }
+    }
+    const jsonl=rows.map(row=>JSON.stringify(row)).join("\n")+"\n";
+    const blob=new Blob([jsonl],{type:"application/x-ndjson"});
+    const url=URL.createObjectURL(blob);
+    const link=document.createElement("a");
+    link.href=url;
+    link.download="outfit-review-"+reviewer.replace(/[^a-zA-Z0-9_-]/g,"_")+".jsonl";
+    document.body.append(link);link.click();link.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    setStatus(rows.length+" independent review record(s) exported. Keep the file separate from other reviewers' files.");
+  };
+  $("load").addEventListener("click",()=>load().catch(error=>setStatus(error.message)));
+  $("traceFile").addEventListener("change",()=>{$("load").disabled=!$("traceFile").files.length;});
+  $("previous").addEventListener("click",()=>{if(current>0){current--;renderCase();}});
+  $("next").addEventListener("click",()=>{if(current<shuffledCases.length-1){current++;renderCase();}});
+  $("export").addEventListener("click",exportReviews);
+})();
+</script>
+</body>
+</html>
