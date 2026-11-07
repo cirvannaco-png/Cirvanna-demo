@@ -332,7 +332,7 @@ def readiness(db: Annotated[Session, Depends(get_db)]):
     try:
         db.execute(select(USIProfileRow.subject_id).limit(1))
         db.execute(select(ColorProfileRow.subject_id).limit(1))
-        db.execute(select(ConsentReceipt.receipt_id).limit(1))
+        db.execute(select(ConsentReceipt.consent_id).limit(1))
         db.execute(select(TALEvent.event_id).limit(1))
         return {"status": "ready", "service": SERVICE, "database": "reachable", "durable_usi": True, "durable_tal": True, "ready": True}
     except SQLAlchemyError:
@@ -553,11 +553,9 @@ def revoke_consent(
                 ConsentReceipt.resource_id == receipt.resource_id,
             )
         else:
-            # Preserve legacy/global withdrawal semantics.
-            statement = statement.where(
-                ConsentReceipt.scope == receipt.scope,
-                ConsentReceipt.resource_id.is_(None),
-            )
+            # A legacy/global scope withdrawal also revokes resource-bound grants
+            # for this scope; it cannot leave a parallel grant active.
+            statement = statement.where(ConsentReceipt.scope == receipt.scope)
         db.execute(statement.values(revoked_at=revoked_at))
         db.commit()
         db.refresh(receipt)
@@ -565,7 +563,7 @@ def revoke_consent(
         "receipt_id": receipt_id,
         "consent_id": receipt.consent_id,
         "resource_id": receipt.resource_id,
-        "status": "revoked" if receipt.revoked_at is not None else "already_denied",
+        "status": "revoked" if receipt.granted and receipt.revoked_at is not None else "already_denied",
         "revoked_at": receipt.revoked_at.isoformat() if receipt.revoked_at else None,
     }
 
