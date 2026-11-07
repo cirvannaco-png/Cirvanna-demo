@@ -141,6 +141,10 @@ class FakeAsyncClient:
         self.calls.append(("POST", url, kwargs))
         return self.responses.pop(0)
 
+    async def delete(self, url, **kwargs):
+        self.calls.append(("DELETE", url, kwargs))
+        return self.responses.pop(0)
+
 
 def test_description_search_fails_closed_without_xari_or_legacy_secret(client, monkeypatch):
     monkeypatch.delenv("TARI_API_URL", raising=False)
@@ -521,3 +525,127 @@ def test_wardrobe_consent_listing_allows_closet_browse_when_learning_provider_ab
     assert response.json()["learning_configured"] is False
     assert response.json()["items"] == []
     assert len(fake.calls) == 1
+
+
+
+def test_wardrobe_learning_export_combines_verified_tal_npl_and_feedback(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({
+            "subject_id": "signed-user-42",
+            "tal": {"events": [{"event_id": "tal-event-1"}]},
+            "npl": {"user_id": "signed-user-42", "preferences": [{"preference_id": "avoid-blue"}]},
+        }),
+        FakeResponse({"owner_user_id": "signed-user-42", "items": [{"event_id": "wardrobe-event-1"}]}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get("/api/wardrobe/learning/export", headers={"Authorization": "Bearer signed-session"})
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["subject_id"] == "signed-user-42"
+    assert data["tal"]["events"][0]["event_id"] == "tal-event-1"
+    assert data["npl"]["preferences"][0]["preference_id"] == "avoid-blue"
+    assert data["wardrobe_feedback"][0]["event_id"] == "wardrobe-event-1"
+    assert fake.calls[1][0] == "GET"
+    assert fake.calls[1][1] == "https://decision.example.test/v1/me/learning/export"
+    assert fake.calls[1][2]["headers"]["X-End-User-Authorization"] == "Bearer signed-session"
+    assert fake.calls[2][1] == "https://wardrobe.example.test/v1/feedback"
+    assert fake.calls[2][2]["params"]["owner_user_id"] == "signed-user-42"
+
+
+def test_wardrobe_learning_export_rejects_cross_subject_npl_payload(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({
+            "subject_id": "signed-user-42",
+            "tal": {"events": []},
+            "npl": {"user_id": "another-user", "preferences": []},
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get("/api/wardrobe/learning/export", headers={"Authorization": "Bearer signed-session"})
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "LEARNING_EXPORT_SCOPE_MISMATCH"
+    assert len(fake.calls) == 2
+
+
+def test_wardrobe_preference_retraction_uses_gateway_verified_subject(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"preference": {"preference_id": "avoid-blue", "active": False}, "retracted": True}, status_code=200),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/preferences/avoid-blue/retract",
+        headers={"Authorization": "Bearer signed-session"},
+        json={"correction_event_id": "correction-123"},
+    )
+    assert response.status_code == 200, response.text
+    assert fake.calls[1][1] == "https://decision.example.test/v1/me/npl/preferences/avoid-blue/retract"
+    assert fake.calls[1][2]["json"] == {"correction_event_id": "correction-123"}
+    assert fake.calls[1][2]["headers"]["X-End-User-Authorization"] == "Bearer signed-session"
+
+
+def test_wardrobe_preference_retraction_rejects_client_subject_override(client, monkeypatch):
+    response = client.post(
+        "/api/wardrobe/preferences/avoid-blue/retract",
+        headers={"Authorization": "Bearer signed-session"},
+        json={"correction_event_id": "correction-123", "user_id": "another-user"},
+    )
+    assert response.status_code == 422
+
+
+def test_wardrobe_learning_delete_erases_gateway_and_local_audit_records(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"status": "deleted", "tal": {}, "npl": {}}),
+        FakeResponse({"status": "deleted", "deleted_feedback_events": 3}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.delete("/api/wardrobe/learning", headers={"Authorization": "Bearer signed-session"})
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["status"] == "deleted"
+    assert result["identity_and_npl_deleted"] is True
+    assert result["wardrobe_audit_deleted"] is True
+    assert result["deleted_wardrobe_feedback_events"] == 3
+    assert fake.calls[1][0] == "DELETE"
+    assert fake.calls[1][1] == "https://decision.example.test/v1/me/learning/data"
+    assert fake.calls[2][0] == "DELETE"
+    assert fake.calls[2][2]["params"]["owner_user_id"] == "signed-user-42"
+
+
+def test_wardrobe_learning_delete_reports_partial_erasure_without_deleting_local_audit(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"detail": {"code": "LEARNING_DELETION_PARTIAL"}}, status_code=503),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.delete("/api/wardrobe/learning", headers={"Authorization": "Bearer signed-session"})
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "LEARNING_DELETION_PARTIAL"
+    assert len(fake.calls) == 2
+
+
+def test_wardrobe_learning_export_requires_signed_session(client):
+    response = client.get("/api/wardrobe/learning/export")
+    assert response.status_code == 401
