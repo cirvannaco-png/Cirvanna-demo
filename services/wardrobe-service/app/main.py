@@ -120,7 +120,7 @@ def store()->WardrobeStore:
     except ValueError as exc: raise HTTPException(503,detail={"code":"WARDROBE_DATABASE_CONFIGURATION_INVALID"}) from exc
 
 def model_json(item:WardrobeItem)->dict[str,object]:
-    return {"item_id":item.item_id,"owner_user_id":item.owner_user_id,"display_name":item.display_name,"category":item.category,"attributes":list(item.attributes),"catalog_product_id":item.catalog_product_id,"commerce_order_id":item.commerce_order_id,"commerce_order_item_id":item.commerce_order_item_id,"purchase_event_id":item.purchase_event_id,"purchase_quantity":item.purchase_quantity,"ownership_source":"verified_purchase" if item.commerce_order_item_id else "user_added","image_asset_id":item.image_asset_id,"image_storage_consent":item.image_storage_consent,"status":item.status.value,"version":item.version,"last_command_id":item.last_command_id}
+    return {"item_id":item.item_id,"owner_user_id":item.owner_user_id,"display_name":item.display_name,"category":item.category,"attributes":list(item.attributes),"catalog_product_id":item.catalog_product_id,"commerce_order_id":item.commerce_order_id,"commerce_order_item_id":item.commerce_order_item_id,"purchase_event_id":item.purchase_event_id,"purchase_quantity":item.purchase_quantity,"purchase_currency":item.purchase_currency,"purchase_unit_price_minor":item.purchase_unit_price_minor,"purchase_paid_at":item.purchase_paid_at,"ownership_source":"verified_purchase" if item.commerce_order_item_id else "user_added","image_asset_id":item.image_asset_id,"image_storage_consent":item.image_storage_consent,"status":item.status.value,"version":item.version,"last_command_id":item.last_command_id}
 
 def domain_error(exc:Exception):
     if isinstance(exc,WardrobeNotFound): raise HTTPException(404,detail={"code":"WARDROBE_ITEM_NOT_FOUND"}) from exc
@@ -143,7 +143,10 @@ def ready()->dict[str,object]:
         engine=engine_for_url(url)
         with engine.connect() as conn: conn.execute(text("SELECT 1"))
         tables=set(inspect(engine).get_table_names())
-        schema_ready={"wardrobe_items","wardrobe_asset_deletion_outbox","wardrobe_learning_events","wardrobe_outfits"}.issubset(tables)
+        required_tables={"wardrobe_items","wardrobe_asset_deletion_outbox","wardrobe_learning_events","wardrobe_outfits"}
+        wardrobe_columns={column["name"] for column in inspect(engine).get_columns("wardrobe_items")} if "wardrobe_items" in tables else set()
+        required_purchase_columns={"commerce_order_id","commerce_order_item_id","purchase_event_id","purchase_quantity","purchase_currency","purchase_unit_price_minor","purchase_paid_at"}
+        schema_ready=required_tables.issubset(tables) and required_purchase_columns.issubset(wardrobe_columns)
         db_ready=schema_ready
     except Exception as exc: db_error=type(exc).__name__
     worker_enabled=os.getenv("WARDROBE_ASSET_DELETION_READY","").lower()=="true"
@@ -212,6 +215,9 @@ def ingest_verified_purchase(payload: VerifiedPurchaseIn) -> dict[str, object]:
                     and existing.purchase_event_id == payload.event_id
                     and existing.catalog_product_id == payload.catalog_product_id
                     and existing.purchase_quantity == payload.quantity
+                    and existing.purchase_currency == payload.currency
+                    and existing.purchase_unit_price_minor == payload.unit_price_minor
+                    and existing.purchase_paid_at == paid_at.isoformat()
                     and existing.display_name == payload.product_name.strip()
                 )
                 if not same:
@@ -224,6 +230,8 @@ def ingest_verified_purchase(payload: VerifiedPurchaseIn) -> dict[str, object]:
                     last_command_id=existing.last_command_id, commerce_order_id=existing.commerce_order_id,
                     commerce_order_item_id=existing.commerce_order_item_id,
                     purchase_event_id=existing.purchase_event_id, purchase_quantity=existing.purchase_quantity,
+                    purchase_currency=existing.purchase_currency, purchase_unit_price_minor=existing.purchase_unit_price_minor,
+                    purchase_paid_at=existing.purchase_paid_at,
                 ))}
             row = WardrobeRow(
                 owner_user_id=owner, item_id=item_id, display_name=payload.product_name.strip(),
@@ -231,6 +239,8 @@ def ingest_verified_purchase(payload: VerifiedPurchaseIn) -> dict[str, object]:
                 catalog_product_id=payload.catalog_product_id.strip(),
                 commerce_order_id=payload.order_id, commerce_order_item_id=payload.order_item_id,
                 purchase_event_id=payload.event_id, purchase_quantity=payload.quantity,
+                purchase_currency=payload.currency, purchase_unit_price_minor=payload.unit_price_minor,
+                purchase_paid_at=paid_at.isoformat(),
                 image_asset_id=None, image_storage_consent=False, status="active", version=1,
             )
             session.add(row)
@@ -240,7 +250,8 @@ def ingest_verified_purchase(payload: VerifiedPurchaseIn) -> dict[str, object]:
                 category=row.category, attributes=tuple(row.attributes), catalog_product_id=row.catalog_product_id,
                 status=WardrobeItemStatus(row.status), version=row.version, commerce_order_id=row.commerce_order_id,
                 commerce_order_item_id=row.commerce_order_item_id, purchase_event_id=row.purchase_event_id,
-                purchase_quantity=row.purchase_quantity,
+                purchase_quantity=row.purchase_quantity, purchase_currency=row.purchase_currency,
+                purchase_unit_price_minor=row.purchase_unit_price_minor, purchase_paid_at=row.purchase_paid_at,
             ))}
     except HTTPException:
         raise
