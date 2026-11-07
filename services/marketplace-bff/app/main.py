@@ -423,7 +423,9 @@ async def list_wardrobe_outfits(request: Request) -> Response:
         data = response.json()
     except ValueError as exc:
         raise HTTPException(502, detail={"code": "WARDROBE_OUTFIT_RESPONSE_INVALID"}) from exc
-    outfits = data.get("outfits") if isinstance(data, dict) else None
+    if not isinstance(data, dict):
+        raise HTTPException(502, detail={"code": "WARDROBE_OUTFIT_RESPONSE_INVALID"})
+    outfits = data.get("outfits")
     if data.get("owner_user_id") != subject or not isinstance(outfits, list) or any(
         not isinstance(outfit, dict) or outfit.get("owner_user_id") != subject
         or not isinstance(outfit.get("pieces"), list)
@@ -500,6 +502,8 @@ async def add_wardrobe_outfit_piece(request: Request, outfit_id: str, payload: A
 
 @app.patch("/api/wardrobe/outfits/{outfit_id}/pieces/{slot_id}")
 async def edit_wardrobe_outfit_piece(request: Request, outfit_id: str, slot_id: str, payload: EditWardrobeOutfitPieceIn) -> Response:
+    if "wardrobe_item_id" not in payload.model_fields_set:
+        raise HTTPException(422, detail={"code": "OUTFIT_PIECE_ACTION_REQUIRED"})
     body = payload.model_dump()
     async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
         subject, _ = await _verified_commerce_subject(client, request)
