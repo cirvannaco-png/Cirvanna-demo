@@ -230,6 +230,25 @@ class StockReservation(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
 
 
+class CommerceOutboxEvent(Base):
+    """Durable domain event; consumers must deduplicate by event_id."""
+    __tablename__ = "commerce_outbox_events"
+    __table_args__ = (
+        UniqueConstraint("aggregate_type", "aggregate_id", "event_type", name="uq_commerce_outbox_aggregate_event"),
+        Index("ix_commerce_outbox_pending", "delivered_at", "created_at"),
+    )
+    event_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    aggregate_type: Mapped[str] = mapped_column(String(48), nullable=False)
+    aggregate_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(96), nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[str | None] = mapped_column(String(500))
+
+
 class PaymentWebhookEvent(Base):
     __tablename__ = "commerce_payment_webhook_events"
     event_id: Mapped[str] = mapped_column(String(180), primary_key=True)
@@ -759,6 +778,28 @@ def settle_paid(db: Session, order: CommerceOrder, amount_total: int, currency: 
         db.add(InventoryMovement(id=str(uuid.uuid4()), variant_id=r.variant_id,
             actor_user_id="system:payment-webhook", delta=-r.quantity, reason=f"sale:{order.order_number}"))
     order.state, order.payment_state, order.paid_at, order.updated_at = "paid", "paid", now(), now()
+    # Insert the ownership-intent event in the SAME transaction as settlement.
+    # A stable event ID and unique aggregate/type constraint make webhook replay safe.
+    lines = list(db.scalars(select(OrderItem).where(OrderItem.order_id == order.id).order_by(OrderItem.id)).all())
+    event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cirvanna:order-paid:{order.id}"))
+    db.add(CommerceOutboxEvent(
+        event_id=event_id, aggregate_type="commerce_order", aggregate_id=order.id,
+        event_type="commerce.order.paid", schema_version=1,
+        payload={
+            "event_id": event_id, "event_type": "commerce.order.paid", "schema_version": 1,
+            "occurred_at": now().isoformat(), "order_id": order.id, "order_number": order.order_number,
+            "buyer_user_id": order.buyer_user_id, "currency": order.currency,
+            "paid_at": order.paid_at.isoformat() if order.paid_at else None,
+            "items": [{
+                "order_item_id": item.id, "catalog_product_id": item.catalog_product_id,
+                "merchant_id": item.merchant_id, "merchant_variant_id": item.variant_id,
+                "sku": item.sku, "product_name": item.product_name, "options": item.options,
+                "quantity": item.quantity, "unit_price_minor": item.unit_price_minor,
+                "currency": order.currency,
+            } for item in lines],
+            "ownership_authority": "verified_payment",
+        },
+    ))
     cart = db.scalar(select(Cart).where(Cart.user_id == order.buyer_user_id))
     if cart:
         ids = [r.variant_id for r in reservations]
