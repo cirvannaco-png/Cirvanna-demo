@@ -25,7 +25,7 @@ Capture only the context needed to evaluate the user-declared constraints. A mis
 
 1. Freeze the candidate pool, wardrobe snapshot and preference/context version for each case.
 2. Generate Cirvanna's ranked list and the baseline ranking from the same candidate pool.
-3. Randomize candidate presentation order for reviewers. Hide system name, algorithm score and rank. Use two independent reviewers per candidate.
+3. Randomize candidate presentation order for reviewers. Hide system name, algorithm score and rank. Use exactly two independent reviewers per candidate. Duplicate reviews from one reviewer are rejected.
 4. Review each look against the declared occasion/context and wardrobe coherence. Rate relevance from 1 (not relevant) to 5 (highly relevant). Separately flag any violation of an explicit hard exclusion.
 5. Require an independent adjudicator whenever reviewers disagree on either label. Never resolve a hard-exclusion disagreement by averaging it away.
 6. Randomly assign each participant to one live arm (Cirvanna or baseline) for the study period. Persist that assignment for the participant to prevent cross-arm contamination. Record actual impressions, edits and rejections only for the arm they saw.
@@ -58,7 +58,7 @@ For the randomly assigned live arm only:
 - **Rejection:** rejected impressions divided by observed exposures.
 - **Repeated rejection:** proportion of rejected participant/look signatures rejected in at least two distinct sessions. Look signatures are SHA-256 hashes of sorted opaque garment IDs; raw user identity is never part of the key.
 
-The evaluator also enforces one randomized system arm per participant across all sessions. It reports descriptive metrics, no-result rate, top-k fill and Cirvanna-minus-baseline deltas. It does not calculate inferential confidence intervals. Before launch decisions, pre-register the sample size and analysis plan, calculate confidence intervals, inspect inter-reviewer agreement, and report results stratified by declared occasion/climate and other non-sensitive context where sample sizes permit. Do not average away hard-exclusion failures.
+The evaluator also enforces one randomized system arm per participant across all sessions and one exposure outcome per look per session. It reports descriptive metrics, no-result rate, top-k fill and Cirvanna-minus-baseline deltas. It calculates percentile-bootstrap 95% confidence intervals by resampling participant clusters (2,000 resamples, fixed seed), including paired Cirvanna-minus-baseline intervals. It also reports exact reviewer agreement and Cohen's kappa within stable pseudonymous reviewer pairs (quadratic-weighted for relevance, nominal for hard exclusions). These are descriptive intervals and agreement summaries, not a substitute for a pre-registered statistical analysis. Before launch decisions, pre-register sample size and analysis plan, inspect subgroup errors, and report results stratified by declared occasion/climate and other non-sensitive context where sample sizes permit. Do not average away hard-exclusion failures.
 
 ## How to run
 
@@ -66,7 +66,7 @@ From a restricted evaluation workspace with the approved JSONL export:
 
     python scripts/evaluation/evaluate_outfits.py --input /secure/evaluation/outfit-review.jsonl --output /secure/evaluation/outfit-report.json --k 3
 
-The command rejects cases with fewer than two independent reviews per candidate, unresolved reviewer disagreements, invalid references, or exposure events outside the assigned arm's top-k. An empty dataset reports insufficient_human_reviewed_data; it does not produce a performance claim.
+The command rejects cases without exactly two distinct independent reviews per candidate, unresolved reviewer disagreements, duplicate per-look exposure outcomes, invalid references, or exposure events outside the assigned arm's top-k. An empty dataset reports insufficient_human_reviewed_data; it does not produce a performance claim.
 
 Run contract tests locally with:
 
