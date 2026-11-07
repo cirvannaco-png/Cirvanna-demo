@@ -338,8 +338,8 @@ def test_rotation_restarts_immediately_when_all_eligible_items_were_seen():
 
 
 def test_overdue_cycle_keeps_unseen_items_prioritized_without_reset():
-    items = wardrobe()
-    seen = [item["item_id"] for item in items if item["item_id"] != "shoe-001"]
+    items = wardrobe() + [{"item_id": "other-001", "owner_user_id": "user-123", "display_name": "Unclassified vintage piece", "category": "other", "attributes": [], "status": "active"}]
+    seen = [item["item_id"] for item in items if item["item_id"] != "other-001"]
     result = build_daily_looks(
         request_id="rotation-003", user_id="user-123", wardrobe_items=items,
         local_date="2026-11-15", rotation_seen_item_ids=seen,
@@ -348,7 +348,7 @@ def test_overdue_cycle_keeps_unseen_items_prioritized_without_reset():
     rotation = result["wardrobe_rotation"]
     assert rotation["cycle_overdue"] is True
     assert rotation["cycle_complete"] is False
-    assert rotation["revival_queue_item_ids"][0] == "shoe-001"
+    assert rotation["revival_queue_item_ids"][0] == "other-001"
     assert rotation["next_state"]["cycle_number"] == 1
 
 
