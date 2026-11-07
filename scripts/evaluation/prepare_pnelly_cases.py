@@ -35,6 +35,12 @@ def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
 
 
 def _extract_trace(row: dict[str, Any]) -> dict[str, Any]:
+    forbidden_identity_keys = {"user_id", "subject_id", "owner_user_id", "account_id"}
+    if forbidden_identity_keys.intersection(row):
+        raise ValueError("trace response contains a raw user/account identifier")
+    recommendation = row.get("recommendation")
+    if isinstance(recommendation, dict) and forbidden_identity_keys.intersection(recommendation):
+        raise ValueError("recommendation envelope contains a raw user/account identifier")
     if isinstance(row.get("evaluation_trace"), dict):
         return row["evaluation_trace"]
     recommendation = row.get("recommendation")
