@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS wardrobe_purchase_refund_snapshots (
         CHECK (ownership_effect = 'financial_status_only'),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (owner_user_id, order_id),
-    CONSTRAINT uq_wardrobe_purchase_refund_event UNIQUE (event_id)
+    CONSTRAINT uq_wardrobe_purchase_refund_event UNIQUE (event_id),
+    CONSTRAINT uq_wardrobe_purchase_refund_provider_event UNIQUE (provider_event_id)
 );
 CREATE INDEX IF NOT EXISTS ix_wardrobe_purchase_refund_event
     ON wardrobe_purchase_refund_snapshots(provider_event_id);
