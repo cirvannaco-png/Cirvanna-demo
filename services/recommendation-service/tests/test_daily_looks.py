@@ -213,3 +213,97 @@ def test_legacy_tari_route_remains_a_hidden_compatibility_alias(monkeypatch):
     legacy = client.post("/v1/tari/daily-looks", headers=headers, json=body)
     assert canonical.status_code == legacy.status_code == 200
     assert canonical.json() == legacy.json()
+
+
+
+def test_evaluation_trace_is_opt_in_pseudonymous_and_role_specific():
+    import json
+    items = wardrobe()
+    excluded_id = "top-002"
+    eligible = [item for item in items if item["item_id"] != excluded_id]
+    result = build_daily_looks(
+        request_id="daily-eval-001",
+        user_id="user-123",
+        wardrobe_items=eligible,
+        evaluation_wardrobe_items=items,
+        hard_excluded_item_ids=[excluded_id],
+        local_date="2026-11-05",
+        occasion="work",
+        climate="hot_dry",
+        style_signals=["style:editorial", "color:teal"],
+        evaluation_trace_enabled=True,
+        evaluation_secret="pnelly-evaluation-hmac-secret-with-at-least-32-bytes",
+    )
+    trace = result["evaluation_trace"]
+    assert trace["trace_version"] == "1.0"
+    assert trace["human_review_state"] == "awaiting_two_independent_reviewers_per_candidate"
+    assert trace["user_exposure_state"] == "not_collected_by_composer"
+    assert trace["privacy"]["raw_user_id_included"] is False
+    assert trace["privacy"]["raw_wardrobe_item_ids_included"] is False
+    assert trace["privacy"]["display_names_included"] is False
+    assert [case["context"]["role"] for case in trace["cases"]] == ["everyday", "elevated", "explore"]
+    for case in trace["cases"]:
+        assert case["assigned_system"] == "cirvanna"
+        assert case["participant_key"].startswith("participant_")
+        assert case["session_id"].startswith("session_")
+        assert case["context"]["preferred_style_tags"] == ["editorial"]
+        assert case["context"]["preferred_color_tags"] == ["teal"]
+        assert case["context"]["hard_excluded_item_ids"]
+        assert case["cirvanna_ranked_look_ids"]
+    payload = json.dumps(trace, sort_keys=True)
+    for raw_value in ("user-123", "top-001", "top-002", "Linen shirt", "Silk blouse"):
+        assert raw_value not in payload
+    for role, ranking in trace["ranking_trace_by_role"].items():
+        case = next(row for row in trace["cases"] if row["context"]["role"] == role)
+        assert case["cirvanna_ranked_look_ids"][0] == ranking[0]["look_id"]
+        blocked = set(trace["hard_excluded_candidate_ids_by_role"][role])
+        assert blocked.isdisjoint(case["cirvanna_ranked_look_ids"])
+        candidates = {row["look_id"]: row for row in case["candidate_outfits"]}
+        excluded_token = case["context"]["hard_excluded_item_ids"][0]
+        assert any(
+            excluded_token in candidate["garment_ids"]
+            for look_id in blocked
+            for candidate in [candidates[look_id]]
+        )
+
+
+def test_evaluation_trace_is_absent_when_feature_flag_is_disabled():
+    result = build_daily_looks(
+        request_id="daily-eval-disabled",
+        user_id="user-123",
+        wardrobe_items=wardrobe(),
+        local_date="2026-11-05",
+    )
+    assert "evaluation_trace" not in result
+
+
+def test_evaluation_trace_requires_a_sufficient_pseudonymization_secret():
+    with pytest.raises(ValueError, match="pseudonymization secret"):
+        build_daily_looks(
+            request_id="daily-eval-short-secret",
+            user_id="user-123",
+            wardrobe_items=wardrobe(),
+            local_date="2026-11-05",
+            evaluation_trace_enabled=True,
+            evaluation_secret="short",
+        )
+
+
+def test_evaluation_trace_api_is_server_flagged_and_fails_closed_without_secret(monkeypatch):
+    monkeypatch.setenv("COMPLEMENTER_SERVICE_TOKEN", TOKEN)
+    monkeypatch.setenv("PNELLY_EVALUATION_TRACE_ENABLED", "true")
+    monkeypatch.delenv("PNELLY_EVALUATION_TRACE_HMAC_SECRET", raising=False)
+    client = TestClient(app)
+    body = {
+        "request_id": "daily-eval-api",
+        "user_id": "user-123",
+        "local_date": "2026-11-05",
+        "wardrobe_items": wardrobe(),
+    }
+    response = client.post(
+        "/v1/pnelly/daily-looks",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json=body,
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "PNELLY_EVALUATION_TRACE_SIGNING_NOT_CONFIGURED"
