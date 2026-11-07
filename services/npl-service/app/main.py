@@ -106,7 +106,7 @@ def readiness() -> dict[str, object]:
         with engine.connect() as connection:
             connection.execute(text("SELECT 1"))
         tables = set(inspect(engine).get_table_names())
-        schema_ready = {"npl_preferences", "npl_rejection_events", "npl_correction_events"}.issubset(tables)
+        schema_ready = {"npl_preferences", "npl_rejection_events", "npl_correction_events", "npl_deletion_receipts"}.issubset(tables)
         database_ready = schema_ready
     except Exception:
         database_ready = False
@@ -133,6 +133,38 @@ def list_preferences(user_id: Annotated[str, Query(min_length=1, max_length=128)
         raise
     except Exception as exc:
         raise HTTPException(503, detail={"code": "NPL_STORE_UNAVAILABLE"}) from exc
+
+@app.get("/v1/users/{user_id}/export", dependencies=[Depends(require_internal_token)], tags=["privacy and data rights"])
+def export_user_data(user_id: str) -> dict[str, object]:
+    """Export one user's NPL ledger; caller must have verified the subject."""
+    normalized = user_id.strip()
+    if not normalized:
+        raise HTTPException(422, detail={"code": "INVALID_NPL_USER_ID"})
+    try:
+        values = _store().list_preferences(normalized)
+        return {
+            "user_id": normalized,
+            "export_version": 1,
+            "preferences": [_preference_json(value) for value in values],
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503, detail={"code": "NPL_STORE_UNAVAILABLE"}) from exc
+
+
+@app.delete("/v1/users/{user_id}", dependencies=[Depends(require_internal_token)], tags=["privacy and data rights"])
+def delete_user_data(user_id: str) -> dict[str, object]:
+    """Delete one user's complete NPL record and retain a non-identifying receipt."""
+    try:
+        return _store().delete_user_data(user_id)
+    except ValueError as exc:
+        raise HTTPException(422, detail={"code": "INVALID_NPL_USER_ID"}) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503, detail={"code": "NPL_STORE_UNAVAILABLE"}) from exc
+
 
 @app.post("/v1/preferences", status_code=201, dependencies=[Depends(require_internal_token)], tags=["preferences"])
 def create_preference(payload: PreferenceCreate) -> dict[str, object]:
