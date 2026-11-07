@@ -26,12 +26,17 @@ def auth():
     return {"Authorization": f"Bearer {TOKEN}"}
 
 
-def consent(client, subject="user-verified-1", scope="style_learning", receipt="receipt-style-0001"):
+def consent(client, subject="user-verified-1", scope="style_learning", receipt="receipt-style-0001", consent_id=None, resource_id=None):
+    body = {"receipt_id": receipt, "scope": scope, "consent_version": "2026-11-01", "granted": True}
+    if consent_id is not None:
+        body["consent_id"] = consent_id
+    if resource_id is not None:
+        body["resource_id"] = resource_id
     return client.post(
         "/v1/tal/consents",
         params={"subject_id": subject},
         headers=auth(),
-        json={"receipt_id": receipt, "scope": scope, "consent_version": "2026-11-01", "granted": True},
+        json=body,
     )
 
 
@@ -88,6 +93,72 @@ def test_usi_profile_versions_increment_without_lost_updates(client):
     assert second.status_code == 200
     assert second.json()["profile_version"] == 2
     assert second.json()["preferences"][0]["attribute"] == "minimal"
+
+
+
+def test_internal_consent_verification_is_grouped_and_resource_bound(client):
+    group = "consent-group-twin-0001"
+    resource = "twin-create-resource-001"
+    assert consent(client, scope="image_processing", receipt="receipt-image-0001",
+                   consent_id=group, resource_id=resource).status_code == 200
+    assert consent(client, scope="body_measurements", receipt="receipt-body-0001",
+                   consent_id=group, resource_id=resource).status_code == 200
+
+    verified = client.post("/internal/v1/consents/verify", headers=auth(), json={
+        "subject_id": "user-verified-1", "consent_id": group,
+        "required_scopes": ["image_processing", "body_measurements"],
+        "resource_id": resource,
+    })
+    assert verified.status_code == 200
+    assert verified.json()["verified"] is True
+    assert set(verified.json()["granted_scopes"]) == {"image_processing", "body_measurements"}
+
+    wrong_resource = client.post("/internal/v1/consents/verify", headers=auth(), json={
+        "subject_id": "user-verified-1", "consent_id": group,
+        "required_scopes": ["image_processing"], "resource_id": "another-resource-001",
+    })
+    assert wrong_resource.status_code == 200
+    assert wrong_resource.json()["verified"] is False
+
+    wrong_subject = client.post("/internal/v1/consents/verify", headers=auth(), json={
+        "subject_id": "user-verified-2", "consent_id": group,
+        "required_scopes": ["image_processing", "body_measurements"],
+        "resource_id": resource,
+    })
+    assert wrong_subject.status_code == 200
+    assert wrong_subject.json()["verified"] is False
+
+
+def test_resource_bound_revocation_invalidates_group_but_not_other_resource(client):
+    group_a = "consent-group-twin-a001"
+    group_b = "consent-group-twin-b001"
+    resource_a = "twin-resource-a001"
+    resource_b = "twin-resource-b001"
+    consent(client, scope="image_processing", receipt="receipt-a-image", consent_id=group_a, resource_id=resource_a)
+    consent(client, scope="twin_storage", receipt="receipt-a-storage", consent_id=group_a, resource_id=resource_a)
+    consent(client, scope="image_processing", receipt="receipt-b-image", consent_id=group_b, resource_id=resource_b)
+
+    revoked = client.post("/v1/tal/consents/receipt-a-image/revoke?subject_id=user-verified-1", headers=auth())
+    assert revoked.status_code == 200
+
+    verify_a = client.post("/internal/v1/consents/verify", headers=auth(), json={
+        "subject_id": "user-verified-1", "consent_id": group_a,
+        "required_scopes": ["image_processing", "twin_storage"], "resource_id": resource_a,
+    })
+    verify_b = client.post("/internal/v1/consents/verify", headers=auth(), json={
+        "subject_id": "user-verified-1", "consent_id": group_b,
+        "required_scopes": ["image_processing"], "resource_id": resource_b,
+    })
+    assert verify_a.json()["verified"] is False
+    assert verify_b.json()["verified"] is True
+
+
+def test_internal_consent_verification_requires_service_auth(client):
+    response = client.post("/internal/v1/consents/verify", json={
+        "subject_id": "user-verified-1", "consent_id": "consent-group-0001",
+        "required_scopes": ["virtual_try_on"],
+    })
+    assert response.status_code == 401
 
 
 def test_tal_requires_active_explicit_consent_and_is_idempotent(client):
