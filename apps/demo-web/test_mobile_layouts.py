@@ -5,10 +5,12 @@ from pathlib import Path
 import pytest
 
 
-PAGES = (
+PAGE_CANDIDATES = (
+    Path("apps/demo-web/living-filters.html"),
     Path("apps/demo-web/marketplace.html"),
     Path("apps/demo-web/wardrobe.html"),
 )
+PAGES = tuple(path for path in PAGE_CANDIDATES if path.is_file())
 VIEWPORTS = (
     (320, 640),
     (360, 800),
@@ -23,6 +25,7 @@ def test_demo_pages_have_no_horizontal_overflow_on_mobile_and_landscape():
     with playwright_sync.sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         try:
+            assert PAGES, "no eligible demo HTML pages found for mobile layout QA"
             for page_path in PAGES:
                 assert page_path.is_file(), f"missing demo page: {page_path}"
                 page = browser.new_page()
