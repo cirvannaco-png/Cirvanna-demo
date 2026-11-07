@@ -6,7 +6,9 @@ rotation state is never authoritative.
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
+import json
 import os
 from datetime import datetime, timezone
 from typing import Annotated
@@ -31,6 +33,8 @@ class WardrobeRotationStateRow(Base):
     cycle_started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     surfaced_item_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    last_request_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    last_request_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -38,6 +42,7 @@ class WardrobeRotationStateRow(Base):
 class RotationStateWrite(BaseModel):
     model_config = ConfigDict(extra="forbid")
     owner_user_id: str = Field(min_length=1, max_length=128)
+    request_id: str = Field(min_length=8, max_length=128)
     expected_version: int = Field(ge=0)
     cycle_number: int = Field(ge=1)
     cycle_started_at: str = Field(min_length=19, max_length=64)
@@ -114,6 +119,11 @@ def get_rotation_state(owner_user_id: Annotated[str, Query(min_length=1, max_len
 @router.put("/v1/rotation-state", dependencies=[Depends(_authorize)])
 def put_rotation_state(payload: RotationStateWrite) -> dict[str, object]:
     owner = payload.owner_user_id
+    fingerprint = hashlib.sha256(json.dumps({
+        "cycle_number": payload.cycle_number,
+        "cycle_started_at": payload.cycle_started_at,
+        "surfaced_item_ids": payload.surfaced_item_ids,
+    }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
     try:
         cycle_started = datetime.fromisoformat(payload.cycle_started_at.replace("Z", "+00:00"))
     except ValueError as exc:
@@ -129,6 +139,13 @@ def put_rotation_state(payload: RotationStateWrite) -> dict[str, object]:
                 WardrobeRotationStateRow.owner_user_id == owner
             ).with_for_update())
             current_version = 0 if row is None else row.version
+            if row is not None and row.last_request_id == payload.request_id:
+                if row.last_request_hash != fingerprint:
+                    raise HTTPException(409, detail={"code": "WARDROBE_ROTATION_IDEMPOTENCY_CONFLICT"})
+                active_ids = set(session.scalars(select(WardrobeRow.item_id).where(
+                    WardrobeRow.owner_user_id == owner, WardrobeRow.status == "active"
+                )).all())
+                return {"state": _json(row, active_ids), "version": row.version, "status": "replayed"}
             if current_version != payload.expected_version:
                 raise HTTPException(409, detail={
                     "code": "WARDROBE_ROTATION_VERSION_CONFLICT",
@@ -144,13 +161,16 @@ def put_rotation_state(payload: RotationStateWrite) -> dict[str, object]:
                 row = WardrobeRotationStateRow(
                     owner_user_id=owner, cycle_number=payload.cycle_number,
                     cycle_started_at=cycle_started, surfaced_item_ids=payload.surfaced_item_ids,
-                    version=1, created_at=now, updated_at=now,
+                    version=1, last_request_id=payload.request_id,
+                    last_request_hash=fingerprint, created_at=now, updated_at=now,
                 )
                 session.add(row)
             else:
                 row.cycle_number = payload.cycle_number
                 row.cycle_started_at = cycle_started
                 row.surfaced_item_ids = payload.surfaced_item_ids
+                row.last_request_id = payload.request_id
+                row.last_request_hash = fingerprint
                 row.version += 1
                 row.updated_at = now
             session.flush()
