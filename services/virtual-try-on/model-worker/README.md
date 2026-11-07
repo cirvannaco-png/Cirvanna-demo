@@ -32,8 +32,8 @@ docker build -f services/virtual-try-on/model-worker/Dockerfile \
 Mount weights from a controlled model artifact store; do not bake private/user assets or model weights into source control. After downloading the pinned FASHN and DWPose artifacts into the mounted directory, generate the manifest:
 
 ```sh
-python services/virtual-try-on/model-worker/scripts/build_artifact_manifest.py \\
-  --weights-dir /path/to/fashn-vton-1.5 \\
+python services/virtual-try-on/model-worker/scripts/build_artifact_manifest.py \
+  --weights-dir /path/to/fashn-vton-1.5 \
   --source-commit 7c0f10af3f91ad4048fe9729c470a13ef905d25a
 ```
 
