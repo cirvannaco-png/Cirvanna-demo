@@ -12,12 +12,13 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from urllib.parse import urlsplit
 
 import httpx
 from fastapi import Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 SERVICE = "cirvanna-marketplace-bff"
 ROOT = Path(__file__).resolve().parents[3]
@@ -237,6 +238,29 @@ class WardrobeConsentIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     scope: Literal["style_learning", "personalization", "profile_storage"]
     granted: bool = True
+
+
+class DailyLooksIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    occasion: str | None = Field(default=None, max_length=120)
+    climate: str | None = Field(default=None, max_length=80)
+    timezone: str = Field(default="UTC", min_length=1, max_length=80)
+    evaluation_consent_receipt_id: str | None = Field(default=None, min_length=8, max_length=128)
+
+    @field_validator("timezone")
+    @classmethod
+    def valid_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError("timezone must be a valid IANA timezone") from exc
+        return value
+
+
+class WardrobePreferenceRetractionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    correction_event_id: str = Field(min_length=8, max_length=128)
+
 
 
 class WardrobeRecommendationIn(BaseModel):
@@ -600,6 +624,600 @@ async def edit_wardrobe_outfit_piece(request: Request, outfit_id: str, slot_id: 
     if not isinstance(outfit, dict) or outfit.get("owner_user_id") != subject:
         raise HTTPException(502, detail={"code": "WARDROBE_OUTFIT_SCOPE_MISMATCH"})
     return _private_json_response(data)
+
+
+@app.get("/api/wardrobe/learning/export")
+async def export_wardrobe_learning_data(request: Request) -> Response:
+    """Return the signed-in user's TAL, NPL and Wardrobe feedback records."""
+    async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, user_token = await _verified_commerce_subject(client, request)
+        gateway_base, gateway_token = _decision_gateway()
+        try:
+            gateway_response = await client.get(
+                gateway_base + "/v1/me/learning/export",
+                headers={
+                    "Authorization": "Bearer " + gateway_token,
+                    "X-End-User-Authorization": "Bearer " + user_token,
+                    "Accept": "application/json",
+                },
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "LEARNING_EXPORT_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "LEARNING_EXPORT_UNAVAILABLE"}) from exc
+        if gateway_response.status_code != 200:
+            try:
+                detail = gateway_response.json().get("detail", {})
+                code = detail.get("code") if isinstance(detail, dict) else None
+            except ValueError:
+                code = None
+            raise HTTPException(
+                gateway_response.status_code if gateway_response.status_code in {401, 403} else 503,
+                detail={"code": code or "LEARNING_EXPORT_UNAVAILABLE"},
+            )
+        try:
+            learning = gateway_response.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "LEARNING_EXPORT_RESPONSE_INVALID"}) from exc
+        if (
+            not isinstance(learning, dict)
+            or learning.get("subject_id") != subject
+            or not isinstance(learning.get("tal"), dict)
+            or not isinstance(learning.get("npl"), dict)
+            or learning["npl"].get("user_id") != subject
+        ):
+            raise HTTPException(502, detail={"code": "LEARNING_EXPORT_SCOPE_MISMATCH"})
+
+        wardrobe_base, wardrobe_token = _wardrobe_service()
+        try:
+            wardrobe_response = await client.get(
+                wardrobe_base + "/v1/feedback",
+                params={"owner_user_id": subject},
+                headers={"Authorization": "Bearer " + wardrobe_token, "Accept": "application/json"},
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "WARDROBE_FEEDBACK_EXPORT_UNAVAILABLE"}) from exc
+        if wardrobe_response.status_code != 200:
+            raise HTTPException(503, detail={"code": "WARDROBE_FEEDBACK_EXPORT_UNAVAILABLE"})
+        try:
+            wardrobe_data = wardrobe_response.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "WARDROBE_FEEDBACK_EXPORT_INVALID"}) from exc
+        if (
+            not isinstance(wardrobe_data, dict)
+            or wardrobe_data.get("owner_user_id") != subject
+            or not isinstance(wardrobe_data.get("items"), list)
+        ):
+            raise HTTPException(502, detail={"code": "WARDROBE_FEEDBACK_EXPORT_SCOPE_MISMATCH"})
+
+    return _private_json_response({
+        "subject_id": subject,
+        "export_version": 1,
+        "tal": learning["tal"],
+        "npl": learning["npl"],
+        "wardrobe_feedback": wardrobe_data["items"],
+    })
+
+
+@app.post("/api/wardrobe/preferences/{preference_id}/retract")
+async def retract_wardrobe_preference(
+    preference_id: str,
+    request: Request,
+    payload: WardrobePreferenceRetractionIn = Body(...),
+) -> Response:
+    """Apply an explicit, subject-bound correction to one NPL preference."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", preference_id):
+        raise HTTPException(422, detail={"code": "INVALID_NPL_PREFERENCE_ID"})
+    async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        _, user_token = await _verified_commerce_subject(client, request)
+        gateway_base, gateway_token = _decision_gateway()
+        try:
+            response = await client.post(
+                gateway_base + f"/v1/me/npl/preferences/{preference_id}/retract",
+                headers={
+                    "Authorization": "Bearer " + gateway_token,
+                    "X-End-User-Authorization": "Bearer " + user_token,
+                    "Accept": "application/json",
+                },
+                json={"correction_event_id": payload.correction_event_id.strip()},
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "NPL_CORRECTION_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "NPL_CORRECTION_UNAVAILABLE"}) from exc
+    if response.status_code in {400, 401, 403, 404, 409, 422}:
+        try:
+            detail = response.json().get("detail", {})
+            code = detail.get("code") if isinstance(detail, dict) else None
+        except ValueError:
+            code = None
+        raise HTTPException(response.status_code, detail={"code": code or "NPL_CORRECTION_REJECTED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "NPL_CORRECTION_UNAVAILABLE"})
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "NPL_CORRECTION_RESPONSE_INVALID"}) from exc
+    return _private_json_response(result)
+
+
+@app.delete("/api/wardrobe/learning")
+async def delete_wardrobe_learning_data(request: Request) -> Response:
+    """Delete canonical learning first, then the Wardrobe service's local audit mirror."""
+    async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, user_token = await _verified_commerce_subject(client, request)
+        gateway_base, gateway_token = _decision_gateway()
+        try:
+            learning_response = await client.delete(
+                gateway_base + "/v1/me/learning/data",
+                headers={
+                    "Authorization": "Bearer " + gateway_token,
+                    "X-End-User-Authorization": "Bearer " + user_token,
+                    "Accept": "application/json",
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "LEARNING_DELETE_UNAVAILABLE"}) from exc
+        if learning_response.status_code != 200:
+            try:
+                detail = learning_response.json().get("detail", {})
+                code = detail.get("code") if isinstance(detail, dict) else None
+            except ValueError:
+                code = None
+            raise HTTPException(
+                learning_response.status_code if learning_response.status_code in {401, 403} else 503,
+                detail={"code": code or "LEARNING_DELETION_INCOMPLETE"},
+            )
+
+        wardrobe_base, wardrobe_token = _wardrobe_service()
+        try:
+            wardrobe_response = await client.delete(
+                wardrobe_base + "/v1/feedback",
+                params={"owner_user_id": subject},
+                headers={"Authorization": "Bearer " + wardrobe_token, "Accept": "application/json"},
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                503,
+                detail={"code": "LEARNING_DELETION_PARTIAL", "identity_and_npl_deleted": True, "wardrobe_audit_deleted": False},
+            ) from exc
+        if wardrobe_response.status_code != 200:
+            raise HTTPException(
+                503,
+                detail={"code": "LEARNING_DELETION_PARTIAL", "identity_and_npl_deleted": True, "wardrobe_audit_deleted": False},
+            )
+        try:
+            wardrobe_result = wardrobe_response.json()
+        except ValueError as exc:
+            raise HTTPException(
+                502,
+                detail={"code": "LEARNING_DELETION_PARTIAL", "identity_and_npl_deleted": True, "wardrobe_audit_deleted": False},
+            ) from exc
+    if not isinstance(wardrobe_result, dict) or wardrobe_result.get("status") != "deleted":
+        raise HTTPException(
+            502,
+            detail={"code": "LEARNING_DELETION_PARTIAL", "identity_and_npl_deleted": True, "wardrobe_audit_deleted": False},
+        )
+    return _private_json_response({
+        "status": "deleted",
+        "identity_and_npl_deleted": True,
+        "wardrobe_audit_deleted": True,
+        "deleted_wardrobe_feedback_events": wardrobe_result.get("deleted_feedback_events", 0),
+    })
+
+
+@app.post("/api/wardrobe/daily-looks", include_in_schema=False)
+@app.post("/api/wardrobe/pnelly/daily-looks")
+async def wardrobe_daily_looks(request: Request, payload: DailyLooksIn = Body(default=DailyLooksIn())) -> Response:
+    """Build PNELLY's three daily looks using only the verified user's active wardrobe."""
+    request_id = str(uuid.uuid4())
+    local_date = datetime.now(ZoneInfo(payload.timezone)).date().isoformat()
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(14.0, connect=2.0),
+        trust_env=False,
+        follow_redirects=False,
+    ) as client:
+        subject, user_token = await _verified_commerce_subject(client, request)
+        wardrobe_base, wardrobe_token = _wardrobe_service()
+        try:
+            wardrobe_response = await client.get(
+                wardrobe_base + "/v1/items",
+                params={"owner_user_id": subject, "include_archived": "false"},
+                headers={"Authorization": "Bearer " + wardrobe_token, "Accept": "application/json"},
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "PNELLY_WARDROBE_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "PNELLY_WARDROBE_UNAVAILABLE"}) from exc
+        if wardrobe_response.status_code != 200:
+            raise HTTPException(503, detail={"code": "PNELLY_WARDROBE_UNAVAILABLE"})
+        try:
+            wardrobe_data = wardrobe_response.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "PNELLY_WARDROBE_RESPONSE_INVALID"}) from exc
+        if (
+            not isinstance(wardrobe_data, dict)
+            or wardrobe_data.get("owner_user_id") != subject
+            or not isinstance(wardrobe_data.get("items"), list)
+            or any(not isinstance(item, dict) or item.get("owner_user_id") != subject
+                   for item in wardrobe_data.get("items", []))
+        ):
+            raise HTTPException(502, detail={"code": "PNELLY_WARDROBE_SCOPE_MISMATCH"})
+
+        active_items = []
+        for item in wardrobe_data["items"]:
+            if item.get("status") != "active":
+                continue
+            if (
+                not isinstance(item.get("item_id"), str)
+                or not isinstance(item.get("display_name"), str)
+                or not isinstance(item.get("category"), str)
+                or not isinstance(item.get("attributes", []), list)
+                or any(not isinstance(value, str) for value in item.get("attributes", []))
+            ):
+                raise HTTPException(502, detail={"code": "PNELLY_WARDROBE_ITEM_SCHEMA_INVALID"})
+            # Send only the minimum text metadata. Image asset identifiers and bytes
+            # never leave the wardrobe service for outfit composition.
+            active_items.append({
+                "item_id": item["item_id"],
+                "owner_user_id": subject,
+                "display_name": item["display_name"],
+                "category": item["category"],
+                "attributes": item.get("attributes", []),
+                "status": "active",
+            })
+        if len(active_items) > 150:
+            raise HTTPException(413, detail={"code": "PNELLY_WARDROBE_TOO_LARGE"})
+
+        gateway_base, gateway_token = _decision_gateway()
+        body = {
+            "request_id": request_id,
+            "user_id": subject,
+            "local_date": local_date,
+            "occasion": payload.occasion.strip() if payload.occasion and payload.occasion.strip() else None,
+            "climate": payload.climate.strip() if payload.climate and payload.climate.strip() else None,
+            "evaluation_consent_receipt_id": payload.evaluation_consent_receipt_id,
+            "wardrobe_items": active_items,
+        }
+        try:
+            response = await client.post(
+                gateway_base + "/v1/pnelly/daily-looks",
+                headers={
+                    "Authorization": "Bearer " + gateway_token,
+                    "X-End-User-Authorization": "Bearer " + user_token,
+                    "Accept": "application/json",
+                },
+                json=body,
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "PNELLY_RECOMMENDATION_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "PNELLY_RECOMMENDATION_UNAVAILABLE"}) from exc
+
+    if response.status_code in {401, 403, 422}:
+        try:
+            detail = response.json().get("detail", {})
+            code = detail.get("code") if isinstance(detail, dict) else None
+        except ValueError:
+            code = None
+        raise HTTPException(response.status_code, detail={"code": code or "PNELLY_RECOMMENDATION_REJECTED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "PNELLY_RECOMMENDATION_UNAVAILABLE"})
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "PNELLY_RECOMMENDATION_RESPONSE_INVALID"}) from exc
+    recommendation = result.get("recommendation") if isinstance(result, dict) else None
+    roles = ["everyday", "elevated", "explore"]
+    looks = recommendation.get("looks") if isinstance(recommendation, dict) else None
+    if (
+        not isinstance(result, dict)
+        or result.get("mode") != "pnelly_wardrobe_daily_looks"
+        or not isinstance(recommendation, dict)
+        or recommendation.get("look_count") != 3
+        or not isinstance(looks, list)
+        or [look.get("role") if isinstance(look, dict) else None for look in looks] != roles
+        # Until the persistent Twin registry, consent verifier, asset authorizer,
+        # and validated renderer are integrated, upstream data cannot claim a
+        # preview exists or smuggle an output asset reference into the UI.
+        or any(
+            not isinstance(look, dict)
+            or not isinstance(look.get("virtual_twin_preview"), dict)
+            or look["virtual_twin_preview"].get("status") != "unavailable"
+            or any(key in look["virtual_twin_preview"] for key in ("asset_id", "output_asset_id", "render_id"))
+            for look in looks
+        )
+    ):
+        raise HTTPException(502, detail={"code": "PNELLY_RECOMMENDATION_SCHEMA_INVALID"})
+    # Internal evaluation traces are available only to the server-side study
+    # collector through the authenticated API Gateway, never to browser sessions.
+    public_result = dict(result)
+    public_recommendation = dict(recommendation)
+    public_recommendation.pop("evaluation_trace", None)
+    public_result["recommendation"] = public_recommendation
+    return _private_json_response(public_result)
+
+
+
+@app.post("/api/vision/click-it")
+async def marketplace_click_it(
+    request: Request,
+    consent_id: str = Form(min_length=8, max_length=160),
+    consent_image_processing: bool = Form(),
+    consent_click_it: bool = Form(),
+    product_image: UploadFile = File(...),
+    twin_id: str | None = Form(default=None, min_length=3, max_length=128),
+    category: str | None = Form(default=None, max_length=80),
+    limit: int = Form(default=10, ge=1, le=25),
+) -> Response:
+    """Bind Click It to a verified Commerce identity and keep all service tokens private.
+
+    The browser may supply consent flags and an opaque consent reference, but the
+    Virtual Twin service verifies the durable, active record with the consent
+    provider. This endpoint cannot treat a checkbox alone as durable consent.
+    """
+    authorization = request.headers.get("authorization", "")
+    scheme, _, user_token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not user_token.strip():
+        raise HTTPException(401, detail={"code": "USER_BEARER_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
+    if not consent_image_processing or not consent_click_it:
+        raise HTTPException(400, detail={"code": "EXPLICIT_CLICK_IT_CONSENT_REQUIRED"})
+    content_type = product_image.content_type or ""
+    if content_type not in {"image/jpeg", "image/png", "image/webp"}:
+        await product_image.close()
+        raise HTTPException(415, detail={"code": "UNSUPPORTED_PRODUCT_IMAGE_TYPE"})
+    if product_image.size is not None and product_image.size > MAX_VISION_IMAGE_BYTES:
+        await product_image.close()
+        raise HTTPException(413, detail={"code": "PRODUCT_IMAGE_SIZE_LIMIT_EXCEEDED"})
+    content = b""
+    try:
+        content = await product_image.read(MAX_VISION_IMAGE_BYTES + 1)
+    finally:
+        await product_image.close()
+    if not content:
+        raise HTTPException(400, detail={"code": "EMPTY_PRODUCT_IMAGE"})
+    if len(content) > MAX_VISION_IMAGE_BYTES:
+        raise HTTPException(413, detail={"code": "PRODUCT_IMAGE_SIZE_LIMIT_EXCEEDED", "maximum_bytes": MAX_VISION_IMAGE_BYTES})
+
+    commerce_base = _upstream_base("COMMERCE_API_URL")
+    twin_base, twin_token = _internal_service("VIRTUAL_TWIN_API_URL", "VIRTUAL_TWIN_API_TOKEN")
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(8.0, connect=2.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            # /me derives subject_id from a signed/verified Commerce token. Never
+            # trust a subject_id submitted by browser JavaScript.
+            identity = await client.get(
+                commerce_base + "/me",
+                headers={"Authorization": "Bearer " + user_token, "Accept": "application/json"},
+            )
+            if identity.status_code in {401, 403}:
+                raise HTTPException(401, detail={"code": "USER_AUTHENTICATION_FAILED"})
+            if identity.status_code != 200:
+                raise HTTPException(503, detail={"code": "USER_IDENTITY_UNAVAILABLE"})
+            actor = identity.json()
+            subject_id = actor.get("user_id") if isinstance(actor, dict) else None
+            if not isinstance(subject_id, str) or not subject_id.strip():
+                raise HTTPException(502, detail={"code": "INVALID_USER_IDENTITY_RESPONSE"})
+            fields = {
+                "subject_id": subject_id,
+                "consent_id": consent_id.strip(),
+                "consent_image_processing": "true",
+                "consent_click_it": "true",
+                "limit": str(limit),
+            }
+            if twin_id and twin_id.strip():
+                fields["twin_id"] = twin_id.strip()
+            if category and category.strip():
+                fields["category"] = category.strip()
+            response = await client.post(
+                twin_base + "/click-it",
+                headers={"Authorization": "Bearer " + twin_token, "Accept": "application/json"},
+                data=fields,
+                files={"product_image": (product_image.filename or "click-it-image", content, content_type)},
+            )
+    except HTTPException:
+        raise
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "CLICK_IT_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "CLICK_IT_UNAVAILABLE"}) from exc
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "CLICK_IT_INVALID_RESPONSE"}) from exc
+    if response.status_code == 200 and isinstance(data, dict):
+        return JSONResponse(content=_withhold_unverified_media(data), headers={"Cache-Control": "no-store, private"})
+    detail = data.get("detail", {}) if isinstance(data, dict) else {}
+    code = detail.get("code") if isinstance(detail, dict) else None
+    safe = {"code": code if isinstance(code, str) else "CLICK_IT_REQUEST_FAILED"}
+    if isinstance(detail, dict):
+        for key in ("quality", "message", "maximum_bytes", "visibility"):
+            if key in detail:
+                safe[key] = detail[key]
+    if response.status_code in {400, 403, 413, 415, 422}:
+        raise HTTPException(response.status_code, detail=safe)
+    if response.status_code == 504:
+        raise HTTPException(504, detail={"code": "CLICK_IT_TIMEOUT"})
+    if response.status_code in {502, 503}:
+        raise HTTPException(503 if response.status_code == 503 else 502, detail=safe)
+    raise HTTPException(502, detail={"code": "CLICK_IT_FAILED"})
+
+
+def _page_html() -> str:
+    try:
+        html = HTML_PATH.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail={"code": "MARKETPLACE_PAGE_UNAVAILABLE"}) from exc
+    marker = "<script>\n(() => {"
+    bootstrap = (
+        '<script>window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce"});</script>\n'
+        + "<script>\n(() => {"
+    )
+    if 'window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({' not in html:
+        if html.count(marker) != 1:
+            raise HTTPException(status_code=503, detail={"code": "MARKETPLACE_BOOTSTRAP_MARKER_MISSING"})
+        html = html.replace(marker, bootstrap, 1)
+    return html
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    return {"status": "alive", "service": SERVICE}
+
+
+@app.get("/ready")
+def readiness() -> dict:
+    catalog_configured = bool(os.getenv("CATALOG_API_URL"))
+    commerce_configured = bool(os.getenv("COMMERCE_API_URL"))
+    catalog_ready = False
+    commerce_ready = False
+    try:
+        catalog_base = _upstream_base("CATALOG_API_URL")
+        if catalog_configured:
+            catalog_ready = _upstream_ready(catalog_base)
+    except HTTPException:
+        catalog_ready = False
+    try:
+        commerce_base = _upstream_base("COMMERCE_API_URL")
+        commerce_ready = _upstream_ready(commerce_base)
+    except HTTPException:
+        commerce_ready = False
+    ready = catalog_configured and commerce_configured and catalog_ready and commerce_ready
+    result = {
+        "status": "ready" if ready else "not_ready",
+        "service": SERVICE,
+        "catalog_url_configured": catalog_configured,
+        "catalog_ready": catalog_ready,
+        "commerce_url_configured": commerce_configured,
+        "commerce_ready": commerce_ready,
+        "ready": ready,
+    }
+    if not ready:
+        raise HTTPException(status_code=503, detail=result)
+    return result
+
+
+@app.get("/", response_class=HTMLResponse)
+@app.get("/marketplace.html", response_class=HTMLResponse)
+def marketplace_page() -> HTMLResponse:
+    return HTMLResponse(_page_html(), headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/commerce/marketplace/offers")
+def public_offers(
+    q: str | None = Query(default=None, max_length=160),
+    category: str | None = Query(default=None, max_length=80),
+    currency: str | None = Query(default=None, min_length=3, max_length=3),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=MAX_PAGE_SIZE),
+) -> dict:
+    """Expose only Commerce's active, approved, in-stock merchant offers."""
+    base = _upstream_base("COMMERCE_API_URL")
+    params: dict[str, str | int] = {"offset": offset, "limit": limit}
+    if q and q.strip():
+        params["q"] = q.strip()
+    if category and category.strip():
+        params["category"] = category.strip()
+    if currency and currency.strip():
+        params["currency"] = currency.strip().upper()
+    try:
+        response = httpx.get(
+            base + "/marketplace/offers",
+            params=params,
+            headers={"Accept": "application/json"},
+            timeout=TIMEOUT_SECONDS,
+            follow_redirects=False,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=503, detail={"code": "COMMERCE_OFFERS_UNAVAILABLE"}) from exc
+    if response.status_code != 200:
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "COMMERCE_OFFERS_UNAVAILABLE", "upstream_status": response.status_code},
+        )
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail={"code": "INVALID_COMMERCE_RESPONSE"}) from exc
+    if not (
+        isinstance(payload, dict)
+        and isinstance(payload.get("items"), list)
+        and isinstance(payload.get("total"), int)
+    ):
+        raise HTTPException(status_code=502, detail={"code": "INVALID_COMMERCE_RESPONSE"})
+    safe_payload = dict(payload)
+    safe_items = []
+    for offer in payload["items"]:
+        if not isinstance(offer, dict):
+            raise HTTPException(status_code=502, detail={"code": "INVALID_COMMERCE_RESPONSE"})
+        safe_offer = dict(offer)
+        # Defense in depth: public media stays hidden until an asset-bound privacy receipt is verified.
+        safe_offer["image_urls"] = []
+        if isinstance(safe_offer.get("product"), dict):
+            safe_product = dict(safe_offer["product"])
+            safe_product["image_urls"] = []
+            safe_offer["product"] = safe_product
+        safe_items.append(safe_offer)
+    safe_payload["items"] = safe_items
+    return safe_payload
+
+
+def _authorized_commerce_path(method: str, path: str) -> bool:
+    parts = path.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        return False
+    if (method, path) in SERVICE_PATHS:
+        return True
+    if len(parts) == 2 and parts[0] == "saved-products" and UUID_RE.fullmatch(parts[1]):
+        return method in {"PUT", "DELETE"}
+    if len(parts) == 3 and parts[:2] == ["cart", "items"] and UUID_RE.fullmatch(parts[2]):
+        return method in {"PATCH", "DELETE"}
+    if len(parts) == 2 and parts[0] == "orders" and UUID_RE.fullmatch(parts[1]):
+        return method == "GET"
+    return False
+
+
+@app.api_route("/api/commerce/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+async def commerce_proxy(path: str, request: Request) -> Response:
+    """Forward customer operations only; admin/internal/webhook routes are not exposed."""
+    method = request.method.upper()
+    if not _authorized_commerce_path(method, path):
+        raise HTTPException(status_code=404, detail={"code": "COMMERCE_ROUTE_NOT_AVAILABLE"})
+    authorization = request.headers.get("authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "USER_BEARER_REQUIRED"},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    base = _upstream_base("COMMERCE_API_URL")
+    headers = {"Authorization": authorization, "Accept": request.headers.get("accept", "application/json")}
+    for key in ("content-type", "idempotency-key"):
+        if request.headers.get(key):
+            headers[key] = request.headers[key]
+    body = await request.body()
+    try:
+        upstream = httpx.request(
+            method,
+            base + "/" + path,
+            params=list(request.query_params.multi_items()),
+            content=body if body else None,
+            headers=headers,
+            timeout=TIMEOUT_SECONDS,
+            follow_redirects=False,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=503, detail={"code": "COMMERCE_API_UNAVAILABLE"}) from exc
+    response_headers = {}
+    if upstream.headers.get("content-type"):
+        response_headers["Content-Type"] = upstream.headers["content-type"]
+    if upstream.headers.get("retry-after"):
+        response_headers["Retry-After"] = upstream.headers["retry-after"]
+    return Response(content=upstream.content, status_code=upstream.status_code, headers=response_headers)
 
 
 @app.post("/api/wardrobe/items", status_code=201)
