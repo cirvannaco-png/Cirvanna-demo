@@ -1935,11 +1935,17 @@ def compose_pnelly_daily_looks(
     subject = _resolve_verified_subject(end_user_authorization)
     if not hmac.compare_digest(subject, payload.user_id):
         raise HTTPException(403, detail={"code": "REQUEST_SUBJECT_MISMATCH"})
+    active_item_ids = {
+        item.get("item_id") for item in payload.wardrobe_items
+        if isinstance(item, dict) and isinstance(item.get("item_id"), str)
+    }
     for item in payload.wardrobe_items:
         if not isinstance(item, dict) or item.get("owner_user_id") != subject:
             raise HTTPException(403, detail={"code": "WARDROBE_SUBJECT_MISMATCH"})
         if item.get("status") != "active":
             raise HTTPException(422, detail={"code": "WARDROBE_SNAPSHOT_MUST_BE_ACTIVE_ONLY"})
+    if any(item_id not in active_item_ids for item_id in payload.rotation_seen_item_ids):
+        raise HTTPException(422, detail={"code": "PNELLY_ROTATION_STATE_SCOPE_MISMATCH"})
     # Only positive, non-sensitive fashion preference namespaces may guide ranking.
     profile = _load_verified_usi_profile(subject, allow_without_consent=True)
     allowed_prefixes = ("style:", "color:", "colour:", "silhouette:", "material:", "pattern:")
