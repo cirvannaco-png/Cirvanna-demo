@@ -60,11 +60,11 @@
 
 ### 1.5 Consent, privacy and learning data rights
 - [ ] Complete one coherent consent lifecycle for profile learning, wardrobe photos, skin analysis, body measurement, Twin storage, try-on rendering and image publication, with scope/purpose/resource binding.
-- [~] User-facing export, NPL correction/retraction and deletion across USI/TAL, NPL and Wardrobe are implemented in PR #139; full CI, migration deployment, retry/failure-injection and production deletion evidence remain pending.
+- [x] User-facing export, NPL correction/retraction and deletion across USI/TAL, NPL and Wardrobe are implemented and CI-verified in merged PR #139. Production migration, retry/failure-injection and deployed deletion evidence remain release gates.
 - [ ] Ensure consent is checked server-side on every relevant read/write/processing path; a UI checkbox alone is not authorization.
 - [ ] Ensure no raw face/body photos, tokens, secrets or unnecessary sensitive information are written to logs/analytics.
 - [ ] Test subject isolation, resource substitution, expired/revoked consent, replay, deletion retries and asset purge at API and storage boundaries.
-- [~] PR #130 was stale and conflict-prone; its privacy/learning-data requirements are being reconciled in PR #139 on the current main base rather than merged blindly.
+- [x] Stale PR #130 privacy/learning-data requirements were reconciled into merged PR #139 on the current main base; no stale branch was force-merged.
 
 ## Step 2 — Intelligence, connected experience and measurable quality
 
@@ -96,9 +96,9 @@
 - [ ] Calibrate fit evidence against real garment sizing/construction/brand size charts and observed outcomes, with no recommendation if evidence is inadequate.
 
 ### 2.4 Wardrobe intelligence, PNELLY, NPL, CFRP/CRFP and learning
-- [~] PNELLY daily-look composition is implemented in PR #139 from authenticated Wardrobe snapshots through Decision Gateway to Complementer, with a Wardrobe UI. Marketplace, persistent Twin and multi-product try-on context handoff remain open.
-- [~] PR #139 records explicit worn/not-my-style feedback only with active style-learning consent; modify/save/search/purchase/return event coverage and durable outfit-graph attribution remain open.
-- [~] PR #139 keeps PNELLY soft feedback separate from NPL hard exclusions and adds user retraction; full end-to-end tests across every recommendation surface remain open.
+- [~] PNELLY daily-look composition is implemented and CI-verified in merged PR #139 from authenticated Wardrobe snapshots through Decision Gateway to Complementer, with a Wardrobe UI. Marketplace, persistent Twin and multi-product try-on context handoff remain open.
+- [~] Merged PR #139 records explicit worn/not-my-style feedback only with active style-learning consent; modify/save/search/purchase/return event coverage and durable outfit-graph attribution remain open.
+- [~] Merged PR #139 keeps PNELLY soft feedback separate from NPL hard exclusions and adds user retraction; full end-to-end tests across every recommendation surface remain open.
 - [ ] Connect wardrobe feedback to NPL and the repository's canonical fit/recommendation pipeline (CFRP/CRFP naming must follow the approved repository contract, not create a second system).
 - [ ] Use explicit profile and wardrobe evidence to personalise recommendations; explain the reason, source and uncertainty.
 - [ ] Implement a personal outfit graph: items, outfit combinations, times worn, last worn, frequency, user ratings and context, with privacy/consent controls.
@@ -159,8 +159,8 @@
 - [~] FCI contract exists; no independently validated calibrated provider or proven 4% measurement accuracy.
 - [~] Virtual Twin exposes truthful capability boundaries; its persistent registry/asset/consent work is in open PRs and not yet a production capability.
 - [x] Saved-outfit piece editing is implemented in merged PR #135; the user-declared colour preference profile is implemented in merged PR #137. PNELLY wardrobe companion, complete personal outfit graph, human-reviewed dataset, multi-product try-on, and end-to-end marketplace-to-wardrobe/Twin flows remain to be integrated and verified.
-- [~] PR #139 ports the missing PNELLY daily-look Decision Gateway route and consent/NPL checks onto current main. Its Decision Gateway workflow is running; merge only after the result is green.
-- [~] Privacy/learning-data controls from stale PR #130 are being reimplemented and tested in PR #139; confirm deletion semantics and migrations before merge.
+- [x] Merged PR #139 ports the PNELLY daily-look Decision Gateway route and consent/NPL checks onto current main; Decision Gateway tests passed.
+- [x] Privacy/learning-data controls from stale PR #130 are integrated through PR #139. Confirm deployed migrations, deletion retry behaviour and production evidence before release.
 - [ ] Reconcile existing open PRs and branches before creating parallel implementations. Preserve reviewable feature branches and never bypass CI or domain ownership.
 
 ## Required evidence for every completed checklist item
