@@ -7,9 +7,10 @@ This service is the sole private binary boundary for Twin source images, Twin re
 ## Contracts
 
 - `POST /internal/v1/assets`: trusted service upload with owner, purpose and parent binding; image bytes are validated and EXIF is stripped before storing as PNG.
-- `POST /internal/v1/assets/authorize`: verifies the exact owner, purpose, parent record, active status and retention window.
+- `POST /internal/v1/assets/authorize`: verifies exact owner, asset purpose, parent record, active status and retention window. It also supports the Twin registry's bulk contract (`asset_ids`, `purpose=virtual_twin_storage`, and exact `parent_id`) and returns the complete authorized ID set.
 - `GET /internal/v1/assets/{asset_id}/content`: returns bytes only when owner, purpose and parent all match.
 - `DELETE /v1/assets/{asset_id}`: idempotent owner-checked deletion. Compatible with Wardrobe's existing deletion outbox worker.
+- `POST /internal/v1/assets/delete`: parent-bound Twin deletion contract. It verifies all requested assets belong to the same owner and exact parent, then deletes all Twin source/representation and derived try-on assets under that parent. Replays return the same deleted asset set.
 - `GET /ready`: verifies database connectivity and object-store bucket access; a process health check is not storage readiness.
 
 Every operation is private and requires `ASSET_SERVICE_TOKEN`. Cross-tenant or wrong-purpose probes return 404. Asset IDs are opaque UUIDs; callers must not use URLs as asset identifiers. All responses containing image bytes are marked no-store.
@@ -26,7 +27,7 @@ Every operation is private and requires `ASSET_SERVICE_TOKEN`. Cross-tenant or w
 
 The service normalizes image orientation and strips EXIF metadata, keeps objects private, does not issue presigned public URLs, enforces subject/purpose/parent ownership on reads, and checks asset expiry on access. Deletion removes the private object and marks its metadata deleted; repeated deletion is safe. Configure a bucket lifecycle policy as a second line of defense and run reconciliation for metadata rows whose physical deletes fail.
 
-The service does not infer identity or consent. The calling domain service must verify current purpose-specific consent before uploading or reading a Twin/try-on image. The asset service enforces ownership and resource purpose independently.
+The service does not infer identity or consent. The calling domain service must verify current purpose-specific consent before uploading or reading a Twin/try-on image. The asset service enforces ownership, asset purpose and exact parent binding independently. The bulk Twin deletion endpoint is idempotent for the same owner/parent; the Twin registry's deletion outbox remains responsible for command-key conflict detection and retry orchestration.
 
 ## Local tests
 
