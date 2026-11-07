@@ -1,7 +1,7 @@
 name: Wardrobe persistence service checks
 on:
   push:
-    branches: ["main", "feature/**", "engineering/**"]
+    branches: ["main", "feat/**", "feature/**", "fix/**", "engineering/**"]
     paths:
       - "services/wardrobe-service/**"
       - "packages/wardrobe/**"
