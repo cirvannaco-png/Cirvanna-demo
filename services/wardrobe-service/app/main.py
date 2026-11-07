@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/"packages"))
 from wardrobe import WardrobeItem, WardrobeItemStatus
-from app.store import Base, WardrobeConflict, WardrobeNotFound, WardrobeStore, WardrobeDeletionQueue, WardrobeFeedbackEventRow, WardrobeRow, engine_for_url
+from app.store import Base, WardrobeConflict, WardrobeNotFound, WardrobeStore, WardrobeDeletionQueue, WardrobeFeedbackEventRow, WardrobeOutfitRow, WardrobeRow, engine_for_url
 from app.learning import LearningIntegrationError, deliver_learning_event
 
 SERVICE="cirvanna-wardrobe-service"
@@ -60,6 +60,33 @@ class EditItem(StrictModel):
     category: str | None = Field(default=None, min_length=1, max_length=80)
     attributes: list[str] | None = Field(default=None, max_length=100)
 
+class OutfitPieceInput(StrictModel):
+    slot_id: str = Field(min_length=3, max_length=128)
+    wardrobe_item_id: str = Field(min_length=3, max_length=128)
+
+
+class CreateOutfit(StrictModel):
+    owner_user_id: str = Field(min_length=1, max_length=128)
+    outfit_id: str = Field(min_length=3, max_length=128)
+    name: str = Field(min_length=1, max_length=160)
+    pieces: list[OutfitPieceInput] = Field(min_length=1, max_length=20)
+
+
+class AddOutfitPiece(StrictModel):
+    owner_user_id: str = Field(min_length=1, max_length=128)
+    expected_version: int = Field(ge=1)
+    command_id: str = Field(min_length=8, max_length=128)
+    slot_id: str = Field(min_length=3, max_length=128)
+    wardrobe_item_id: str = Field(min_length=3, max_length=128)
+
+
+class EditOutfitPiece(StrictModel):
+    owner_user_id: str = Field(min_length=1, max_length=128)
+    expected_version: int = Field(ge=1)
+    command_id: str = Field(min_length=8, max_length=128)
+    wardrobe_item_id: str | None = Field(default=None, min_length=3, max_length=128)
+
+
 def require_internal_token(credentials:Annotated[HTTPAuthorizationCredentials|None,Depends(bearer)])->None:
     expected=os.getenv("WARDROBE_SERVICE_TOKEN","")
     if len(expected.encode())<32:
@@ -99,7 +126,7 @@ def ready()->dict[str,object]:
         engine=engine_for_url(url)
         with engine.connect() as conn: conn.execute(text("SELECT 1"))
         tables=set(inspect(engine).get_table_names())
-        schema_ready={"wardrobe_items","wardrobe_asset_deletion_outbox","wardrobe_learning_events"}.issubset(tables)
+        schema_ready={"wardrobe_items","wardrobe_asset_deletion_outbox","wardrobe_learning_events","wardrobe_outfits"}.issubset(tables)
         db_ready=schema_ready
     except Exception as exc: db_error=type(exc).__name__
     worker_enabled=os.getenv("WARDROBE_ASSET_DELETION_READY","").lower()=="true"
@@ -366,3 +393,166 @@ def edit_item(item_id: str, payload: EditItem) -> dict[str, object]:
         raise HTTPException(422, detail={"code": "INVALID_WARDROBE_EDIT", "detail": str(exc)}) from exc
     except Exception as exc:
         raise HTTPException(503, detail={"code": "WARDROBE_STORE_UNAVAILABLE"}) from exc
+
+
+
+def _outfit_json(session: Session, row: WardrobeOutfitRow) -> dict[str, object]:
+    pieces = []
+    for piece in row.pieces or []:
+        item = session.get(WardrobeRow, (row.owner_user_id, piece["wardrobe_item_id"]))
+        item_payload = None
+        if item is not None and item.status == WardrobeItemStatus.ACTIVE.value:
+            item_payload = {
+                "item_id": item.item_id,
+                "display_name": item.display_name,
+                "category": item.category,
+                "attributes": list(item.attributes or []),
+                "version": item.version,
+            }
+        pieces.append({
+            "slot_id": piece["slot_id"],
+            "wardrobe_item_id": piece["wardrobe_item_id"],
+            "item": item_payload,
+            "availability": "available" if item_payload else "unavailable",
+        })
+    return {
+        "outfit_id": row.outfit_id,
+        "owner_user_id": row.owner_user_id,
+        "name": row.name,
+        "pieces": pieces,
+        "status": row.status,
+        "version": row.version,
+        "last_command_id": row.last_command_id,
+    }
+
+
+def _require_active_outfit_item(session: Session, owner: str, item_id: str) -> WardrobeRow:
+    item = session.get(WardrobeRow, (owner, item_id))
+    if item is None:
+        raise HTTPException(404, detail={"code": "WARDROBE_ITEM_NOT_FOUND"})
+    if item.status != WardrobeItemStatus.ACTIVE.value:
+        raise HTTPException(409, detail={"code": "OUTFIT_ITEM_NOT_ACTIVE"})
+    return item
+
+
+@app.get("/v1/outfits", dependencies=[Depends(require_internal_token)], tags=["saved outfits"])
+def list_outfits(owner_user_id: Annotated[str, Query(min_length=1, max_length=128)]) -> dict[str, object]:
+    owner = owner_user_id.strip()
+    try:
+        with Session(store().engine) as session:
+            rows = session.scalars(
+                select(WardrobeOutfitRow)
+                .where(WardrobeOutfitRow.owner_user_id == owner, WardrobeOutfitRow.status == "active")
+                .order_by(WardrobeOutfitRow.updated_at.desc())
+            ).all()
+            return {"owner_user_id": owner, "outfits": [_outfit_json(session, row) for row in rows]}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503, detail={"code": "WARDROBE_OUTFIT_STORE_UNAVAILABLE"}) from exc
+
+
+@app.post("/v1/outfits", status_code=201, dependencies=[Depends(require_internal_token)], tags=["saved outfits"])
+def create_outfit(payload: CreateOutfit) -> dict[str, object]:
+    owner = payload.owner_user_id.strip()
+    pieces = [{"slot_id": p.slot_id.strip(), "wardrobe_item_id": p.wardrobe_item_id.strip()} for p in payload.pieces]
+    if len({p["slot_id"] for p in pieces}) != len(pieces):
+        raise HTTPException(422, detail={"code": "OUTFIT_SLOT_DUPLICATE"})
+    if len({p["wardrobe_item_id"] for p in pieces}) != len(pieces):
+        raise HTTPException(422, detail={"code": "OUTFIT_ITEM_DUPLICATE"})
+    try:
+        with Session(store().engine) as session, session.begin():
+            for piece in pieces:
+                _require_active_outfit_item(session, owner, piece["wardrobe_item_id"])
+            row = WardrobeOutfitRow(
+                owner_user_id=owner, outfit_id=payload.outfit_id.strip(),
+                name=payload.name.strip(), pieces=pieces, status="active", version=1,
+            )
+            if not row.name:
+                raise HTTPException(422, detail={"code": "OUTFIT_NAME_EMPTY"})
+            session.add(row)
+            session.flush()
+            return {"outfit": _outfit_json(session, row), "status": "created"}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503, detail={"code": "WARDROBE_OUTFIT_STORE_UNAVAILABLE"}) from exc
+
+
+@app.post("/v1/outfits/{outfit_id}/pieces", status_code=201, dependencies=[Depends(require_internal_token)], tags=["saved outfits"])
+def add_outfit_piece(outfit_id: str, payload: AddOutfitPiece) -> dict[str, object]:
+    owner = payload.owner_user_id.strip()
+    try:
+        with Session(store().engine) as session, session.begin():
+            row = session.scalar(select(WardrobeOutfitRow).where(
+                WardrobeOutfitRow.owner_user_id == owner, WardrobeOutfitRow.outfit_id == outfit_id,
+            ).with_for_update())
+            if row is None:
+                raise HTTPException(404, detail={"code": "SAVED_OUTFIT_NOT_FOUND"})
+            if row.status != "active":
+                raise HTTPException(409, detail={"code": "SAVED_OUTFIT_NOT_ACTIVE"})
+            pieces = list(row.pieces or [])
+            desired = {"slot_id": payload.slot_id.strip(), "wardrobe_item_id": payload.wardrobe_item_id.strip()}
+            if payload.expected_version != row.version:
+                if row.last_command_id == payload.command_id and desired in pieces:
+                    return {"outfit": _outfit_json(session, row), "status": "replayed"}
+                raise HTTPException(409, detail={"code": "SAVED_OUTFIT_VERSION_CONFLICT", "current_version": row.version})
+            if any(p["slot_id"] == desired["slot_id"] for p in pieces):
+                raise HTTPException(409, detail={"code": "OUTFIT_SLOT_ALREADY_EXISTS"})
+            if any(p["wardrobe_item_id"] == desired["wardrobe_item_id"] for p in pieces):
+                raise HTTPException(409, detail={"code": "OUTFIT_ITEM_ALREADY_EXISTS"})
+            _require_active_outfit_item(session, owner, desired["wardrobe_item_id"])
+            row.pieces = pieces + [desired]
+            row.version += 1
+            row.last_command_id = payload.command_id.strip()
+            row.updated_at = datetime.now(timezone.utc)
+            session.flush()
+            return {"outfit": _outfit_json(session, row), "status": "updated"}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503, detail={"code": "WARDROBE_OUTFIT_STORE_UNAVAILABLE"}) from exc
+
+
+@app.patch("/v1/outfits/{outfit_id}/pieces/{slot_id}", dependencies=[Depends(require_internal_token)], tags=["saved outfits"])
+def edit_outfit_piece(outfit_id: str, slot_id: str, payload: EditOutfitPiece) -> dict[str, object]:
+    """Replace or remove one slot; every other piece remains byte-for-byte unchanged."""
+    owner = payload.owner_user_id.strip()
+    try:
+        with Session(store().engine) as session, session.begin():
+            row = session.scalar(select(WardrobeOutfitRow).where(
+                WardrobeOutfitRow.owner_user_id == owner, WardrobeOutfitRow.outfit_id == outfit_id,
+            ).with_for_update())
+            if row is None:
+                raise HTTPException(404, detail={"code": "SAVED_OUTFIT_NOT_FOUND"})
+            if row.status != "active":
+                raise HTTPException(409, detail={"code": "SAVED_OUTFIT_NOT_ACTIVE"})
+            pieces = list(row.pieces or [])
+            index = next((i for i, p in enumerate(pieces) if p["slot_id"] == slot_id), None)
+            if index is None:
+                raise HTTPException(404, detail={"code": "SAVED_OUTFIT_PIECE_NOT_FOUND"})
+            desired = None if payload.wardrobe_item_id is None else payload.wardrobe_item_id.strip()
+            if payload.expected_version != row.version:
+                current_id = pieces[index]["wardrobe_item_id"]
+                if row.last_command_id == payload.command_id and current_id == desired:
+                    return {"outfit": _outfit_json(session, row), "status": "replayed"}
+                raise HTTPException(409, detail={"code": "SAVED_OUTFIT_VERSION_CONFLICT", "current_version": row.version})
+            if desired is not None:
+                _require_active_outfit_item(session, owner, desired)
+                if any(i != index and p["wardrobe_item_id"] == desired for i, p in enumerate(pieces)):
+                    raise HTTPException(409, detail={"code": "OUTFIT_ITEM_ALREADY_EXISTS"})
+                pieces[index] = {**pieces[index], "wardrobe_item_id": desired}
+            else:
+                pieces.pop(index)
+                if not pieces:
+                    raise HTTPException(422, detail={"code": "SAVED_OUTFIT_CANNOT_BE_EMPTY"})
+            row.pieces = pieces
+            row.version += 1
+            row.last_command_id = payload.command_id.strip()
+            row.updated_at = datetime.now(timezone.utc)
+            session.flush()
+            return {"outfit": _outfit_json(session, row), "status": "updated"}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503, detail={"code": "WARDROBE_OUTFIT_STORE_UNAVAILABLE"}) from exc
