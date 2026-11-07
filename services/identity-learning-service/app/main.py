@@ -210,6 +210,7 @@ class ConsentVerify(StrictModel):
     subject_id: str = Field(min_length=1, max_length=128)
     consent_id: str = Field(min_length=8, max_length=128)
     required_scopes: list[str] = Field(min_length=1, max_length=10)
+    consent_version: str | None = Field(default=None, min_length=1, max_length=80)
     resource_id: str | None = Field(default=None, min_length=3, max_length=160)
 
     @field_validator("subject_id", "consent_id", "resource_id", mode="before")
@@ -583,6 +584,8 @@ def verify_resource_bound_consent(payload: ConsentVerify, db: Annotated[Session,
         statement = statement.where(ConsentReceipt.resource_id.is_(None))
     else:
         statement = statement.where(ConsentReceipt.resource_id == payload.resource_id)
+    if payload.consent_version is not None:
+        statement = statement.where(ConsentReceipt.consent_version == payload.consent_version)
     rows = list(db.scalars(statement).all())
     granted = {row.scope for row in rows}
     missing = sorted(set(payload.required_scopes) - granted)
