@@ -54,6 +54,29 @@ def test_consent_and_tal_event_are_bound_to_verified_subject(client, monkeypatch
     assert all(call[2] == "commerce-verified-subject" for call in calls)
 
 
+def test_twin_and_try_on_consent_is_resource_bound_to_verified_subject(client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(main, "_verified_actor_from_header", lambda token: "commerce-verified-subject")
+    monkeypatch.setattr(main, "_identity_service_request", lambda method, path, subject, payload=None: (
+        calls.append((method, path, subject, payload)) or {"status": "recorded"}
+    ))
+    response = client.post("/v1/me/consents", headers=headers(), json={
+        "receipt_id": "receipt-twin-storage-0001",
+        "consent_id": "consent-session-twin-0001",
+        "scope": "twin_storage",
+        "resource_id": "twin-resource-0001",
+        "consent_version": "2026-11-07",
+        "granted": True,
+    })
+    assert response.status_code == 200
+    assert calls[0][0] == "POST"
+    assert calls[0][1] == "/v1/tal/consents"
+    assert calls[0][2] == "commerce-verified-subject"
+    assert calls[0][3]["consent_id"] == "consent-session-twin-0001"
+    assert calls[0][3]["resource_id"] == "twin-resource-0001"
+    assert calls[0][3]["scope"] == "twin_storage"
+
+
 def test_export_and_deletion_use_verified_subject(client, monkeypatch):
     calls = []
     monkeypatch.setattr(main, "_verified_actor_from_header", lambda token: "commerce-verified-subject")
