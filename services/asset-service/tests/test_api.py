@@ -258,7 +258,7 @@ def test_expiry_sweeper_physically_deletes_expired_output_assets(client, monkeyp
     assert created.status_code == 201
     asset_id = created.json()["asset_id"]
     database_url = response.app.state.asset_test_database_url
-    with main._sessions(database_url) as db:
+    with main._sessions(database_url)() as db:
         row = db.get(main.AssetRow, asset_id)
         row.retention_until = datetime.now(timezone.utc) - timedelta(minutes=1)
         db.commit()
