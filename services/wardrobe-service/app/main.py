@@ -587,3 +587,8 @@ def edit_outfit_piece(outfit_id: str, slot_id: str, payload: EditOutfitPiece) ->
         raise
     except Exception as exc:
         raise HTTPException(503, detail={"code": "WARDROBE_OUTFIT_STORE_UNAVAILABLE"}) from exc
+
+
+# Rotation state is a separate persistence contract; trusted ingress owns identity binding.
+from app.rotation import router as rotation_router  # noqa: E402
+app.include_router(rotation_router)
