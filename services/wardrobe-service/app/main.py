@@ -152,7 +152,7 @@ def ready()->dict[str,object]:
         engine=engine_for_url(url)
         with engine.connect() as conn: conn.execute(text("SELECT 1"))
         tables=set(inspect(engine).get_table_names())
-        required_tables={"wardrobe_items","wardrobe_asset_deletion_outbox","wardrobe_learning_events","wardrobe_outfits","wardrobe_outfit_wear_events"}
+        required_tables={"wardrobe_items","wardrobe_asset_deletion_outbox","wardrobe_learning_events","wardrobe_outfits","wardrobe_rotation_states","wardrobe_outfit_wear_events"}
         wardrobe_columns={column["name"] for column in inspect(engine).get_columns("wardrobe_items")} if "wardrobe_items" in tables else set()
         required_purchase_columns={"commerce_order_id","commerce_order_item_id","purchase_event_id","purchase_quantity","purchase_currency","purchase_unit_price_minor","purchase_paid_at"}
         schema_ready=required_tables.issubset(tables) and required_purchase_columns.issubset(wardrobe_columns)
@@ -791,3 +791,25 @@ def list_wear_history(owner_user_id: Annotated[str, Query(min_length=1, max_leng
             } for row in rows]}
     except Exception as exc:
         raise HTTPException(503, detail={"code": "OUTFIT_WEAR_HISTORY_UNAVAILABLE"}) from exc
+
+
+@app.delete("/v1/wear-history", dependencies=[Depends(require_internal_token)], tags=["outfit history"])
+def delete_wear_history(owner_user_id: Annotated[str, Query(min_length=1, max_length=128)]) -> dict[str, object]:
+    """Erase only the authenticated owner's factual outfit-wear events."""
+    owner = owner_user_id.strip()
+    try:
+        with Session(store().engine) as session, session.begin():
+            result = session.execute(
+                delete(WardrobeOutfitWearEventRow).where(
+                    WardrobeOutfitWearEventRow.owner_user_id == owner
+                )
+            )
+            deleted = result.rowcount or 0
+        return {"status": "deleted", "owner_user_id": owner, "deleted_wear_events": deleted}
+    except Exception as exc:
+        raise HTTPException(503, detail={"code": "OUTFIT_WEAR_HISTORY_DELETE_UNAVAILABLE"}) from exc
+
+
+# Rotation state is a separate persistence contract; trusted ingress owns identity binding.
+from app.rotation import router as rotation_router  # noqa: E402
+app.include_router(rotation_router)
