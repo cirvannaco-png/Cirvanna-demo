@@ -50,6 +50,23 @@ def test_capabilities_do_not_claim_mesh_measurement_or_cal_is_available(monkeypa
     assert data["decision_governance_connected_to_rendering"] is False
 
 
+
+def test_pose_only_provider_does_not_advertise_persistent_twin(monkeypatch):
+    mock_internal_config(monkeypatch, consent=True, twin_registry=True, vision=True)
+
+    async def ready():
+        return True
+
+    monkeypatch.setattr(main, "_vision_worker_ready", ready)
+    data = client.get("/capabilities").json()
+    assert data["pose_skeleton_inference"] is True
+    assert data["twin_generation"] is False
+    assert data["persistent_twin_generation"] is False
+    assert data["persistent_twin_preview"] is False
+    assert data["body_reconstruction"] is False
+    assert data["full_surface_mesh"] is False
+
+
 async def _false():
     return False
 
