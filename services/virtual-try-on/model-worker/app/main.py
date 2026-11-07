@@ -12,6 +12,8 @@ import io
 import json
 import os
 import re
+import subprocess
+import threading
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -19,6 +21,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from PIL import Image, UnidentifiedImageError
+from starlette.concurrency import run_in_threadpool
 
 SERVICE = "cirvanna-vton-gpu-worker"
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
@@ -32,9 +35,13 @@ CATEGORY_MAP = {
     "full_outfit": "one-pieces",
 }
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
+PINNED_FASHN_VTON_COMMIT = "7c0f10af3f91ad4048fe9729c470a13ef905d25a"
+MIN_GPU_VRAM_BYTES = 8 * 1024**3
 bearer = HTTPBearer(auto_error=False)
 app = FastAPI(title="Cirvanna Private VTON GPU Worker", version="0.1.0")
 _PIPELINE = None
+_PIPELINE_LOCK = threading.Lock()
+_INFERENCE_SLOT = threading.BoundedSemaphore(value=1)
 
 
 REQUIRED_ARTIFACTS = (
@@ -84,36 +91,66 @@ def _verify_artifact_manifest(weights_dir: Path, source_ref: str) -> tuple[bool,
     return True, "verified"
 
 
+def _source_checkout_matches() -> bool:
+    """Verify the on-disk source checkout, not just an environment string."""
+    source_ref = os.getenv("FASHN_VTON_SOURCE_REF", "")
+    built_ref = os.getenv("FASHN_VTON_BUILT_SOURCE_REF", "")
+    source_dir = os.getenv("FASHN_VTON_SOURCE_DIR", "")
+    if source_ref != PINNED_FASHN_VTON_COMMIT or built_ref != PINNED_FASHN_VTON_COMMIT:
+        return False
+    root = Path(source_dir)
+    if not source_dir or not (root / ".git").exists():
+        return False
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=3,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.stdout.strip() == PINNED_FASHN_VTON_COMMIT
+
+
 def _configured() -> tuple[bool, str]:
     token = os.getenv("VTON_WORKER_TOKEN", "")
     weights = os.getenv("FASHN_VTON_WEIGHTS_DIR", "")
-    source_ref = os.getenv("FASHN_VTON_SOURCE_REF", "")
-    built_ref = os.getenv("FASHN_VTON_BUILT_SOURCE_REF", "")
     usage_mode = os.getenv("CIRVANNA_DEPLOYMENT_MODE", "production").strip().lower()
-    parser_license_approved = os.getenv("FASHN_HUMAN_PARSER_COMMERCIAL_LICENSE_APPROVED", "").lower() == "true"
+    parser_license_approved = os.getenv(
+        "FASHN_HUMAN_PARSER_COMMERCIAL_LICENSE_APPROVED", ""
+    ).lower() == "true"
     if len(token.encode()) < 32:
         return False, "worker_token_not_configured"
-    if not SHA40.fullmatch(source_ref):
-        return False, "pinned_source_commit_required"
-    if built_ref != source_ref:
+    if os.getenv("FASHN_VTON_SOURCE_REF", "") != PINNED_FASHN_VTON_COMMIT:
+        return False, "unexpected_or_unpinned_source_commit"
+    if os.getenv("FASHN_VTON_BUILT_SOURCE_REF", "") != PINNED_FASHN_VTON_COMMIT:
         return False, "built_source_commit_mismatch"
+    if not _source_checkout_matches():
+        return False, "source_checkout_does_not_match_pin"
     if usage_mode not in {"research", "production"}:
         return False, "invalid_deployment_mode"
     if usage_mode == "production" and not parser_license_approved:
         return False, "human_parser_commercial_license_not_cleared"
     if not weights or not Path(weights).is_dir():
         return False, "model_weights_directory_missing"
-    verified, reason = _verify_artifact_manifest(Path(weights), source_ref)
+    verified, reason = _verify_artifact_manifest(Path(weights), PINNED_FASHN_VTON_COMMIT)
     if not verified:
         return False, reason
     try:
         import torch
+        import onnxruntime
+
         if not torch.cuda.is_available():
             return False, "cuda_gpu_unavailable"
+        if torch.cuda.get_device_properties(0).total_memory < MIN_GPU_VRAM_BYTES:
+            return False, "gpu_vram_below_8_gib"
+        if "CUDAExecutionProvider" not in onnxruntime.get_available_providers():
+            return False, "onnx_cuda_provider_unavailable"
     except Exception:
-        return False, "pytorch_runtime_unavailable"
+        return False, "gpu_runtime_unavailable"
     return True, "ready"
-
 
 def require_worker_auth(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
@@ -128,10 +165,15 @@ def require_worker_auth(
 def _pipeline():
     global _PIPELINE
     if _PIPELINE is None:
-        # Heavy import is deferred so health and contract tests do not load model weights.
-        from fashn_vton import TryOnPipeline
-        weights = os.environ["FASHN_VTON_WEIGHTS_DIR"]
-        _PIPELINE = TryOnPipeline(weights_dir=weights)
+        with _PIPELINE_LOCK:
+            if _PIPELINE is None:
+                # Never trigger network downloads during runtime. Provision the
+                # exact parser/model cache before the worker can become ready.
+                os.environ["HF_HUB_OFFLINE"] = "1"
+                os.environ["TRANSFORMERS_OFFLINE"] = "1"
+                from fashn_vton import TryOnPipeline
+                weights = os.environ["FASHN_VTON_WEIGHTS_DIR"]
+                _PIPELINE = TryOnPipeline(weights_dir=weights, device="cuda")
     return _PIPELINE
 
 
@@ -160,12 +202,15 @@ def _decode_image(data: bytes, content_type: str) -> Image.Image:
         raise HTTPException(422, detail={"code": "INVALID_IMAGE_DATA"}) from exc
 
 
-def _render(person: Image.Image, garment: Image.Image, category: str) -> bytes:
+def _render(
+    person: Image.Image, garment: Image.Image, category: str, garment_photo_type: str
+) -> bytes:
     try:
         result = _pipeline()(
             person_image=person,
             garment_image=garment,
             category=CATEGORY_MAP[category],
+            garment_photo_type=garment_photo_type,
         )
         output = result.images[0]
         if not isinstance(output, Image.Image):
@@ -211,9 +256,16 @@ def capabilities() -> dict[str, object]:
         "input_persistence": False,
         "output_persistence": False,
         "remote_urls_accepted": False,
-        "consent_flags_required": True,
-        "consent_authority": "trusted_orchestrator_server_side_receipt",
-        "model_source_pinned": bool(SHA40.fullmatch(os.getenv("FASHN_VTON_SOURCE_REF", ""))),
+        "consent_enforced_by_worker": False,
+        "requires_orchestrator_consent_gate": True,
+        "model_source_pinned": _source_checkout_matches(),
+        "required_weights_present": bool(
+            os.getenv("FASHN_VTON_WEIGHTS_DIR")
+            and _verify_artifact_manifest(
+                Path(os.getenv("FASHN_VTON_WEIGHTS_DIR", "")),
+                PINNED_FASHN_VTON_COMMIT,
+            )[0]
+        ),
         "artifact_manifest_required": True,
         "commercial_license_gate": os.getenv("FASHN_HUMAN_PARSER_COMMERCIAL_LICENSE_APPROVED", "").lower() == "true",
     }
@@ -221,16 +273,15 @@ def capabilities() -> dict[str, object]:
 
 @app.post("/v1/render", dependencies=[Depends(require_worker_auth)], tags=["inference"])
 async def render(
-    consent_image_processing: Annotated[bool, Form()],
-    consent_virtual_try_on: Annotated[bool, Form()],
-    category: Annotated[Literal["upper_body", "outerwear", "lower_body", "dress", "full_outfit"], Form()],
+    category: Annotated[
+        Literal["upper_body", "outerwear", "lower_body", "dress", "full_outfit"], Form()
+    ],
     person_image: Annotated[UploadFile, File()],
     garment_image: Annotated[UploadFile, File()],
+    garment_photo_type: Annotated[Literal["model", "flat-lay"], Form()] = "flat-lay",
 ) -> Response:
-    if not consent_image_processing or not consent_virtual_try_on:
-        await person_image.close()
-        await garment_image.close()
-        raise HTTPException(403, detail={"code": "EXPLICIT_CONSENT_REQUIRED"})
+    # Consent is verified by the authenticated orchestrator before this private
+    # worker is called. Browser-supplied booleans are not consent evidence.
     if category not in CATEGORY_MAP:
         await person_image.close()
         await garment_image.close()
@@ -244,13 +295,25 @@ async def render(
         await garment_image.close()
     person = _decode_image(person_bytes, person_type)
     garment = _decode_image(garment_bytes, garment_type)
-    output = _render(person, garment, category)
+    if not _INFERENCE_SLOT.acquire(blocking=False):
+        raise HTTPException(
+            429,
+            detail={"code": "GPU_WORKER_BUSY", "retryable": True},
+            headers={"Retry-After": "2"},
+        )
+    try:
+        output = await run_in_threadpool(
+            _render, person, garment, category, garment_photo_type
+        )
+    finally:
+        _INFERENCE_SLOT.release()
     return Response(
         content=output,
         media_type="image/png",
         headers={
             "Cache-Control": "no-store, private",
             "X-Cirvanna-Renderer": SERVICE,
-            "X-Cirvanna-Model-Commit": os.getenv("FASHN_VTON_SOURCE_REF", "unconfigured"),
+            "X-Cirvanna-Model-Commit": PINNED_FASHN_VTON_COMMIT,
         },
     )
+
