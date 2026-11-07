@@ -717,3 +717,37 @@ def test_wardrobe_page_exposes_saved_outfit_piece_editor(client):
     assert 'fetch("/api/wardrobe/outfits"' in response.text or 'api("/api/wardrobe/outfits"' in response.text
     assert 'method:"PATCH"' in response.text
     assert "Other pieces were preserved." in response.text
+
+
+def test_saved_outfit_bff_adds_piece_with_server_generated_slot(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42"}),
+        FakeResponse({"outfit": {
+            "outfit_id": "outfit-1", "owner_user_id": "signed-user-42",
+            "name": "Weekend", "version": 2, "pieces": [],
+        }, "status": "updated"}, status_code=201),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/outfits/outfit-1/pieces",
+        headers={"Authorization": "Bearer signed-session"},
+        json={"expected_version": 1, "command_id": "add-piece-001", "wardrobe_item_id": "shoe-1"},
+    )
+    assert response.status_code == 201, response.text
+    sent = fake.calls[1][2]["json"]
+    assert sent["owner_user_id"] == "signed-user-42"
+    assert sent["slot_id"]
+    assert sent["wardrobe_item_id"] == "shoe-1"
+
+
+def test_saved_outfit_bff_requires_explicit_replace_or_remove(client):
+    response = client.patch(
+        "/api/wardrobe/outfits/outfit-1/pieces/top-slot",
+        headers={"Authorization": "Bearer signed-session"},
+        json={"expected_version": 1, "command_id": "missing-piece-action"},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "OUTFIT_PIECE_ACTION_REQUIRED"
