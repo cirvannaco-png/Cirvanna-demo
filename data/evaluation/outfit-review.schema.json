@@ -50,7 +50,7 @@
     "cirvanna_ranked_look_ids": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
     "human_reviews": {
       "type": "array",
-      "description": "At least two independent, blinded reviewers per candidate look.",
+      "description": "Exactly two independent, blinded reviewers per candidate look; the evaluator enforces exactly two distinct reviewer keys per look.",
       "items": {
         "type": "object",
         "additionalProperties": false,
@@ -79,7 +79,7 @@
     },
     "exposures": {
       "type": "array",
-      "description": "Actual user outcomes from the randomly assigned system arm only.",
+      "description": "Actual user outcomes from the randomly assigned system arm only; at most one outcome per look per session.",
       "items": {
         "type": "object",
         "additionalProperties": false,
