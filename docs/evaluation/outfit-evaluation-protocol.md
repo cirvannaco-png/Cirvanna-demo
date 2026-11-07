@@ -92,7 +92,11 @@ The internal Recommendation Service can emit an opt-in `evaluation_trace` when
 `PNELLY_EVALUATION_TRACE_ENABLED=true` and
 `PNELLY_EVALUATION_TRACE_HMAC_SECRET` is configured with at least 32 bytes.
 The trace is not returned by the public Marketplace BFF. A controlled study
-collector may retrieve it through the authenticated API Gateway.
+collector may retrieve it through the authenticated API Gateway. Trace
+generation also requires an active Identity consent receipt with
+`style_learning` or `personalization` scope; the Gateway validates the
+receipt on every request. Missing or revoked consent suppresses the trace while
+ordinary Daily Looks remains available.
 
 Each trace contains one case per role (Everyday, Elevated, Explore), the
 candidate pool for that role, the Cirvanna role ranking, per-candidate score,
