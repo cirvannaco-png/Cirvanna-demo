@@ -1,0 +1,38 @@
+name: Living Filters Mobile Layout QA
+
+on:
+  push:
+    branches: ["main", "feat/**", "feature/**"]
+    paths:
+      - "apps/demo-web/*.html"
+      - "apps/demo-web/test_mobile_layouts.py"
+      - ".github/workflows/living-filters-mobile-layout.yml"
+  pull_request:
+    paths:
+      - "apps/demo-web/*.html"
+      - "apps/demo-web/test_mobile_layouts.py"
+      - ".github/workflows/living-filters-mobile-layout.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: living-filters-mobile-layout-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  viewport-layout:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install browser test dependencies
+        run: |
+          python -m pip install --disable-pip-version-check pytest playwright
+          python -m playwright install --with-deps chromium
+      - name: Run mobile and landscape layout checks
+        run: python -m pytest -q apps/demo-web/test_mobile_layouts.py
