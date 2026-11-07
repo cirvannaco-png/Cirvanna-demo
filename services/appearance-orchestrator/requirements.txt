@@ -1,0 +1,2 @@
+# Runtime dependency for authenticated, read-only Catalog Service access.
+httpx>=0.27,<1.0
