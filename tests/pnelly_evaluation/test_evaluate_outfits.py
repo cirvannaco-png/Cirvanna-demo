@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.pnelly_evaluation.evaluate_outfits import load_rows, session_metrics, summarize, baseline_key
+from tools.pnelly_evaluation.evaluate_outfits import load_rows, session_metrics, summarize, baseline_key, inter_rater_agreement
 
 
 def row(session, outfit, rank, relevance, *, occasion=True, prefs=0, excluded=False, edited=False, rejected=False, user="u1"):
@@ -13,7 +13,10 @@ def row(session, outfit, rank, relevance, *, occasion=True, prefs=0, excluded=Fa
         "hard_exclusion_violation": excluded, "edited": edited, "rejected": rejected,
         "occasion_match": occasion, "preference_match_count": prefs,
         "garment_categories": ["top", outfit], "style_tags": ["casual"],
-        "human_reviewed": True, "reviewer_ids": ["reviewer-a", "reviewer-b"],
+        "human_reviewed": True, "reviewer_scores": [
+            {"reviewer_id": "reviewer-a", "human_relevance": relevance, "hard_exclusion_violation": excluded},
+            {"reviewer_id": "reviewer-b", "human_relevance": max(1, relevance - 1), "hard_exclusion_violation": excluded},
+        ],
         "review_rubric_version": "v1",
     }
 
@@ -30,7 +33,7 @@ class OutfitEvaluationTests(unittest.TestCase):
 
     def test_loader_requires_two_distinct_reviewers(self):
         data = row("s1", "o1", 1, 4)
-        data["reviewer_ids"] = ["reviewer-a", "reviewer-a"]
+        data["reviewer_scores"][1]["reviewer_id"] = "reviewer-a"
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "data.jsonl"
             path.write_text(json.dumps(data), encoding="utf-8")
@@ -43,6 +46,14 @@ class OutfitEvaluationTests(unittest.TestCase):
             path.write_text(json.dumps({"session_id": "s1"}), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "missing fields"):
                 load_rows(path)
+
+    def test_inter_rater_agreement_uses_raw_blinded_scores(self):
+        rows = [row("s1", "o1", 1, 5), row("s1", "o2", 2, 3)]
+        agreement = inter_rater_agreement(rows)
+        self.assertEqual(agreement["adjudicated_candidate_rows"], 2)
+        self.assertEqual(agreement["exact_relevance_agreement_rate"], 0.0)
+        self.assertEqual(agreement["hard_exclusion_agreement_rate"], 1.0)
+        self.assertIsNone(agreement["hard_exclusion_cohen_kappa"])
 
     def test_baseline_hard_exclusion_is_absolute_priority(self):
         unsafe = row("s1", "a", 1, 5, occasion=True, prefs=100, excluded=True)
