@@ -165,6 +165,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
   let colorProfileVersion = 0;
   let pnellyData = null;
   let items = [];
+  let wardrobeCategories = [];
   const api = async (path, options = {}) => {
     const response = await fetch(path, {
       ...options,
@@ -500,6 +501,31 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
       $("createOutfit").disabled = false;
     }
   };
+  const loadWardrobeCategories = async () => {
+    const data = await api("/api/wardrobe/categories");
+    if (!Array.isArray(data.categories) || !data.taxonomy_version) {
+      throw new Error("WARDROBE_CATEGORY_RESPONSE_INVALID");
+    }
+    wardrobeCategories = data.categories;
+    const populate = (select, includeAny) => {
+      const first = includeAny ? [new Option("Any category", "")] : [];
+      select.replaceChildren(...first);
+      const groups = new Map();
+      for (const category of wardrobeCategories) {
+        if (!groups.has(category.group)) {
+          const group = document.createElement("optgroup");
+          group.label = category.group[0].toUpperCase() + category.group.slice(1);
+          groups.set(category.group, group);
+          select.append(group);
+        }
+        groups.get(category.group).append(new Option(category.label, category.id));
+      }
+    };
+    populate($("itemCategory"), false);
+    populate($("category"), true);
+    $("itemCategory").value = "tops";
+    $("category").value = "";
+  };
   const loadWardrobe = async () => {
     const data = await api("/api/wardrobe/items");
     items = data.items || [];
@@ -510,6 +536,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     token = $("token").value.trim();
     if (!token) throw new Error("Enter a signed Commerce token.");
     // Identity is verified server-side by the BFF on every personal-data request.
+    await loadWardrobeCategories();
     await loadWardrobe();
     const consentData = await api("/api/wardrobe/consents");
     const activeReceipts = (consentData.items || []).filter(x => x && x.granted === true && !x.revoked_at);
