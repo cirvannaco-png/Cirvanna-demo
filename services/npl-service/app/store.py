@@ -2,6 +2,8 @@
 from __future__ import annotations
 from datetime import datetime, timezone
 import hashlib
+import hmac
+import os
 import uuid
 from functools import lru_cache
 from typing import Any
@@ -156,13 +158,51 @@ class NPLStore:
                         return self._as_domain(session, row)
             raise PreferenceConflict("correction event ID was already used by a different preference") from exc
 
+    def export_user_data(self, user_id: str) -> dict[str, object]:
+        """Return complete, user-scoped NPL preferences and their event audit rows."""
+        normalized = user_id.strip()
+        if not normalized:
+            raise ValueError("user_id must not be empty")
+        with Session(self.engine) as session:
+            preference_rows = session.scalars(
+                select(PreferenceRow).where(PreferenceRow.user_id == normalized).order_by(PreferenceRow.preference_id)
+            ).all()
+            rejection_rows = session.execute(
+                select(
+                    RejectionEventRow.preference_id,
+                    RejectionEventRow.rejection_event_id,
+                    RejectionEventRow.occurred_at,
+                ).where(RejectionEventRow.user_id == normalized).order_by(RejectionEventRow.occurred_at, RejectionEventRow.event_id)
+            ).all()
+            correction_rows = session.execute(
+                select(
+                    CorrectionEventRow.preference_id,
+                    CorrectionEventRow.correction_event_id,
+                    CorrectionEventRow.occurred_at,
+                ).where(CorrectionEventRow.user_id == normalized).order_by(CorrectionEventRow.occurred_at, CorrectionEventRow.event_id)
+            ).all()
+            return {
+                "preferences": tuple(self._as_domain(session, row) for row in preference_rows),
+                "rejection_events": [
+                    {"preference_id": row.preference_id, "event_id": row.rejection_event_id, "occurred_at": row.occurred_at.isoformat()}
+                    for row in rejection_rows
+                ],
+                "correction_events": [
+                    {"preference_id": row.preference_id, "event_id": row.correction_event_id, "occurred_at": row.occurred_at.isoformat()}
+                    for row in correction_rows
+                ],
+            }
+
     def delete_user_data(self, user_id: str) -> dict[str, object]:
         """Delete every NPL preference and its event rows, retaining only a one-way receipt."""
         normalized = user_id.strip()
         if not normalized:
             raise ValueError("user_id must not be empty")
         receipt_id = str(uuid.uuid4())
-        digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+        receipt_secret = os.getenv("NPL_EVIDENCE_HMAC_SECRET", "").strip()
+        if len(receipt_secret.encode("utf-8")) < 32:
+            raise RuntimeError("NPL deletion receipt signing is not configured")
+        digest = hmac.new(receipt_secret.encode("utf-8"), normalized.encode("utf-8"), hashlib.sha256).hexdigest()
         with Session(self.engine) as session, session.begin():
             preference_count = session.scalar(
                 select(func.count()).select_from(PreferenceRow).where(PreferenceRow.user_id == normalized)
