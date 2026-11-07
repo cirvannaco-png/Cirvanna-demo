@@ -107,7 +107,7 @@ def test_source_checkout_must_match_exact_sha(monkeypatch,tmp_path):
     expected="a"*40
     monkeypatch.setenv("FASHN_VTON_SOURCE_REF",expected)
     monkeypatch.setenv("FASHN_VTON_SOURCE_DIR",str(source))
-    monkeypatch.setattr(main.subprocess,"run",lambda *a,**k:type("Result",(),{"stdout":expected+"\\n"})())
+    monkeypatch.setattr(main.subprocess,"run",lambda *a,**k:type("Result",(),{"stdout":expected+"\n"})())
     assert main._source_checkout_matches() is True
 
 
