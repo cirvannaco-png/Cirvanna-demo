@@ -163,6 +163,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
   let styleReceipt = null;
   let profileReceipt = null;
   let colorProfileVersion = 0;
+  let pnellyData = null;
   let items = [];
   const api = async (path, options = {}) => {
     const response = await fetch(path, {
@@ -552,6 +553,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     $("enableProfile").disabled = !!profileReceipt;
     $("revokeProfile").disabled = !profileReceipt;
     renderItems();
+    if (pnellyData) renderPNELLYLooks(pnellyData);
   };
   const addWardrobeItem = async event => {
     event.preventDefault();
@@ -658,6 +660,14 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
       }
       root.append(card);
     }
+    const colorProfile = data?.tal?.color_profile || data?.tal?.profile?.color_profile;
+    root.append(text("h3", "Personal colour profile", "eyebrow"));
+    if (!colorProfile) root.append(text("p", "No saved personal colour profile.", "small"));
+    else {
+      root.append(text("p", "Liked: " + ((colorProfile.liked_colors || []).join(", ") || "none recorded"), "small"));
+      root.append(text("p", "Disliked: " + ((colorProfile.disliked_colors || []).join(", ") || "none recorded"), "small"));
+      root.append(text("p", "Brings out my best version: " + ((colorProfile.best_version_colors || []).join(", ") || "none recorded"), "small"));
+    }
     const events = data?.tal?.events || [];
     root.append(text("h3", "Temporal learning events", "eyebrow"));
     root.append(text("p", events.length + " event(s) in the USI/TAL export.", "small"));
@@ -695,6 +705,13 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
       const result = await api("/api/wardrobe/learning", {method: "DELETE"});
       styleReceipt = null;
       profileReceipt = null;
+      colorProfileVersion = 0;
+      $("likedColors").value = "";
+      $("dislikedColors").value = "";
+      $("bestVersionColors").value = "";
+      $("saveColorProfile").disabled = true;
+      pnellyData = null;
+      $("pnellyLooks").replaceChildren();
       updateConsentState();
       $("learningDataResults").replaceChildren();
       status("learningDataStatus",
@@ -770,6 +787,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     }
   };
   const renderPNELLYLooks = data => {
+    pnellyData = data;
     const root = $("pnellyLooks");
     root.replaceChildren();
     const recommendation = data.recommendation || {};
