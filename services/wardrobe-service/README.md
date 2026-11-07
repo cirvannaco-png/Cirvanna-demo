@@ -15,7 +15,12 @@ The service owns user wardrobe item records and saved outfit compositions. Item 
 - `POST /v1/items` creates an owner-scoped item.
 - `GET /v1/items?owner_user_id=...` lists only the requested owner's items.
 - `GET /v1/items/{item_id}?owner_user_id=...` gets an owner-scoped item.
-- `POST /v1/items/{item_id}/transition` applies a version-checked lifecycle command.\n- `PATCH /v1/items/{item_id}` edits only one owned item with optimistic concurrency and command replay protection.\n- `POST /v1/outfits` creates a saved outfit from active items owned by the same user.\n- `GET /v1/outfits?owner_user_id=...` lists that user's saved outfits and hydrates each piece from its current wardrobe item record.\n- `POST /v1/outfits/{outfit_id}/pieces` adds one owned item to an outfit.\n- `PATCH /v1/outfits/{outfit_id}/pieces/{slot_id}` replaces or removes one piece; every unaffected piece remains unchanged. Mutations require expected version and command ID.
+- `POST /v1/items/{item_id}/transition` applies a version-checked lifecycle command.
+- `PATCH /v1/items/{item_id}` edits only one owned item with optimistic concurrency and command replay protection.
+- `POST /v1/outfits` creates a saved outfit from active items owned by the same user.
+- `GET /v1/outfits?owner_user_id=...` lists that user's saved outfits and hydrates each piece from its current wardrobe item record.
+- `POST /v1/outfits/{outfit_id}/pieces` adds one owned item to an outfit.
+- `PATCH /v1/outfits/{outfit_id}/pieces/{slot_id}` replaces or removes one piece; every unaffected piece remains unchanged. Mutations require expected version and command ID.
 - Moving an image-bearing item to deleted records a pending asset deletion in the same transaction. This confirms enqueueing only; it does not mean an object has been physically purged.
 
 All routes are internal. The trusted ingress must bind the caller's authenticated user to `owner_user_id`; do not pass through an arbitrary client-supplied owner ID from public ingress without comparing it to the verified identity. Catalog remains the owner of product metadata; Wardrobe stores only catalog IDs.
