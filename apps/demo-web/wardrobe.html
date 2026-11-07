@@ -352,7 +352,16 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     status("learningDataStatus", "Loading your learning records…");
     const data = await api("/api/wardrobe/learning/export");
     renderLearningData(data);
-    status("learningDataStatus", "Export prepared from your verified account. Only you can access this response.", "good");
+    const blob = new Blob([JSON.stringify(data, null, 2)], {type: "application/json"});
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "cirvanna-learning-export.json";
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    status("learningDataStatus", "Full JSON export downloaded from your verified account. Review the records below.", "good");
   };
 
   const deleteLearningData = async () => {
