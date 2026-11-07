@@ -136,6 +136,8 @@ def test_user_export_is_scoped_and_contains_correction_history(client):
     assert preference["preference_id"] == "avoid-blue"
     assert preference["rejection_event_ids"] == ["reject-blue-1"]
     assert preference["correction_event_id"] == "correct-blue-1"
+    assert payload["rejection_events"][0]["event_id"] == "reject-blue-1"
+    assert payload["correction_events"][0]["event_id"] == "correct-blue-1"
     assert preference["active"] is False
     assert "avoid-red" not in exported.text
 
@@ -167,7 +169,7 @@ def test_user_deletion_removes_all_npl_rows_and_keeps_only_digest_receipt(client
     with Session(engine) as session:
         receipt = session.get(NPLDeletionReceiptRow, result["deletion_receipt_id"])
         assert receipt is not None
-        assert receipt.subject_digest == hashlib.sha256(b"user-1").hexdigest()
+        assert receipt.subject_digest == hmac.new(SECRET.encode(), b"user-1", hashlib.sha256).hexdigest()
         assert session.scalar(select(PreferenceRow).where(PreferenceRow.user_id == "user-1")) is None
         assert session.scalar(select(RejectionEventRow).where(RejectionEventRow.user_id == "user-1")) is None
         assert session.scalar(select(CorrectionEventRow).where(CorrectionEventRow.user_id == "user-1")) is None
