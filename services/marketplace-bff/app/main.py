@@ -500,6 +500,31 @@ async def edit_wardrobe_item(request: Request, item_id: str, payload: EditWardro
     return _private_json_response({"item": item, "status": data.get("status", "updated")})
 
 
+@app.get("/api/wardrobe/categories")
+async def get_wardrobe_categories(request: Request) -> Response:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        await _verified_commerce_subject(client, request)
+        base, token = _wardrobe_service()
+        try:
+            response = await client.get(
+                base + "/v1/categories",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "WARDROBE_CATEGORY_SERVICE_UNAVAILABLE"}) from exc
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "WARDROBE_CATEGORY_SERVICE_UNAVAILABLE"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "WARDROBE_CATEGORY_RESPONSE_INVALID"}) from exc
+    if not isinstance(data, dict) or not isinstance(data.get("taxonomy_version"), str) or not isinstance(data.get("categories"), list):
+        raise HTTPException(502, detail={"code": "WARDROBE_CATEGORY_RESPONSE_INVALID"})
+    if any(not isinstance(item, dict) or not all(isinstance(item.get(key), str) for key in ("id", "label", "group")) for item in data["categories"]):
+        raise HTTPException(502, detail={"code": "WARDROBE_CATEGORY_RESPONSE_INVALID"})
+    return _private_json_response(data)
+
+
 @app.get("/api/wardrobe/outfits")
 async def list_wardrobe_outfits(request: Request) -> Response:
     async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
