@@ -198,3 +198,50 @@ def test_feedback_audit_is_user_scoped(client, monkeypatch):
     other = client.get("/v1/feedback", headers=auth(), params={"owner_user_id": "user-2"})
     assert len(own.json()["items"]) == 1
     assert other.json()["items"] == []
+
+
+def test_edit_one_wardrobe_item_updates_only_selected_item_and_increments_version(client):
+    create(client)
+    response = client.patch("/v1/items/item-001", headers=auth(), json={
+        "owner_user_id": "user-1", "expected_version": 1, "command_id": "edit-command-001",
+        "display_name": "Blue linen shirt", "attributes": ["blue", "linen", "relaxed"],
+    })
+    assert response.status_code == 200, response.text
+    item = response.json()["item"]
+    assert item["display_name"] == "Blue linen shirt"
+    assert item["attributes"] == ["blue", "linen", "relaxed"]
+    assert item["version"] == 2
+    assert item["category"] == "tops"
+    assert client.get("/v1/items/item-001", headers=auth(), params={"owner_user_id": "user-2"}).status_code == 404
+
+
+def test_edit_rejects_stale_version_and_supports_exact_idempotent_replay(client):
+    create(client)
+    body = {"owner_user_id": "user-1", "expected_version": 1, "command_id": "edit-command-002", "category": "outerwear"}
+    first = client.patch("/v1/items/item-001", headers=auth(), json=body)
+    replay = client.patch("/v1/items/item-001", headers=auth(), json=body)
+    conflict = client.patch("/v1/items/item-001", headers=auth(), json={**body, "category": "tops"})
+    assert first.status_code == 200
+    assert replay.status_code == 200 and replay.json()["status"] == "replayed"
+    assert replay.json()["item"]["version"] == 2
+    assert conflict.status_code == 409
+
+
+def test_edit_rejects_empty_duplicate_attributes_and_deleted_items(client):
+    create(client)
+    empty = client.patch("/v1/items/item-001", headers=auth(), json={
+        "owner_user_id": "user-1", "expected_version": 1, "command_id": "edit-command-003"
+    })
+    duplicate = client.patch("/v1/items/item-001", headers=auth(), json={
+        "owner_user_id": "user-1", "expected_version": 1, "command_id": "edit-command-004",
+        "attributes": ["blue", " Blue "],
+    })
+    assert empty.status_code == 422
+    assert duplicate.status_code == 422
+    assert transition(client).status_code == 200
+    assert transition(client, expected_version=2, target_status="deleted", command_id="delete-command-001").status_code == 200
+    deleted_edit = client.patch("/v1/items/item-001", headers=auth(), json={
+        "owner_user_id": "user-1", "expected_version": 3, "command_id": "edit-command-005",
+        "display_name": "Should not edit",
+    })
+    assert deleted_edit.status_code == 409
