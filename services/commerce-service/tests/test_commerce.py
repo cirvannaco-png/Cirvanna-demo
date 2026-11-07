@@ -502,8 +502,8 @@ def test_verified_charge_refund_is_monotonic_and_does_not_change_order_or_wardro
 
     order = client.get(f"/orders/{order_id}", headers=buyer).json()
     assert order["status"] == "paid"
-    assert order["payment_status"] == "partially_refunded"
-    assert order["refund_status"] == "partially_refunded"
+    assert order["payment_status"] == "partial_refund"
+    assert order["refund_status"] == "partial_refund"
     assert order["amount_refunded_minor"] == 200
 
     db = TEST_SESSION()
