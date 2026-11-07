@@ -16,6 +16,7 @@ on:
       - "services/commerce-service/**"
       - "services/decision-service/**"
       - "services/marketplace-bff/**"
+      - "services/asset-service/**"
       - ".github/workflows/container-image-builds.yml"
   workflow_dispatch:
 
