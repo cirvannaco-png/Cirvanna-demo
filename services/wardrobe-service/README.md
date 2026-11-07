@@ -45,7 +45,7 @@ Internal endpoint POST /v1/feedback records a clear user interaction against an 
 - The Wardrobe service does not import the quarantined CFRP V6 candidate or emit the unverified CRFP concept. See ADR-0002 and issue #76; neither is authorized in runtime.
 - Configure IDENTITY_SERVICE_URL, IDENTITY_SERVICE_TOKEN, NPL_SERVICE_URL, and NPL_SERVICE_TOKEN in the service secret manager. Missing providers or consent fail closed.
 
-Apply migrations in order: `0001_initial.sql`, `0002_wardrobe_learning_events.sql`, then `0003_saved_outfits.sql`, then `0004_rotation_state.sql`. The learning table is an audit mirror; USI/TAL and NPL remain the authoritative stores. Service readiness now requires the `wardrobe_outfits` and `wardrobe_rotation_states` tables as well as the existing item, learning and deletion-outbox schema.
+Apply migrations in order: `0001_initial.sql`, `0002_wardrobe_learning_events.sql`, `0003_saved_outfits.sql`, `0004_rotation_state.sql`, `0005_verified_purchase_ownership.sql`, and `0006_outfit_wear_history.sql`. The learning table is an audit mirror; USI/TAL and NPL remain the authoritative stores. Service readiness now requires the `wardrobe_outfits`, `wardrobe_rotation_states`, and `wardrobe_outfit_wear_events` tables plus the verified-purchase provenance columns, in addition to the existing item, learning and deletion-outbox schema.
 
 
 ## PNELLY wardrobe rotation state
@@ -55,3 +55,20 @@ Apply migrations in order: `0001_initial.sql`, `0002_wardrobe_learning_events.sq
 - `DELETE /v1/rotation-state?owner_user_id=...` erases the record for account-data deletion.
 - The record stores cycle number, cycle start, surfaced item IDs and a monotonically increasing version. Archived/deleted items are filtered from reads and cannot be added by writes; newly added active items naturally remain unseen.
 - The API is internal-only. The trusted BFF must resolve `owner_user_id` from Commerce `/me`; never forward a browser-supplied owner or rotation state. The end-to-end contract and concurrency tests are validated in the integration PR.
+
+
+## Verified purchase ownership
+
+- `POST /v1/purchases/verified` accepts only a trusted internal `commerce.order.paid` event with `ownership_authority=verified_payment`.
+- A purchased wardrobe item retains its order ID, order-line ID, event ID, quantity, currency, agreed unit price and paid timestamp.
+- Stable owner/order-line identity makes replay idempotent; a changed payload for the same Commerce order line conflicts.
+- Product category is not inferred from incomplete evidence; unknown taxonomy is `other` and marked for review.
+- Only the Commerce Sync worker may call this route, after it retrieves a verified paid-order outbox event. The endpoint itself does not validate Stripe signatures.
+
+## Factual outfit wear history
+
+- `POST /v1/outfits/{outfit_id}/wear` records an explicit user confirmation against a versioned saved outfit.
+- The event stores an immutable snapshot of exact pieces and context, and delivers deterministic, consent-checked item-level wear signals to USI/TAL.
+- `GET /v1/wear-history` is owner scoped. `DELETE /v1/wear-history` erases only that owner's event records.
+- Marketplace BFF derives the user from Commerce `/me`; the public “Mark this look worn” action creates a stable outfit ID and then submits a user-confirmed wear event. Recommendation exposure does not update wear history.
+- User export includes rotation and factual wear-history data; user erasure removes both.
