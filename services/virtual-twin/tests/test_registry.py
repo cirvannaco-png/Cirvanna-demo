@@ -56,9 +56,14 @@ def registration(**overrides):
 
 def test_register_persists_only_full_body_mesh_after_consent_and_asset_checks(client, monkeypatch):
     checked = {"consent": 0, "mesh": 0, "assets": 0}
+    consent_binding = {}
 
-    async def consent(*_args, **_kwargs):
+    async def consent(subject_id, consent_id, consent_version, resource_id):
         checked["consent"] += 1
+        consent_binding.update({
+            "subject_id": subject_id, "consent_id": consent_id,
+            "consent_version": consent_version, "resource_id": resource_id,
+        })
 
     async def mesh(*_args, **_kwargs):
         checked["mesh"] += 1
@@ -77,6 +82,12 @@ def test_register_persists_only_full_body_mesh_after_consent_and_asset_checks(cl
     assert data["representation_type"] == "full_body_mesh"
     assert data["version"] == 1
     assert checked == {"consent": 1, "mesh": 1, "assets": 1}
+    assert consent_binding == {
+        "subject_id": "subject-registry-001",
+        "consent_id": "consent-receipt-0001",
+        "consent_version": "privacy-2026-11-v1",
+        "resource_id": "twin-registry-001",
+    }
 
 
 def test_registry_rejects_pose_skeleton_as_a_persistent_twin(client):
