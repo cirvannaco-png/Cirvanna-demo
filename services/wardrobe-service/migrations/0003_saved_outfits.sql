@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS wardrobe_outfits (
     status VARCHAR(16) NOT NULL DEFAULT 'active' CHECK (status IN ('active','archived')),
     version INTEGER NOT NULL DEFAULT 1 CHECK (version >= 1),
     last_command_id VARCHAR(128),
+    last_command_hash VARCHAR(64),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (owner_user_id, outfit_id),
