@@ -104,6 +104,33 @@ class OutfitEvaluationTests(unittest.TestCase):
         self.assertEqual(baseline["top_k_fill_rate"], 0.0)
         self.assertIsNone(baseline["hard_exclusion_violation_rate"])
 
+    def test_reports_participant_cluster_confidence_intervals_and_reviewer_agreement(self):
+        first = make_case("case-0001", "session-0001")
+        second = make_case("case-0002", "session-0002")
+        second["participant_key"] = "participant-002"
+        result = evaluate([first, second], k=3)
+        for system in ("cirvanna", "baseline"):
+            intervals = result["systems"][system]["confidence_intervals_95"]
+            self.assertEqual(len(intervals["ndcg_at_k"]), 2)
+            self.assertLessEqual(intervals["ndcg_at_k"][0], intervals["ndcg_at_k"][1])
+        paired = result["paired_cirvanna_minus_baseline_confidence_intervals_95"]
+        self.assertEqual(len(paired["mean_human_relevance_top_k"]), 2)
+        agreement = result["inter_rater_agreement"]
+        self.assertEqual(agreement["candidate_review_pairs"], 6)
+        self.assertEqual(agreement["exact_relevance_agreement_rate"], 1.0)
+        self.assertEqual(agreement["hard_exclusion_agreement_rate"], 1.0)
+        self.assertEqual(agreement["weighted_relevance_kappa_across_reviewer_pairs"], 1.0)
+        self.assertEqual(agreement["hard_exclusion_kappa_across_reviewer_pairs"], 1.0)
+
+    def test_duplicate_reviewer_and_duplicate_exposure_are_rejected(self):
+        case = make_case("case-0001", "session-0001")
+        case["human_reviews"][1]["reviewer_key"] = "reviewer-a"
+        with self.assertRaisesRegex(ValueError, "exactly two independent reviewers"):
+            evaluate([case])
+        case = make_case("case-0001", "session-0001")
+        case["exposures"].append({"look_id": "work-set", "action": "no_action", "edit_count": 0})
+        with self.assertRaisesRegex(ValueError, "duplicate exposure outcome"):
+            evaluate([case])
     def test_empty_dataset_makes_no_performance_claim(self):
         result = evaluate([])
         self.assertEqual(result["status"], "insufficient_human_reviewed_data")
