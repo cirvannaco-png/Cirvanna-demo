@@ -191,6 +191,11 @@ class TALObservationInput(BaseModel):
     event_kind: Literal["observation", "correction"] = "observation"
     supersedes_event_id: str | None = Field(default=None, max_length=128)
 
+class NPLPreferenceRetractionInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    correction_event_id: str = Field(min_length=8, max_length=128)
+
+
 
 class ComplementerAdvisoryRequest(BaseModel):
     """Request-scoped style advisory; this is not a persisted identity profile."""
@@ -1167,6 +1172,38 @@ def _identity_service_request(method: str, path: str, subject_id: str, payload: 
     return data
 
 
+def _npl_service_request(method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Call the private NPL provider; the caller must bind the path to a verified subject."""
+    base = os.getenv("NPL_SERVICE_URL", "").strip().rstrip("/")
+    token = os.getenv("NPL_SERVICE_TOKEN", "").strip()
+    if not base or not _trusted_internal_base_url(base) or len(token.encode("utf-8")) < 32:
+        raise HTTPException(503, detail={"code": "NPL_SERVICE_NOT_CONFIGURED"})
+    try:
+        with httpx.Client(
+            timeout=httpx.Timeout(5.0, connect=1.5),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            response = client.request(
+                method,
+                base + path,
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json=payload,
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "NPL_SERVICE_UNAVAILABLE"}) from exc
+    try:
+        data = response.json() if response.content else {}
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "NPL_SERVICE_RESPONSE_INVALID"}) from exc
+    if response.status_code in {400, 401, 403, 404, 409, 422}:
+        detail = data.get("detail", data) if isinstance(data, dict) else data
+        raise HTTPException(response.status_code, detail=detail)
+    if response.status_code < 200 or response.status_code >= 300 or not isinstance(data, dict):
+        raise HTTPException(503, detail={"code": "NPL_SERVICE_REQUEST_FAILED"})
+    return data
+
+
 def _verified_actor_from_header(end_user_authorization: str | None) -> str:
     return _resolve_verified_subject(end_user_authorization)
 
@@ -1691,6 +1728,56 @@ def delete_my_learning_data(
 ):
     subject = _verified_actor_from_header(end_user_authorization)
     return _identity_service_request("DELETE", f"/v1/tal/users/{subject}", subject)
+
+
+
+@app.get("/v1/me/learning/export", dependencies=[Depends(require_api_token)], tags=["identity and learning"])
+def export_my_learning_data_bundle(
+    end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
+) -> dict[str, Any]:
+    """Export this verified subject's USI/TAL and NPL records together."""
+    subject = _verified_actor_from_header(end_user_authorization)
+    tal = _identity_service_request("GET", f"/v1/tal/export/{subject}", subject)
+    npl = _npl_service_request("GET", f"/v1/users/{subject}/export")
+    return {"subject_id": subject, "tal": tal, "npl": npl, "export_version": 1}
+
+
+@app.post("/v1/me/npl/preferences/{preference_id}/retract", dependencies=[Depends(require_api_token)], tags=["identity and learning"])
+def retract_my_npl_preference(
+    preference_id: str,
+    payload: NPLPreferenceRetractionInput,
+    end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
+) -> dict[str, Any]:
+    """Retract one NPL preference only for the subject authenticated by Commerce /me."""
+    subject = _verified_actor_from_header(end_user_authorization)
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", preference_id):
+        raise HTTPException(422, detail={"code": "INVALID_NPL_PREFERENCE_ID"})
+    return _npl_service_request(
+        "POST",
+        f"/v1/preferences/{preference_id}/retract",
+        {"user_id": subject, "correction_event_id": payload.correction_event_id.strip()},
+    )
+
+
+@app.delete("/v1/me/learning/data", dependencies=[Depends(require_api_token)], tags=["identity and learning"])
+def delete_my_learning_data_bundle(
+    end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
+) -> dict[str, Any]:
+    """Delete USI/TAL first (revoking future learning), then remove NPL records."""
+    subject = _verified_actor_from_header(end_user_authorization)
+    tal = _identity_service_request("DELETE", f"/v1/tal/users/{subject}", subject)
+    try:
+        npl = _npl_service_request("DELETE", f"/v1/users/{subject}")
+    except HTTPException as exc:
+        # TAL/consent deletion already blocks further writes. Retrying this endpoint
+        # is safe: the identity delete is idempotent and NPL deletion can be retried.
+        raise HTTPException(
+            503,
+            detail={"code": "LEARNING_DELETION_PARTIAL", "tal_deleted": True, "npl_deleted": False},
+        ) from exc
+    return {"status": "deleted", "subject_id": subject, "tal": tal, "npl": npl}
+
+
 
 
 
