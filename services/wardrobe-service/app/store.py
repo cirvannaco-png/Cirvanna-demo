@@ -39,7 +39,7 @@ class WardrobeRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.current_timestamp())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
 
-class PurchaseRefundSnapshotRow(Base):
+class WardrobePurchaseRefundSnapshotRow(Base):
     """Order-level financial refund snapshot; never asserts physical return or item deletion."""
     __tablename__ = "wardrobe_purchase_refund_snapshots"
     __table_args__ = (
