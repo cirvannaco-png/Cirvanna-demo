@@ -210,8 +210,8 @@ def test_deletion_dispatch_marks_complete_only_after_provider_confirms_all_asset
     )
     observed = {}
 
-    async def delete_assets(subject_id, asset_ids, idempotency_key):
-        observed.update(subject_id=subject_id, asset_ids=asset_ids, idempotency_key=idempotency_key)
+    async def delete_assets(subject_id, twin_id, asset_ids, idempotency_key):
+        observed.update(subject_id=subject_id, twin_id=twin_id, asset_ids=asset_ids, idempotency_key=idempotency_key)
 
     monkeypatch.setattr(registry, "_delete_assets", delete_assets)
     dispatched = client.post(
