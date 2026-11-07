@@ -186,6 +186,15 @@ class CreateWardrobeItemIn(BaseModel):
     catalog_product_id: str | None = Field(default=None, max_length=128)
 
 
+class EditWardrobeItemIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_version: int = Field(ge=1)
+    command_id: str = Field(min_length=8, max_length=128)
+    display_name: str | None = Field(default=None, min_length=1, max_length=200)
+    category: str | None = Field(default=None, min_length=1, max_length=80)
+    attributes: list[str] | None = Field(default=None, max_length=100)
+
+
 class WardrobeFeedbackIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     item_id: str = Field(min_length=3, max_length=128)
@@ -315,6 +324,65 @@ async def wardrobe_items(request: Request) -> Response:
     return _private_json_response(data)
 
 
+
+
+@app.patch("/api/wardrobe/items/{item_id}")
+async def edit_wardrobe_item(request: Request, item_id: str, payload: EditWardrobeItemIn) -> Response:
+    """Edit exactly one wardrobe item for the Commerce-verified user."""
+    changes = payload.model_dump(exclude_unset=True)
+    editable = {key: value for key, value in changes.items() if key not in {"expected_version", "command_id"}}
+    if not editable or all(value is None for value in editable.values()):
+        raise HTTPException(422, detail={"code": "WARDROBE_EDIT_EMPTY"})
+    if "display_name" in editable and editable["display_name"] is not None:
+        editable["display_name"] = editable["display_name"].strip()
+        if not editable["display_name"]:
+            raise HTTPException(422, detail={"code": "WARDROBE_DISPLAY_NAME_EMPTY"})
+    if "category" in editable and editable["category"] is not None:
+        editable["category"] = editable["category"].strip()
+        if not editable["category"]:
+            raise HTTPException(422, detail={"code": "WARDROBE_CATEGORY_EMPTY"})
+    if "attributes" in editable and editable["attributes"] is not None:
+        editable["attributes"] = [value.strip() for value in editable["attributes"]]
+        if any(not value for value in editable["attributes"]) or len(set(editable["attributes"])) != len(editable["attributes"]):
+            raise HTTPException(422, detail={"code": "WARDROBE_ATTRIBUTES_INVALID"})
+    body = {
+        "owner_user_id": None,
+        "expected_version": payload.expected_version,
+        "command_id": payload.command_id.strip(),
+        **editable,
+    }
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        base, token = _wardrobe_service()
+        body["owner_user_id"] = subject
+        try:
+            response = await client.patch(
+                base + f"/v1/items/{item_id}",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json=body,
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "WARDROBE_ITEM_EDIT_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "WARDROBE_ITEM_EDIT_UNAVAILABLE"}) from exc
+    if response.status_code in {400, 403, 404, 409, 422}:
+        try:
+            detail = response.json().get("detail", {})
+            if not isinstance(detail, dict):
+                detail = {"code": "WARDROBE_ITEM_EDIT_REJECTED"}
+        except ValueError:
+            detail = {"code": "WARDROBE_ITEM_EDIT_REJECTED"}
+        raise HTTPException(response.status_code, detail=detail)
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "WARDROBE_ITEM_EDIT_UNAVAILABLE"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "WARDROBE_ITEM_EDIT_RESPONSE_INVALID"}) from exc
+    item = data.get("item") if isinstance(data, dict) else None
+    if not isinstance(item, dict) or item.get("owner_user_id") != subject or item.get("item_id") != item_id:
+        raise HTTPException(502, detail={"code": "WARDROBE_ITEM_EDIT_SCOPE_MISMATCH"})
+    return _private_json_response({"item": item, "status": data.get("status", "updated")})
 
 
 @app.post("/api/wardrobe/items", status_code=201)
