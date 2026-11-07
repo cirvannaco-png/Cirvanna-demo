@@ -17,6 +17,11 @@ def _trace():
                 "image_assets_included": False,
             },
             "no_result_roles": ["explore"],
+            "consent": {
+                "required": True,
+                "validated_by_gateway": True,
+                "scope": "style_learning_or_personalization",
+            },
             "cases": [{
                 "schema_version": "1.0",
                 "case_id": "case-1",
