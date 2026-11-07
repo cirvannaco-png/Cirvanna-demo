@@ -6,6 +6,7 @@ fabricates decision, fit, Click It, Virtual Twin, or try-on outputs.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import uuid
@@ -18,12 +19,13 @@ from urllib.parse import urlsplit
 import httpx
 from fastapi import Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 SERVICE = "cirvanna-marketplace-bff"
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_HTML = ROOT / "apps" / "demo-web" / "marketplace.html"
 DEFAULT_WARDROBE_HTML = ROOT / "apps" / "demo-web" / "wardrobe.html"
+DEFAULT_STYLE_DESK_HTML = ROOT / "apps" / "demo-web" / "style-desk.html"
 HTML_PATH = Path(os.getenv("MARKETPLACE_HTML_PATH", str(DEFAULT_HTML)))
 TIMEOUT_SECONDS = 5.0
 MAX_PAGE_SIZE = 100
@@ -240,6 +242,41 @@ class DailyLooksIn(BaseModel):
         return value
 
 
+class ColorProfileUpdateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_profile_version: int = Field(ge=0)
+    liked_colors: list[str] = Field(default_factory=list, max_length=24)
+    disliked_colors: list[str] = Field(default_factory=list, max_length=24)
+    feel_best_colors: list[str] = Field(default_factory=list, max_length=24)
+
+    @field_validator("liked_colors", "disliked_colors", "feel_best_colors")
+    @classmethod
+    def valid_colour_labels(cls, values: list[str]) -> list[str]:
+        cleaned = []
+        seen = set()
+        for value in values:
+            if not isinstance(value, str):
+                raise ValueError("colour labels must be strings")
+            label = value.strip()
+            if not label or len(label) > 60 or any(ord(char) < 32 or ord(char) == 127 for char in label):
+                raise ValueError("colour labels must contain 1 to 60 printable characters")
+            key = label.casefold()
+            if key in seen:
+                raise ValueError("colour groups must not contain duplicates")
+            seen.add(key)
+            cleaned.append(label)
+        return cleaned
+
+    @model_validator(mode="after")
+    def no_liked_disliked_conflict(self):
+        overlap = {value.casefold() for value in self.liked_colors} & {
+            value.casefold() for value in self.disliked_colors
+        }
+        if overlap:
+            raise ValueError("a colour cannot be both liked and disliked")
+        return self
+
+
 class WardrobePreferenceRetractionIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     correction_event_id: str = Field(min_length=8, max_length=128)
@@ -289,6 +326,93 @@ def _decision_gateway() -> tuple[str, str]:
     return _internal_service("DECISION_GATEWAY_URL", "DECISION_GATEWAY_TOKEN")
 
 
+async def _style_desk_usi_profile(
+    client: httpx.AsyncClient, subject: str, user_token: str
+) -> tuple[dict, str, str]:
+    """Read the verified user's USI profile through the decision gateway."""
+    gateway_base, gateway_token = _decision_gateway()
+    try:
+        response = await client.get(
+            gateway_base + "/v1/me/style-profile",
+            headers={
+                "Authorization": "Bearer " + gateway_token,
+                "X-End-User-Authorization": "Bearer " + user_token,
+                "Accept": "application/json",
+            },
+        )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "STYLE_DESK_PROFILE_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "STYLE_DESK_PROFILE_UNAVAILABLE"}) from exc
+    if response.status_code in {401, 403, 409, 422}:
+        try:
+            detail = response.json().get("detail", {})
+            if not isinstance(detail, dict):
+                detail = {"code": "STYLE_DESK_PROFILE_REJECTED"}
+        except ValueError:
+            detail = {"code": "STYLE_DESK_PROFILE_REJECTED"}
+        raise HTTPException(response.status_code, detail=detail)
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "STYLE_DESK_PROFILE_UNAVAILABLE"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "STYLE_DESK_PROFILE_RESPONSE_INVALID"}) from exc
+    if (
+        not isinstance(data, dict)
+        or data.get("subject_id") != subject
+        or not isinstance(data.get("profile_version"), int)
+        or data.get("profile_version") < 0
+        or not isinstance(data.get("preferences"), list)
+        or any(not isinstance(item, dict) for item in data.get("preferences", []))
+    ):
+        raise HTTPException(502, detail={"code": "STYLE_DESK_PROFILE_SCOPE_OR_SCHEMA_MISMATCH"})
+    return data, gateway_base, gateway_token
+
+
+def _style_desk_colour_profile_view(profile: dict) -> dict:
+    grouped = {"liked": [], "disliked": [], "feel_best": []}
+    for item in profile["preferences"]:
+        attribute = item.get("attribute")
+        if not isinstance(attribute, str) or not attribute.startswith("color_profile:"):
+            continue
+        group, separator, colour = attribute[len("color_profile:"):].partition(":")
+        if not separator or group not in grouped or not colour.strip():
+            continue
+        active = item.get("active") is True
+        # Dislikes are persisted inactive so they cannot become positive USI scores.
+        if group == "disliked" and not active:
+            grouped[group].append(colour.strip())
+        elif group in {"liked", "feel_best"} and active:
+            grouped[group].append(colour.strip())
+    return {
+        "profile_version": profile["profile_version"],
+        "liked_colors": grouped["liked"],
+        "disliked_colors": grouped["disliked"],
+        "feel_best_colors": grouped["feel_best"],
+        "preference_source": "user_declared",
+    }
+
+
+def _style_desk_colour_preference_records(payload: ColorProfileUpdateIn) -> list[dict]:
+    records = []
+    for group, values in (
+        ("liked", payload.liked_colors),
+        ("disliked", payload.disliked_colors),
+        ("feel_best", payload.feel_best_colors),
+    ):
+        for colour in values:
+            digest = hashlib.sha256(colour.casefold().encode("utf-8")).hexdigest()[:16]
+            records.append({
+                "preference_id": f"color-profile:{group}:{digest}",
+                "attribute": f"color_profile:{group}:{colour}",
+                "weight": 1.0,
+                # The USI kernel is positive-only; disliked colours are stored but are not positive matches.
+                "active": group != "disliked",
+            })
+    return records
+
+
 def _withhold_unverified_media(value):
     """Recursively redact image URLs until the exact asset has a verified receipt."""
     if isinstance(value, list):
@@ -309,6 +433,74 @@ def _withhold_unverified_media(value):
 
 def _private_json_response(data: dict) -> JSONResponse:
     return JSONResponse(content=_withhold_unverified_media(data), headers={"Cache-Control": "no-store, private"})
+
+
+@app.get("/style-desk", response_class=HTMLResponse)
+def style_desk_page() -> HTMLResponse:
+    try:
+        html = DEFAULT_STYLE_DESK_HTML.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail={"code": "STYLE_DESK_PAGE_UNAVAILABLE"}) from exc
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/style-desk/colour-profile")
+async def get_style_desk_colour_profile(request: Request) -> Response:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, user_token = await _verified_commerce_subject(client, request)
+        profile, _, _ = await _style_desk_usi_profile(client, subject, user_token)
+    return _private_json_response(_style_desk_colour_profile_view(profile))
+
+
+@app.put("/api/style-desk/colour-profile")
+async def update_style_desk_colour_profile(request: Request, payload: ColorProfileUpdateIn) -> Response:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, user_token = await _verified_commerce_subject(client, request)
+        profile, gateway_base, gateway_token = await _style_desk_usi_profile(client, subject, user_token)
+        current_version = profile["profile_version"]
+        if payload.expected_profile_version != current_version:
+            raise HTTPException(409, detail={"code": "USI_PROFILE_VERSION_CONFLICT", "current_version": current_version})
+        existing = [
+            item for item in profile["preferences"]
+            if not (
+                isinstance(item.get("attribute"), str)
+                and item["attribute"].startswith("color_profile:")
+            )
+        ]
+        merged = existing + _style_desk_colour_preference_records(payload)
+        if len(merged) > 100:
+            raise HTTPException(422, detail={"code": "USI_PROFILE_PREFERENCE_LIMIT"})
+        try:
+            response = await client.put(
+                gateway_base + "/v1/me/style-profile",
+                headers={
+                    "Authorization": "Bearer " + gateway_token,
+                    "X-End-User-Authorization": "Bearer " + user_token,
+                    "Accept": "application/json",
+                },
+                json={"expected_version": current_version, "preferences": merged},
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "STYLE_DESK_PROFILE_SAVE_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "STYLE_DESK_PROFILE_SAVE_UNAVAILABLE"}) from exc
+    if response.status_code in {401, 403, 409, 422}:
+        try:
+            detail = response.json().get("detail", {})
+            if not isinstance(detail, dict):
+                detail = {"code": "STYLE_DESK_PROFILE_SAVE_REJECTED"}
+        except ValueError:
+            detail = {"code": "STYLE_DESK_PROFILE_SAVE_REJECTED"}
+        raise HTTPException(response.status_code, detail=detail)
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "STYLE_DESK_PROFILE_SAVE_UNAVAILABLE"})
+    try:
+        saved = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "STYLE_DESK_PROFILE_SAVE_RESPONSE_INVALID"}) from exc
+    if not isinstance(saved, dict) or saved.get("subject_id") != subject or not isinstance(saved.get("preferences"), list):
+        raise HTTPException(502, detail={"code": "STYLE_DESK_PROFILE_SAVE_SCOPE_MISMATCH"})
+    return _private_json_response(_style_desk_colour_profile_view(saved))
 
 
 @app.get("/wardrobe", response_class=HTMLResponse)
