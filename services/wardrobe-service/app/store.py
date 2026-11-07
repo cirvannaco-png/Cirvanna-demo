@@ -39,6 +39,36 @@ class WardrobeRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.current_timestamp())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
 
+class WardrobePurchaseRefundSnapshotRow(Base):
+    """Order-level financial refund snapshot; never asserts physical return or item deletion."""
+    __tablename__ = "wardrobe_purchase_refund_snapshots"
+    __table_args__ = (
+        UniqueConstraint("event_id", name="uq_wardrobe_purchase_refund_event"),
+        UniqueConstraint("provider_event_id", name="uq_wardrobe_purchase_refund_provider_event"),
+        Index("ix_wardrobe_purchase_refund_order", "order_id"),
+        CheckConstraint("order_total_minor > 0", name="ck_wardrobe_refund_order_total_positive"),
+        CheckConstraint("amount_refunded_minor > 0 AND amount_refunded_minor <= order_total_minor", name="ck_wardrobe_refund_amount_bounds"),
+        CheckConstraint("refund_state IN ('partial_refund', 'refunded')", name="ck_wardrobe_refund_state"),
+        CheckConstraint("physical_return_confirmed = FALSE", name="ck_wardrobe_refund_not_a_return"),
+        CheckConstraint("ownership_effect = 'financial_status_only'", name="ck_wardrobe_refund_financial_only"),
+    )
+    owner_user_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    order_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    event_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    provider_event_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    payment_intent_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    charge_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    order_total_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    amount_refunded_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    refund_state: Mapped[str] = mapped_column(String(16), nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    refunded_at: Mapped[str] = mapped_column(String(64), nullable=False)
+    physical_return_confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    ownership_effect: Mapped[str] = mapped_column(String(32), nullable=False, default="financial_status_only")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+
 class WardrobeOutfitRow(Base):
     """Saved outfit is a user-owned composition of references to active wardrobe items."""
     __tablename__ = "wardrobe_outfits"

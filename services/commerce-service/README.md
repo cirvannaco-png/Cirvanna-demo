@@ -56,7 +56,7 @@ Local run from this directory:
     pip install -r requirements.txt
     uvicorn app.main:app --host 127.0.0.1 --port 8081
 
-Production-like migration:
+Production-like migration (apply `20261107_0005_refund_snapshot.py` after `20261107_0004_verified_purchase_outbox.py`):
 
     export COMMERCE_DATABASE_URL='postgresql+psycopg://...'
     export COMMERCE_AUTO_CREATE_SCHEMA=false
@@ -70,7 +70,7 @@ Checkout commits the order and stock reservations before calling Stripe, so a ne
 
 Only a verified Stripe webhook can mark an order paid. The handler verifies signature, order metadata, Checkout Session ID, total and currency before decrementing stock and consuming reservations. Duplicate event IDs are ignored. The expiry job releases reservations only after Stripe confirms expiration.
 
-A successful paid settlement writes a versioned `commerce.order.paid` record to `commerce_outbox_events` in the same database transaction as payment settlement. Its stable event ID, order/buyer identity, immutable line-item snapshots and `ownership_authority=verified_payment` provenance allow downstream Wardrobe consumers to deduplicate safely. Failed, pending, saved, carted and try-on states do not emit ownership events. The outbox exposes authenticated internal lease/claim, acknowledge and retry/dead-letter endpoints for the Sync worker. Delivery is at-least-once; consumers must deduplicate by event ID. The endpoints are not a deployed worker and do not themselves complete purchase-to-Wardrobe sync. Refunds and returns are not supported by Commerce yet; no ownership reversal is inferred from a cancellation request or an unverified event.
+A successful paid settlement writes a versioned `commerce.order.paid` record to `commerce_outbox_events` in the same database transaction as payment settlement. The paid Checkout Session's PaymentIntent ID is bound to exactly one Commerce order. A verified Stripe `charge.refunded` event is mapped through that PaymentIntent and checked against the original order amount/currency; only monotonic cumulative refund increases update the payment snapshot and emit `commerce.order.refund.updated`. Its stable event ID, order/buyer identity, immutable line-item snapshots and `ownership_authority=verified_payment` provenance allow downstream Wardrobe consumers to deduplicate safely. Failed, pending, saved, carted and try-on states do not emit ownership events. The outbox exposes authenticated internal lease/claim, acknowledge and retry/dead-letter endpoints for the Sync worker. Delivery is at-least-once; consumers must deduplicate by event ID. The endpoints are not a deployed worker and do not themselves complete purchase-to-Wardrobe sync. Refunds are recorded as an order-level financial snapshot (`partial_refund` or `refunded`) and delivered through a separate at-least-once outbox event. A refund is not proof that an item was physically returned or that the buyer no longer possesses it: order state remains paid/fulfilled, and the Wardrobe consumer records the financial state without deleting or archiving owned garments. Physical returns, chargebacks, item-level allocation, and seller recovery remain separate workflows.
 
 ## Identity provider setup
 
@@ -82,7 +82,7 @@ This repository does not issue login sessions or manage the user lifecycle. Conn
 - Integrate the actual Cirvanna identity issuer and validate JWT claims, role administration and secret handling.
 - Configure a non-production catalog and verify real TLS, credentials and CORS from the intended origin.
 - Configure Stripe test mode and exercise real test payment, expiry, retry, webhook replay and reconciliation. This service currently charges item subtotal only; shipping/tax computation is not implemented.
-- Seller payouts/Connect onboarding, refunds/returns, fulfillment, fraud/rate limits, reconciliation dashboards, retention/deletion and alerting are not implemented.
+- Seller payouts/Connect onboarding, physical returns, chargebacks, item-level refund allocation, fulfillment, fraud/rate limits, reconciliation dashboards, retention/deletion and alerting are not implemented.
 - CaTaCaCi eligibility, Click It reconstruction, Virtual Twin and try-on remain explicitly unavailable until real adapters/models are integrated and independently validated.
 
 

@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/"packages"))
 from wardrobe import WardrobeItem, WardrobeItemStatus, list_categories
-from app.store import Base, WardrobeConflict, WardrobeNotFound, WardrobeStore, WardrobeDeletionQueue, WardrobeFeedbackEventRow, WardrobeOutfitRow, WardrobeOutfitWearEventRow, WardrobeRow, engine_for_url
+from app.store import Base, WardrobeConflict, WardrobeNotFound, WardrobeStore, WardrobeDeletionQueue, WardrobeFeedbackEventRow, WardrobeOutfitRow, WardrobeOutfitWearEventRow, WardrobePurchaseRefundSnapshotRow, WardrobeRow, engine_for_url
 from app.learning import LearningIntegrationError, deliver_learning_event
 
 SERVICE="cirvanna-wardrobe-service"
@@ -49,6 +49,26 @@ class VerifiedPurchaseIn(StrictModel):
     currency: str = Field(min_length=3, max_length=3)
     unit_price_minor: int = Field(ge=0)
     paid_at: str = Field(min_length=20, max_length=64)
+
+
+class PurchaseRefundSnapshotIn(StrictModel):
+    """Verified order-level Stripe refund; this is not a physical return assertion."""
+    event_id: str = Field(min_length=36, max_length=36)
+    provider_event_id: str = Field(min_length=8, max_length=180)
+    event_type: Literal["commerce.order.refund.updated"]
+    schema_version: Literal[1]
+    ownership_authority: Literal["verified_stripe_charge_refund"]
+    owner_user_id: str = Field(min_length=1, max_length=128)
+    order_id: str = Field(min_length=36, max_length=36)
+    payment_intent_id: str = Field(min_length=4, max_length=180)
+    charge_id: str = Field(min_length=4, max_length=180)
+    currency: str = Field(min_length=3, max_length=3)
+    order_total_minor: int = Field(gt=0)
+    amount_refunded_minor: int = Field(gt=0)
+    refund_state: Literal["partial_refund", "refunded"]
+    refunded_at: str = Field(min_length=20, max_length=64)
+    physical_return_confirmed: Literal[False]
+    ownership_effect: Literal["financial_status_only"]
 
 
 class FeedbackCreate(StrictModel):
@@ -158,7 +178,7 @@ def ready()->dict[str,object]:
         engine=engine_for_url(url)
         with engine.connect() as conn: conn.execute(text("SELECT 1"))
         tables=set(inspect(engine).get_table_names())
-        required_tables={"wardrobe_items","wardrobe_asset_deletion_outbox","wardrobe_learning_events","wardrobe_outfits","wardrobe_rotation_states","wardrobe_outfit_wear_events"}
+        required_tables={"wardrobe_items","wardrobe_asset_deletion_outbox","wardrobe_learning_events","wardrobe_outfits","wardrobe_rotation_states","wardrobe_outfit_wear_events","wardrobe_purchase_refund_snapshots"}
         wardrobe_columns={column["name"] for column in inspect(engine).get_columns("wardrobe_items")} if "wardrobe_items" in tables else set()
         required_purchase_columns={"commerce_order_id","commerce_order_item_id","purchase_event_id","purchase_quantity","purchase_currency","purchase_unit_price_minor","purchase_paid_at"}
         schema_ready=required_tables.issubset(tables) and required_purchase_columns.issubset(wardrobe_columns)
@@ -272,6 +292,143 @@ def ingest_verified_purchase(payload: VerifiedPurchaseIn) -> dict[str, object]:
         raise
     except Exception as exc:
         raise HTTPException(503, detail={"code": "PURCHASE_OWNERSHIP_STORE_UNAVAILABLE"}) from exc
+
+
+@app.post("/v1/purchases/refund-status", status_code=200, dependencies=[Depends(require_internal_token)], tags=["purchase ownership"])
+def record_purchase_refund_status(payload: PurchaseRefundSnapshotIn) -> dict[str, object]:
+    """Persist cumulative order-level refund state without changing owned wardrobe items."""
+    owner = payload.owner_user_id.strip()
+    if payload.currency != payload.currency.upper() or not payload.currency.isalpha():
+        raise HTTPException(422, detail={"code": "INVALID_REFUND_CURRENCY"})
+    if not payload.payment_intent_id.startswith("pi_") or not payload.charge_id.startswith("ch_"):
+        raise HTTPException(422, detail={"code": "INVALID_STRIPE_REFUND_REFERENCES"})
+    if payload.amount_refunded_minor > payload.order_total_minor:
+        raise HTTPException(422, detail={"code": "REFUND_EXCEEDS_ORDER_TOTAL"})
+    expected_state = "refunded" if payload.amount_refunded_minor == payload.order_total_minor else "partial_refund"
+    if payload.refund_state != expected_state:
+        raise HTTPException(422, detail={"code": "REFUND_STATE_AMOUNT_MISMATCH"})
+    try:
+        refunded_at = datetime.fromisoformat(payload.refunded_at.replace("Z", "+00:00"))
+        if refunded_at.tzinfo is None:
+            raise ValueError("timezone required")
+    except ValueError as exc:
+        raise HTTPException(422, detail={"code": "INVALID_REFUND_TIMESTAMP"}) from exc
+
+    payload_value = payload.model_dump(mode="json")
+    payload_hash = hashlib.sha256(
+        json.dumps(payload_value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    try:
+        with Session(store().engine) as session, session.begin():
+            lines = list(session.scalars(select(WardrobeRow).where(
+                WardrobeRow.owner_user_id == owner,
+                WardrobeRow.commerce_order_id == payload.order_id,
+            ).with_for_update()).all())
+            if not lines:
+                raise HTTPException(404, detail={"code": "PURCHASE_ORDER_NOT_FOUND"})
+            currencies = {line.purchase_currency for line in lines}
+            calculated_total = sum(
+                int(line.purchase_unit_price_minor or 0) * int(line.purchase_quantity or 0)
+                for line in lines
+            )
+            if currencies != {payload.currency} or calculated_total != payload.order_total_minor:
+                raise HTTPException(409, detail={"code": "PURCHASE_ORDER_SNAPSHOT_MISMATCH"})
+
+            key = (owner, payload.order_id)
+            existing = session.get(WardrobePurchaseRefundSnapshotRow, key)
+            if existing is not None:
+                immutable = (
+                    existing.payment_intent_id == payload.payment_intent_id
+                    and existing.currency == payload.currency
+                    and existing.order_total_minor == payload.order_total_minor
+                )
+                if not immutable:
+                    raise HTTPException(409, detail={"code": "PURCHASE_REFUND_ORDER_IDENTITY_CONFLICT"})
+                if existing.event_id == payload.event_id:
+                    if existing.payload_hash != payload_hash:
+                        raise HTTPException(409, detail={"code": "PURCHASE_REFUND_EVENT_ID_CONFLICT"})
+                    return {
+                        "status": "replayed",
+                        "owner_user_id": owner,
+                        "order_id": payload.order_id,
+                        "refund_state": existing.refund_state,
+                        "amount_refunded_minor": existing.amount_refunded_minor,
+                        "wardrobe_items_unchanged": True,
+                    }
+                if payload.amount_refunded_minor <= existing.amount_refunded_minor:
+                    return {
+                        "status": "stale_snapshot_ignored",
+                        "owner_user_id": owner,
+                        "order_id": payload.order_id,
+                        "refund_state": existing.refund_state,
+                        "amount_refunded_minor": existing.amount_refunded_minor,
+                        "wardrobe_items_unchanged": True,
+                    }
+                existing.event_id = payload.event_id
+                existing.provider_event_id = payload.provider_event_id
+                existing.charge_id = payload.charge_id
+                existing.amount_refunded_minor = payload.amount_refunded_minor
+                existing.refund_state = payload.refund_state
+                existing.payload_hash = payload_hash
+                existing.refunded_at = payload.refunded_at
+                existing.physical_return_confirmed = False
+                existing.ownership_effect = "financial_status_only"
+            else:
+                session.add(WardrobePurchaseRefundSnapshotRow(
+                    owner_user_id=owner,
+                    order_id=payload.order_id,
+                    event_id=payload.event_id,
+                    provider_event_id=payload.provider_event_id,
+                    payment_intent_id=payload.payment_intent_id,
+                    charge_id=payload.charge_id,
+                    currency=payload.currency,
+                    order_total_minor=payload.order_total_minor,
+                    amount_refunded_minor=payload.amount_refunded_minor,
+                    refund_state=payload.refund_state,
+                    payload_hash=payload_hash,
+                    refunded_at=payload.refunded_at,
+                    physical_return_confirmed=False,
+                    ownership_effect="financial_status_only",
+                ))
+            session.flush()
+            return {
+                "status": "recorded",
+                "owner_user_id": owner,
+                "order_id": payload.order_id,
+                "refund_state": payload.refund_state,
+                "amount_refunded_minor": payload.amount_refunded_minor,
+                "wardrobe_items_unchanged": True,
+            }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503, detail={"code": "PURCHASE_REFUND_STORE_UNAVAILABLE"}) from exc
+
+
+@app.get("/v1/purchases/refund-status", dependencies=[Depends(require_internal_token)], tags=["purchase ownership"])
+def get_purchase_refund_status(
+    owner_user_id: str = Query(min_length=1, max_length=128),
+    order_id: str = Query(min_length=36, max_length=36),
+) -> dict[str, object]:
+    try:
+        with Session(store().engine) as session:
+            snapshot = session.get(WardrobePurchaseRefundSnapshotRow, (owner_user_id.strip(), order_id))
+            if snapshot is None:
+                return {"owner_user_id": owner_user_id.strip(), "order_id": order_id, "refund_status": "none"}
+            return {
+                "owner_user_id": snapshot.owner_user_id,
+                "order_id": snapshot.order_id,
+                "event_id": snapshot.event_id,
+                "currency": snapshot.currency,
+                "order_total_minor": snapshot.order_total_minor,
+                "amount_refunded_minor": snapshot.amount_refunded_minor,
+                "refund_status": snapshot.refund_state,
+                "refunded_at": snapshot.refunded_at,
+                "physical_return_confirmed": snapshot.physical_return_confirmed,
+                "ownership_effect": snapshot.ownership_effect,
+            }
+    except Exception as exc:
+        raise HTTPException(503, detail={"code": "PURCHASE_REFUND_STORE_UNAVAILABLE"}) from exc
 
 
 @app.post("/v1/feedback", status_code=201, dependencies=[Depends(require_internal_token)], tags=["wardrobe intelligence"])

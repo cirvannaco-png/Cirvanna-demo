@@ -38,3 +38,12 @@ The container runs the long-lived worker. The worker does not log event payloads
     python -m pytest -q
 
 Tests use mocked Commerce and Wardrobe endpoints. Before production, apply both service migrations, configure secrets, run a real signed Stripe test checkout, verify delivery and replay in PostgreSQL, inject downstream outages, verify dead-letter alerts and reconcile event counts. Refund/cancellation ownership reconciliation is blocked until Commerce implements those lifecycle events.
+## Event types and ownership truth
+
+The worker consumes two Commerce outbox event types:
+
+- `commerce.order.paid`: a signed Stripe-paid settlement with immutable order-line snapshots. Each line is idempotently materialized as a Wardrobe purchase record before the event is acknowledged.
+- `commerce.order.refund.updated`: a signed Stripe `charge.refunded` cumulative order-level refund snapshot. It is validated against the trusted provider authority, amount, currency, order, PaymentIntent and event schema before it is written to Wardrobe's owner/order refund ledger.
+
+A refund snapshot is financial state only. It never archives, deletes, or de-owns garment records and must explicitly declare `physical_return_confirmed=false`. Partial refunds and full refunds are not proof of a physical return. Returns, chargebacks, item-level refund allocation and inventory restocking remain separate verified workflows. Unknown or malformed event types are never acknowledged as successful.
+

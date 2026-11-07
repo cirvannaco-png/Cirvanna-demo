@@ -97,6 +97,55 @@ def _purchase_payload(event: dict[str, Any], item: dict[str, Any]) -> dict[str, 
     }
 
 
+def _refund_payload(event: dict[str, Any]) -> dict[str, Any]:
+    payload = event.get("payload")
+    if not isinstance(payload, dict):
+        raise SyncContractError("invalid_refund_payload")
+    event_id = _required_string(event.get("event_id"), "event_id", 36)
+    if payload.get("event_id") != event_id:
+        raise SyncContractError("refund_event_id_mismatch")
+    if event.get("event_type") != "commerce.order.refund.updated" or payload.get("event_type") != "commerce.order.refund.updated":
+        raise SyncContractError("unsupported_refund_event_type")
+    if event.get("schema_version") != 1 or payload.get("schema_version") != 1:
+        raise SyncContractError("unsupported_refund_event_schema")
+    if payload.get("ownership_authority") != "verified_stripe_charge_refund":
+        raise SyncContractError("unverified_refund_authority")
+    if payload.get("physical_return_confirmed") is not False or payload.get("ownership_effect") != "financial_status_only":
+        raise SyncContractError("refund_must_not_imply_physical_return")
+    order_total = payload.get("order_total_minor")
+    refunded = payload.get("amount_refunded_minor")
+    if (
+        not isinstance(order_total, int) or isinstance(order_total, bool) or order_total <= 0
+        or not isinstance(refunded, int) or isinstance(refunded, bool) or refunded <= 0
+        or refunded > order_total
+    ):
+        raise SyncContractError("invalid_refund_amount")
+    expected_state = "refunded" if refunded == order_total else "partial_refund"
+    if payload.get("refund_state") != expected_state:
+        raise SyncContractError("refund_state_amount_mismatch")
+    currency = _required_string(payload.get("currency"), "currency", 3)
+    if len(currency) != 3 or not currency.isalpha() or currency != currency.upper():
+        raise SyncContractError("invalid_refund_currency")
+    return {
+        "event_id": event_id,
+        "provider_event_id": _required_string(payload.get("provider_event_id"), "provider_event_id", 180),
+        "event_type": "commerce.order.refund.updated",
+        "schema_version": 1,
+        "ownership_authority": "verified_stripe_charge_refund",
+        "owner_user_id": _required_string(payload.get("buyer_user_id"), "buyer_user_id", 128),
+        "order_id": _required_string(payload.get("order_id"), "order_id", 36),
+        "payment_intent_id": _required_string(payload.get("payment_intent_id"), "payment_intent_id", 180),
+        "charge_id": _required_string(payload.get("charge_id"), "charge_id", 180),
+        "currency": currency,
+        "order_total_minor": order_total,
+        "amount_refunded_minor": refunded,
+        "refund_state": expected_state,
+        "refunded_at": _required_string(payload.get("refunded_at"), "refunded_at", 64),
+        "physical_return_confirmed": False,
+        "ownership_effect": "financial_status_only",
+    }
+
+
 class CommerceWardrobeWorker:
     def __init__(self, settings: Settings, client: httpx.Client | None = None):
         self.settings = settings
@@ -122,19 +171,31 @@ class CommerceWardrobeWorker:
         for event in events:
             event_id = _required_string(event.get("event_id"), "event_id", 36)
             try:
-                payload = event.get("payload")
-                if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
-                    raise SyncContractError("invalid_paid_order_payload")
-                for item in payload["items"]:
-                    if not isinstance(item, dict):
-                        raise SyncContractError("invalid_paid_order_line")
-                    purchase = _purchase_payload(event, item)
+                event_type = event.get("event_type")
+                if event_type == "commerce.order.paid":
+                    payload = event.get("payload")
+                    if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
+                        raise SyncContractError("invalid_paid_order_payload")
+                    for item in payload["items"]:
+                        if not isinstance(item, dict):
+                            raise SyncContractError("invalid_paid_order_line")
+                        purchase = _purchase_payload(event, item)
+                        response = self.client.post(
+                            f"{self.settings.wardrobe_url}/v1/purchases/verified",
+                            headers=self._wardrobe_headers(),
+                            json=purchase,
+                        )
+                        response.raise_for_status()
+                elif event_type == "commerce.order.refund.updated":
+                    refund = _refund_payload(event)
                     response = self.client.post(
-                        f"{self.settings.wardrobe_url}/v1/purchases/verified",
+                        f"{self.settings.wardrobe_url}/v1/purchases/refund-status",
                         headers=self._wardrobe_headers(),
-                        json=purchase,
+                        json=refund,
                     )
                     response.raise_for_status()
+                else:
+                    raise SyncContractError("unsupported_commerce_event_type")
                 ack = self.client.post(
                     f"{self.settings.commerce_url}/internal/outbox/{event_id}/ack",
                     headers=self._commerce_headers(),
