@@ -204,7 +204,7 @@ def test_feedback_audit_is_user_scoped(client, monkeypatch):
 def test_feedback_audit_deletion_is_user_scoped_and_idempotent(client):
     from datetime import datetime, timezone
     from sqlalchemy.orm import Session
-    from app.store import WardrobeFeedbackEventRow, store as _unused
+    from app.store import WardrobeFeedbackEventRow
     from app.main import store
 
     engine = store().engine
