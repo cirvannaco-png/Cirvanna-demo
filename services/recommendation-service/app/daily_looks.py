@@ -231,14 +231,18 @@ def _safe_attribute_tags(items: list[dict[str, Any]]) -> dict[str, list[str]]:
     style: set[str] = set()
     colors: set[str] = set()
     occasions: set[str] = set()
+    prefixes = ("style", "aesthetic", "silhouette", "pattern", "color", "colour", "occasion")
     for item in items:
         for raw in item.get("attributes", []):
-            value = _normalise(str(raw))
-            if not value:
-                continue
-            key, separator, tagged_value = value.partition(":")
+            raw_value = str(raw).strip().casefold()
+            key, separator, tagged_value = raw_value.partition(":")
+            if not separator:
+                for prefix in prefixes:
+                    if raw_value.startswith(prefix + " "):
+                        key, tagged_value, separator = prefix, raw_value[len(prefix) + 1:], " "
+                        break
             if separator:
-                tag = re.sub(r"[^a-z0-9_-]", "", tagged_value.replace(" ", "_"))[:40]
+                tag = re.sub(r"[^a-z0-9_-]", "", _normalise(tagged_value).replace(" ", "_"))[:40]
                 if not tag:
                     continue
                 if key in {"style", "aesthetic", "silhouette", "pattern"}:
@@ -248,7 +252,7 @@ def _safe_attribute_tags(items: list[dict[str, Any]]) -> dict[str, list[str]]:
                 elif key == "occasion":
                     occasions.add(tag)
             else:
-                safe = re.sub(r"[^a-z0-9_-]", "", value.replace(" ", "_"))[:40]
+                safe = re.sub(r"[^a-z0-9_-]", "", _normalise(raw_value).replace(" ", "_"))[:40]
                 if safe in _EVALUATION_STYLE_WORDS:
                     style.add(safe)
                 if safe in _EVALUATION_COLOR_WORDS:
@@ -265,11 +269,18 @@ def _safe_attribute_tags(items: list[dict[str, Any]]) -> dict[str, list[str]]:
 def _preferred_trace_tags(style_signals: tuple[str, ...]) -> tuple[list[str], list[str]]:
     styles: set[str] = set()
     colors: set[str] = set()
+    prefixes = ("style", "aesthetic", "silhouette", "pattern", "color", "colour")
     for raw in style_signals:
-        key, separator, value = raw.partition(":")
+        raw_value = str(raw).strip().casefold()
+        key, separator, tagged_value = raw_value.partition(":")
+        if not separator:
+            for prefix in prefixes:
+                if raw_value.startswith(prefix + " "):
+                    key, tagged_value, separator = prefix, raw_value[len(prefix) + 1:], " "
+                    break
         if not separator:
             continue
-        normalized = re.sub(r"[^a-z0-9_-]", "", _normalise(value).replace(" ", "_"))[:40]
+        normalized = re.sub(r"[^a-z0-9_-]", "", _normalise(tagged_value).replace(" ", "_"))[:40]
         if not normalized:
             continue
         if key in {"style", "aesthetic", "silhouette", "pattern"}:
@@ -561,6 +572,8 @@ def build_daily_looks(
     if len(wardrobe_items) > 150:
         raise ValueError("wardrobe snapshot exceeds 150 items")
 
+    if evaluation_wardrobe_items is not None and len(evaluation_wardrobe_items) > 150:
+        raise ValueError("evaluation wardrobe snapshot must not exceed 150 items")
     active = _normalise_active_items(wardrobe_items, user_id)
     evaluation_source = evaluation_wardrobe_items if evaluation_wardrobe_items is not None else wardrobe_items
     evaluation_active = _normalise_active_items(evaluation_source, user_id) if evaluation_trace_enabled else active
