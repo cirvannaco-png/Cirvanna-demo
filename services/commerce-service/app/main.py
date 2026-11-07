@@ -235,7 +235,7 @@ class CommerceOutboxEvent(Base):
     __tablename__ = "commerce_outbox_events"
     __table_args__ = (
         UniqueConstraint("aggregate_type", "aggregate_id", "event_type", name="uq_commerce_outbox_aggregate_event"),
-        Index("ix_commerce_outbox_pending", "delivered_at", "created_at"),
+        Index("ix_commerce_outbox_pending", "delivered_at", "dead_letter_at", "next_attempt_at"),
     )
     event_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     aggregate_type: Mapped[str] = mapped_column(String(48), nullable=False)
@@ -246,7 +246,33 @@ class CommerceOutboxEvent(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lease_owner: Mapped[str | None] = mapped_column(String(128))
+    dead_letter_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(String(500))
+
+
+class OutboxClaimIn(BaseModel):
+    worker_id: str = Field(min_length=3, max_length=128)
+    limit: int = Field(default=20, ge=1, le=100)
+
+
+class OutboxLeaseIn(BaseModel):
+    worker_id: str = Field(min_length=3, max_length=128)
+
+
+class OutboxFailureIn(BaseModel):
+    worker_id: str = Field(min_length=3, max_length=128)
+    error_code: str = Field(min_length=1, max_length=120)
+
+
+def require_sync_token(token: Annotated[str | None, Header(alias="X-Commerce-Sync-Token")] = None) -> None:
+    expected = os.getenv("COMMERCE_SYNC_TOKEN", "")
+    if len(expected.encode()) < 32:
+        raise HTTPException(503, detail={"code": "COMMERCE_SYNC_TOKEN_NOT_CONFIGURED"})
+    if not token or not hmac.compare_digest(token, expected):
+        raise HTTPException(401, detail={"code": "COMMERCE_SYNC_AUTH_FAILED"})
 
 
 class PaymentWebhookEvent(Base):
@@ -1380,3 +1406,74 @@ def inventory_audit(actor: Annotated[Actor, Depends(require_actor)], db: Annotat
         (Variant.on_hand < 0) | (Variant.reserved_qty < 0) | (Variant.reserved_qty > Variant.on_hand))).all())
     return {"ok": not bad, "violations": [{"variant_id": v.id, "on_hand": v.on_hand,
         "reserved_qty": v.reserved_qty, "version": v.version} for v in bad]}
+
+
+@app.post("/internal/outbox/claim", dependencies=[Depends(require_sync_token)], tags=["internal event delivery"])
+def claim_outbox_events(payload: OutboxClaimIn) -> dict[str, object]:
+    """Lease pending outbox events for the authenticated Sync worker."""
+    current = now()
+    try:
+        with SessionLocal() as db, db.begin():
+            events = list(db.scalars(select(CommerceOutboxEvent).where(
+                CommerceOutboxEvent.delivered_at.is_(None),
+                CommerceOutboxEvent.dead_letter_at.is_(None),
+                CommerceOutboxEvent.next_attempt_at <= current,
+                (CommerceOutboxEvent.lease_until.is_(None) | (CommerceOutboxEvent.lease_until < current)),
+            ).order_by(CommerceOutboxEvent.created_at, CommerceOutboxEvent.event_id)
+              .with_for_update(skip_locked=True).limit(payload.limit)).all())
+            for event in events:
+                event.attempts += 1
+                event.lease_owner = payload.worker_id.strip()
+                event.lease_until = current + timedelta(seconds=90)
+            db.flush()
+            return {"worker_id": payload.worker_id.strip(), "events": [{
+                "event_id": event.event_id, "event_type": event.event_type,
+                "schema_version": event.schema_version, "payload": event.payload,
+                "attempt": event.attempts, "lease_until": event.lease_until.isoformat(),
+            } for event in events]}
+    except Exception as exc:
+        raise HTTPException(503, detail={"code": "COMMERCE_OUTBOX_CLAIM_FAILED"}) from exc
+
+
+@app.post("/internal/outbox/{event_id}/ack", dependencies=[Depends(require_sync_token)], tags=["internal event delivery"])
+def acknowledge_outbox_event(event_id: str, payload: OutboxLeaseIn) -> dict[str, object]:
+    current = now()
+    with SessionLocal() as db, db.begin():
+        event = db.scalar(select(CommerceOutboxEvent).where(
+            CommerceOutboxEvent.event_id == event_id).with_for_update())
+        if event is None:
+            raise HTTPException(404, detail={"code": "COMMERCE_OUTBOX_EVENT_NOT_FOUND"})
+        if event.delivered_at is not None:
+            return {"status": "already_delivered", "event_id": event_id}
+        if event.lease_owner != payload.worker_id.strip() or event.lease_until is None or event.lease_until < current:
+            raise HTTPException(409, detail={"code": "COMMERCE_OUTBOX_LEASE_LOST"})
+        event.delivered_at = current
+        event.lease_owner = None
+        event.lease_until = None
+        event.last_error = None
+        return {"status": "delivered", "event_id": event_id}
+
+
+@app.post("/internal/outbox/{event_id}/fail", dependencies=[Depends(require_sync_token)], tags=["internal event delivery"])
+def fail_outbox_event(event_id: str, payload: OutboxFailureIn) -> dict[str, object]:
+    current = now()
+    with SessionLocal() as db, db.begin():
+        event = db.scalar(select(CommerceOutboxEvent).where(
+            CommerceOutboxEvent.event_id == event_id).with_for_update())
+        if event is None:
+            raise HTTPException(404, detail={"code": "COMMERCE_OUTBOX_EVENT_NOT_FOUND"})
+        if event.delivered_at is not None:
+            return {"status": "already_delivered", "event_id": event_id}
+        if event.lease_owner != payload.worker_id.strip() or event.lease_until is None or event.lease_until < current:
+            raise HTTPException(409, detail={"code": "COMMERCE_OUTBOX_LEASE_LOST"})
+        event.last_error = payload.error_code.strip()[:500]
+        event.lease_owner = None
+        event.lease_until = None
+        if event.attempts >= 8:
+            event.dead_letter_at = current
+            return {"status": "dead_lettered", "event_id": event_id, "attempts": event.attempts}
+        delay = min(15 * (2 ** max(event.attempts - 1, 0)), 900)
+        event.next_attempt_at = current + timedelta(seconds=delay)
+        return {"status": "retry_scheduled", "event_id": event_id, "retry_after_seconds": delay}
+
+
