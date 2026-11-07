@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from enum import Enum
 import re
+from .taxonomy import normalize_category
 
 ASSET_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{2,159}$")
 
@@ -45,6 +46,7 @@ class WardrobeItem:
             value = getattr(self, field_name)
             if not isinstance(value, str) or not value.strip():
                 raise ValueError(f"{field_name} must not be empty")
+        object.__setattr__(self, "category", normalize_category(self.category))
         if not isinstance(self.attributes, tuple):
             raise ValueError("attributes must be a tuple")
         if any(not isinstance(value, str) or not value.strip() for value in self.attributes):
