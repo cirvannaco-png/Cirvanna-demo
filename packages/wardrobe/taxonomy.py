@@ -5,6 +5,8 @@ are normalized at the domain boundary so old records remain readable.
 """
 from __future__ import annotations
 
+import re
+
 TAXONOMY_VERSION = "1.0.0"
 
 # Keep IDs stable: integrations should store these keys, never localized labels.
@@ -63,9 +65,13 @@ def normalize_category(value: str) -> str:
         raise ValueError("category must not be empty")
     key = value.strip().casefold().replace("-", "_").replace(" ", "_")
     key = _ALIASES.get(key, key)
-    if key not in _CATEGORY_IDS:
-        raise ValueError(f"unsupported wardrobe category: {value.strip()}")
-    return key
+    if key in _CATEGORY_IDS:
+        return key
+    # Preserve valid custom/legacy keys so older records and future category
+    # extensions remain readable without silently relabeling them as "other".
+    if re.fullmatch(r"[a-z0-9][a-z0-9_]{1,79}", key):
+        return key
+    raise ValueError(f"invalid wardrobe category key: {value.strip()}")
 
 
 def list_categories() -> dict[str, object]:
