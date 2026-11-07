@@ -185,6 +185,7 @@ class CommerceOrder(Base):
         Index("uq_commerce_order_payment_intent", "payment_intent_id", unique=True),
         CheckConstraint("subtotal_minor >= 0", name="ck_commerce_order_subtotal_nonnegative"),
         CheckConstraint("amount_refunded_minor >= 0 AND amount_refunded_minor <= subtotal_minor", name="ck_commerce_order_refunded_nonnegative"),
+        CheckConstraint("refund_state IN ('none', 'partial_refund', 'refunded')", name="ck_commerce_order_refund_state"),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     order_number: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
@@ -1440,8 +1441,8 @@ async def stripe_webhook(request: Request, db: Annotated[Session, Depends(get_db
                 payment_intent = obj.get("payment_intent")
                 if isinstance(payment_intent, dict):
                     payment_intent = payment_intent.get("id")
-                if payment_intent is not None and not isinstance(payment_intent, str):
-                    raise HTTPException(400, detail={"code": "INVALID_PAYMENT_INTENT_REFERENCE"})
+                if not isinstance(payment_intent, str) or not payment_intent.strip():
+                    raise HTTPException(400, detail={"code": "PAYMENT_INTENT_REQUIRED_FOR_REFUND_RECONCILIATION"})
                 settle_paid(
                     db, order, int(obj.get("amount_total", -1)), str(obj.get("currency", "")),
                     payment_intent_id=payment_intent,
