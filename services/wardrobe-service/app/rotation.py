@@ -40,7 +40,7 @@ class RotationStateWrite(BaseModel):
     owner_user_id: str = Field(min_length=1, max_length=128)
     expected_version: int = Field(ge=0)
     cycle_number: int = Field(ge=1)
-    cycle_started_at: str = Field(min_length=20, max_length=64)
+    cycle_started_at: str = Field(min_length=19, max_length=64)
     surfaced_item_ids: list[str] = Field(max_length=150)
 
     @field_validator("owner_user_id")
