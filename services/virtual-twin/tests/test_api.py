@@ -54,7 +54,8 @@ async def _false():
     return False
 
 
-def test_readiness_fails_closed_without_dependencies():
+def test_readiness_fails_closed_without_dependencies(monkeypatch):
+    monkeypatch.delenv("VIRTUAL_TWIN_API_TOKEN", raising=False)
     response = client.get("/ready")
     assert response.status_code == 503
     detail = response.json()["detail"]
