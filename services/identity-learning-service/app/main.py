@@ -180,12 +180,32 @@ class ConsentPut(StrictModel):
     consent_version: str = Field(min_length=1, max_length=80)
     granted: bool
 
+    @field_validator("consent_id", "resource_id")
+    @classmethod
+    def normalize_optional_ids(cls, value):
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("optional identifiers must not be blank")
+        return normalized
+
 
 class ConsentVerifyIn(StrictModel):
     subject_id: str = Field(min_length=1, max_length=128)
     consent_id: str = Field(min_length=8, max_length=128)
     required_scopes: list[Literal["personalization", "style_learning", "profile_storage", "image_processing", "body_measurements", "virtual_twin_storage", "virtual_try_on", "click_it"]] = Field(min_length=1, max_length=8)
     resource_id: str | None = Field(default=None, min_length=3, max_length=160)
+
+    @field_validator("consent_id", "resource_id")
+    @classmethod
+    def normalize_optional_ids(cls, value):
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("optional identifiers must not be blank")
+        return normalized
 
     @model_validator(mode="after")
     def unique_scopes(self):
@@ -621,4 +641,4 @@ def purge_expired(db: Annotated[Session, Depends(get_db)], cron_token: Annotated
 def list_consents(subject_id: str, db: Annotated[Session, Depends(get_db)]):
     subject = subject_or_404(subject_id)
     rows = list(db.scalars(select(ConsentReceipt).where(ConsentReceipt.subject_id == subject).order_by(ConsentReceipt.created_at)).all())
-    return [{"receipt_id": x.receipt_id, "scope": x.scope, "consent_version": x.consent_version, "granted": x.granted, "granted_at": x.granted_at.isoformat() if x.granted_at else None, "revoked_at": x.revoked_at.isoformat() if x.revoked_at else None} for x in rows]
+    return [{"receipt_id": x.receipt_id, "consent_id": x.consent_id, "resource_id": x.resource_id, "scope": x.scope, "consent_version": x.consent_version, "granted": x.granted, "granted_at": x.granted_at.isoformat() if x.granted_at else None, "revoked_at": x.revoked_at.isoformat() if x.revoked_at else None} for x in rows]
