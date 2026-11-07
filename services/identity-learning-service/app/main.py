@@ -76,6 +76,17 @@ class USIProfileRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
 
+class ColorProfileRow(Base):
+    """User-declared colour preferences; objective colour analysis is stored separately."""
+    __tablename__ = "identity_usi_color_profiles"
+    subject_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    profile_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    liked_colors: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    disliked_colors: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    best_version_colors: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
 class ConsentReceipt(Base):
     __tablename__ = "identity_tal_consent_receipts"
     __table_args__ = (Index("ix_identity_tal_consent_subject_scope", "subject_id", "scope", "granted"),)
@@ -140,6 +151,23 @@ class ProfilePut(StrictModel):
         if len(ids) != len(set(ids)):
             raise ValueError("preference_id values must be unique")
         return self
+
+
+class ColorProfilePut(StrictModel):
+    expected_version: int = Field(ge=0)
+    liked_colors: list[str] = Field(default_factory=list, max_length=40)
+    disliked_colors: list[str] = Field(default_factory=list, max_length=40)
+    best_version_colors: list[str] = Field(default_factory=list, max_length=40)
+
+    @field_validator("liked_colors", "disliked_colors", "best_version_colors")
+    @classmethod
+    def normalize_color_list(cls, values):
+        normalized = [" ".join(value.strip().casefold().split()) for value in values]
+        if any(not value or len(value) > 40 for value in normalized):
+            raise ValueError("color names must be non-empty and at most 40 characters")
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("color names must be unique within each preference list")
+        return normalized
 
 
 class ConsentPut(StrictModel):
@@ -243,6 +271,7 @@ def health():
 def readiness(db: Annotated[Session, Depends(get_db)]):
     try:
         db.execute(select(USIProfileRow.subject_id).limit(1))
+        db.execute(select(ColorProfileRow.subject_id).limit(1))
         db.execute(select(ConsentReceipt.receipt_id).limit(1))
         db.execute(select(TALEvent.event_id).limit(1))
         return {"status": "ready", "service": SERVICE, "database": "reachable", "durable_usi": True, "durable_tal": True, "ready": True}
@@ -300,6 +329,89 @@ def put_profile(subject_id: str, payload: ProfilePut, db: Annotated[Session, Dep
         db.expire_all()
         row = db.get(USIProfileRow, subject)
     return {"subject_id": subject, "profile_version": row.profile_version, "preferences": row.preferences, "updated_at": row.updated_at.isoformat()}
+
+
+@app.get("/v1/color-profiles/{subject_id}", dependencies=[Depends(require_internal_token)])
+def get_color_profile(subject_id: str, db: Annotated[Session, Depends(get_db)]):
+    subject = subject_or_404(subject_id)
+    active = db.scalar(select(ConsentReceipt).where(
+        ConsentReceipt.subject_id == subject,
+        ConsentReceipt.scope == "profile_storage",
+        ConsentReceipt.granted.is_(True),
+        ConsentReceipt.revoked_at.is_(None),
+    ).limit(1))
+    if active is None:
+        raise HTTPException(403, detail={"code": "ACTIVE_PROFILE_STORAGE_CONSENT_REQUIRED"})
+    row = db.get(ColorProfileRow, subject)
+    return {
+        "subject_id": subject,
+        "profile_version": row.profile_version if row else 0,
+        "liked_colors": row.liked_colors if row else [],
+        "disliked_colors": row.disliked_colors if row else [],
+        "best_version_colors": row.best_version_colors if row else [],
+        "analysis": {
+            "status": "unavailable",
+            "reason_code": "NO_VALIDATED_COLOR_ANALYSIS_MODEL",
+            "message": "No validated colour-analysis model is connected. These lists are user-declared preferences, not objective skin-tone analysis.",
+        },
+    }
+
+
+@app.put("/v1/color-profiles/{subject_id}", dependencies=[Depends(require_internal_token)])
+def put_color_profile(subject_id: str, payload: ColorProfilePut, db: Annotated[Session, Depends(get_db)]):
+    subject = subject_or_404(subject_id)
+    active = db.scalar(select(ConsentReceipt).where(
+        ConsentReceipt.subject_id == subject,
+        ConsentReceipt.scope == "profile_storage",
+        ConsentReceipt.granted.is_(True),
+        ConsentReceipt.revoked_at.is_(None),
+    ).limit(1))
+    if active is None:
+        raise HTTPException(403, detail={"code": "ACTIVE_PROFILE_STORAGE_CONSENT_REQUIRED"})
+    row = db.get(ColorProfileRow, subject)
+    current = row.profile_version if row else 0
+    if payload.expected_version != current:
+        raise HTTPException(409, detail={"code": "COLOR_PROFILE_VERSION_CONFLICT", "current_version": current})
+    values = {
+        "liked_colors": payload.liked_colors,
+        "disliked_colors": payload.disliked_colors,
+        "best_version_colors": payload.best_version_colors,
+    }
+    now = utcnow()
+    if row is None:
+        row = ColorProfileRow(subject_id=subject, profile_version=1, updated_at=now, **values)
+        db.add(row)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            latest = db.scalar(select(ColorProfileRow.profile_version).where(ColorProfileRow.subject_id == subject)) or 0
+            raise HTTPException(409, detail={"code": "COLOR_PROFILE_VERSION_CONFLICT", "current_version": latest})
+    else:
+        result = db.execute(
+            update(ColorProfileRow)
+            .where(ColorProfileRow.subject_id == subject, ColorProfileRow.profile_version == payload.expected_version)
+            .values(profile_version=ColorProfileRow.profile_version + 1, updated_at=now, **values)
+        )
+        if result.rowcount != 1:
+            db.rollback()
+            latest = db.scalar(select(ColorProfileRow.profile_version).where(ColorProfileRow.subject_id == subject)) or 0
+            raise HTTPException(409, detail={"code": "COLOR_PROFILE_VERSION_CONFLICT", "current_version": latest})
+        db.commit()
+        db.expire_all()
+        row = db.get(ColorProfileRow, subject)
+    return {
+        "subject_id": subject,
+        "profile_version": row.profile_version,
+        "liked_colors": row.liked_colors,
+        "disliked_colors": row.disliked_colors,
+        "best_version_colors": row.best_version_colors,
+        "analysis": {
+            "status": "unavailable",
+            "reason_code": "NO_VALIDATED_COLOR_ANALYSIS_MODEL",
+            "message": "Saved preferences are user-declared. Objective complexion/undertone analysis remains unavailable until a validated model is deployed.",
+        },
+    }
 
 
 @app.post("/v1/tal/consents", dependencies=[Depends(require_internal_token)])
@@ -419,6 +531,7 @@ def export_events(subject_id: str, db: Annotated[Session, Depends(get_db)]):
     return {
         "subject_id": subject,
         "profile": {"profile_version": profile.profile_version, "preferences": profile.preferences} if profile else None,
+        "color_profile": (lambda row: {"profile_version": row.profile_version, "liked_colors": row.liked_colors, "disliked_colors": row.disliked_colors, "best_version_colors": row.best_version_colors})(db.get(ColorProfileRow, subject)) if db.get(ColorProfileRow, subject) else None,
         "consent_receipts": [{"receipt_id": x.receipt_id, "scope": x.scope, "consent_version": x.consent_version, "granted": x.granted, "granted_at": x.granted_at.isoformat() if x.granted_at else None, "revoked_at": x.revoked_at.isoformat() if x.revoked_at else None} for x in consents],
         "events": [{"event_id": x.event_id, "feature_key": x.feature_key, "value": x.value, "event_kind": x.event_kind, "supersedes_event_id": x.supersedes_event_id, "observed_at": x.observed_at.isoformat(), "expires_at": x.expires_at.isoformat() if x.expires_at else None, "consent_receipt_id": x.consent_receipt_id} for x in events],
     }
@@ -433,6 +546,9 @@ def delete_user_data(subject_id: str, db: Annotated[Session, Depends(get_db)]):
     db.execute(delete(ConsentReceipt).where(ConsentReceipt.subject_id == subject))
     if profile is not None:
         db.delete(profile)
+    color_profile = db.get(ColorProfileRow, subject)
+    if color_profile is not None:
+        db.delete(color_profile)
     receipt = TALDeletionReceipt(
         receipt_id=str(uuid.uuid4()), subject_digest=hashlib.sha256(subject.encode()).hexdigest(),
         deleted_event_count=len(event_ids), deleted_profile=profile is not None,
