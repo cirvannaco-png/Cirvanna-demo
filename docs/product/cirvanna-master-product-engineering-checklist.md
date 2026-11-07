@@ -32,8 +32,8 @@
 - [ ] Add cross-domain schemas, API contract tests, idempotency keys, optimistic concurrency and owner/tenant isolation tests.
 
 ### 1.2 Wardrobe domain and item lifecycle
-- [x] Merge the versioned, owner-scoped single-item edit API (PR #128); its Wardrobe persistence and architecture checks passed. **Scope limitation:** this verifies the backend endpoint only; user-facing edit controls and saved-outfit piece editing are not complete.
-- [ ] Connect single-item editing to the authenticated BFF and wardrobe UI; support editing one selected garment/accessory without changing other items, with stale-version conflict handling and undo/correction.
+- [x] Merge the versioned, owner-scoped single-item edit API (PR #128); its Wardrobe persistence and architecture checks passed.
+- [x] Connect single-item editing to the authenticated BFF and Wardrobe UI; edit one selected garment/accessory without changing other items, with stale-version conflict handling and reload. User-facing undo remains open.
 - [x] Saved-outfit piece editing implemented in PR #135: create/list saved looks from owned items; add, replace or remove one piece with optimistic versioning and command replay protection; the UI preserves unaffected pieces. Deployment migration and device QA remain release gates.
 - [ ] Expand and validate an extensible category taxonomy for clothing, shoes/footwear, bags, jewellery, ties, glasses/frames, watches, accessories, makeup and other user-owned beauty products.
 - [ ] Support user-added items with explicit provenance, optional photos, metadata correction and appropriate consent; do not silently turn image guesses into facts.
@@ -69,8 +69,8 @@
 ## Step 2 — Intelligence, connected experience and measurable quality
 
 ### 2.1 Personal colour profile (independent Style Desk product)
-- [~] User-owned, editable Style Desk colour profile implemented on a feature branch in USI/TAL, separate from catalogue colour metadata; merge, CI and deployment migration remain pending.
-- [~] The profile captures user-declared liked, disliked and “brings out my best version” colours with optimistic versioning and profile-storage consent. Objective analysis is explicitly marked unavailable; no skin-tone inference is fabricated.
+- [x] User-owned, editable Style Desk colour profile merged in PR #137, separate from catalogue colour metadata; it uses versioned USI/TAL storage and existing profile-storage consent.
+- [x] The profile captures user-declared liked, disliked and “brings out my best version” colours with optimistic versioning and export/deletion support. Objective analysis is explicitly marked unavailable; no skin-tone inference is fabricated.
 - [ ] Store colour observations separately from user preference: undertone/contrast/palette hypotheses must be evidence-labelled, confidence-aware and correctable.
 - [ ] Define a controlled capture protocol (neutral lighting guidance, exposure/white-balance checks, camera/device metadata, reference calibration where appropriate) and detect unsuitable lighting before analysis.
 - [ ] Evaluate colour analysis across skin tones, devices, lighting conditions and regions. Report subgroup performance and uncertainty; do not collapse preference into an objective “best colour”.
@@ -152,13 +152,14 @@
 ## Current verified baseline and immediate work
 
 - [x] Repository inspected on 7 November 2026; active monorepo and service boundaries identified.
-- [x] Versioned single-item Wardrobe edit API merged in PR #128; its architecture and Wardrobe persistence checks passed. It is not yet a complete screen-level feature.
+- [x] Versioned single-item Wardrobe edit API and authenticated UI controls merged in PR #128; its Wardrobe persistence and architecture checks passed.
 - [~] DermalSight has a fail-closed ONNX adapter and signed release-evidence gate, but the trained/validated model and dataset are absent.
 - [~] Commerce documents immutable checkout line snapshots and transactional payment/stock controls; cancellation/refund and deployment-level price-integrity verification remain open.
 - [~] Wardrobe has authenticated persistence and feedback contracts; durable production DB, storage deletion worker and end-to-end integrations remain gated.
 - [~] FCI contract exists; no independently validated calibrated provider or proven 4% measurement accuracy.
 - [~] Virtual Twin exposes truthful capability boundaries; its persistent registry/asset/consent work is in open PRs and not yet a production capability.
-- [~] Saved-outfit piece editing is implemented in merged PR #135. The user-declared colour preference profile is under review on a separate feature branch. PNELLY wardrobe companion, complete personal outfit graph, human-reviewed dataset, multi-product try-on, and end-to-end marketplace-to-wardrobe/Twin flows remain to be integrated and verified.
+- [x] Saved-outfit piece editing is implemented in merged PR #135; the user-declared colour preference profile is implemented in merged PR #137. PNELLY wardrobe companion, complete personal outfit graph, human-reviewed dataset, multi-product try-on, and end-to-end marketplace-to-wardrobe/Twin flows remain to be integrated and verified.
+- [!] The Decision Gateway workflow is currently red on the repository baseline: its existing `test_tari_daily_looks.py` expects PNELLY daily-look gateway routes/helpers absent from `main` (the stale PR #104 contains a candidate implementation). This is a pre-existing integration gap, not a failure in PR #135 or PR #137.
 - [ ] Resolve PR #130 on a fresh base before integrating its privacy data-rights work; do not merge stale conflicting branch state.
 - [ ] Reconcile existing open PRs and branches before creating parallel implementations. Preserve reviewable feature branches and never bypass CI or domain ownership.
 
