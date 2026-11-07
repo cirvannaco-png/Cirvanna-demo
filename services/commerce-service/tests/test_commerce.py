@@ -421,6 +421,7 @@ def test_checkout_reserves_stock_idempotently_and_only_signed_paid_webhook_settl
 
     event = {"id": "evt_test_paid_0001", "type": "checkout.session.completed",
         "data": {"object": {"id": "cs_test_checkout_1", "metadata": {"order_id": order["order_id"]},
+            "payment_intent": "pi_test_checkout_1",
             "payment_status": "paid", "amount_total": 500, "currency": "kes"}}}
     raw = json.dumps(event, separators=(",", ":")).encode()
     sig = sign_stripe_event(raw, "whsec_test_unit_only_secret")
@@ -445,6 +446,132 @@ def test_checkout_reserves_stock_idempotently_and_only_signed_paid_webhook_settl
     db.close()
     replay = client.post("/webhooks/stripe", content=raw, headers={"Stripe-Signature": sig, "Content-Type": "application/json"})
     assert replay.status_code == 200 and replay.json()["duplicate"] is True
+
+
+def test_verified_charge_refund_is_monotonic_and_does_not_change_order_or_wardrobe_ownership(client, monkeypatch):
+    offer = seed_offer(stock=5, price_minor=500)
+    buyer = auth("buyer-refund", email="buyer-refund@example.test")
+    client.post("/cart/items", json={"variant_id": offer["variant_id"], "quantity": 1}, headers=buyer)
+    configure_stripe(monkeypatch, session_id="cs_test_refund")
+    checkout = client.post(
+        "/checkout", headers={**buyer, "Idempotency-Key": "checkout-refund-key-0001"}
+    )
+    order_id = checkout.json()["order"]["order_id"]
+
+    paid_event = {
+        "id": "evt_refund_setup_paid",
+        "type": "checkout.session.completed",
+        "data": {"object": {
+            "id": "cs_test_refund",
+            "metadata": {"order_id": order_id},
+            "payment_intent": "pi_test_refund_0001",
+            "payment_status": "paid",
+            "amount_total": 500,
+            "currency": "kes",
+        }},
+    }
+    paid_raw = json.dumps(paid_event, separators=(",", ":")).encode()
+    paid_sig = sign_stripe_event(paid_raw, "whsec_test_unit_only_secret")
+    paid = client.post(
+        "/webhooks/stripe", content=paid_raw,
+        headers={"Stripe-Signature": paid_sig, "Content-Type": "application/json"},
+    )
+    assert paid.status_code == 200
+
+    def refund_event(event_id, amount_refunded):
+        return {
+            "id": event_id,
+            "type": "charge.refunded",
+            "data": {"object": {
+                "id": "ch_test_refund_0001",
+                "payment_intent": "pi_test_refund_0001",
+                "amount": 500,
+                "amount_refunded": amount_refunded,
+                "currency": "kes",
+            }},
+        }
+
+    partial_raw = json.dumps(refund_event("evt_refund_partial", 200), separators=(",", ":")).encode()
+    partial_sig = sign_stripe_event(partial_raw, "whsec_test_unit_only_secret")
+    partial = client.post(
+        "/webhooks/stripe", content=partial_raw,
+        headers={"Stripe-Signature": partial_sig, "Content-Type": "application/json"},
+    )
+    assert partial.status_code == 200
+    assert partial.json()["duplicate"] is False
+
+    order = client.get(f"/orders/{order_id}", headers=buyer).json()
+    assert order["status"] == "paid"
+    assert order["payment_status"] == "partially_refunded"
+    assert order["refund_status"] == "partially_refunded"
+    assert order["amount_refunded_minor"] == 200
+
+    db = TEST_SESSION()
+    paid_events = db.query(main.CommerceOutboxEvent).filter_by(
+        aggregate_id=order_id, event_type="commerce.order.paid"
+    ).all()
+    refund_events = db.query(main.CommerceOutboxEvent).filter_by(
+        event_type="commerce.order.refund.updated"
+    ).all()
+    assert len(paid_events) == 1
+    assert len(refund_events) == 1
+    payload = refund_events[0].payload
+    assert payload["order_id"] == order_id
+    assert payload["buyer_user_id"] == "buyer-refund"
+    assert payload["amount_refunded_minor"] == 200
+    assert payload["physical_return_confirmed"] is False
+    assert payload["ownership_effect"] == "financial_status_only"
+    db.close()
+
+    full_raw = json.dumps(refund_event("evt_refund_full", 500), separators=(",", ":")).encode()
+    full_sig = sign_stripe_event(full_raw, "whsec_test_unit_only_secret")
+    full = client.post(
+        "/webhooks/stripe", content=full_raw,
+        headers={"Stripe-Signature": full_sig, "Content-Type": "application/json"},
+    )
+    assert full.status_code == 200
+    final_order = client.get(f"/orders/{order_id}", headers=buyer).json()
+    assert final_order["status"] == "paid"
+    assert final_order["payment_status"] == "refunded"
+    assert final_order["amount_refunded_minor"] == 500
+
+    stale_raw = json.dumps(refund_event("evt_refund_stale", 200), separators=(",", ":")).encode()
+    stale_sig = sign_stripe_event(stale_raw, "whsec_test_unit_only_secret")
+    stale = client.post(
+        "/webhooks/stripe", content=stale_raw,
+        headers={"Stripe-Signature": stale_sig, "Content-Type": "application/json"},
+    )
+    assert stale.status_code == 200
+    after_stale = client.get(f"/orders/{order_id}", headers=buyer).json()
+    assert after_stale["payment_status"] == "refunded"
+    assert after_stale["amount_refunded_minor"] == 500
+    replay = client.post(
+        "/webhooks/stripe", content=full_raw,
+        headers={"Stripe-Signature": full_sig, "Content-Type": "application/json"},
+    )
+    assert replay.status_code == 200 and replay.json()["duplicate"] is True
+
+
+def test_refund_webhook_rejects_unknown_payment_intent_and_amount_mismatch(client, monkeypatch):
+    unknown = {
+        "id": "evt_refund_unknown",
+        "type": "charge.refunded",
+        "data": {"object": {
+            "id": "ch_unknown",
+            "payment_intent": "pi_missing",
+            "amount": 100,
+            "amount_refunded": 100,
+            "currency": "kes",
+        }},
+    }
+    raw = json.dumps(unknown, separators=(",", ":")).encode()
+    signature = sign_stripe_event(raw, "whsec_test_unit_only_secret")
+    response = client.post(
+        "/webhooks/stripe", content=raw,
+        headers={"Stripe-Signature": signature, "Content-Type": "application/json"},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "REFUND_ORDER_NOT_FOUND_OR_NOT_PAID"
 
 
 def test_stripe_webhook_rejects_invalid_signature_and_amount_mismatch(client, monkeypatch):
