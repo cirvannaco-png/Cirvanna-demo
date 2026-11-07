@@ -10,7 +10,7 @@ TOKEN="vton-worker-test-token-with-more-than-32-bytes"
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setenv("VTON_WORKER_TOKEN",TOKEN)
-    monkeypatch.setenv("FASHN_VTON_SOURCE_REF","a"*40)
+    monkeypatch.setenv("FASHN_VTON_SOURCE_REF",main.PINNED_FASHN_VTON_COMMIT)
     monkeypatch.setenv("FASHN_VTON_WEIGHTS_DIR","/mock/weights")
     monkeypatch.setattr(main,"_configured",lambda:(True,"ready"))
     with TestClient(main.app) as c:
@@ -38,6 +38,9 @@ def test_capabilities_do_not_claim_persistence_or_remote_urls(client):
     assert result["input_persistence"] is False
     assert result["output_persistence"] is False
     assert result["remote_urls_accepted"] is False
+    assert result["consent_enforced_by_worker"] is False
+    assert result["consent_assertions_required"] is True
+    assert result["model_source_pinned"] is True
 
 def test_authentication_required(client):
     assert post(client,headers={}).status_code==401
@@ -93,3 +96,34 @@ def test_readiness_requires_gpu_source_pin_and_weights(monkeypatch):
     with TestClient(main.app) as client:
         response=client.get("/ready")
     assert response.status_code==503
+
+
+def test_model_source_pin_is_an_exact_allowlist():
+    assert main.PINNED_FASHN_VTON_COMMIT == "7c0f10af3f91ad4048fe9729c470a13ef905d25a"
+    assert len(main.PINNED_FASHN_VTON_COMMIT) == 40
+
+
+def test_required_weight_manifest_paths_are_explicit():
+    assert main.REQUIRED_WEIGHT_FILES == (
+        "model.safetensors",
+        "dwpose/yolox_l.onnx",
+        "dwpose/dw-ll_ucoco_384.onnx",
+    )
+
+
+def test_readiness_rejects_mutable_or_unreviewed_source_pin(monkeypatch, tmp_path):
+    monkeypatch.setenv("VTON_WORKER_TOKEN", TOKEN)
+    monkeypatch.setenv("FASHN_VTON_SOURCE_REF", "a" * 40)
+    monkeypatch.setenv("FASHN_VTON_WEIGHTS_DIR", str(tmp_path))
+    configured, reason = main._configured()
+    assert configured is False
+    assert reason == "unexpected_or_unpinned_source_commit"
+
+
+def test_readiness_rejects_missing_required_artifacts(monkeypatch, tmp_path):
+    monkeypatch.setenv("VTON_WORKER_TOKEN", TOKEN)
+    monkeypatch.setenv("FASHN_VTON_SOURCE_REF", main.PINNED_FASHN_VTON_COMMIT)
+    monkeypatch.setenv("FASHN_VTON_WEIGHTS_DIR", str(tmp_path))
+    configured, reason = main._configured()
+    assert configured is False
+    assert reason == "required_model_artifacts_missing"
