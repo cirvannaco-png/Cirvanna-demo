@@ -182,17 +182,18 @@ class CommerceOrder(Base):
     __table_args__ = (
         UniqueConstraint("buyer_user_id", "idempotency_key", name="uq_commerce_order_idempotency"),
         Index("ix_commerce_order_buyer_created", "buyer_user_id", "created_at"),
+        Index("uq_commerce_order_payment_intent", "payment_intent_id", unique=True),
         CheckConstraint("subtotal_minor >= 0", name="ck_commerce_order_subtotal_nonnegative"),
-        CheckConstraint("amount_refunded_minor >= 0", name="ck_commerce_order_refunded_nonnegative"),
+        CheckConstraint("amount_refunded_minor >= 0 AND amount_refunded_minor <= subtotal_minor", name="ck_commerce_order_refunded_nonnegative"),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     order_number: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
     buyer_user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     state: Mapped[str] = mapped_column(String(24), nullable=False, default="pending_payment", index=True)
     payment_state: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
-    refund_state: Mapped[str] = mapped_column(String(24), nullable=False, default="none")
+    refund_state: Mapped[str] = mapped_column(String(16), nullable=False, default="none")
     amount_refunded_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    payment_intent_id: Mapped[str | None] = mapped_column(String(180), unique=True)
+    payment_intent_id: Mapped[str | None] = mapped_column(String(180))
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     subtotal_minor: Mapped[int] = mapped_column(Integer, nullable=False)
     commission_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -1394,7 +1395,7 @@ async def stripe_webhook(request: Request, db: Annotated[Session, Depends(get_db
         # Stripe reports a cumulative charge-level refund amount. Only monotonic
         # increases update the order snapshot or emit a downstream event.
         if amount_refunded > order.amount_refunded_minor:
-            refund_state = "refunded" if amount_refunded == charge_amount else "partially_refunded"
+            refund_state = "refunded" if amount_refunded == charge_amount else "partial_refund"
             order.amount_refunded_minor = amount_refunded
             order.refund_state = refund_state
             order.payment_state = refund_state
