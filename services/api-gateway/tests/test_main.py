@@ -444,6 +444,5 @@ def test_my_learning_delete_reports_partial_failure_and_never_claims_complete(mo
 
 
 def test_my_learning_export_requires_verified_end_user_bearer(client):
-    monkeypatch = None
     response = client.get("/v1/me/learning/export", headers=auth_headers())
     assert response.status_code == 401
