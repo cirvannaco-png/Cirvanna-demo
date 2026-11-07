@@ -20,7 +20,7 @@ def request_body():
         "local_date": "2026-11-05",
         "occasion": "work",
         "climate": "hot_dry",
-        "rotation_seen_item_ids": ["shirt-000"],
+        "rotation_seen_item_ids": ["shirt-001"],
         "rotation_cycle_started_at": "2026-11-01",
         "rotation_cycle_number": 2,
         "wardrobe_items": [
@@ -97,7 +97,7 @@ def test_pnelly_gateway_checks_subject_and_uses_only_active_usi_profile(monkeypa
     assert observed["allow_without_consent"] is True
     assert observed["style_signals"] == ["color:teal", "silhouette:relaxed"]
     assert observed["feedback_signals"] == ["feedback:teal", "feedback:linen"]
-    assert observed["payload"].rotation_seen_item_ids == ["shirt-000"]
+    assert observed["payload"].rotation_seen_item_ids == ["shirt-001"]
     assert observed["payload"].rotation_cycle_started_at == "2026-11-01"
     assert observed["payload"].rotation_cycle_number == 2
     assert response.json()["mode"] == "pnelly_wardrobe_daily_looks"
