@@ -281,6 +281,8 @@ def test_media_consent_bundle_verifies_only_active_scopes_for_subject_and_resour
     assert set(verified.json()["granted_scopes"]) == {"image_processing", "click_it"}
     wrong_resource = client.post("/internal/v1/consents/verify", headers=auth(), json={"subject_id": "user-verified-1", "consent_id": "media-bundle-0001", "required_scopes": ["image_processing", "click_it"], "resource_id": "twin-other-user"})
     assert wrong_resource.status_code == 403
+    omitted_resource = client.post("/internal/v1/consents/verify", headers=auth(), json={"subject_id": "user-verified-1", "consent_id": "media-bundle-0001", "required_scopes": ["image_processing", "click_it"]})
+    assert omitted_resource.status_code == 403
     wrong_subject = client.post("/internal/v1/consents/verify", headers=auth(), json={"subject_id": "user-verified-2", "consent_id": "media-bundle-0001", "required_scopes": ["image_processing"], "resource_id": "twin-user-1"})
     assert wrong_subject.status_code == 403
 
