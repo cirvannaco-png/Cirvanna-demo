@@ -1,6 +1,6 @@
 # Cirvanna master product and engineering checklist
 
-**Code baseline audited:** `main` at `8133e9c92671c01dd7bcd08dc27f0328b445e7c8` (7 November 2026; includes resource-bound consent #158 and Commerce refund reconciliation #159)  
+**Code baseline audited:** `main` at `9f721f5e97a44454d9ae56da31ed8fda2e577fc2` (7 November 2026; includes consent #158, refund reconciliation #159 and VTON/Click It containment #161/#162)  
 **Status:** Active; the product requirements are captured below. This is not a production-readiness declaration.
 
 ## Operating rules
@@ -59,7 +59,11 @@
 - [ ] Keep product display gated by the canonical CAL decision; no search, sponsored, try-on or recommendation path may bypass BLOCK/REVIEW or missing evidence.
 
 ### 1.5 Consent, privacy and learning data rights
-- [~] Profile-learning consent, owner/purpose/parent-bound private asset contracts and the persistent Twin registry are present in main. The full resource-bound media/Twin consent verifier is still in conflicted PR #123; deployed consent-provider, real bucket policy, masking/publication routes and revocation/deletion evidence remain release gates.
+- [~] Profile-learning consent, resource-bound media/Twin consent bundles and the owner-scoped Twin registry are in main. PR #158 added subject + bundle + consent-version + optional resource verification, exact Twin-ID binding, scope-completeness checks, resource-specific revocation and PostgreSQL 17 migration/backfill/dump-restore CI. The production identity/consent provider and managed database are not provisioned; real bucket policy, revocation/deletion worker and deployed evidence remain release gates.
+- [~] Click It is deliberately unavailable and fails closed: Marketplace BFF now closes the uploaded file without reading or forwarding bytes (PR #162), and Vision Intelligence rejects the internal scan before decode, quality scoring, embedding or retrieval. Public marketplace/gateway/vision serializers withhold unverified image URLs. This is containment, not a released masking feature or global publication certification.
+- [ ] Build the trusted face-masking stage and independent asset-bound privacy attestation; mask all detected faces, fail closed on uncertain/missing detection, prohibit facial recognition/identity search/age estimation, use transient processing and bind receipts to exact source/output asset hashes and model revisions.
+- [ ] Inventory and wire every public media mutation path—profile/community feeds, marketplace, merchant surfaces, shared links, restore, syndication, cache/CDN and derivatives—to the central pre-publication gate. Verify that no unmasked original or derivative can escape on missing, stale, mismatched or unsafe attestation.
+- [ ] Provision jurisdiction policy resolver, signed counsel-approved policy bundles, guardian-authority verification, rights-requester verification and Content Lifecycle quarantine/unpublish/delete/CDN purge; staff a human review/removal operation. PRs #107/#111 remain open candidates and are not live providers or platform-wide evidence.
 - [x] User-facing export, NPL correction/retraction and deletion across USI/TAL, NPL and Wardrobe are implemented and CI-verified in merged PR #139. Production migration, retry/failure-injection and deployed deletion evidence remain release gates.
 - [ ] Ensure consent is checked server-side on every relevant read/write/processing path; a UI checkbox alone is not authorization.
 - [ ] Ensure no raw face/body photos, tokens, secrets or unnecessary sensitive information are written to logs/analytics.
