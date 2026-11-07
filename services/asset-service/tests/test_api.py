@@ -127,6 +127,45 @@ def test_authorization_requires_exact_subject_purpose_and_parent(client):
     assert wrong_purpose.status_code == 404
 
 
+def test_bulk_twin_authorization_requires_exact_owner_parent_and_asset_purposes(client):
+    response, _ = client
+    source = upload(response).json()["asset_id"]
+    mesh = upload(response, purpose="twin_representation").json()["asset_id"]
+    allowed = response.post("/internal/v1/assets/authorize", headers=auth(), json={
+        "subject_id": "subject-001", "asset_ids": [source, mesh],
+        "purpose": "virtual_twin_storage", "parent_id": "twin-001",
+    })
+    wrong_parent = response.post("/internal/v1/assets/authorize", headers=auth(), json={
+        "subject_id": "subject-001", "asset_ids": [source, mesh],
+        "purpose": "virtual_twin_storage", "parent_id": "twin-002",
+    })
+    wrong_owner = response.post("/internal/v1/assets/authorize", headers=auth(), json={
+        "subject_id": "subject-002", "asset_ids": [source, mesh],
+        "purpose": "virtual_twin_storage", "parent_id": "twin-001",
+    })
+    assert allowed.status_code == 200
+    assert allowed.json()["authorized_asset_ids"] == sorted([source, mesh])
+    assert wrong_parent.status_code == 404
+    assert wrong_owner.status_code == 404
+
+def test_bulk_twin_deletion_cascades_derived_assets_and_is_idempotent(client):
+    response, fake = client
+    source = upload(response).json()["asset_id"]
+    mesh = upload(response, purpose="twin_representation").json()["asset_id"]
+    output = upload(response, purpose="try_on_output", retention_days="1").json()["asset_id"]
+    payload = {
+        "subject_id": "subject-001", "asset_ids": [source, mesh],
+        "parent_id": "twin-001", "purpose": "virtual_twin_deletion",
+        "cascade_derived_assets": True, "idempotency_key": "delete-twin-command-001",
+    }
+    first = response.post("/internal/v1/assets/delete", headers=auth(), json=payload)
+    replay = response.post("/internal/v1/assets/delete", headers=auth(), json=payload)
+    assert first.status_code == 200
+    assert replay.status_code == 200
+    assert first.json()["deleted"] is True
+    assert set(first.json()["deleted_asset_ids"]) == {source, mesh, output}
+    assert first.json()["deleted_asset_ids"] == replay.json()["deleted_asset_ids"]
+    assert fake.objects == {}
 def test_asset_bytes_are_returned_only_with_owner_and_resource_binding(client):
     response, _ = client
     asset_id = upload(response).json()["asset_id"]
