@@ -155,7 +155,12 @@ class ConsentPut(StrictModel):
     @field_validator("consent_id", "resource_id")
     @classmethod
     def normalize_optional_ids(cls, value):
-        return value.strip() if value is not None else None
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("optional identifiers must not be blank")
+        return normalized
 
 
 class ConsentVerifyInput(StrictModel):
@@ -505,4 +510,4 @@ def purge_expired(db: Annotated[Session, Depends(get_db)], cron_token: Annotated
 def list_consents(subject_id: str, db: Annotated[Session, Depends(get_db)]):
     subject = subject_or_404(subject_id)
     rows = list(db.scalars(select(ConsentReceipt).where(ConsentReceipt.subject_id == subject).order_by(ConsentReceipt.created_at)).all())
-    return [{"receipt_id": x.receipt_id, "scope": x.scope, "consent_version": x.consent_version, "granted": x.granted, "granted_at": x.granted_at.isoformat() if x.granted_at else None, "revoked_at": x.revoked_at.isoformat() if x.revoked_at else None} for x in rows]
+    return [{"receipt_id": x.receipt_id, "consent_id": x.consent_id, "resource_id": x.resource_id, "scope": x.scope, "consent_version": x.consent_version, "granted": x.granted, "granted_at": x.granted_at.isoformat() if x.granted_at else None, "revoked_at": x.revoked_at.isoformat() if x.revoked_at else None} for x in rows]
