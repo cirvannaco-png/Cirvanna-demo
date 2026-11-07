@@ -49,6 +49,23 @@ def _extract_trace(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
+def _assert_trace_contains_no_raw_identity_or_assets(value: Any) -> None:
+    forbidden = {
+        "user_id", "subject_id", "owner_user_id", "account_id",
+        "display_name", "image_url", "preview_url", "asset_url",
+        "image_asset_id", "asset_id", "storage_key",
+    }
+    if isinstance(value, dict):
+        overlap = forbidden.intersection(value)
+        if overlap:
+            raise ValueError(f"evaluation trace contains restricted fields: {sorted(overlap)}")
+        for child in value.values():
+            _assert_trace_contains_no_raw_identity_or_assets(child)
+    elif isinstance(value, list):
+        for child in value:
+            _assert_trace_contains_no_raw_identity_or_assets(child)
+
+
 def _index_records(records: Iterable[dict[str, Any]], kind: str) -> dict[str, list[dict[str, Any]]]:
     indexed: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for record in records:
@@ -153,6 +170,7 @@ def prepare_cases(
         trace = _extract_trace(trace_row)
         if trace.get("trace_version") != "1.0":
             raise ValueError("unsupported or missing PNELLY trace_version")
+        _assert_trace_contains_no_raw_identity_or_assets(trace)
         privacy = trace.get("privacy", {})
         for key in ("raw_user_id_included", "raw_wardrobe_item_ids_included",
                     "display_names_included", "image_assets_included"):
