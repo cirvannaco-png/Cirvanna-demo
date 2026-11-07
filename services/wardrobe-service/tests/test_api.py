@@ -347,6 +347,7 @@ def test_saved_outfit_piece_add_remove_and_version_conflict(client):
 
 
 def test_saved_outfit_rejects_foreign_or_inactive_items_and_duplicate_pieces(client):
+    create(client)
     create_active(client, "shirt-003", "Linen shirt")
     create(client, owner_user_id="user-2", item_id="foreign-001")
     response = client.post("/v1/outfits", headers=auth(), json={
