@@ -27,3 +27,6 @@ exported.
 The review tool is metadata-only. It does not establish visual styling,
 fit, or try-on accuracy. Human-labelled data and live outcome records must be
 collected before any adoption, relevance or retention claim is reported.
+
+
+**Limitations:** current traces represent the Cirvanna live arm only; baseline rankings are computed offline. The product does not yet collect look-level exposures, edits, or rejections, and no live random assignment is implemented. Do not report causal uplift or measured edit/rejection rates until those event and experiment gates are completed.
