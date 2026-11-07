@@ -9,7 +9,7 @@ ALTER TABLE wardrobe_items
     ADD COLUMN IF NOT EXISTS purchase_paid_at VARCHAR(64);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_wardrobe_owner_commerce_line
     ON wardrobe_items(owner_user_id, commerce_order_item_id);
-DO $
+DO $purchase_provenance$
 BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pg_constraint
@@ -31,4 +31,4 @@ BEGIN
             );
     END IF;
 END
-$;
+$purchase_provenance$;
