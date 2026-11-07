@@ -19,7 +19,7 @@ exported.
    `apps/demo-web/outfit-review.html`.
 3. Export their review JSONL files separately. Do not reveal system ranking or
    system assignment to reviewers.
-4. Join reviews and any genuine exposure records with
+4. The study coordinator verifies reviewer independence; the joiner checks distinct reviewer keys but cannot authenticate real people. Join reviews and any genuine exposure records with
    `scripts/evaluation/prepare_pnelly_cases.py`.
 5. Run the overall and role-stratified reports with
    `scripts/evaluation/evaluate_pnelly_cases.py`.
