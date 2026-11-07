@@ -89,7 +89,8 @@ class ColorPreferenceProfile:
                     user_id=self.user_id,
                     attribute=f"{COLOUR_PROFILE_PREFIX}{group}:{colour}",
                     weight=1.0,
-                    active=True,
+                    # USI scoring is positive-only; dislikes are stored but never score as matches.
+                    active=(group != "disliked"),
                 ))
         return tuple(records)
 
@@ -122,12 +123,17 @@ class ColorPreferenceProfile:
                 raise ValueError("preferences must be StylePreference values or records")
             if owner != user_id:
                 raise ValueError("colour preference belongs to another user")
-            if not isinstance(attribute, str) or not attribute.startswith(COLOUR_PROFILE_PREFIX) or active is not True:
+            if not isinstance(attribute, str) or not attribute.startswith(COLOUR_PROFILE_PREFIX):
                 continue
             encoded = attribute[len(COLOUR_PROFILE_PREFIX):]
             group, separator, colour = encoded.partition(":")
             if not separator or group not in groups:
                 raise ValueError("invalid colour-profile preference namespace")
+            # Dislikes are intentionally inactive in the positive-only USI scorer.
+            if active is not True and group != "disliked":
+                continue
+            if group == "disliked" and active is True:
+                raise ValueError("disliked colours must not be active positive USI preferences")
             groups[group].append(_clean_colour(colour))
         return cls(
             user_id=user_id,
