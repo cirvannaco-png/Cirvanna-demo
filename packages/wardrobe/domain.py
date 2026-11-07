@@ -39,6 +39,10 @@ class WardrobeItem:
     status: WardrobeItemStatus = WardrobeItemStatus.DRAFT
     version: int = 1
     last_command_id: str | None = None
+    commerce_order_id: str | None = None
+    commerce_order_item_id: str | None = None
+    purchase_event_id: str | None = None
+    purchase_quantity: int | None = None
 
     def __post_init__(self) -> None:
         for field_name in ("item_id", "owner_user_id", "display_name", "category"):
@@ -67,6 +71,16 @@ class WardrobeItem:
             raise ValueError("version must be a positive integer")
         if self.last_command_id is not None and not self.last_command_id.strip():
             raise ValueError("last_command_id must be non-empty or None")
+        purchase_fields = (self.commerce_order_id, self.commerce_order_item_id, self.purchase_event_id, self.purchase_quantity)
+        if any(value is not None for value in purchase_fields):
+            if not all(value is not None for value in purchase_fields):
+                raise ValueError("purchase provenance fields must be supplied together")
+            for name in ("commerce_order_id", "commerce_order_item_id", "purchase_event_id"):
+                value = getattr(self, name)
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(f"{name} must be non-empty")
+            if not isinstance(self.purchase_quantity, int) or isinstance(self.purchase_quantity, bool) or self.purchase_quantity < 1:
+                raise ValueError("purchase_quantity must be a positive integer")
 
 def transition_item(
     item: WardrobeItem,
