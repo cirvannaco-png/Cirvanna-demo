@@ -18,7 +18,23 @@ permissions:
 jobs:
   wardrobe:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: cirvanna_wardrobe_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d cirvanna_wardrobe_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      WARDROBE_TEST_POSTGRES_DSN: postgresql://postgres@localhost:5432/cirvanna_wardrobe_test
     defaults:
       run:
         working-directory: services/wardrobe-service
@@ -31,6 +47,10 @@ jobs:
           cache-dependency-path: services/wardrobe-service/requirements.txt
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
+      - name: Install PostgreSQL client tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
       - name: Check dependency consistency
         run: python -m pip check
       - name: Compile service and tests

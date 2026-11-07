@@ -442,3 +442,38 @@ def test_each_daily_look_revives_items_not_surfaced_earlier_today():
     assert {"top-b", "top-c"}.issubset(set(second["item_ids"]) | set(third["item_ids"]))
     surfaced = {item_id for look in result["looks"] for item_id in look["item_ids"]}
     assert surfaced == {item["item_id"] for item in items}
+
+
+
+def test_rotation_seven_day_boundary_keeps_unseen_items_without_reset():
+    items = wardrobe() + [{
+        "item_id": "unclassified-001", "owner_user_id": "user-123",
+        "display_name": "Unclassified vintage piece", "category": "other",
+        "attributes": [], "status": "active",
+    }]
+    seen = sorted(
+        item["item_id"] for item in items
+        if item.get("status") == "active" and item["item_id"] != "unclassified-001"
+    )
+
+    at_six_days = build_daily_looks(
+        request_id="rotation-six-days", user_id="user-123", wardrobe_items=items,
+        local_date="2026-11-07", rotation_seen_item_ids=seen,
+        rotation_cycle_started_at="2026-11-01", rotation_cycle_number=4,
+    )["wardrobe_rotation"]
+    assert at_six_days["cycle_overdue"] is False
+    assert at_six_days["cycle_complete"] is False
+    assert at_six_days["revival_queue_item_ids"] == ["unclassified-001"]
+    assert at_six_days["next_state"]["cycle_number"] == 4
+
+    at_seven_days = build_daily_looks(
+        request_id="rotation-seven-days", user_id="user-123", wardrobe_items=items,
+        local_date="2026-11-08", rotation_seen_item_ids=seen,
+        rotation_cycle_started_at="2026-11-01", rotation_cycle_number=4,
+    )["wardrobe_rotation"]
+    assert at_seven_days["cycle_overdue"] is True
+    assert at_seven_days["cycle_complete"] is False
+    assert at_seven_days["revival_queue_item_ids"] == ["unclassified-001"]
+    assert at_seven_days["next_state"]["cycle_number"] == 4
+    assert at_seven_days["next_state"]["seen_item_ids"] == seen
+

@@ -317,6 +317,96 @@ def _decision_gateway() -> tuple[str, str]:
     return _internal_service("DECISION_GATEWAY_URL", "DECISION_GATEWAY_TOKEN")
 
 
+def _parse_rotation_snapshot(data: object, *, subject: str, active_item_ids: set[str]) -> dict:
+    if not isinstance(data, dict) or data.get("version") is None:
+        raise HTTPException(502, detail={"code": "PNELLY_ROTATION_STATE_RESPONSE_INVALID"})
+    version = data.get("version")
+    if isinstance(version, bool) or not isinstance(version, int) or version < 0:
+        raise HTTPException(502, detail={"code": "PNELLY_ROTATION_STATE_RESPONSE_INVALID"})
+    state = data.get("state")
+    if state is None:
+        if version != 0:
+            raise HTTPException(502, detail={"code": "PNELLY_ROTATION_STATE_RESPONSE_INVALID"})
+        return {"version": 0, "cycle_number": 1, "cycle_started_at": None, "seen_item_ids": []}
+    if not isinstance(state, dict) or state.get("owner_user_id") != subject or state.get("version") != version:
+        raise HTTPException(502, detail={"code": "PNELLY_ROTATION_STATE_SCOPE_MISMATCH"})
+    cycle_number = state.get("cycle_number")
+    started = state.get("cycle_started_at")
+    seen = state.get("surfaced_item_ids")
+    if isinstance(cycle_number, bool) or not isinstance(cycle_number, int) or cycle_number < 1:
+        raise HTTPException(502, detail={"code": "PNELLY_ROTATION_STATE_RESPONSE_INVALID"})
+    if (
+        not isinstance(started, str)
+        or not isinstance(seen, list)
+        or any(not isinstance(item_id, str) for item_id in seen)
+        or len(seen) != len(set(seen))
+    ):
+        raise HTTPException(502, detail={"code": "PNELLY_ROTATION_STATE_RESPONSE_INVALID"})
+    try:
+        from datetime import date
+        cycle_start_date = started[:10]
+        date.fromisoformat(cycle_start_date)
+    except (TypeError, ValueError):
+        raise HTTPException(502, detail={"code": "PNELLY_ROTATION_STATE_RESPONSE_INVALID"})
+    if any(not isinstance(item_id, str) or item_id not in active_item_ids for item_id in seen):
+        raise HTTPException(502, detail={"code": "PNELLY_ROTATION_STATE_SCOPE_MISMATCH"})
+    return {
+        "version": version,
+        "cycle_number": cycle_number,
+        "cycle_started_at": cycle_start_date,
+        "seen_item_ids": seen,
+    }
+
+
+def _validate_rotation_recommendation(
+    recommendation: object,
+    *,
+    active_item_ids: set[str],
+    prior_state: dict,
+    local_date: str,
+) -> dict:
+    if not isinstance(recommendation, dict):
+        raise HTTPException(502, detail={"code": "PNELLY_ROTATION_RESPONSE_INVALID"})
+    rotation = recommendation.get("wardrobe_rotation")
+    if not isinstance(rotation, dict) or rotation.get("policy_version") != "wardrobe-revival-v1":
+        raise HTTPException(502, detail={"code": "PNELLY_ROTATION_RESPONSE_INVALID"})
+    next_state = rotation.get("next_state")
+    seen = next_state.get("seen_item_ids") if isinstance(next_state, dict) else None
+    queue = rotation.get("revival_queue_item_ids")
+    cycle_number = next_state.get("cycle_number") if isinstance(next_state, dict) else None
+    cycle_started = next_state.get("cycle_started_at") if isinstance(next_state, dict) else None
+    complete = rotation.get("cycle_complete")
+    overdue = rotation.get("cycle_overdue")
+    try:
+        from datetime import date
+        date.fromisoformat(cycle_started)
+    except (TypeError, ValueError):
+        raise HTTPException(502, detail={"code": "PNELLY_ROTATION_RESPONSE_INVALID"})
+    if (
+        isinstance(cycle_number, bool) or not isinstance(cycle_number, int) or cycle_number < 1
+        or not isinstance(seen, list) or len(seen) != len(set(seen))
+        or not isinstance(queue, list) or len(queue) != len(set(queue))
+        or any(not isinstance(item_id, str) or item_id not in active_item_ids for item_id in seen + queue)
+        or set(seen).intersection(queue)
+        or not isinstance(complete, bool) or not isinstance(overdue, bool)
+    ):
+        raise HTTPException(502, detail={"code": "PNELLY_ROTATION_RESPONSE_INVALID"})
+    prior_cycle = prior_state["cycle_number"]
+    prior_start = prior_state["cycle_started_at"] or local_date
+    if complete:
+        if cycle_number != prior_cycle + 1 or seen or cycle_started != local_date or overdue:
+            raise HTTPException(502, detail={"code": "PNELLY_ROTATION_CYCLE_RESET_INVALID"})
+    else:
+        if cycle_number != prior_cycle or cycle_started != prior_start:
+            raise HTTPException(502, detail={"code": "PNELLY_ROTATION_CYCLE_RESET_INVALID"})
+        days_elapsed = (date.fromisoformat(local_date) - date.fromisoformat(prior_start)).days
+        if days_elapsed >= 7 and not overdue:
+            raise HTTPException(502, detail={"code": "PNELLY_ROTATION_OVERDUE_STATE_INVALID"})
+        if overdue and days_elapsed < 7:
+            raise HTTPException(502, detail={"code": "PNELLY_ROTATION_OVERDUE_STATE_INVALID"})
+    return {"cycle_number": cycle_number, "cycle_started_at": cycle_started, "seen_item_ids": seen}
+
+
 def _withhold_unverified_media(value):
     """Recursively redact image URLs until the exact asset has a verified receipt."""
     if isinstance(value, list):
@@ -809,7 +899,7 @@ async def delete_wardrobe_learning_data(request: Request) -> Response:
 @app.post("/api/wardrobe/daily-looks", include_in_schema=False)
 @app.post("/api/wardrobe/pnelly/daily-looks")
 async def wardrobe_daily_looks(request: Request, payload: DailyLooksIn = Body(default=DailyLooksIn())) -> Response:
-    """Build PNELLY's three daily looks using only the verified user's active wardrobe."""
+    """Build daily looks and persist the verified user's rotation with bounded CAS retries."""
     request_id = str(uuid.uuid4())
     local_date = datetime.now(ZoneInfo(payload.timezone)).date().isoformat()
     async with httpx.AsyncClient(
@@ -819,11 +909,12 @@ async def wardrobe_daily_looks(request: Request, payload: DailyLooksIn = Body(de
     ) as client:
         subject, user_token = await _verified_commerce_subject(client, request)
         wardrobe_base, wardrobe_token = _wardrobe_service()
+        service_headers = {"Authorization": "Bearer " + wardrobe_token, "Accept": "application/json"}
         try:
             wardrobe_response = await client.get(
                 wardrobe_base + "/v1/items",
                 params={"owner_user_id": subject, "include_archived": "false"},
-                headers={"Authorization": "Bearer " + wardrobe_token, "Accept": "application/json"},
+                headers=service_headers,
             )
         except httpx.TimeoutException as exc:
             raise HTTPException(504, detail={"code": "PNELLY_WARDROBE_TIMEOUT"}) from exc
@@ -856,8 +947,6 @@ async def wardrobe_daily_looks(request: Request, payload: DailyLooksIn = Body(de
                 or any(not isinstance(value, str) for value in item.get("attributes", []))
             ):
                 raise HTTPException(502, detail={"code": "PNELLY_WARDROBE_ITEM_SCHEMA_INVALID"})
-            # Send only the minimum text metadata. Image asset identifiers and bytes
-            # never leave the wardrobe service for outfit composition.
             active_items.append({
                 "item_id": item["item_id"],
                 "owner_user_id": subject,
@@ -868,8 +957,32 @@ async def wardrobe_daily_looks(request: Request, payload: DailyLooksIn = Body(de
             })
         if len(active_items) > 150:
             raise HTTPException(413, detail={"code": "PNELLY_WARDROBE_TOO_LARGE"})
+        active_item_ids = {item["item_id"] for item in active_items}
 
+        async def read_rotation_state() -> dict:
+            try:
+                state_response = await client.get(
+                    wardrobe_base + "/v1/rotation-state",
+                    params={"owner_user_id": subject},
+                    headers=service_headers,
+                )
+            except httpx.HTTPError as exc:
+                raise HTTPException(503, detail={"code": "PNELLY_ROTATION_STATE_UNAVAILABLE"}) from exc
+            if state_response.status_code != 200:
+                raise HTTPException(503, detail={"code": "PNELLY_ROTATION_STATE_UNAVAILABLE"})
+            try:
+                state_data = state_response.json()
+            except ValueError as exc:
+                raise HTTPException(502, detail={"code": "PNELLY_ROTATION_STATE_RESPONSE_INVALID"}) from exc
+            return _parse_rotation_snapshot(state_data, subject=subject, active_item_ids=active_item_ids)
+
+        rotation_snapshot = await read_rotation_state()
         gateway_base, gateway_token = _decision_gateway()
+        headers = {
+            "Authorization": "Bearer " + gateway_token,
+            "X-End-User-Authorization": "Bearer " + user_token,
+            "Accept": "application/json",
+        }
         body = {
             "request_id": request_id,
             "user_id": subject,
@@ -879,64 +992,126 @@ async def wardrobe_daily_looks(request: Request, payload: DailyLooksIn = Body(de
             "evaluation_consent_receipt_id": payload.evaluation_consent_receipt_id,
             "wardrobe_items": active_items,
         }
-        try:
-            response = await client.post(
-                gateway_base + "/v1/pnelly/daily-looks",
-                headers={
-                    "Authorization": "Bearer " + gateway_token,
-                    "X-End-User-Authorization": "Bearer " + user_token,
-                    "Accept": "application/json",
-                },
-                json=body,
-            )
-        except httpx.TimeoutException as exc:
-            raise HTTPException(504, detail={"code": "PNELLY_RECOMMENDATION_TIMEOUT"}) from exc
-        except httpx.HTTPError as exc:
-            raise HTTPException(503, detail={"code": "PNELLY_RECOMMENDATION_UNAVAILABLE"}) from exc
+        result = None
+        recommendation = None
+        next_rotation = None
+        for attempt in range(2):
+            body["rotation_seen_item_ids"] = list(rotation_snapshot["seen_item_ids"])
+            body["rotation_cycle_started_at"] = rotation_snapshot["cycle_started_at"]
+            body["rotation_cycle_number"] = rotation_snapshot["cycle_number"]
+            try:
+                gateway_response = await client.post(
+                    gateway_base + "/v1/pnelly/daily-looks",
+                    headers=headers,
+                    json=body,
+                )
+            except httpx.TimeoutException as exc:
+                raise HTTPException(504, detail={"code": "PNELLY_RECOMMENDATION_TIMEOUT"}) from exc
+            except httpx.HTTPError as exc:
+                raise HTTPException(503, detail={"code": "PNELLY_RECOMMENDATION_UNAVAILABLE"}) from exc
 
-    if response.status_code in {401, 403, 422}:
-        try:
-            detail = response.json().get("detail", {})
-            code = detail.get("code") if isinstance(detail, dict) else None
-        except ValueError:
-            code = None
-        raise HTTPException(response.status_code, detail={"code": code or "PNELLY_RECOMMENDATION_REJECTED"})
-    if response.status_code != 200:
-        raise HTTPException(503, detail={"code": "PNELLY_RECOMMENDATION_UNAVAILABLE"})
-    try:
-        result = response.json()
-    except ValueError as exc:
-        raise HTTPException(502, detail={"code": "PNELLY_RECOMMENDATION_RESPONSE_INVALID"}) from exc
-    recommendation = result.get("recommendation") if isinstance(result, dict) else None
-    roles = ["everyday", "elevated", "explore"]
-    looks = recommendation.get("looks") if isinstance(recommendation, dict) else None
-    if (
-        not isinstance(result, dict)
-        or result.get("mode") != "pnelly_wardrobe_daily_looks"
-        or not isinstance(recommendation, dict)
-        or recommendation.get("look_count") != 3
-        or not isinstance(looks, list)
-        or [look.get("role") if isinstance(look, dict) else None for look in looks] != roles
-        # Until the persistent Twin registry, consent verifier, asset authorizer,
-        # and validated renderer are integrated, upstream data cannot claim a
-        # preview exists or smuggle an output asset reference into the UI.
-        or any(
-            not isinstance(look, dict)
-            or not isinstance(look.get("virtual_twin_preview"), dict)
-            or look["virtual_twin_preview"].get("status") != "unavailable"
-            or any(key in look["virtual_twin_preview"] for key in ("asset_id", "output_asset_id", "render_id"))
-            for look in looks
-        )
-    ):
-        raise HTTPException(502, detail={"code": "PNELLY_RECOMMENDATION_SCHEMA_INVALID"})
-    # Internal evaluation traces are available only to the server-side study
-    # collector through the authenticated API Gateway, never to browser sessions.
+            if gateway_response.status_code in {401, 403, 422}:
+                try:
+                    detail = gateway_response.json().get("detail", {})
+                    code = detail.get("code") if isinstance(detail, dict) else None
+                except ValueError:
+                    code = None
+                raise HTTPException(gateway_response.status_code, detail={"code": code or "PNELLY_RECOMMENDATION_REJECTED"})
+            if gateway_response.status_code != 200:
+                raise HTTPException(503, detail={"code": "PNELLY_RECOMMENDATION_UNAVAILABLE"})
+            try:
+                result = gateway_response.json()
+            except ValueError as exc:
+                raise HTTPException(502, detail={"code": "PNELLY_RECOMMENDATION_RESPONSE_INVALID"}) from exc
+
+            recommendation = result.get("recommendation") if isinstance(result, dict) else None
+            roles = ["everyday", "elevated", "explore"]
+            looks = recommendation.get("looks") if isinstance(recommendation, dict) else None
+            if (
+                not isinstance(result, dict)
+                or result.get("mode") != "pnelly_wardrobe_daily_looks"
+                or not isinstance(recommendation, dict)
+                or recommendation.get("look_count") != 3
+                or not isinstance(looks, list)
+                or [look.get("role") if isinstance(look, dict) else None for look in looks] != roles
+                or any(
+                    not isinstance(look, dict)
+                    or not isinstance(look.get("virtual_twin_preview"), dict)
+                    or look["virtual_twin_preview"].get("status") != "unavailable"
+                    or any(key in look["virtual_twin_preview"] for key in ("asset_id", "output_asset_id", "render_id"))
+                    for look in looks
+                )
+            ):
+                raise HTTPException(502, detail={"code": "PNELLY_RECOMMENDATION_SCHEMA_INVALID"})
+            next_rotation = _validate_rotation_recommendation(
+                recommendation,
+                active_item_ids=active_item_ids,
+                prior_state=rotation_snapshot,
+                local_date=local_date,
+            )
+            write_body = {
+                "owner_user_id": subject,
+                "request_id": request_id,
+                "expected_version": rotation_snapshot["version"],
+                "cycle_number": next_rotation["cycle_number"],
+                "cycle_started_at": next_rotation["cycle_started_at"] + "T00:00:00Z",
+                "surfaced_item_ids": next_rotation["seen_item_ids"],
+            }
+            # Retry the exact write once on a transport failure. The rotation
+            # service uses request_id+payload hash to replay a committed write.
+            try:
+                write_response = await client.put(
+                    wardrobe_base + "/v1/rotation-state",
+                    headers=service_headers,
+                    json=write_body,
+                )
+            except httpx.HTTPError:
+                try:
+                    write_response = await client.put(
+                        wardrobe_base + "/v1/rotation-state",
+                        headers=service_headers,
+                        json=write_body,
+                    )
+                except httpx.HTTPError as exc:
+                    raise HTTPException(503, detail={"code": "PNELLY_ROTATION_STATE_WRITE_UNAVAILABLE"}) from exc
+
+            if write_response.status_code == 409 and attempt == 0:
+                # A concurrent daily-look request won the compare-and-swap.
+                # Reload and recompose; never merge stale exposure sets.
+                rotation_snapshot = await read_rotation_state()
+                continue
+            if write_response.status_code == 409:
+                raise HTTPException(409, detail={"code": "PNELLY_ROTATION_STATE_CONFLICT"})
+            if write_response.status_code != 200:
+                raise HTTPException(503, detail={"code": "PNELLY_ROTATION_STATE_WRITE_UNAVAILABLE"})
+            try:
+                saved = write_response.json()
+                saved_state = saved.get("state") if isinstance(saved, dict) else None
+                saved_version = saved.get("version") if isinstance(saved, dict) else None
+            except ValueError as exc:
+                raise HTTPException(502, detail={"code": "PNELLY_ROTATION_STATE_WRITE_RESPONSE_INVALID"}) from exc
+            if (
+                not isinstance(saved, dict)
+                or not isinstance(saved_state, dict)
+                or saved_state.get("owner_user_id") != subject
+                or saved_state.get("cycle_number") != next_rotation["cycle_number"]
+                or saved_state.get("surfaced_item_ids") != next_rotation["seen_item_ids"]
+                or not isinstance(saved_version, int)
+                or saved_version < 1
+                or saved_state.get("version") != saved_version
+            ):
+                raise HTTPException(502, detail={"code": "PNELLY_ROTATION_STATE_WRITE_RESPONSE_INVALID"})
+            break
+        else:
+            raise HTTPException(409, detail={"code": "PNELLY_ROTATION_STATE_CONFLICT"})
+
+    # Internal evaluation traces are available only to server-side study collection,
+    # never to browser sessions.
     public_result = dict(result)
     public_recommendation = dict(recommendation)
     public_recommendation.pop("evaluation_trace", None)
     public_result["recommendation"] = public_recommendation
     return _private_json_response(public_result)
-
 
 
 @app.post("/api/vision/click-it")

@@ -2,7 +2,7 @@
 
 **Status:** authenticated API and SQLAlchemy persistence contract implemented; production database and object-storage deletion worker still require deployment and validation.
 
-The service owns user wardrobe item records and saved outfit compositions. Item records include lifecycle, catalog-product references, user-authorized opaque image asset IDs, explicit photo-storage consent, optimistic version checks and a durable asset-deletion outbox. Saved outfits contain references to active, owner-scoped wardrobe items; they do not copy Catalog facts or make unpurchased marketplace products owned. The PostgreSQL schema is applied through ordered migrations `0001_initial.sql`, `0002_wardrobe_learning_events.sql` and `0003_saved_outfits.sql`. The application does not automatically create the production schema. SQLite is test-only.
+The service owns user wardrobe item records and saved outfit compositions. Item records include lifecycle, catalog-product references, user-authorized opaque image asset IDs, explicit photo-storage consent, optimistic version checks and a durable asset-deletion outbox. Saved outfits contain references to active, owner-scoped wardrobe items; they do not copy Catalog facts or make unpurchased marketplace products owned. The PostgreSQL schema is applied through ordered migrations `0001_initial.sql`, `0002_wardrobe_learning_events.sql`, `0003_saved_outfits.sql` and `0004_rotation_state.sql`. The application does not automatically create the production schema. SQLite is test-only.
 
 ## Configuration
 
@@ -45,4 +45,13 @@ Internal endpoint POST /v1/feedback records a clear user interaction against an 
 - The Wardrobe service does not import the quarantined CFRP V6 candidate or emit the unverified CRFP concept. See ADR-0002 and issue #76; neither is authorized in runtime.
 - Configure IDENTITY_SERVICE_URL, IDENTITY_SERVICE_TOKEN, NPL_SERVICE_URL, and NPL_SERVICE_TOKEN in the service secret manager. Missing providers or consent fail closed.
 
-Apply migrations in order: `0001_initial.sql`, `0002_wardrobe_learning_events.sql`, then `0003_saved_outfits.sql`. The learning table is an audit mirror; USI/TAL and NPL remain the authoritative stores. Service readiness now requires the `wardrobe_outfits` table as well as the existing item, learning and deletion-outbox schema.
+Apply migrations in order: `0001_initial.sql`, `0002_wardrobe_learning_events.sql`, then `0003_saved_outfits.sql`, then `0004_rotation_state.sql`. The learning table is an audit mirror; USI/TAL and NPL remain the authoritative stores. Service readiness now requires the `wardrobe_outfits` and `wardrobe_rotation_states` tables as well as the existing item, learning and deletion-outbox schema.
+
+
+## PNELLY wardrobe rotation state
+
+- `GET /v1/rotation-state?owner_user_id=...` reads the owner-scoped cycle record; an absent record returns version `0`.
+- `PUT /v1/rotation-state` creates or compare-and-swaps a record using `expected_version`. A stale version returns `409`; every surfaced item ID must still belong to the owner's active wardrobe.
+- `DELETE /v1/rotation-state?owner_user_id=...` erases the record for account-data deletion.
+- The record stores cycle number, cycle start, surfaced item IDs and a monotonically increasing version. Archived/deleted items are filtered from reads and cannot be added by writes; newly added active items naturally remain unseen.
+- The API is internal-only. The trusted BFF must resolve `owner_user_id` from Commerce `/me`; never forward a browser-supplied owner or rotation state. The end-to-end contract and concurrency tests are validated in the integration PR.
