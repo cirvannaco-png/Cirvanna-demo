@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import inspect, select, text
+from sqlalchemy import delete, inspect, select, text
 from sqlalchemy.orm import Session
 
 ROOT=Path(__file__).resolve().parents[3]
@@ -289,6 +289,27 @@ def list_feedback(
         raise
     except Exception as exc:
         raise HTTPException(503, detail={"code": "WARDROBE_FEEDBACK_STORE_UNAVAILABLE"}) from exc
+
+@app.delete("/v1/feedback", dependencies=[Depends(require_internal_token)], tags=["wardrobe intelligence"])
+def delete_feedback(
+    owner_user_id: Annotated[str, Query(min_length=1, max_length=128)],
+) -> dict[str, object]:
+    """Delete one verified owner's local learning-audit mirror after upstream erasure."""
+    owner = owner_user_id.strip()
+    if not owner:
+        raise HTTPException(422, detail={"code": "INVALID_WARDROBE_OWNER_ID"})
+    try:
+        with Session(store().engine) as session, session.begin():
+            result = session.execute(
+                delete(WardrobeFeedbackEventRow).where(WardrobeFeedbackEventRow.owner_user_id == owner)
+            )
+            deleted = int(result.rowcount or 0)
+        return {"status": "deleted", "deleted_feedback_events": deleted}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503, detail={"code": "WARDROBE_FEEDBACK_DELETE_UNAVAILABLE"}) from exc
+
 
 @app.post("/v1/items/{item_id}/transition",dependencies=[Depends(require_internal_token)],tags=["wardrobe"])
 def transition(item_id:str,payload:TransitionItem)->dict[str,object]:
