@@ -45,7 +45,7 @@ Internal endpoint POST /v1/feedback records a clear user interaction against an 
 - The Wardrobe service does not import the quarantined CFRP V6 candidate or emit the unverified CRFP concept. See ADR-0002 and issue #76; neither is authorized in runtime.
 - Configure IDENTITY_SERVICE_URL, IDENTITY_SERVICE_TOKEN, NPL_SERVICE_URL, and NPL_SERVICE_TOKEN in the service secret manager. Missing providers or consent fail closed.
 
-Apply migrations in order: `0001_initial.sql`, `0002_wardrobe_learning_events.sql`, then `0003_saved_outfits.sql`. The learning table is an audit mirror; USI/TAL and NPL remain the authoritative stores. Service readiness now requires the `wardrobe_outfits` and `wardrobe_rotation_states` tables as well as the existing item, learning and deletion-outbox schema.
+Apply migrations in order: `0001_initial.sql`, `0002_wardrobe_learning_events.sql`, then `0003_saved_outfits.sql`, then `0004_rotation_state.sql`. The learning table is an audit mirror; USI/TAL and NPL remain the authoritative stores. Service readiness now requires the `wardrobe_outfits` and `wardrobe_rotation_states` tables as well as the existing item, learning and deletion-outbox schema.
 
 ## PNELLY wardrobe rotation state
 
