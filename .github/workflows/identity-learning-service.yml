@@ -14,7 +14,7 @@ permissions:
 jobs:
   identity-learning:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: services/identity-learning-service
@@ -33,5 +33,27 @@ jobs:
         run: python -m compileall -q app tests
       - name: Run USI and TAL regression tests
         run: python -m pytest -q
+      - name: Start isolated PostgreSQL 17
+        run: docker run -d --name cirvanna-identity-pg -e POSTGRES_USER=cirvanna -e POSTGRES_PASSWORD=ci-only-password -e POSTGRES_DB=cirvanna_identity -p 5432:5432 postgres:17
+      - name: Apply identity migrations and verify legacy consent backfill
+        shell: bash
+        run: |
+          for attempt in {1..40}; do
+            if docker exec cirvanna-identity-pg pg_isready -U cirvanna -d cirvanna_identity; then break; fi
+            sleep 1
+          done
+          docker exec -i cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity < migrations/0001_identity_tal.sql
+          docker exec -i cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity < migrations/0002_color_profile.sql
+          docker exec cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity -c "INSERT INTO identity_tal_consent_receipts(receipt_id, subject_id, scope, consent_version, granted) VALUES ('legacy-consent-0001', 'legacy-user-0001', 'profile_storage', 'legacy-v1', true)"
+          docker exec -i cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity < migrations/0003_resource_bound_media_consent.sql
+          docker exec cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM identity_tal_consent_receipts WHERE receipt_id='legacy-consent-0001' AND consent_id='legacy-consent-0001' AND resource_id IS NULL) THEN RAISE EXCEPTION 'legacy consent backfill failed'; END IF; END \$\$;"
+          docker exec cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d cirvanna_identity -c "INSERT INTO identity_tal_consent_receipts(receipt_id, subject_id, consent_id, resource_id, scope, consent_version, granted) VALUES ('resource-consent-0001', 'user-0001', 'bundle-0001', 'twin-0001', 'virtual_twin_storage', 'v1', true)"
+      - name: Verify PostgreSQL dump and isolated restore
+        shell: bash
+        run: |
+          docker exec cirvanna-identity-pg pg_dump -U cirvanna -d cirvanna_identity --format=custom > /tmp/cirvanna-identity.dump
+          docker exec cirvanna-identity-pg createdb -U cirvanna identity_restore
+          docker exec -i cirvanna-identity-pg pg_restore -U cirvanna -d identity_restore --exit-on-error < /tmp/cirvanna-identity.dump
+          docker exec cirvanna-identity-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d identity_restore -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM identity_tal_consent_receipts WHERE receipt_id='resource-consent-0001' AND consent_id='bundle-0001' AND resource_id='twin-0001') THEN RAISE EXCEPTION 'restored resource-bound consent row missing'; END IF; IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='identity_tal_consent_receipts' AND column_name='consent_id') THEN RAISE EXCEPTION 'restored schema missing consent_id'; END IF; END \$\$;"
       - name: Build service container
         run: docker build -t cirvanna-identity-learning .
