@@ -37,7 +37,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 
 
 SERVICE = "cirvanna-commerce-service"
-EXPECTED_SCHEMA_REVISION = "20261107_0004"
+EXPECTED_SCHEMA_REVISION = "20261107_0005"
 MAX_QTY = 50
 RESERVATION_MINUTES = 60
 SKU_RE = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,79}$")
@@ -183,12 +183,16 @@ class CommerceOrder(Base):
         UniqueConstraint("buyer_user_id", "idempotency_key", name="uq_commerce_order_idempotency"),
         Index("ix_commerce_order_buyer_created", "buyer_user_id", "created_at"),
         CheckConstraint("subtotal_minor >= 0", name="ck_commerce_order_subtotal_nonnegative"),
+        CheckConstraint("amount_refunded_minor >= 0", name="ck_commerce_order_refunded_nonnegative"),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     order_number: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
     buyer_user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     state: Mapped[str] = mapped_column(String(24), nullable=False, default="pending_payment", index=True)
-    payment_state: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    payment_state: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
+    refund_state: Mapped[str] = mapped_column(String(24), nullable=False, default="none")
+    amount_refunded_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    payment_intent_id: Mapped[str | None] = mapped_column(String(180), unique=True)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     subtotal_minor: Mapped[int] = mapped_column(Integer, nullable=False)
     commission_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -733,7 +737,9 @@ def cart_json(db: Session, cart: Cart) -> dict[str, Any]:
 def order_json(db: Session, order: CommerceOrder, include_url: bool = False) -> dict[str, Any]:
     lines = list(db.scalars(select(OrderItem).where(OrderItem.order_id == order.id)).all())
     result = {"order_id": order.id, "order_number": order.order_number, "status": order.state,
-        "payment_status": order.payment_state, "currency": order.currency, "subtotal_minor": order.subtotal_minor,
+        "payment_status": order.payment_state, "refund_status": order.refund_state,
+        "amount_refunded_minor": order.amount_refunded_minor,
+        "currency": order.currency, "subtotal_minor": order.subtotal_minor,
         "commission_minor": order.commission_minor, "expires_at": order.expires_at, "paid_at": order.paid_at,
         "created_at": order.created_at, "items": [{"merchant_id": i.merchant_id, "variant_id": i.variant_id,
         "catalog_product_id": i.catalog_product_id, "product_name": i.product_name, "sku": i.sku, "options": i.options,
@@ -782,7 +788,14 @@ def release_reservations(db: Session, order: CommerceOrder, final_state: str) ->
     order.updated_at = now()
 
 
-def settle_paid(db: Session, order: CommerceOrder, amount_total: int, currency: str) -> None:
+def settle_paid(
+    db: Session, order: CommerceOrder, amount_total: int, currency: str,
+    payment_intent_id: str | None = None,
+) -> None:
+    if payment_intent_id:
+        if order.payment_intent_id and order.payment_intent_id != payment_intent_id:
+            raise HTTPException(409, detail={"code": "PAYMENT_INTENT_MISMATCH"})
+        order.payment_intent_id = payment_intent_id
     if order.state == "paid":
         return
     if order.state != "pending_payment":
@@ -928,6 +941,8 @@ def capabilities() -> dict[str, Any]:
         "merchant_onboarding": True, "variant_inventory": True, "transactional_reservations": True,
         "idempotent_orders": True, "stripe_hosted_checkout": StripeGateway().ready,
         "verified_payment_webhooks": bool(os.getenv("STRIPE_WEBHOOK_SECRET")),
+        "verified_charge_refund_reconciliation": bool(os.getenv("STRIPE_WEBHOOK_SECRET")),
+        "physical_return_reconciliation": False,
         "automated_seller_payouts": False, "shipping_tax_calculation": False,
         "catacaci_eligibility": False, "click_it_reconstruction": False,
         "virtual_twin_generation": False, "virtual_try_on": False}
@@ -1349,6 +1364,67 @@ async def stripe_webhook(request: Request, db: Annotated[Session, Depends(get_db
         raise HTTPException(400, detail={"code": "INVALID_PAYMENT_EVENT"})
     if db.get(PaymentWebhookEvent, event_id) is not None:
         return {"received": True, "duplicate": True}
+    if event_type == "charge.refunded":
+        payment_intent = obj.get("payment_intent")
+        if isinstance(payment_intent, dict):
+            payment_intent = payment_intent.get("id")
+        if not isinstance(payment_intent, str) or not payment_intent.strip():
+            raise HTTPException(400, detail={"code": "REFUND_PAYMENT_INTENT_MISSING"})
+        order = db.scalar(
+            select(CommerceOrder).where(
+                CommerceOrder.payment_intent_id == payment_intent.strip()
+            ).with_for_update()
+        )
+        if order is None or order.state != "paid":
+            raise HTTPException(409, detail={"code": "REFUND_ORDER_NOT_FOUND_OR_NOT_PAID"})
+        try:
+            charge_amount = int(obj.get("amount", -1))
+            amount_refunded = int(obj.get("amount_refunded", -1))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(400, detail={"code": "INVALID_REFUND_AMOUNT"}) from exc
+        charge_currency = str(obj.get("currency", "")).upper()
+        if (
+            charge_amount != order.subtotal_minor
+            or charge_currency != order.currency
+            or amount_refunded < 0
+            or amount_refunded > charge_amount
+            or not obj.get("id")
+        ):
+            raise HTTPException(400, detail={"code": "REFUND_AMOUNT_OR_CURRENCY_MISMATCH"})
+        # Stripe reports a cumulative charge-level refund amount. Only monotonic
+        # increases update the order snapshot or emit a downstream event.
+        if amount_refunded > order.amount_refunded_minor:
+            refund_state = "refunded" if amount_refunded == charge_amount else "partially_refunded"
+            order.amount_refunded_minor = amount_refunded
+            order.refund_state = refund_state
+            order.payment_state = refund_state
+            order.updated_at = now()
+            refund_event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cirvanna:stripe-refund:{event_id}"))
+            db.add(CommerceOutboxEvent(
+                event_id=refund_event_id,
+                aggregate_type="stripe_event",
+                aggregate_id=refund_event_id,
+                event_type="commerce.order.refund.updated",
+                schema_version=1,
+                payload={
+                    "event_id": refund_event_id,
+                    "provider_event_id": event_id,
+                    "event_type": "commerce.order.refund.updated",
+                    "schema_version": 1,
+                    "ownership_authority": "verified_stripe_charge_refund",
+                    "order_id": order.id,
+                    "buyer_user_id": order.buyer_user_id,
+                    "payment_intent_id": payment_intent,
+                    "charge_id": str(obj["id"]),
+                    "currency": order.currency,
+                    "order_total_minor": order.subtotal_minor,
+                    "amount_refunded_minor": amount_refunded,
+                    "refund_state": refund_state,
+                    "refunded_at": now().isoformat(),
+                    "physical_return_confirmed": False,
+                    "ownership_effect": "financial_status_only",
+                },
+            ))
     handled = {"checkout.session.completed", "checkout.session.async_payment_succeeded",
         "checkout.session.expired", "checkout.session.async_payment_failed"}
     if event_type in handled:
@@ -1360,7 +1436,15 @@ async def stripe_webhook(request: Request, db: Annotated[Session, Depends(get_db
             raise HTTPException(409, detail={"code": "PAYMENT_SESSION_MISMATCH"})
         if event_type in {"checkout.session.completed", "checkout.session.async_payment_succeeded"}:
             if obj.get("payment_status") == "paid":
-                settle_paid(db, order, int(obj.get("amount_total", -1)), str(obj.get("currency", "")))
+                payment_intent = obj.get("payment_intent")
+                if isinstance(payment_intent, dict):
+                    payment_intent = payment_intent.get("id")
+                if payment_intent is not None and not isinstance(payment_intent, str):
+                    raise HTTPException(400, detail={"code": "INVALID_PAYMENT_INTENT_REFERENCE"})
+                settle_paid(
+                    db, order, int(obj.get("amount_total", -1)), str(obj.get("currency", "")),
+                    payment_intent_id=payment_intent,
+                )
         elif event_type == "checkout.session.expired" and order.state == "pending_payment":
             release_reservations(db, order, "expired")
         elif event_type == "checkout.session.async_payment_failed" and order.state == "pending_payment":
