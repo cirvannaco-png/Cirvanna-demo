@@ -359,3 +359,12 @@ def test_rotation_never_marks_recent_wear_as_a_hard_exclusion():
         wear_history=[{"item_id": "top-001", "last_worn_at": "2026-11-06T08:00:00Z", "wear_count": 20}],
     )
     assert result["wardrobe_rotation"]["rules"]["recent_wear_is_not_exclusion"] is True
+
+
+def test_explicit_hard_exclusions_are_removed_from_looks_and_revival_queue():
+    result = build_daily_looks(
+        request_id="rotation-005", user_id="user-123", wardrobe_items=wardrobe(),
+        local_date="2026-11-07", hard_excluded_item_ids=["top-001"],
+    )
+    assert all("top-001" not in look["item_ids"] for look in result["looks"])
+    assert "top-001" not in result["wardrobe_rotation"]["revival_queue_item_ids"]
