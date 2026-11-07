@@ -1,9 +1,13 @@
 """SQLAlchemy-backed NPL ledger. PostgreSQL is the production target."""
 from __future__ import annotations
 from datetime import datetime, timezone
+import hashlib
+import hmac
+import os
+import uuid
 from functools import lru_cache
 from typing import Any
-from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKeyConstraint, Index, Integer, String, UniqueConstraint, create_engine, func, select
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKeyConstraint, Index, Integer, String, UniqueConstraint, create_engine, delete, func, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
@@ -56,6 +60,15 @@ class CorrectionEventRow(Base):
     preference_id: Mapped[str] = mapped_column(String(128), nullable=False)
     correction_event_id: Mapped[str] = mapped_column(String(128), nullable=False)
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.current_timestamp())
+
+class NPLDeletionReceiptRow(Base):
+    __tablename__ = "npl_deletion_receipts"
+    receipt_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    subject_digest: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    deleted_preference_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    deleted_rejection_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    deleted_correction_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.current_timestamp())
 
 class PreferenceNotFound(Exception):
     pass
@@ -144,6 +157,80 @@ class NPLStore:
                     if row is not None and not row.active and row.correction_event_id == correction_event_id:
                         return self._as_domain(session, row)
             raise PreferenceConflict("correction event ID was already used by a different preference") from exc
+
+    def export_user_data(self, user_id: str) -> dict[str, object]:
+        """Return complete, user-scoped NPL preferences and their event audit rows."""
+        normalized = user_id.strip()
+        if not normalized:
+            raise ValueError("user_id must not be empty")
+        with Session(self.engine) as session:
+            preference_rows = session.scalars(
+                select(PreferenceRow).where(PreferenceRow.user_id == normalized).order_by(PreferenceRow.preference_id)
+            ).all()
+            rejection_rows = session.execute(
+                select(
+                    RejectionEventRow.preference_id,
+                    RejectionEventRow.rejection_event_id,
+                    RejectionEventRow.occurred_at,
+                ).where(RejectionEventRow.user_id == normalized).order_by(RejectionEventRow.occurred_at, RejectionEventRow.event_id)
+            ).all()
+            correction_rows = session.execute(
+                select(
+                    CorrectionEventRow.preference_id,
+                    CorrectionEventRow.correction_event_id,
+                    CorrectionEventRow.occurred_at,
+                ).where(CorrectionEventRow.user_id == normalized).order_by(CorrectionEventRow.occurred_at, CorrectionEventRow.event_id)
+            ).all()
+            return {
+                "preferences": tuple(self._as_domain(session, row) for row in preference_rows),
+                "rejection_events": [
+                    {"preference_id": row.preference_id, "event_id": row.rejection_event_id, "occurred_at": row.occurred_at.isoformat()}
+                    for row in rejection_rows
+                ],
+                "correction_events": [
+                    {"preference_id": row.preference_id, "event_id": row.correction_event_id, "occurred_at": row.occurred_at.isoformat()}
+                    for row in correction_rows
+                ],
+            }
+
+    def delete_user_data(self, user_id: str) -> dict[str, object]:
+        """Delete every NPL preference and its event rows, retaining only a one-way receipt."""
+        normalized = user_id.strip()
+        if not normalized:
+            raise ValueError("user_id must not be empty")
+        receipt_id = str(uuid.uuid4())
+        receipt_secret = os.getenv("NPL_EVIDENCE_HMAC_SECRET", "").strip()
+        if len(receipt_secret.encode("utf-8")) < 32:
+            raise RuntimeError("NPL deletion receipt signing is not configured")
+        digest = hmac.new(receipt_secret.encode("utf-8"), normalized.encode("utf-8"), hashlib.sha256).hexdigest()
+        with Session(self.engine) as session, session.begin():
+            preference_count = session.scalar(
+                select(func.count()).select_from(PreferenceRow).where(PreferenceRow.user_id == normalized)
+            ) or 0
+            rejection_count = session.scalar(
+                select(func.count()).select_from(RejectionEventRow).where(RejectionEventRow.user_id == normalized)
+            ) or 0
+            correction_count = session.scalar(
+                select(func.count()).select_from(CorrectionEventRow).where(CorrectionEventRow.user_id == normalized)
+            ) or 0
+            session.execute(delete(RejectionEventRow).where(RejectionEventRow.user_id == normalized))
+            session.execute(delete(CorrectionEventRow).where(CorrectionEventRow.user_id == normalized))
+            session.execute(delete(PreferenceRow).where(PreferenceRow.user_id == normalized))
+            session.add(NPLDeletionReceiptRow(
+                receipt_id=receipt_id,
+                subject_digest=digest,
+                deleted_preference_count=int(preference_count),
+                deleted_rejection_count=int(rejection_count),
+                deleted_correction_count=int(correction_count),
+            ))
+            session.flush()
+        return {
+            "status": "deleted",
+            "deleted_preferences": int(preference_count),
+            "deleted_rejection_events": int(rejection_count),
+            "deleted_correction_events": int(correction_count),
+            "deletion_receipt_id": receipt_id,
+        }
 
     def evaluate(self, *, user_id: str, candidate_id: str, candidate_attributes: tuple[str, ...]):
         preferences = self.list_preferences(user_id)

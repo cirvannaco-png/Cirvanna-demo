@@ -1,7 +1,7 @@
 name: NPL ledger service checks
 on:
   push:
-    branches: ["main", "feature/**", "engineering/**"]
+    branches: ["main", "feat/**", "feature/**", "engineering/**"]
     paths:
       - "services/npl-service/**"
       - "packages/preferences/npl/**"
