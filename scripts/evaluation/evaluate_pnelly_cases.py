@@ -3,15 +3,38 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 from pathlib import Path
 from typing import Any
 
-from evaluate_outfits import evaluate, load_jsonl
+from evaluate_outfits import evaluate
+
+
+def read_cases(path: str | Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    with Path(path).open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if not line.strip():
+                continue
+            value = json.loads(line)
+            if not isinstance(value, dict):
+                raise ValueError(f"{path}:{line_number}: case must be a JSON object")
+            rows.append(value)
+    return rows
+
+
+def _run_evaluator(records: list[dict[str, Any]], k: int) -> dict[str, Any]:
+    parameters = inspect.signature(evaluate).parameters
+    if "k" in parameters:
+        return evaluate(records, k=k)
+    if "top_k" in parameters:
+        return evaluate(records, top_k=k)
+    return evaluate(records)
 
 
 def evaluate_by_role(records: list[dict[str, Any]], *, k: int = 3) -> dict[str, Any]:
-    overall = evaluate(records, k=k)
+    overall = _run_evaluator(records, k)
     by_role: dict[str, Any] = {}
     for role in ("everyday", "elevated", "explore"):
         subset = [
@@ -19,7 +42,7 @@ def evaluate_by_role(records: list[dict[str, Any]], *, k: int = 3) -> dict[str, 
             if record.get("context", {}).get("role") == role
         ]
         if subset:
-            by_role[role] = evaluate(subset, k=k)
+            by_role[role] = _run_evaluator(subset, k)
     return {
         "status": overall.get("status", "unknown"),
         "overall": overall,
@@ -34,7 +57,11 @@ def main() -> int:
     parser.add_argument("--output", required=True, help="JSON report path")
     parser.add_argument("--k", type=int, default=3)
     args = parser.parse_args()
-    records = load_jsonl(args.cases)
+    if args.k < 1:
+        raise ValueError("--k must be positive")
+    records = read_cases(args.cases)
+    if not records:
+        raise ValueError("no evaluator cases found")
     report = evaluate_by_role(records, k=args.k)
     Path(args.output).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps({"status": report["status"], "case_count": report["case_count"]}, sort_keys=True))
