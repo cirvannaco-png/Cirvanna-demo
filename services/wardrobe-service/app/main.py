@@ -521,6 +521,8 @@ def add_outfit_piece(outfit_id: str, payload: AddOutfitPiece) -> dict[str, objec
 @app.patch("/v1/outfits/{outfit_id}/pieces/{slot_id}", dependencies=[Depends(require_internal_token)], tags=["saved outfits"])
 def edit_outfit_piece(outfit_id: str, slot_id: str, payload: EditOutfitPiece) -> dict[str, object]:
     """Replace or remove one slot; every other piece remains byte-for-byte unchanged."""
+    if "wardrobe_item_id" not in payload.model_fields_set:
+        raise HTTPException(422, detail={"code": "OUTFIT_PIECE_ACTION_REQUIRED"})
     owner = payload.owner_user_id.strip()
     try:
         with Session(store().engine) as session, session.begin():
