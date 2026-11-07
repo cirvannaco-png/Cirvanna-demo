@@ -464,7 +464,13 @@ def test_item_create_normalizes_known_category_alias_and_rejects_unknown(client)
     assert created.json()["item"]["category"] == "shoes"
     invalid = client.post("/v1/items", headers=auth(), json={
         "owner_user_id": "user-1", "item_id": "unknown-category-001",
-        "display_name": "Unknown item", "category": "unverified-special-type",
+        "display_name": "Unknown item", "category": "not a valid category!",
     })
     assert invalid.status_code == 422
     assert invalid.json()["detail"]["code"] == "INVALID_WARDROBE_COMMAND"
+    custom = client.post("/v1/items", headers=auth(), json={
+        "owner_user_id": "user-1", "item_id": "custom-category-001",
+        "display_name": "Custom nail art", "category": "custom_nail_art",
+    })
+    assert custom.status_code == 201, custom.text
+    assert custom.json()["item"]["category"] == "custom_nail_art"
