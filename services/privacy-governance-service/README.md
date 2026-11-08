@@ -26,9 +26,10 @@ It accepts no uploaded image, face crop, biometric template or identity document
 ### Public media publication gate
 
 - `POST /internal/v1/privacy/assets/publication/evaluate` is a mandatory pre-publication contract for public profiles, community feeds, Marketplace media, merchant surfaces and shared links.
-- The service requires a trusted Vision Privacy Attestation provider. The attestation must bind to the exact opaque asset ID and masking-attestation ID, prove all detected faces were masked before publication, report zero unmasked faces and confirm no facial recognition, face embeddings or age estimation ran.
-- Missing, stale, mismatched, incomplete or unsafe masking evidence returns BLOCK. The service does not infer whether a face belongs to a child; it requires every detected face in a public asset to be masked. This is a conservative platform safeguard, not a legal classification.
-- The Content Lifecycle/publication owner must call this gate before every public publish, restore, syndication or share-link activation path. A gate implementation that is not wired to all publication paths is not production protection.
+- The service requires a trusted Vision Privacy Attestation provider. The caller supplies the SHA-256 digest of the exact stored asset; the provider must bind its verified receipt and independent human privacy review to that same digest and opaque asset ID. The receipt must include a review receipt ID, opaque reviewer reference and timezone-aware review timestamp; a bare caller-supplied boolean is not proof of review.
+- The gate pins the approved masking-model SHA-256 using `PRIVACY_APPROVED_MASKING_MODEL_SHA256`. A PASS requires exact asset and human-review digest matches, active trusted attestation, matching approved model digest, all detected faces masked, zero unmasked faces, all face regions processed, and explicit proof that face recognition, face embeddings and age estimation did not run.
+- Missing, stale, mismatched, incomplete or unsafe evidence returns BLOCK. The service does not infer whether a face belongs to a child; it requires every detected face in a public asset to be masked. This is a conservative platform safeguard, not a legal classification.
+- The Content Lifecycle/publication owner must call this gate immediately before every public publish, restore, syndication or share-link activation path and must verify the same immutable object version/digest at the storage origin. A gate implementation that is not wired to all publication paths is not production protection.
 
 ### Image rights
 - `POST /internal/v1/image-rights/requests`: accepts only an opaque Cirvanna asset reference. The service first validates the reference with the trusted Content Lifecycle provider. Urgent reasons require confirmed quarantine **and unpublishing** before a receipt is returned.
@@ -64,7 +65,8 @@ Every configured provider must also expose an authenticated `GET /ready` endpoin
 - `PRIVACY_RIGHTS_REVIEW_TOKEN`: separate reviewer token, at least 32 bytes.
 - `PRIVACY_RIGHTS_TRIAGE_HOURS`: platform internal triage target between 1 and 24 hours; not a substitute for jurisdiction-specific statutory response deadlines.
 - `PRIVACY_POLICY_BUNDLE_PUBLIC_KEY_PEM`: Ed25519 public key in PEM form.
-- `VISION_PRIVACY_ATTESTATION_API_URL/TOKEN`: trusted Vision provider that verifies a signed masking attestation for the exact asset and public publication target.
+- `VISION_PRIVACY_ATTESTATION_API_URL/TOKEN`: trusted Vision provider that verifies a signed masking attestation, exact asset SHA-256 digest and independent human privacy review for the public publication target.
+- `PRIVACY_APPROVED_MASKING_MODEL_SHA256`: exact approved masking detector SHA-256; readiness and publication evaluation fail closed unless this is a 64-character lowercase digest. The currently pinned BlazeFace full-range asset is `3698b18f063835bc609069ef052228fbe86d9c9a6dc8dcb7c7c2d69aed2b181b`.
 - `RIGHTS_AUTHORITY_VERIFICATION_API_URL/TOKEN`: trusted provider that independently verifies a photographed person's, parent/guardian's or authorized representative's authority for the specific image-rights case.
 - Provider URL/token pairs listed above.
 
