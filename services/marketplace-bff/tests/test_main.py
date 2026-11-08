@@ -1587,3 +1587,101 @@ def test_wardrobe_category_bff_rejects_malformed_upstream_taxonomy(client, monke
     assert response.status_code == 502
     assert response.json()["detail"]["code"] == "WARDROBE_CATEGORY_RESPONSE_INVALID"
 
+
+
+def test_wardrobe_try_on_derives_subject_and_uses_exact_owned_private_garment(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    monkeypatch.setenv("VIRTUAL_TRY_ON_API_URL", "https://tryon.example.test")
+    monkeypatch.setenv("VIRTUAL_TRY_ON_API_TOKEN", "virtual-try-on-internal-token-more-than-32-bytes")
+    garment_asset = "6e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d"
+    output_asset = "7e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d"
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42"}),
+        FakeResponse({"item": {
+            "owner_user_id": "signed-user-42", "item_id": "closet-item-1",
+            "status": "active", "category": "dress", "image_asset_id": garment_asset,
+            "image_storage_consent": True,
+        }}),
+        FakeResponse({
+            "request_id": "request-tryon-1234", "status": "complete",
+            "output_asset_id": output_asset, "renderer_id": "fashn-vton-1.5",
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/items/closet-item-1/try-on",
+        headers={"Authorization": "Bearer signed-session"},
+        json={
+            "wardrobe_item_id": "closet-item-1",
+            "twin_id": "persistent-twin-42",
+            "person_image_asset_id": "5e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d",
+            "consent_id": "consent-receipt-1234",
+            "consent_image_processing": True,
+            "consent_virtual_try_on": True,
+            "request_id": "request-tryon-1234",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.json()["output_asset_id"] == output_asset
+    assert [call[0] for call in fake.calls] == ["GET", "GET", "POST"]
+    assert fake.calls[1][2]["params"]["owner_user_id"] == "signed-user-42"
+    forwarded = fake.calls[2][2]["json"]
+    assert forwarded["subject_id"] == "signed-user-42"
+    assert forwarded["product_id"] == "wardrobe:closet-item-1"
+    assert forwarded["garment_image_asset_id"] == garment_asset
+    assert forwarded["garment_asset_purpose"] == "wardrobe_garment_image"
+    assert forwarded["garment_asset_parent_id"] == "closet-item-1"
+    assert forwarded["garment_category"] == "dress"
+    assert forwarded["consent"]["retention_policy"] == "ephemeral"
+
+
+def test_wardrobe_try_on_rejects_cross_subject_item_before_renderer_call(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    monkeypatch.setenv("VIRTUAL_TRY_ON_API_URL", "https://tryon.example.test")
+    monkeypatch.setenv("VIRTUAL_TRY_ON_API_TOKEN", "virtual-try-on-internal-token-more-than-32-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42"}),
+        FakeResponse({"item": {
+            "owner_user_id": "another-user", "item_id": "foreign-item",
+            "status": "active", "category": "dress",
+            "image_asset_id": "6e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d",
+            "image_storage_consent": True,
+        }}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/items/foreign-item/try-on",
+        headers={"Authorization": "Bearer signed-session"},
+        json={
+            "wardrobe_item_id": "foreign-item", "twin_id": "persistent-twin-42",
+            "person_image_asset_id": "5e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d",
+            "consent_id": "consent-receipt-1234",
+            "consent_image_processing": True, "consent_virtual_try_on": True,
+        },
+    )
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "WARDROBE_ITEM_SCOPE_MISMATCH"
+    assert len(fake.calls) == 2
+
+
+def test_wardrobe_try_on_requires_both_explicit_consent_flags_before_upstream(client, monkeypatch):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Try-on must reject missing consent before contacting any provider")
+    monkeypatch.setattr(main.httpx, "AsyncClient", forbidden)
+    response = client.post(
+        "/api/wardrobe/items/closet-item-1/try-on",
+        headers={"Authorization": "Bearer signed-session"},
+        json={
+            "wardrobe_item_id": "closet-item-1", "twin_id": "persistent-twin-42",
+            "person_image_asset_id": "5e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d",
+            "consent_id": "consent-receipt-1234",
+            "consent_image_processing": False, "consent_virtual_try_on": True,
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "TRY_ON_CONSENT_REQUIRED"
