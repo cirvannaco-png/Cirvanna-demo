@@ -55,12 +55,53 @@ def _two_reviews():
     ]
 
 
+def _adjudication(adjudicator_key="reviewer-c"):
+    return {
+        "case_id": "case-1",
+        "look_id": "look-1",
+        "adjudicator_key": adjudicator_key,
+        "relevance": 5,
+        "exclusion_violation": False,
+    }
+
+
 def test_prepare_requires_two_distinct_blinded_reviewers_per_candidate():
-    cases, summary = prepare_cases([_trace()], _two_reviews())
+    cases, summary = prepare_cases(
+        [_trace()], _two_reviews(), adjudication_rows=[_adjudication()]
+    )
     assert len(cases) == 1
     assert len(cases[0]["human_reviews"]) == 2
+    assert cases[0]["adjudications"] == [_adjudication()]
     assert summary["no_result_roles_by_role"] == {"explore": 1}
     assert summary["review_count"] == 2
+    assert summary["adjudication_count"] == 1
+
+
+def test_prepare_rejects_unresolved_review_disagreement():
+    with pytest.raises(ValueError, match="reviewer disagreement requires adjudication"):
+        prepare_cases([_trace()], _two_reviews())
+
+
+def test_prepare_requires_adjudicator_independent_of_both_reviewers():
+    with pytest.raises(ValueError, match="adjudicator must be independent"):
+        prepare_cases(
+            [_trace()], _two_reviews(),
+            adjudication_rows=[_adjudication(adjudicator_key="reviewer-a")],
+        )
+
+
+def test_prepare_rejects_duplicate_adjudication_for_one_candidate():
+    with pytest.raises(ValueError, match="duplicate adjudication"):
+        prepare_cases(
+            [_trace()], _two_reviews(),
+            adjudication_rows=[_adjudication(), _adjudication(adjudicator_key="reviewer-d")],
+        )
+
+
+def test_prepare_rejects_adjudication_for_unknown_candidate():
+    wrong = dict(_adjudication(), look_id="unknown-look")
+    with pytest.raises(ValueError, match="adjudication references an unknown candidate"):
+        prepare_cases([_trace()], _two_reviews(), adjudication_rows=[wrong])
 
 
 def test_prepare_rejects_duplicate_reviewer_and_missing_rating():
