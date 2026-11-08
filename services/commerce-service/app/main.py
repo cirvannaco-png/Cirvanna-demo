@@ -29,7 +29,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from urllib.parse import urlsplit
 
 from sqlalchemy import (
-    JSON, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint,
+    JSON, CheckConstraint, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint,
     create_engine, func, inspect, select, text, update,
 )
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -37,7 +37,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 
 
 SERVICE = "cirvanna-commerce-service"
-EXPECTED_SCHEMA_REVISION = "20261108_0006"
+EXPECTED_SCHEMA_REVISION = "20261109_0007"
 MAX_QTY = 50
 RESERVATION_MINUTES = 60
 SKU_RE = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,79}$")
@@ -91,6 +91,8 @@ class Merchant(Base):
     legal_name: Mapped[str] = mapped_column(String(180), nullable=False)
     country_code: Mapped[str] = mapped_column(String(2), nullable=False)
     contact_email: Mapped[str] = mapped_column(String(254), nullable=False)
+    brand_home_country_code: Mapped[str | None] = mapped_column(String(2))
+    legal_country_code: Mapped[str | None] = mapped_column(String(2))
     verification_reference: Mapped[str | None] = mapped_column(String(180))
     state: Mapped[str] = mapped_column(String(16), nullable=False, default="pending", index=True)
     commission_bps: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
@@ -131,6 +133,8 @@ class Variant(Base):
     options: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     price_minor: Mapped[int] = mapped_column(Integer, nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    source_price_minor: Mapped[int | None] = mapped_column(Integer)
+    source_currency: Mapped[str | None] = mapped_column(String(3))
     on_hand: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     reserved_qty: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     state: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
@@ -1680,3 +1684,117 @@ def list_admin_merchant_decisions(
         "limit": limit,
     }
 
+
+
+# Multi-market provider evidence models. Provider quote rows are immutable
+# evidence snapshots; ingestion and activation APIs are added in the next stage.
+class MerchantOperatingMarket(Base):
+    __tablename__ = "commerce_merchant_operating_markets"
+    __table_args__ = (
+        UniqueConstraint("merchant_id", "market_country_code", name="uq_commerce_merchant_market"),
+        CheckConstraint("state IN ('pending','active','blocked')", name="ck_commerce_market_state"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(ForeignKey("commerce_merchants.id", ondelete="CASCADE"), nullable=False, index=True)
+    market_country_code: Mapped[str] = mapped_column(String(2), nullable=False, index=True)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    display_currency: Mapped[str | None] = mapped_column(String(3))
+    locale: Mapped[str | None] = mapped_column(String(35))
+    activated_by: Mapped[str | None] = mapped_column(String(128))
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    tax_provider: Mapped[str | None] = mapped_column(String(100))
+    tax_provider_reference: Mapped[str | None] = mapped_column(String(180))
+    tax_capability_observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    tax_capability_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fulfillment_provider: Mapped[str | None] = mapped_column(String(100))
+    fulfillment_provider_reference: Mapped[str | None] = mapped_column(String(180))
+    fulfillment_capability_observed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fulfillment_capability_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now, onupdate=now)
+
+
+class OfferFXQuote(Base):
+    __tablename__ = "commerce_offer_fx_quotes"
+    __table_args__ = (
+        UniqueConstraint("variant_id", "provider", "provider_quote_id", name="uq_commerce_fx_provider_quote"),
+        CheckConstraint("rate > 0", name="ck_commerce_fx_rate_positive"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    variant_id: Mapped[str] = mapped_column(ForeignKey("commerce_variants.id", ondelete="CASCADE"), nullable=False, index=True)
+    base_currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    quote_currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    rate: Mapped[Decimal] = mapped_column(Numeric(24, 12), nullable=False)
+    provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    provider_quote_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    rounding_rule: Mapped[str] = mapped_column(String(40), nullable=False, default="HALF_UP")
+    spread_bps: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+
+
+class OfferFulfillmentQuote(Base):
+    __tablename__ = "commerce_offer_fulfillment_quotes"
+    __table_args__ = (
+        UniqueConstraint("variant_id", "provider", "provider_quote_id", name="uq_commerce_fulfillment_provider_quote"),
+        CheckConstraint("status IN ('estimate','confirmed','unavailable')", name="ck_commerce_fulfillment_status"),
+        CheckConstraint("charge_basis IN ('per_unit','per_quote')", name="ck_commerce_fulfillment_charge_basis"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    variant_id: Mapped[str] = mapped_column(ForeignKey("commerce_variants.id", ondelete="CASCADE"), nullable=False, index=True)
+    destination_country_code: Mapped[str] = mapped_column(String(2), nullable=False)
+    destination_key: Mapped[str] = mapped_column(String(180), nullable=False)
+    fulfillment_mode: Mapped[str] = mapped_column(String(32), nullable=False)
+    amount_minor: Mapped[int | None] = mapped_column(Integer)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    charge_basis: Mapped[str] = mapped_column(String(16), nullable=False, default="per_unit")
+    distance_km: Mapped[Decimal | None] = mapped_column(Numeric(9, 2))
+    provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    provider_quote_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class OfferTaxQuote(Base):
+    __tablename__ = "commerce_offer_tax_quotes"
+    __table_args__ = (
+        UniqueConstraint("variant_id", "provider", "provider_quote_id", name="uq_commerce_tax_provider_quote"),
+        CheckConstraint("basis IN ('inclusive','exclusive')", name="ck_commerce_tax_basis"),
+        CheckConstraint("status IN ('estimate','confirmed','unavailable')", name="ck_commerce_tax_status"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    variant_id: Mapped[str] = mapped_column(ForeignKey("commerce_variants.id", ondelete="CASCADE"), nullable=False, index=True)
+    destination_country_code: Mapped[str] = mapped_column(String(2), nullable=False)
+    jurisdiction: Mapped[str] = mapped_column(String(100), nullable=False)
+    tax_category: Mapped[str] = mapped_column(String(80), nullable=False)
+    basis: Mapped[str] = mapped_column(String(16), nullable=False)
+    amount_minor: Mapped[int | None] = mapped_column(Integer)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    authoritative: Mapped[bool] = mapped_column(nullable=False, default=False)
+    provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    provider_quote_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    rule_version: Mapped[str | None] = mapped_column(String(80))
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class MarketPaymentCapability(Base):
+    __tablename__ = "commerce_market_payment_capabilities"
+    __table_args__ = (
+        UniqueConstraint("merchant_id", "market_country_code", "provider", name="uq_commerce_market_payment_provider"),
+        CheckConstraint("state IN ('pending','active','blocked')", name="ck_commerce_market_payment_state"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(ForeignKey("commerce_merchants.id", ondelete="CASCADE"), nullable=False, index=True)
+    market_country_code: Mapped[str] = mapped_column(String(2), nullable=False)
+    provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    transaction_currencies: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    settlement_currencies: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    payment_methods: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
+    provider_reference: Mapped[str | None] = mapped_column(String(180))
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
