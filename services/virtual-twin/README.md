@@ -66,3 +66,16 @@ The service includes an owner-scoped metadata registry for a validated `full_bod
 This is a **guarded persistence foundation**, not a Twin generator or live Try-On service. The current pose endpoint still returns an ephemeral pose skeleton. No production persistent Twin can be registered until the real consent provider, full-body mesh generation/validation and private asset authorization/deletion providers are deployed and independently tested. Keep Virtual Try-On disabled until its renderer and output validation gates also pass.
 
 Migration: `services/virtual-twin/migrations/0001_virtual_twin_registry.sql`. Apply through the approved PostgreSQL migration process and verify backup/restore before any production promotion.
+
+## Validation
+
+Run the contract and API suites from this service directory before changing the generation contract or its trust bindings:
+
+```bash
+python -m pip install -r requirements.txt
+python -m pip check
+python -m compileall -q app tests
+python -m pytest -q
+```
+
+The PR must have successful exact-head results for the Virtual Twin API tests, registry checks, and architecture validation. These tests validate the contract and fail-closed behavior; they do not prove a production generator, consent provider, private storage provider, or independent mesh validator is deployed.
