@@ -8,6 +8,7 @@ on:
       - "services/decision-service/**"
       - "services/marketplace-bff/**"
       - "services/asset-service/**"
+      - "services/privacy-governance-service/**"
       - ".github/workflows/container-image-builds.yml"
   push:
     branches: [main]
@@ -39,3 +40,5 @@ jobs:
         run: docker build -f services/marketplace-bff/Dockerfile -t cirvanna-marketplace-bff:ci .
       - name: Build private Asset service image
         run: docker build -f services/asset-service/Dockerfile -t cirvanna-asset-service:ci .
+      - name: Build Privacy Governance service image
+        run: docker build -f services/privacy-governance-service/Dockerfile -t cirvanna-privacy-governance:ci services/privacy-governance-service
