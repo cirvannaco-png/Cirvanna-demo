@@ -1,4 +1,4 @@
-"""Canonical, consent-aware Xari capability routing.
+"""Canonical, consent-aware PNELLY capability routing. The `xari` import path is retained for compatibility.
 
 Tari and Xyra are legacy source names. This module routes only to fixed,
 server-configured capabilities; it never accepts a client-provided URL or

@@ -1,5 +1,7 @@
 # Cirvanna feature-spine audit and integration gates
 
+> **Naming supersession:** This historical snapshot used Xari as the assistant name. The current canonical identity is PNELLY under ADR-0010. The `services/xari` path and `/v1/*` routes remain compatibility surfaces; this file's original audit evidence and date are preserved.
+
 **Audit date:** 23 October 2026  
 **Baseline main:** `fe0a61f9b32dcc080d1ac25d70187538a1ec1048`  
 **Change under review:** `feature/twin-clickit-live-inference`  

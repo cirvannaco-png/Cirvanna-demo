@@ -15,7 +15,9 @@ def auth():
 
 
 def test_marketplace_search_requires_internal_authentication(monkeypatch):
+    monkeypatch.delenv("PNELLY_API_TOKEN", raising=False)
     monkeypatch.delenv("XARI_API_TOKEN", raising=False)
+    monkeypatch.delenv("TARI_API_TOKEN", raising=False)
     response = client.post("/v1/marketplace/search", json=PAYLOAD)
     assert response.status_code == 401
 
@@ -94,8 +96,38 @@ def test_xari_token_is_preferred_over_legacy_tari_token(monkeypatch):
     assert right.status_code == 503
     assert right.json()["detail"]["code"] == "MARKETPLACE_SEARCH_NOT_CONFIGURED"
 
-def test_capabilities_name_xari_as_canonical_and_keep_tari_as_legacy(monkeypatch):
-    monkeypatch.setenv("XARI_API_TOKEN", "xari-test-token-at-least-thirty-two-bytes")
+def test_capabilities_name_pnelly_as_canonical_and_keep_legacy_aliases(monkeypatch):
+    monkeypatch.setenv("PNELLY_API_TOKEN", "pnelly-test-token-at-least-thirty-two-bytes")
     data = client.get("/capabilities").json()
-    assert data["canonical_name"] == "Xari"
-    assert data["legacy_names"] == ["Tari", "Xyra"]
+    assert data["canonical_name"] == "PNELLY"
+    assert data["legacy_names"] == ["Xari", "Tari", "Xyra"]
+    assert data["contract_compatibility"] == {
+        "xari_routes_preserved": True,
+        "route_contract_version": "1.0.0",
+    }
+
+
+
+def test_pnelly_token_is_preferred_over_xari_and_tari(monkeypatch):
+    pnelly_token = "pnelly-test-token-at-least-thirty-two-bytes"
+    xari_token = "xari-test-token-at-least-thirty-two-bytes"
+    tari_token = "tari-legacy-token-at-least-thirty-bytes"
+    monkeypatch.setenv("PNELLY_API_TOKEN", pnelly_token)
+    monkeypatch.setenv("XARI_API_TOKEN", xari_token)
+    monkeypatch.setenv("TARI_API_TOKEN", tari_token)
+    monkeypatch.delenv("VISION_INTELLIGENCE_API_URL", raising=False)
+    monkeypatch.delenv("VISION_INTELLIGENCE_API_TOKEN", raising=False)
+
+    legacy = client.post(
+        "/v1/marketplace/search",
+        headers={"Authorization": f"Bearer {xari_token}"},
+        json=PAYLOAD,
+    )
+    canonical = client.post(
+        "/v1/marketplace/search",
+        headers={"Authorization": f"Bearer {pnelly_token}"},
+        json=PAYLOAD,
+    )
+    assert legacy.status_code == 401
+    assert canonical.status_code == 503
+    assert canonical.json()["detail"]["code"] == "MARKETPLACE_SEARCH_NOT_CONFIGURED"

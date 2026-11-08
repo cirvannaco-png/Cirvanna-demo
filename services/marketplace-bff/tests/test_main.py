@@ -155,17 +155,15 @@ class FakeAsyncClient:
 
 
 
-def test_description_search_fails_closed_without_xari_or_legacy_secret(client, monkeypatch):
-    monkeypatch.delenv("TARI_API_URL", raising=False)
-    monkeypatch.delenv("TARI_API_TOKEN", raising=False)
-    monkeypatch.delenv("XARI_API_URL", raising=False)
-    monkeypatch.delenv("XARI_API_TOKEN", raising=False)
+def test_description_search_fails_closed_without_pnelly_or_legacy_credentials(client, monkeypatch):
+    for name in ("PNELLY_API_URL", "PNELLY_API_TOKEN", "XARI_API_URL", "XARI_API_TOKEN", "TARI_API_URL", "TARI_API_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
     response = client.post("/api/vision/marketplace-search", json={"query": "blue linen summer dress"})
     assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "XARI_API_URL_NOT_CONFIGURED"
+    assert response.json()["detail"]["code"] == "PNELLY_API_URL_NOT_CONFIGURED"
 
 
-def test_description_search_forwards_to_legacy_tari_alias_and_keeps_candidates_pending_cal(client, monkeypatch):
+def test_description_search_forwards_to_legacy_xari_alias_and_keeps_candidates_pending_cal(client, monkeypatch):
     monkeypatch.setenv("XARI_API_URL", "https://xari.example.test")
     monkeypatch.setenv("XARI_API_TOKEN", "xari-internal-token-at-least-thirty-two-bytes")
     fake = FakeAsyncClient([FakeResponse({
@@ -286,7 +284,7 @@ def test_marketplace_ui_has_xari_description_search_and_mobile_click_it_capture(
     assert "display_authorized===true" in response.text
     assert "PENDING_CAL" in response.text
 
-def test_description_search_prefers_xari_environment_names(client, monkeypatch):
+def test_description_search_keeps_xari_credentials_as_legacy_fallback(client, monkeypatch):
     monkeypatch.setenv("XARI_API_URL", "https://xari.example.test")
     monkeypatch.setenv("XARI_API_TOKEN", "xari-internal-token-at-least-thirty-two-bytes")
     monkeypatch.setenv("TARI_API_URL", "https://legacy-tari.example.test")
@@ -305,6 +303,63 @@ def test_description_search_prefers_xari_environment_names(client, monkeypatch):
     assert response.status_code == 200, response.text
     assert fake.calls[0][1] == "https://xari.example.test/v1/marketplace/search"
     assert fake.calls[0][2]["headers"]["Authorization"] == "Bearer xari-internal-token-at-least-thirty-two-bytes"
+
+
+def test_description_search_prefers_pnelly_credentials_over_xari_and_tari(client, monkeypatch):
+    monkeypatch.setenv("PNELLY_API_URL", "https://pnelly.example.test")
+    monkeypatch.setenv("PNELLY_API_TOKEN", "pnelly-internal-token-at-least-thirty-two-bytes")
+    monkeypatch.setenv("XARI_API_URL", "https://xari.example.test")
+    monkeypatch.setenv("XARI_API_TOKEN", "xari-internal-token-at-least-thirty-two-bytes")
+    monkeypatch.setenv("TARI_API_URL", "https://legacy-tari.example.test")
+    monkeypatch.setenv("TARI_API_TOKEN", "legacy-tari-token-at-least-thirty-two-bytes")
+    fake = FakeAsyncClient([FakeResponse({
+        "status": "complete",
+        "query": "linen shirt",
+        "candidate_count": 1,
+        "candidates": [{"variant_id": "offer-1", "product_name": "linen shirt"}],
+        "display_authorized": False,
+        "decision_status": "PENDING_CAL",
+        "scores_are_probabilities": False,
+    })])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post("/api/vision/marketplace-search", json={"query": "linen shirt"})
+    assert response.status_code == 200, response.text
+    assert fake.calls[0][1] == "https://pnelly.example.test/v1/marketplace/search"
+    assert fake.calls[0][2]["headers"]["Authorization"] == "Bearer pnelly-internal-token-at-least-thirty-two-bytes"
+
+
+def test_pnelly_url_never_uses_xari_or_tari_token_as_a_cross_provider_fallback(client, monkeypatch):
+    monkeypatch.setenv("PNELLY_API_URL", "https://pnelly.example.test")
+    monkeypatch.delenv("PNELLY_API_TOKEN", raising=False)
+    monkeypatch.setenv("XARI_API_URL", "https://xari.example.test")
+    monkeypatch.setenv("XARI_API_TOKEN", "xari-internal-token-at-least-thirty-two-bytes")
+    monkeypatch.setenv("TARI_API_TOKEN", "legacy-tari-token-at-least-thirty-two-bytes")
+    response = client.post("/api/vision/marketplace-search", json={"query": "linen shirt"})
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "PNELLY_API_TOKEN_NOT_CONFIGURED"
+
+
+def test_description_search_uses_tari_only_as_the_final_legacy_fallback(client, monkeypatch):
+    monkeypatch.delenv("PNELLY_API_URL", raising=False)
+    monkeypatch.delenv("PNELLY_API_TOKEN", raising=False)
+    monkeypatch.delenv("XARI_API_URL", raising=False)
+    monkeypatch.delenv("XARI_API_TOKEN", raising=False)
+    monkeypatch.setenv("TARI_API_URL", "https://legacy-tari.example.test")
+    monkeypatch.setenv("TARI_API_TOKEN", "legacy-tari-token-at-least-thirty-two-bytes")
+    fake = FakeAsyncClient([FakeResponse({
+        "status": "complete",
+        "query": "linen shirt",
+        "candidate_count": 0,
+        "candidates": [],
+        "display_authorized": False,
+        "decision_status": "PENDING_CAL",
+        "scores_are_probabilities": False,
+    })])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post("/api/vision/marketplace-search", json={"query": "linen shirt"})
+    assert response.status_code == 200, response.text
+    assert fake.calls[0][1] == "https://legacy-tari.example.test/v1/marketplace/search"
+    assert fake.calls[0][2]["headers"]["Authorization"] == "Bearer legacy-tari-token-at-least-thirty-two-bytes"
 
 
 def test_wardrobe_items_are_bound_to_verified_commerce_subject(client, monkeypatch):

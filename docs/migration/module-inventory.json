@@ -109,11 +109,11 @@
       "promotionGate": "Split by deployment/data ownership, verify complete files, and avoid duplicated catalog logic."
     },
     {
-      "id": "xari",
+      "id": "pnelly",
       "target": "services/xari",
-      "status": "legacy-name-reconciliation",
-      "purpose": "Assistant/orchestration product known as Xari; historical snapshots use Tari and Xyra.",
-      "promotionGate": "Reconcile versions and service scope before establishing executable entry points."
+      "status": "implementation-scaffold",
+      "purpose": "Canonical PNELLY assistant/orchestration capability implemented on the preserved `services/xari` source/import path. Xari, Tari and Xyra are legacy names and compatibility contracts, not separate assistant runtimes.",
+      "promotionGate": "Complete the staged package-path and deployment-consumer migration only after all Dockerfiles, manifests, imports, workflow filters and clients are updated; verify production identity/session integration and all provider adapters. Do not claim full assistant task execution, persistent Twin, real Try-On or CAL-approved display without their respective providers and evidence."
     },
     {
       "id": "wardrobe-domain",

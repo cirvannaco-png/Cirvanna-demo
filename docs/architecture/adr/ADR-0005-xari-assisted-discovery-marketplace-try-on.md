@@ -1,7 +1,9 @@
 # ADR-0005: Xari-assisted discovery, Complementer collaboration and marketplace Try-On
 
-**Status:** Accepted — product and service ownership decision. Runtime completion remains gated.
+**Status:** Historical product/service ownership decision; its Xari canonical-name and credential clauses are superseded by [ADR-0010](ADR-0010-pnelly-canonical-assistant-identity.md). Remaining Complementer, marketplace discovery and Try-On ownership decisions remain accepted subject to their stated runtime gates.
 **Date:** 4 November 2026
+
+> **Naming history:** This ADR records the earlier Xari product decision. On 8 November 2026 the product owner designated PNELLY as the canonical assistant identity. Keep this document for historical ownership context; use ADR-0010 for current identity, credential precedence and compatibility rules.
 
 ## Context
 

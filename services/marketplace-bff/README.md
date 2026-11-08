@@ -2,14 +2,14 @@
 
 **Status: deployable integration boundary; production remains gated on verified upstream services and identity-provider integration.**
 
-This is the server-side browser boundary for marketplace browsing, visual discovery and the authenticated personal Wardrobe UI. It serves the marketplace UI, proxies public offers, forwards allowlisted account operations, routes natural-language search to Xari, and forwards Click It photos to the private Virtual Twin API after deriving the user subject from Commerce's verified `/me` endpoint. It does not issue identities, hold user tokens in storage, bypass Commerce authorization, or invent fit/try-on results.
+This is the server-side browser boundary for marketplace browsing, visual discovery and the authenticated personal Wardrobe UI. It serves the marketplace UI, proxies public offers, forwards allowlisted account operations, routes natural-language search to PNELLY, and stops Click It at the BFF boundary until verified masking and publication attestation are released. It does not issue identities, hold user tokens in storage, bypass Commerce authorization, or invent fit/try-on results.
 
 ## Why this boundary exists
 
 - No Catalog or Commerce service credential is embedded in the marketplace page. Catalog secrets remain in Catalog/Commerce service environments; the BFF uses only configured upstream URLs.
 - The browser defaults to GET /api/commerce/marketplace/offers. Commerce returns only active offers from approved merchants with stock available.
-- `POST /api/vision/marketplace-search` forwards a bounded written description/category/limit to Xari using a server-side token. It does not expose the Tari secret in browser JavaScript.
-- `POST /api/vision/click-it` requires a signed Commerce user JWT, checks the user through `GET /me`, and forwards a size-bounded product photo to Virtual Twin with a server-side token. It never trusts a browser-supplied subject/user ID.
+- `POST /api/vision/marketplace-search` forwards a bounded written description/category/limit to PNELLY using its paired server-side credentials. XARI_* and TARI_* remain legacy fallback aliases; no assistant secret is exposed in browser JavaScript.
+- `POST /api/vision/click-it` validates the signed-user/consent assertions, closes the upload without reading its bytes, and returns a private no-store 503 until the masking and resource-bound privacy-attestation pipeline is released. No photo is forwarded to Virtual Twin or Vision Intelligence.
 - `/api/wardrobe/outfits` lists and creates saved looks; piece-level add/replace/remove operations are proxied to the Wardrobe service. The BFF derives the owner from Commerce `/me`, generates outfit/slot identifiers, and rejects cross-subject responses.
 - `/api/style/color-profile` reads and writes the user's structured liked/disliked/best-version colour preferences through USI/TAL. The BFF derives the subject from Commerce `/me`; profile-storage consent is enforced by Identity Learning. The route does not perform objective complexion or undertone analysis.\n- Account operations require the user's bearer token and are forwarded to Commerce. Commerce remains responsible for signature, issuer, audience, role, ownership, stock, checkout and payment validation.
 - Only customer cart, saved-product, checkout and order routes are proxied. Admin, merchant-management, webhooks, cron, and internal endpoints are not exposed through this gateway.
@@ -22,7 +22,7 @@ Set through the deployment secret manager:
 - CATALOG_API_URL: deployed canonical Catalog API base URL.
 - COMMERCE_API_URL: deployed Commerce API base URL.
 - MARKETPLACE_HTML_PATH: optional path override for a nonstandard container layout.
-- XARI_API_URL and XARI_API_TOKEN: preferred private assistant endpoint and bearer token. Existing TARI_API_URL and TARI_API_TOKEN values remain supported as compatibility fallbacks during migration.
+- PNELLY_API_URL and PNELLY_API_TOKEN: preferred paired assistant endpoint and bearer token. XARI_API_URL / XARI_API_TOKEN and TARI_API_URL / TARI_API_TOKEN remain compatibility fallbacks. A PNELLY URL never borrows an Xari/Tari token.
 
 Non-local upstream URLs must use HTTPS without URL credentials, query strings or fragments. The /ready endpoint probes both upstream /ready endpoints and fails with HTTP 503 unless the catalog credential is configured and both services independently report ready. /health is liveness only.
 
@@ -41,8 +41,8 @@ Build the container from repository root:
 
 ## Production release gates not solved by the BFF
 
-Click It stays unavailable until the actual consent-verification service and pinned Vision Intelligence model assets are deployed/configured; an HTML checkbox is not accepted as proof of durable consent. Candidate products remain hidden unless the response is authorized for display by the real CAL decision gateway.
+Click It stays unavailable until the verified face-masking processor, resource-bound consent verifier, independent asset-bound privacy attestation, publication gate, and pinned Vision Intelligence model assets are deployed/configured. The current BFF closes uploads before reading or forwarding bytes; an HTML checkbox is not proof of durable consent. Candidate products remain hidden unless the response is authorized for display by the real CAL decision gateway.
 
 A working proxy does not create a production marketplace by itself. The actual Cirvanna identity provider and token/session flow must be integrated in place of manual test-token entry. Real PostgreSQL migrations, backups/restores and concurrency checks, Stripe test-mode checkout/webhook/reconciliation, shipping/tax policy, refunds/returns, seller payouts and fulfilment, rate limits/alerts, privacy deletion/retention, and live origin/credential smoke tests remain explicit release gates. The marketplace must keep showing account/checkout and AI/try-on features as unavailable until those integrations are verified.
 
-Xari's search response contains candidate matches, not display authorization. The marketplace must apply the canonical decision flow before showing candidate product details. Offer-price comparison belongs to the Catalog/Commerce offer layer: the assistant must never generate merchant names, prices, currencies, stock or shipping estimates.
+PNELLY's search response contains candidate matches, not display authorization. The marketplace must apply the canonical decision flow before showing candidate product details. Offer-price comparison belongs to the Catalog/Commerce offer layer: the assistant must never generate merchant names, prices, currencies, stock or shipping estimates.
