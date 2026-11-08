@@ -1,3 +1,9 @@
-# Empty template: add one JSON object per reviewed candidate row.
-# Example shape only; remove this comment and replace values with actual reviewed data.
-# {"session_id":"session-random-001","user_pseudonym":"user-random-001","outfit_id":"outfit-opaque-001","algorithm_rank":1,"human_relevance":4,"hard_exclusion_violation":false,"edited":false,"rejected":false,"occasion_match":true,"preference_match_count":2,"garment_categories":["top","trousers","shoes"],"style_tags":["minimal","smart-casual"],"human_reviewed":true,"reviewer_id":"reviewer-random-001"}
+# Empty template: one JSON object per candidate-pool case.
+# Do not commit participant-level or reviewer-level observations to this repository.
+# See data/evaluation/outfit-review.schema.json and docs/evaluation/outfit-evaluation-protocol.md.
+# Required case structure: schema_version, case_id, participant_key, session_id,
+# assigned_system ("cirvanna" or "baseline"), context, candidate_outfits,
+# cirvanna_ranked_look_ids, human_reviews, adjudications, exposures.
+# Every candidate look requires exactly two distinct reviewer_key annotations.
+# If reviewers disagree, an independent adjudicator is required.
+# User exposure outcomes must correspond only to the randomized arm's top-k.
