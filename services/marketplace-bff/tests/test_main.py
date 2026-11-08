@@ -2,6 +2,7 @@ import json
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 from app import main
 
@@ -224,6 +225,35 @@ def test_click_it_fails_closed_before_reading_or_forwarding_the_uploaded_photo(c
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "CLICK_IT_PRIVACY_PIPELINE_NOT_RELEASED"
     assert response.headers["cache-control"] == "no-store"
+
+
+def test_click_it_rejects_before_multipart_form_parser_is_invoked(client, monkeypatch):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Click It must return 503 without parsing multipart photo bytes")
+
+    monkeypatch.setattr(Request, "form", forbidden)
+    response = client.post(
+        "/api/vision/click-it",
+        headers={"Authorization": "Bearer signed-user-token"},
+        data={"consent_image_processing": "true", "consent_click_it": "true"},
+        files={"product_image": ("private.jpg", b"do-not-parse-this-photo", "image/jpeg")},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "CLICK_IT_PRIVACY_PIPELINE_NOT_RELEASED"
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_click_it_requires_authentication_without_parsing_multipart(client, monkeypatch):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Unauthenticated Click It request must not parse multipart body")
+
+    monkeypatch.setattr(Request, "form", forbidden)
+    response = client.post(
+        "/api/vision/click-it",
+        files={"product_image": ("private.jpg", b"do-not-parse-this-photo", "image/jpeg")},
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "USER_BEARER_REQUIRED"
 
 
 def test_click_it_fails_closed_for_every_upload_type_without_content_inspection(client, monkeypatch):
