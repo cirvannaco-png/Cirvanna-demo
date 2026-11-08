@@ -39,7 +39,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 
 
 SERVICE = "cirvanna-commerce-service"
-EXPECTED_SCHEMA_REVISION = "20261105_0005"
+EXPECTED_SCHEMA_REVISION = "20261108_0008"
 MAX_QTY = 50
 RESERVATION_MINUTES = 60
 SKU_RE = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,79}$")
@@ -310,13 +310,19 @@ class CommerceOrder(Base):
     __table_args__ = (
         UniqueConstraint("buyer_user_id", "idempotency_key", name="uq_commerce_order_idempotency"),
         Index("ix_commerce_order_buyer_created", "buyer_user_id", "created_at"),
+        Index("uq_commerce_order_payment_intent", "payment_intent_id", unique=True),
         CheckConstraint("subtotal_minor >= 0", name="ck_commerce_order_subtotal_nonnegative"),
+        CheckConstraint("amount_refunded_minor >= 0 AND amount_refunded_minor <= COALESCE(total_minor, subtotal_minor)", name="ck_commerce_order_refunded_nonnegative"),
+        CheckConstraint("refund_state IN ('none', 'partial_refund', 'refunded')", name="ck_commerce_order_refund_state"),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     order_number: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
     buyer_user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     state: Mapped[str] = mapped_column(String(24), nullable=False, default="pending_payment", index=True)
     payment_state: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    refund_state: Mapped[str] = mapped_column(String(16), nullable=False, default="none")
+    amount_refunded_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    payment_intent_id: Mapped[str | None] = mapped_column(String(180), nullable=True)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     subtotal_minor: Mapped[int] = mapped_column(Integer, nullable=False)
     fulfillment_total_minor: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -394,6 +400,51 @@ class StockReservation(Base):
     quantity: Mapped[int] = mapped_column(Integer, nullable=False)
     state: Mapped[str] = mapped_column(String(16), nullable=False, default="reserved", index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+
+
+class CommerceOutboxEvent(Base):
+    """Durable domain event; consumers must deduplicate by event_id."""
+    __tablename__ = "commerce_outbox_events"
+    __table_args__ = (
+        UniqueConstraint("aggregate_type", "aggregate_id", "event_type", name="uq_commerce_outbox_aggregate_event"),
+        Index("ix_commerce_outbox_pending", "delivered_at", "dead_letter_at", "next_attempt_at"),
+    )
+    event_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    aggregate_type: Mapped[str] = mapped_column(String(48), nullable=False)
+    aggregate_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(96), nullable=False)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    lease_owner: Mapped[str | None] = mapped_column(String(128))
+    dead_letter_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(String(500))
+
+
+class OutboxClaimIn(BaseModel):
+    worker_id: str = Field(min_length=3, max_length=128)
+    limit: int = Field(default=20, ge=1, le=100)
+
+
+class OutboxLeaseIn(BaseModel):
+    worker_id: str = Field(min_length=3, max_length=128)
+
+
+class OutboxFailureIn(BaseModel):
+    worker_id: str = Field(min_length=3, max_length=128)
+    error_code: str = Field(min_length=1, max_length=120)
+
+
+def require_sync_token(token: Annotated[str | None, Header(alias="X-Commerce-Sync-Token")] = None) -> None:
+    expected = os.getenv("COMMERCE_SYNC_TOKEN", "")
+    if len(expected.encode()) < 32:
+        raise HTTPException(503, detail={"code": "COMMERCE_SYNC_TOKEN_NOT_CONFIGURED"})
+    if not token or not hmac.compare_digest(token, expected):
+        raise HTTPException(401, detail={"code": "COMMERCE_SYNC_AUTH_FAILED"})
 
 
 class PaymentWebhookEvent(Base):
@@ -1292,7 +1343,10 @@ def order_json(db: Session, order: CommerceOrder, include_url: bool = False) -> 
     charges = list(db.scalars(select(OrderCharge).where(OrderCharge.order_id == order.id)).all())
     result = {
         "order_id": order.id, "order_number": order.order_number, "status": order.state,
-        "payment_status": order.payment_state, "currency": order.currency,
+        "payment_status": order.payment_state, "refund_status": order.refund_state,
+        "amount_refunded_minor": order.amount_refunded_minor,
+        "payment_intent_id": order.payment_intent_id,
+        "currency": order.currency,
         "subtotal_minor": order.subtotal_minor,
         "fulfillment_total_minor": order.fulfillment_total_minor or 0,
         "tax_total_minor": order.tax_total_minor or 0,
@@ -1364,7 +1418,14 @@ def release_reservations(db: Session, order: CommerceOrder, final_state: str) ->
     order.updated_at = now()
 
 
-def settle_paid(db: Session, order: CommerceOrder, amount_total: int, currency: str) -> None:
+def settle_paid(
+    db: Session, order: CommerceOrder, amount_total: int, currency: str,
+    payment_intent_id: str | None = None,
+) -> None:
+    if payment_intent_id:
+        if order.payment_intent_id and order.payment_intent_id != payment_intent_id:
+            raise HTTPException(409, detail={"code": "PAYMENT_INTENT_MISMATCH"})
+        order.payment_intent_id = payment_intent_id
     if order.state == "paid":
         return
     if order.state != "pending_payment":
@@ -1372,25 +1433,62 @@ def settle_paid(db: Session, order: CommerceOrder, amount_total: int, currency: 
     expected_total = order.total_minor if order.total_minor is not None else order.subtotal_minor
     if amount_total != expected_total or currency.lower() != order.currency.lower():
         raise HTTPException(400, detail={"code": "PAYMENT_AMOUNT_MISMATCH"})
+    if not payment_intent_id or not payment_intent_id.strip():
+        raise HTTPException(400, detail={"code": "PAYMENT_INTENT_REQUIRED_FOR_REFUND_RECONCILIATION"})
     reservations = list(db.scalars(select(StockReservation).where(
         StockReservation.order_id == order.id, StockReservation.state == "reserved").with_for_update()).all())
     if not reservations:
         raise HTTPException(409, detail={"code": "ACTIVE_RESERVATION_MISSING"})
-    for r in reservations:
-        changed = db.execute(update(Variant).where(Variant.id == r.variant_id,
-            Variant.reserved_qty >= r.quantity, Variant.on_hand >= r.quantity).values(
-            on_hand=Variant.on_hand - r.quantity, reserved_qty=Variant.reserved_qty - r.quantity,
-            version=Variant.version + 1, updated_at=now(), observed_at=now()))
+    for reservation in reservations:
+        changed = db.execute(update(Variant).where(
+            Variant.id == reservation.variant_id,
+            Variant.reserved_qty >= reservation.quantity,
+            Variant.on_hand >= reservation.quantity,
+        ).values(
+            on_hand=Variant.on_hand - reservation.quantity,
+            reserved_qty=Variant.reserved_qty - reservation.quantity,
+            version=Variant.version + 1, updated_at=now(), observed_at=now(),
+        ))
         if changed.rowcount != 1:
             raise HTTPException(409, detail={"code": "STOCK_SETTLEMENT_CONFLICT"})
-        r.state = "consumed"
-        db.add(InventoryMovement(id=str(uuid.uuid4()), variant_id=r.variant_id,
-            actor_user_id="system:payment-webhook", delta=-r.quantity, reason=f"sale:{order.order_number}"))
+        reservation.state = "consumed"
+        db.add(InventoryMovement(
+            id=str(uuid.uuid4()), variant_id=reservation.variant_id,
+            actor_user_id="system:payment-webhook", delta=-reservation.quantity,
+            reason=f"sale:{order.order_number}",
+        ))
     order.state, order.payment_state, order.paid_at, order.updated_at = "paid", "paid", now(), now()
+
+    # This is merchandise provenance, not the full captured amount: fulfilment/tax
+    # are stored as separate OrderCharge records and do not create wardrobe items.
+    lines = list(db.scalars(
+        select(OrderItem).where(OrderItem.order_id == order.id).order_by(OrderItem.id)
+    ).all())
+    event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cirvanna:order-paid:{order.id}"))
+    db.add(CommerceOutboxEvent(
+        event_id=event_id, aggregate_type="commerce_order", aggregate_id=order.id,
+        event_type="commerce.order.paid", schema_version=1,
+        payload={
+            "event_id": event_id, "event_type": "commerce.order.paid", "schema_version": 1,
+            "occurred_at": now().isoformat(), "order_id": order.id, "order_number": order.order_number,
+            "buyer_user_id": order.buyer_user_id, "currency": order.currency,
+            "paid_at": order.paid_at.isoformat() if order.paid_at else None,
+            "items": [{
+                "order_item_id": item.id, "catalog_product_id": item.catalog_product_id,
+                "merchant_id": item.merchant_id, "merchant_variant_id": item.variant_id,
+                "sku": item.sku, "product_name": item.product_name, "options": item.options,
+                "quantity": item.quantity, "unit_price_minor": item.unit_price_minor,
+                "currency": order.currency,
+            } for item in lines],
+            "ownership_authority": "verified_payment",
+        },
+    ))
     cart = db.scalar(select(Cart).where(Cart.user_id == order.buyer_user_id))
     if cart:
-        ids = [r.variant_id for r in reservations]
-        db.query(CartItem).filter(CartItem.cart_id == cart.id, CartItem.variant_id.in_(ids)).delete(synchronize_session=False)
+        ids = [reservation.variant_id for reservation in reservations]
+        db.query(CartItem).filter(
+            CartItem.cart_id == cart.id, CartItem.variant_id.in_(ids)
+        ).delete(synchronize_session=False)
         cart.version, cart.updated_at = cart.version + 1, now()
 
 
@@ -2820,6 +2918,69 @@ async def stripe_webhook(request: Request, db: Annotated[Session, Depends(get_db
         raise HTTPException(400, detail={"code": "INVALID_PAYMENT_EVENT"})
     if db.get(PaymentWebhookEvent, event_id) is not None:
         return {"received": True, "duplicate": True}
+    if event_type == "charge.refunded":
+        payment_intent = obj.get("payment_intent")
+        if isinstance(payment_intent, dict):
+            payment_intent = payment_intent.get("id")
+        if not isinstance(payment_intent, str) or not payment_intent.strip():
+            raise HTTPException(400, detail={"code": "REFUND_PAYMENT_INTENT_MISSING"})
+        order = db.scalar(
+            select(CommerceOrder).where(
+                CommerceOrder.payment_intent_id == payment_intent.strip()
+            ).with_for_update()
+        )
+        if order is None or order.state != "paid":
+            raise HTTPException(409, detail={"code": "REFUND_ORDER_NOT_FOUND_OR_NOT_PAID"})
+        try:
+            charge_amount = int(obj.get("amount", -1))
+            amount_refunded = int(obj.get("amount_refunded", -1))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(400, detail={"code": "INVALID_REFUND_AMOUNT"}) from exc
+        captured_total = order.total_minor if order.total_minor is not None else order.subtotal_minor
+        charge_currency = str(obj.get("currency", "")).upper()
+        if (
+            charge_amount != captured_total
+            or charge_currency != order.currency
+            or amount_refunded < 0
+            or amount_refunded > charge_amount
+            or not obj.get("id")
+        ):
+            raise HTTPException(400, detail={"code": "REFUND_AMOUNT_OR_CURRENCY_MISMATCH"})
+        if amount_refunded > order.amount_refunded_minor:
+            refund_state = "refunded" if amount_refunded == charge_amount else "partial_refund"
+            order.amount_refunded_minor = amount_refunded
+            order.refund_state = refund_state
+            order.payment_state = refund_state
+            order.updated_at = now()
+            refund_event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cirvanna:stripe-refund:{event_id}"))
+            db.add(CommerceOutboxEvent(
+                event_id=refund_event_id,
+                aggregate_type="stripe_event",
+                aggregate_id=refund_event_id,
+                event_type="commerce.order.refund.updated",
+                schema_version=1,
+                payload={
+                    "event_id": refund_event_id,
+                    "provider_event_id": event_id,
+                    "event_type": "commerce.order.refund.updated",
+                    "schema_version": 1,
+                    "ownership_authority": "verified_stripe_charge_refund",
+                    "order_id": order.id,
+                    "buyer_user_id": order.buyer_user_id,
+                    "payment_intent_id": payment_intent,
+                    "charge_id": str(obj["id"]),
+                    "currency": order.currency,
+                    # Wardrobe matches this to merchandise purchase-line snapshots.
+                    "order_total_minor": order.subtotal_minor,
+                    # Refunds include the full captured amount, including separately quoted fees.
+                    "captured_total_minor": captured_total,
+                    "amount_refunded_minor": amount_refunded,
+                    "refund_state": refund_state,
+                    "refunded_at": now().isoformat(),
+                    "physical_return_confirmed": False,
+                    "ownership_effect": "financial_status_only",
+                },
+            ))
     handled = {"checkout.session.completed", "checkout.session.async_payment_succeeded",
         "checkout.session.expired", "checkout.session.async_payment_failed"}
     if event_type in handled:
@@ -2831,7 +2992,15 @@ async def stripe_webhook(request: Request, db: Annotated[Session, Depends(get_db
             raise HTTPException(409, detail={"code": "PAYMENT_SESSION_MISMATCH"})
         if event_type in {"checkout.session.completed", "checkout.session.async_payment_succeeded"}:
             if obj.get("payment_status") == "paid":
-                settle_paid(db, order, int(obj.get("amount_total", -1)), str(obj.get("currency", "")))
+                payment_intent = obj.get("payment_intent")
+                if isinstance(payment_intent, dict):
+                    payment_intent = payment_intent.get("id")
+                if not isinstance(payment_intent, str) or not payment_intent.strip():
+                    raise HTTPException(400, detail={"code": "PAYMENT_INTENT_REQUIRED_FOR_REFUND_RECONCILIATION"})
+                settle_paid(
+                    db, order, int(obj.get("amount_total", -1)), str(obj.get("currency", "")),
+                    payment_intent_id=payment_intent,
+                )
         elif event_type == "checkout.session.expired" and order.state == "pending_payment":
             release_reservations(db, order, "expired")
         elif event_type == "checkout.session.async_payment_failed" and order.state == "pending_payment":
@@ -2877,3 +3046,77 @@ def inventory_audit(actor: Annotated[Actor, Depends(require_actor)], db: Annotat
         (Variant.on_hand < 0) | (Variant.reserved_qty < 0) | (Variant.reserved_qty > Variant.on_hand))).all())
     return {"ok": not bad, "violations": [{"variant_id": v.id, "on_hand": v.on_hand,
         "reserved_qty": v.reserved_qty, "version": v.version} for v in bad]}
+
+@app.post("/internal/outbox/claim", dependencies=[Depends(require_sync_token)], tags=["internal event delivery"])
+def claim_outbox_events(payload: OutboxClaimIn) -> dict[str, object]:
+    """Lease pending outbox events for the authenticated Sync worker."""
+    current = now()
+    try:
+        with SessionLocal() as db, db.begin():
+            events = list(db.scalars(select(CommerceOutboxEvent).where(
+                CommerceOutboxEvent.delivered_at.is_(None),
+                CommerceOutboxEvent.dead_letter_at.is_(None),
+                CommerceOutboxEvent.next_attempt_at <= current,
+                (CommerceOutboxEvent.lease_until.is_(None) | (CommerceOutboxEvent.lease_until < current)),
+            ).order_by(CommerceOutboxEvent.created_at, CommerceOutboxEvent.event_id)
+              .with_for_update(skip_locked=True).limit(payload.limit)).all())
+            for event in events:
+                event.attempts += 1
+                event.lease_owner = payload.worker_id.strip()
+                event.lease_until = current + timedelta(seconds=90)
+            db.flush()
+            return {"worker_id": payload.worker_id.strip(), "events": [{
+                "event_id": event.event_id, "event_type": event.event_type,
+                "schema_version": event.schema_version, "payload": event.payload,
+                "attempt": event.attempts, "lease_until": event.lease_until.isoformat(),
+            } for event in events]}
+    except Exception as exc:
+        raise HTTPException(503, detail={"code": "COMMERCE_OUTBOX_CLAIM_FAILED"}) from exc
+
+
+@app.post("/internal/outbox/{event_id}/ack", dependencies=[Depends(require_sync_token)], tags=["internal event delivery"])
+def acknowledge_outbox_event(event_id: str, payload: OutboxLeaseIn) -> dict[str, object]:
+    current = now()
+    with SessionLocal() as db, db.begin():
+        event = db.scalar(select(CommerceOutboxEvent).where(
+            CommerceOutboxEvent.event_id == event_id).with_for_update())
+        if event is None:
+            raise HTTPException(404, detail={"code": "COMMERCE_OUTBOX_EVENT_NOT_FOUND"})
+        if event.delivered_at is not None:
+            return {"status": "already_delivered", "event_id": event_id}
+        lease_until = event.lease_until
+        if lease_until is not None and lease_until.tzinfo is None:
+            lease_until = lease_until.replace(tzinfo=timezone.utc)
+        if event.lease_owner != payload.worker_id.strip() or lease_until is None or lease_until < current:
+            raise HTTPException(409, detail={"code": "COMMERCE_OUTBOX_LEASE_LOST"})
+        event.delivered_at = current
+        event.lease_owner = None
+        event.lease_until = None
+        event.last_error = None
+        return {"status": "delivered", "event_id": event_id}
+
+
+@app.post("/internal/outbox/{event_id}/fail", dependencies=[Depends(require_sync_token)], tags=["internal event delivery"])
+def fail_outbox_event(event_id: str, payload: OutboxFailureIn) -> dict[str, object]:
+    current = now()
+    with SessionLocal() as db, db.begin():
+        event = db.scalar(select(CommerceOutboxEvent).where(
+            CommerceOutboxEvent.event_id == event_id).with_for_update())
+        if event is None:
+            raise HTTPException(404, detail={"code": "COMMERCE_OUTBOX_EVENT_NOT_FOUND"})
+        if event.delivered_at is not None:
+            return {"status": "already_delivered", "event_id": event_id}
+        lease_until = event.lease_until
+        if lease_until is not None and lease_until.tzinfo is None:
+            lease_until = lease_until.replace(tzinfo=timezone.utc)
+        if event.lease_owner != payload.worker_id.strip() or lease_until is None or lease_until < current:
+            raise HTTPException(409, detail={"code": "COMMERCE_OUTBOX_LEASE_LOST"})
+        event.last_error = payload.error_code.strip()[:500]
+        event.lease_owner = None
+        event.lease_until = None
+        if event.attempts >= 8:
+            event.dead_letter_at = current
+            return {"status": "dead_lettered", "event_id": event_id, "attempts": event.attempts}
+        delay = min(15 * (2 ** max(event.attempts - 1, 0)), 900)
+        event.next_attempt_at = current + timedelta(seconds=delay)
+        return {"status": "retry_scheduled", "event_id": event_id, "retry_after_seconds": delay}
