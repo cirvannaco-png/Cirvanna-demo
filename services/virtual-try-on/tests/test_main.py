@@ -83,10 +83,12 @@ def install_providers(monkeypatch, *, twin_asset=PERSON_ASSET):
         }
 
     async def resolve(request):
+        if request.person_image_asset_id != twin_asset:
+            raise HTTPException(403, detail={"code": "TWIN_PERSON_ASSET_MISMATCH"})
         return {
             "twin_id": request.twin_id,
             "subject_id": request.subject_id,
-            "source_asset_id": twin_asset,
+            "source_image_asset_ids": [twin_asset],
             "status": "active",
         }
 
