@@ -43,7 +43,7 @@ class FakeObjectStore:
     def get_bucket_policy_status(self, *, Bucket):
         return {"PolicyStatus": {"IsPublic": not self.private_controls_valid}}
 
-    def get_bucket_encryption(self):
+    def get_bucket_encryption(self, *, Bucket):
         rules = [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}] if self.private_controls_valid else []
         return {"ServerSideEncryptionConfiguration": {"Rules": rules}}
 
