@@ -44,6 +44,7 @@ class MarketplaceContractTests(unittest.TestCase):
         self.assertIn("Complementer is designed as optional styling advice", HTML)
         self.assertIn("price comparisons must use current Commerce offers", HTML)
         self.assertNotIn("Xari · Describe it", HTML)
+        self.assertNotIn("Search marketplace with Xari", HTML)
         self.assertNotIn("with Tari", HTML)
         self.assertNotIn("search with Tari", HTML)
 
