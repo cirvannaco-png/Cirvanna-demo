@@ -139,6 +139,8 @@ class MeshValidationReceipt(StrictContractModel):
     validator_id: str = Field(min_length=3, max_length=80)
     receipt_id: str = Field(min_length=8, max_length=160)
     validated: StrictBool
+    consent_id: str = Field(min_length=8, max_length=160)
+    consent_version: str = Field(min_length=1, max_length=80)
     subject_id: str = Field(min_length=3, max_length=128)
     twin_id: str = Field(min_length=3, max_length=128)
     representation_type: Literal["full_body_mesh"]
@@ -148,7 +150,7 @@ class MeshValidationReceipt(StrictContractModel):
     model_version: str = Field(min_length=3, max_length=160)
     checks: MeshValidationChecks
 
-    @field_validator("validator_id", "receipt_id", "subject_id", "twin_id", "artifact_asset_id")
+    @field_validator("validator_id", "receipt_id", "consent_id", "consent_version", "subject_id", "twin_id", "artifact_asset_id")
     @classmethod
     def validate_identifiers(cls, value: str) -> str:
         return _opaque_identifier(value)
@@ -204,6 +206,8 @@ def validate_generation_bundle(
         raise GenerationContractError("TWIN_MESH_NOT_VALIDATED")
     if receipt.subject_id != command.subject_id or receipt.twin_id != command.twin_id:
         raise GenerationContractError("TWIN_VALIDATION_SCOPE_MISMATCH")
+    if receipt.consent_id != command.consent_id or receipt.consent_version != command.consent_version:
+        raise GenerationContractError("TWIN_VALIDATION_CONSENT_MISMATCH")
     if receipt.representation_type != result.representation_type:
         raise GenerationContractError("TWIN_VALIDATION_REPRESENTATION_MISMATCH")
     if receipt.artifact_asset_id != result.artifact_asset_id:
