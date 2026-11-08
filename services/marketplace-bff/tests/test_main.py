@@ -232,6 +232,8 @@ def test_click_it_rejects_before_multipart_form_parser_is_invoked(client, monkey
         pytest.fail("Click It must return 503 without parsing multipart photo bytes")
 
     monkeypatch.setattr(Request, "form", forbidden)
+    monkeypatch.setattr(Request, "body", forbidden)
+    monkeypatch.setattr(Request, "stream", forbidden)
     response = client.post(
         "/api/vision/click-it",
         headers={"Authorization": "Bearer signed-user-token"},
@@ -248,6 +250,8 @@ def test_click_it_requires_authentication_without_parsing_multipart(client, monk
         pytest.fail("Unauthenticated Click It request must not parse multipart body")
 
     monkeypatch.setattr(Request, "form", forbidden)
+    monkeypatch.setattr(Request, "body", forbidden)
+    monkeypatch.setattr(Request, "stream", forbidden)
     response = client.post(
         "/api/vision/click-it",
         files={"product_image": ("private.jpg", b"do-not-parse-this-photo", "image/jpeg")},
