@@ -127,7 +127,7 @@ def install_providers(monkeypatch, *, twin_asset=PERSON_ASSET):
         assert twin_id == "twin-test-001"
         return {
             "twin_id": twin_id, "subject_id": subject_id,
-            "source_asset_id": twin_asset, "status": "active",
+            "source_image_asset_ids": [twin_asset], "status": "active",
         }
 
     monkeypatch.setattr(main, "_trusted_base", trusted_base)
