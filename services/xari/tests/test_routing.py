@@ -51,12 +51,13 @@ def test_unknown_intents_and_consent_fields_are_rejected():
 def test_health_is_liveness_and_capabilities_are_honest():
     assert client.get("/health").json()["status"] == "alive"
     data = client.get("/capabilities").json()
-    assert data["canonical_name"] == "Xari"
-    assert data["legacy_names"] == ["Tari", "Xyra"]
+    assert data["canonical_name"] == "PNELLY"
+    assert data["legacy_names"] == ["Xari", "Tari", "Xyra"]
+    assert data["contract_compatibility"]["xari_routes_preserved"] is True
     assert data["execution_enabled"] is False
 
 def test_unknown_consent_field_is_a_client_error_not_a_server_error(monkeypatch):
-    monkeypatch.setenv("XARI_API_TOKEN", TOKEN)
+    monkeypatch.setenv("PNELLY_API_TOKEN", TOKEN)
     response = client.post(
         "/v1/route",
         headers={"Authorization": f"Bearer {TOKEN}"},
