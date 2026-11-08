@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from urllib.parse import urlsplit
 
 import httpx
-from fastapi import Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -1444,36 +1444,22 @@ async def wardrobe_daily_looks(request: Request, payload: DailyLooksIn = Body(de
 
 
 @app.post("/api/vision/click-it")
-async def marketplace_click_it(
-    request: Request,
-    consent_id: str = Form(min_length=8, max_length=160),
-    consent_image_processing: bool = Form(),
-    consent_click_it: bool = Form(),
-    product_image: UploadFile = File(...),
-    twin_id: str | None = Form(default=None, min_length=3, max_length=128),
-    category: str | None = Form(default=None, max_length=80),
-    limit: int = Form(default=10, ge=1, le=25),
-) -> Response:
-    """Fail closed until the trusted face-masking and publication pipeline is released.
+async def marketplace_click_it(request: Request) -> Response:
+    """Reject Click It before FastAPI parses any multipart photo upload.
 
-    The browser-facing service must not read, copy or forward a raw Click It image
-    while the masking and asset-bound privacy-attestation providers are unavailable.
+    This endpoint intentionally has no Form/File parameters and never calls
+    request.form(), request.body(), or request.stream(). Until the masking,
+    consent, and asset-bound attestation providers are released, even parsing
+    the uploaded photo into a spooled file is unnecessary.
     """
-    del consent_id, twin_id, category, limit
     authorization = request.headers.get("authorization", "")
     scheme, _, user_token = authorization.partition(" ")
     if scheme.lower() != "bearer" or not user_token.strip():
-        await product_image.close()
         raise HTTPException(
             401,
             detail={"code": "USER_BEARER_REQUIRED"},
             headers={"WWW-Authenticate": "Bearer"},
         )
-    if not consent_image_processing or not consent_click_it:
-        await product_image.close()
-        raise HTTPException(400, detail={"code": "EXPLICIT_CLICK_IT_CONSENT_REQUIRED"})
-    # Close the spooled upload without calling read() or forwarding its bytes.
-    await product_image.close()
     raise HTTPException(
         503,
         detail={

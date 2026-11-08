@@ -2,6 +2,7 @@ import json
 
 import pytest
 from fastapi.testclient import TestClient
+from starlette.requests import Request
 
 from app import main
 
@@ -226,6 +227,39 @@ def test_click_it_fails_closed_before_reading_or_forwarding_the_uploaded_photo(c
     assert response.headers["cache-control"] == "no-store"
 
 
+def test_click_it_rejects_before_multipart_form_parser_is_invoked(client, monkeypatch):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Click It must return 503 without parsing multipart photo bytes")
+
+    monkeypatch.setattr(Request, "form", forbidden)
+    monkeypatch.setattr(Request, "body", forbidden)
+    monkeypatch.setattr(Request, "stream", forbidden)
+    response = client.post(
+        "/api/vision/click-it",
+        headers={"Authorization": "Bearer signed-user-token"},
+        data={"consent_image_processing": "true", "consent_click_it": "true"},
+        files={"product_image": ("private.jpg", b"do-not-parse-this-photo", "image/jpeg")},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "CLICK_IT_PRIVACY_PIPELINE_NOT_RELEASED"
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_click_it_requires_authentication_without_parsing_multipart(client, monkeypatch):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Unauthenticated Click It request must not parse multipart body")
+
+    monkeypatch.setattr(Request, "form", forbidden)
+    monkeypatch.setattr(Request, "body", forbidden)
+    monkeypatch.setattr(Request, "stream", forbidden)
+    response = client.post(
+        "/api/vision/click-it",
+        files={"product_image": ("private.jpg", b"do-not-parse-this-photo", "image/jpeg")},
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "USER_BEARER_REQUIRED"
+
+
 def test_click_it_fails_closed_for_every_upload_type_without_content_inspection(client, monkeypatch):
     def forbidden(*_args, **_kwargs):
         pytest.fail("Click It must stop before content inspection or upstream calls")
@@ -269,18 +303,21 @@ def test_bff_has_no_duplicate_method_path_route_registrations(client):
     assert duplicates == {}
 
 
-def test_marketplace_ui_has_xari_description_search_and_mobile_click_it_capture(client):
+def test_marketplace_ui_does_not_solicit_click_it_photos_while_pipeline_is_blocked(client):
     response = client.get("/")
     assert response.status_code == 200
     assert 'id="aiQuery"' in response.text
     assert 'id="aiSearchBtn"' in response.text
-    assert 'id="clickItImage"' in response.text
-    assert 'capture="environment"' in response.text
-    assert 'id="clickItConsentId"' in response.text
-    assert 'id="clickItImageConsent"' in response.text
-    assert 'id="clickItSearchConsent"' in response.text
+    assert "Click It · Temporarily paused" in response.text
+    assert "Photo search is temporarily unavailable" in response.text
+    assert "face masking, consent enforcement, and asset-bound privacy attestation" in response.text
+    assert "No photo is requested or sent from this page" in response.text
+    assert "Use PNELLY description search in the meantime" in response.text
+    assert 'id="clickItImage"' not in response.text
+    assert 'id="clickItConsentId"' not in response.text
+    assert 'id="clickItForm"' not in response.text
     assert 'fetch("/api/vision/marketplace-search"' in response.text
-    assert 'fetch("/api/vision/click-it"' in response.text
+    assert 'fetch("/api/vision/click-it"' not in response.text
     assert "display_authorized===true" in response.text
     assert "PENDING_CAL" in response.text
 
