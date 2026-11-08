@@ -178,7 +178,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
         ))
         connection.execute(
             text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
-            {"revision": "20261107_0005"},
+            {"revision": "20261108_0006"},
         )
 
     ready = client.get("/ready")
@@ -191,7 +191,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
     assert payload["payment_configured"] is True
     assert payload["migrations_required"] is True
     assert payload["migrations_applied"] is True
-    assert payload["schema_revision"] == "20261107_0005"
+    assert payload["schema_revision"] == "20261108_0006"
     assert payload["ready"] is True
 
 
