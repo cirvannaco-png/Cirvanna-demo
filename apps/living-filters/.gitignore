@@ -1,0 +1,4 @@
+/vendor/
+/models/
+/node_modules/
+/src/vision-worker.bundle.js
