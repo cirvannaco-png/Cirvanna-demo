@@ -383,7 +383,7 @@ Run the relevant service tests plus architecture and security checks:
     python -m unittest discover -s tests/architecture -v
     python scripts/scan_source_secrets.py
 
-Service workflows are path-scoped. The Decision Gateway workflow runs API/contract tests, container build, architecture checks, and source secret scanning. It also triggers when the Complementer service changes because the gateway proxy depends on its response contract. The Complementer workflow runs dependency checks, compileall, and its API/domain tests. Catalog, NPL, Cultural Identity, DermalSight, marketplace, Commerce, Vision Intelligence, Twin, Try-On, Wardrobe The PNELLY assistant uses the compatibility workflow file `xari-tests.yml` until workflow-path migration is separately reviewed.
+Service workflows are path-scoped. The Decision Gateway workflow runs API/contract tests, container build, architecture checks, and source secret scanning. It also triggers when the Complementer service changes because the gateway proxy depends on its response contract. The Complementer workflow runs dependency checks, compileall, and its API/domain tests. Catalog, NPL, Cultural Identity, DermalSight, marketplace, Commerce, Vision Intelligence, Twin, Try-On, Wardrobe, and the PNELLY assistant each have a separate workflow. The PNELLY workflow file is still named `xari-tests.yml` to preserve current path filters; renaming it is a separate migration.
 
 For every CI report, record the branch, commit SHA, workflow/job, exact test result, warnings, skips, and limitations. A passing unit suite or container build does not prove production readiness, model quality, live database health, cross-service identity, backup recovery, or commercial outcomes.
 
