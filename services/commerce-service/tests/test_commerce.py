@@ -297,7 +297,7 @@ def test_merchant_application_is_persisted_and_approval_requires_verification(cl
     assert persisted.json()["merchant_id"] == pending
 
 
-def test_merchant_listing_snapshots_only_trusted_catalog_images(client, monkeypatch):
+def test_merchant_listing_withholds_catalog_images_until_attestation(client, monkeypatch):
     seed_offer()
     catalog_id = str(uuid.uuid4())
     monkeypatch.setattr(
