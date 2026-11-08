@@ -1776,3 +1776,39 @@ def test_virtual_twin_capabilities_reject_invalid_boolean_contract(client, monke
     )
     assert response.status_code == 502
     assert response.json()["detail"]["code"] == "VIRTUAL_TWIN_CAPABILITIES_INVALID"
+
+
+def test_brand_and_founder_portals_are_served_same_origin(client):
+    brand = client.get("/brand-portal")
+    founder = client.get("/founder-console")
+    css = client.get("/assets/portal.css")
+    brand_js = client.get("/assets/brand-portal.js")
+    assert brand.status_code == founder.status_code == css.status_code == brand_js.status_code == 200
+    assert brand.headers["cache-control"] == "no-store"
+    assert founder.headers["cache-control"] == "no-store"
+    assert "Brand Partner Portal" in brand.text
+    assert "Founder console" in founder.text
+    assert "/merchant/listings" in brand_js.text
+    assert "localStorage" not in brand_js.text
+    assert "sessionStorage" not in brand_js.text
+
+
+def test_commerce_proxy_allowlist_routes_role_based_operations():
+    allowed = [
+        ("GET", "me"), ("POST", "merchants/applications"), ("GET", "merchants/me"),
+        ("GET", "merchant/listings"), ("GET", "merchant/orders"), ("POST", "merchant/listings"),
+        ("POST", "merchant/listings/123e4567-e89b-12d3-a456-426614174000/variants"),
+        ("POST", "merchant/variants/123e4567-e89b-12d3-a456-426614174000/inventory-adjustments"),
+        ("GET", "admin/merchants"), ("GET", "admin/merchant-decisions"),
+        ("POST", "admin/merchants/123e4567-e89b-12d3-a456-426614174000/decision"),
+    ]
+    for method, route in allowed:
+        assert main._authorized_commerce_path(method, route), (method, route)
+    blocked = [
+        ("POST", "admin/merchants"), ("POST", "webhooks/stripe"),
+        ("POST", "internal/expire-reservations"),
+        ("POST", "merchant/listings/not-a-uuid/variants"),
+        ("DELETE", "admin/merchant-decisions"),
+    ]
+    for method, route in blocked:
+        assert not main._authorized_commerce_path(method, route), (method, route)
