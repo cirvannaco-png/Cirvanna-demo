@@ -198,3 +198,14 @@ def test_generation_lifecycle_rejects_skipped_or_terminal_transitions(current, t
 def test_every_nonterminal_stage_can_be_revoked():
     for stage in ("queued", "generating", "validating", "persisting", "active"):
         assert_generation_transition(stage, "revoked")
+
+
+def test_mesh_validator_must_be_a_separate_integration_from_generator():
+    command, result, receipt = bundle(
+        receipt_overrides={"validator_id": "body-provider"}
+    )
+    with pytest.raises(
+        GenerationContractError,
+        match="TWIN_VALIDATOR_NOT_INDEPENDENT",
+    ):
+        validate_generation_bundle(command, result, receipt)
