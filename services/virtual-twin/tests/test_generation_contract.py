@@ -233,3 +233,11 @@ def test_validator_source_asset_set_must_match_command():
         match="TWIN_VALIDATION_SOURCE_SET_MISMATCH",
     ):
         validate_generation_bundle(command, result, receipt)
+
+
+def test_generation_lifecycle_rejects_unknown_states_without_key_error():
+    with pytest.raises(
+        GenerationContractError,
+        match="TWIN_GENERATION_INVALID_STATE_TRANSITION",
+    ):
+        assert_generation_transition("unexpected", "active")  # type: ignore[arg-type]
