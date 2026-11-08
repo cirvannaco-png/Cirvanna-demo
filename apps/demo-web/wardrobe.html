@@ -120,6 +120,19 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
 <div id="savedOutfits"></div>
 </section>
 
+<section class="panel hidden" id="twinPanel">
+<div class="eyebrow">Virtual Twin · private representation</div>
+<h2>Your Twin and Try-On readiness</h2>
+<p class="small">Cirvanna checks the connected service before offering a preview. Pose detection is not a persistent Twin, and a stored Twin is not proof of fit.</p>
+<div class="row" style="justify-content:space-between;align-items:center">
+<div class="small" id="twinReadinessSummary">Readiness has not been checked.</div>
+<button class="btn" id="refreshTwinReadiness" type="button">Refresh status</button>
+</div>
+<div class="status" id="twinReadinessStatus" role="status">Connect your session to check Twin capabilities.</div>
+<div class="grid" id="twinCapabilityList" aria-live="polite"></div>
+<p class="small">Try-On stays unavailable until persistent full-body mesh generation, private asset authorization, current consent verification, a validated renderer and output controls all pass their release gates. No preview is fabricated.</p>
+</section>
+
 <section class="panel hidden" id="pnellyPanel">
 <div class="eyebrow">PNELLY · daily look intelligence</div>
 <h2>Three ways to wear what you own</h2>
@@ -544,6 +557,8 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     profileReceipt = activeReceipts.find(x => x.scope === "profile_storage")?.receipt_id || null;
     updateConsentState();
     if (profileReceipt) await loadColorProfile();
+    $("twinPanel").classList.remove("hidden");
+    await loadTwinCapabilities();
     $("learningPanel").classList.remove("hidden");
     $("closetPanel").classList.remove("hidden");
     $("recommendPanel").classList.remove("hidden");
@@ -827,6 +842,49 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
       status("pnellyStatus", error.message, "error");
     }
   };
+  const renderTwinCapabilities = data => {
+    const root = $("twinCapabilityList");
+    root.replaceChildren();
+    const fields = [
+      ["Persistent Twin generation", data.persistent_twin_generation],
+      ["Persistent Twin preview", data.persistent_twin_preview],
+      ["Pose-skeleton inference", data.pose_skeleton_inference],
+      ["Full-body reconstruction", data.body_reconstruction],
+      ["Full-surface mesh", data.full_surface_mesh],
+      ["Calibrated measurements", data.calibrated_body_measurements],
+      ["Fit prediction", data.fit_prediction],
+      ["AR rendering", data.ar_rendering],
+      ["Private image persistence", data.image_persistence],
+      ["Twin-personalized Click It", data.click_it_twin_personalization],
+      ["Virtual Try-On", data.try_on_available]
+    ];
+    for (const [label, enabled] of fields) {
+      const card = document.createElement("div");
+      card.className = "pnelly-card";
+      card.append(text("strong", label));
+      card.append(text("div", enabled ? "Available" : "Not available", "small"));
+      root.append(card);
+    }
+    const persistentReady = data.persistent_twin_generation === true && data.persistent_twin_preview === true;
+    $("twinReadinessSummary").textContent = persistentReady ? "Persistent Twin capability reported by service." : "Persistent Twin generation and preview are not enabled.";
+    status("twinReadinessStatus", data.reason ? "Service reason: " + data.reason : (persistentReady ? "Service reports persistent Twin capability. A user Twin still requires registration and authorization." : "This deployment does not currently provide persistent Twin generation or preview."), persistentReady ? "good" : "");
+  };
+  const loadTwinCapabilities = async () => {
+    $("refreshTwinReadiness").disabled = true;
+    status("twinReadinessStatus", "Checking authenticated Virtual Twin capability…");
+    try {
+      const data = await api("/api/virtual-twin/capabilities");
+      renderTwinCapabilities(data);
+    } catch (error) {
+      $("twinCapabilityList").replaceChildren();
+      $("twinReadinessSummary").textContent = "Capability check unavailable.";
+      status("twinReadinessStatus", error.message + ". Try-On remains disabled.", "error");
+    } finally {
+      $("refreshTwinReadiness").disabled = false;
+    }
+  };
+  $("refreshTwinReadiness").addEventListener("click", loadTwinCapabilities);
+
   const renderPNELLYLooks = data => {
     pnellyData = data;
     const root = $("pnellyLooks");
