@@ -155,3 +155,20 @@ def test_detector_runtime_exception_fails_closed(monkeypatch, tmp_path):
         privacy.anonymize_click_it_image(Image.new("RGB", (120, 120), "white"))
     assert error.value.status_code == 503
     assert error.value.detail["code"] == "CLICK_IT_PRIVACY_DETECTION_FAILED"
+
+
+def test_mask_failure_closes_partial_output_image(monkeypatch):
+    source = Image.new("RGB", (80, 80), "white")
+    closed = []
+    original_close = Image.Image.close
+
+    def tracked_close(self):
+        closed.append(self)
+        return original_close(self)
+
+    monkeypatch.setattr(Image.Image, "close", tracked_close)
+    with pytest.raises(HTTPException):
+        privacy.mask_face_regions(source, [(1, 2, 0, 4)])
+    assert closed
+    assert all(image is not source for image in closed)
+    source.close()
