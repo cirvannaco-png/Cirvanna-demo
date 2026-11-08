@@ -44,6 +44,8 @@ def bundle(*, source_ids=None, receipt_overrides=None, result_overrides=None):
         "validator_id": "independent-mesh-validator",
         "receipt_id": "validation-receipt-001",
         "validated": True,
+        "consent_id": "consent-receipt-001",
+        "consent_version": "privacy-v1",
         "subject_id": "subject-001",
         "twin_id": "twin-001",
         "representation_type": "full_body_mesh",
@@ -207,5 +209,27 @@ def test_mesh_validator_must_be_a_separate_integration_from_generator():
     with pytest.raises(
         GenerationContractError,
         match="TWIN_VALIDATOR_NOT_INDEPENDENT",
+    ):
+        validate_generation_bundle(command, result, receipt)
+
+
+def test_validator_receipt_must_bind_to_the_same_consent_version():
+    command, result, receipt = bundle(
+        receipt_overrides={"consent_version": "privacy-v2"}
+    )
+    with pytest.raises(
+        GenerationContractError,
+        match="TWIN_VALIDATION_CONSENT_MISMATCH",
+    ):
+        validate_generation_bundle(command, result, receipt)
+
+
+def test_validator_source_asset_set_must_match_command():
+    command, result, receipt = bundle(
+        receipt_overrides={"source_image_asset_ids": ["source-image-001", "source-image-999"]}
+    )
+    with pytest.raises(
+        GenerationContractError,
+        match="TWIN_VALIDATION_SOURCE_SET_MISMATCH",
     ):
         validate_generation_bundle(command, result, receipt)
