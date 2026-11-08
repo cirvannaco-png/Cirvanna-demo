@@ -1,7 +1,7 @@
 name: Vision intelligence contract tests
 on:
   push:
-    branches: ["main", "feature/**", "engineering/**"]
+    branches: ["main", "feature/**", "engineering/**", "reconcile/**"]
     paths:
       - "services/vision-intelligence/**"
       - "services/virtual-twin/**"
@@ -9,7 +9,6 @@ on:
       - "services/catalog-service/**"
       - ".github/workflows/vision-intelligence.yml"
   pull_request:
-    branches: [main]
     paths:
       - "services/vision-intelligence/**"
       - "services/virtual-twin/**"
