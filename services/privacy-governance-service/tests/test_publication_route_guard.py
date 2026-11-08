@@ -51,7 +51,8 @@ def test_no_public_media_publication_or_restore_route_bypasses_privacy_gate():
         source = source_path.read_text(encoding="utf-8")
         scanned += 1
         for method, route, handler in _route_definitions(source, source_path):
-            if route.startswith("/internal/"):
+            if route.startswith("/internal/") or method == "DELETE":
+                # Deletion/removal endpoints reduce exposure; they do not publish an asset.
                 continue
             segments = {part.casefold() for part in route.split("/") if part}
             handler_media_name = any(term in handler.name.casefold() for term in (
