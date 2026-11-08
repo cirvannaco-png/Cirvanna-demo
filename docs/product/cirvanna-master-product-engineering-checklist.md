@@ -1,6 +1,6 @@
 # Cirvanna master product and engineering checklist
 
-**Code baseline audited:** `main` at `9f721f5e97a44454d9ae56da31ed8fda2e577fc2` (7 November 2026; includes consent #158, refund reconciliation #159 and VTON/Click It containment #161/#162)  
+**Code baseline audited:** `main` at `6428b41d8334b7579e2b9620bd4a12d523bcfa1b` (8 November 2026; includes consent #158, refund reconciliation #159, VTON/Click It containment #161/#162, CRFP scope correction #164, double-review evaluator #165 and canonical PNELLY identity #166)  
 **Status:** Active; the product requirements are captured below. This is not a production-readiness declaration.
 
 ## Operating rules
@@ -61,7 +61,10 @@
 ### 1.5 Consent, privacy and learning data rights
 - [~] Profile-learning consent, resource-bound media/Twin consent bundles and the owner-scoped Twin registry are in main. PR #158 added subject + bundle + consent-version + optional resource verification, exact Twin-ID binding, scope-completeness checks, resource-specific revocation and PostgreSQL 17 migration/backfill/dump-restore CI. The production identity/consent provider and managed database are not provisioned; real bucket policy, revocation/deletion worker and deployed evidence remain release gates.
 - [~] Click It is deliberately unavailable and fails closed: Marketplace BFF now closes the uploaded file without reading or forwarding bytes (PR #162), and Vision Intelligence rejects the internal scan before decode, quality scoring, embedding or retrieval. Public marketplace/gateway/vision serializers withhold unverified image URLs. This is containment, not a released masking feature or global publication certification.
+- [~] Draft PRs #107/#111 contain the privacy-governance and pinned BlazeFace masking candidate, but remain open and unmerged; current main intentionally blocks Click It ingress (#162). The model pin/build smoke test is not independent recall validation and does not release Click It.
 - [ ] Build the trusted face-masking stage and independent asset-bound privacy attestation; mask all detected faces, fail closed on uncertain/missing detection, prohibit facial recognition/identity search/age estimation, use transient processing and bind receipts to exact source/output asset hashes and model revisions.
+- [~] PR #168 adds provider-reported S3 privacy checks at asset-service readiness: all four Public Access Block flags, non-public bucket policy, default server-side encryption and BucketOwnerEnforced object ownership. Its asset API/lifecycle, orchestration and architecture workflows passed on the exact PR head. This is a stronger fail-closed readiness contract, not proof about the actual deployed bucket.
+- [!] Binary media storage/delivery remains an open security gap tracked by issue #121: recursive API URL redaction and bucket configuration checks do not prove deployed private ACLs, origin/CDN isolation, legacy URL revocation, cache invalidation, publication-route coverage or end-to-end deletion. No claim that every unmasked image is contained is permitted.
 - [ ] Inventory and wire every public media mutation path—profile/community feeds, marketplace, merchant surfaces, shared links, restore, syndication, cache/CDN and derivatives—to the central pre-publication gate. Verify that no unmasked original or derivative can escape on missing, stale, mismatched or unsafe attestation.
 - [ ] Provision jurisdiction policy resolver, signed counsel-approved policy bundles, guardian-authority verification, rights-requester verification and Content Lifecycle quarantine/unpublish/delete/CDN purge; staff a human review/removal operation. PRs #107/#111 remain open candidates and are not live providers or platform-wide evidence.
 - [x] User-facing export, NPL correction/retraction and deletion across USI/TAL, NPL and Wardrobe are implemented and CI-verified in merged PR #139. Production migration, retry/failure-injection and deployed deletion evidence remain release gates.
@@ -108,7 +111,7 @@
 - [~] Wardrobe now stores owner-scoped saved outfit snapshots and explicit wear events with item snapshots, outfit version and consent provenance (PR #151); rotation-cycle state and revival logic are persistent (PR #149). A complete cross-surface outfit graph, user-rating/context coverage and production learning telemetry remain open.
 - [~] Persistent wardrobe rotation prioritizes unseen eligible items, resets immediately after a completed cycle and uses recent wear as a ranking signal rather than a permanent exclusion (PR #146/#149). Cross-surface outfit-level evaluation and real-user utilisation outcomes remain unmeasured.
 - [ ] Add deterministic anti-repeat tests (same outfit, near-duplicate combination, cooldown, wardrobe changes, seasonal/context changes) plus a human-reviewed relevance/diversity baseline.
-- [~] PNELLY evaluation now has a strict case schema, exactly two independent blinded reviews per candidate, disagreement adjudication, consent/pseudonym/privacy-checked trace preparation, a transparent baseline, reviewer agreement/kappa, participant-cluster bootstrap intervals and Everyday/Elevated/Explore reporting (PR #117 foundation, current-main evaluator port). CI uses synthetic fixtures only. The HMAC-pseudonymized opt-in Gateway trace exists, but the dataset remains empty; no approved reviewer UI/study collector, randomized baseline arm, look-level exposures/edits/rejections or empirical algorithm-vs-baseline result exists. Do not claim recommendation quality or causal uplift.
+- [~] PNELLY evaluation now has a strict case schema, exactly two independent blinded reviews per candidate, disagreement adjudication, consent/pseudonym/privacy-checked trace preparation, a transparent baseline, reviewer agreement/kappa, participant-cluster bootstrap intervals and Everyday/Elevated/Explore reporting (PR #117 foundation; double-review/statistical hardening merged in #165). CI uses synthetic fixtures only. The HMAC-pseudonymized opt-in Gateway trace exists, but the dataset remains empty; no approved reviewer UI/study collector, randomized baseline arm, look-level exposures/edits/rejections or empirical algorithm-vs-baseline result exists. Reviewer identity and independence still require coordinator verification. Do not claim recommendation quality or causal uplift.
 - [ ] Measure whether recommendations improve user satisfaction and wardrobe utilisation; do not equate clicks or exposure with preference.
 
 ### 2.5 Complementer: suggestions and “Upgrade my look”
@@ -120,7 +123,8 @@
 - [ ] Recommend actual marketplace products only from canonical Catalog/Commerce data and only after CAL authorization; never fabricate brand, SKU, price, inventory or delivery.
 
 ### 2.6 Connected Virtual Twin and multi-product try-on
-- [~] Owner-scoped persistent Twin registry and provider-neutral private asset service are merged (PR #152/#124), with authorization, integrity, parent-scoped deletion and lifecycle contracts. Actual private S3/PostgreSQL providers, the resource-bound consent verifier, validated full-body mesh generation and end-to-end deletion confirmation are not provisioned.
+- [~] Owner-scoped persistent Twin registry and provider-neutral private asset service are merged (PR #152/#124), with authorization, integrity, parent-scoped deletion and lifecycle contracts. Resource-bound consent verification is now in main (PR #158). Actual production private S3/PostgreSQL providers, validated full-body mesh generation, live renderer and end-to-end deletion confirmation are not provisioned.
+- [~] PR #169 adds the persistent VTON job reservation/migration, canonical Twin-registry authorization contract, canonical `virtual_twin_storage` consent scope, and post-render/post-persistence consent, Twin and asset revalidation. It is still under exact-head CI after two initial VTON test failures were corrected; no successful rerun is claimed yet. The BFF/UI route, full-body mesh generator/validator, production providers, GPU inference and commercial parser clearance remain open.
 - [~] The API and registry distinguish ephemeral pose-skeleton inference from a validated full-body mesh registration; a pose skeleton is not a persistent Twin. Real full-body generation/validation and persisted visual preview remain unavailable.
 - [ ] Connect Wardrobe, PNELLY and Marketplace bidirectionally to the same Twin and try-on session without duplicate stores or user identity paths.
 - [ ] Permit product selection from Marketplace and wardrobe selection from the personal closet; support searching for an exact product or a canonical purchasable variant in the Marketplace.
@@ -130,7 +134,7 @@
 - [ ] Allow users to modify one selected piece in a saved look without regenerating or silently changing the rest.
 - [ ] Integrate optional Complementer suggestions and Upgrade my look mode into Twin/try-on with per-item acceptance and comparison.
 - [ ] Reduce latency through measured budgets, caching keyed by safe/versioned assets, progressive rendering and bounded worker queues; never serve one user's private render to another.
-- [~] The private VTON worker now enforces source/artifact provenance, model-file integrity, runtime readiness and a commercial-license gate (PR #127). Model weights are not provisioned, the inherited human-parser license blocks commercial use absent written permission or a cleared replacement, and no real GPU inference is verified.
+- [~] The private VTON worker now enforces source/artifact provenance, model-file integrity, real GPU readiness and a commercial-license gate (PR #127/#161). Model weights are not provisioned, the inherited human-parser license blocks commercial use absent written permission or a cleared replacement, and no real GPU inference is verified.
 - [!] Physical Android QA remains blocked. Browser/fake-camera CI is not device evidence; the Android 10 TECNO KB8 and low-/mid-/high-range device matrix still require hands-on runs with camera, lifecycle, FPS, memory, thermal and network measurements (issue #70).
 
 ### 2.7 Marketplace recommendations and product discovery
@@ -155,7 +159,7 @@
 
 ## Current verified baseline and immediate work
 
-- [x] Repository inspected on 7 November 2026; active monorepo and service boundaries identified.
+- [x] Repository inspected on 8 November 2026 at main commit `6428b41d8334b7579e2b9620bd4a12d523bcfa1b`; active monorepo and service boundaries identified. Follow-up PRs #168 (private bucket readiness) and #169 (Twin/VTON orchestration) are open and not merged.
 - [x] Versioned single-item Wardrobe edit API and authenticated UI controls merged in PR #128; its Wardrobe persistence and architecture checks passed.
 - [~] DermalSight has a fail-closed ONNX adapter and signed release-evidence gate, but the trained/validated model and dataset are absent.
 - [~] Commerce implements immutable line snapshots, transactional stock reservation, verified Stripe settlement and cumulative signed charge-refund reconciliation (PR #159). Refund snapshots flow through Sync to Wardrobe's separate financial ledger without changing garment ownership. Physical returns/chargebacks, landed-cost checkout, complete price-integrity verification and live production reconciliation remain open.
@@ -165,7 +169,26 @@
 - [x] Saved-outfit piece editing is implemented in merged PR #135; the user-declared colour preference profile is implemented in merged PR #137. PNELLY wardrobe companion, complete personal outfit graph, actual human-reviewed dataset and study operations, multi-product try-on, and end-to-end marketplace-to-wardrobe/Twin flows remain to be integrated and verified.
 - [x] Merged PR #139 ports the PNELLY daily-look Decision Gateway route and consent/NPL checks onto current main; Decision Gateway tests passed.
 - [x] Privacy/learning-data controls from stale PR #130 are integrated through PR #139. Confirm deployed migrations, deletion retry behaviour and production evidence before release.
-- [~] Open-PR/branch reconciliation is documented in merged PR #157. PRs #158 (resource-bound consent verifier and PostgreSQL migration/restore CI) and #159 (Commerce refund reconciliation through Sync to Wardrobe, PostgreSQL migration/restore and five green CI workflows) are merged. The remaining 19 open PRs are inventoried with dispositions; historical refs are preserved pending a reviewed retention plan.
+- [~] PR/branch reconciliation was documented in #157, but its inventory is stale. The 8 November 2026 open-PR query returned **14 open PRs in total** at this audit: 11 legacy feature PRs, the checklist refresh #167, and the two new workstream PRs #168/#169:
+  - #102 multi-market Commerce: 85 commits ahead / 42 behind main; 7 historical workflow groups passed on its head. Rebase and re-audit the offer/FX/tax/fulfilment providers before considering integration.
+  - #84 PNELLY Look It: 63 ahead / 46 behind; 11 historical workflow groups passed. Keep separate from Click It; provider/model and current privacy/consent integration remain blockers.
+  - #77 merchant/founder portals: 6 ahead / 48 behind; 4 historical workflow groups passed. Rebase and verify identity role issuance, migration and same-origin deployment.
+  - #69 AM/PM skincare routines: 19 ahead / 52 behind; 2 historical workflow groups passed. UI, authenticated subject binding and live recommendation provider remain absent.
+  - #68 Living Filters: 96 ahead / 52 behind; 3 historical workflow groups passed. Physical Android QA, performance and runtime/device acceptance remain open.
+  - #67 intelligent marketplace filters: 11 ahead / 52 behind; 8 historical workflow groups failed before runner steps were recorded. Rebase before diagnosing or trusting prior results.
+  - #66 appearance specialist registry: 51 ahead / 52 behind; 4 historical workflow groups failed before runner steps. Keep internal until identity, provider and current-main integration gates pass.
+  - #64 PAMASMMA/brand-auth foundations: 42 ahead / 480 behind; its workflow failed before runner steps. Treat as highly stale; do not merge without a fresh source/value audit.
+  - #62 candidate-bound CAL purchase governance: 119 ahead / 54 behind; 10 historical workflow groups failed. Independent safety/FCI providers and staging checkout evidence are still absent.
+  - #107 Privacy Governance: 154 ahead / 41 behind; no workflow runs are reported for its current head. Keep draft; provider, policy-signing, rights and publication integration gates remain.
+  - #111 outfit-evaluation/publication safeguards: 165 ahead / 41 behind, stacked on #107; no workflow runs are reported for its current head. Rebase/retarget only after #107 is reconciled; the human-labelled dataset is empty.
+  - #168 private media bucket readiness: 4 commits ahead / 0 behind; its three exact-head workflow groups passed. This checks configuration-readiness behavior only; no live bucket/CDN proof exists.
+  - #169 Twin/VTON orchestration hardening: 14 commits ahead / 0 behind; architecture, Vision, Virtual Twin API and cross-service contract suites passed on an earlier head, while the exact latest VTON/registry/container rerun is still in progress after two test failures were corrected.
+  - #167 checklist refresh: 3 commits ahead / 0 behind; documentation-only, with its exact-head architecture and Sync worker workflow groups passed.
+  - All 11 feature branches diverge from current main. The ahead/behind figures are commit topology, not evidence of unique useful work. Do not merge or delete branches based on counts alone; compare file-level changes, preserve valuable commits, and close/supersede stale work only after a reviewed migration.
+
+- [x] CRFP naming and scope corrected in merged PR #164: CRFP is canonical, with distinct marketplace and system-wide scopes; no unvalidated runtime behavior is implied.
+- [x] PNELLY evaluation hardening merged in PR #165; its two-review protocol, adjudication and cluster-aware reporting are CI-verified, but the human-labelled dataset remains empty.
+- [x] PNELLY canonical identity migration merged in PR #166; legacy Xari API/import compatibility remains intentionally in place pending a separate path migration.
 
 ## Required evidence for every completed checklist item
 
