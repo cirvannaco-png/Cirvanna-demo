@@ -581,6 +581,53 @@ async def wardrobe_items(request: Request) -> Response:
 
 
 
+@app.get("/api/virtual-twin/capabilities")
+async def virtual_twin_capabilities(request: Request) -> Response:
+    """Expose a minimal authenticated capability snapshot; never imply a Twin exists."""
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(5.0, connect=1.5), trust_env=False, follow_redirects=False
+    ) as client:
+        await _verified_commerce_subject(client, request)
+        twin_base = _upstream_base("VIRTUAL_TWIN_API_URL")
+        try:
+            response = await client.get(twin_base + "/capabilities", headers={"Accept": "application/json"})
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "VIRTUAL_TWIN_CAPABILITIES_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "VIRTUAL_TWIN_CAPABILITIES_UNAVAILABLE"}) from exc
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "VIRTUAL_TWIN_CAPABILITIES_UNAVAILABLE"})
+    try:
+        source = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "VIRTUAL_TWIN_CAPABILITIES_INVALID"}) from exc
+    if not isinstance(source, dict):
+        raise HTTPException(502, detail={"code": "VIRTUAL_TWIN_CAPABILITIES_INVALID"})
+    boolean_fields = (
+        "twin_generation", "persistent_twin_generation", "persistent_twin_preview",
+        "pose_skeleton_inference", "body_reconstruction", "full_surface_mesh",
+        "calibrated_body_measurements", "fit_prediction", "ar_rendering",
+        "image_persistence", "click_it_twin_personalization",
+    )
+    if any(not isinstance(source.get(field), bool) for field in boolean_fields):
+        raise HTTPException(502, detail={"code": "VIRTUAL_TWIN_CAPABILITIES_INVALID"})
+    return _private_json_response({
+        "service": "virtual-twin",
+        "persistent_twin_generation": source["persistent_twin_generation"],
+        "persistent_twin_preview": source["persistent_twin_preview"],
+        "pose_skeleton_inference": source["pose_skeleton_inference"],
+        "body_reconstruction": source["body_reconstruction"],
+        "full_surface_mesh": source["full_surface_mesh"],
+        "calibrated_body_measurements": source["calibrated_body_measurements"],
+        "fit_prediction": source["fit_prediction"],
+        "ar_rendering": source["ar_rendering"],
+        "image_persistence": source["image_persistence"],
+        "click_it_twin_personalization": source["click_it_twin_personalization"],
+        "try_on_available": False,
+        "reason": source.get("reason") if isinstance(source.get("reason"), str) else None,
+    })
+
+
 @app.post("/api/wardrobe/items/{item_id}/try-on")
 async def try_on_wardrobe_item(item_id: str, request: Request, payload: WardrobeTryOnIn) -> Response:
     """Start a private Twin render for an exact, active, user-owned wardrobe image."""
