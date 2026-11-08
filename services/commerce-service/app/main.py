@@ -1360,7 +1360,12 @@ def merchant_orders(actor: Annotated[Actor, Depends(require_actor)], db: Annotat
     result = []
     for order in orders:
         snapshot = order_json(db, order)
-        snapshot["items"] = [item for item in snapshot["items"] if item["merchant_id"] == merchant.id]
+        merchant_items = [item for item in snapshot["items"] if item["merchant_id"] == merchant.id]
+        # Marketplace-wide totals disclose other sellers' economics; return seller-scoped totals only.
+        snapshot["items"] = merchant_items
+        snapshot["subtotal_minor"] = sum(item["line_total_minor"] for item in merchant_items)
+        snapshot["commission_minor"] = sum(item["commission_minor"] for item in merchant_items)
+        snapshot["merchant_scope"] = True
         result.append(snapshot)
     return {"items": result, "offset": offset, "limit": limit}
 
