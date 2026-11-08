@@ -18,6 +18,7 @@ on:
       - "services/decision-service/**"
       - "services/marketplace-bff/**"
       - "services/asset-service/**"
+      - "services/vision-intelligence/**"
       - ".github/workflows/container-image-builds.yml"
   workflow_dispatch:
 
@@ -40,5 +41,7 @@ jobs:
         run: docker build -f services/marketplace-bff/Dockerfile -t cirvanna-marketplace-bff:ci .
       - name: Build private Asset service image
         run: docker build -f services/asset-service/Dockerfile -t cirvanna-asset-service:ci .
+      - name: Build Vision Intelligence image
+        run: docker build -f services/vision-intelligence/Dockerfile -t cirvanna-vision-intelligence:ci services/vision-intelligence
       - name: Build Privacy Governance service image
         run: docker build -f services/privacy-governance-service/Dockerfile -t cirvanna-privacy-governance:ci services/privacy-governance-service
