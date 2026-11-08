@@ -19,7 +19,7 @@ A direct bulk copy would create architecture drift, duplicate implementations, b
 - services/catalog-service and services/wardrobe-service: catalog and user wardrobe; garment persistence has clear ownership.
 - services/virtual-twin and services/virtual-try-on: separate body/avatar representation from rendering/simulation.
 - services/dermalsight: skin perception and clinically sensitive outputs behind consent and safety controls.
-- services/xari: canonical assistant/orchestration name; Tari/Xyra material remains migration input.
+- services/xari: original source path for the assistant/orchestrator; the current canonical identity is PNELLY under ADR-0010. Xari/Tari/Xyra remain legacy names and source lineage.
 - services/graph-service, services/recommendation-service, services/perception-service and services/sync-service: proposed separate service boundaries for wardrobe-related capabilities.
 - packages/identity-intelligence: CaTaCaCi, CDIC legacy adapter, USI and EEPL.
 - packages/fit-intelligence: FCI and unresolved CFRP/CRFP candidate.
