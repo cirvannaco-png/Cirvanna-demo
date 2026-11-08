@@ -113,14 +113,17 @@ def _refund_payload(event: dict[str, Any]) -> dict[str, Any]:
     if payload.get("physical_return_confirmed") is not False or payload.get("ownership_effect") != "financial_status_only":
         raise SyncContractError("refund_must_not_imply_physical_return")
     order_total = payload.get("order_total_minor")
+    captured_total = payload.get("captured_total_minor", order_total)
     refunded = payload.get("amount_refunded_minor")
     if (
         not isinstance(order_total, int) or isinstance(order_total, bool) or order_total <= 0
+        or not isinstance(captured_total, int) or isinstance(captured_total, bool)
+        or captured_total < order_total
         or not isinstance(refunded, int) or isinstance(refunded, bool) or refunded <= 0
-        or refunded > order_total
+        or refunded > captured_total
     ):
         raise SyncContractError("invalid_refund_amount")
-    expected_state = "refunded" if refunded == order_total else "partial_refund"
+    expected_state = "refunded" if refunded == captured_total else "partial_refund"
     if payload.get("refund_state") != expected_state:
         raise SyncContractError("refund_state_amount_mismatch")
     currency = _required_string(payload.get("currency"), "currency", 3)
@@ -138,6 +141,7 @@ def _refund_payload(event: dict[str, Any]) -> dict[str, Any]:
         "charge_id": _required_string(payload.get("charge_id"), "charge_id", 180),
         "currency": currency,
         "order_total_minor": order_total,
+        "captured_total_minor": captured_total,
         "amount_refunded_minor": refunded,
         "refund_state": expected_state,
         "refunded_at": _required_string(payload.get("refunded_at"), "refunded_at", 64),
