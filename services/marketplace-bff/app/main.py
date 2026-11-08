@@ -295,6 +295,36 @@ class WardrobeRecommendationIn(BaseModel):
     exclude_owned_products: bool = True
 
 
+class WardrobeTryOnIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    wardrobe_item_id: str = Field(min_length=3, max_length=128)
+    twin_id: str = Field(min_length=8, max_length=128)
+    person_image_asset_id: str = Field(min_length=36, max_length=36)
+    consent_id: str = Field(min_length=8, max_length=160)
+    consent_image_processing: bool
+    consent_virtual_try_on: bool
+    request_id: str | None = Field(default=None, min_length=8, max_length=128)
+    look_id: str | None = Field(default=None, min_length=3, max_length=128)
+    look_version: int | None = Field(default=None, ge=1)
+    wardrobe_snapshot_version: int | None = Field(default=None, ge=1)
+
+    @field_validator("person_image_asset_id")
+    @classmethod
+    def valid_person_asset_id(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if not UUID_RE.fullmatch(normalized):
+            raise ValueError("person_image_asset_id must be an opaque UUID")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_look_version(self):
+        if self.look_id and (self.look_version is None or self.wardrobe_snapshot_version is None):
+            raise ValueError("look_id requires look_version and wardrobe_snapshot_version")
+        if not self.look_id and (self.look_version is not None or self.wardrobe_snapshot_version is not None):
+            raise ValueError("look versions require look_id")
+        return self
+
+
 
 async def _verified_commerce_subject(client: httpx.AsyncClient, request: Request) -> tuple[str, str]:
     authorization = request.headers.get("authorization", "")
@@ -549,6 +579,124 @@ async def wardrobe_items(request: Request) -> Response:
     return _private_json_response(data)
 
 
+
+
+@app.post("/api/wardrobe/items/{item_id}/try-on")
+async def try_on_wardrobe_item(item_id: str, request: Request, payload: WardrobeTryOnIn) -> Response:
+    """Start a private Twin render for an exact, active, user-owned wardrobe image."""
+    if item_id != payload.wardrobe_item_id:
+        raise HTTPException(422, detail={"code": "WARDROBE_ITEM_ID_MISMATCH"})
+    if not payload.consent_image_processing or not payload.consent_virtual_try_on:
+        raise HTTPException(403, detail={"code": "TRY_ON_CONSENT_REQUIRED"})
+
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(20.0, connect=2.0), trust_env=False, follow_redirects=False
+    ) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        wardrobe_base, wardrobe_token = _wardrobe_service()
+        try:
+            item_response = await client.get(
+                wardrobe_base + f"/v1/items/{item_id}",
+                params={"owner_user_id": subject},
+                headers={"Authorization": "Bearer " + wardrobe_token, "Accept": "application/json"},
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "WARDROBE_ITEM_LOOKUP_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "WARDROBE_ITEM_LOOKUP_UNAVAILABLE"}) from exc
+
+        if item_response.status_code in {403, 404}:
+            raise HTTPException(404, detail={"code": "WARDROBE_ITEM_NOT_FOUND"})
+        if item_response.status_code != 200:
+            raise HTTPException(503, detail={"code": "WARDROBE_ITEM_LOOKUP_UNAVAILABLE"})
+        try:
+            item_payload = item_response.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "WARDROBE_ITEM_RESPONSE_INVALID"}) from exc
+        item = item_payload.get("item") if isinstance(item_payload, dict) else None
+        if not isinstance(item, dict) or item.get("owner_user_id") != subject or item.get("item_id") != item_id:
+            raise HTTPException(502, detail={"code": "WARDROBE_ITEM_SCOPE_MISMATCH"})
+        if item.get("status") != "active":
+            raise HTTPException(409, detail={"code": "WARDROBE_ITEM_NOT_ACTIVE"})
+        garment_asset_id = item.get("image_asset_id")
+        if item.get("image_storage_consent") is not True or not isinstance(garment_asset_id, str) or not UUID_RE.fullmatch(garment_asset_id):
+            raise HTTPException(409, detail={"code": "WARDROBE_ITEM_PRIVATE_IMAGE_NOT_READY"})
+
+        category = str(item.get("category", "")).strip().lower().replace("-", "_").replace(" ", "_")
+        category_map = {
+            "upper_body": "upper_body", "top": "upper_body", "tops": "upper_body",
+            "shirt": "upper_body", "shirts": "upper_body", "blouse": "upper_body",
+            "blouses": "upper_body", "sweater": "upper_body", "sweaters": "upper_body",
+            "lower_body": "lower_body", "bottom": "lower_body", "bottoms": "lower_body",
+            "trousers": "lower_body", "pants": "lower_body", "jeans": "lower_body",
+            "shorts": "lower_body", "skirt": "lower_body", "skirts": "lower_body",
+            "dress": "dress", "dresses": "dress",
+            "outerwear": "outerwear", "jacket": "outerwear", "jackets": "outerwear",
+            "coat": "outerwear", "coats": "outerwear",
+            "full_outfit": "full_outfit",
+        }
+        garment_category = category_map.get(category)
+        if garment_category is None:
+            raise HTTPException(422, detail={"code": "WARDROBE_CATEGORY_NOT_SUPPORTED_FOR_TRY_ON"})
+
+        try:
+            vton_base, vton_token = _internal_service("VIRTUAL_TRY_ON_API_URL", "VIRTUAL_TRY_ON_API_TOKEN")
+        except HTTPException:
+            raise
+        body = {
+            "request_id": payload.request_id.strip() if payload.request_id else str(uuid.uuid4()),
+            "subject_id": subject,
+            "twin_id": payload.twin_id.strip(),
+            "product_id": "wardrobe:" + item_id,
+            "person_image_asset_id": payload.person_image_asset_id,
+            "garment_image_asset_id": garment_asset_id.lower(),
+            "garment_asset_purpose": "wardrobe_garment_image",
+            "garment_asset_parent_id": item_id,
+            "garment_category": garment_category,
+            "look_id": payload.look_id,
+            "look_version": payload.look_version,
+            "wardrobe_snapshot_version": payload.wardrobe_snapshot_version,
+            "consent": {
+                "consent_id": payload.consent_id.strip(),
+                "image_processing": True,
+                "virtual_try_on": True,
+                "retention_policy": "ephemeral",
+            },
+        }
+        try:
+            response = await client.post(
+                vton_base + "/v1/try-ons",
+                headers={"Authorization": "Bearer " + vton_token, "Accept": "application/json"},
+                json=body,
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "VIRTUAL_TRY_ON_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "VIRTUAL_TRY_ON_UNAVAILABLE"}) from exc
+
+    if response.status_code in {400, 403, 404, 409, 413, 415, 422}:
+        try:
+            detail = response.json().get("detail", {})
+            if not isinstance(detail, dict):
+                detail = {"code": "VIRTUAL_TRY_ON_REJECTED"}
+        except ValueError:
+            detail = {"code": "VIRTUAL_TRY_ON_REJECTED"}
+        raise HTTPException(response.status_code, detail=detail)
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "VIRTUAL_TRY_ON_UNAVAILABLE"})
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "VIRTUAL_TRY_ON_RESPONSE_INVALID"}) from exc
+    if (
+        not isinstance(result, dict)
+        or result.get("status") != "complete"
+        or result.get("request_id") != body["request_id"]
+        or not isinstance(result.get("output_asset_id"), str)
+        or not UUID_RE.fullmatch(result["output_asset_id"])
+    ):
+        raise HTTPException(502, detail={"code": "VIRTUAL_TRY_ON_RESPONSE_INVALID"})
+    return _private_json_response(result)
 
 
 @app.patch("/api/wardrobe/items/{item_id}")
