@@ -1,4 +1,4 @@
-"""Authenticated Xari route planning and marketplace-description search.
+"""Authenticated PNELLY route planning and marketplace-description search.
 
 The dedicated marketplace-search endpoint executes the private model-backed
 retrieval adapter; candidates still require NPL/cultural constraints and CAL.
