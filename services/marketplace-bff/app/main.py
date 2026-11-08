@@ -45,7 +45,6 @@ SERVICE_PATHS = {
     ("POST", "merchant/listings"),
     ("GET", "admin/merchants"),
     ("GET", "admin/merchant-decisions"),
-    ("GET", "admin/inventory/audit"),
     ("GET", "cart"),
     ("GET", "saved-products"),
     ("GET", "orders"),
