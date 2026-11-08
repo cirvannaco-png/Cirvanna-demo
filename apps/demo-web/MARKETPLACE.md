@@ -32,7 +32,7 @@ Configure `CATALOG_CORS_ORIGINS` on the API as a comma-separated list of exact t
 
 ## Validation still required
 
-A GitHub Actions workflow runs static contract checks, headless Chromium browser smoke tests, JavaScript syntax validation, and Python syntax compilation. The browser suite covers demo search, saving, bag interactions, disabled checkout/try-on boundaries and Xari search status, and rejection of insecure remote API URLs. Before merge/release, still run a live authenticated catalog/CORS smoke test against a non-production deployment, plus the catalog service test suite from `services/catalog-service`:
+A GitHub Actions workflow runs static contract checks, headless Chromium browser smoke tests, JavaScript syntax validation, and Python syntax compilation. The browser suite covers demo search, saving, bag interactions, disabled checkout/try-on boundaries and PNELLY search status, and rejection of insecure remote API URLs. Before merge/release, still run a live authenticated catalog/CORS smoke test against a non-production deployment, plus the catalog service test suite from `services/catalog-service`:
 
 ```bash
 python -m pip install -r requirements.txt
@@ -43,9 +43,9 @@ Also verify the API's `/ready` endpoint, CORS behavior, authentication failures,
 
 Do not merge or deploy until the HTML/JavaScript has been checked in a browser and the catalog integration is tested against a non-production environment.
 
-## Xari, Complementer and marketplace price comparison
+## PNELLY, Complementer and marketplace price comparison
 
-Xari is available as the marketplace's optional conversational discovery entry point. A user can describe a product in natural language. The future complete search flow must combine semantic retrieval with canonical Catalog products and current Commerce offers, then pass candidate products through NPL, explicit cultural requirements and CAL before display.
+PNELLY is available as the marketplace's optional conversational discovery entry point. A user can describe a product in natural language. The future complete search flow must combine semantic retrieval with canonical Catalog products and current Commerce offers, then pass candidate products through NPL, explicit cultural requirements and CAL before display.
 
 When multiple merchants offer the same canonical product/variant, the marketplace should present a price comparison using the same currency, clearly showing merchant, price, stock and offer timestamp. Do not compare different currencies without a separately sourced conversion rate, and do not call a merchant price the total checkout cost unless shipping and tax are included.
 
