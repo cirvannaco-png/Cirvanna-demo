@@ -1,14 +1,14 @@
-# ADR-0006: PNELLY proposed assistant brand and controlled migration gate
+# ADR-0006: PNELLY brand clearance and commercial launch gate
 
-**Status:** Proposed brand; legal clearance and product approval pending. No runtime rename authorized.
+**Status:** PNELLY identity selected by product owner and runtime migration authorized by [ADR-0010](ADR-0010-pnelly-canonical-assistant-identity.md); commercial trademark clearance remains pending.
 **Date:** 4 November 2026
-**Supersedes:** No existing runtime naming decision. ADR-0005 remains authoritative until this ADR is accepted for implementation.
+**Supersedes:** The legal-clearance hold remains active. ADR-0010 supersedes this ADR's former Xari runtime-identity hold but does not supersede the commercial clearance requirement.
 
 ## Context
 
 The product owner selected **PNELLY** as the proposed public-facing name for Cirvanna's conversational beauty and marketplace-discovery assistant. The owner specifies the pronunciation as **“Pinelly”**. The spelling is intentional and must remain PNELLY; do not silently normalize it to Pinelly, Nelly or Pnelly.
 
-The current implementation has an established Xari identity: service directory `services/xari`, `XARI_API_URL`, `XARI_API_TOKEN`, API capability metadata, marketplace labels, tests and architecture records. A global rename would touch service discovery, deployment configuration, clients, tests, documentation and operational runbooks. A premature rename would create avoidable compatibility and deployment risk.
+The implementation historically used Xari identity and configuration: source path `services/xari`, `XARI_API_URL`, `XARI_API_TOKEN`, and Xari-labelled capability metadata. ADR-0010 authorizes PNELLY as the canonical runtime/product identity while preserving that source path, the existing HTTP contract and XARI/TARI credential aliases during a staged migration. Commercial use of the PNELLY mark remains blocked pending counsel-led clearance.
 
 Initial public-web reconnaissance found a US PINELLY trademark application (serial 98164366) for handbags, purses and wallets, reported abandoned on 10 March 2025. This is not evidence that PNELLY is available for software, AI, beauty, marketplace or other services, and it does not establish availability in Kenya or any other target market. Similarity can be assessed by sight, sound and commercial context; the requested pronunciation makes PINELLY a relevant search variant.
 
@@ -16,9 +16,9 @@ Initial public-web reconnaissance found a US PINELLY trademark application (seri
 
 1. **Proposed brand:** PNELLY.
 2. **Owner-confirmed pronunciation:** “Pinelly”.
-3. **Current runtime identity:** Xari remains canonical until formal clearance and a separately approved migration.
+3. **Runtime identity:** PNELLY is canonical under ADR-0010. Xari, Tari and Xyra are compatibility aliases/source lineage only; no second assistant may be deployed.
 4. **No duplicate assistant:** PNELLY is a proposed successor brand for the same assistant capability, not a second agent, service or orchestrator.
-5. **No production-facing rename in this ADR:** Keep `services/xari`, `XARI_API_URL`, `XARI_API_TOKEN`, existing route contracts, service IDs and deployment settings unchanged. Do not introduce `PNELLY_API_*` aliases or change public UI labels in this documentation-only step.
+5. **Compatibility during migration:** Keep `services/xari` and the existing `/v1/*` route contract temporarily. Prefer the paired `PNELLY_API_URL` / `PNELLY_API_TOKEN` configuration; XARI_* and TARI_* remain fallback aliases as defined by ADR-0010. The source-path relocation is a later reviewed change.
 6. **Complementer remains separate and optional:** Complementer is an advisory styling collaborator, not a second assistant identity and not an authority over Catalog, Commerce, NPL, FCI or CAL.
 
 ## Clearance work required before accepting the name for commercial use
@@ -48,7 +48,7 @@ Only after written legal clearance and explicit product-owner approval may a sep
 
 - [x] Product owner selected the exact spelling PNELLY.
 - [x] Product owner confirmed pronunciation “Pinelly”.
-- [x] Existing Xari runtime and deployment contracts are preserved pending clearance.
+- [x] Existing Xari HTTP routes and source path are preserved as compatibility contracts while PNELLY becomes the canonical runtime identity.
 - [ ] Professional exact, phonetic and confusing-similarity trademark search completed for Kenya and intended launch territories.
 - [ ] Trademark counsel provides written risk assessment and filing recommendation.
 - [ ] Domain, company-name and social-handle checks completed.
@@ -57,4 +57,4 @@ Only after written legal clearance and explicit product-owner approval may a sep
 
 ## Release truth
 
-PNELLY is a proposed product brand, not a cleared or registered trademark. This ADR records naming intent and a safe migration gate only. It does not authorize commercial launch under PNELLY, claim legal availability, rename production services, or change the existing Xari implementation.
+PNELLY is a proposed product brand, not a cleared or registered trademark. This ADR preserves the legal clearance requirement. It does not authorize commercial launch under PNELLY or claim legal availability. The runtime identity/credential migration is governed by ADR-0010; production deployment and service activation remain separate gates.
