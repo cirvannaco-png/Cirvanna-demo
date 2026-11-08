@@ -6,6 +6,9 @@ containing evaluation_trace directly. The coordinator must verify reviewer
 identities outside this tool; this script enforces distinct reviewer keys only.
 Reviews use:
   case_id, look_id, reviewer_key, relevance (1..5), exclusion_violation (bool)
+Adjudications use:
+  case_id, look_id, adjudicator_key, relevance (1..5), exclusion_violation (bool)
+An independent adjudication is mandatory when the two reviewers disagree.
 Exposure rows are passed through to the evaluator after their case/look IDs
 are checked. No participant or garment identifiers are resolved here.
 """
@@ -156,9 +159,11 @@ def prepare_cases(
     trace_rows: list[dict[str, Any]],
     review_rows: list[dict[str, Any]],
     exposure_rows: list[dict[str, Any]] | None = None,
+    adjudication_rows: list[dict[str, Any]] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     reviews_by_case = _index_records(review_rows, "review")
     exposures_by_case = _index_records(exposure_rows or [], "exposure")
+    adjudications_by_case = _index_records(adjudication_rows or [], "adjudication")
     cases: list[dict[str, Any]] = []
     seen_case_ids: set[str] = set()
     no_result_roles: dict[str, int] = defaultdict(int)
@@ -213,6 +218,7 @@ def prepare_cases(
 
             case_reviews = reviews_by_case.pop(case_id, [])
             case_exposures = exposures_by_case.pop(case_id, [])
+            case_adjudications = adjudications_by_case.pop(case_id, [])
             reviews_for_look: dict[str, list[dict[str, Any]]] = defaultdict(list)
             for record in case_reviews:
                 look_id = record["look_id"]
@@ -241,6 +247,31 @@ def prepare_cases(
                 if len(ratings) != 2 or len(reviewers) != 2:
                     raise ValueError(f"{case_id}/{look_id}: exactly two distinct reviewer ratings are required")
 
+            adjudications_for_look: dict[str, dict[str, Any]] = {}
+            for record in case_adjudications:
+                look_id = record["look_id"]
+                if look_id not in set(candidate_ids):
+                    raise ValueError(f"{case_id}: adjudication references an unknown candidate")
+                if look_id in adjudications_for_look:
+                    raise ValueError(f"{case_id}/{look_id}: duplicate adjudication is not allowed")
+                adjudicator_key = record.get("adjudicator_key")
+                relevance = record.get("relevance")
+                exclusion_violation = record.get("exclusion_violation")
+                if not isinstance(adjudicator_key, str) or not adjudicator_key.strip():
+                    raise ValueError(f"{case_id}/{look_id}: adjudicator_key is required")
+                if not isinstance(relevance, int) or isinstance(relevance, bool) or not 1 <= relevance <= 5:
+                    raise ValueError(f"{case_id}/{look_id}: adjudicated relevance must be an integer from 1 to 5")
+                if not isinstance(exclusion_violation, bool):
+                    raise ValueError(f"{case_id}/{look_id}: adjudicated exclusion_violation must be boolean")
+                reviewer_keys = {
+                    row["reviewer_key"] for row in reviews_for_look.get(look_id, [])
+                }
+                if adjudicator_key.strip() in reviewer_keys:
+                    raise ValueError(f"{case_id}/{look_id}: adjudicator must be independent of both reviewers")
+                adjudications_for_look[look_id] = {
+                    key: value for key, value in record.items() if key != "case_id"
+                }
+
             for record in case_exposures:
                 if record["look_id"] not in set(candidate_ids):
                     raise ValueError(f"{case_id}: exposure references an unknown candidate")
@@ -249,7 +280,7 @@ def prepare_cases(
                 {key: value for key, value in row.items() if key != "case_id"}
                 for row in case_exposures
             ]
-            case.setdefault("adjudications", [])
+            case["adjudications"] = list(adjudications_for_look.values())
             try:
                 from tools.pnelly_evaluation.evaluate_outfits import _validate_case
                 _validate_case(case, k=3)
@@ -261,6 +292,8 @@ def prepare_cases(
         raise ValueError("review file contains case IDs absent from trace input")
     if exposures_by_case:
         raise ValueError("exposure file contains case IDs absent from trace input")
+    if adjudications_by_case:
+        raise ValueError("adjudication file contains case IDs absent from trace input")
     if trace_count == 0:
         raise ValueError("no PNELLY evaluation traces found")
 
@@ -269,6 +302,7 @@ def prepare_cases(
         "case_count": len(cases),
         "candidate_count": sum(len(case["candidate_outfits"]) for case in cases),
         "review_count": sum(len(case["human_reviews"]) for case in cases),
+        "adjudication_count": sum(len(case["adjudications"]) for case in cases),
         "exposure_count": sum(len(case["exposures"]) for case in cases),
         "candidate_pool_truncated_trace_count": truncated_count,
         "no_result_roles_by_role": dict(no_result_roles),
@@ -290,6 +324,7 @@ def main() -> int:
     parser.add_argument("--traces", required=True, help="JSONL containing Gateway trace responses")
     parser.add_argument("--reviews", required=True, help="JSONL of two independent ratings per candidate")
     parser.add_argument("--exposures", help="Optional JSONL of genuine live exposure outcomes")
+    parser.add_argument("--adjudications", help="Optional JSONL of independent reviewer-disagreement adjudications")
     parser.add_argument("--output", required=True, help="Output evaluator case JSONL")
     parser.add_argument("--summary", help="Optional JSON summary path")
     args = parser.parse_args()
@@ -298,6 +333,7 @@ def main() -> int:
         read_jsonl(args.traces),
         read_jsonl(args.reviews),
         read_jsonl(args.exposures) if args.exposures else [],
+        read_jsonl(args.adjudications) if args.adjudications else [],
     )
     write_jsonl(args.output, cases)
     summary_path = Path(args.summary) if args.summary else Path(str(args.output) + ".summary.json")
