@@ -97,17 +97,27 @@ def _internal_service(url_key: str, token_key: str) -> tuple[str, str]:
         raise HTTPException(status_code=503, detail={"code": f"{token_key}_NOT_CONFIGURED"})
     return base, token
 
-def _xari_internal_service() -> tuple[str, str]:
-    """Prefer Xari environment names while retaining Tari aliases during migration."""
+def _pnelly_internal_service() -> tuple[str, str]:
+    """Prefer PNELLY URL/token as a pair; keep Xari and Tari pairs as fallbacks."""
+    pnelly_url = os.getenv("PNELLY_API_URL", "").strip()
     xari_url = os.getenv("XARI_API_URL", "").strip()
     tari_url = os.getenv("TARI_API_URL", "").strip()
-    url_key = "XARI_API_URL" if xari_url else "TARI_API_URL"
-    token = os.getenv("XARI_API_TOKEN", "").strip() or os.getenv("TARI_API_TOKEN", "").strip()
-    if not xari_url and not tari_url:
-        raise HTTPException(status_code=503, detail={"code": "XARI_API_URL_NOT_CONFIGURED"})
+
+    if pnelly_url:
+        url_key = "PNELLY_API_URL"
+        token = os.getenv("PNELLY_API_TOKEN", "").strip()
+    elif xari_url:
+        url_key = "XARI_API_URL"
+        token = os.getenv("XARI_API_TOKEN", "").strip() or os.getenv("TARI_API_TOKEN", "").strip()
+    elif tari_url:
+        url_key = "TARI_API_URL"
+        token = os.getenv("TARI_API_TOKEN", "").strip()
+    else:
+        raise HTTPException(status_code=503, detail={"code": "PNELLY_API_URL_NOT_CONFIGURED"})
+
     base = _upstream_base(url_key)
     if len(token.encode("utf-8")) < 32:
-        raise HTTPException(status_code=503, detail={"code": "XARI_API_TOKEN_NOT_CONFIGURED"})
+        raise HTTPException(status_code=503, detail={"code": "PNELLY_API_TOKEN_NOT_CONFIGURED"})
     return base, token
 
 
@@ -160,8 +170,8 @@ async def _safe_json_post(
 
 @app.post("/api/vision/marketplace-search")
 async def marketplace_description_search(payload: MarketplaceSearchIn) -> dict:
-    """Search marketplace candidates by description without exposing Xari credentials."""
-    base, token = _xari_internal_service()
+    """Search marketplace candidates by description without exposing PNELLY credentials."""
+    base, token = _pnelly_internal_service()
     request_body = {"query": payload.normalized_query, "limit": payload.limit}
     if payload.category and payload.category.strip():
         request_body["category"] = payload.category.strip()
