@@ -1,4 +1,4 @@
-name: Twin, Vision, Catalog and Xari contract tests
+name: Twin, Vision, Catalog and PNELLY contract tests (Xari compatibility)
 
 on:
   push:
