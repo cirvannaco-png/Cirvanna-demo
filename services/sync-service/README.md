@@ -37,7 +37,7 @@ The container runs the long-lived worker. The worker does not log event payloads
 
     python -m pytest -q
 
-Tests use mocked Commerce and Wardrobe endpoints. Before production, apply both service migrations, configure secrets, run a real signed Stripe test checkout, verify delivery and replay in PostgreSQL, inject downstream outages, verify dead-letter alerts and reconcile event counts. Refund/cancellation ownership reconciliation is blocked until Commerce implements those lifecycle events.
+Tests use mocked Commerce and Wardrobe endpoints. Before production, apply both service migrations, configure secrets, run a real signed Stripe test checkout, verify delivery and replay in PostgreSQL, inject downstream outages, verify dead-letter alerts and reconcile event counts. The worker now consumes Commerce's `commerce.order.refund.updated` event and writes the verified cumulative refund snapshot to Wardrobe's separate financial ledger; this is financial-state reconciliation only, not ownership reversal. Physical returns, cancellation lifecycle events, chargebacks/disputes, item-level allocation and restocking remain blocked pending their own verified Commerce events and operational workflows.
 ## Event types and ownership truth
 
 The worker consumes two Commerce outbox event types:
