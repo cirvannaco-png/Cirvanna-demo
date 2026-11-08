@@ -59,19 +59,10 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       <div class="ai-status" id="aiSearchStatus" role="status" aria-live="polite">PNELLY description search requires the private vision worker. Candidate matches are not product recommendations until CAL authorizes display; price comparisons must use current Commerce offers, not generated estimates.</div>
     </section>
     <section class="ai-panel" aria-labelledby="clickItTitle">
-      <div class="eyebrow">Click It · Photograph it</div>
-      <h2 id="clickItTitle">Find a product from a photo</h2>
-      <p>Take or choose a product photo. Click It checks image quality, scans it and searches active marketplace offers. A verified account and active server-side consent record are required.</p>
-      <form id="clickItForm">
-        <div class="ai-controls">
-          <input id="clickItImage" class="wide" type="file" accept="image/jpeg,image/png,image/webp" capture="environment" aria-label="Take or choose a product image" required>
-          <input id="clickItConsentId" class="wide" type="text" maxlength="160" minlength="8" autocomplete="off" placeholder="Consent record ID issued by Cirvanna" aria-label="Active Cirvanna consent record ID" required>
-        </div>
-        <label class="consent-line"><input id="clickItImageConsent" type="checkbox" required><span>I consent to processing this photo to search marketplace products. The image is processed ephemerally.</span></label>
-        <label class="consent-line"><input id="clickItSearchConsent" type="checkbox" required><span>I agree to use Click It for this product search. I understand an active consent record is also verified by the server.</span></label>
-        <button class="btn primary wide" id="clickItBtn" type="submit">Scan photo and search marketplace</button>
-      </form>
-      <div class="ai-status" id="clickItStatus" role="status" aria-live="polite">Use the Connect catalog button to connect a signed Commerce user session first. Photos and results are not saved by this scanner.</div>
+      <div class="eyebrow">Click It · Temporarily paused</div>
+      <h2 id="clickItTitle">Photo search is temporarily unavailable</h2>
+      <p>Photo uploads are disabled while Cirvanna completes and verifies face masking, consent enforcement, and asset-bound privacy attestation. Please do not submit a photo through Click It yet.</p>
+      <div class="ai-status" id="clickItStatus" role="status" aria-live="polite">Click It is not accepting photos. No photo is requested or sent from this page. Use PNELLY description search in the meantime.</div>
     </section>
   </div>
 </section>
@@ -275,32 +266,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     }catch(e){setAiStatus("aiSearchStatus",(e&&e.message?e.message:"Search is unavailable")+". No demo or fabricated results were shown.",true)}
     finally{setAiBusy("aiSearchBtn",false,"Search marketplace with PNELLY")}
   });
-  $("clickItForm").addEventListener("submit",async e=>{
-    e.preventDefault();
-    const image=$("clickItImage").files&&$("clickItImage").files[0];
-    if(!image){setAiStatus("clickItStatus","Take or choose a product photo.",true);return}
-    if(!config.commerceBase||!config.userToken){setAiStatus("clickItStatus","Connect the Commerce API with a signed user JWT in Connect catalog before using Click It.",true);return}
-    if(image.size>10*1024*1024){setAiStatus("clickItStatus","Photo exceeds the 10 MB upload limit. Choose a smaller image.",true);return}
-    if(!["image/jpeg","image/png","image/webp"].includes(image.type)){setAiStatus("clickItStatus","Use a JPEG, PNG or WEBP photo.",true);return}
-    if(!$("clickItImageConsent").checked||!$("clickItSearchConsent").checked){setAiStatus("clickItStatus","Both explicit consent checkboxes are required.",true);return}
-    const form=new FormData();
-    form.append("consent_id",$("clickItConsentId").value.trim());
-    form.append("consent_image_processing","true");form.append("consent_click_it","true");form.append("product_image",image);
-    setAiBusy("clickItBtn",true,"Scanning…");setAiStatus("clickItStatus","Checking your signed account, consent record and image quality, then searching live marketplace offers…");
-    try{
-      const response=await fetch("/api/vision/click-it",{method:"POST",headers:{Authorization:"Bearer "+config.userToken,Accept:"application/json"},body:form});
-      const data=await response.json().catch(()=>({}));
-      if(!response.ok)throw new Error((data.detail&&data.detail.code)||("Click It returned HTTP "+response.status+"."));
-      if(data.status!=="complete"||!Array.isArray(data.candidates))throw new Error("Click It returned an invalid scan response.");
-      presentAiSearchResult(data,"clickItStatus");
-    }catch(err){
-      let message=err&&err.message?err.message:"Click It is unavailable";
-      if(message==="CONSENT_PROVIDER_NOT_CONFIGURED")message="The server-side consent provider is not deployed/configured yet. Your photo was not sent for model processing.";
-      if(message==="VISION_INFERENCE_NOT_CONFIGURED")message="The private vision worker or its pinned model assets are not configured. No result was fabricated.";
-      if(message==="TWIN_REGISTRY_NOT_CONFIGURED")message="Twin personalization is not configured; a basic marketplace scan should not require a Twin.";
-      setAiStatus("clickItStatus",message+". No demo or fabricated matches were shown.",true);
-    }finally{setAiBusy("clickItBtn",false,"Scan photo and search marketplace")}
-  });
+
 
   updateCounts();load();
 })();
