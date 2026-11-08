@@ -36,9 +36,9 @@ KIPI's published guidance describes a formal search using Form TM27 and an appli
 
 ## Migration gate
 
-Only after written legal clearance and explicit product-owner approval may a separate implementation ADR authorize the migration. That ADR must include:
+The runtime identity migration is already authorized by ADR-0010 and does not depend on completing the trademark search. However, **commercial launch, public advertising, domain/handle reservation as a brand claim, or customer-facing campaigns under PNELLY remain blocked until written trademark-counsel clearance** for the intended goods/services and launch jurisdictions. Any physical source-path relocation or removal of compatibility aliases requires its own reviewed migration change. The legal clearance record must include:
 
-- an inventory of every Xari service, API, environment variable, route, capability field, UI label, test, deployment manifest, secret and operational reference;
+- an inventory of the PNELLY assistant capability, its preserved `services/xari` source path, API/environment aliases, routes, capability fields, UI labels, tests, deployment manifests, secret references and operational runbooks;
 - a compatibility strategy for existing `XARI_*` settings and clients, with a defined deprecation window and no secret leakage;
 - a staged rollout, observability, rollback plan and cross-service contract tests;
 - confirmation that the migration changes branding only, not assistant permissions, consent requirements, data ownership, orchestration boundaries or safety policy;
