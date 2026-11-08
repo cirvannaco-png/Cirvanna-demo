@@ -144,7 +144,6 @@ class TryOnStore:
             row.output_asset_id = data["output_asset_id"]
             row.renderer_id = data["renderer_id"]
             row.renderer_version = data["renderer_version"]
-            row.created_at = data["created_at"]
             row.updated_at = datetime.now(timezone.utc)
             row.lease_expires_at = None
             row.result = data["result"]
