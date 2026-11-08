@@ -198,6 +198,8 @@ def validate_generation_bundle(
     if result.artifact_asset_id in command.source_image_asset_ids:
         raise GenerationContractError("TWIN_GENERATION_ARTIFACT_IS_SOURCE")
 
+    if receipt.validator_id == result.provider_id:
+        raise GenerationContractError("TWIN_VALIDATOR_NOT_INDEPENDENT")
     if receipt.validated is not True:
         raise GenerationContractError("TWIN_MESH_NOT_VALIDATED")
     if receipt.subject_id != command.subject_id or receipt.twin_id != command.twin_id:
