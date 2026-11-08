@@ -44,7 +44,7 @@ These workflows do not establish that Cirvanna's product is implemented end to e
 ## Next engineering gates
 
 - Extend secret scanning to credentialed database/cache/message-broker URIs while managing intentional local examples explicitly.
-- Decide canonical versions and ownership for CaTaCaCi/CAL, USI, NPL, EEPL, FCI, and the CRFP/CFRP naming conflict.
+- Preserve CRFP as the canonical acronym and document its separate marketplace/system-wide scope ownership; recover authoritative specifications before runtime promotion. Continue contract alignment for CaTaCaCi/CAL, USI, NPL, EEPL and FCI.
 - Promote one reviewed component at a time from candidate to canonical source, preserving provenance and adding contract/unit/integration tests.
 - Implement the Virtual Twin adapter only when the reconstruction/model dependency, required assets, privacy controls, and acceptance criteria are known.
 - Build and test one complete vertical slice: profile/preferences → catalog retrieval → hard constraint enforcement → CaTaCaCi arbitration → auditable response.
