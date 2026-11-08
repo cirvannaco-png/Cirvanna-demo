@@ -79,7 +79,7 @@ Complementer is advisory. It is not a second profile database, product database,
 ### Fit and purchase confidence
 
 - **FCI — Fit Confidence Intelligence:** intended to estimate suitability from actual product and user evidence.
-- **CRFP / CFRP:** source material uses both names. Resolve their definitions and contracts before choosing a canonical implementation.
+- **CRFP:** one canonical concept with two distinct scopes: marketplace CRFP and system-wide CRFP. The former CFRP spelling was a typo; preserve historical archive filenames for provenance. See the [CRFP scope index](packages/fit-intelligence/crfp/README.md) and [ADR-0003](docs/architecture/adr/ADR-0003-crfp-marketplace-and-system-scopes.md).
 - **Purchase-decision support:** communicates evidence and uncertainty; it must not imply certainty where only an estimate exists.
 - **Merchant insights:** aggregate reporting subject to data minimisation, privacy controls, and validated metrics.
 
@@ -470,7 +470,7 @@ The Complementer and Catalog product-intelligence work was merged through [PR #7
 
 ## Contribution rules
 
-Start with the [Source of truth and contributor guide](docs/architecture/source-of-truth-and-contributor-guide.md), the [runtime source registry](docs/architecture/runtime-source-registry.json), and the [CRFP/CFRP status ADR](docs/architecture/adr/ADR-0002-crfp-cfrp-contract-status.md). Canonical source, candidate, experimental, archived, and scaffold paths are deliberately distinct; never promote by copying or renaming alone.
+Start with the [Source of truth and contributor guide](docs/architecture/source-of-truth-and-contributor-guide.md), the [runtime source registry](docs/architecture/runtime-source-registry.json), and the [CRFP scope ADR](docs/architecture/adr/ADR-0003-crfp-marketplace-and-system-scopes.md). Canonical source, candidate, experimental, archived, and scaffold paths are deliberately distinct; never promote by copying or renaming alone.
 
 1. Inspect the current branch, code, architecture owner, service contract, and tests before editing.
 2. Prefer one small, complete, testable integration over disconnected feature stubs.
@@ -494,7 +494,7 @@ Start with the [Source of truth and contributor guide](docs/architecture/source-
 - [Monorepo governance](docs/architecture/monorepo-governance.md)
 - [Source of truth and contributor guide](docs/architecture/source-of-truth-and-contributor-guide.md)
 - [Runtime source registry](docs/architecture/runtime-source-registry.json)
-- [CRFP/CFRP contract status ADR](docs/architecture/adr/ADR-0002-crfp-cfrp-contract-status.md)
+- [CRFP marketplace/system-wide scope ADR](docs/architecture/adr/ADR-0003-crfp-marketplace-and-system-scopes.md)
 - [Production release evidence gates](docs/release/README.md)
 - [Catalog](services/catalog-service/README.md)
 - [Complementer](services/recommendation-service/README.md)

@@ -74,7 +74,7 @@ Retain the exact candidate commit, CI links, migration output, database restore 
 
 ## 5. Cirvanna vision modules that must not be advertised as live
 
-The current repository does not certify these end-to-end: **TARI**, **CRFP/CFRP** (the names/contracts are unresolved and must not be merged by guesswork), trained/calibrated **FCI** fit inference, personalized NPL/USI evaluation on real user data, **CaTaCaCi** arbitration wired into storefront display suppression, **Click It** reconstruction, **Virtual Twin** geometry or real virtual try-on rendering. The deterministic EEPL/NPL/USI/FCI-evidence/CAL contract tests are not proof those production integrations and underlying models exist. Keep each capability visibly unavailable until its own provider, evaluation corpus, policy, authorization, latency/failure and user-consent gates are evidenced.
+The current repository does not certify these end-to-end: **TARI**, **CRFP** marketplace and system-wide scopes (scope ownership is documented, but authoritative runtime contracts and implementations remain unverified), trained/calibrated **FCI** fit inference, personalized NPL/USI evaluation on real user data, **CaTaCaCi** arbitration wired into storefront display suppression, **Click It** reconstruction, **Virtual Twin** geometry or real virtual try-on rendering. The deterministic EEPL/NPL/USI/FCI-evidence/CAL contract tests are not proof those production integrations and underlying models exist. Keep each capability visibly unavailable until its own provider, evaluation corpus, policy, authorization, latency/failure and user-consent gates are evidenced.
 
 ## 6. Promotion decision
 
@@ -87,7 +87,7 @@ Do not merge/deploy to production until all of the following are recorded as pas
 - [ ] Stripe test-mode checkout/webhook/reconciliation and stock-expiry job pass; production keys are configured through secret storage.
 - [ ] Approved merchant applications, real catalog data and inventory are present and independently reviewed.
 - [ ] Security, observability, rate limiting, privacy, refunds/returns, fulfilment, shipping/tax and seller payout operating procedures are approved.
-- [ ] Product owners explicitly sign off on whether TARI, NPL, CRFP/CFRP, CaTaCaCi, Click It, Virtual Twin and try-on are launch blockers or clearly out-of-scope for the initial commerce launch.
+- [ ] Product owners explicitly sign off on whether TARI, NPL, marketplace/system-wide CRFP, CaTaCaCi, Click It, Virtual Twin and try-on are launch blockers or clearly out-of-scope for the initial commerce launch.
 - [ ] Staging end-to-end evidence is attached to the PR; rollback and on-call owners are identified.
 
 Until then, the accurate status is **engineering candidate with passing automated CI—not production-ready**.

@@ -7,7 +7,7 @@
     "lineCount": 52551,
     "sourceSnapshotCount": 31,
     "runtimeSourcePromoted": false,
-    "note": "Original upload is not copied into this repository. References preserve source lineage for controlled migration."
+    "note": "Original upload is not copied into this repository. References preserve source lineage for controlled migration. The historical CFRP spelling in the source bundle is a typo; canonical acronym is CRFP. CRFP has distinct marketplace and system-wide scopes."
   },
   "modules": [
     {
@@ -67,11 +67,18 @@
       "promotionGate": "Add a reviewed model adapter, held-out calibration and interval-coverage evidence, bias evaluation, and end-to-end fit/return outcome validation."
     },
     {
-      "id": "cfrp",
-      "target": "packages/fit-intelligence/cfrp",
-      "status": "name-and-contract-unresolved",
-      "purpose": "CFRP V6 source candidate. Do not equate CFRP with the separately remembered CRFP label without a contract comparison.",
-      "promotionGate": "Resolve acronym, ownership, interfaces, and overlap with FCI before integration."
+      "id": "crfp-system",
+      "target": "packages/fit-intelligence/crfp/system",
+      "status": "scope-contract-documentation",
+      "purpose": "System-wide CRFP scope. Shared architectural concept and contract consumed across Cirvanna; detailed functional semantics and typed interface remain to be specified from the authoritative CRFP source.",
+      "promotionGate": "Recover and verify the system-wide CRFP specification, define typed inputs/outputs and authority boundaries, then add owner-approved implementation, contract tests, privacy/security review, and consumer integration evidence."
+    },
+    {
+      "id": "crfp-marketplace",
+      "target": "packages/fit-intelligence/crfp/marketplace",
+      "status": "scope-contract-documentation",
+      "purpose": "Marketplace-specific CRFP scope. Applies the CRFP concept within marketplace workflows without being collapsed into the system-wide scope; detailed functional semantics and typed interface remain to be specified from the authoritative CRFP source.",
+      "promotionGate": "Recover and verify the marketplace CRFP specification, define marketplace-owned responsibilities and its interaction with system-wide CRFP, then add typed contracts, contract tests, security/privacy review, and marketplace integration evidence."
     },
     {
       "id": "dermalsight",

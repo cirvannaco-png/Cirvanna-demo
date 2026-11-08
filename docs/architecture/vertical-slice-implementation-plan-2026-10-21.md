@@ -49,7 +49,7 @@ The first slice must accept a user-controlled preference profile, retrieve candi
 ### Gate 1 — Contract alignment
 - Reconcile canonical product IDs and data schemas across catalog and consumers.
 - Reconcile USI, NPL, EEPL, cultural policy, fit-confidence, and CAL request/response contracts.
-- Resolve naming drift (including CRFP/CFRP and legacy Tari/Xyra versus canonical Xari) in documentation and interfaces without deleting source lineage.
+- Preserve CRFP as the canonical acronym and define separate marketplace/system-wide scope ownership; resolve legacy Tari/Xyra versus canonical Xari without deleting source lineage.
 - Define reason-code registry and error envelope.
 
 **Exit evidence:** contract tests and documented ownership.

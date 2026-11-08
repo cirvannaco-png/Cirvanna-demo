@@ -42,9 +42,9 @@ When a domain package and a service both contain code, the package owns reusable
 
 The accepted CaTaCaCi ADR defines the arbitration boundary. CAL is the only component that may convert normalized evidence into `SHOW`, `BLOCK`, or `REVIEW`. Evidence producers may veto within their defined hard-constraint domain, but they do not get a second display authority. TAL is a consented learning workflow, not a per-candidate arbiter. See [ADR-0001](adr/ADR-0001-catacaci-decision-contract.md).
 
-### CFRP / CRFP naming hold
+### CRFP scope ownership
 
-CFRP V6 is an archived candidate label, while CRFP has no verified in-repository specification. They are not aliases. Neither is a canonical runtime capability. Do not add integrations based on the spelling alone. See [ADR-0002](adr/ADR-0002-crfp-cfrp-contract-status.md).
+CRFP is the single canonical acronym; the former CFRP spelling was a typo. It has two distinct scopes: marketplace CRFP and system-wide CRFP. The two scopes have separate responsibility and contract documentation, but neither has a verified runtime implementation. Preserve historical archive filenames and hashes for provenance; do not promote candidate code by renaming. FCI owns fit-confidence estimation and CAL remains the sole final `SHOW`/`BLOCK`/`REVIEW` arbiter. See [ADR-0003](adr/ADR-0003-crfp-marketplace-and-system-scopes.md) and the [CRFP scope index](../../packages/fit-intelligence/crfp/README.md).
 
 ## 3. Quarantine and archive rules
 
@@ -100,7 +100,7 @@ Then read, in order:
 
 1. [Monorepo governance](monorepo-governance.md) — layers and ownership.
 2. [CaTaCaCi decision contract](adr/ADR-0001-catacaci-decision-contract.md) — the display authorization boundary.
-3. [CRFP/CFRP status](adr/ADR-0002-crfp-cfrp-contract-status.md) — unresolved candidate naming.
+3. [CRFP scope decision](adr/ADR-0003-crfp-marketplace-and-system-scopes.md) — canonical acronym and separate marketplace/system-wide scope ownership.
 4. [Marketplace production readiness](../marketplace-production-readiness.md) — release-blocking evidence.
 5. The README and workflow for the service/package you intend to change.
 
