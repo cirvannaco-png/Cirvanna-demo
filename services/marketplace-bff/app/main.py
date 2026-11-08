@@ -18,18 +18,34 @@ from urllib.parse import urlsplit
 import httpx
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 SERVICE = "cirvanna-marketplace-bff"
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_HTML = ROOT / "apps" / "demo-web" / "marketplace.html"
 DEFAULT_WARDROBE_HTML = ROOT / "apps" / "demo-web" / "wardrobe.html"
+DEFAULT_BRAND_PORTAL_HTML = ROOT / "apps" / "demo-web" / "brand-portal.html"
+DEFAULT_FOUNDER_CONSOLE_HTML = ROOT / "apps" / "demo-web" / "founder-console.html"
+DEFAULT_PORTAL_ASSETS = ROOT / "apps" / "demo-web" / "assets"
 HTML_PATH = Path(os.getenv("MARKETPLACE_HTML_PATH", str(DEFAULT_HTML)))
+BRAND_PORTAL_HTML_PATH = Path(os.getenv("BRAND_PORTAL_HTML_PATH", str(DEFAULT_BRAND_PORTAL_HTML)))
+FOUNDER_CONSOLE_HTML_PATH = Path(os.getenv("FOUNDER_CONSOLE_HTML_PATH", str(DEFAULT_FOUNDER_CONSOLE_HTML)))
+PORTAL_ASSETS_DIR = Path(os.getenv("MARKETPLACE_ASSETS_DIR", str(DEFAULT_PORTAL_ASSETS)))
 TIMEOUT_SECONDS = 5.0
 MAX_PAGE_SIZE = 100
 MAX_VISION_IMAGE_BYTES = 10 * 1024 * 1024
 UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$")
 SERVICE_PATHS = {
+    ("GET", "me"),
+    ("GET", "merchants/me"),
+    ("POST", "merchants/applications"),
+    ("GET", "merchant/listings"),
+    ("GET", "merchant/orders"),
+    ("POST", "merchant/listings"),
+    ("GET", "admin/merchants"),
+    ("GET", "admin/merchant-decisions"),
+    ("GET", "admin/inventory/audit"),
     ("GET", "cart"),
     ("GET", "saved-products"),
     ("GET", "orders"),
@@ -40,8 +56,10 @@ SERVICE_PATHS = {
 app = FastAPI(
     title="Cirvanna Marketplace BFF",
     version="0.1.0",
-    description="Same-origin marketplace and Wardrobe UI with verified account identity and private service proxies.",
+    description="Same-origin marketplace, Wardrobe and governed merchant portals with verified account identity and private service proxies.",
 )
+
+app.mount("/assets", StaticFiles(directory=str(PORTAL_ASSETS_DIR), check_dir=True), name="portal-assets")
 
 
 @app.middleware("http")
@@ -1796,6 +1814,12 @@ def _authorized_commerce_path(method: str, path: str) -> bool:
         return method in {"PATCH", "DELETE"}
     if len(parts) == 2 and parts[0] == "orders" and UUID_RE.fullmatch(parts[1]):
         return method == "GET"
+    if len(parts) == 4 and parts[:2] == ["merchant", "listings"] and UUID_RE.fullmatch(parts[2]) and parts[3] == "variants":
+        return method == "POST"
+    if len(parts) == 4 and parts[:2] == ["merchant", "variants"] and UUID_RE.fullmatch(parts[2]) and parts[3] == "inventory-adjustments":
+        return method == "POST"
+    if len(parts) == 4 and parts[:2] == ["admin", "merchants"] and UUID_RE.fullmatch(parts[2]) and parts[3] == "decision":
+        return method == "POST"
     return False
 
 
@@ -2071,3 +2095,24 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
     if not isinstance(data, dict) or not isinstance(data.get("displayable_products"), list):
         raise HTTPException(502, detail={"code": "WARDROBE_RECOMMENDATIONS_RESPONSE_INVALID"})
     return _private_json_response(_withhold_unverified_media(data))
+
+def _read_portal_page(path: Path, code: str) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail={"code": code}) from exc
+
+
+@app.get("/brand-portal", response_class=HTMLResponse)
+@app.get("/brand-portal.html", response_class=HTMLResponse)
+def brand_portal_page() -> HTMLResponse:
+    return HTMLResponse(_read_portal_page(BRAND_PORTAL_HTML_PATH, "BRAND_PORTAL_UNAVAILABLE"),
+        headers={"Cache-Control": "no-store"})
+
+
+@app.get("/founder-console", response_class=HTMLResponse)
+@app.get("/founder-console.html", response_class=HTMLResponse)
+def founder_console_page() -> HTMLResponse:
+    return HTMLResponse(_read_portal_page(FOUNDER_CONSOLE_HTML_PATH, "FOUNDER_CONSOLE_UNAVAILABLE"),
+        headers={"Cache-Control": "no-store"})
+
