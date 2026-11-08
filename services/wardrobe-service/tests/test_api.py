@@ -628,6 +628,70 @@ def test_refund_snapshot_requires_internal_auth(client):
     assert response.status_code == 401
 
 
+def test_full_checkout_refund_can_exceed_merchandise_subtotal_without_unowning_garment(client):
+    purchase = client.post(
+        "/v1/purchases/verified", headers=auth(), json=verified_purchase_body()
+    )
+    assert purchase.status_code == 201, purchase.text
+    item_id = purchase.json()["item"]["item_id"]
+
+    # Merchandise is KES 5,000.00; the captured checkout also included
+    # KES 1,000.00 of separately quoted delivery/tax charges.
+    payload = refund_snapshot_body(
+        captured_total_minor=600000,
+        amount_refunded_minor=550000,
+        refund_state="partial_refund",
+    )
+    partial = client.post("/v1/purchases/refund-status", headers=auth(), json=payload)
+    assert partial.status_code == 200, partial.text
+    assert partial.json()["captured_total_minor"] == 600000
+    assert partial.json()["amount_refunded_minor"] == 550000
+
+    full = client.post(
+        "/v1/purchases/refund-status", headers=auth(),
+        json=refund_snapshot_body(
+            event_id="a23e4567-e89b-42d3-a456-426614174111",
+            provider_event_id="evt_refund_captured_total_full",
+            captured_total_minor=600000,
+            amount_refunded_minor=600000,
+            refund_state="refunded",
+        ),
+    )
+    assert full.status_code == 200, full.text
+    assert full.json()["refund_state"] == "refunded"
+    assert full.json()["captured_total_minor"] == 600000
+
+    items = client.get("/v1/items", headers=auth(), params={"owner_user_id": "buyer-1"}).json()["items"]
+    assert len(items) == 1
+    assert items[0]["item_id"] == item_id
+    assert items[0]["status"] == "active"
+
+
+def test_refund_snapshot_rejects_captured_total_below_merchandise_and_refund_above_capture(client):
+    purchase = client.post(
+        "/v1/purchases/verified", headers=auth(), json=verified_purchase_body()
+    )
+    assert purchase.status_code == 201
+
+    below_merchandise = client.post(
+        "/v1/purchases/refund-status", headers=auth(),
+        json=refund_snapshot_body(captured_total_minor=499999),
+    )
+    assert below_merchandise.status_code == 422
+
+    above_capture = client.post(
+        "/v1/purchases/refund-status", headers=auth(),
+        json=refund_snapshot_body(
+            event_id="b23e4567-e89b-42d3-a456-426614174111",
+            provider_event_id="evt_refund_above_capture",
+            captured_total_minor=600000,
+            amount_refunded_minor=600001,
+        ),
+    )
+    assert above_capture.status_code == 422
+
+
+
 def test_verified_purchase_requires_internal_auth(client):
     response = client.post("/v1/purchases/verified", json=verified_purchase_body())
     assert response.status_code == 401
