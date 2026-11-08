@@ -47,7 +47,8 @@ class WardrobePurchaseRefundSnapshotRow(Base):
         UniqueConstraint("provider_event_id", name="uq_wardrobe_purchase_refund_provider_event"),
         Index("ix_wardrobe_purchase_refund_order", "order_id"),
         CheckConstraint("order_total_minor > 0", name="ck_wardrobe_refund_order_total_positive"),
-        CheckConstraint("amount_refunded_minor > 0 AND amount_refunded_minor <= order_total_minor", name="ck_wardrobe_refund_amount_bounds"),
+        CheckConstraint("captured_total_minor >= order_total_minor", name="ck_wardrobe_refund_captured_total_gte_merchandise"),
+        CheckConstraint("amount_refunded_minor > 0 AND amount_refunded_minor <= captured_total_minor", name="ck_wardrobe_refund_amount_bounds"),
         CheckConstraint("refund_state IN ('partial_refund', 'refunded')", name="ck_wardrobe_refund_state"),
         CheckConstraint("physical_return_confirmed = FALSE", name="ck_wardrobe_refund_not_a_return"),
         CheckConstraint("ownership_effect = 'financial_status_only'", name="ck_wardrobe_refund_financial_only"),
@@ -60,6 +61,7 @@ class WardrobePurchaseRefundSnapshotRow(Base):
     charge_id: Mapped[str] = mapped_column(String(180), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     order_total_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    captured_total_minor: Mapped[int] = mapped_column(Integer, nullable=False)
     amount_refunded_minor: Mapped[int] = mapped_column(Integer, nullable=False)
     refund_state: Mapped[str] = mapped_column(String(16), nullable=False)
     payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
