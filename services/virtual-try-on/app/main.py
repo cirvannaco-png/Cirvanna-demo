@@ -596,10 +596,13 @@ async def create_try_on(payload: TryOnRequest, _: Annotated[None, Depends(requir
                 "Output asset expires after 24 hours unless retained under a separate explicit product action.",
             ],
         }
-        saved = store.complete(payload.subject_id, payload.request_id, {
-            "output_asset_id": output_asset_id, "renderer_id": "fashn-vton-1.5",
-            "renderer_version": renderer_version, "created_at": created_at, "result": result,
-        })
+        try:
+            saved = store.complete(payload.subject_id, payload.request_id, {
+                "output_asset_id": output_asset_id, "renderer_id": "fashn-vton-1.5",
+                "renderer_version": renderer_version, "created_at": created_at, "result": result,
+            })
+        except Exception as exc:
+            raise HTTPException(503, detail={"code": "TRY_ON_RESULT_PERSISTENCE_FAILED"}) from exc
         return _response_from_job(saved)
     except Exception:
         if output_asset_id is not None:
