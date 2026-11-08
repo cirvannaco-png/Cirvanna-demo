@@ -110,8 +110,8 @@ images, and asset references. Candidate-pool truncation is recorded; truncated
 traces must not be used for comparative claims.
 
 Use `tools/pnelly_evaluation/prepare_pnelly_cases.py` to join trace JSONL with
-two independent blinded reviews per candidate and any verified exposure log.
-The coordinator must verify the two reviewer identities and assign distinct reviewer keys; this tool can only check key uniqueness, not human identity. The resulting JSONL follows the benchmark schema and can be passed to
+two independent blinded reviews per candidate, a separate adjudication file for disagreements, and any verified exposure log.
+The coordinator must verify the two reviewer identities and any third adjudicator, assigning distinct pseudonymous keys; the joiner enforces exactly two reviewers and requires an independent adjudicator when their labels differ. It rejects an adjudicator who shares a reviewer key. It cannot authenticate real-world identities. Supply disagreements in a separate adjudication JSONL using `case_id`, `look_id`, `adjudicator_key`, `relevance` and `exclusion_violation`. The resulting JSONL follows the benchmark schema and can be passed to
 `tools/pnelly_evaluation/evaluate_outfits.py`. Use
 `tools/pnelly_evaluation/evaluate_pnelly_cases.py` for role-stratified reports.
 
