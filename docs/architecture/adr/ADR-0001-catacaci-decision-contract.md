@@ -63,7 +63,7 @@ These are domain responsibilities, not a requirement to create separate services
 | **CAM — Counterfactual Auditing** | Keep as replay/evaluation tooling. Clearly separate observed decisions from simulated alternatives; do not claim counterfactuals prove causality. |
 | **CIL — Collective Intelligence** | Defer production integration until consent, aggregation, privacy, retention, and abuse controls are designed. Contributor suppression alone is not differential privacy. It must never override a user's hard constraints. |
 | **VSL — Value System Layer** | Treat as policy governance/configuration and a reviewed change process, not an autonomous self-modifying runtime brain. Changes require a distinct approver, versioning, tests, and rollback. |
-| **CDIC and CFRP/CRFP candidates** | Keep behind explicit compatibility/fit contracts until semantics and versions are reconciled. They do not get an alternative display authority. |
+| **CDIC and CRFP scopes** | Keep behind explicit compatibility/fit contracts until semantics and versions are reconciled. Marketplace CRFP and system-wide CRFP remain separate scopes; neither creates an alternative display authority. |
 
 Do not create separate deployable services for TAL, CAM, CIL, or VSL just to honor their names. Separate them only when concrete storage, privacy/security, scaling, ownership, or release-cadence needs justify the boundary.
 
