@@ -29,7 +29,7 @@ This repository owns Cirvanna product source: identity intelligence, fit intelli
 - **Virtual Try-On** owns rendering/simulation orchestration, not preference policy.
 - **DermalSight** owns skin-perception and clinically sensitive data; it does not make unsupported diagnoses.
 - **Wardrobe/catalog** owns garment metadata and catalog persistence.
-- **Xari** is the current product name for the assistant/skin-analysis/chat/marketplace-search/Try-On orchestration surface. Tari and Xyra are legacy source names and must be reconciled, not deployed as duplicates.
+- **PNELLY** is the canonical assistant/orchestration identity. The `services/xari` source package, existing `/v1/*` routes and XARI/TARI configuration names are compatibility surfaces during the staged migration; Xari, Tari and Xyra are not separate assistants. Commercial PNELLY brand use remains subject to formal trademark clearance. Follow ADR-0010.
 - **Shared contracts** define stable API events, identifiers, versioning and error envelopes.
 
 ## Integration requirements
