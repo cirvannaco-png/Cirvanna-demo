@@ -178,6 +178,7 @@ def test_authorization_is_scoped_to_the_record_owner_and_live_consent(client):
     assert correct_owner.status_code == 200
     assert correct_owner.json()["authorized"] is True
     assert correct_owner.json()["artifact_asset_id"] == "mesh-asset-001"
+    assert correct_owner.json()["source_image_asset_ids"] == ["source-image-001", "source-image-002"]
 
 
 def test_deactivation_immediately_blocks_authorization_and_queues_asset_deletion(client):

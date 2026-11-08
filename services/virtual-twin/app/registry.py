@@ -526,6 +526,7 @@ async def authorize_twin(
         "version": record.version,
         "representation_type": record.representation_type,
         "artifact_asset_id": record.artifact_asset_id,
+        "source_image_asset_ids": list(record.source_image_asset_ids),
         "model_version": record.model_version,
     }
 
