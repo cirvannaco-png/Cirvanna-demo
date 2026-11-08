@@ -243,5 +243,6 @@ _ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
 
 def assert_generation_transition(current: GenerationStatus, target: GenerationStatus) -> None:
     """Reject skipped, reversed, or post-terminal lifecycle transitions."""
-    if target not in _ALLOWED_TRANSITIONS[current]:
+    allowed = _ALLOWED_TRANSITIONS.get(current)
+    if allowed is None or target not in allowed:
         raise GenerationContractError("TWIN_GENERATION_INVALID_STATE_TRANSITION")
