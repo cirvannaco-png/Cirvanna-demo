@@ -1,71 +1,48 @@
 # Cirvanna Virtual Try-On
 
-**Status:** guarded API foundation only. It does not yet generate try-on images.
+**Status:** persistent orchestration contract with private asset and Twin-registry integration. It remains unavailable until production consent, registry, PostgreSQL, private storage and a licensed GPU renderer are independently configured and verified.
 
 ## Ownership
 
-This service owns try-on orchestration and rendering/simulation contracts. It does not own product truth (catalog), body representation (Virtual Twin), fit-confidence prediction (FCI), or purchase-policy arbitration (CaTaCaCi/CAL).
+- Virtual Twin owns the canonical user representation and source asset references.
+- Identity/Consent owns purpose-specific, resource-bound consent.
+- Asset Service owns private binary storage, authorization, integrity and deletion.
+- Virtual Try-On owns request reservation, renderer orchestration, provenance and output lifecycle.
+- Catalog/Commerce own product truth; Wardrobe owns owned garments and outfit snapshots; CAL owns display authorization; FCI owns calibrated fit evidence.
 
-## API
+## API and trust boundary
 
-- `GET /health` — liveness only.
-- `GET /ready` — readiness; returns 503 until a validated renderer, consent verifier, asset authorizer, and authentication are configured.
-- `GET /capabilities` — reports verified capability state.
-- `POST /v1/try-ons` — consent-gated orchestration request. It currently returns 503 because the production integrations are deliberately absent.
+- `POST /v1/try-ons` accepts opaque private asset IDs only; no raw uploads, URLs or filesystem paths.
+- Requests are internal service-to-service calls. The trusted BFF must derive the subject from its verified session; a browser-supplied subject ID is never authentication.
+- Consent is checked server-side for `image_processing`, `virtual_try_on` and `virtual_twin_storage`, bound to the exact Twin resource and rechecked after inference and before completion.
+- Twin authorization uses canonical `POST /internal/v1/twins/authorize`; it returns full-body mesh metadata and authorized source-image asset IDs. A pose skeleton is not a persistent Twin.
+- Person, garment and output assets are checked against the private Asset Service for exact owner, purpose and parent. No public object URLs are issued.
+- A durable PostgreSQL reservation is acquired before GPU work. Concurrent duplicate requests cannot launch duplicate renders; failed/stale reservations can be retried under the same payload hash and lease rules.
+- Jobs retain look ID/version and wardrobe snapshot version when supplied, plus consent version, asset references and renderer/model provenance.
 
-Requests use `Authorization: Bearer $VIRTUAL_TRY_ON_API_TOKEN`. Do not put the shared service token in browser code. A user-facing application needs user authentication and server-side authorization before it calls this service.
+## Render lifecycle
 
-## Input and privacy boundary
+1. Verify current consent and canonical Twin ownership.
+2. Atomically reserve the subject/request idempotency key in PostgreSQL.
+3. Authorize and resolve person and garment assets from private storage.
+4. Invoke the pinned private worker with bounded timeout and validated image inputs.
+5. Re-check consent, Twin ownership and source asset authorization after inference.
+6. Persist output privately, then re-check consent/Twin and authorize the stored output before marking complete.
+7. On failure, delete any new output and mark the reservation failed; never report a placeholder as complete.
 
-The API accepts opaque internal asset IDs only, not arbitrary image URLs, file paths, or raw image uploads. A production asset authorizer must verify ownership/access for the person image, Virtual Twin, catalog product, and garment image. A renderer must resolve those IDs through a protected internal asset service.
+The visual result is not a fit guarantee. A real renderer, model weights, human-parser cache, commercial licensing and representative quality evaluation remain mandatory. The inherited parser licensing restriction must be cleared in writing or replaced with a commercially licensed alternative before customer inference.
 
-Both `consent.image_processing` and `consent.virtual_try_on` must be true, and the current contract only accepts an `ephemeral` retention policy. These client-provided fields are not trusted evidence by themselves: before rendering, the service calls a separate server-side consent verifier and blocks rendering unless an active matching consent record is verified. Consent must be recorded and revocable in the identity/consent service before real user traffic is enabled.
+## Configuration
 
-The current service does not persist images or request bodies. It does not log image content or accept caller-controlled URLs.
+- `VIRTUAL_TRY_ON_DATABASE_URL`: managed PostgreSQL; SQLite is test-only.
+- `VIRTUAL_TRY_ON_API_TOKEN`: internal BFF/service token.
+- `CONSENT_API_URL` / `CONSENT_API_TOKEN`: trusted consent verifier.
+- `TWIN_REGISTRY_API_URL` / `TWIN_REGISTRY_API_TOKEN`: canonical Twin registry endpoint and registry token.
+- `ASSET_SERVICE_URL` / `ASSET_SERVICE_TOKEN`: private Asset Service.
+- `VTON_WORKER_URL` / `VTON_WORKER_TOKEN`: private GPU worker.
 
-## Model candidate
+Apply `migrations/0001_virtual_try_on_jobs.sql` through approved migrations. Do not auto-create production schema.
 
-[FASHN VTON 1.5](https://huggingface.co/fashn-ai/fashn-vton-1.5) is the leading open-source candidate for the first prototype. Its official model card describes a roughly 972M-parameter PyTorch MMDiT model, Apache-2.0 licensing for the model repository, 576×864 output, and three categories: `tops`, `bottoms`, and `one-pieces`. The published model card estimates about 8 GB of VRAM for inference and around 5 seconds on an NVIDIA H100; these are upstream estimates, not Cirvanna benchmark results. The model weights are about 2 GB, and a human-parser dependency adds about 244 MB of weights. See the [official inference example](https://github.com/fashn-AI/fashn-vton-1.5/blob/main/examples/basic_inference.py) and [model card](https://huggingface.co/fashn-ai/fashn-vton-1.5).
+## Validation
 
-**Decision:** prototype FASHN VTON 1.5 in an isolated GPU worker; do not load it inside the public API container. Map Cirvanna categories explicitly: `upper_body` and `outerwear` to `tops`, `lower_body` to `bottoms`, and `dress` / `full_outfit` to `one-pieces`. Unsupported category combinations must be rejected, not silently remapped.
-
-**Before production:** pin the exact source commit and weight revision, verify the license for the full dependency stack (the model card lists a human-parser dependency whose license must be reviewed separately), validate model inputs/outputs, and benchmark representative images. The published model card itself notes imperfect body-shape preservation and possible traces of the original garment during long-to-short or bulky-to-slim swaps. These are material quality risks, not edge cases to ignore.
-
-## Provider integration contract
-
-Implement and independently validate three adapters satisfying the protocols in `app.main`:
-
-1. **Consent verifier:** verify the subject's current server-side consent record, scope, purpose, and revocation state. Do not accept a boolean or arbitrary consent ID as proof.
-2. **Asset authorizer:** verify subject ownership/authorization for the twin and person image, and verify the garment image belongs to the referenced catalog product. Resolve assets from trusted internal storage; reject arbitrary URLs and cross-tenant IDs.
-3. **Renderer:** call a pinned model revision through a protected inference endpoint or isolated GPU worker; validate category compatibility and inputs; verify the output is a decodable image within dimensions/size limits; persist the output under an opaque asset ID; return the actual stored asset ID and model version.
-
-A timeout, invalid image, failed consent check, unauthorized asset, or malformed model output must never return `complete`. Use bounded concurrency, rate limits, timeouts, ephemeral input handling, deletion controls, and observability without logging image payloads or secrets.
-
-## Local development
-
-```bash
-python -m pip install -r services/virtual-try-on/requirements.txt
-cd services/virtual-try-on
-VIRTUAL_TRY_ON_API_TOKEN=local-test-token uvicorn app.main:app --host 127.0.0.1 --port 8080
-python -m pytest tests -q
-```
-
-Build the container from the repository root:
-
-```bash
-docker build -f services/virtual-try-on/Dockerfile -t cirvanna-virtual-try-on .
-```
-
-## Validation and release gates
-
-The dedicated `.github/workflows/virtual-try-on.yml` workflow runs API tests and a Docker image build. The tests validate authentication, explicit consent gating, server-side consent and asset authorization, rejection of external URL/path inputs, provider failure handling, and honest unavailable status. Fixture adapters are used only to test the successful response contract; they are not real models and must never be enabled outside tests.
-
-Still required: authenticated asset-resolution integration, server-side consent integration, actual model inference, image-quality/robustness tests across body types and garment categories, privacy/security review, model/license review, latency/cost benchmarking, rendering artifact validation, deletion tests, and a real end-to-end deployment smoke test. Passing CI validates the contract and container build, not image realism or fit accuracy.
-
-## Marketplace, PNELLY and optional Complementer entry points
-
-Marketplace product cards are the intended first-class entry point for trying on a selected catalog product before purchase. The card may expose a Try-On action, but it must remain unavailable unless the BFF can authenticate the user, resolve a user-owned Twin and trusted person/product image assets, verify active server-side consent, and confirm this service's /ready and renderer capability checks.
-
-PNELLY may optionally coordinate the user journey and explain the next step. Complementer may optionally provide styling context (for example, pairing or colour suggestions) when requested. Neither assistant may fabricate a rendered image, override consent/asset authorization, certify fit, or bypass the canonical FCI and CAL boundaries. A generated visual preview is not a guarantee of garment fit, fabric behavior, shade fidelity or purchase suitability.
-
-The current implementation still returns unavailable until the real renderer and secure adapters are integrated. The marketplace must not enable the action merely because a product card or API route exists.
+The dedicated workflow runs API tests and builds the container. Tests use fakes and do not prove live providers, GPU inference, image realism, fit accuracy, deployment security, commercial rights or Android acceptance.
