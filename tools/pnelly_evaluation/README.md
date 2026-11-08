@@ -19,7 +19,7 @@ The preparation tool additionally requires a source trace with:
 - no truncated candidate pool;
 - a pseudonymous participant key and stable random arm assignment across sessions.
 
-The joiner verifies that each candidate has two distinct reviewer keys. It cannot authenticate real reviewer identities or prove independence; a study coordinator must verify and document that outside the code.
+The joiner verifies that each candidate has two distinct reviewer keys and that an adjudicator is a third, independent key whenever ratings disagree. Missing, duplicated, non-independent or unknown-case adjudications are rejected. The tool cannot authenticate real reviewer identities or prove real-world independence; a study coordinator must verify and document that outside the code.
 
 ## Metrics and safety gates
 
@@ -39,6 +39,7 @@ Prepare cases from a consented, pseudonymized trace export, independent review r
 python tools/pnelly_evaluation/prepare_pnelly_cases.py \
   --traces /secure/study/pnelly-traces.jsonl \
   --reviews /secure/study/pnelly-reviews.jsonl \
+  --adjudications /secure/study/pnelly-adjudications.jsonl \
   --exposures /secure/study/pnelly-exposures.jsonl \
   --output /secure/study/prepared-cases.jsonl
 ```
