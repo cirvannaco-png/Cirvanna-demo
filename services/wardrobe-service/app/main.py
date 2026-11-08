@@ -64,6 +64,7 @@ class PurchaseRefundSnapshotIn(StrictModel):
     charge_id: str = Field(min_length=4, max_length=180)
     currency: str = Field(min_length=3, max_length=3)
     order_total_minor: int = Field(gt=0)
+    captured_total_minor: int | None = Field(default=None, gt=0)
     amount_refunded_minor: int = Field(gt=0)
     refund_state: Literal["partial_refund", "refunded"]
     refunded_at: str = Field(min_length=20, max_length=64)
@@ -302,9 +303,12 @@ def record_purchase_refund_status(payload: PurchaseRefundSnapshotIn) -> dict[str
         raise HTTPException(422, detail={"code": "INVALID_REFUND_CURRENCY"})
     if not payload.payment_intent_id.startswith("pi_") or not payload.charge_id.startswith("ch_"):
         raise HTTPException(422, detail={"code": "INVALID_STRIPE_REFUND_REFERENCES"})
-    if payload.amount_refunded_minor > payload.order_total_minor:
-        raise HTTPException(422, detail={"code": "REFUND_EXCEEDS_ORDER_TOTAL"})
-    expected_state = "refunded" if payload.amount_refunded_minor == payload.order_total_minor else "partial_refund"
+    captured_total = payload.captured_total_minor if payload.captured_total_minor is not None else payload.order_total_minor
+    if captured_total < payload.order_total_minor:
+        raise HTTPException(422, detail={"code": "CAPTURED_TOTAL_BELOW_MERCHANDISE_TOTAL"})
+    if payload.amount_refunded_minor > captured_total:
+        raise HTTPException(422, detail={"code": "REFUND_EXCEEDS_CAPTURED_TOTAL"})
+    expected_state = "refunded" if payload.amount_refunded_minor == captured_total else "partial_refund"
     if payload.refund_state != expected_state:
         raise HTTPException(422, detail={"code": "REFUND_STATE_AMOUNT_MISMATCH"})
     try:
@@ -341,6 +345,7 @@ def record_purchase_refund_status(payload: PurchaseRefundSnapshotIn) -> dict[str
                     existing.payment_intent_id == payload.payment_intent_id
                     and existing.currency == payload.currency
                     and existing.order_total_minor == payload.order_total_minor
+                    and existing.captured_total_minor == captured_total
                 )
                 if not immutable:
                     raise HTTPException(409, detail={"code": "PURCHASE_REFUND_ORDER_IDENTITY_CONFLICT"})
@@ -352,6 +357,7 @@ def record_purchase_refund_status(payload: PurchaseRefundSnapshotIn) -> dict[str
                         "owner_user_id": owner,
                         "order_id": payload.order_id,
                         "refund_state": existing.refund_state,
+                        "captured_total_minor": existing.captured_total_minor,
                         "amount_refunded_minor": existing.amount_refunded_minor,
                         "wardrobe_items_unchanged": True,
                     }
@@ -383,6 +389,7 @@ def record_purchase_refund_status(payload: PurchaseRefundSnapshotIn) -> dict[str
                     charge_id=payload.charge_id,
                     currency=payload.currency,
                     order_total_minor=payload.order_total_minor,
+                    captured_total_minor=captured_total,
                     amount_refunded_minor=payload.amount_refunded_minor,
                     refund_state=payload.refund_state,
                     payload_hash=payload_hash,
@@ -421,6 +428,7 @@ def get_purchase_refund_status(
                 "event_id": snapshot.event_id,
                 "currency": snapshot.currency,
                 "order_total_minor": snapshot.order_total_minor,
+                "captured_total_minor": snapshot.captured_total_minor,
                 "amount_refunded_minor": snapshot.amount_refunded_minor,
                 "refund_status": snapshot.refund_state,
                 "refunded_at": snapshot.refunded_at,
