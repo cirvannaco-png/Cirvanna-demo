@@ -68,9 +68,13 @@ def _face_detector():
 
 def mask_face_regions(image: Image.Image, boxes: Iterable[tuple[int, int, int, int]]) -> tuple[Image.Image, int]:
     """Blur every supplied face box with padding; reject malformed detector output."""
-    output = image.convert("RGB").copy()
-    regions = list(boxes)
+    converted = image.convert("RGB")
     try:
+        output = converted.copy()
+    finally:
+        converted.close()
+    try:
+        regions = list(boxes)
         for box in regions:
             if not isinstance(box, (tuple, list)) or len(box) != 4:
                 raise HTTPException(503, detail={"code": "CLICK_IT_PRIVACY_INVALID_DETECTION"})
@@ -105,8 +109,12 @@ def anonymize_click_it_image(image: Image.Image) -> tuple[Image.Image, int]:
         detector = _face_detector()
         import mediapipe as mp
 
-        rgb = np.asarray(image.convert("RGB"), dtype=np.uint8)
-        result = detector.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb))
+        converted = image.convert("RGB")
+        try:
+            rgb = np.asarray(converted, dtype=np.uint8)
+            result = detector.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb))
+        finally:
+            converted.close()
         detections = getattr(result, "detections", None)
         if detections is None:
             raise HTTPException(503, detail={"code": "CLICK_IT_PRIVACY_DETECTION_UNCERTAIN"})
