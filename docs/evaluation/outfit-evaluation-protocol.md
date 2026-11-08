@@ -74,7 +74,7 @@ The command rejects cases without exactly two distinct independent reviews per c
 
 Run contract tests locally with:
 
-    python -m unittest discover -s scripts/evaluation -p 'test_*.py' -v
+    python -m pytest tests/pnelly_evaluation -q
 
 ## Release gate
 
@@ -115,11 +115,12 @@ The coordinator must verify the two reviewer identities and assign distinct revi
 `tools/pnelly_evaluation/evaluate_outfits.py`. Use
 `tools/pnelly_evaluation/evaluate_pnelly_cases.py` for role-stratified reports.
 
-The offline `apps/demo-web/outfit-review.html` reviewer tool randomizes candidate
-presentation and hides system assignment and ranking. It currently evaluates
-declared metadata only; it does not measure visual appeal, garment fit, skin
-appearance, or virtual try-on realism. Those require a separately governed
-visual-review workflow.
+No approved reviewer UI is included in this repository change. The study
+coordinator must independently verify reviewer identities, randomize candidate
+presentation, hide rank/system assignment, collect annotations through an
+approved controlled process, and export only the schema-approved pseudonymous
+review rows. The code checks reviewer-key uniqueness; it cannot authenticate
+people or establish reviewer independence by itself.
 
 No human ratings or live exposure events are included by this code change.
 Two real independent reviewers and verified edit/rejection logs are still
