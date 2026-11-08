@@ -53,6 +53,12 @@ PNELLY may be offered as an optional conversational guide from the Virtual Twin 
 
 The present pose-skeleton response is not a persistent full Twin. Do not present it as a saved avatar or enable marketplace Try-On until a user-scoped Twin registry, persistent asset authorization and the separate Virtual Try-On renderer are operational.
 
+## Generation provider contract
+
+A provider-neutral generation/validation schema now exists in `app/generation_contract.py`. It requires the exact owner, Twin, consent-bound source set, private artifact ID, pinned model digest, artifact SHA-256 and a separate validator receipt. It also rejects incomplete mesh-quality/privacy checks and invalid job-state transitions.
+
+This is a contract and test layer only. No provider adapter or generation endpoint is activated, and `/capabilities` must continue to report persistent Twin generation and preview as unavailable. See [the provider qualification and validation trust-chain specification](../../docs/architecture/twin-generation-provider-contract-2026-11-08.md).
+
 ## Persistent Twin registry foundation
 
 The service includes an owner-scoped metadata registry for a validated `full_body_mesh` and opaque private asset references. The registry has a PostgreSQL migration and stores no image bytes. Registration is denied unless the trusted consent verifier, independent mesh validator and asset authorization provider all confirm the same subject, Twin, asset set and model version. The internal authorization route is used by Click It to confirm that a persistent Twin belongs to the authenticated subject.
@@ -60,3 +66,16 @@ The service includes an owner-scoped metadata registry for a validated `full_bod
 This is a **guarded persistence foundation**, not a Twin generator or live Try-On service. The current pose endpoint still returns an ephemeral pose skeleton. No production persistent Twin can be registered until the real consent provider, full-body mesh generation/validation and private asset authorization/deletion providers are deployed and independently tested. Keep Virtual Try-On disabled until its renderer and output validation gates also pass.
 
 Migration: `services/virtual-twin/migrations/0001_virtual_twin_registry.sql`. Apply through the approved PostgreSQL migration process and verify backup/restore before any production promotion.
+
+## Validation
+
+Run the contract and API suites from this service directory before changing the generation contract or its trust bindings:
+
+```bash
+python -m pip install -r requirements.txt
+python -m pip check
+python -m compileall -q app tests
+python -m pytest -q
+```
+
+The PR must have successful exact-head results for the Virtual Twin API tests, registry checks, and architecture validation. These tests validate the contract and fail-closed behavior; they do not prove a production generator, consent provider, private storage provider, or independent mesh validator is deployed.
