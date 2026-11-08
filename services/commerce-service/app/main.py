@@ -37,7 +37,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 
 
 SERVICE = "cirvanna-commerce-service"
-EXPECTED_SCHEMA_REVISION = "20261107_0005"
+EXPECTED_SCHEMA_REVISION = "20261108_0006"
 MAX_QTY = 50
 RESERVATION_MINUTES = 60
 SKU_RE = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,79}$")
@@ -1031,10 +1031,25 @@ def decide_merchant(merchant_id: uuid.UUID, payload: MerchantDecision,
             raise HTTPException(409, detail={"code": "MERCHANT_VERIFICATION_REQUIRED",
                 "detail": "An admin-supplied reference from the external business/KYC verification procedure is required."})
         merchant.verification_reference = payload.verification_reference.strip()
+    previous_state = merchant.state
+    previous_commission_bps = merchant.commission_bps
     merchant.state = {"approve": "approved", "reject": "rejected", "suspend": "suspended"}[payload.decision]
     merchant.commission_bps = payload.commission_bps
     merchant.decision_note = payload.note.strip() if payload.note else None
     merchant.updated_at = now()
+    db.add(MerchantDecisionAudit(
+        id=str(uuid.uuid4()),
+        merchant_id=merchant.id,
+        actor_user_id=actor.user_id,
+        decision=payload.decision,
+        previous_state=previous_state,
+        new_state=merchant.state,
+        previous_commission_bps=previous_commission_bps,
+        commission_bps=merchant.commission_bps,
+        verification_reference=payload.verification_reference.strip() if payload.verification_reference else None,
+        note=merchant.decision_note,
+        occurred_at=merchant.updated_at,
+    ))
     db.commit()
     db.refresh(merchant)
     return merchant_json(merchant)
@@ -1330,7 +1345,12 @@ def merchant_orders(actor: Annotated[Actor, Depends(require_actor)], db: Annotat
     result = []
     for order in orders:
         snapshot = order_json(db, order)
-        snapshot["items"] = [item for item in snapshot["items"] if item["merchant_id"] == merchant.id]
+        merchant_items = [item for item in snapshot["items"] if item["merchant_id"] == merchant.id]
+        # Marketplace-wide totals disclose other sellers' economics; return seller-scoped totals only.
+        snapshot["items"] = merchant_items
+        snapshot["subtotal_minor"] = sum(item["line_total_minor"] for item in merchant_items)
+        snapshot["commission_minor"] = sum(item["commission_minor"] for item in merchant_items)
+        snapshot["merchant_scope"] = True
         result.append(snapshot)
     return {"items": result, "offset": offset, "limit": limit}
 
@@ -1553,4 +1573,110 @@ def fail_outbox_event(event_id: str, payload: OutboxFailureIn) -> dict[str, obje
         event.next_attempt_at = current + timedelta(seconds=delay)
         return {"status": "retry_scheduled", "event_id": event_id, "retry_after_seconds": delay}
 
+# Merchant governance audit and seller-scoped listing read models.
+class MerchantDecisionAudit(Base):
+    """Append-only record of each administrator-controlled merchant decision."""
+    __tablename__ = "commerce_merchant_decision_audit"
+    __table_args__ = (
+        Index("ix_commerce_merchant_decision_audit_merchant_created", "merchant_id", "occurred_at"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    merchant_id: Mapped[str] = mapped_column(ForeignKey("commerce_merchants.id", ondelete="RESTRICT"), nullable=False, index=True)
+    actor_user_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    previous_state: Mapped[str] = mapped_column(String(16), nullable=False)
+    new_state: Mapped[str] = mapped_column(String(16), nullable=False)
+    previous_commission_bps: Mapped[int] = mapped_column(Integer, nullable=False)
+    commission_bps: Mapped[int] = mapped_column(Integer, nullable=False)
+    verification_reference: Mapped[str | None] = mapped_column(String(180))
+    note: Mapped[str | None] = mapped_column(String(500))
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+@app.get("/merchant/listings")
+def list_merchant_listings(
+    actor: Annotated[Actor, Depends(require_actor)],
+    db: Annotated[Session, Depends(get_db)],
+    offset: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
+):
+    """List only the authenticated merchant's own listings and variants."""
+    merchant = approved_merchant(db, actor)
+    statement = select(Listing).where(Listing.merchant_id == merchant.id)
+    total = int(db.scalar(select(func.count()).select_from(statement.subquery())) or 0)
+    listings = list(db.scalars(
+        statement.order_by(Listing.created_at.desc(), Listing.id).offset(offset).limit(limit)
+    ).all())
+    items = []
+    for listing in listings:
+        variants = list(db.scalars(
+            select(Variant).where(Variant.listing_id == listing.id).order_by(Variant.sku)
+        ).all())
+        items.append({
+            "listing_id": listing.id,
+            "catalog_product_id": listing.catalog_product_id,
+            "product_name": listing.product_name,
+            "category": listing.category,
+            "image_urls": [],
+            "status": listing.state,
+            "created_at": listing.created_at.isoformat() if listing.created_at else None,
+            "variants": [{
+                "variant_id": variant.id,
+                "sku": variant.sku,
+                "options": variant.options,
+                "price_minor": variant.price_minor,
+                "currency": variant.currency,
+                "on_hand": variant.on_hand,
+                "reserved_qty": variant.reserved_qty,
+                "available_stock": variant.on_hand - variant.reserved_qty,
+                "state": variant.state,
+                "version": variant.version,
+            } for variant in variants],
+        })
+    return {"items": items, "total": total, "offset": offset, "limit": limit}
+
+
+@app.get("/admin/merchant-decisions")
+def list_admin_merchant_decisions(
+    actor: Annotated[Actor, Depends(require_actor)],
+    db: Annotated[Session, Depends(get_db)],
+    merchant_id: uuid.UUID | None = Query(default=None),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(25, ge=1, le=100),
+):
+    """Read append-only merchant decision history; administrators only."""
+    if actor.role != "admin":
+        raise HTTPException(403, detail={"code": "ADMIN_REQUIRED"})
+    statement = select(MerchantDecisionAudit, Merchant).join(
+        Merchant, Merchant.id == MerchantDecisionAudit.merchant_id
+    )
+    if merchant_id:
+        statement = statement.where(MerchantDecisionAudit.merchant_id == str(merchant_id))
+    count_statement = select(func.count()).select_from(MerchantDecisionAudit)
+    if merchant_id:
+        count_statement = count_statement.where(MerchantDecisionAudit.merchant_id == str(merchant_id))
+    total = int(db.scalar(count_statement) or 0)
+    rows = db.execute(
+        statement.order_by(MerchantDecisionAudit.occurred_at.desc(), MerchantDecisionAudit.id.desc())
+        .offset(offset).limit(limit)
+    ).all()
+    return {
+        "items": [{
+            "id": audit.id,
+            "merchant_id": audit.merchant_id,
+            "display_name": merchant.display_name,
+            "actor_user_id": audit.actor_user_id,
+            "decision": audit.decision,
+            "previous_state": audit.previous_state,
+            "new_state": audit.new_state,
+            "previous_commission_bps": audit.previous_commission_bps,
+            "commission_bps": audit.commission_bps,
+            "verification_reference": audit.verification_reference,
+            "note": audit.note,
+            "occurred_at": audit.occurred_at.isoformat() if audit.occurred_at else None,
+        } for audit, merchant in rows],
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+    }
 

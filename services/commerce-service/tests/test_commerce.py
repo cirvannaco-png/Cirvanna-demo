@@ -178,7 +178,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
         ))
         connection.execute(
             text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
-            {"revision": "20261107_0005"},
+            {"revision": "20261108_0006"},
         )
 
     ready = client.get("/ready")
@@ -191,7 +191,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
     assert payload["payment_configured"] is True
     assert payload["migrations_required"] is True
     assert payload["migrations_applied"] is True
-    assert payload["schema_revision"] == "20261107_0005"
+    assert payload["schema_revision"] == "20261108_0006"
     assert payload["ready"] is True
 
 
@@ -785,3 +785,116 @@ def test_commerce_outbox_failure_schedules_retry_and_dead_letters_after_limit(cl
     assert failed.json()["status"] == "dead_lettered"
     row = TEST_SESSION().get(main.CommerceOutboxEvent, event_id)
     assert row.dead_letter_at is not None
+
+
+def test_merchant_listing_directory_is_owner_scoped_and_includes_variant_inventory(client):
+    offer = seed_offer(stock=7, price_minor=129900)
+    seller = auth("merchant-1", "merchant")
+    response = client.get("/merchant/listings?offset=0&limit=10", headers=seller)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["total"] == 1
+    assert payload["items"][0]["listing_id"] == offer["listing_id"]
+    assert payload["items"][0]["variants"][0]["variant_id"] == offer["variant_id"]
+    assert payload["items"][0]["variants"][0]["available_stock"] == 7
+
+    other_merchant = client.get("/merchant/listings", headers=auth("other-merchant", "merchant"))
+    assert other_merchant.status_code == 403
+    assert other_merchant.json()["detail"]["code"] == "MERCHANT_NOT_APPROVED"
+    customer = client.get("/merchant/listings", headers=auth("buyer-1", "customer"))
+    assert customer.status_code == 403
+    assert customer.json()["detail"]["code"] == "MERCHANT_ROLE_REQUIRED"
+
+
+def test_admin_merchant_directory_and_decision_history_are_admin_only(client):
+    application = {
+        "display_name": "North Star Studio",
+        "legal_name": "North Star Studio Limited",
+        "country_code": "KE",
+        "contact_email": "ops@northstar.example",
+    }
+    created = client.post("/merchants/applications", json=application, headers=auth("north-star-owner", "customer"))
+    assert created.status_code == 201
+    merchant_id = created.json()["merchant_id"]
+
+    denied = client.get("/admin/merchants", headers=auth("customer-1", "customer"))
+    assert denied.status_code == 403
+    denied_history = client.get("/admin/merchant-decisions", headers=auth("customer-1", "customer"))
+    assert denied_history.status_code == 403
+
+    admin = auth("founder-admin", "admin")
+    directory = client.get("/admin/merchants?state=pending&offset=0&limit=10", headers=admin)
+    assert directory.status_code == 200
+    assert directory.json()["total"] == 1
+    assert directory.json()["items"][0]["merchant_id"] == merchant_id
+    assert "owner_user_id" not in directory.json()["items"][0]
+
+    approved = client.post(
+        f"/admin/merchants/{merchant_id}/decision",
+        headers=admin,
+        json={
+            "decision": "approve",
+            "verification_reference": "external-verification-case-2026-44",
+            "commission_bps": 350,
+            "note": "Business verification completed.",
+        },
+    )
+    assert approved.status_code == 200
+    suspended = client.post(
+        f"/admin/merchants/{merchant_id}/decision",
+        headers=admin,
+        json={"decision": "suspend", "commission_bps": 350, "note": "Compliance review opened."},
+    )
+    assert suspended.status_code == 200
+    history = client.get(f"/admin/merchant-decisions?merchant_id={merchant_id}&limit=10", headers=admin)
+    assert history.status_code == 200
+    records = history.json()["items"]
+    assert history.json()["total"] == 2
+    transitions = {(record["previous_state"], record["new_state"]) for record in records}
+    assert transitions == {("pending", "approved"), ("approved", "suspended")}
+    approval = next(record for record in records if record["decision"] == "approve")
+    assert approval["actor_user_id"] == "founder-admin"
+    assert approval["verification_reference"] == "external-verification-case-2026-44"
+    assert approval["commission_bps"] == 350
+
+
+def test_admin_merchant_directory_rejects_unknown_state_filter(client):
+    response = client.get("/admin/merchants?state=all", headers=auth("founder-admin", "admin"))
+    assert response.status_code == 422
+
+
+def test_merchant_orders_do_not_disclose_other_merchants_order_totals(client, monkeypatch):
+    own = seed_offer(stock=5, price_minor=1000)
+    other_db = TEST_SESSION()
+    other_merchant = main.Merchant(
+        id=str(uuid.uuid4()), owner_user_id="merchant-2", display_name="Other Studio",
+        legal_name="Other Studio Ltd", country_code="KE", contact_email="other@example.test",
+        verification_reference="external-check-2", state="approved", commission_bps=500,
+    )
+    other_listing = main.Listing(
+        id=str(uuid.uuid4()), merchant_id=other_merchant.id, catalog_product_id=str(uuid.uuid4()),
+        product_name="Other Merchant Item", category="Fashion", image_urls=[], state="active",
+    )
+    other_variant = main.Variant(
+        id=str(uuid.uuid4()), listing_id=other_listing.id, sku="OTHER-1", options={"size":"M"},
+        price_minor=9000, currency="KES", on_hand=4, reserved_qty=0, state="active", version=1,
+    )
+    other_db.add_all([other_merchant, other_listing, other_variant])
+    other_db.commit()
+    other_variant_id = other_variant.id
+    other_db.close()
+
+    buyer = auth("multi-seller-buyer")
+    assert client.post("/cart/items", headers=buyer, json={"variant_id": own["variant_id"], "quantity": 2}).status_code == 201
+    assert client.post("/cart/items", headers=buyer, json={"variant_id": other_variant_id, "quantity": 1}).status_code == 201
+    configure_stripe(monkeypatch, session_id="cs_test_multi_seller")
+    checkout = client.post("/checkout", headers={**buyer, "Idempotency-Key":"multi-seller-order-key-01"})
+    assert checkout.status_code == 201
+    seller_view = client.get("/merchant/orders", headers=auth("merchant-1","merchant"))
+    assert seller_view.status_code == 200
+    order = seller_view.json()["items"][0]
+    assert order["merchant_scope"] is True
+    assert len(order["items"]) == 1
+    assert order["items"][0]["variant_id"] == own["variant_id"]
+    assert order["subtotal_minor"] == 2000
+    assert order["commission_minor"] == 60
