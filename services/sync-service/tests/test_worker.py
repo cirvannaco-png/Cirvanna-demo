@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import httpx
+import pytest
 
-from app.worker import CommerceWardrobeWorker, Settings
+from app.worker import CommerceWardrobeWorker, Settings, SyncContractError, _refund_payload
 
 
 def settings():
