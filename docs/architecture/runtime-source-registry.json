@@ -149,9 +149,9 @@
     },
     {
       "path": "services/xari",
-      "owner": "Xari",
+      "owner": "PNELLY",
       "status": "implementation-scaffold",
-      "scope": "Canonical optional assistant/orchestration surface; Tari/Xyra remain legacy source labels."
+      "scope": "Canonical PNELLY assistant/orchestration capability. Physical `services/xari` source/import path and existing `/v1/*` route contract are temporarily retained for backward compatibility; Xari/Tari/Xyra are legacy names, not separate runtimes. Implementation is configuration-gated and does not certify live identity integration, persistent Twin, real Try-On, or CAL-authorized candidate display."
     },
     {
       "path": "packages/fit-intelligence/crfp",
