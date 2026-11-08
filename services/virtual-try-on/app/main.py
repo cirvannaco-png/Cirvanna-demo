@@ -555,6 +555,12 @@ async def create_try_on(payload: TryOnRequest, _: Annotated[None, Depends(requir
     if not reservation["acquired"]:
         existing = reservation["job"]
         if existing["status"] == "complete":
+            await _read_authorized_asset(
+                subject_id=payload.subject_id,
+                asset_id=existing["output_asset_id"],
+                purpose="try_on_output",
+                parent_id=payload.twin_id,
+            )
             return _response_from_job(existing)
         raise HTTPException(409, detail={"code": "TRY_ON_ALREADY_IN_PROGRESS"})
 
@@ -621,4 +627,10 @@ async def get_try_on(
     twin = await _resolve_twin_by_ids(subject_id, result["twin_id"])
     if result["person_image_asset_id"] not in twin.get("source_image_asset_ids", []):
         raise HTTPException(410, detail={"code": "TWIN_SOURCE_VERSION_CHANGED"})
+    await _read_authorized_asset(
+        subject_id=subject_id,
+        asset_id=result["output_asset_id"],
+        purpose="try_on_output",
+        parent_id=result["twin_id"],
+    )
     return JSONResponse(content=result["result"], headers={"Cache-Control": "no-store, private"})
