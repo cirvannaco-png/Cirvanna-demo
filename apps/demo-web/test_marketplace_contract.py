@@ -38,12 +38,12 @@ class MarketplaceContractTests(unittest.TestCase):
         self.assertIn('disabled title="Virtual try-on adapter is not connected"', HTML)
         self.assertIn('disabled>Checkout unavailable</button>', HTML)
         self.assertIn("No stock is reserved and no order is created.", HTML)
-    def test_tari_is_the_marketplace_assistant_and_complementer_is_advisory(self):
-        self.assertIn("Xari · Describe it", HTML)
-        self.assertIn("Search marketplace with Xari", HTML)
+    def test_pnelly_is_the_marketplace_assistant_and_complementer_is_advisory(self):
+        self.assertIn("PNELLY · Describe it", HTML)
+        self.assertIn("Search marketplace with PNELLY", HTML)
         self.assertIn("Complementer is designed as optional styling advice", HTML)
         self.assertIn("price comparisons must use current Commerce offers", HTML)
-        self.assertNotIn("Tari · Describe it", HTML)
+        self.assertNotIn("Xari · Describe it", HTML)
         self.assertNotIn("with Tari", HTML)
         self.assertNotIn("search with Tari", HTML)
 
