@@ -70,24 +70,34 @@ def mask_face_regions(image: Image.Image, boxes: Iterable[tuple[int, int, int, i
     """Blur every supplied face box with padding; reject malformed detector output."""
     output = image.convert("RGB").copy()
     regions = list(boxes)
-    for box in regions:
-        if not isinstance(box, (tuple, list)) or len(box) != 4:
-            raise HTTPException(503, detail={"code": "CLICK_IT_PRIVACY_INVALID_DETECTION"})
-        x, y, width, height = box
-        if any(not isinstance(value, (int, np.integer)) for value in box) or width <= 0 or height <= 0:
-            raise HTTPException(503, detail={"code": "CLICK_IT_PRIVACY_INVALID_DETECTION"})
-        pad_x = max(4, int(width * FACE_PADDING_FRACTION))
-        pad_y = max(4, int(height * FACE_PADDING_FRACTION))
-        left = max(0, x - pad_x)
-        top = max(0, y - pad_y)
-        right = min(output.width, x + width + pad_x)
-        bottom = min(output.height, y + height + pad_y)
-        if right <= left or bottom <= top:
-            raise HTTPException(503, detail={"code": "CLICK_IT_PRIVACY_INVALID_DETECTION"})
-        crop = output.crop((left, top, right, bottom)).filter(ImageFilter.GaussianBlur(radius=FACE_BLUR_RADIUS))
-        output.paste(crop, (left, top))
-    return output, len(regions)
-
+    try:
+        for box in regions:
+            if not isinstance(box, (tuple, list)) or len(box) != 4:
+                raise HTTPException(503, detail={"code": "CLICK_IT_PRIVACY_INVALID_DETECTION"})
+            x, y, width, height = box
+            if any(not isinstance(value, (int, np.integer)) for value in box) or width <= 0 or height <= 0:
+                raise HTTPException(503, detail={"code": "CLICK_IT_PRIVACY_INVALID_DETECTION"})
+            pad_x = max(4, int(width * FACE_PADDING_FRACTION))
+            pad_y = max(4, int(height * FACE_PADDING_FRACTION))
+            left = max(0, x - pad_x)
+            top = max(0, y - pad_y)
+            right = min(output.width, x + width + pad_x)
+            bottom = min(output.height, y + height + pad_y)
+            if right <= left or bottom <= top:
+                raise HTTPException(503, detail={"code": "CLICK_IT_PRIVACY_INVALID_DETECTION"})
+            crop = output.crop((left, top, right, bottom))
+            try:
+                blurred = crop.filter(ImageFilter.GaussianBlur(radius=FACE_BLUR_RADIUS))
+                try:
+                    output.paste(blurred, (left, top))
+                finally:
+                    blurred.close()
+            finally:
+                crop.close()
+        return output, len(regions)
+    except Exception:
+        output.close()
+        raise
 
 def anonymize_click_it_image(image: Image.Image) -> tuple[Image.Image, int]:
     """Detect and blur all faces before any Click It embedding or downstream call."""
