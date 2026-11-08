@@ -82,7 +82,8 @@ def refund_event():
             "payment_intent_id": "pi_test_0001",
             "charge_id": "ch_test_0001",
             "currency": "KES",
-            "order_total_minor": 500000,
+            "order_total_minor": 450000,
+            "captured_total_minor": 500000,
             "amount_refunded_minor": 250000,
             "refund_state": "partial_refund",
             "refunded_at": "2026-11-07T12:00:00+00:00",
@@ -103,6 +104,8 @@ def test_worker_delivers_refund_snapshot_before_acknowledging():
             body = __import__("json").loads(request.content)
             assert body["ownership_authority"] == "verified_stripe_charge_refund"
             assert body["order_id"] == "123e4567-e89b-42d3-a456-426614174001"
+            assert body["order_total_minor"] == 450000
+            assert body["captured_total_minor"] == 500000
             assert body["physical_return_confirmed"] is False
             return httpx.Response(200, json={"status": "recorded", "wardrobe_items_unchanged": True})
         if request.url.path.endswith("/ack"):
@@ -168,3 +171,21 @@ def test_worker_retries_when_wardrobe_is_unavailable_without_acknowledging():
     result = CommerceWardrobeWorker(settings(), client).process_batch()
     assert result == {"claimed": 1, "processed": 0, "retried": 1, "dead_lettered": 0}
     assert not any(path.endswith("/ack") for path in calls)
+
+
+def test_worker_accepts_full_refund_including_separately_charged_fulfilment_and_tax():
+    event = refund_event()
+    event["payload"]["amount_refunded_minor"] = 500000
+    event["payload"]["refund_state"] = "refunded"
+    payload = _refund_payload(event)
+    assert payload["order_total_minor"] == 450000
+    assert payload["captured_total_minor"] == 500000
+    assert payload["amount_refunded_minor"] == 500000
+    assert payload["refund_state"] == "refunded"
+
+
+def test_worker_rejects_refund_above_captured_total():
+    event = refund_event()
+    event["payload"]["amount_refunded_minor"] = 500001
+    with pytest.raises(SyncContractError, match="invalid_refund_amount"):
+        _refund_payload(event)
