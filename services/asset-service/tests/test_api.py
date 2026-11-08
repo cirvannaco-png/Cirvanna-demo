@@ -15,6 +15,7 @@ TOKEN = "asset-service-test-token-with-more-than-32-bytes"
 class FakeObjectStore:
     def __init__(self):
         self.objects = {}
+        self.private_controls_valid = True
 
     def put_object(self, *, Bucket, Key, Body, ContentType, Metadata):
         self.objects[(Bucket, Key)] = bytes(Body)
@@ -29,6 +30,26 @@ class FakeObjectStore:
 
     def head_bucket(self, *, Bucket):
         return {}
+
+    def get_public_access_block(self, *, Bucket):
+        value = self.private_controls_valid
+        return {"PublicAccessBlockConfiguration": {
+            "BlockPublicAcls": value,
+            "IgnorePublicAcls": value,
+            "BlockPublicPolicy": value,
+            "RestrictPublicBuckets": value,
+        }}
+
+    def get_bucket_policy_status(self, *, Bucket):
+        return {"PolicyStatus": {"IsPublic": not self.private_controls_valid}}
+
+    def get_bucket_encryption(self):
+        rules = [{"ApplyServerSideEncryptionByDefault": {"SSEAlgorithm": "AES256"}}] if self.private_controls_valid else []
+        return {"ServerSideEncryptionConfiguration": {"Rules": rules}}
+
+    def get_bucket_ownership_controls(self, *, Bucket):
+        rules = [{"ObjectOwnership": "BucketOwnerEnforced"}] if self.private_controls_valid else []
+        return {"OwnershipControls": {"Rules": rules}}
 
 
 @pytest.fixture
@@ -86,6 +107,15 @@ def test_readiness_checks_database_and_object_store(client):
     result = response.get("/ready")
     assert result.status_code == 200
     assert result.json()["object_storage"] == "reachable"
+    assert result.json()["private_access"] == "verified"
+
+
+def test_readiness_fails_closed_when_bucket_privacy_controls_are_missing(client):
+    response, fake = client
+    fake.private_controls_valid = False
+    result = response.get("/ready")
+    assert result.status_code == 503
+    assert result.json()["detail"]["reason"] == "private_bucket_controls_unverified"
 
 
 def test_upload_normalizes_and_returns_only_opaque_asset_metadata(client):
