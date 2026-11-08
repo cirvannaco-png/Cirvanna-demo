@@ -1,4 +1,4 @@
-name: Xari route-contract tests
+name: PNELLY route-contract tests (compatibility path xari)
 
 on:
   push:
