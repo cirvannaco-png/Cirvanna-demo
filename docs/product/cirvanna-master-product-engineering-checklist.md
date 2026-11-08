@@ -167,7 +167,20 @@
 - [x] Saved-outfit piece editing is implemented in merged PR #135; the user-declared colour preference profile is implemented in merged PR #137. PNELLY wardrobe companion, complete personal outfit graph, actual human-reviewed dataset and study operations, multi-product try-on, and end-to-end marketplace-to-wardrobe/Twin flows remain to be integrated and verified.
 - [x] Merged PR #139 ports the PNELLY daily-look Decision Gateway route and consent/NPL checks onto current main; Decision Gateway tests passed.
 - [x] Privacy/learning-data controls from stale PR #130 are integrated through PR #139. Confirm deployed migrations, deletion retry behaviour and production evidence before release.
-- [~] PR/branch reconciliation was documented in #157, but its open-PR count is stale. As of the 8 November 2026 audit, the only open PRs returned by the repository's recent-PR listing are #107 (Privacy Governance) and #111 (stacked outfit-evaluation/publication safeguards). Older superseded drafts are closed; historical branches remain and must not be deleted without a reviewed reachability/retention audit.
+- [~] PR/branch reconciliation was documented in #157, but its inventory is stale. The 8 November 2026 open-PR query returned **11 pre-existing open PRs** (excluding this checklist refresh, #167):
+  - #102 multi-market Commerce: 85 commits ahead / 42 behind main; 7 historical workflow groups passed on its head. Rebase and re-audit the offer/FX/tax/fulfilment providers before considering integration.
+  - #84 PNELLY Look It: 63 ahead / 46 behind; 11 historical workflow groups passed. Keep separate from Click It; provider/model and current privacy/consent integration remain blockers.
+  - #77 merchant/founder portals: 6 ahead / 48 behind; 4 historical workflow groups passed. Rebase and verify identity role issuance, migration and same-origin deployment.
+  - #69 AM/PM skincare routines: 19 ahead / 52 behind; 2 historical workflow groups passed. UI, authenticated subject binding and live recommendation provider remain absent.
+  - #68 Living Filters: 96 ahead / 52 behind; 3 historical workflow groups passed. Physical Android QA, performance and runtime/device acceptance remain open.
+  - #67 intelligent marketplace filters: 11 ahead / 52 behind; 8 historical workflow groups failed before runner steps were recorded. Rebase before diagnosing or trusting prior results.
+  - #66 appearance specialist registry: 51 ahead / 52 behind; 4 historical workflow groups failed before runner steps. Keep internal until identity, provider and current-main integration gates pass.
+  - #64 PAMASMMA/brand-auth foundations: 42 ahead / 480 behind; its workflow failed before runner steps. Treat as highly stale; do not merge without a fresh source/value audit.
+  - #62 candidate-bound CAL purchase governance: 119 ahead / 54 behind; 10 historical workflow groups failed. Independent safety/FCI providers and staging checkout evidence are still absent.
+  - #107 Privacy Governance: 154 ahead / 41 behind; no workflow runs are reported for its current head. Keep draft; provider, policy-signing, rights and publication integration gates remain.
+  - #111 outfit-evaluation/publication safeguards: 165 ahead / 41 behind, stacked on #107; no workflow runs are reported for its current head. Rebase/retarget only after #107 is reconciled; the human-labelled dataset is empty.
+  - All 11 feature branches diverge from current main. The ahead/behind figures are commit topology, not evidence of unique useful work. Do not merge or delete branches based on counts alone; compare file-level changes, preserve valuable commits, and close/supersede stale work only after a reviewed migration.
+
 - [x] CRFP naming and scope corrected in merged PR #164: CRFP is canonical, with distinct marketplace and system-wide scopes; no unvalidated runtime behavior is implied.
 - [x] PNELLY evaluation hardening merged in PR #165; its two-review protocol, adjudication and cluster-aware reporting are CI-verified, but the human-labelled dataset remains empty.
 - [x] PNELLY canonical identity migration merged in PR #166; legacy Xari API/import compatibility remains intentionally in place pending a separate path migration.
