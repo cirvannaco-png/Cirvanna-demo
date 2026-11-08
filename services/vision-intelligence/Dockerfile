@@ -4,11 +4,13 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     HF_HUB_DISABLE_TELEMETRY=1 \
-    HF_HOME=/home/app/.cache/huggingface
+    HF_HOME=/home/app/.cache/huggingface \
+    CLICK_IT_FACE_DETECTOR_MODEL_PATH=/opt/cirvanna-models/blaze_face_full_range.tflite \
+    CLICK_IT_FACE_DETECTOR_MODEL_SHA256=3698b18f063835bc609069ef052228fbe86d9c9a6dc8dcb7c7c2d69aed2b181b
 
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      libgl1 libglib2.0-0 libgomp1 && \
+      libgl1 libglib2.0-0 libgomp1 libegl1 libgles2 && \
     rm -rf /var/lib/apt/lists/* && \
     groupadd --system app && \
     useradd --system --gid app --create-home --home-dir /home/app app && \
@@ -19,7 +21,46 @@ COPY requirements.txt ./requirements.txt
 RUN python -m pip install --upgrade pip && \
     python -m pip install -r requirements.txt
 
+# Pin the official Google MediaPipe BlazeFace full-range model by immutable
+# versioned URL, exact byte count and SHA-256. Do not use a floating "latest" URL.
+RUN mkdir -p /opt/cirvanna-models && python - <<'PY'
+import hashlib
+import urllib.request
+from pathlib import Path
+
+url = "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_full_range/float16/1/blaze_face_full_range.tflite"
+expected_sha256 = "3698b18f063835bc609069ef052228fbe86d9c9a6dc8dcb7c7c2d69aed2b181b"
+expected_size = 1083786
+request = urllib.request.Request(url, headers={"User-Agent": "Cirvanna-Vision-Model-Provisioner/1.0"})
+with urllib.request.urlopen(request, timeout=60) as response:
+    payload = response.read(expected_size + 1)
+if len(payload) != expected_size:
+    raise SystemExit(f"Unexpected BlazeFace model size: {len(payload)}")
+actual_sha256 = hashlib.sha256(payload).hexdigest()
+if actual_sha256 != expected_sha256:
+    raise SystemExit(f"BlazeFace model checksum mismatch: {actual_sha256}")
+Path("/opt/cirvanna-models/blaze_face_full_range.tflite").write_bytes(payload)
+PY
+RUN chown -R app:app /opt/cirvanna-models
+
 COPY app ./app
+# Build-time smoke test loads the real pinned MediaPipe model and verifies
+# that inference returns a structurally valid result. A synthetic image can
+# trigger a low-confidence candidate; production correctly fails closed on
+# uncertain detections, so this smoke test does not assert a zero-face result
+# or imply detector recall/precision validation.
+RUN python - <<'PY'
+import numpy as np
+import mediapipe as mp
+from app.click_it_privacy import _face_detector, detector_configuration
+
+assert detector_configuration() == (True, "configured")
+detector = _face_detector()
+image = mp.Image(image_format=mp.ImageFormat.SRGB, data=np.zeros((256, 256, 3), dtype=np.uint8))
+result = detector.detect(image)
+assert result is not None and getattr(result, "detections", None) is not None
+detector.close()
+PY
 USER app
 EXPOSE 8000
 
