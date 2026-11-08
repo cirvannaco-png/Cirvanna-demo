@@ -269,18 +269,21 @@ def test_bff_has_no_duplicate_method_path_route_registrations(client):
     assert duplicates == {}
 
 
-def test_marketplace_ui_has_xari_description_search_and_mobile_click_it_capture(client):
+def test_marketplace_ui_does_not_solicit_click_it_photos_while_pipeline_is_blocked(client):
     response = client.get("/")
     assert response.status_code == 200
     assert 'id="aiQuery"' in response.text
     assert 'id="aiSearchBtn"' in response.text
-    assert 'id="clickItImage"' in response.text
-    assert 'capture="environment"' in response.text
-    assert 'id="clickItConsentId"' in response.text
-    assert 'id="clickItImageConsent"' in response.text
-    assert 'id="clickItSearchConsent"' in response.text
+    assert "Click It · Temporarily paused" in response.text
+    assert "Photo search is temporarily unavailable" in response.text
+    assert "face masking, consent enforcement, and asset-bound privacy attestation" in response.text
+    assert "No photo is requested or sent from this page" in response.text
+    assert "Use PNELLY description search in the meantime" in response.text
+    assert 'id="clickItImage"' not in response.text
+    assert 'id="clickItConsentId"' not in response.text
+    assert 'id="clickItForm"' not in response.text
     assert 'fetch("/api/vision/marketplace-search"' in response.text
-    assert 'fetch("/api/vision/click-it"' in response.text
+    assert 'fetch("/api/vision/click-it"' not in response.text
     assert "display_authorized===true" in response.text
     assert "PENDING_CAL" in response.text
 
