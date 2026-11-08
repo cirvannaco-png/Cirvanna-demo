@@ -6,7 +6,7 @@
 
 ## Context
 
-The product owner selected **PNELLY** as the proposed public-facing name for Cirvanna's conversational beauty and marketplace-discovery assistant. The owner specifies the pronunciation as **“Pinelly”**. The spelling is intentional and must remain PNELLY; do not silently normalize it to Pinelly, Nelly or Pnelly.
+The product owner selected **PNELLY** as the canonical public-facing identity for Cirvanna's conversational beauty and marketplace-discovery assistant. The owner specifies the pronunciation as **“Pinelly”**. The spelling is intentional and must remain PNELLY; do not silently normalize it to Pinelly, Nelly or Pnelly.
 
 The implementation historically used Xari identity and configuration: source path `services/xari`, `XARI_API_URL`, `XARI_API_TOKEN`, and Xari-labelled capability metadata. ADR-0010 authorizes PNELLY as the canonical runtime/product identity while preserving that source path, the existing HTTP contract and XARI/TARI credential aliases during a staged migration. Commercial use of the PNELLY mark remains blocked pending counsel-led clearance.
 
@@ -14,10 +14,10 @@ Initial public-web reconnaissance found a US PINELLY trademark application (seri
 
 ## Decision
 
-1. **Proposed brand:** PNELLY.
+1. **Product identity:** PNELLY is the selected canonical assistant identity; commercial launch remains subject to trademark clearance.
 2. **Owner-confirmed pronunciation:** “Pinelly”.
 3. **Runtime identity:** PNELLY is canonical under ADR-0010. Xari, Tari and Xyra are compatibility aliases/source lineage only; no second assistant may be deployed.
-4. **No duplicate assistant:** PNELLY is a proposed successor brand for the same assistant capability, not a second agent, service or orchestrator.
+4. **No duplicate assistant:** PNELLY is the canonical identity of the existing assistant capability, not a second agent, service or orchestrator.
 5. **Compatibility during migration:** Keep `services/xari` and the existing `/v1/*` route contract temporarily. Prefer the paired `PNELLY_API_URL` / `PNELLY_API_TOKEN` configuration; XARI_* and TARI_* remain fallback aliases as defined by ADR-0010. The source-path relocation is a later reviewed change.
 6. **Complementer remains separate and optional:** Complementer is an advisory styling collaborator, not a second assistant identity and not an authority over Catalog, Commerce, NPL, FCI or CAL.
 
@@ -57,4 +57,4 @@ Only after written legal clearance and explicit product-owner approval may a sep
 
 ## Release truth
 
-PNELLY is a proposed product brand, not a cleared or registered trademark. This ADR preserves the legal clearance requirement. It does not authorize commercial launch under PNELLY or claim legal availability. The runtime identity/credential migration is governed by ADR-0010; production deployment and service activation remain separate gates.
+PNELLY is the product-owner-selected identity, but it is not represented as a cleared or registered trademark. This ADR preserves the legal clearance requirement. It does not authorize commercial launch under PNELLY or claim legal availability. The runtime identity/credential migration is governed by ADR-0010; production deployment and service activation remain separate gates.
