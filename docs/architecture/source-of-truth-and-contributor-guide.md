@@ -100,7 +100,7 @@ Then read, in order:
 
 1. [Monorepo governance](monorepo-governance.md) — layers and ownership.
 2. [CaTaCaCi decision contract](adr/ADR-0001-catacaci-decision-contract.md) — the display authorization boundary.
-3. [CRFP/CFRP status](adr/ADR-0002-crfp-cfrp-contract-status.md) — unresolved candidate naming.
+3. [CRFP scope decision](adr/ADR-0003-crfp-marketplace-and-system-scopes.md) — canonical acronym and separate marketplace/system-wide scope ownership.
 4. [Marketplace production readiness](../marketplace-production-readiness.md) — release-blocking evidence.
 5. The README and workflow for the service/package you intend to change.
 
