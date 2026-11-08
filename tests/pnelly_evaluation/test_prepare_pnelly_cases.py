@@ -71,7 +71,7 @@ def test_prepare_requires_two_distinct_blinded_reviewers_per_candidate():
     )
     assert len(cases) == 1
     assert len(cases[0]["human_reviews"]) == 2
-    assert cases[0]["adjudications"] == [_adjudication()]
+    assert cases[0]["adjudications"] == [{key: value for key, value in _adjudication().items() if key != "case_id"}]
     assert summary["no_result_roles_by_role"] == {"explore": 1}
     assert summary["review_count"] == 2
     assert summary["adjudication_count"] == 1
