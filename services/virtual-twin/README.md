@@ -53,6 +53,12 @@ PNELLY may be offered as an optional conversational guide from the Virtual Twin 
 
 The present pose-skeleton response is not a persistent full Twin. Do not present it as a saved avatar or enable marketplace Try-On until a user-scoped Twin registry, persistent asset authorization and the separate Virtual Try-On renderer are operational.
 
+## Generation provider contract
+
+A provider-neutral generation/validation schema now exists in `app/generation_contract.py`. It requires the exact owner, Twin, consent-bound source set, private artifact ID, pinned model digest, artifact SHA-256 and a separate validator receipt. It also rejects incomplete mesh-quality/privacy checks and invalid job-state transitions.
+
+This is a contract and test layer only. No provider adapter or generation endpoint is activated, and `/capabilities` must continue to report persistent Twin generation and preview as unavailable. See [the provider qualification and validation trust-chain specification](../../docs/architecture/twin-generation-provider-contract-2026-11-08.md).
+
 ## Persistent Twin registry foundation
 
 The service includes an owner-scoped metadata registry for a validated `full_body_mesh` and opaque private asset references. The registry has a PostgreSQL migration and stores no image bytes. Registration is denied unless the trusted consent verifier, independent mesh validator and asset authorization provider all confirm the same subject, Twin, asset set and model version. The internal authorization route is used by Click It to confirm that a persistent Twin belongs to the authenticated subject.
