@@ -172,3 +172,52 @@ def test_mask_failure_closes_partial_output_image(monkeypatch):
     assert closed
     assert all(image is not source for image in closed)
     source.close()
+
+
+def test_mask_closes_output_if_detection_iterator_raises(monkeypatch):
+    source = Image.new("RGB", (100, 100), "white")
+    closed = []
+    original_close = Image.Image.close
+
+    def tracked_close(self):
+        closed.append(self)
+        return original_close(self)
+
+    def broken_boxes():
+        yield (20, 20, 30, 30)
+        raise RuntimeError("malformed detector iterator")
+
+    monkeypatch.setattr(Image.Image, "close", tracked_close)
+    with pytest.raises(RuntimeError, match="malformed detector iterator"):
+        privacy.mask_face_regions(source, broken_boxes())
+    assert any(image is not source for image in closed)
+    source.close()
+
+
+def test_anonymizer_closes_rgb_conversion_when_detector_raises(monkeypatch, tmp_path):
+    fake_mediapipe(monkeypatch)
+    asset = tmp_path / "face_detector.task"
+    payload = b"test-model-bytes"
+    asset.write_bytes(payload)
+    monkeypatch.setenv("CLICK_IT_FACE_DETECTOR_MODEL_PATH", str(asset))
+    monkeypatch.setenv("CLICK_IT_FACE_DETECTOR_MODEL_SHA256", hashlib.sha256(payload).hexdigest())
+
+    class BrokenDetector:
+        def detect(self, _image):
+            raise RuntimeError("inference failed")
+
+    monkeypatch.setattr(privacy, "_face_detector", lambda: BrokenDetector())
+    source = Image.new("RGB", (120, 120), "white")
+    closed = []
+    original_close = Image.Image.close
+
+    def tracked_close(self):
+        closed.append(self)
+        return original_close(self)
+
+    monkeypatch.setattr(Image.Image, "close", tracked_close)
+    with pytest.raises(HTTPException) as error:
+        privacy.anonymize_click_it_image(source)
+    assert error.value.detail["code"] == "CLICK_IT_PRIVACY_DETECTION_FAILED"
+    assert any(image is not source for image in closed)
+    source.close()
