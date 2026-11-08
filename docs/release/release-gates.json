@@ -120,7 +120,7 @@
       "required": true,
       "status": "blocked",
       "owner_role": "Product owner / risk approver",
-      "acceptance": "Each capability is labelled live, limited, unavailable, or deferred from actual evidence. Product owner signs off launch scope for FCI, safety, NPL/USI, CAL, DermalSight, Virtual Twin, Virtual Try-On, Xari, and all unresolved modules; no unsupported accuracy or production claims remain.",
+      "acceptance": "Each capability is labelled live, limited, unavailable, or deferred from actual evidence. Product owner signs off launch scope for FCI, safety, NPL/USI, CAL, DermalSight, Virtual Twin, Virtual Try-On, PNELLY, and all unresolved modules; no unsupported accuracy or production claims remain.",
       "evidence_refs": [],
       "verified_commit": null
     }
