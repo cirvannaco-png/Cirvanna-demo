@@ -494,7 +494,7 @@ Start with the [Source of truth and contributor guide](docs/architecture/source-
 - [Monorepo governance](docs/architecture/monorepo-governance.md)
 - [Source of truth and contributor guide](docs/architecture/source-of-truth-and-contributor-guide.md)
 - [Runtime source registry](docs/architecture/runtime-source-registry.json)
-- [CRFP/CFRP contract status ADR](docs/architecture/adr/ADR-0002-crfp-cfrp-contract-status.md)
+- [CRFP marketplace/system-wide scope ADR](docs/architecture/adr/ADR-0003-crfp-marketplace-and-system-scopes.md)
 - [Production release evidence gates](docs/release/README.md)
 - [Catalog](services/catalog-service/README.md)
 - [Complementer](services/recommendation-service/README.md)
