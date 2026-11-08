@@ -293,8 +293,14 @@ def test_look_render_binds_versions_and_wardrobe_asset_owner(client, monkeypatch
     install_providers(monkeypatch)
 
     async def read_asset(*, subject_id, asset_id, purpose, parent_id):
-        assert purpose == "wardrobe_garment_image"
-        assert parent_id == "wardrobe-item-001"
+        if purpose == "twin_source_image":
+            assert parent_id == "twin-test-001"
+        elif purpose == "wardrobe_garment_image":
+            assert parent_id == "wardrobe-item-001"
+        elif purpose == "try_on_output":
+            assert parent_id == "twin-test-001"
+        else:
+            raise AssertionError(f"unexpected asset purpose: {purpose}")
         return png_bytes(), "image/png"
 
     monkeypatch.setattr(main, "_read_authorized_asset", read_asset)
@@ -325,7 +331,7 @@ def test_output_record_persistence_failure_rolls_back_private_output(client, mon
     providers = install_providers(monkeypatch)
     from app.store import TryOnStore
 
-    def broken_create(self, data):
+    def broken_create(self, subject_id, request_id, data):
         raise RuntimeError("database unavailable")
 
     monkeypatch.setattr(TryOnStore, "complete", broken_create)
