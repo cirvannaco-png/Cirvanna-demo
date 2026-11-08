@@ -1685,3 +1685,57 @@ def test_wardrobe_try_on_requires_both_explicit_consent_flags_before_upstream(cl
     )
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "TRY_ON_CONSENT_REQUIRED"
+
+
+def test_virtual_twin_capabilities_are_authenticated_minimal_and_no_store(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("VIRTUAL_TWIN_API_URL", "https://twin.example.test")
+    source = {
+        "twin_generation": False, "persistent_twin_generation": False,
+        "persistent_twin_preview": False, "pose_skeleton_inference": True,
+        "body_reconstruction": False, "full_surface_mesh": False,
+        "calibrated_body_measurements": False, "fit_prediction": False,
+        "ar_rendering": False, "image_persistence": False,
+        "click_it_twin_personalization": False,
+        "reason": "vision_worker_not_ready", "private_internal_url": "https://secret",
+    }
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42"}),
+        FakeResponse(source),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get(
+        "/api/virtual-twin/capabilities",
+        headers={"Authorization": "Bearer signed-session"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store, private"
+    body = response.json()
+    assert body["persistent_twin_generation"] is False
+    assert body["persistent_twin_preview"] is False
+    assert body["pose_skeleton_inference"] is True
+    assert body["try_on_available"] is False
+    assert "private_internal_url" not in body
+    assert len(fake.calls) == 2
+    assert fake.calls[1][0] == "GET"
+    assert fake.calls[1][1] == "https://twin.example.test/capabilities"
+
+
+def test_virtual_twin_capabilities_reject_invalid_boolean_contract(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("VIRTUAL_TWIN_API_URL", "https://twin.example.test")
+    source = {
+        "persistent_twin_generation": "false", "persistent_twin_preview": False,
+        "pose_skeleton_inference": False, "body_reconstruction": False,
+        "full_surface_mesh": False, "calibrated_body_measurements": False,
+        "fit_prediction": False, "ar_rendering": False, "image_persistence": False,
+        "click_it_twin_personalization": False,
+    }
+    fake = FakeAsyncClient([FakeResponse({"user_id": "signed-user-42"}), FakeResponse(source)])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get(
+        "/api/virtual-twin/capabilities",
+        headers={"Authorization": "Bearer signed-session"},
+    )
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "VIRTUAL_TWIN_CAPABILITIES_INVALID"
