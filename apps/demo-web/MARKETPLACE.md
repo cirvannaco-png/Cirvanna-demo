@@ -2,7 +2,7 @@
 
 **Status: implementation candidate; not production-ready.**
 
-This is a small, dependency-free browser surface built from the uploaded `Marketplace .txt` patterns: searchable product cards, category filtering, saved items, bag interactions, a Xari natural-language discovery entry point, and honest capability boundaries. It reuses Cirvanna's dark/cream/gold visual direction.
+This is a small, dependency-free browser surface built from the uploaded `Marketplace .txt` patterns: searchable product cards, category filtering, saved items, bag interactions, a PNELLY natural-language discovery entry point, and honest capability boundaries. It reuses Cirvanna's dark/cream/gold visual direction.
 
 ## Open the interface
 
@@ -25,7 +25,7 @@ Configure `CATALOG_CORS_ORIGINS` on the API as a comma-separated list of exact t
 - A live API failure is shown as an error; it does not silently replace live results with sample records.
 - Saved items and bag contents are stored in this browser's local storage. They are not synced across devices and are not a durable account/cart implementation.
 - The bag does not reserve stock, create an order, calculate shipping/tax, or initiate payment.
-- Xari is the canonical optional marketplace assistant. Its current search adapter returns candidates pending CAL; this page must not expose those candidates as approved products or invent prices.
+- PNELLY is the canonical optional marketplace assistant. Its current search adapter returns candidates pending CAL; this page must not expose those candidates as approved products or invent prices.
 - Product-card Try-On is a visible entry point but remains disabled until the renderer, verified consent provider, user/Twin and product-asset authorization, and authenticated BFF route are all ready. No try-on image or fit result is fabricated.
 - Checkout remains unavailable. No fit analysis, CaTaCaCi decision, AI ranking, Click It reconstruction, or Virtual Twin output is fabricated.
 - Images are rendered only from catalog-provided HTTP(S) URLs; the catalog API validates these as metadata but does not proxy or verify remote image content.
@@ -49,4 +49,4 @@ Xari is available as the marketplace's optional conversational discovery entry p
 
 When multiple merchants offer the same canonical product/variant, the marketplace should present a price comparison using the same currency, clearly showing merchant, price, stock and offer timestamp. Do not compare different currencies without a separately sourced conversion rate, and do not call a merchant price the total checkout cost unless shipping and tax are included.
 
-Complementer is an optional styling collaborator inside Xari. It may suggest colours, accessories or look completion when asked; it must not own search, prices, inventory, product facts or display authorization.
+Complementer is an optional styling collaborator inside PNELLY. It may suggest colours, accessories or look completion when asked; it must not own search, prices, inventory, product facts or display authorization.
