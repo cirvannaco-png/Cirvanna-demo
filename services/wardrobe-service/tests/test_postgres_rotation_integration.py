@@ -35,6 +35,7 @@ def apply_postgres_migrations():
         "0005_verified_purchase_ownership.sql",
         "0006_outfit_wear_history.sql",
         "0007_purchase_refund_snapshots.sql",
+        "0008_refund_captured_total.sql",
     ):
         subprocess.run(
             ["psql", POSTGRES_DSN, "-v", "ON_ERROR_STOP=1", "-f", str(migration_dir / name)],
@@ -98,9 +99,10 @@ def test_postgres_migrations_are_idempotent_and_custom_dump_restores_rotation_st
             """
             INSERT INTO wardrobe_purchase_refund_snapshots
                 (owner_user_id, order_id, event_id, provider_event_id, payment_intent_id,
-                 charge_id, currency, order_total_minor, amount_refunded_minor, refund_state,
-                 payload_hash, refunded_at, physical_return_confirmed, ownership_effect)
-            VALUES (%s, %s, %s, %s, %s, %s, 'KES', 120000, 60000, 'partial_refund',
+                 charge_id, currency, order_total_minor, captured_total_minor,
+                 amount_refunded_minor, refund_state, payload_hash, refunded_at,
+                 physical_return_confirmed, ownership_effect)
+            VALUES (%s, %s, %s, %s, %s, %s, 'KES', 120000, 150000, 60000, 'partial_refund',
                     %s, TIMESTAMPTZ '2026-11-07 09:00:00+00', FALSE, 'financial_status_only')
             """,
             (
@@ -183,14 +185,14 @@ def test_postgres_migrations_are_idempotent_and_custom_dump_restores_rotation_st
             assert row == (3, [item_id], 9, request_id, "a" * 64)
             refund = restored.execute(
                 """
-                SELECT amount_refunded_minor, order_total_minor, refund_state,
+                SELECT amount_refunded_minor, order_total_minor, captured_total_minor, refund_state,
                        physical_return_confirmed, ownership_effect
                 FROM wardrobe_purchase_refund_snapshots
                 WHERE owner_user_id = %s AND order_id = %s
                 """,
                 (owner, order_id),
             ).fetchone()
-            assert refund == (60000, 120000, "partial_refund", False, "financial_status_only")
+            assert refund == (60000, 120000, 150000, "partial_refund", False, "financial_status_only")
             item = restored.execute(
                 "SELECT display_name, attributes FROM wardrobe_items WHERE owner_user_id = %s AND item_id = %s",
                 (owner, item_id),
