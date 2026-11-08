@@ -154,7 +154,7 @@ def _verify_private_bucket(client, bucket: str) -> bool:
         if policy.get("IsPublic") is not False:
             return False
 
-        encryption = client.get_bucket_encryption().get("ServerSideEncryptionConfiguration", {})
+        encryption = client.get_bucket_encryption(Bucket=bucket).get("ServerSideEncryptionConfiguration", {})
         rules = encryption.get("Rules", [])
         if not rules or not any(
             rule.get("ApplyServerSideEncryptionByDefault", {}).get("SSEAlgorithm")
