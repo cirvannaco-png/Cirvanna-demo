@@ -129,6 +129,53 @@ def _object_store():
     return boto3.client("s3", **options), bucket
 
 
+def _verify_private_bucket(client, bucket: str) -> bool:
+    """Require provider-reported controls that prevent anonymous/public bucket reads.
+
+    Reachability alone is not a privacy check. Providers that cannot report these
+    controls remain not-ready; CDN/origin and deployment-level checks are separate.
+    """
+    try:
+        access = client.get_public_access_block(Bucket=bucket).get(
+            "PublicAccessBlockConfiguration", {}
+        )
+        if not all(
+            access.get(key) is True
+            for key in (
+                "BlockPublicAcls",
+                "IgnorePublicAcls",
+                "BlockPublicPolicy",
+                "RestrictPublicBuckets",
+            )
+        ):
+            return False
+
+        policy = client.get_bucket_policy_status(Bucket=bucket).get("PolicyStatus", {})
+        if policy.get("IsPublic") is not False:
+            return False
+
+        encryption = client.get_bucket_encryption(Bucket=bucket).get("ServerSideEncryptionConfiguration", {})
+        rules = encryption.get("Rules", [])
+        if not rules or not any(
+            rule.get("ApplyServerSideEncryptionByDefault", {}).get("SSEAlgorithm")
+            in {"AES256", "aws:kms", "aws:kms:dsse"}
+            for rule in rules
+        ):
+            return False
+
+        ownership = client.get_bucket_ownership_controls(Bucket=bucket).get(
+            "OwnershipControls", {}
+        )
+        if not any(
+            rule.get("ObjectOwnership") == "BucketOwnerEnforced"
+            for rule in ownership.get("Rules", [])
+        ):
+            return False
+    except (BotoCoreError, ClientError, KeyError, TypeError, AttributeError, ValueError):
+        return False
+    return True
+
+
 def _normalize_image(data: bytes, content_type: str) -> bytes:
     if content_type not in {"image/jpeg", "image/png", "image/webp"}:
         raise HTTPException(415, detail={"code": "UNSUPPORTED_IMAGE_TYPE"})
@@ -188,11 +235,28 @@ def ready(db: Annotated[Session, Depends(get_db)]):
         db.execute(select(AssetRow.asset_id).limit(1))
         client, bucket = _object_store()
         client.head_bucket(Bucket=bucket)
+        if not _verify_private_bucket(client, bucket):
+            raise HTTPException(
+                503,
+                detail={
+                    "status": "not_ready",
+                    "service": SERVICE,
+                    "ready": False,
+                    "reason": "private_bucket_controls_unverified",
+                },
+            )
     except HTTPException:
         raise
     except (BotoCoreError, ClientError, SQLAlchemyError, ValueError) as exc:
         raise HTTPException(503, detail={"status": "not_ready", "service": SERVICE, "ready": False, "reason": "storage_or_database_unavailable"}) from exc
-    return {"status": "ready", "service": SERVICE, "database": "reachable", "object_storage": "reachable", "ready": True}
+    return {
+        "status": "ready",
+        "service": SERVICE,
+        "database": "reachable",
+        "object_storage": "reachable",
+        "private_access": "verified",
+        "ready": True,
+    }
 
 
 @app.post("/internal/v1/assets", dependencies=[Depends(require_internal_token)], status_code=201)
