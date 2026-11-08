@@ -962,3 +962,22 @@ def test_publication_gate_requires_asset_digest(client):
         },
     )
     assert response.status_code == 422
+
+
+@pytest.mark.parametrize("invalid_pin", [None, "x" * 64, "a" * 63])
+def test_readiness_fails_without_valid_approved_masking_model_pin(client, monkeypatch, invalid_pin):
+    configure_policy_key(monkeypatch)
+
+    async def healthy_provider(_name):
+        return True, True
+
+    monkeypatch.setattr(main, "probe_trusted_service_ready", healthy_provider)
+    if invalid_pin is None:
+        monkeypatch.delenv("PRIVACY_APPROVED_MASKING_MODEL_SHA256", raising=False)
+    else:
+        monkeypatch.setenv("PRIVACY_APPROVED_MASKING_MODEL_SHA256", invalid_pin)
+
+    response = client.get("/ready")
+    assert response.status_code == 503
+    assert response.json()["ready"] is False
+    assert response.json()["approved_masking_model_pin_configured"] is False
