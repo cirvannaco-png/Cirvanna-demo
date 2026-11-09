@@ -15,16 +15,26 @@ class MarketplaceContractTests(unittest.TestCase):
     def test_page_has_search_and_pagination_controls(self):
         self.assertIn("CIRVANNA_MARKETPLACE_CONFIG", HTML)
         self.assertIn("bootstrap.publicOffersBase", HTML)
-        self.assertIn("LIVE MARKETPLACE", HTML)
+        self.assertIn("CAL-GOVERNED LIVE COMMERCE", HTML)
+        self.assertIn('fetch("/api/commerce/marketplace/offers"', HTML)
+        self.assertIn('Authorization:"Bearer "+config.userToken', HTML)
+        self.assertIn('data.display_authority!=="CaTaCaCi/CAL"', HTML)
+        self.assertIn("Sign in with a verified Cirvanna account", HTML)
         for element_id in ("query", "category", "products", "prevBtn", "nextBtn", "settingsBtn"):
             with self.subTest(element_id=element_id):
                 self.assertIn(f'id="{element_id}"', HTML)
 
-    def test_live_api_uses_catalog_contract_and_bearer_auth(self):
-        self.assertIn('url.searchParams.set("limit","20")', HTML)
+    def test_live_marketplace_uses_authenticated_bff_and_never_bypasses_cal(self):
+        self.assertIn('const url=new URL(config.commerceBase+"/marketplace/offers")', HTML)
+        self.assertIn('Authorization:"Bearer "+config.userToken', HTML)
+        self.assertIn('config.commerceBase=bootstrap.publicOffersBase.replace(/\\/$/,"")', HTML)
+        self.assertIn('data.display_authority!=="CaTaCaCi/CAL"', HTML)
+        self.assertIn("Direct Commerce browsing is disabled", HTML)
+        self.assertIn("Direct Catalog product display is disabled", HTML)
+        self.assertNotIn('new URL(config.base+"/products")', HTML)
+        self.assertNotIn('new URL(config.commerceBase+"/marketplace/offers")', HTML)
         self.assertIn('url.searchParams.set("offset",String(page*20))', HTML)
-        self.assertIn('Authorization:"Bearer "+config.token', HTML)
-        self.assertIn('Demo data is not substituted after a live API error.', HTML)
+        self.assertIn("No demo fallback was used.", HTML)
 
     def test_bearer_token_requires_tls_except_local_development(self):
         self.assertIn("bearer tokens may only be sent to HTTPS endpoints", HTML)
