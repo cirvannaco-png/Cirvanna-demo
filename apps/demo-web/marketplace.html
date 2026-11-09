@@ -374,7 +374,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       const response=await fetch("/api/vision/marketplace-search",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json"},body:JSON.stringify(body)});
       const data=await response.json().catch(()=>({}));
       if(!response.ok)throw new Error((data.detail&&data.detail.code)||("PNELLY marketplace search returned HTTP "+response.status+"."));
-      if(data.status!=="complete"||!Array.isArray(data.candidates))throw new Error("PNELLY returned an invalid search response.");
+      if(data.status!=="complete"||data.display_authorized!==false||data.decision_status!=="PENDING_CAL"||Object.prototype.hasOwnProperty.call(data,"candidates"))throw new Error("PNELLY returned an invalid or unsafe search response.");
       presentAiSearchResult(data,"aiSearchStatus");
     }catch(e){setAiStatus("aiSearchStatus",(e&&e.message?e.message:"Search is unavailable")+". No demo or fabricated results were shown.",true)}
     finally{setAiBusy("aiSearchBtn",false,"Search marketplace with PNELLY")}
