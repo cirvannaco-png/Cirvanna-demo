@@ -32,7 +32,8 @@ DEFAULT_PORTAL_ASSETS = ROOT / "apps" / "demo-web" / "assets"
 HTML_PATH = Path(os.getenv("MARKETPLACE_HTML_PATH", str(DEFAULT_HTML)))
 BRAND_PORTAL_HTML_PATH = Path(os.getenv("BRAND_PORTAL_HTML_PATH", str(DEFAULT_BRAND_PORTAL_HTML)))
 FOUNDER_CONSOLE_HTML_PATH = Path(os.getenv("FOUNDER_CONSOLE_HTML_PATH", str(DEFAULT_FOUNDER_CONSOLE_HTML)))
-PORTAL_ASSETS_DIR = Path(os.getenv("MARKETPLACE_ASSETS_DIR", str(DEFAULT_PORTAL_ASSETS)))
+# Public assets are repository-owned presentation files, never an upload or media store.
+PORTAL_ASSETS_DIR = DEFAULT_PORTAL_ASSETS
 TIMEOUT_SECONDS = 5.0
 MAX_PAGE_SIZE = 100
 MAX_VISION_IMAGE_BYTES = 10 * 1024 * 1024
@@ -69,7 +70,7 @@ async def security_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers.setdefault(
         "Content-Security-Policy",
-        "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; "
+        "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
         "script-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; "
         "base-uri 'self'; frame-ancestors 'none'",
     )
