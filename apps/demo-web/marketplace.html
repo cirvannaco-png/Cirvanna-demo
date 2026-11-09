@@ -329,17 +329,12 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
   function setAiBusy(id,busy,label){const el=$(id);el.disabled=busy;if(label)el.textContent=label}
   function presentAiSearchResult(data,source){
     const count=Number(data.candidate_count)||0;
-    if(data.display_authorized===true && Array.isArray(data.candidates)){
-      // Candidates may be rendered only after the server reports real CAL SHOW.
-      const authorized=data.candidates.filter(x=>x&&x.display_authorized===true);
-      setAiStatus(source,authorized.length
-        ? "CAL authorized "+authorized.length+" result(s). Run a product-list refresh to compare current offers."
-        : "CAL did not authorize display of individual results. No product details are shown.");
-      return;
-    }
+    // PNELLY is a retrieval assistant, not the final display authority.
+    // This browser surface accepts aggregate status only; candidate cards and
+    // product details must come from the server-side CAL-authorized discovery path.
     const scoreNote=data.scores_are_probabilities===false?" Scores are similarities, not probabilities.":"";
     setAiStatus(source,count
-      ? "PENDING_CAL: Search completed with "+count+" marketplace candidate(s). They are withheld from display until CAL, NPL and explicit cultural-identity checks return an authorization."+scoreNote
+      ? "PENDING_CAL: Search completed with "+count+" marketplace candidate(s). They are withheld from display until the canonical CAL path returns SHOW, with NPL and explicit cultural-identity checks satisfied."+scoreNote
       : "Search completed: no marketplace candidates met the current retrieval criteria. Try a different description or photo."+scoreNote);
   }
   $("lookItBtn").addEventListener("click",async()=>{
