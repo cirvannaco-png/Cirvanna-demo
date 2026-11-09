@@ -178,7 +178,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
         ))
         connection.execute(
             text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
-            {"revision": "20261108_0006"},
+            {"revision": "20261109_0007"},
         )
 
     ready = client.get("/ready")
@@ -191,7 +191,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
     assert payload["payment_configured"] is True
     assert payload["migrations_required"] is True
     assert payload["migrations_applied"] is True
-    assert payload["schema_revision"] == "20261108_0006"
+    assert payload["schema_revision"] == "20261109_0007"
     assert payload["ready"] is True
 
 
@@ -898,3 +898,18 @@ def test_merchant_orders_do_not_disclose_other_merchants_order_totals(client, mo
     assert order["items"][0]["variant_id"] == own["variant_id"]
     assert order["subtotal_minor"] == 2000
     assert order["commission_minor"] == 60
+
+
+def test_multi_market_provider_evidence_models_are_registered_and_constrained():
+    from app.main import (
+        MerchantOperatingMarket, OfferFXQuote, OfferFulfillmentQuote,
+        OfferTaxQuote, MarketPaymentCapability,
+    )
+    assert MerchantOperatingMarket.__tablename__ == "commerce_merchant_operating_markets"
+    assert OfferFXQuote.__tablename__ == "commerce_offer_fx_quotes"
+    assert OfferFulfillmentQuote.__tablename__ == "commerce_offer_fulfillment_quotes"
+    assert OfferTaxQuote.__tablename__ == "commerce_offer_tax_quotes"
+    assert MarketPaymentCapability.__tablename__ == "commerce_market_payment_capabilities"
+    assert any(c.name == "ck_commerce_fx_rate_positive" for c in OfferFXQuote.__table__.constraints)
+    assert any(c.name == "ck_commerce_fulfillment_charge_basis" for c in OfferFulfillmentQuote.__table__.constraints)
+    assert any(c.name == "ck_commerce_tax_basis" for c in OfferTaxQuote.__table__.constraints)
