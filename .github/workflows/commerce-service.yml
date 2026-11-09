@@ -47,6 +47,8 @@ jobs:
         run: |
           alembic upgrade 20261109_0007
           alembic upgrade head
+          alembic downgrade 20261109_0007
+          alembic upgrade head
       - name: Validate model schema compilation
         run: python -m compileall -q app migrations
       - name: Run portal contract tests
