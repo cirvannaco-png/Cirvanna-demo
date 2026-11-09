@@ -9,14 +9,14 @@ from __future__ import annotations
 import os
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from urllib.parse import urlsplit
 
 import httpx
-from fastapi import Body, FastAPI, HTTPException, Query, Request
+from fastapi import Body, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -1690,6 +1690,240 @@ async def wardrobe_daily_looks(request: Request, payload: DailyLooksIn = Body(de
     public_recommendation.pop("evaluation_trace", None)
     public_result["recommendation"] = public_recommendation
     return _private_json_response(public_result)
+
+
+async def _record_look_it_consent(
+    client: httpx.AsyncClient, *, base: str, token: str, subject: str,
+    receipt_id: str, consent_id: str, resource_id: str, scope: str,
+    expires_at: str, consent_version: str,
+) -> None:
+    response = await client.post(
+        base + "/v1/tal/consents",
+        params={"subject_id": subject},
+        headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+        json={
+            "receipt_id": receipt_id, "consent_id": consent_id,
+            "resource_id": resource_id, "scope": scope,
+            "consent_version": consent_version, "granted": True,
+            "expires_at": expires_at,
+        },
+    )
+    if response.status_code not in {200, 201}:
+        raise HTTPException(503, detail={"code": "LOOK_IT_CONSENT_WRITE_FAILED"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "LOOK_IT_CONSENT_RESPONSE_INVALID"}) from exc
+    if not (
+        isinstance(data, dict) and data.get("receipt_id") == receipt_id
+        and data.get("consent_id") == consent_id and data.get("resource_id") == resource_id
+        and data.get("granted") is True
+    ):
+        raise HTTPException(502, detail={"code": "LOOK_IT_CONSENT_SCOPE_MISMATCH"})
+
+
+async def _verify_look_it_bundle(
+    client: httpx.AsyncClient, *, base: str, token: str, subject: str,
+    consent_id: str, resource_id: str, consent_version: str,
+) -> None:
+    response = await client.post(
+        base + "/internal/v1/consents/verify",
+        headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+        json={
+            "subject_id": subject, "consent_id": consent_id,
+            "resource_id": resource_id, "consent_version": consent_version,
+            "required_scopes": ["image_processing", "look_it"],
+        },
+    )
+    if response.status_code != 200:
+        raise HTTPException(403, detail={"code": "LOOK_IT_CONSENT_NOT_VERIFIED"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "LOOK_IT_CONSENT_VERIFY_RESPONSE_INVALID"}) from exc
+    scopes = data.get("granted_scopes") if isinstance(data, dict) else None
+    expires_at = data.get("expires_at") if isinstance(data, dict) else None
+    try:
+        expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00")) if isinstance(expires_at, str) else None
+    except ValueError:
+        expiry = None
+    if expiry is not None and (expiry.tzinfo is None or expiry.utcoffset() is None):
+        expiry = None
+    if not (
+        isinstance(data, dict) and data.get("verified") is True and data.get("active") is True
+        and data.get("subject_id") == subject and data.get("consent_id") == consent_id
+        and data.get("resource_id") == resource_id and data.get("consent_version") == consent_version
+        and isinstance(scopes, list) and {"image_processing", "look_it"}.issubset(set(scopes))
+        and expiry is not None and expiry.astimezone(timezone.utc) > datetime.now(timezone.utc)
+    ):
+        raise HTTPException(403, detail={"code": "LOOK_IT_CONSENT_NOT_VERIFIED"})
+
+
+@app.post("/api/vision/look-it")
+async def marketplace_look_it(
+    request: Request,
+    consent_image_processing: bool = Form(),
+    consent_look_it: bool = Form(),
+    reference_image: UploadFile = File(...),
+    category: str | None = Form(default=None, max_length=80),
+    limit: int = Form(default=10, ge=1, le=25),
+) -> Response:
+    """Run an ephemeral, resource-consented PNELLY Look It search; never Click It."""
+    if not consent_image_processing or not consent_look_it:
+        await reference_image.close()
+        raise HTTPException(403, detail={"code": "EXPLICIT_LOOK_IT_CONSENT_REQUIRED"})
+    content_type = (reference_image.content_type or "").lower()
+    if content_type not in {"image/jpeg", "image/png", "image/webp"}:
+        await reference_image.close()
+        raise HTTPException(415, detail={"code": "UNSUPPORTED_LOOK_IT_IMAGE_TYPE"})
+    if reference_image.size is not None and reference_image.size > MAX_VISION_IMAGE_BYTES:
+        await reference_image.close()
+        raise HTTPException(413, detail={"code": "LOOK_IT_IMAGE_SIZE_LIMIT_EXCEEDED"})
+
+    consent_id = str(uuid.uuid4())
+    resource_id = "look-it-" + str(uuid.uuid4())
+    consent_version = "pnelly-look-it-2026-11-v1"
+    receipt_ids: list[str] = []
+    operation_error: HTTPException | None = None
+    revoke_failed = False
+    public_data: dict | None = None
+    subject: str | None = None
+    identity_base: str | None = None
+    identity_token: str | None = None
+
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(35.0, connect=3.0),
+            trust_env=False, follow_redirects=False,
+        ) as client:
+            try:
+                subject, _user_token = await _verified_commerce_subject(client, request)
+                identity_base, identity_token = _identity_learning_service()
+                pnelly_base, pnelly_token = _pnelly_internal_service()
+                expires_at = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+                for scope in ("image_processing", "look_it"):
+                    receipt_id = str(uuid.uuid4())
+                    # Track the attempted receipt before writing: a timed-out response
+                    # may follow a committed transaction, so cleanup must still be attempted.
+                    receipt_ids.append(receipt_id)
+                    await _record_look_it_consent(
+                        client, base=identity_base, token=identity_token, subject=subject,
+                        receipt_id=receipt_id, consent_id=consent_id, resource_id=resource_id,
+                        scope=scope, expires_at=expires_at, consent_version=consent_version,
+                    )
+                await _verify_look_it_bundle(
+                    client, base=identity_base, token=identity_token, subject=subject,
+                    consent_id=consent_id, resource_id=resource_id, consent_version=consent_version,
+                )
+                content = await reference_image.read(MAX_VISION_IMAGE_BYTES + 1)
+                if not content:
+                    raise HTTPException(400, detail={"code": "EMPTY_LOOK_IT_IMAGE"})
+                if len(content) > MAX_VISION_IMAGE_BYTES:
+                    raise HTTPException(413, detail={"code": "LOOK_IT_IMAGE_SIZE_LIMIT_EXCEEDED"})
+                fields = {
+                    "subject_id": subject, "consent_id": consent_id, "resource_id": resource_id,
+                    "consent_image_processing": "true", "consent_look_it": "true", "limit": str(limit),
+                }
+                if category and category.strip():
+                    fields["category"] = category.strip()
+                upstream = await client.post(
+                    pnelly_base + "/v1/marketplace/search/image",
+                    headers={"Authorization": "Bearer " + pnelly_token, "Accept": "application/json"},
+                    data=fields,
+                    files={"image": (reference_image.filename or "look-it-reference", content, content_type)},
+                )
+                if upstream.status_code != 200:
+                    code = "LOOK_IT_SEARCH_FAILED"
+                    try:
+                        detail = upstream.json().get("detail", {})
+                        if isinstance(detail, dict) and isinstance(detail.get("code"), str):
+                            code = detail["code"]
+                    except (ValueError, AttributeError):
+                        pass
+                    if upstream.status_code in {400, 403, 413, 415, 422}:
+                        raise HTTPException(upstream.status_code, detail={"code": code})
+                    raise HTTPException(503 if upstream.status_code in {502, 503, 504} else 502, detail={"code": code})
+                try:
+                    data = upstream.json()
+                except ValueError as exc:
+                    raise HTTPException(502, detail={"code": "LOOK_IT_RESPONSE_INVALID"}) from exc
+                if not (
+                    isinstance(data, dict) and data.get("status") == "complete"
+                    and data.get("display_authorized") is False
+                    and data.get("decision_status") == "PENDING_CAL"
+                    and data.get("image_persisted") is False
+                    and isinstance(data.get("candidate_count"), int)
+                    and isinstance(data.get("outfit_decomposition"), dict)
+                ):
+                    raise HTTPException(502, detail={"code": "LOOK_IT_RESPONSE_INVALID"})
+                public_data = data
+            except HTTPException as exc:
+                operation_error = exc
+            except httpx.TimeoutException:
+                operation_error = HTTPException(504, detail={"code": "LOOK_IT_OPERATION_TIMEOUT"})
+            except httpx.HTTPError:
+                operation_error = HTTPException(503, detail={"code": "LOOK_IT_OPERATION_UNAVAILABLE"})
+            finally:
+                if receipt_ids and subject and identity_base and identity_token:
+                    try:
+                        revoked = await client.post(
+                            identity_base + f"/v1/tal/consents/{receipt_ids[0]}/revoke",
+                            params={"subject_id": subject},
+                            headers={"Authorization": "Bearer " + identity_token, "Accept": "application/json"},
+                        )
+                        revoke_failed = revoked.status_code != 200
+                    except (httpx.TimeoutException, httpx.HTTPError):
+                        revoke_failed = True
+    finally:
+        await reference_image.close()
+
+    if revoke_failed:
+        raise HTTPException(503, detail={"code": "LOOK_IT_CONSENT_REVOCATION_FAILED"})
+    if operation_error is not None:
+        raise operation_error
+    if not isinstance(public_data, dict):
+        raise HTTPException(502, detail={"code": "LOOK_IT_RESPONSE_INVALID"})
+
+    decomposition = public_data["outfit_decomposition"]
+    components = decomposition.get("components")
+    if not isinstance(components, list):
+        raise HTTPException(502, detail={"code": "LOOK_IT_DECOMPOSITION_RESPONSE_INVALID"})
+    safe_components = []
+    for component in components:
+        if not isinstance(component, dict):
+            raise HTTPException(502, detail={"code": "LOOK_IT_DECOMPOSITION_RESPONSE_INVALID"})
+        description = component.get("description")
+        category_value = component.get("category")
+        count = component.get("candidate_count", 0)
+        if (
+            not isinstance(description, str) or not 3 <= len(description) <= 500
+            or not isinstance(category_value, str) or not category_value
+            or isinstance(count, bool) or not isinstance(count, int) or count < 0
+        ):
+            raise HTTPException(502, detail={"code": "LOOK_IT_DECOMPOSITION_RESPONSE_INVALID"})
+        safe_components.append({"category": category_value, "description": description, "candidate_count": count})
+
+    result = {
+        "status": "complete",
+        "search_mode": "pnelly_look_it_image_to_catalog_text_similarity",
+        "candidate_count": public_data["candidate_count"],
+        "scores_are_probabilities": False,
+        "image_persisted": False,
+        "display_authorized": False,
+        "decision_status": "PENDING_CAL",
+        "outfit_decomposition": {
+            "status": decomposition.get("status"),
+            "reason": decomposition.get("reason"),
+            "components": safe_components,
+        },
+        "merchant_comparison": {
+            "status": "pending_cal",
+            "reason": "CAL_AUTHORIZATION_REQUIRED_BEFORE_PRODUCT_OR_OFFER_DETAILS",
+            "landed_cost_included": False,
+        },
+        "notice": "No product or offer details are returned by Look It. CAL, NPL and explicit cultural-identity checks must authorize display before Commerce comparison.",
+    }
+    return _private_json_response(result)
 
 
 @app.post("/api/vision/click-it")

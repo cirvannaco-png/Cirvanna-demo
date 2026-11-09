@@ -2,7 +2,7 @@
 
 ## Status and release boundary
 
-This service implements guarded inference APIs for image-to-live-offer retrieval and a partial MediaPipe 3D pose skeleton. It is **not production-validated**. The repository does not prove that the pinned CLIP weights have been downloaded, that a checksummed Pose Landmarker asset is provisioned, or that a CUDA-compatible GPU is attached to a live deployment. Unit tests mock model inference; they do not demonstrate live model quality, throughput, or GPU execution.
+This service implements guarded inference APIs for text-to-live-offer retrieval, ephemeral PNELLY Look It image-to-live-offer retrieval, and a partial MediaPipe 3D pose skeleton. It is **not production-validated**. The repository does not prove that the pinned CLIP weights have been downloaded, that a checksummed Pose Landmarker asset is provisioned, or that a CUDA-compatible GPU is attached to a live deployment. Unit tests mock model inference; they do not demonstrate live model quality, throughput, or GPU execution.
 
 Readiness is deliberately fail-closed. Configure the exact reviewed CLIP revision, the pose model path and SHA-256, a worker token of at least 32 bytes, trusted Commerce/Catalog URLs, and a Catalog read token. The service loads model weights at startup and reports model-load failures via sanitized readiness fields. The Dockerfile is based on CPU-oriented `python:3.12-slim`; it does not install CUDA or prove GPU availability. For GPU deployment, use a separately qualified CUDA base/runtime, compatible NVIDIA driver and pinned PyTorch build, and run a smoke test that asserts `torch.cuda.is_available()` and exercises both image/text embeddings and pose inference.
 
@@ -33,6 +33,14 @@ Retrieval reliability:
 - If embeddings are non-finite/zero-norm, model loading/inference fails, marketplace contracts are malformed, or upstream dependencies are unavailable, return a bounded error rather than fabricated results.
 - Click It currently compares the photographed product embedding with textual offer metadata, not the actual catalog product images. This is approximate cross-modal retrieval, not exact visual duplicate detection.
 
+## PNELLY Look It image search
+
+`POST /v1/search/image` is a separate route from Click It. It requires both `image_processing` and `look_it` consent assertions from the private PNELLY service. It enforces the same 10 MiB and decoded-image quality gates, loads only current active Commerce offers enriched with active Catalog product descriptions, and ranks the uploaded outfit reference against product text using the pinned CLIP model. The source image is not written to disk or persisted by this service.
+
+The Vision response contains only an aggregate candidate count, image-quality diagnostics, and optional outfit-component descriptions/counts. It does **not** return product IDs, merchant names, prices, stock, product photos, or product descriptions. Merchant comparison remains pending CAL; after CAL SHOW, the BFF/Commerce offer-comparison route must produce an exact product/variant and destination-specific landed-cost comparison. CLIP scores remain ranking scores, never probabilities or fit evidence.
+
+Optional outfit decomposition calls an external provider only when its trusted URL/token, exact model ID/revision, validation-report digest, and separate `OUTFIT_DECOMPOSITION_PRIVACY_APPROVAL_SHA256` digest are configured. The privacy-approval digest is a release control, not proof by itself that a provider is deployed, licensed, contractually approved, or enforcing the required retention policy. Without all pins, decomposition returns unavailable and no image is sent to that provider.
+
 ## Live catalog contracts
 
 The service reads `GET {COMMERCE_API_URL}/marketplace/offers?offset=0&limit=100`. Commerce returns `items`, `total`, `offset`, `limit`; offer rows include `variant_id`, `catalog_product_id`, `product_name`, `category`, `options`, `available_stock`. Commerce itself filters inactive offers/variants, unapproved merchants and zero available stock.
@@ -45,7 +53,8 @@ The service enriches canonical product IDs with authenticated `GET {CATALOG_API_
 2. Run integration tests against the real Commerce and Catalog APIs, including pagination, empty catalog, archived product omission, inventory depletion, upstream timeouts, invalid UUIDs, and malformed responses.
 3. Provision and verify the exact model assets and runtime; record weight hashes, model revisions, device/runtime versions and inference smoke-test output.
 4. Evaluate image-quality thresholds on labeled images and retrieval using top-k recall, precision, score/margin distributions, and subgroup error rates. Do not present a match threshold as confidence until calibrated and independently validated.
-5. Keep durable consent verification, Twin ownership, no-store response headers, and CAL/NPL/cultural hard-veto integration as release gates.
+5. Keep durable resource-bound consent verification/expiry/revocation, Twin ownership, no-store response headers, and CAL/NPL/cultural hard-veto integration as release gates.
+6. For Look It, verify the BFF-created consent bundle lifecycle and Xari re-verification against real Identity in staging; keep optional decomposition disabled until its privacy approval and provider operation are independently reviewed.
 
 
 ## Measurable capture rejection criteria

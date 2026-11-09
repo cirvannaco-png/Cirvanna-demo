@@ -559,6 +559,8 @@ def capabilities() -> dict[str, Any]:
         "service": SERVICE,
         "model_backed_image_search": clip_configured and commerce_configured and catalog_configured and _CLIP_MODEL is not None,
         "description_search": clip_configured and commerce_configured and catalog_configured and _CLIP_MODEL is not None,
+        "look_it_image_search": clip_configured and commerce_configured and catalog_configured and _CLIP_MODEL is not None,
+        "outfit_decomposition": bool(os.getenv("OUTFIT_DECOMPOSITION_API_URL") and os.getenv("OUTFIT_DECOMPOSITION_VALIDATION_REPORT_SHA256") and SHA256.fullmatch(os.getenv("OUTFIT_DECOMPOSITION_PRIVACY_APPROVAL_SHA256", "").strip().lower())),
         "pose_3d_landmark_inference": pose_configured and _POSE_LANDMARKER is not None,
         "full_surface_mesh": False,
         "fit_grade_anthropometry": False,
@@ -591,6 +593,179 @@ async def search_by_description(payload: TextSearchRequest) -> dict[str, Any]:
         "catalog_truncated": truncated,
         "model": {"id": MODEL_ID, "revision": PINNED_MODEL_REVISION},
         "scores_are_probabilities": False,
+    }
+
+
+OUTFIT_COMPONENT_CATEGORIES = {
+    "upper_body", "lower_body", "dress", "outerwear",
+    "footwear", "accessory", "beauty", "full_outfit",
+}
+
+
+async def _decompose_outfit(image: Image.Image) -> dict[str, Any]:
+    """Accept decomposition only from a pinned provider with the configured report digest."""
+    try:
+        base = _trusted_base("OUTFIT_DECOMPOSITION_API_URL", required=False)
+    except HTTPException:
+        return {"status": "unavailable", "reason": "OUTFIT_DECOMPOSITION_PROVIDER_NOT_TRUSTED", "components": []}
+    token = os.getenv("OUTFIT_DECOMPOSITION_API_TOKEN", "").strip()
+    model_id = os.getenv("OUTFIT_DECOMPOSITION_MODEL_ID", "").strip()
+    model_revision = os.getenv("OUTFIT_DECOMPOSITION_MODEL_REVISION", "").strip().lower()
+    report_hash = os.getenv("OUTFIT_DECOMPOSITION_VALIDATION_REPORT_SHA256", "").strip().lower()
+    privacy_approval_hash = os.getenv("OUTFIT_DECOMPOSITION_PRIVACY_APPROVAL_SHA256", "").strip().lower()
+    if (
+        not base or len(token.encode("utf-8")) < 32 or not model_id
+        or not SHA40.fullmatch(model_revision) or not SHA256.fullmatch(report_hash)
+        or not SHA256.fullmatch(privacy_approval_hash)
+    ):
+        return {"status": "unavailable", "reason": "VALIDATED_OUTFIT_DECOMPOSITION_PROVIDER_NOT_CONFIGURED", "components": []}
+
+    buffer = io.BytesIO()
+    image.convert("RGB").save(buffer, format="JPEG", quality=92, optimize=True)
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(12.0, connect=2.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            response = await client.post(
+                base + "/v1/decompose",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                files={"image": ("look-it-reference.jpg", buffer.getvalue(), "image/jpeg")},
+            )
+    except (httpx.TimeoutException, httpx.HTTPError):
+        return {"status": "unavailable", "reason": "OUTFIT_DECOMPOSITION_PROVIDER_UNAVAILABLE", "components": []}
+    if response.status_code != 200:
+        return {"status": "unavailable", "reason": "OUTFIT_DECOMPOSITION_PROVIDER_REJECTED", "components": []}
+    try:
+        payload = response.json()
+    except ValueError:
+        return {"status": "unavailable", "reason": "OUTFIT_DECOMPOSITION_RESPONSE_INVALID", "components": []}
+
+    model = payload.get("model") if isinstance(payload, dict) else None
+    components = payload.get("components") if isinstance(payload, dict) else None
+    if not (
+        isinstance(payload, dict)
+        and payload.get("status") == "complete"
+        and payload.get("validation_report_sha256") == report_hash
+        and isinstance(model, dict)
+        and model.get("id") == model_id
+        and model.get("revision") == model_revision
+        and isinstance(components, list)
+        and 1 <= len(components) <= 12
+    ):
+        return {"status": "unavailable", "reason": "OUTFIT_DECOMPOSITION_VALIDATION_OR_SCHEMA_FAILED", "components": []}
+
+    normalized = []
+    for item in components:
+        if not isinstance(item, dict):
+            return {"status": "unavailable", "reason": "OUTFIT_DECOMPOSITION_COMPONENT_INVALID", "components": []}
+        component_id = item.get("component_id")
+        category = item.get("category")
+        description = item.get("description")
+        if not (
+            isinstance(component_id, str) and 1 <= len(component_id.strip()) <= 80
+            and isinstance(category, str) and category.strip().casefold() in OUTFIT_COMPONENT_CATEGORIES
+            and isinstance(description, str) and 3 <= len(description.strip()) <= 500
+        ):
+            return {"status": "unavailable", "reason": "OUTFIT_DECOMPOSITION_COMPONENT_INVALID", "components": []}
+        normalized.append({
+            "component_id": component_id.strip(),
+            "category": category.strip().casefold(),
+            "description": " ".join(description.split())[:500],
+        })
+    return {
+        "status": "complete",
+        "model": {"id": model["id"], "revision": model["revision"]},
+        "validation_report_sha256": report_hash,
+        "components": normalized,
+    }
+
+
+async def _component_match_counts(
+    decomposition: dict[str, Any], offers: list[dict[str, Any]], limit: int,
+) -> dict[str, Any]:
+    if decomposition.get("status") != "complete":
+        return decomposition
+    matched = []
+    for component in decomposition["components"]:
+        query = _text_embedding(
+            "A marketplace item matching this outfit component: " + component["description"]
+        )
+        candidates = _rank_offers(query, offers, limit)
+        matched.append({
+            **component,
+            "candidate_count": len(candidates),
+            "match_scores_are_probabilities": False,
+        })
+    return {**decomposition, "components": matched}
+
+
+@app.post("/v1/search/image", dependencies=[Depends(require_worker_auth)], tags=["look-it"])
+async def look_it_image_search(
+    consent_image_processing: Annotated[bool, Form()],
+    consent_look_it: Annotated[bool, Form()],
+    image: Annotated[UploadFile, File()],
+    category: Annotated[str | None, Form()] = None,
+    limit: Annotated[int, Form(ge=1, le=25)] = 10,
+) -> dict[str, Any]:
+    """Ephemeral PNELLY Look It retrieval. This route is not the Click It workflow."""
+    if not consent_image_processing or not consent_look_it:
+        await image.close()
+        raise HTTPException(403, detail={"code": "EXPLICIT_LOOK_IT_CONSENT_REQUIRED"})
+    content_type = image.content_type or ""
+    try:
+        data = await image.read(MAX_IMAGE_BYTES + 1)
+    finally:
+        await image.close()
+    if not data:
+        raise HTTPException(400, detail={"code": "EMPTY_LOOK_IT_IMAGE"})
+    if len(data) > MAX_IMAGE_BYTES:
+        raise HTTPException(413, detail={"code": "LOOK_IT_IMAGE_SIZE_LIMIT_EXCEEDED", "maximum_bytes": MAX_IMAGE_BYTES})
+
+    decoded = _decode_image(data, content_type)
+    quality = evaluate_image_quality(decoded)
+    if not quality["passed"]:
+        raise HTTPException(
+            422,
+            detail={
+                "code": "IMAGE_QUALITY_REJECTED",
+                "quality": quality,
+                "message": "Retake the reference with better light, focus and framing.",
+            },
+        )
+
+    offers, truncated = await _live_offers()
+    if category and category.strip():
+        selected = category.strip().casefold()
+        offers = [
+            item for item in offers
+            if str(item.get("category", "")).casefold() == selected
+            or str((item.get("product") or {}).get("category", "")).casefold() == selected
+        ]
+    image_vector = _image_embedding(decoded)
+    ranked = _rank_offers(image_vector, offers, limit)
+    decomposition = await _decompose_outfit(decoded)
+    decomposition = await _component_match_counts(decomposition, offers, limit)
+
+    # Candidate records and merchant prices do not leave Vision Intelligence.
+    # CAL and Commerce own the later display and landed-cost comparison boundary.
+    return {
+        "status": "complete",
+        "search_mode": "look_it_image_to_catalog_text_similarity",
+        "candidate_count": len(ranked),
+        "catalog_offer_count": len(offers),
+        "catalog_truncated": truncated,
+        "image_quality": quality,
+        "image_persisted": False,
+        "model": {"id": MODEL_ID, "revision": PINNED_MODEL_REVISION},
+        "scores_are_probabilities": False,
+        "outfit_decomposition": decomposition,
+        "merchant_comparison": {
+            "status": "pending_cal",
+            "reason": "CAL_AUTHORIZATION_REQUIRED_BEFORE_PRODUCT_OR_OFFER_DETAILS",
+            "landed_cost_included": False,
+        },
     }
 
 

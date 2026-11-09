@@ -131,3 +131,101 @@ def test_pnelly_token_is_preferred_over_xari_and_tari(monkeypatch):
     assert legacy.status_code == 401
     assert canonical.status_code == 503
     assert canonical.json()["detail"]["code"] == "MARKETPLACE_SEARCH_NOT_CONFIGURED"
+
+def test_look_it_requires_internal_authentication(monkeypatch):
+    monkeypatch.setenv("PNELLY_API_TOKEN", TOKEN)
+    response = client.post(
+        "/v1/marketplace/search/image",
+        data={
+            "subject_id": "customer-123",
+            "consent_id": "consent-look-it-0001",
+            "resource_id": "look-it-request-0001",
+            "consent_image_processing": "true",
+            "consent_look_it": "true",
+        },
+        files={"image": ("outfit.png", b"image", "image/png")},
+    )
+    assert response.status_code == 401
+
+
+def test_look_it_verifies_exact_resource_bound_consent_and_returns_no_product_details(monkeypatch):
+    monkeypatch.setenv("PNELLY_API_TOKEN", TOKEN)
+    verified = {}
+
+    async def verify(subject_id, consent_id, resource_id):
+        verified.update({"subject_id": subject_id, "consent_id": consent_id, "resource_id": resource_id})
+
+    async def search(**kwargs):
+        assert kwargs["data"] == b"reference-image"
+        assert kwargs["content_type"] == "image/png"
+        return {
+            "status": "complete",
+            "candidate_count": 3,
+            "image_persisted": False,
+            "outfit_decomposition": {
+                "status": "complete",
+                "components": [{
+                    "component_id": "component-1",
+                    "category": "upper_body",
+                    "description": "dark tailored jacket",
+                    "candidate_count": 2,
+                }],
+            },
+            "merchant_comparison": {"status": "pending_cal"},
+        }
+
+    monkeypatch.setattr(main, "_verify_look_it_consent", verify)
+    monkeypatch.setattr(main, "_execute_marketplace_image_search", search)
+    response = client.post(
+        "/v1/marketplace/search/image",
+        headers=auth(),
+        data={
+            "subject_id": "customer-123",
+            "consent_id": "consent-look-it-0001",
+            "resource_id": "look-it-request-0001",
+            "consent_image_processing": "true",
+            "consent_look_it": "true",
+            "category": "dress",
+            "limit": "5",
+        },
+        files={"image": ("outfit.png", b"reference-image", "image/png")},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert verified == {
+        "subject_id": "customer-123",
+        "consent_id": "consent-look-it-0001",
+        "resource_id": "look-it-request-0001",
+    }
+    assert body["candidate_count"] == 3
+    assert body["display_authorized"] is False
+    assert body["decision_status"] == "PENDING_CAL"
+    assert body["outfit_decomposition"]["components"][0]["description"] == "dark tailored jacket"
+    assert body["merchant_comparison"]["status"] == "pending_cal"
+    assert "variant_id" not in response.text
+    assert "price_minor" not in response.text
+    assert "private-image" not in response.text
+    assert response.headers["cache-control"] == "no-store, private"
+
+
+def test_look_it_rejects_request_when_consent_is_incomplete(monkeypatch):
+    monkeypatch.setenv("PNELLY_API_TOKEN", TOKEN)
+
+    async def forbidden(*_args, **_kwargs):
+        pytest.fail("Look It must reject missing explicit consent before provider verification")
+
+    monkeypatch.setattr(main, "_verify_look_it_consent", forbidden)
+    response = client.post(
+        "/v1/marketplace/search/image",
+        headers=auth(),
+        data={
+            "subject_id": "customer-123",
+            "consent_id": "consent-look-it-0001",
+            "resource_id": "look-it-request-0001",
+            "consent_image_processing": "true",
+            "consent_look_it": "false",
+        },
+        files={"image": ("outfit.png", b"reference-image", "image/png")},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "EXPLICIT_LOOK_IT_CONSENT_REQUIRED"

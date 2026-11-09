@@ -97,3 +97,10 @@ Do not merge/deploy to production until all of the following are recorded as pas
 - [ ] Staging end-to-end evidence is attached to the PR; rollback and on-call owners are identified.
 
 Until then, the accurate status is **engineering candidate with passing automated CI—not production-ready**.
+
+
+## PNELLY Look It and Click It separation
+
+Look It is a user-supplied outfit-reference search. Its BFF route records and verifies a short-lived, exact-resource Identity consent bundle, PNELLY independently re-verifies the bundle, and Vision performs transient image-to-Catalog-text retrieval. The browser receives only aggregate candidate counts and optional validated outfit-component descriptions; no product/merchant/price/image data is returned until CAL SHOW. External outfit decomposition remains unavailable unless its model/report and separate privacy approval are pinned and the provider's retention and operational behavior are independently reviewed.
+
+Click It is not a fallback route for Look It. Click It remains disabled before multipart parsing until verified masking, photographed-person rights, child safeguards and complete public publication-route coverage pass. The two routes have distinct consent scopes and release gates (REL-18 and REL-14).
