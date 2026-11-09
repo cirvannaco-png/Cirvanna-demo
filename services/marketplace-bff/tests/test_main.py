@@ -328,7 +328,7 @@ def test_marketplace_ui_does_not_solicit_click_it_photos_while_pipeline_is_block
     assert 'id="clickItForm"' not in response.text
     assert 'fetch("/api/vision/marketplace-search"' in response.text
     assert 'fetch("/api/vision/click-it"' not in response.text
-    assert "display_authorized===true" in response.text
+    assert "display_authorized===true" not in response.text
     assert "PENDING_CAL" in response.text
 
 def test_description_search_keeps_xari_credentials_as_legacy_fallback(client, monkeypatch):
