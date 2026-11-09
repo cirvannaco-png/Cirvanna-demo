@@ -534,7 +534,12 @@ async def grant_consent(payload: ConsentGrantIn, db: Session = Depends(session_f
     scopes = ["image_processing", "click_it", DECLARATION_SCOPES[payload.photographed_people_status]]
     guardian_verified = False
     verification_digest = None
-    if payload.photographed_people_status == "contains_minor" and payload.guardian_verification_reference:
+    if payload.photographed_people_status == "contains_minor":
+        # Minor photographs are not accepted on uploader attestation alone.
+        # Require independent, purpose-bound guardian authority before issuing
+        # any Click It consent receipt, even if a jurisdiction bundle is absent.
+        if not payload.guardian_verification_reference:
+            raise HTTPException(403, detail={"code": "GUARDIAN_AUTHORITY_NOT_VERIFIED"})
         verified = await post_trusted(
             "GUARDIAN_VERIFICATION",
             "/internal/v1/guardian-authorizations/verify",
