@@ -2355,10 +2355,41 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
         data = response.json()
     except ValueError as exc:
         raise HTTPException(502, detail={"code": "WARDROBE_RECOMMENDATIONS_RESPONSE_INVALID"}) from exc
-    # The decision gateway returns product/offer details only for CAL SHOW.
-    if not isinstance(data, dict) or not isinstance(data.get("displayable_products"), list):
+    # Treat the gateway decision as a candidate-bound authorization contract.
+    # Never pass withheld IDs or raw policy evidence to the browser.
+    if (
+        not isinstance(data, dict)
+        or not isinstance(data.get("displayable_products"), list)
+        or not isinstance(data.get("withheld_candidate_ids", []), list)
+    ):
         raise HTTPException(502, detail={"code": "WARDROBE_RECOMMENDATIONS_RESPONSE_INVALID"})
-    return _private_json_response(_withhold_unverified_media(data))
+
+    authorized_products = []
+    for candidate in data["displayable_products"]:
+        if not isinstance(candidate, dict):
+            raise HTTPException(502, detail={"code": "WARDROBE_RECOMMENDATIONS_RESPONSE_INVALID"})
+        decision = candidate.get("decision")
+        if (
+            not isinstance(decision, dict)
+            or decision.get("verdict") != "show"
+            or decision.get("may_display") is not True
+            or not isinstance(candidate.get("product"), dict)
+            or not isinstance(candidate.get("offer"), dict)
+        ):
+            raise HTTPException(502, detail={"code": "WARDROBE_CANDIDATE_CAL_AUTHORIZATION_INVALID"})
+        authorized_products.append(_withhold_unverified_media(candidate))
+
+    withheld = data.get("withheld_candidate_ids", [])
+    safe_payload = {
+        "request_id": data.get("request_id"),
+        "ranked_candidate_count": data.get("ranked_candidate_count", len(authorized_products) + len(withheld)),
+        "displayable_products": authorized_products,
+        "withheld_candidate_count": len(withheld),
+        "display_authority": "CaTaCaCi/CAL",
+        "display_rule": "Only candidate-bound CAL SHOW decisions with may_display=true are returned with product and offer details.",
+        "wardrobe_context": data.get("wardrobe_context") if isinstance(data.get("wardrobe_context"), dict) else {"used": True},
+    }
+    return _private_json_response(safe_payload)
 
 def _read_portal_page(path: Path, code: str) -> str:
     try:
