@@ -241,9 +241,16 @@ def test_nonpublication_media_adjacent_routes_remain_narrow_and_explicit():
     click_it_source, click_it_handler = route_handlers[click_it_key]
     click_it_body = ast.get_source_segment(click_it_source, click_it_handler) or ""
     assert "CLICK_IT_PRIVACY_PIPELINE_NOT_RELEASED" in click_it_body
-    assert "request.form()" not in click_it_body
-    assert "request.body()" not in click_it_body
-    assert "request.stream()" not in click_it_body
+    assert len(click_it_handler.args.args) == 1
+    assert click_it_handler.args.args[0].arg == "request"
+    assert not any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "request"
+        and node.func.attr in {"form", "body", "stream"}
+        for node in ast.walk(click_it_handler)
+    ), "Click It must not parse or read the incoming upload before privacy release."
     assert "503" in click_it_body
 
     # Internal Vision and PNELLY Look It routes remain transient and never return
