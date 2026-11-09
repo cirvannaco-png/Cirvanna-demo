@@ -16,7 +16,7 @@ class MarketplaceContractTests(unittest.TestCase):
         self.assertIn("CIRVANNA_MARKETPLACE_CONFIG", HTML)
         self.assertIn("bootstrap.publicOffersBase", HTML)
         self.assertIn("CAL-GOVERNED LIVE COMMERCE", HTML)
-        self.assertIn('fetch("/api/commerce/marketplace/offers"', HTML)
+        self.assertIn('new URL(config.commerceBase+"/marketplace/offers",window.location.origin)', HTML)
         self.assertIn('Authorization:"Bearer "+config.userToken', HTML)
         self.assertIn('data.display_authority!=="CaTaCaCi/CAL"', HTML)
         self.assertIn("Sign in with a verified Cirvanna account", HTML)
