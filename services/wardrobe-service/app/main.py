@@ -494,20 +494,53 @@ def record_feedback(payload: FeedbackCreate) -> dict[str, object]:
                         "learning": existing.delivery_result,
                     }
 
-        learning_result = deliver_learning_event(
-            owner_user_id=owner,
-            item_id=item.item_id,
-            item_version=item.version,
-            display_name=item.display_name,
-            category=item.category,
-            attributes=list(item.attributes),
-            event_id=payload.event_id.strip(),
-            signal=payload.signal,
-            target_type=target_type,
-            target_value=target_value,
-            consent_receipt_id=payload.consent_receipt_id.strip(),
-            observed_at=observed,
-        )
+        try:
+            learning_result = deliver_learning_event(
+                owner_user_id=owner,
+                item_id=item.item_id,
+                item_version=item.version,
+                display_name=item.display_name,
+                category=item.category,
+                attributes=list(item.attributes),
+                event_id=payload.event_id.strip(),
+                signal=payload.signal,
+                target_type=target_type,
+                target_value=target_value,
+                consent_receipt_id=payload.consent_receipt_id.strip(),
+                observed_at=observed,
+            )
+        except LearningIntegrationError as exc:
+            # Keep a durable failed outbox/audit record. A retry with the same
+            # event ID replays idempotently through TAL and NPL.
+            try:
+                with Session(wardrobe.engine) as session, session.begin():
+                    existing = session.get(WardrobeFeedbackEventRow, (owner, payload.event_id.strip()))
+                    if existing is None:
+                        session.add(WardrobeFeedbackEventRow(
+                            owner_user_id=owner,
+                            event_id=payload.event_id.strip(),
+                            item_id=item.item_id,
+                            item_version=item.version,
+                            signal=payload.signal,
+                            target_type=target_type,
+                            target_value=target_value,
+                            consent_receipt_id=payload.consent_receipt_id.strip(),
+                            payload_hash=digest,
+                            delivery_state="failed",
+                            delivery_result=None,
+                            error_code=exc.code[:80],
+                            observed_at=observed,
+                        ))
+                    elif existing.payload_hash != digest:
+                        raise HTTPException(409, detail={"code": "WARDROBE_FEEDBACK_EVENT_CONFLICT"})
+                    elif existing.delivery_state != "delivered":
+                        existing.delivery_state = "failed"
+                        existing.error_code = exc.code[:80]
+            except HTTPException:
+                raise
+            except Exception as persist_exc:
+                raise HTTPException(503, detail={"code": "WARDROBE_FEEDBACK_AUDIT_UNAVAILABLE"}) from persist_exc
+            raise HTTPException(exc.status_code, detail={"code": exc.code}) from exc
 
         with Session(wardrobe.engine) as session, session.begin():
             existing = session.get(WardrobeFeedbackEventRow, (owner, payload.event_id.strip()))

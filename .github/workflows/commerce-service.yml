@@ -6,6 +6,7 @@ on:
       - "services/commerce-service/**"
       - "apps/demo-web/founder-console.html"
       - "apps/demo-web/merchant-portal.html"
+      - "apps/demo-web/marketplace.html"
       - "apps/demo-web/test_portal_contract.py"
       - "apps/demo-web/PORTALS.md"
       - ".github/workflows/commerce-service.yml"
@@ -15,6 +16,7 @@ on:
       - "services/commerce-service/**"
       - "apps/demo-web/founder-console.html"
       - "apps/demo-web/merchant-portal.html"
+      - "apps/demo-web/marketplace.html"
       - "apps/demo-web/test_portal_contract.py"
       - "apps/demo-web/PORTALS.md"
       - ".github/workflows/commerce-service.yml"
@@ -42,12 +44,29 @@ jobs:
         env:
           COMMERCE_DATABASE_URL: sqlite:///./migration-ci.db
           COMMERCE_AUTO_CREATE_SCHEMA: "false"
-        run: alembic upgrade head
+        run: |
+          alembic upgrade 20261109_0007
+          alembic upgrade head
       - name: Validate model schema compilation
         run: python -m compileall -q app migrations
       - name: Run portal contract tests
         working-directory: .
         run: python -m unittest discover -s apps/demo-web -p 'test_portal_contract.py'
+      - name: Check inline marketplace and merchant portal JavaScript syntax
+        working-directory: .
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+          for name in ("merchant-portal", "marketplace"):
+              html = Path(f"apps/demo-web/{name}.html").read_text(encoding="utf-8")
+              scripts = re.findall(r"<script(?:\s[^>]*)?>(.*?)</script>", html, re.I | re.S)
+              if not scripts:
+                  raise SystemExit(f"No inline script found in {name}.html")
+              Path(f"/tmp/cirvanna-{name}.js").write_text("\n".join(scripts), encoding="utf-8")
+          PY
+          node --check /tmp/cirvanna-merchant-portal.js
+          node --check /tmp/cirvanna-marketplace.js
       - name: Run commerce API tests
         env:
           COMMERCE_DATABASE_URL: sqlite:///./migration-ci.db

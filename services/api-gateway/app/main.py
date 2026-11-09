@@ -869,7 +869,7 @@ def _load_persisted_npl_preferences(
         "candidate_attributes": list(attributes),
     }
     try:
-        with httpx.Client(timeout=httpx.Timeout(3.5, connect=1.0)) as client:
+        with httpx.Client(timeout=httpx.Timeout(3.5, connect=1.0), trust_env=False, follow_redirects=False) as client:
             response = client.post(
                 f"{base}/v1/evaluate",
                 headers={"Authorization": f"Bearer {token}"},

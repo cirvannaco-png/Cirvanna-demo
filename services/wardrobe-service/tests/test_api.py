@@ -746,3 +746,37 @@ def test_item_create_normalizes_known_category_alias_and_rejects_malformed_key(c
     assert custom.status_code == 201, custom.text
     assert custom.json()["item"]["category"] == "custom_nail_art"
 
+
+
+def test_failed_learning_delivery_is_audited_and_same_event_can_retry(client, monkeypatch):
+    create(client)
+    transition(client)
+    body = {
+        "owner_user_id": "user-1", "item_id": "item-001",
+        "event_id": "feedback-retry-001", "signal": "dislike",
+        "consent_receipt_id": "receipt-style-001",
+        "target_type": "attribute", "target_value": "blue",
+        "observed_at": "2026-11-05T03:00:00Z",
+    }
+    def fail_delivery(**kwargs):
+        raise main.LearningIntegrationError("NPL_STORE_UNAVAILABLE", 503)
+    monkeypatch.setattr(main, "deliver_learning_event", fail_delivery)
+    failed = client.post("/v1/feedback", headers=auth(), json=body)
+    assert failed.status_code == 503
+    from app.store import WardrobeFeedbackEventRow
+    with main.Session(main.store().engine) as session:
+        row = session.get(WardrobeFeedbackEventRow, ("user-1", "feedback-retry-001"))
+        assert row is not None
+        assert row.delivery_state == "failed"
+        assert row.error_code == "NPL_STORE_UNAVAILABLE"
+
+    monkeypatch.setattr(main, "deliver_learning_event", lambda **kwargs: {
+        "tal_status": "recorded", "npl": {"rejection_count": 1, "hard_veto": False},
+    })
+    retried = client.post("/v1/feedback", headers=auth(), json=body)
+    assert retried.status_code == 201, retried.text
+    assert retried.json()["delivery_state"] == "delivered"
+    with main.Session(main.store().engine) as session:
+        row = session.get(WardrobeFeedbackEventRow, ("user-1", "feedback-retry-001"))
+        assert row.delivery_state == "delivered"
+        assert row.error_code is None
