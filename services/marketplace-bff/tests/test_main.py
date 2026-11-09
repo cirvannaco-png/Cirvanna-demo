@@ -39,16 +39,66 @@ def test_page_bootstraps_same_origin_live_offers_not_demo_data(client):
     assert response.headers["referrer-policy"] == "no-referrer"
 
 
-def test_public_offers_fail_closed_without_authenticated_cal_show(client, monkeypatch):
+def test_marketplace_offers_use_authenticated_gateway_cal_show_only(client, monkeypatch):
     configure_upstreams(monkeypatch)
-    calls = []
-    monkeypatch.setattr(main.httpx, "get", lambda *args, **kwargs: calls.append((args, kwargs)))
-    response = client.get("/api/commerce/marketplace/offers?q=linen&category=Fashion&offset=20&limit=10")
-    assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "CAL_GOVERNED_DISCOVERY_REQUIRED"
-    assert "items" not in response.json()
-    assert "image_urls" not in response.text
-    assert calls == []
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({
+            "request_id": "req-marketplace-1",
+            "ranked_candidate_count": 2,
+            "displayable_products": [{
+                "product": {
+                    "product_id": "product-1", "name": "Linen shirt", "brand": "Cirvanna",
+                    "category": "Fashion", "description": "A linen shirt",
+                    "attributes": {"material": "linen"},
+                    "image_urls": ["https://cdn.example.test/unverified-product.jpg"],
+                },
+                "offer": {
+                    "catalog_product_id": "product-1", "variant_id": "variant-1",
+                    "merchant_id": "merchant-1", "merchant_name": "Merchant One",
+                    "product_name": "Linen shirt", "category": "Fashion", "sku": "LINEN-M",
+                    "options": {"size": "M"}, "price_minor": 2500, "currency": "KES",
+                    "available_stock": 3, "image_urls": ["https://cdn.example.test/unverified-offer.jpg"],
+                    "product": {"image_urls": ["https://cdn.example.test/nested.jpg"]},
+                },
+                "decision": {"verdict": "show", "may_display": True, "policy_version": "policy-1"},
+            }],
+            "withheld_candidate_ids": [{"product_id": "blocked-product-secret", "decision": "review"}],
+            "display_authority": "CaTaCaCi/CAL",
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get(
+        "/api/commerce/marketplace/offers?q=linen&category=Fashion&market_country_code=KE&display_currency=KES&destination_key=Nakuru%2FSubukia&fulfillment_mode=courier_delivery&radius_km=75&offset=20&limit=10",
+        headers={"Authorization": "Bearer signed-session"},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["display_authority"] == "CaTaCaCi/CAL"
+    assert data["withheld_candidate_count"] == 1
+    assert "withheld_candidate_ids" not in data
+    assert "blocked-product-secret" not in response.text
+    assert len(data["items"]) == 1
+    item = data["items"][0]
+    assert item["variant_id"] == "variant-1"
+    assert item["product_name"] == "Linen shirt"
+    assert item["image_urls"] == []
+    assert item["product"]["image_urls"] == []
+    assert fake.calls[0][1] == "https://commerce.example.test/me"
+    assert fake.calls[1][1] == "https://decision.example.test/v1/discover"
+    assert fake.calls[1][2]["headers"]["X-End-User-Authorization"] == "Bearer signed-session"
+    sent = fake.calls[1][2]["json"]
+    assert sent["user_id"] == "signed-user-42"
+    assert sent["query"] == "linen"
+    assert sent["market_country_code"] == "KE"
+    assert sent["display_currency"] == "KES"
+    assert sent["destination_key"] == "Nakuru/Subukia"
+    assert sent["fulfillment_mode"] == "courier_delivery"
+    assert sent["radius_km"] == 75.0
+    assert sent["offset"] == 20
+    assert "Authorization" not in response.text
 
 
 def test_account_proxy_requires_bearer_and_blocks_admin_routes(client, monkeypatch):
@@ -108,14 +158,14 @@ def test_readiness_fails_closed_until_both_upstreams_are_ready(client, monkeypat
     assert pending.json()["detail"]["ready"] is False
 
 
-def test_public_offers_never_contact_an_upstream_even_if_commerce_is_configured_insecurely(client, monkeypatch):
-    monkeypatch.setenv("COMMERCE_API_URL", "http://commerce.example.test")
-    calls = []
-    monkeypatch.setattr(main.httpx, "get", lambda *args, **kwargs: calls.append(args))
+def test_marketplace_guest_browse_requires_verified_user_bearer(client, monkeypatch):
+    configure_upstreams(monkeypatch)
+    fake = FakeAsyncClient([])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.get("/api/commerce/marketplace/offers")
-    assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "CAL_GOVERNED_DISCOVERY_REQUIRED"
-    assert calls == []
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "USER_BEARER_REQUIRED"
+    assert fake.calls == []
 
 class FakeAsyncClient:
     def __init__(self, responses):
@@ -1836,16 +1886,7 @@ def test_marketplace_comparison_route_is_registered_once():
 
 
 
-def test_market_specific_guest_offers_fail_closed_before_commerce_lookup(client, monkeypatch):
-    configure_upstreams(monkeypatch)
-    calls = []
-    monkeypatch.setattr(main.httpx, "get", lambda *args, **kwargs: calls.append((args, kwargs)))
-    response = client.get(
-        "/api/commerce/marketplace/offers?market_country_code=KE&display_currency=KES&destination_key=Nakuru%2FSubukia&fulfillment_mode=courier_delivery&radius_km=75"
-    )
-    assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "CAL_GOVERNED_DISCOVERY_REQUIRED"
-    assert calls == []
+
 
 
 def test_offer_comparison_fails_closed_without_candidate_bound_cal_receipt(client, monkeypatch):
