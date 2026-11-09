@@ -231,14 +231,17 @@ async def marketplace_description_search(payload: MarketplaceSearchIn) -> dict:
     if payload.category and payload.category.strip():
         request_body["category"] = payload.category.strip()
     data = await _safe_json_post(base, "/v1/marketplace/search", token, request_body)
-    # This endpoint intentionally forwards candidates separately from display authorization.
+    # PNELLY retrieval is never a CAL decision. Do not return candidate records,
+    # even if an upstream response incorrectly claims SHOW/display_authorized.
+    raw_count = data.get("candidate_count", len(data["candidates"]))
+    if isinstance(raw_count, bool) or not isinstance(raw_count, int) or raw_count < 0:
+        raise HTTPException(502, detail={"code": "VISION_SEARCH_INVALID_CANDIDATE_COUNT"})
     return {
         "status": "complete",
         "query": payload.normalized_query,
-        "candidate_count": data.get("candidate_count", len(data["candidates"])),
-        "candidates": _withhold_unverified_media(data["candidates"]),
-        "display_authorized": data.get("display_authorized") is True,
-        "decision_status": data.get("decision_status", "PENDING_CAL"),
+        "candidate_count": raw_count,
+        "display_authorized": False,
+        "decision_status": "PENDING_CAL",
         "scores_are_probabilities": False,
     }
 
