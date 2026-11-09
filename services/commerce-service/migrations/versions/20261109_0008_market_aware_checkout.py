@@ -88,6 +88,14 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Restore the legacy refund ceiling before removing total_minor.
+    with op.batch_alter_table("commerce_orders") as batch:
+        batch.drop_constraint("ck_commerce_order_refunded_nonnegative", type_="check")
+        batch.create_check_constraint(
+            "ck_commerce_order_refunded_nonnegative",
+            "amount_refunded_minor >= 0 AND amount_refunded_minor <= subtotal_minor",
+        )
+
     op.drop_index("ix_commerce_order_charges_merchant_id", table_name="commerce_order_charges")
     op.drop_index("ix_commerce_order_charges_order_id", table_name="commerce_order_charges")
     op.drop_table("commerce_order_charges")
