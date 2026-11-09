@@ -153,27 +153,34 @@ def test_public_static_media_mount_is_fixed_to_repository_owned_portal_assets():
     source = bff_path.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(bff_path))
 
+    # Inventory every StaticFiles mount in every service, not only the BFF
+    # currently known to expose public portal assets.
     mounts = []
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+    for source_path in sorted(SERVICES.rglob("*.py")):
+        relative_parts = source_path.relative_to(SERVICES).parts
+        if {"tests", "migrations", "__pycache__"}.intersection(relative_parts):
             continue
-        if node.func.attr != "mount" or len(node.args) < 2:
-            continue
-        route = _route_path(node)
-        app_expression = node.args[1]
-        uses_static_files = any(
-            isinstance(item, ast.Name) and item.id == "StaticFiles"
-            for item in ast.walk(app_expression)
-        )
-        if not uses_static_files:
-            continue
-        uses_fixed_portal_directory = any(
-            isinstance(item, ast.Name) and item.id == "PORTAL_ASSETS_DIR"
-            for item in ast.walk(app_expression)
-        )
-        mounts.append((route, uses_fixed_portal_directory))
+        module = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+        for node in ast.walk(module):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                continue
+            if node.func.attr != "mount" or len(node.args) < 2:
+                continue
+            app_expression = node.args[1]
+            uses_static_files = any(
+                isinstance(item, ast.Name) and item.id == "StaticFiles"
+                for item in ast.walk(app_expression)
+            )
+            if not uses_static_files:
+                continue
+            route = _route_path(node)
+            uses_fixed_portal_directory = any(
+                isinstance(item, ast.Name) and item.id == "PORTAL_ASSETS_DIR"
+                for item in ast.walk(app_expression)
+            )
+            mounts.append((source_path.relative_to(ROOT).as_posix(), route, uses_fixed_portal_directory))
 
-    assert mounts == [("/assets", True)], (
+    assert mounts == [("services/marketplace-bff/app/main.py", "/assets", True)], (
         "Every public StaticFiles mount must be explicitly inventoried and limited "
         "to the one repository-owned portal assets directory."
     )
