@@ -127,3 +127,58 @@ def test_private_vton_worker_image_response_is_authenticated_ephemeral_and_non_p
     assert '"input_persistence": False' in source
     assert '"output_persistence": False' in source
     assert '"Cache-Control": "no-store, private"' in source
+
+def test_public_static_media_mount_is_fixed_to_repository_owned_portal_assets():
+    """Static mounts are binary-delivery surfaces, not exempt from the privacy inventory."""
+    bff_path = SERVICES / "marketplace-bff" / "app" / "main.py"
+    source = bff_path.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(bff_path))
+
+    mounts = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr != "mount" or len(node.args) < 2:
+            continue
+        route = _route_path(node)
+        app_expression = node.args[1]
+        uses_static_files = any(
+            isinstance(item, ast.Name) and item.id == "StaticFiles"
+            for item in ast.walk(app_expression)
+        )
+        if not uses_static_files:
+            continue
+        uses_fixed_portal_directory = any(
+            isinstance(item, ast.Name) and item.id == "PORTAL_ASSETS_DIR"
+            for item in ast.walk(app_expression)
+        )
+        mounts.append((route, uses_fixed_portal_directory))
+
+    assert mounts == [("/assets", True)], (
+        "Every public StaticFiles mount must be explicitly inventoried and limited "
+        "to the one repository-owned portal assets directory."
+    )
+
+    assignments = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "PORTAL_ASSETS_DIR" for target in node.targets)
+    ]
+    assert len(assignments) == 1
+    assert isinstance(assignments[0].value, ast.Name)
+    assert assignments[0].value.id == "DEFAULT_PORTAL_ASSETS"
+    assert "MARKETPLACE_ASSETS_DIR" not in source, (
+        "A deployment variable must not redirect public static delivery to an upload, "
+        "private-media, temporary or object-storage directory."
+    )
+
+    public_root = ROOT / "apps" / "demo-web" / "assets"
+    assert public_root.is_dir()
+    assert public_root.resolve() == (ROOT / "apps" / "demo-web" / "assets").resolve()
+    symlinks = [str(path.relative_to(ROOT)) for path in public_root.rglob("*") if path.is_symlink()]
+    assert not symlinks, "Public static assets must not contain symlinks: " + ", ".join(symlinks)
+
+    # Customer pages must not load arbitrary third-party image origins. Public media
+    # can only be added later through an explicitly governed same-origin delivery path.
+    assert "img-src 'self' data:" in source
+    assert "img-src 'self' https:" not in source
