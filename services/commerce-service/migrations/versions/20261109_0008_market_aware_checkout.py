@@ -45,6 +45,16 @@ def upgrade() -> None:
         "total_minor = subtotal_minor WHERE total_minor IS NULL"
     )
 
+    # Refund amounts are charge-level cumulative totals. For market-aware
+    # orders the Stripe charge includes item + fulfilment + payable tax, not
+    # only subtotal_minor. Preserve legacy semantics through COALESCE.
+    with op.batch_alter_table("commerce_orders") as batch:
+        batch.drop_constraint("ck_commerce_order_refunded_nonnegative", type_="check")
+        batch.create_check_constraint(
+            "ck_commerce_order_refunded_nonnegative",
+            "amount_refunded_minor >= 0 AND amount_refunded_minor <= COALESCE(total_minor, subtotal_minor)",
+        )
+
     # Preserve source offer price and FX provenance independently of the
     # consumer display/order currency.
     op.add_column("commerce_order_items", sa.Column("source_unit_price_minor", sa.Integer(), nullable=True))

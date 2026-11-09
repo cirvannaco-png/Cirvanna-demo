@@ -318,7 +318,7 @@ class CommerceOrder(Base):
         Index("ix_commerce_order_buyer_created", "buyer_user_id", "created_at"),
         Index("uq_commerce_order_payment_intent", "payment_intent_id", unique=True),
         CheckConstraint("subtotal_minor >= 0", name="ck_commerce_order_subtotal_nonnegative"),
-        CheckConstraint("amount_refunded_minor >= 0 AND amount_refunded_minor <= subtotal_minor", name="ck_commerce_order_refunded_nonnegative"),
+        CheckConstraint("amount_refunded_minor >= 0 AND amount_refunded_minor <= COALESCE(total_minor, subtotal_minor)", name="ck_commerce_order_refunded_nonnegative"),
         CheckConstraint("refund_state IN ('none', 'partial_refund', 'refunded')", name="ck_commerce_order_refund_state"),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -2944,11 +2944,12 @@ async def stripe_webhook(request: Request, db: Annotated[Session, Depends(get_db
         except (TypeError, ValueError) as exc:
             raise HTTPException(400, detail={"code": "INVALID_REFUND_AMOUNT"}) from exc
         charge_currency = str(obj.get("currency", "")).upper()
+        expected_charge_minor = order.total_minor if order.total_minor is not None else order.subtotal_minor
         if (
-            charge_amount != order.subtotal_minor
+            charge_amount != expected_charge_minor
             or charge_currency != order.currency
             or amount_refunded < 0
-            or amount_refunded > charge_amount
+            or amount_refunded > expected_charge_minor
             or not obj.get("id")
         ):
             raise HTTPException(400, detail={"code": "REFUND_AMOUNT_OR_CURRENCY_MISMATCH"})
@@ -2978,7 +2979,7 @@ async def stripe_webhook(request: Request, db: Annotated[Session, Depends(get_db
                     "payment_intent_id": payment_intent,
                     "charge_id": str(obj["id"]),
                     "currency": order.currency,
-                    "order_total_minor": order.subtotal_minor,
+                    "order_total_minor": expected_charge_minor,
                     "amount_refunded_minor": amount_refunded,
                     "refund_state": refund_state,
                     "refunded_at": now().isoformat(),

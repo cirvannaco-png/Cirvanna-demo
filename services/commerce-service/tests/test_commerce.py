@@ -1324,6 +1324,92 @@ def test_market_aware_checkout_revalidates_quotes_and_charges_localized_total(cl
     assert changed_context.json()["detail"]["code"] == "IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_CHECKOUT_CONTEXT"
 
 
+def test_market_checkout_full_refund_uses_landed_charge_total_not_item_subtotal(client, monkeypatch):
+    merchant, _peer = _market_compare_seed(client, monkeypatch)
+    buyer_id = "buyer-market-refund"
+    buyer = auth(buyer_id, email="buyer-market-refund@example.test")
+    db = TEST_SESSION()
+    cart = main.Cart(id=str(uuid.uuid4()), user_id=buyer_id, version=1)
+    db.add(cart)
+    db.flush()
+    db.add(main.CartItem(id=str(uuid.uuid4()), cart_id=cart.id, variant_id=merchant["variant_id"], quantity=1))
+    db.commit()
+    db.close()
+
+    configure_stripe(monkeypatch, session_id="cs_test_market_refund")
+    monkeypatch.setattr(main.httpx, "post", lambda *args, **kwargs: FakeResponse({
+        "id": "cs_test_market_refund",
+        "url": "https://checkout.stripe.test/cs_test_market_refund",
+        "status": "open",
+    }))
+    checkout = client.post(
+        "/checkout",
+        headers={**buyer, "Idempotency-Key": "market-refund-order-0001"},
+        json={
+            "destination_country_code": "KE",
+            "destination_key": "Nakuru/Subukia",
+            "fulfillment_mode": "courier_delivery",
+            "display_currency": "KES",
+            "payment_method": "card",
+        },
+    )
+    assert checkout.status_code == 201, checkout.text
+    order = checkout.json()["order"]
+    assert order["subtotal_minor"] == 1800
+    assert order["fulfillment_total_minor"] == 250
+    assert order["tax_total_minor"] == 180
+    assert order["total_minor"] == 2230
+    assert order["total_minor"] > order["subtotal_minor"]
+
+    paid_event = {
+        "id": "evt_market_refund_setup_paid",
+        "type": "checkout.session.completed",
+        "data": {"object": {
+            "id": "cs_test_market_refund",
+            "metadata": {"order_id": order["order_id"]},
+            "payment_intent": "pi_test_market_refund_0001",
+            "payment_status": "paid",
+            "amount_total": 2230,
+            "currency": "kes",
+        }},
+    }
+    paid_raw = json.dumps(paid_event, separators=(",", ":")).encode()
+    paid_sig = sign_stripe_event(paid_raw, "whsec_test_unit_only_secret")
+    paid = client.post("/webhooks/stripe", content=paid_raw, headers={
+        "Stripe-Signature": paid_sig, "Content-Type": "application/json",
+    })
+    assert paid.status_code == 200, paid.text
+
+    refund_event = {
+        "id": "evt_market_refund_full",
+        "type": "charge.refunded",
+        "data": {"object": {
+            "id": "ch_test_market_refund_0001",
+            "payment_intent": "pi_test_market_refund_0001",
+            "amount": 2230,
+            "amount_refunded": 2230,
+            "currency": "kes",
+        }},
+    }
+    refund_raw = json.dumps(refund_event, separators=(",", ":")).encode()
+    refund_sig = sign_stripe_event(refund_raw, "whsec_test_unit_only_secret")
+    refunded = client.post("/webhooks/stripe", content=refund_raw, headers={
+        "Stripe-Signature": refund_sig, "Content-Type": "application/json",
+    })
+    assert refunded.status_code == 200, refunded.text
+    final_order = client.get(f"/orders/{order['order_id']}", headers=buyer).json()
+    assert final_order["status"] == "paid"
+    assert final_order["refund_status"] == "refunded"
+    assert final_order["amount_refunded_minor"] == 2230
+
+    db = TEST_SESSION()
+    event = db.query(main.CommerceOutboxEvent).filter_by(
+        event_type="commerce.order.refund.updated",
+    ).one()
+    assert event.payload["order_total_minor"] == 2230
+    db.close()
+
+
 def test_active_market_cannot_bypass_checkout_context(client, monkeypatch):
     merchant, _ = _market_compare_seed(client, monkeypatch)
     buyer_id = "buyer-market-bypass"
