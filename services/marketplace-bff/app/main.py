@@ -2053,7 +2053,8 @@ def marketplace_page() -> HTMLResponse:
 
 
 @app.get("/api/commerce/marketplace/offers")
-def public_offers(
+async def public_offers(
+    request: Request,
     q: str | None = Query(default=None, max_length=160),
     category: str | None = Query(default=None, max_length=80),
     currency: str | None = Query(default=None, min_length=3, max_length=3),
@@ -2064,15 +2065,112 @@ def public_offers(
     radius_km: float = Query(default=30.0, ge=1.0, le=500.0),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=MAX_PAGE_SIZE),
-) -> dict:
-    """Fail closed: the anonymous offer feed bypasses authenticated CAL discovery."""
-    raise HTTPException(
-        status_code=503,
-        detail={
-            "code": "CAL_GOVERNED_DISCOVERY_REQUIRED",
-            "message": "Public product browsing is paused until every offer is returned through authenticated CAL SHOW authorization.",
+) -> Response:
+    """Authenticated marketplace browse through the canonical CAL discovery route."""
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(20.0, connect=3.0),
+        trust_env=False,
+        follow_redirects=False,
+    ) as client:
+        subject, user_token = await _verified_commerce_subject(client, request)
+        gateway_base, gateway_token = _decision_gateway()
+        body = {
+            "user_id": subject,
+            "query": " ".join((q or "").split()).strip(),
+            "category": category.strip() if category and category.strip() else None,
+            "currency": currency.upper() if currency else None,
+            "market_country_code": market_country_code.upper() if market_country_code else None,
+            "display_currency": display_currency.upper() if display_currency else None,
+            "destination_key": destination_key.strip() if destination_key and destination_key.strip() else None,
+            "fulfillment_mode": fulfillment_mode,
+            "radius_km": radius_km,
+            "offset": offset,
+            "limit": min(limit, 25),
+            "use_wardrobe_context": False,
+            "exclude_owned_products": True,
+        }
+        try:
+            response = await client.post(
+                gateway_base + "/v1/discover",
+                headers={
+                    "Authorization": "Bearer " + gateway_token,
+                    "X-End-User-Authorization": "Bearer " + user_token,
+                    "Accept": "application/json",
+                },
+                json=body,
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "CAL_MARKETPLACE_DISCOVERY_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "CAL_MARKETPLACE_DISCOVERY_UNAVAILABLE"}) from exc
+
+    if response.status_code in {400, 401, 403, 404, 409, 422}:
+        try:
+            detail = response.json().get("detail", {})
+            code = detail.get("code") if isinstance(detail, dict) else None
+        except ValueError:
+            code = None
+        raise HTTPException(response.status_code, detail={"code": code or "CAL_MARKETPLACE_DISCOVERY_REJECTED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "CAL_MARKETPLACE_DISCOVERY_UNAVAILABLE"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "CAL_MARKETPLACE_DISCOVERY_RESPONSE_INVALID"}) from exc
+    if (
+        not isinstance(data, dict)
+        or not isinstance(data.get("displayable_products"), list)
+        or not isinstance(data.get("withheld_candidate_ids", []), list)
+        or isinstance(data.get("ranked_candidate_count"), bool)
+        or not isinstance(data.get("ranked_candidate_count", 0), int)
+        or data.get("ranked_candidate_count", 0) < 0
+    ):
+        raise HTTPException(502, detail={"code": "CAL_MARKETPLACE_DISCOVERY_RESPONSE_INVALID"})
+
+    items = []
+    for candidate in data["displayable_products"]:
+        if not isinstance(candidate, dict):
+            raise HTTPException(502, detail={"code": "CAL_MARKETPLACE_DISCOVERY_RESPONSE_INVALID"})
+        decision = candidate.get("decision")
+        product = candidate.get("product")
+        offer = candidate.get("offer")
+        if (
+            not isinstance(decision, dict)
+            or decision.get("verdict") != "show"
+            or decision.get("may_display") is not True
+            or not isinstance(product, dict)
+            or not isinstance(offer, dict)
+            or not isinstance(product.get("product_id"), str)
+            or offer.get("catalog_product_id") != product.get("product_id")
+            or not isinstance(offer.get("variant_id"), str)
+        ):
+            raise HTTPException(502, detail={"code": "CAL_MARKETPLACE_CANDIDATE_AUTHORIZATION_INVALID"})
+        safe_offer = _withhold_unverified_media(offer)
+        safe_offer["product_name"] = offer.get("product_name") or product.get("name")
+        safe_offer["brand"] = product.get("brand")
+        safe_offer["category"] = offer.get("category") or product.get("category")
+        safe_offer["description"] = product.get("description") or ""
+        safe_offer["attributes"] = product.get("attributes") if isinstance(product.get("attributes"), dict) else {}
+        safe_offer["image_urls"] = []
+        safe_offer["product"] = _withhold_unverified_media(product)
+        items.append(safe_offer)
+
+    withheld = data.get("withheld_candidate_ids", [])
+    ranked_count = data.get("ranked_candidate_count", len(items) + len(withheld))
+    has_more = ranked_count >= min(limit, 25)
+    total = offset + ranked_count + (1 if has_more else 0)
+    return JSONResponse(
+        content={
+            "items": items,
+            "total": total,
+            "offset": offset,
+            "limit": min(limit, 25),
+            "has_more": has_more,
+            "withheld_candidate_count": len(withheld),
+            "display_authority": "CaTaCaCi/CAL",
+            "display_rule": "Only authenticated, candidate-bound CAL SHOW decisions with may_display=true are returned with product and offer details.",
         },
-        headers={"Cache-Control": "no-store"},
+        headers={"Cache-Control": "no-store, private"},
     )
 
 @app.post("/api/commerce/marketplace/compare")
