@@ -77,7 +77,7 @@ This deliberately masks all detected faces on public assets rather than trying t
 
 ### Current repository route audit
 
-The current service source contains no public profile-photo, community-feed media, shared-link activation, restore, syndication or general asset-serving route. This is not an exemption for future work: `services/privacy-governance-service/tests/test_publication_route_guard.py` scans the FastAPI route declarations and fails CI when a public asset/image/photo/media/publish/restore/share/community/feed route is added without an explicit `require_publication_gate` dependency. The privacy gate itself is internal-only.
+The current service source contains no public profile-photo, community-feed media, shared-link activation, restore, syndication or general user-asset-serving route. The BFF does expose one explicit static mount, `GET /assets/*`, for repository-owned presentation files under `apps/demo-web/assets`. Its directory is fixed in code (not deployment-configurable), must contain no symlinks, and is not an upload or private-media store. The BFF image CSP permits only same-origin and data images; arbitrary remote image origins are blocked. The route guard now inventories both FastAPI media routes and `StaticFiles` mounts, and fails CI if another public static root, configurable media directory or symlinked asset is introduced. The privacy publication gate itself remains internal-only.
 
 Until a real asset publication owner and content-lifecycle provider are deployed, Cirvanna deliberately withholds media from customer-facing APIs:
 - Commerce `GET /marketplace/offers` returns no image URLs; merchant listing creation does not echo the stored source URLs.
