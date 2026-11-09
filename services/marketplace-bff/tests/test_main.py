@@ -506,8 +506,9 @@ def test_wardrobe_recommendations_forward_verified_token_to_cal_decision_gateway
                 "product": {"product_id": "product-1", "image_urls": ["https://cdn.example.test/product.jpg"]},
                 "offer": {"variant_id": "variant-1", "image_urls": ["https://cdn.example.test/offer.jpg"],
                           "product": {"image_urls": ["https://cdn.example.test/nested-offer.jpg"]}},
+                "decision": {"verdict": "show", "may_display": True},
             }],
-            "withheld_candidate_ids": [],
+            "withheld_candidate_ids": [{"product_id": "blocked-product-secret", "decision": "review"}],
             "display_authority": "CaTaCaCi/CAL",
         }),
     ])
@@ -535,6 +536,9 @@ def test_wardrobe_recommendations_forward_verified_token_to_cal_decision_gateway
     assert result["product"]["image_urls"] == []
     assert result["offer"]["image_urls"] == []
     assert result["offer"]["product"]["image_urls"] == []
+    assert response.json()["withheld_candidate_count"] == 1
+    assert "withheld_candidate_ids" not in response.json()
+    assert "blocked-product-secret" not in response.text
     assert "Authorization" not in response.text
 
 
