@@ -164,16 +164,25 @@ def test_description_search_fails_closed_without_pnelly_or_legacy_credentials(cl
     assert response.json()["detail"]["code"] == "PNELLY_API_URL_NOT_CONFIGURED"
 
 
-def test_description_search_forwards_to_legacy_xari_alias_and_keeps_candidates_pending_cal(client, monkeypatch):
+def test_description_search_forwards_to_legacy_xari_alias_but_suppresses_all_candidates_until_cal(client, monkeypatch):
     monkeypatch.setenv("XARI_API_URL", "https://xari.example.test")
     monkeypatch.setenv("XARI_API_TOKEN", "xari-internal-token-at-least-thirty-two-bytes")
     fake = FakeAsyncClient([FakeResponse({
         "status": "complete",
         "query": "green linen dress",
         "candidate_count": 2,
-        "candidates": [{"variant_id": "offer-1", "product_name": "green dress", "image_urls": ["https://cdn.example.test/unverified.jpg"], "product": {"image_urls": ["https://cdn.example.test/nested.jpg"]}}],
-        "display_authorized": False,
-        "decision_status": "PENDING_CAL",
+        "candidates": [{
+            "variant_id": "offer-1",
+            "product_name": "green dress",
+            "merchant_name": "unapproved merchant",
+            "price_minor": 1234,
+            "image_urls": ["https://cdn.example.test/unverified.jpg"],
+            "product": {"name": "private product", "image_urls": ["https://cdn.example.test/nested.jpg"]},
+        }],
+        # PNELLY is not the CAL owner. These deliberately false/forged claims
+        # must never authorize disclosure through this retrieval-only route.
+        "display_authorized": True,
+        "decision_status": "SHOW",
         "scores_are_probabilities": False,
     })])
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
@@ -183,8 +192,9 @@ def test_description_search_forwards_to_legacy_xari_alias_and_keeps_candidates_p
     assert data["candidate_count"] == 2
     assert data["display_authorized"] is False
     assert data["decision_status"] == "PENDING_CAL"
-    assert data["candidates"][0]["image_urls"] == []
-    assert data["candidates"][0]["product"]["image_urls"] == []
+    assert "candidates" not in data
+    for private_value in ("offer-1", "green dress", "unapproved merchant", "1234", "private product", "cdn.example.test"):
+        assert private_value not in response.text
     assert fake.calls[0][1] == "https://xari.example.test/v1/marketplace/search"
     assert fake.calls[0][2]["json"]["query"] == "green linen dress"
     assert "Authorization" not in response.text
