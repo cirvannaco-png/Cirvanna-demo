@@ -170,7 +170,7 @@
       "containerized": true,
       "dockerfile": "services/identity-learning-service/Dockerfile",
       "build_context": "services/identity-learning-service",
-      "build_context_verified_by_ci": false,
+      "build_context_verified_by_ci": true,
       "exposure": "private_api",
       "required_for_marketplace": true,
       "production_enabled": false,
@@ -298,7 +298,8 @@
       "depends_on_services": [
         "asset-service",
         "privacy-governance-service",
-        "vision-intelligence"
+        "vision-intelligence",
+        "twin-registry"
       ],
       "depends_on_providers": [
         "private_object_storage"
@@ -307,7 +308,8 @@
       "release_gates": [
         "REL-09",
         "REL-10",
-        "REL-14"
+        "REL-14",
+        "REL-17"
       ]
     },
     {
@@ -323,7 +325,8 @@
       "readiness_path": "/ready",
       "depends_on_services": [
         "asset-service",
-        "virtual-twin"
+        "virtual-twin",
+        "twin-registry"
       ],
       "depends_on_providers": [
         "private_object_storage"
@@ -332,7 +335,8 @@
       "release_gates": [
         "REL-09",
         "REL-10",
-        "REL-12"
+        "REL-12",
+        "REL-17"
       ]
     },
     {
@@ -492,6 +496,32 @@
         "REL-12",
         "REL-15"
       ]
+    },
+    {
+      "id": "twin-registry",
+      "source_path": "services/twin-registry",
+      "containerized": true,
+      "dockerfile": "services/twin-registry/Dockerfile",
+      "build_context": ".",
+      "build_context_verified_by_ci": true,
+      "exposure": "private_api",
+      "required_for_marketplace": false,
+      "production_enabled": false,
+      "readiness_path": "/ready",
+      "depends_on_services": [
+        "asset-service",
+        "identity-learning-service"
+      ],
+      "depends_on_providers": [],
+      "data_store_refs": [
+        "twin-registry-postgres"
+      ],
+      "release_gates": [
+        "REL-03",
+        "REL-09",
+        "REL-10",
+        "REL-17"
+      ]
     }
   ],
   "data_stores": [
@@ -534,6 +564,13 @@
       "id": "cultural-identity-postgres",
       "owner_service": "cultural-identity-service",
       "kind": "managed_postgresql",
+      "provisioned_for_production": false,
+      "backup_restore_verified": false
+    },
+    {
+      "id": "twin-registry-postgres",
+      "owner_service": "twin-registry",
+      "kind": "approved_shared_postgresql_namespace",
       "provisioned_for_production": false,
       "backup_restore_verified": false
     }

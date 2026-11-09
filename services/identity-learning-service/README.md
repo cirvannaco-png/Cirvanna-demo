@@ -28,7 +28,7 @@ Run tests:
 
 - Versioned USI profile upsert with optimistic concurrency (`expected_version`).
 - Structured Style Desk colour preferences (`liked_colors`, `disliked_colors`, `best_version_colors`) with consent gating, optimistic versions, export and deletion. These are user-declared preferences, not inferred skin tone or objective colour analysis. The API reports objective analysis as unavailable until a validated model is deployed.
-- Versioned consent receipts with a bundle ID and optional exact resource ID. Legacy scope-wide receipts remain compatible. Resource-bound revocation withdraws every active scope in that bundle for that resource only; it cannot revoke another Twin/resource. Internal `POST /internal/v1/consents/verify` checks the trusted subject, complete requested scope set, consent version and exact resource. Revoked receipts cannot be reused.
+- Versioned consent receipts with a bundle ID, optional exact resource ID and optional expiry. Legacy receipts with null expiry remain compatible; a supplied expiry must be timezone-aware and in the future, and expired grants are excluded from profile/TAL operations and resource-bundle verification. Resource-bound revocation withdraws every active scope in that bundle for that resource only; it cannot revoke another Twin/resource. Internal `POST /internal/v1/consents/verify` checks the trusted subject, complete requested scope set, consent version, exact resource, revocation and expiry.
 - Event writes require an active `personalization` or `style_learning` receipt; USI profile reads and writes require active `profile_storage` consent.
 - TAL append supports event-ID and per-subject idempotency; changed replay payloads return 409.
 - Corrections are append-only, must belong to the same subject and feature, and point to the superseded event.
@@ -40,4 +40,9 @@ All endpoints except `/health` require internal bearer authentication. Retention
 
 ## Production gates
 
-Before deployment: provision the service on the approved Cirvanna workspace; configure its database URL to the approved PostgreSQL instance; apply `migrations/0001_identity_tal.sql`, `migrations/0002_color_profile.sql` and `migrations/0003_resource_bound_media_consent.sql` in order; set independently rotated service and cron tokens; verify database backup/restore and deletion behavior; then enable gateway hydration. No production credentials or live identity-provider assertion are embedded here.
+Before deployment: provision the service on the approved Cirvanna workspace; configure its database URL to the approved PostgreSQL instance; apply `migrations/0001_identity_tal.sql`, `migrations/0002_color_profile.sql`, `migrations/0003_resource_bound_media_consent.sql` and `migrations/0004_consent_expiry.sql` in order; set independently rotated service and cron tokens; verify database backup/restore and deletion behavior; then enable gateway hydration. No production credentials or live identity-provider assertion are embedded here.
+
+
+## Resource-bound consent expiry
+
+Migration `0004_consent_expiry.sql` adds an expiry timestamp to the existing consent receipt authority. It deliberately does not create a second consent-bundle table. New grants may supply an ISO-8601 timezone-aware `expires_at`; verification and all active-consent checks reject expired records. Existing null-expiry records are retained for backward compatibility and must be migrated through the approved consent renewal process rather than silently treated as newly issued time-bounded consent.

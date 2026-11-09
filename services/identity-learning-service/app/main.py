@@ -22,7 +22,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import (
     Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text,
-    UniqueConstraint, create_engine, select, delete, update,
+    UniqueConstraint, create_engine, select, delete, update, or_,
 )
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
@@ -97,6 +97,7 @@ class ConsentReceipt(Base):
     __table_args__ = (
         Index("ix_identity_tal_consent_subject_scope", "subject_id", "scope", "granted"),
         Index("ix_identity_tal_consent_bundle", "subject_id", "consent_id", "resource_id", "granted"),
+        Index("ix_identity_tal_consent_expiry", "expires_at"),
     )
     receipt_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     subject_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
@@ -107,6 +108,7 @@ class ConsentReceipt(Base):
     granted: Mapped[bool] = mapped_column(Boolean, nullable=False)
     granted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
 
@@ -192,6 +194,19 @@ class ConsentPut(StrictModel):
     granted: bool
     consent_id: str | None = Field(default=None, min_length=8, max_length=128)
     resource_id: str | None = Field(default=None, min_length=3, max_length=160)
+    expires_at: datetime | None = None
+
+    @field_validator("expires_at")
+    @classmethod
+    def validate_expiry(cls, value: datetime | None) -> datetime | None:
+        if value is None:
+            return None
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("consent expiry must include a timezone")
+        normalized = value.astimezone(timezone.utc)
+        if normalized <= datetime.now(timezone.utc):
+            raise ValueError("new consent expiry must be in the future")
+        return normalized
 
     @field_validator("receipt_id", "consent_id", "resource_id", mode="before")
     @classmethod
@@ -300,6 +315,26 @@ def subject_or_404(subject_id: str) -> str:
     return subject
 
 
+def active_consent_predicate():
+    """Legacy null expiry remains readable; new expiries are enforced centrally."""
+    return or_(ConsentReceipt.expires_at.is_(None), ConsentReceipt.expires_at > utcnow())
+
+
+def normalize_utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def consent_is_active(receipt: ConsentReceipt) -> bool:
+    if not receipt.granted or receipt.revoked_at is not None:
+        return False
+    expiry = normalize_utc(receipt.expires_at)
+    return expiry is None or expiry > utcnow()
+
+
 def _event_hash(payload: EventPut) -> str:
     body = payload.model_dump(mode="json")
     canonical = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
@@ -332,7 +367,7 @@ def readiness(db: Annotated[Session, Depends(get_db)]):
     try:
         db.execute(select(USIProfileRow.subject_id).limit(1))
         db.execute(select(ColorProfileRow.subject_id).limit(1))
-        db.execute(select(ConsentReceipt.consent_id).limit(1))
+        db.execute(select(ConsentReceipt.consent_id, ConsentReceipt.expires_at).limit(1))
         db.execute(select(TALEvent.event_id).limit(1))
         return {"status": "ready", "service": SERVICE, "database": "reachable", "durable_usi": True, "durable_tal": True, "ready": True}
     except SQLAlchemyError:
@@ -342,7 +377,7 @@ def readiness(db: Annotated[Session, Depends(get_db)]):
 @app.get("/v1/profiles/{subject_id}", dependencies=[Depends(require_internal_token)])
 def get_profile(subject_id: str, db: Annotated[Session, Depends(get_db)]):
     subject = subject_or_404(subject_id)
-    active = db.scalar(select(ConsentReceipt).where(ConsentReceipt.subject_id == subject, ConsentReceipt.scope == "profile_storage", ConsentReceipt.granted.is_(True), ConsentReceipt.revoked_at.is_(None)).limit(1))
+    active = db.scalar(select(ConsentReceipt).where(ConsentReceipt.subject_id == subject, ConsentReceipt.scope == "profile_storage", ConsentReceipt.granted.is_(True), ConsentReceipt.revoked_at.is_(None), active_consent_predicate()).limit(1))
     if active is None:
         raise HTTPException(403, detail={"code": "ACTIVE_PROFILE_STORAGE_CONSENT_REQUIRED"})
     row = db.get(USIProfileRow, subject)
@@ -354,7 +389,7 @@ def get_profile(subject_id: str, db: Annotated[Session, Depends(get_db)]):
 @app.put("/v1/profiles/{subject_id}", dependencies=[Depends(require_internal_token)])
 def put_profile(subject_id: str, payload: ProfilePut, db: Annotated[Session, Depends(get_db)]):
     subject = subject_or_404(subject_id)
-    active = db.scalar(select(ConsentReceipt).where(ConsentReceipt.subject_id == subject, ConsentReceipt.scope == "profile_storage", ConsentReceipt.granted.is_(True), ConsentReceipt.revoked_at.is_(None)).limit(1))
+    active = db.scalar(select(ConsentReceipt).where(ConsentReceipt.subject_id == subject, ConsentReceipt.scope == "profile_storage", ConsentReceipt.granted.is_(True), ConsentReceipt.revoked_at.is_(None), active_consent_predicate()).limit(1))
     if active is None:
         raise HTTPException(403, detail={"code": "ACTIVE_PROFILE_STORAGE_CONSENT_REQUIRED"})
     row = db.get(USIProfileRow, subject)
@@ -399,6 +434,7 @@ def get_color_profile(subject_id: str, db: Annotated[Session, Depends(get_db)]):
         ConsentReceipt.scope == "profile_storage",
         ConsentReceipt.granted.is_(True),
         ConsentReceipt.revoked_at.is_(None),
+        active_consent_predicate(),
     ).limit(1))
     if active is None:
         raise HTTPException(403, detail={"code": "ACTIVE_PROFILE_STORAGE_CONSENT_REQUIRED"})
@@ -425,6 +461,7 @@ def put_color_profile(subject_id: str, payload: ColorProfilePut, db: Annotated[S
         ConsentReceipt.scope == "profile_storage",
         ConsentReceipt.granted.is_(True),
         ConsentReceipt.revoked_at.is_(None),
+        active_consent_predicate(),
     ).limit(1))
     if active is None:
         raise HTTPException(403, detail={"code": "ACTIVE_PROFILE_STORAGE_CONSENT_REQUIRED"})
@@ -489,11 +526,12 @@ def put_consent(subject_id: str = Query(min_length=1, max_length=128), payload: 
             or existing.granted != payload.granted
             or existing.consent_id != consent_id
             or existing.resource_id != payload.resource_id
+            or normalize_utc(existing.expires_at) != normalize_utc(payload.expires_at)
         ):
             raise HTTPException(409, detail={"code": "CONSENT_RECEIPT_IMMUTABLE"})
         return {
             "receipt_id": existing.receipt_id, "consent_id": existing.consent_id,
-            "resource_id": existing.resource_id, "status": "replayed", "granted": existing.granted,
+            "resource_id": existing.resource_id, "expires_at": existing.expires_at.isoformat() if existing.expires_at else None, "status": "replayed", "granted": existing.granted,
         }
 
     now = utcnow()
@@ -519,12 +557,13 @@ def put_consent(subject_id: str = Query(min_length=1, max_length=128), payload: 
         consent_version=payload.consent_version, granted=payload.granted,
         granted_at=now if payload.granted else None,
         revoked_at=None if payload.granted else now,
+        expires_at=payload.expires_at if payload.granted else None,
     )
     db.add(row)
     db.commit()
     return {
         "receipt_id": row.receipt_id, "consent_id": row.consent_id,
-        "resource_id": row.resource_id, "status": "recorded", "granted": row.granted,
+        "resource_id": row.resource_id, "expires_at": row.expires_at.isoformat() if row.expires_at else None, "status": "recorded", "granted": row.granted,
     }
 
 
@@ -577,6 +616,7 @@ def verify_resource_bound_consent(payload: ConsentVerify, db: Annotated[Session,
         ConsentReceipt.consent_id == payload.consent_id,
         ConsentReceipt.granted.is_(True),
         ConsentReceipt.revoked_at.is_(None),
+        active_consent_predicate(),
     )
     if payload.resource_id is None:
         statement = statement.where(ConsentReceipt.resource_id.is_(None))
@@ -602,6 +642,7 @@ def verify_resource_bound_consent(payload: ConsentVerify, db: Annotated[Session,
         "consent_id": payload.consent_id,
         "resource_id": payload.resource_id,
         "consent_version": next(iter(versions)),
+        "expires_at": min((row.expires_at for row in rows if row.scope in payload.required_scopes and row.expires_at is not None), default=None).isoformat() if any(row.expires_at is not None for row in rows if row.scope in payload.required_scopes) else None,
         "granted_scopes": sorted(granted),
         "receipt_ids": sorted(row.receipt_id for row in rows if row.scope in payload.required_scopes),
     }
@@ -613,7 +654,7 @@ def append_event(subject_id: str = Query(min_length=1, max_length=128), payload:
     if payload is None:
         raise HTTPException(422, detail={"code": "TAL_EVENT_REQUIRED"})
     consent = db.get(ConsentReceipt, payload.consent_receipt_id)
-    if consent is None or consent.subject_id != subject or not consent.granted or consent.revoked_at is not None or consent.scope not in {"personalization", "style_learning"}:
+    if consent is None or consent.subject_id != subject or not consent_is_active(consent) or consent.scope not in {"personalization", "style_learning"}:
         raise HTTPException(403, detail={"code": "ACTIVE_TAL_CONSENT_REQUIRED"})
     digest = _event_hash(payload)
     existing = db.get(TALEvent, payload.event_id)
@@ -663,6 +704,7 @@ def export_events(subject_id: str, db: Annotated[Session, Depends(get_db)]):
             "resource_id": x.resource_id, "scope": x.scope,
             "consent_version": x.consent_version, "granted": x.granted,
             "granted_at": x.granted_at.isoformat() if x.granted_at else None,
+            "expires_at": x.expires_at.isoformat() if x.expires_at else None,
             "revoked_at": x.revoked_at.isoformat() if x.revoked_at else None,
         } for x in consents],
         "events": [{"event_id": x.event_id, "feature_key": x.feature_key, "value": x.value, "event_kind": x.event_kind, "supersedes_event_id": x.supersedes_event_id, "observed_at": x.observed_at.isoformat(), "expires_at": x.expires_at.isoformat() if x.expires_at else None, "consent_receipt_id": x.consent_receipt_id} for x in events],
@@ -709,5 +751,6 @@ def list_consents(subject_id: str, db: Annotated[Session, Depends(get_db)]):
         "resource_id": x.resource_id, "scope": x.scope,
         "consent_version": x.consent_version, "granted": x.granted,
         "granted_at": x.granted_at.isoformat() if x.granted_at else None,
+        "expires_at": x.expires_at.isoformat() if x.expires_at else None,
         "revoked_at": x.revoked_at.isoformat() if x.revoked_at else None,
     } for x in rows]
