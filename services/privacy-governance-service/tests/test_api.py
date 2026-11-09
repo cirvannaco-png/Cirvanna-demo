@@ -393,6 +393,24 @@ def test_consent_requires_both_explicit_click_it_acceptances(client):
     assert response.json()["detail"]["code"] == "EXPLICIT_CLICK_IT_CONSENT_REQUIRED"
 
 
+def test_minor_consent_fails_closed_when_guardian_reference_is_missing(client, monkeypatch):
+    calls = []
+
+    async def forbidden_provider(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("Guardian provider must not be called without an authority reference.")
+
+    monkeypatch.setattr(main, "post_trusted", forbidden_provider)
+    response = client.post(
+        "/internal/v1/consents/grant",
+        headers=internal(),
+        json=grant_payload("contains_minor"),
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "GUARDIAN_AUTHORITY_NOT_VERIFIED"
+    assert calls == []
+
+
 def test_minor_consent_never_grants_guardian_scope_from_a_checkbox_or_reference_alone(client, monkeypatch):
     async def absent_provider(*_args, **_kwargs):
         raise HTTPException(503, detail={"code": "GUARDIAN_VERIFICATION_PROVIDER_NOT_CONFIGURED"})
