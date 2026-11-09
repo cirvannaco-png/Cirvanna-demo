@@ -32,7 +32,7 @@ class MarketplaceContractTests(unittest.TestCase):
         self.assertIn("Direct Commerce browsing is disabled", HTML)
         self.assertIn("Direct Catalog product display is disabled", HTML)
         self.assertNotIn('new URL(config.base+"/products")', HTML)
-        self.assertIn('new URL(config.commerceBase+"/marketplace/offers")', HTML)
+        self.assertIn('new URL(config.commerceBase+"/marketplace/offers",window.location.origin)', HTML)
         self.assertIn('url.searchParams.set("offset",String(page*20))', HTML)
         self.assertIn("No demo fallback was used.", HTML)
 
