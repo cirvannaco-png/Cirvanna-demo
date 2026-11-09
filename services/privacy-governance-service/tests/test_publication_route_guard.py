@@ -193,6 +193,7 @@ def test_public_static_media_mount_is_fixed_to_repository_owned_portal_assets():
 
     public_root = ROOT / "apps" / "demo-web" / "assets"
     assert public_root.is_dir()
+    assert not public_root.is_symlink(), "The public static root itself must not be a symlink."
     assert public_root.resolve() == (ROOT / "apps" / "demo-web" / "assets").resolve()
     symlinks = [str(path.relative_to(ROOT)) for path in public_root.rglob("*") if path.is_symlink()]
     assert not symlinks, "Public static assets must not contain symlinks: " + ", ".join(symlinks)
@@ -232,7 +233,8 @@ def test_nonpublication_media_adjacent_routes_remain_narrow_and_explicit():
     look_it_body = ast.get_source_segment(look_it_source, look_it_handler) or ""
     for token in ("_verified_commerce_subject", "_record_look_it_consent", "_verify_look_it_bundle", "reference_image.read", "reference_image.close", "revoke"):
         assert token in look_it_body
-    assert "Cache-Control" in look_it_body and "no-store" in look_it_body
+    assert "_private_json_response({" in look_it_body
+    assert '"Cache-Control": "no-store, private"' in look_it_source
 
     # Click It has no multipart parameters and rejects before parsing request bytes.
     click_it_key = ("services/marketplace-bff/app/main.py", "POST", "/api/vision/click-it", "marketplace_click_it")
