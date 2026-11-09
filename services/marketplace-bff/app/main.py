@@ -2174,7 +2174,7 @@ async def public_offers(
     )
 
 @app.post("/api/commerce/marketplace/compare")
-def compare_public_offers(payload: OfferComparisonIn) -> Response:
+async def compare_public_offers(request: Request) -> Response:
     """Fail closed until each candidate is bound to an authenticated CAL SHOW receipt."""
     raise HTTPException(
         status_code=503,
