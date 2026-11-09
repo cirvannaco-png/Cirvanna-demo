@@ -2034,10 +2034,29 @@ def test_look_it_suppresses_results_when_consent_revocation_fails(client, monkey
     assert "candidate_count" not in response.text
 
 
-def test_look_it_requires_both_consents_before_identity_or_provider_calls(client, monkeypatch):
+def test_look_it_authenticates_before_multipart_parser(client, monkeypatch):
     def forbidden(*_args, **_kwargs):
-        pytest.fail("Look It must reject before identity, consent or PNELLY provider calls")
-    monkeypatch.setattr(main.httpx, "AsyncClient", forbidden)
+        pytest.fail("Unauthenticated Look It must reject before parsing multipart bytes")
+    monkeypatch.setattr(Request, "form", forbidden)
+    monkeypatch.setattr(Request, "body", forbidden)
+    monkeypatch.setattr(Request, "stream", forbidden)
+    response = client.post(
+        "/api/vision/look-it",
+        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        files={"reference_image": ("outfit.png", b"private-outfit-reference", "image/png")},
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "USER_BEARER_REQUIRED"
+
+
+def test_look_it_requires_both_consents_before_identity_consent_or_pnelly_calls(client, monkeypatch):
+    async def verified_subject(_client, _request):
+        return "verified-customer-01", "signed-user-session-token"
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Look It must reject before contacting consent or PNELLY services")
+    monkeypatch.setattr(main, "_verified_commerce_subject", verified_subject)
+    monkeypatch.setattr(main, "_identity_learning_service", forbidden)
+    monkeypatch.setattr(main, "_pnelly_internal_service", forbidden)
     response = client.post(
         "/api/vision/look-it",
         headers={"Authorization": "Bearer signed-user-session-token"},
