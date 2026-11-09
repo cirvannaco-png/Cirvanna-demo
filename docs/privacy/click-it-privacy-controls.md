@@ -39,7 +39,7 @@ Missing or unknown status blocks processing. This declaration is not facial age 
 
 When people are declared visible, the uploader must explicitly attest that they have permission to submit the photograph and, where required, parent/guardian authority. For either `adults_only` or `contains_minor`, the consent service refuses to grant the photographed-person attestation scope unless `photographed_people_consent_confirmed=true`. This is an uploader attestation, not independent proof that every photographed adult consented; it must never be described as verified consent from those people.
 
-For a declared minor, the jurisdiction policy registry decides whether guardian consent is legally required. When required, the consent service must return an active receipt containing the `guardian_authorized` scope and `guardian_authority_verified=true`. A checkbox alone is not guardian verification. The policy registry may apply a stricter platform rule than the legal minimum.
+For a photograph declared to contain a minor, Cirvanna applies a stricter platform default: no Click It consent receipt is issued unless an independent, purpose-bound guardian-authority provider verifies an active receipt for the same subject and `cirvanna_click_it_photographed_minor` purpose. A missing reference, unavailable provider, mismatched subject/purpose, inactive receipt or unverified authority blocks consent. This platform rule is stricter than any jurisdiction whose legal minimum might not require a guardian, and does not replace the jurisdiction policy registry's legal determination.
 
 For minor-containing images:
 - no Twin, wardrobe or preference-learning personalization is allowed;
