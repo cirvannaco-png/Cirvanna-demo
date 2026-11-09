@@ -161,7 +161,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
         addMarketParams(url);
         url.searchParams.set("limit","20");url.searchParams.set("offset",String(page*20));
         const response=await fetch(url,{headers:{Accept:"application/json"}});
-        if(!response.ok)throw new Error(response.status===503?"Marketplace API is not ready (503).":"Marketplace offers API returned HTTP "+response.status+".");
+        if(!response.ok)throw new Error(response.status===503?"Live product browsing is temporarily paused until every offer passes authenticated CAL authorization.":"Marketplace offers API returned HTTP "+response.status+".");
         const data=await response.json();
         if(!Array.isArray(data.items)||!Number.isFinite(Number(data.total)))throw new Error("Marketplace API returned an invalid offer list.");
         items=data.items.map(p=>({...p,product_id:p.catalog_product_id,name:p.product_name,brand:p.merchant_name,description:Object.entries(p.options||{}).map(([k,v])=>k+": "+v).join(" · ")||"Approved merchant offer with current stock.",image_urls:p.image_urls||[],attributes:{}}));
