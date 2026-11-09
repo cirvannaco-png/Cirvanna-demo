@@ -129,7 +129,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       const transport=fq?'<div class="brandline">Delivery: '+moneyMinor(fq.display_conversion_status==="localized"?fq.display_amount_minor:fq.amount_minor,fq.display_conversion_status==="localized"?fq.display_currency:fq.currency)+' · '+escapeHtml(fq.distance_km)+' km</div>':'';
       const comparablePeers=p.canonical_variant_id?items.filter(x=>x.canonical_variant_id===p.canonical_variant_id&&x.merchant_id!==p.merchant_id&&x.available_stock>0):[];
       const compareAction=(mode!=="commerce"&&comparablePeers.length)?'<button class="btn wide" data-action="compare" data-id="'+escapeHtml(id)+'">Compare merchant offers</button>':'';
-      return '<article class="card"><div class="visual">'+image+'<span class="tag">'+(p.attributes&&p.attributes.demo?'Demo data':escapeHtml(p.category||'Product'))+'</span></div><div class="card-body"><div class="brandline">'+escapeHtml(p.brand||'Independent brand')+'</div><div class="name">'+escapeHtml(p.name)+'</div><div class="description">'+escapeHtml(p.description||'Product details have not been provided.')+'</div><div class="price">'+money(p)+'</div>'+transport+'<div class="brandline">'+escapeHtml(p.sku||'')+'</div><div class="card-actions"><button class="btn" data-action="save" data-id="'+escapeHtml(id)+'">'+(isSaved?'Saved ✓':'Save')+'</button><button class="btn" data-action="bag" data-id="'+escapeHtml(id)+'">'+(inBag?'In bag ✓':'Add to bag')+'</button>'+compareAction+'<button class="btn wide" data-action="tryon" data-id="'+escapeHtml(id)+'" disabled title="Virtual try-on adapter is not connected">Try on — unavailable</button></div></div></article>'
+      return '<article class="card"><div class="visual">'+image+'<span class="tag">'+(p.attributes&&p.attributes.demo?'Demo data':escapeHtml(p.category||'Product'))+'</span></div><div class="card-body"><div class="brandline">'+escapeHtml(p.brand||'Independent brand')+'</div><div class="name">'+escapeHtml(p.name)+'</div><div class="description">'+escapeHtml(p.description||'Product details have not been provided.')+'</div><div class="price">'+money(p)+'</div>'+transport+'<div class="brandline">'+escapeHtml(p.sku||'')+'</div><div class="card-actions"><button class="btn" data-action="save" data-id="'+escapeHtml(id)+'">'+(isSaved?'Saved ✓':'Save')+'</button>'+(mode==="commerce"?'<button class="btn" disabled title="Candidate-bound purchase reauthorization is not released">Bag — paused</button>':'<button class="btn" data-action="bag" data-id="'+escapeHtml(id)+'">'+(inBag?'In bag ✓':'Add to bag')+'</button>')+''+compareAction+'<button class="btn wide" data-action="tryon" data-id="'+escapeHtml(id)+'" disabled title="Virtual try-on adapter is not connected">Try on — unavailable</button></div></div></article>'
     }).join(''):'<div class="empty">No products match this search. Try a broader term or clear the category filter.</div>';
     $("pageLabel").textContent='Page '+(page+1);$("prevBtn").disabled=page===0;$("nextBtn").disabled=(page+1)*20>=total;
   }
@@ -172,15 +172,14 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
         if(!response.ok)throw new Error(response.status===401?"Sign in with a verified Cirvanna account to browse live offers.":response.status===503?"Live product browsing is unavailable because CAL or a required evidence provider is not ready.":"Marketplace offers API returned HTTP "+response.status+".");
         const data=await response.json();
         if(!Array.isArray(data.items)||!Number.isFinite(Number(data.total))||data.display_authority!=="CaTaCaCi/CAL")throw new Error("Marketplace API returned an invalid or non-CAL-governed offer list.");
-        const [cartResponse,savedResponse]=await Promise.all([fetch(config.commerceBase+"/cart",{headers}),fetch(config.commerceBase+"/saved-products",{headers})]);
-        if(!cartResponse.ok||!savedResponse.ok)throw new Error("Your account cart or saved-products service is unavailable; no guest fallback was used.");
-        const [cartData,savedData]=await Promise.all([cartResponse.json(),savedResponse.json()]);
+        const savedResponse=await fetch(config.commerceBase+"/saved-products",{headers});
+        if(!savedResponse.ok)throw new Error("Your account saved-products service is unavailable; no guest fallback was used.");
+        const savedData=await savedResponse.json();
         items=data.items.map(p=>({...p,product_id:p.catalog_product_id,name:p.product_name,brand:p.merchant_name,description:p.description||Object.entries(p.options||{}).map(([k,v])=>k+": "+v).join(" · "),image_urls:p.image_urls||[],attributes:p.attributes||{}}));
-        total=Number(data.total)||0;cartVersion=Number(cartData.version)||0;
-        cart=(Array.isArray(cartData.items)?cartData.items:[]).map(x=>({...x,product_id:x.variant_id,name:x.product_name}));
+        total=Number(data.total)||0;cartVersion=0;cart=[];
         saved=(Array.isArray(savedData.items)?savedData.items:[]).map(x=>({product_id:x.catalog_product_id,name:x.catalog_product_id,currency:"",price_minor:null}));
         updateCategories(items);updateCounts();
-        setStatus("CAL-GOVERNED LIVE COMMERCE — "+items.length+" authorized offer(s) on this page. "+(Number(data.withheld_candidate_count)||0)+" candidate(s) withheld. Product details are returned only after candidate-bound SHOW authorization.");
+        setStatus("CAL-GOVERNED LIVE COMMERCE — "+items.length+" authorized offer(s) on this page. "+(Number(data.withheld_candidate_count)||0)+" candidate(s) withheld. Cart and checkout remain paused until every purchase action has fresh candidate-bound CAL authorization.");
         render();return;
       }catch(e){items=[];total=0;setStatus((e&&e.message?e.message:"Marketplace request failed")+" No demo fallback was used.",true);render();return}
     }
