@@ -2215,6 +2215,17 @@ def _authorized_commerce_path(method: str, path: str) -> bool:
 async def commerce_proxy(path: str, request: Request) -> Response:
     """Forward customer operations only; admin/internal/webhook routes are not exposed."""
     method = request.method.upper()
+    cart_item_match = re.fullmatch(r"cart/items/[0-9a-fA-F-]{36}", path)
+    if (
+        (method == "GET" and path == "cart")
+        or (method == "POST" and path in {"cart/items", "checkout"})
+        or (method == "PATCH" and cart_item_match is not None)
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "CAL_CANDIDATE_PURCHASE_REAUTH_REQUIRED"},
+            headers={"Cache-Control": "no-store"},
+        )
     if not _authorized_commerce_path(method, path):
         raise HTTPException(status_code=404, detail={"code": "COMMERCE_ROUTE_NOT_AVAILABLE"})
     authorization = request.headers.get("authorization", "")
