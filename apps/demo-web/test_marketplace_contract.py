@@ -25,7 +25,7 @@ class MarketplaceContractTests(unittest.TestCase):
                 self.assertIn(f'id="{element_id}"', HTML)
 
     def test_live_marketplace_uses_authenticated_bff_and_never_bypasses_cal(self):
-        self.assertIn('const url=new URL(config.commerceBase+"/marketplace/offers")', HTML)
+        self.assertIn('const url=new URL(config.commerceBase+"/marketplace/offers",window.location.origin)', HTML)
         self.assertIn('Authorization:"Bearer "+config.userToken', HTML)
         self.assertIn("config.commerceBase=bootstrap.publicOffersBase.replace", HTML)
         self.assertIn('data.display_authority!=="CaTaCaCi/CAL"', HTML)
