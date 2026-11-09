@@ -1897,3 +1897,171 @@ def test_offer_comparison_rejects_invalid_variant_identity_before_upstream(clien
     })
     assert response.status_code == 422
     assert calls == []
+
+class LookItLifecycleClient:
+    def __init__(self, *, fail_scope=None, fail_revoke=False):
+        self.calls = []
+        self.receipts = []
+        self.fail_scope = fail_scope
+        self.fail_revoke = fail_revoke
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
+    async def post(self, url, **kwargs):
+        self.calls.append(("POST", url, kwargs))
+        if url == "https://identity.example.test/v1/tal/consents":
+            body = kwargs["json"]
+            if body["scope"] == self.fail_scope:
+                return FakeResponse({"detail": {"code": "CONSENT_WRITE_FAILED"}}, status_code=503)
+            self.receipts.append(body)
+            return FakeResponse({
+                "receipt_id": body["receipt_id"],
+                "consent_id": body["consent_id"],
+                "resource_id": body["resource_id"],
+                "granted": True,
+                "expires_at": body["expires_at"],
+            })
+        if url == "https://identity.example.test/internal/v1/consents/verify":
+            body = kwargs["json"]
+            assert body["subject_id"] == "verified-customer-01"
+            assert {item["scope"] for item in self.receipts} == {"image_processing", "look_it"}
+            return FakeResponse({
+                "verified": True, "active": True,
+                "subject_id": body["subject_id"],
+                "consent_id": body["consent_id"],
+                "resource_id": body["resource_id"],
+                "consent_version": body["consent_version"],
+                "expires_at": self.receipts[0]["expires_at"],
+                "granted_scopes": ["image_processing", "look_it"],
+            })
+        if url == "https://pnelly.example.test/v1/marketplace/search/image":
+            fields = kwargs["data"]
+            assert fields["subject_id"] == "verified-customer-01"
+            assert fields["consent_id"] == self.receipts[0]["consent_id"]
+            assert fields["resource_id"] == self.receipts[0]["resource_id"]
+            assert kwargs["files"]["image"][1] == b"private-outfit-reference"
+            return FakeResponse({
+                "status": "complete",
+                "candidate_count": 2,
+                "display_authorized": False,
+                "decision_status": "PENDING_CAL",
+                "image_persisted": False,
+                "outfit_decomposition": {
+                    "status": "unavailable",
+                    "reason": "VALIDATED_OUTFIT_DECOMPOSITION_PROVIDER_NOT_CONFIGURED",
+                    "components": [],
+                },
+                "merchant_comparison": {"status": "pending_cal"},
+            })
+        if url.startswith("https://identity.example.test/v1/tal/consents/") and url.endswith("/revoke"):
+            return FakeResponse({"status": "revoked"}, status_code=503 if self.fail_revoke else 200)
+        pytest.fail("Unexpected Look It upstream URL: " + url)
+
+
+def _configure_look_it_bff(monkeypatch, fake):
+    async def verified_subject(_client, _request):
+        return "verified-customer-01", "signed-user-session-token"
+
+    monkeypatch.setattr(main, "_verified_commerce_subject", verified_subject)
+    monkeypatch.setattr(main, "_identity_learning_service", lambda: (
+        "https://identity.example.test", "identity-service-token-with-at-least-32-bytes"
+    ))
+    monkeypatch.setattr(main, "_pnelly_internal_service", lambda: (
+        "https://pnelly.example.test", "pnelly-service-token-with-at-least-32-bytes"
+    ))
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **_kwargs: fake)
+
+
+def test_look_it_records_verifies_and_revokes_request_scoped_consent(client, monkeypatch):
+    fake = LookItLifecycleClient()
+    _configure_look_it_bff(monkeypatch, fake)
+    response = client.post(
+        "/api/vision/look-it",
+        headers={"Authorization": "Bearer signed-user-session-token"},
+        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        files={"reference_image": ("outfit.png", b"private-outfit-reference", "image/png")},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["candidate_count"] == 2
+    assert data["display_authorized"] is False
+    assert data["decision_status"] == "PENDING_CAL"
+    assert data["image_persisted"] is False
+    assert data["outfit_decomposition"]["status"] == "unavailable"
+    assert response.headers["cache-control"] == "no-store, private"
+    assert len(fake.receipts) == 2
+    assert {row["scope"] for row in fake.receipts} == {"image_processing", "look_it"}
+    assert len({row["consent_id"] for row in fake.receipts}) == 1
+    assert len({row["resource_id"] for row in fake.receipts}) == 1
+    assert all(row["expires_at"] for row in fake.receipts)
+    assert any(url.endswith("/internal/v1/consents/verify") for _method, url, _kwargs in fake.calls)
+    assert any(url.endswith("/revoke") for _method, url, _kwargs in fake.calls)
+    for forbidden in ("variant_id", "product_name", "price_minor", "merchant_id", "image_urls"):
+        assert forbidden not in response.text
+
+
+def test_look_it_revokes_partial_consent_write_before_returning_failure(client, monkeypatch):
+    fake = LookItLifecycleClient(fail_scope="look_it")
+    _configure_look_it_bff(monkeypatch, fake)
+    response = client.post(
+        "/api/vision/look-it",
+        headers={"Authorization": "Bearer signed-user-session-token"},
+        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        files={"reference_image": ("outfit.png", b"private-outfit-reference", "image/png")},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "LOOK_IT_CONSENT_WRITE_FAILED"
+    assert len(fake.receipts) == 1
+    assert not any(url == "https://pnelly.example.test/v1/marketplace/search/image" for _m, url, _k in fake.calls)
+    assert any(url.endswith("/revoke") for _m, url, _k in fake.calls)
+
+
+def test_look_it_suppresses_results_when_consent_revocation_fails(client, monkeypatch):
+    fake = LookItLifecycleClient(fail_revoke=True)
+    _configure_look_it_bff(monkeypatch, fake)
+    response = client.post(
+        "/api/vision/look-it",
+        headers={"Authorization": "Bearer signed-user-session-token"},
+        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        files={"reference_image": ("outfit.png", b"private-outfit-reference", "image/png")},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "LOOK_IT_CONSENT_REVOCATION_FAILED"
+    assert "candidate_count" not in response.text
+
+
+def test_look_it_authenticates_before_multipart_parser(client, monkeypatch):
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Unauthenticated Look It must reject before parsing multipart bytes")
+    monkeypatch.setattr(Request, "form", forbidden)
+    monkeypatch.setattr(Request, "body", forbidden)
+    monkeypatch.setattr(Request, "stream", forbidden)
+    response = client.post(
+        "/api/vision/look-it",
+        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        files={"reference_image": ("outfit.png", b"private-outfit-reference", "image/png")},
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "USER_BEARER_REQUIRED"
+
+
+def test_look_it_requires_both_consents_before_identity_consent_or_pnelly_calls(client, monkeypatch):
+    async def verified_subject(_client, _request):
+        return "verified-customer-01", "signed-user-session-token"
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("Look It must reject before contacting consent or PNELLY services")
+    monkeypatch.setattr(main, "_verified_commerce_subject", verified_subject)
+    monkeypatch.setattr(main, "_identity_learning_service", forbidden)
+    monkeypatch.setattr(main, "_pnelly_internal_service", forbidden)
+    response = client.post(
+        "/api/vision/look-it",
+        headers={"Authorization": "Bearer signed-user-session-token"},
+        data={"consent_image_processing": "true", "consent_look_it": "false"},
+        files={"reference_image": ("outfit.png", b"private-outfit-reference", "image/png")},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "EXPLICIT_LOOK_IT_CONSENT_REQUIRED"

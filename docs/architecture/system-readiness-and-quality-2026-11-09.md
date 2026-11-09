@@ -170,3 +170,16 @@ The current Virtual Try-On contract already expects a Twin Registry authorizatio
 Identity consent expiry is added to the existing `ConsentReceipt` authority; no parallel consent-bundle table is created. Legacy null-expiry receipts are retained for compatibility. New consent grants can carry a timezone-aware expiry, and active profile/TAL/mesh authorization checks reject expired receipts. Consent and Asset Service health are checked in Twin Registry readiness; these checks do not replace live operational validation, database restore drills, or asset deletion propagation.
 
 **Gate:** REL-17 remains blocked until a licensed/pinned full-body mesh model, independent validation report signer, managed PostgreSQL, private Asset Service storage, consent expiry/revocation, deletion and restore procedures, and complete staging integration are evidenced.
+
+
+## Workstream 9 — PNELLY Look It visual retrieval
+
+The current-main Look It port adds a dedicated image-reference path across Marketplace BFF, PNELLY and Vision Intelligence. It is not Click It. The browser submits an outfit reference under two explicit consent controls; the BFF derives the subject from the signed Commerce session, creates a short-lived Identity consent bundle with exact resource ID and expiry, verifies it, calls PNELLY, and revokes the complete bundle after processing. PNELLY independently re-verifies subject, bundle, resource and scopes before forwarding the image.
+
+The retrieval service uses the reviewed pinned CLIP release and current active Commerce offers enriched by active Catalog descriptions. Source images are not persisted by the BFF/Xari/Vision code path. The browser receives only an aggregate candidate count and, when a separately approved decomposition provider is configured, bounded outfit-component descriptions and match counts. Product IDs, merchant identities, prices, stock, product photos and product descriptions are withheld. No merchant comparison or landed-cost claim is made until CAL authorizes candidates and the existing Commerce comparison flow is used.
+
+Optional outfit decomposition has an independent privacy-approval digest gate in addition to its exact model/revision and validation-report pins. A configured digest does not itself establish provider licensing, a DPA, retention behavior, or operational readiness. Until those are reviewed and tested, decomposition must report unavailable. Real CLIP model weights, Commerce/Catalog provider operations, real Identity session/consent, Android acceptance and CAL integration remain release checks.
+
+**Boundary:** Look It is user-supplied outfit-reference discovery. Click It is a separate product/photo workflow and remains disabled before multipart parsing until face masking, photographed-person rights, child safeguards and proof of no unmasked publication path are complete.
+
+**Gate:** REL-18 remains blocked until exact-head CI and real staging consent/provider/CAL integration evidence pass.

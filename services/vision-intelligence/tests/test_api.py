@@ -265,3 +265,84 @@ def test_live_offer_join_excludes_missing_or_archived_catalog_products(monkeypat
     monkeypatch.setattr(main, "_get_json", fake_get_json)
     offers, _ = asyncio.run(main._live_offers())
     assert offers == []
+
+def test_look_it_requires_both_explicit_consents_before_decoding(client, monkeypatch):
+    monkeypatch.setattr(main, "_decode_image", lambda *_: pytest.fail("Look It must reject before decoding without consent"))
+    response = client.post(
+        "/v1/search/image",
+        headers=auth(),
+        data={"consent_image_processing": "true", "consent_look_it": "false"},
+        files={"image": ("outfit.png", image_bytes(), "image/png")},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "EXPLICIT_LOOK_IT_CONSENT_REQUIRED"
+
+
+def test_look_it_returns_only_candidate_counts_and_optional_validated_components(client, monkeypatch):
+    async def offers():
+        return ([{
+            "variant_id": "00000000-0000-4000-8000-000000000001",
+            "catalog_product_id": "00000000-0000-4000-8000-000000000002",
+            "product_name": "private catalog result",
+            "search_text": "private catalog result",
+        }], False)
+
+    async def decomposition(_image):
+        return {
+            "status": "complete",
+            "model": {"id": "outfit-model", "revision": "a" * 40},
+            "validation_report_sha256": "b" * 64,
+            "components": [{
+                "component_id": "component-1",
+                "category": "upper_body",
+                "description": "a dark tailored jacket",
+            }],
+        }
+
+    monkeypatch.setattr(main, "_live_offers", offers)
+    monkeypatch.setattr(main, "_image_embedding", lambda _image: [1.0, 0.0])
+    monkeypatch.setattr(main, "_text_embedding", lambda _text: [1.0, 0.0])
+    monkeypatch.setattr(main, "_rank_offers", lambda _query, _offers, limit: [{
+        "variant_id": "00000000-0000-4000-8000-000000000001",
+        "product_name": "private catalog result",
+        "price_minor": 999999,
+        "currency": "KES",
+        "image_urls": ["https://private.example.test/photo.jpg"],
+    }][:limit])
+    monkeypatch.setattr(main, "_decompose_outfit", decomposition)
+
+    response = client.post(
+        "/v1/search/image",
+        headers=auth(),
+        data={"consent_image_processing": "true", "consent_look_it": "true"},
+        files={"image": ("outfit.png", image_bytes(), "image/png")},
+    )
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["candidate_count"] == 1
+    assert result["image_persisted"] is False
+    assert result["scores_are_probabilities"] is False
+    assert result["merchant_comparison"]["status"] == "pending_cal"
+    assert result["outfit_decomposition"]["components"][0]["candidate_count"] == 1
+    assert "results" not in result
+    assert "private catalog result" not in response.text
+    assert "999999" not in response.text
+    assert "private.example.test" not in response.text
+
+
+def test_outfit_decomposition_requires_privacy_approval_digest(monkeypatch):
+    monkeypatch.setenv("OUTFIT_DECOMPOSITION_API_URL", "https://decomposer.example.test")
+    monkeypatch.setenv("OUTFIT_DECOMPOSITION_API_TOKEN", "decomposer-token-with-at-least-thirty-two-bytes")
+    monkeypatch.setenv("OUTFIT_DECOMPOSITION_MODEL_ID", "approved-outfit-model")
+    monkeypatch.setenv("OUTFIT_DECOMPOSITION_MODEL_REVISION", "a" * 40)
+    monkeypatch.setenv("OUTFIT_DECOMPOSITION_VALIDATION_REPORT_SHA256", "b" * 64)
+    monkeypatch.delenv("OUTFIT_DECOMPOSITION_PRIVACY_APPROVAL_SHA256", raising=False)
+
+    async def forbidden(*_args, **_kwargs):
+        pytest.fail("unapproved decomposition provider must not receive user images")
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", forbidden)
+    import asyncio
+    result = asyncio.run(main._decompose_outfit(Image.new("RGB", (128, 128), (120, 120, 120))))
+    assert result["status"] == "unavailable"
+    assert result["reason"] == "VALIDATED_OUTFIT_DECOMPOSITION_PROVIDER_NOT_CONFIGURED"

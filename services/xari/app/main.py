@@ -8,11 +8,13 @@ from __future__ import annotations
 
 import hmac
 import os
+import re
 import httpx
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -112,6 +114,125 @@ async def _execute_marketplace_search(payload: MarketplaceSearchRequest) -> dict
     return result
 
 
+def _look_it_consent_config() -> tuple[str, str] | None:
+    raw = os.getenv("CONSENT_API_URL", "").strip().rstrip("/")
+    token = os.getenv("CONSENT_API_TOKEN", "").strip()
+    if not raw or len(token.encode("utf-8")) < 32:
+        return None
+    parts = urlsplit(raw)
+    host = (parts.hostname or "").lower()
+    local = host in {"localhost", "127.0.0.1", "::1"}
+    if (
+        not host or parts.username is not None or parts.password is not None
+        or parts.query or parts.fragment
+        or (parts.scheme != "https" and not (parts.scheme == "http" and local))
+    ):
+        return None
+    return raw, token
+
+
+async def _verify_look_it_consent(subject_id: str, consent_id: str, resource_id: str) -> None:
+    config = _look_it_consent_config()
+    if config is None:
+        raise HTTPException(503, detail={"code": "LOOK_IT_CONSENT_PROVIDER_NOT_CONFIGURED"})
+    base, token = config
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(6.0, connect=2.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            response = await client.post(
+                base + "/internal/v1/consents/verify",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json={
+                    "subject_id": subject_id,
+                    "consent_id": consent_id,
+                    "resource_id": resource_id,
+                    "required_scopes": ["image_processing", "look_it"],
+                },
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "LOOK_IT_CONSENT_VERIFICATION_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "LOOK_IT_CONSENT_VERIFIER_UNAVAILABLE"}) from exc
+    if response.status_code in {401, 403, 404}:
+        raise HTTPException(403, detail={"code": "LOOK_IT_CONSENT_NOT_VERIFIED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "LOOK_IT_CONSENT_VERIFIER_UNAVAILABLE"})
+    try:
+        receipt = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "LOOK_IT_CONSENT_RESPONSE_INVALID"}) from exc
+    scopes = receipt.get("granted_scopes") if isinstance(receipt, dict) else None
+    if not (
+        isinstance(receipt, dict)
+        and receipt.get("verified") is True
+        and receipt.get("active") is True
+        and receipt.get("subject_id") == subject_id
+        and receipt.get("consent_id") == consent_id
+        and receipt.get("resource_id") == resource_id
+        and isinstance(scopes, list)
+        and {"image_processing", "look_it"}.issubset(set(scopes))
+        and isinstance(receipt.get("consent_version"), str)
+        and bool(receipt.get("consent_version"))
+    ):
+        raise HTTPException(403, detail={"code": "LOOK_IT_CONSENT_NOT_VERIFIED"})
+
+
+async def _execute_marketplace_image_search(
+    *, data: bytes, filename: str, content_type: str, category: str | None, limit: int,
+) -> dict[str, object]:
+    config = _marketplace_search_config()
+    if config is None:
+        raise HTTPException(503, detail={"code": "MARKETPLACE_SEARCH_NOT_CONFIGURED"})
+    base, token = config
+    fields = {"consent_image_processing": "true", "consent_look_it": "true", "limit": str(limit)}
+    if category and category.strip():
+        fields["category"] = category.strip()
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(25.0, connect=3.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            response = await client.post(
+                base + "/v1/search/image",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                data=fields,
+                files={"image": (filename or "look-it-reference", data, content_type)},
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "LOOK_IT_SEARCH_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "LOOK_IT_SEARCH_UNAVAILABLE"}) from exc
+    if response.status_code != 200:
+        detail = {}
+        try:
+            payload = response.json().get("detail", {})
+            detail = payload if isinstance(payload, dict) else {}
+        except (ValueError, AttributeError):
+            pass
+        code = detail.get("code") if isinstance(detail.get("code"), str) else "LOOK_IT_SEARCH_FAILED"
+        if response.status_code in {400, 403, 413, 415, 422}:
+            raise HTTPException(response.status_code, detail={"code": code})
+        raise HTTPException(503 if response.status_code in {502, 503, 504} else 502, detail={"code": code})
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "LOOK_IT_INVALID_RESPONSE"}) from exc
+    if not (
+        isinstance(result, dict)
+        and result.get("status") == "complete"
+        and isinstance(result.get("candidate_count"), int)
+        and isinstance(result.get("outfit_decomposition"), dict)
+        and isinstance(result.get("merchant_comparison"), dict)
+        and result.get("image_persisted") is False
+    ):
+        raise HTTPException(502, detail={"code": "LOOK_IT_INVALID_RESPONSE"})
+    return result
+
+
 class RouteRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     request_id: str = Field(min_length=3, max_length=128)
@@ -120,6 +241,82 @@ class RouteRequest(BaseModel):
         "virtual_try_on", "virtual_twin", "wardrobe", "click_it",
     ]
     consents: dict[str, bool] = Field(default_factory=dict)
+
+@app.post(
+    "/v1/marketplace/search/image",
+    tags=["look-it"],
+    dependencies=[Depends(require_api_token)],
+)
+async def look_it_image_search(
+    subject_id: Annotated[str, Form(min_length=3, max_length=128)],
+    consent_id: Annotated[str, Form(min_length=8, max_length=128)],
+    resource_id: Annotated[str, Form(min_length=3, max_length=160)],
+    consent_image_processing: Annotated[bool, Form()],
+    consent_look_it: Annotated[bool, Form()],
+    image: Annotated[UploadFile, File()],
+    category: Annotated[str | None, Form()] = None,
+    limit: Annotated[int, Form(ge=1, le=25)] = 10,
+) -> JSONResponse:
+    """Search the user's Look It reference under exact, short-lived consent."""
+    try:
+        subject = subject_id.strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}", subject):
+            raise HTTPException(422, detail={"code": "INVALID_VERIFIED_SUBJECT"})
+        if not consent_image_processing or not consent_look_it:
+            raise HTTPException(403, detail={"code": "EXPLICIT_LOOK_IT_CONSENT_REQUIRED"})
+        content_type = (image.content_type or "").lower()
+        if content_type not in {"image/jpeg", "image/png", "image/webp"}:
+            raise HTTPException(415, detail={"code": "UNSUPPORTED_LOOK_IT_IMAGE_TYPE"})
+        if image.size is not None and image.size > 10 * 1024 * 1024:
+            raise HTTPException(413, detail={"code": "LOOK_IT_IMAGE_SIZE_LIMIT_EXCEEDED"})
+        await _verify_look_it_consent(subject, consent_id.strip(), resource_id.strip())
+        data = await image.read(10 * 1024 * 1024 + 1)
+        if not data:
+            raise HTTPException(400, detail={"code": "EMPTY_LOOK_IT_IMAGE"})
+        if len(data) > 10 * 1024 * 1024:
+            raise HTTPException(413, detail={"code": "LOOK_IT_IMAGE_SIZE_LIMIT_EXCEEDED"})
+        result = await _execute_marketplace_image_search(
+            data=data,
+            filename=image.filename or "look-it-reference",
+            content_type=content_type,
+            category=category,
+            limit=limit,
+        )
+        decomposition = result["outfit_decomposition"]
+        safe_components = []
+        for item in decomposition.get("components", []) if isinstance(decomposition, dict) else []:
+            if isinstance(item, dict):
+                safe_components.append({
+                    "component_id": item.get("component_id"),
+                    "category": item.get("category"),
+                    "description": item.get("description"),
+                    "candidate_count": item.get("candidate_count", 0),
+                    "match_scores_are_probabilities": False,
+                })
+        public = {
+            "status": "complete",
+            "search_mode": "pnelly_look_it_image_to_catalog_text_similarity",
+            "candidate_count": result["candidate_count"],
+            "scores_are_probabilities": False,
+            "image_persisted": False,
+            "display_authorized": False,
+            "decision_status": "PENDING_CAL",
+            "outfit_decomposition": {
+                "status": decomposition.get("status"),
+                "reason": decomposition.get("reason"),
+                "components": safe_components,
+            },
+            "merchant_comparison": {
+                "status": "pending_cal",
+                "reason": "CAL_AUTHORIZATION_REQUIRED_BEFORE_PRODUCT_OR_OFFER_DETAILS",
+                "landed_cost_included": False,
+            },
+            "notice": "No product or offer details are returned by Look It. CAL, NPL and explicit cultural-identity checks must authorize display before Commerce comparison.",
+        }
+        return JSONResponse(public, headers={"Cache-Control": "no-store, private"})
+    finally:
+        await image.close()
+
 
 @app.get("/health", tags=["operations"])
 def health() -> dict[str, str]:
@@ -151,6 +348,14 @@ def capabilities() -> dict[str, object]:
         "legacy_names": ["Xari", "Tari", "Xyra"],
         "contract_compatibility": {"xari_routes_preserved": True, "route_contract_version": "1.0.0"},
         "execution_enabled": _marketplace_search_config() is not None,
+        "marketplace_look_it_image_search": {
+            "implemented": True,
+            "configured": _marketplace_search_config() is not None and _look_it_consent_config() is not None,
+            "endpoint": "POST /v1/marketplace/search/image",
+            "returns_product_details": False,
+            "resource_bound_consent_required": True,
+            "cal_authorization_required_before_display": True,
+        },
         "marketplace_description_search": {
             "implemented": True,
             "configured": _marketplace_search_config() is not None,

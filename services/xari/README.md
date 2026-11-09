@@ -1,6 +1,6 @@
 # PNELLY assistant service (compatibility source path: `services/xari`)
 
-**Status:** consent-aware route planning plus an implemented, configuration-gated natural-language marketplace-search adapter.
+**Status:** consent-aware route planning plus configuration-gated text and Look It visual-search adapters. Visual retrieval returns no product or offer details before CAL.
 
 PNELLY is the canonical product-facing assistant and orchestration identity. Xari, Tari and Xyra are legacy aliases/source generations; there is one assistant runtime. The `services/xari` source path and `/v1/*` route contract are retained temporarily for compatibility, not as a second assistant.
 
@@ -9,6 +9,12 @@ PNELLY is the canonical product-facing assistant and orchestration identity. Xar
 POST /v1/marketplace/search accepts a natural-language product/garment description and optional category/limit. PNELLY forwards a typed request to the private Vision Intelligence service, which ranks current active, approved, in-stock Commerce offers enriched with active Catalog descriptions and attributes. This supports requests such as “a modest green linen dress for warm weather” or “a moisturizer with a light texture”.
 
 The result is named candidates, with display_authorized=false and decision_status=PENDING_CAL. Similarity values are not probabilities. PNELLY does not authorize display, fit, or purchase: NPL, explicit cultural-identity requirements and CAL still have to run before any candidate is shown.
+
+## Look It visual reference search
+
+POST /v1/marketplace/search/image is the PNELLY Look It route, distinct from Click It. It requires a trusted service bearer, verified subject ID, consent bundle ID, exact request resource ID, and explicit `image_processing` plus `look_it` flags. PNELLY independently verifies the active resource-bound Identity consent before it forwards the image to Vision Intelligence. The request is capped at 10 MiB and accepts JPEG, PNG or WebP. It returns a candidate count and bounded outfit-component descriptions only; it does not return catalog products, merchant identities, prices, image URLs or purchase authority. Responses are `no-store, private`.
+
+Consent must expire and be revoked by the BFF after the operation. Missing, expired, revoked, wrong-subject or wrong-resource consent blocks processing. Optional outfit decomposition is not called unless the configured model/revision/report pins and a separate privacy-approval digest are present; that configuration is not proof of a live provider or legal/retention approval. Commerce landed-cost comparison is a separate current offer flow and remains gated until CAL authorizes candidate display.
 
 The historical Virtual Twin `/click-it` route remains a separately gated internal contract. The Marketplace BFF now closes Click It uploads without reading or forwarding the photo and returns `503 CLICK_IT_PRIVACY_PIPELINE_NOT_RELEASED`; Vision Intelligence independently refuses processing until the masking and asset-attestation pipeline is released. Do not advertise Click It as available.
 
@@ -19,12 +25,14 @@ The historical Virtual Twin `/click-it` route remains a separately gated interna
 - GET /capabilities — route and marketplace-adapter status.
 - POST /v1/route — existing route-planning contract.
 - POST /v1/marketplace/search — authenticated semantic candidate search.
+- POST /v1/marketplace/search/image — authenticated, resource-consented Look It reference search.
 
 ## Environment
 
 - PNELLY_API_TOKEN: preferred high-entropy internal bearer token (at least 32 UTF-8 bytes). XARI_API_TOKEN and TARI_API_TOKEN remain compatibility fallbacks.
 - VISION_INTELLIGENCE_API_URL: trusted HTTPS base URL for the private Vision Intelligence service (local HTTP only for development).
 - VISION_INTELLIGENCE_API_TOKEN: internal worker bearer token, at least 32 bytes.
+- CONSENT_API_URL / CONSENT_API_TOKEN: trusted Identity Learning consent verifier and internal bearer, required by Look It.
 - Existing optional trusted base URLs: XARI_CHAT_API_URL, DERMALSIGHT_API_URL, MARKETPLACE_BFF_URL, VIRTUAL_TRY_ON_API_URL, VIRTUAL_TWIN_API_URL, WARDROBE_API_URL.
 
 For local verification:

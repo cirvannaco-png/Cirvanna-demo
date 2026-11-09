@@ -69,6 +69,18 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       </div>
       <div class="ai-status" id="aiSearchStatus" role="status" aria-live="polite">PNELLY description search requires the private vision worker. Candidate matches are not product recommendations until CAL authorizes display; price comparisons must use current Commerce offers, not generated estimates.</div>
     </section>
+    <section class="ai-panel" aria-labelledby="lookItTitle">
+      <div class="eyebrow">PNELLY · Look It</div>
+      <h2 id="lookItTitle">Search from an outfit reference</h2>
+      <p>Upload a reference image of an outfit you are authorized to use. Look It is separate from Click It: it searches outfit components, does not identify people, and does not publish the uploaded image. Product, merchant, price and offer details remain withheld until CAL authorizes display.</p>
+      <div class="ai-controls">
+        <input id="lookItImage" class="wide" type="file" accept="image/jpeg,image/png,image/webp" aria-label="Choose an outfit reference image">
+        <label class="consent-line wide"><input id="lookItImageConsent" type="checkbox" required><span>I consent to ephemeral image processing for this Look It request.</span></label>
+        <label class="consent-line wide"><input id="lookItPurposeConsent" type="checkbox" required><span>I separately consent to using this image for PNELLY Look It outfit discovery.</span></label>
+        <button class="btn primary wide" id="lookItBtn">Search this outfit with Look It</button>
+      </div>
+      <div class="ai-status" id="lookItStatus" role="status" aria-live="polite">Look It requires an authenticated account and both consent choices. The request consent is short-lived and revoked after processing. Product and price details are not returned before CAL authorization.</div>
+    </section>
     <section class="ai-panel" aria-labelledby="clickItTitle">
       <div class="eyebrow">Click It · Temporarily paused</div>
       <h2 id="clickItTitle">Photo search is temporarily unavailable</h2>
@@ -330,6 +342,42 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       ? "PENDING_CAL: Search completed with "+count+" marketplace candidate(s). They are withheld from display until CAL, NPL and explicit cultural-identity checks return an authorization."+scoreNote
       : "Search completed: no marketplace candidates met the current retrieval criteria. Try a different description or photo."+scoreNote);
   }
+  $("lookItBtn").addEventListener("click",async()=>{
+    const image=$("lookItImage").files&&$("lookItImage").files[0];
+    if(!image){setAiStatus("lookItStatus","Choose an outfit reference image first.",true);return}
+    if(!$("lookItImageConsent").checked||!$("lookItPurposeConsent").checked){setAiStatus("lookItStatus","Both separate Look It consent controls are required.",true);return}
+    if(!["image/jpeg","image/png","image/webp"].includes(image.type)){setAiStatus("lookItStatus","Choose a JPEG, PNG or WebP image.",true);return}
+    if(image.size>10*1024*1024){setAiStatus("lookItStatus","The image exceeds the 10 MiB upload limit.",true);return}
+    setAiBusy("lookItBtn",true,"Searching…");
+    setAiStatus("lookItStatus","Verifying your account and short-lived Look It consent before image processing…");
+    try{
+      const form=new FormData();
+      form.append("consent_image_processing","true");
+      form.append("consent_look_it","true");
+      form.append("reference_image",image,image.name||"look-it-reference");
+      if($("aiCategory").value)form.append("category",$("aiCategory").value);
+      const response=await fetch("/api/vision/look-it",{method:"POST",headers:{Accept:"application/json"},body:form});
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok)throw new Error((data.detail&&data.detail.code)||("Look It returned HTTP "+response.status+"."));
+      if(data.status!=="complete"||data.display_authorized!==false||data.decision_status!=="PENDING_CAL"||data.image_persisted!==false||!Array.isArray(data.outfit_decomposition&&data.outfit_decomposition.components))throw new Error("Look It returned an invalid or unsafe response.");
+      const count=Number(data.candidate_count)||0;
+      const decomposition=data.outfit_decomposition;
+      const components=decomposition.components;
+      const componentSummary=components.length
+        ? " Components: "+components.map(x=>x.category+": "+x.description+" ("+(Number(x.candidate_count)||0)+" candidate(s))").join("; ")+"."
+        : " Outfit decomposition is unavailable ("+(decomposition.reason||"validated provider not configured")+").";
+      const matchSummary=count
+        ? "Look It found "+count+" candidate offer(s)."
+        : "Look It found no current marketplace candidates.";
+      setAiStatus("lookItStatus",matchSummary+componentSummary+" Product, merchant, price and offer details remain withheld pending CAL authorization.");
+      $("lookItImage").value="";
+      $("lookItImageConsent").checked=false;
+      $("lookItPurposeConsent").checked=false;
+    }catch(e){
+      setAiStatus("lookItStatus",(e&&e.message?e.message:"Look It is unavailable")+". The image is not displayed or stored by this page.",true);
+    }finally{setAiBusy("lookItBtn",false,"Search this outfit with Look It")}
+  });
+
   $("aiSearchBtn").addEventListener("click",async()=>{
     const query=$("aiQuery").value.trim(),category=$("aiCategory").value;
     if(query.length<3){setAiStatus("aiSearchStatus","Enter a product description of at least 3 characters.",true);return}
