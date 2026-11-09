@@ -389,3 +389,71 @@ def test_stale_wardrobe_context_is_downgraded_to_eepl_review_not_inferred():
     )
     assert result.verdict is GateVerdict.REVIEW
     assert "EEPL_REQUIRED_CONTEXT_MISSING_LOCATION" in result.reason_codes
+
+def test_discovery_forwards_market_destination_and_fulfilment_filters_to_commerce(monkeypatch):
+    monkeypatch.setenv("CATALOG_SERVICE_URL", "https://catalog.example.test")
+    monkeypatch.setenv("CATALOG_API_TOKEN", "catalog-internal-token-more-than-thirty-two-bytes")
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def __init__(self, body):
+            self._body = body
+
+        def json(self):
+            return self._body
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def get(self, url, **kwargs):
+            calls.append((url, kwargs))
+            if url.endswith("/products"):
+                return FakeResponse({"items": [product(P1, "Minimal shirt", {"style": "minimal"})], "total": 1})
+            return FakeResponse({"items": [offer(P1, "v1", 10000)], "total": 1})
+
+    monkeypatch.setattr(main.httpx, "Client", FakeClient)
+    request = main.DiscoveryRequest(
+        user_id="subject-verified-1",
+        query="",
+        category="shirt",
+        market_country_code="KE",
+        display_currency="KES",
+        destination_key="Nakuru/Subukia",
+        fulfillment_mode="courier_delivery",
+        radius_km=75,
+        offset=20,
+        limit=15,
+    )
+
+    products, offers = main._discover_catalog_and_offers(request)
+
+    assert [item["product_id"] for item in products] == [P1]
+    assert [item["catalog_product_id"] for item in offers] == [P1]
+    assert calls[0][0] == "https://catalog.example.test/products"
+    assert calls[0][1]["params"] == {"limit": 15, "offset": 20, "category": "shirt"}
+    assert calls[1][0] == "https://commerce.example.test/marketplace/offers"
+    assert calls[1][1]["params"] == {
+        "limit": 15,
+        "offset": 20,
+        "category": "shirt",
+        "market_country_code": "KE",
+        "display_currency": "KES",
+        "destination_key": "Nakuru/Subukia",
+        "radius_km": 75.0,
+        "fulfillment_mode": "courier_delivery",
+    }
+
+
+def test_discovery_query_may_be_empty_for_market_browse():
+    request = main.DiscoveryRequest(user_id="subject-verified-1", query="", market_country_code="KE")
+    assert request.query == ""
