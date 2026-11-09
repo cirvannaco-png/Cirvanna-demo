@@ -1,0 +1,648 @@
+{
+  "schema_version": 1,
+  "repository": "cirvannaco-png/Cirvanna-demo",
+  "canonical_source": true,
+  "artifact_kind": "provider_neutral_system_deployment_inventory",
+  "release_status": "blocked",
+  "deployment": {
+    "production_platform": null,
+    "production_environment_id": null,
+    "production_release_commit": null,
+    "operationally_complete": false,
+    "note": "This is the canonical service/dependency inventory, not an executable deployment or proof of provisioning. Provider-specific deployment is blocked until the platform, region, budget, identity, databases, secrets, monitoring and recovery ownership are approved."
+  },
+  "public_ingress": "marketplace-bff",
+  "policy": {
+    "one_public_browser_origin": true,
+    "internal_services_private": true,
+    "service_ownership_is_authoritative": true,
+    "provider_credentials_from_secret_manager_only": true,
+    "disabled_features_require_explicit_enablement_gate": true
+  },
+  "services": [
+    {
+      "id": "marketplace-bff",
+      "source_path": "services/marketplace-bff",
+      "containerized": true,
+      "dockerfile": "services/marketplace-bff/Dockerfile",
+      "build_context": ".",
+      "build_context_verified_by_ci": true,
+      "exposure": "public_edge",
+      "required_for_marketplace": true,
+      "production_enabled": false,
+      "readiness_path": "/ready",
+      "depends_on_services": [
+        "api-gateway",
+        "catalog-service",
+        "commerce-service",
+        "privacy-governance-service",
+        "wardrobe-service",
+        "xari"
+      ],
+      "depends_on_providers": [
+        "oidc_identity_provider"
+      ],
+      "data_store_refs": [],
+      "release_gates": [
+        "REL-01",
+        "REL-04",
+        "REL-07",
+        "REL-09",
+        "REL-10",
+        "REL-11"
+      ]
+    },
+    {
+      "id": "api-gateway",
+      "source_path": "services/api-gateway",
+      "containerized": true,
+      "dockerfile": "services/api-gateway/Dockerfile",
+      "build_context": ".",
+      "build_context_verified_by_ci": false,
+      "exposure": "private_api",
+      "required_for_marketplace": true,
+      "production_enabled": false,
+      "readiness_path": "/ready",
+      "depends_on_services": [
+        "catalog-service",
+        "commerce-service",
+        "identity-learning-service",
+        "npl-service",
+        "cultural-identity-service",
+        "recommendation-service"
+      ],
+      "depends_on_providers": [
+        "safety_evidence_provider",
+        "fci_predictor_provider"
+      ],
+      "data_store_refs": [],
+      "release_gates": [
+        "REL-07",
+        "REL-08",
+        "REL-10",
+        "REL-11"
+      ]
+    },
+    {
+      "id": "catalog-service",
+      "source_path": "services/catalog-service",
+      "containerized": true,
+      "dockerfile": "services/catalog-service/Dockerfile",
+      "build_context": "services/catalog-service",
+      "build_context_verified_by_ci": true,
+      "exposure": "private_api",
+      "required_for_marketplace": true,
+      "production_enabled": false,
+      "readiness_path": "/ready",
+      "depends_on_services": [],
+      "depends_on_providers": [],
+      "data_store_refs": [
+        "catalog-postgres"
+      ],
+      "release_gates": [
+        "REL-01",
+        "REL-03",
+        "REL-06",
+        "REL-11"
+      ]
+    },
+    {
+      "id": "commerce-service",
+      "source_path": "services/commerce-service",
+      "containerized": true,
+      "dockerfile": "services/commerce-service/Dockerfile",
+      "build_context": "services/commerce-service",
+      "build_context_verified_by_ci": true,
+      "exposure": "private_api",
+      "required_for_marketplace": true,
+      "production_enabled": false,
+      "readiness_path": "/ready",
+      "depends_on_services": [
+        "catalog-service"
+      ],
+      "depends_on_providers": [
+        "oidc_identity_provider",
+        "stripe",
+        "fx_provider",
+        "tax_provider",
+        "fulfillment_provider"
+      ],
+      "data_store_refs": [
+        "commerce-postgres"
+      ],
+      "release_gates": [
+        "REL-03",
+        "REL-04",
+        "REL-05",
+        "REL-06",
+        "REL-13"
+      ]
+    },
+    {
+      "id": "decision-service",
+      "source_path": "services/decision-service",
+      "containerized": true,
+      "dockerfile": "services/decision-service/Dockerfile",
+      "build_context": ".",
+      "build_context_verified_by_ci": true,
+      "exposure": "private_api",
+      "required_for_marketplace": false,
+      "production_enabled": false,
+      "readiness_path": "/ready",
+      "depends_on_services": [
+        "npl-service",
+        "cultural-identity-service"
+      ],
+      "depends_on_providers": [
+        "safety_evidence_provider",
+        "fci_predictor_provider"
+      ],
+      "data_store_refs": [],
+      "release_gates": [
+        "REL-07",
+        "REL-08",
+        "REL-10"
+      ]
+    },
+    {
+      "id": "identity-learning-service",
+      "source_path": "services/identity-learning-service",
+      "containerized": true,
+      "dockerfile": "services/identity-learning-service/Dockerfile",
+      "build_context": "services/identity-learning-service",
+      "build_context_verified_by_ci": false,
+      "exposure": "private_api",
+      "required_for_marketplace": true,
+      "production_enabled": false,
+      "readiness_path": "/ready",
+      "depends_on_services": [],
+      "depends_on_providers": [
+        "oidc_identity_provider"
+      ],
+      "data_store_refs": [
+        "identity-learning-postgres"
+      ],
+      "release_gates": [
+        "REL-03",
+        "REL-04",
+        "REL-09",
+        "REL-10",
+        "REL-11"
+      ]
+    },
+    {
+      "id": "privacy-governance-service",
+      "source_path": "services/privacy-governance-service",
+      "containerized": true,
+      "dockerfile": "services/privacy-governance-service/Dockerfile",
+      "build_context": "services/privacy-governance-service",
+      "build_context_verified_by_ci": true,
+      "exposure": "private_api",
+      "required_for_marketplace": false,
+      "production_enabled": false,
+      "readiness_path": "/ready",
+      "depends_on_services": [
+        "asset-service"
+      ],
+      "depends_on_providers": [
+        "jurisdiction_resolver",
+        "content_lifecycle_provider",
+        "guardian_verification_provider",
+        "rights_authority_verification_provider",
+        "vision_privacy_attestation_provider"
+      ],
+      "data_store_refs": [
+        "privacy-governance-postgres"
+      ],
+      "release_gates": [
+        "REL-09",
+        "REL-10",
+        "REL-14"
+      ]
+    },
+    {
+      "id": "asset-service",
+      "source_path": "services/asset-service",
+      "containerized": true,
+      "dockerfile": "services/asset-service/Dockerfile",
+      "build_context": ".",
+      "build_context_verified_by_ci": true,
+      "exposure": "private_api",
+      "required_for_marketplace": false,
+      "production_enabled": false,
+      "readiness_path": "/ready",
+      "depends_on_services": [],
+      "depends_on_providers": [
+        "private_object_storage"
+      ],
+      "data_store_refs": [],
+      "release_gates": [
+        "REL-09",
+        "REL-10",
+        "REL-14"
+      ]
+    },
+    {
+      "id": "recommendation-service",
+      "source_path": "services/recommendation-service",
+      "containerized": true,
+      "dockerfile": "services/recommendation-service/Dockerfile",
+      "build_context": "services/recommendation-service",
+      "build_context_verified_by_ci": false,
+      "exposure": "private_api",
+      "required_for_marketplace": false,
+      "production_enabled": false,
+      "readiness_path": "/ready",
+      "depends_on_services": [],
+      "depends_on_providers": [],
+      "data_store_refs": [],
+      "release_gates": [
+        "REL-12",
+        "REL-15"
+      ]
+    },
+    {
+      "id": "vision-intelligence",
+      "source_path": "services/vision-intelligence",
+      "containerized": true,
+      "dockerfile": "services/vision-intelligence/Dockerfile",
+      "build_context": "services/vision-intelligence",
+      "build_context_verified_by_ci": true,
+      "exposure": "private_worker",
+      "required_for_marketplace": false,
+      "production_enabled": false,
+      "readiness_path": "/ready",
+      "depends_on_services": [
+        "catalog-service"
+      ],
+      "depends_on_providers": [
+        "vision_privacy_attestation_provider"
+      ],
+      "data_store_refs": [],
+      "release_gates": [
+        "REL-09",
+        "REL-14"
+      ]
+    },
+    {
+      "id": "virtual-twin",
+      "source_path": "services/virtual-twin",
+      "containerized": true,
+      "dockerfile": "services/virtual-twin/Dockerfile",
+      "build_context": "services/virtual-twin",
+      "build_context_verified_by_ci": false,
+      "exposure": "private_api",
+      "required_for_marketplace": false,
+      "production_enabled": false,
+      "readiness_path": "/ready",
+      "depends_on_services": [
+        "asset-service",
+        "privacy-governance-service",
+        "vision-intelligence"
+      ],
+      "depends_on_providers": [
+        "private_object_storage"
+      ],
+      "data_store_refs": [],
+      "release_gates": [
+        "REL-09",
+        "REL-10",
+        "REL-14"
+      ]
+    },
+    {
+      "id": "virtual-try-on",
+      "source_path": "services/virtual-try-on",
+      "containerized": true,
+      "dockerfile": "services/virtual-try-on/Dockerfile",
+      "build_context": "services/virtual-try-on",
+      "build_context_verified_by_ci": false,
+      "exposure": "private_api",
+      "required_for_marketplace": false,
+      "production_enabled": false,
+      "readiness_path": "/ready",
+      "depends_on_services": [
+        "asset-service",
+        "virtual-twin"
+      ],
+      "depends_on_providers": [
+        "private_object_storage"
+      ],
+      "data_store_refs": [],
+      "release_gates": [
+        "REL-09",
+        "REL-10",
+        "REL-12"
+      ]
+    },
+    {
+      "id": "vton-model-worker",
+      "source_path": "services/virtual-try-on/model-worker",
+      "containerized": true,
+      "dockerfile": "services/virtual-try-on/model-worker/Dockerfile",
+      "build_context": "services/virtual-try-on/model-worker",
+      "build_context_verified_by_ci": false,
+      "exposure": "private_worker",
+      "required_for_marketplace": false,
+      "production_enabled": false,
+      "readiness_path": "/ready",
+      "depends_on_services": [],
+      "depends_on_providers": [
+        "licensed_renderer_model"
+      ],
+      "data_store_refs": [],
+      "release_gates": [
+        "REL-08",
+        "REL-09",
+        "REL-12"
+      ]
+    },
+    {
+      "id": "dermalsight",
+      "source_path": "services/dermalsight",
+      "containerized": true,
+      "dockerfile": "services/dermalsight/Dockerfile",
+      "build_context": "services/dermalsight",
+      "build_context_verified_by_ci": false,
+      "exposure": "private_worker",
+      "required_for_marketplace": false,
+      "production_enabled": false,
+      "readiness_path": "/ready",
+      "depends_on_services": [],
+      "depends_on_providers": [
+        "licensed_skin_model"
+      ],
+      "data_store_refs": [],
+      "release_gates": [
+        "REL-08",
+        "REL-09",
+        "REL-12"
+      ]
+    },
+    {
+      "id": "skincare-routine-service",
+      "source_path": "services/skincare-routine-service",
+      "containerized": true,
+      "dockerfile": "services/skincare-routine-service/Dockerfile",
+      "build_context": "services/skincare-routine-service",
+      "build_context_verified_by_ci": false,
+      "exposure": "private_api",
+      "required_for_marketplace": false,
+      "production_enabled": false,
+      "readiness_path": "/ready",
+      "depends_on_services": [
+        "dermalsight"
+      ],
+      "depends_on_providers": [],
+      "data_store_refs": [],
+      "release_gates": [
+        "REL-09",
+        "REL-10",
+        "REL-12"
+      ]
+    },
+    {
+      "id": "wardrobe-service",
+      "source_path": "services/wardrobe-service",
+      "containerized": false,
+      "dockerfile": null,
+      "build_context": null,
+      "build_context_verified_by_ci": false,
+      "exposure": "not_containerized",
+      "required_for_marketplace": false,
+      "production_enabled": false,
+      "readiness_path": "/ready",
+      "depends_on_services": [
+        "identity-learning-service"
+      ],
+      "depends_on_providers": [],
+      "data_store_refs": [],
+      "release_gates": [
+        "REL-03",
+        "REL-09",
+        "REL-10",
+        "REL-11"
+      ]
+    },
+    {
+      "id": "npl-service",
+      "source_path": "services/npl-service",
+      "containerized": false,
+      "dockerfile": null,
+      "build_context": null,
+      "build_context_verified_by_ci": false,
+      "exposure": "not_containerized",
+      "required_for_marketplace": true,
+      "production_enabled": false,
+      "readiness_path": "/ready",
+      "depends_on_services": [],
+      "depends_on_providers": [],
+      "data_store_refs": [
+        "npl-postgres"
+      ],
+      "release_gates": [
+        "REL-03",
+        "REL-07",
+        "REL-09",
+        "REL-11"
+      ]
+    },
+    {
+      "id": "cultural-identity-service",
+      "source_path": "services/cultural-identity-service",
+      "containerized": false,
+      "dockerfile": null,
+      "build_context": null,
+      "build_context_verified_by_ci": false,
+      "exposure": "not_containerized",
+      "required_for_marketplace": true,
+      "production_enabled": false,
+      "readiness_path": "/ready",
+      "depends_on_services": [],
+      "depends_on_providers": [],
+      "data_store_refs": [
+        "cultural-identity-postgres"
+      ],
+      "release_gates": [
+        "REL-03",
+        "REL-07",
+        "REL-09",
+        "REL-11"
+      ]
+    },
+    {
+      "id": "xari",
+      "source_path": "services/xari",
+      "containerized": false,
+      "dockerfile": null,
+      "build_context": null,
+      "build_context_verified_by_ci": false,
+      "exposure": "not_containerized",
+      "required_for_marketplace": false,
+      "production_enabled": false,
+      "readiness_path": "/ready",
+      "depends_on_services": [
+        "commerce-service",
+        "catalog-service"
+      ],
+      "depends_on_providers": [],
+      "data_store_refs": [],
+      "release_gates": [
+        "REL-10",
+        "REL-12",
+        "REL-15"
+      ]
+    }
+  ],
+  "data_stores": [
+    {
+      "id": "catalog-postgres",
+      "owner_service": "catalog-service",
+      "kind": "managed_postgresql",
+      "provisioned_for_production": false,
+      "backup_restore_verified": false
+    },
+    {
+      "id": "commerce-postgres",
+      "owner_service": "commerce-service",
+      "kind": "managed_postgresql",
+      "provisioned_for_production": false,
+      "backup_restore_verified": false
+    },
+    {
+      "id": "identity-learning-postgres",
+      "owner_service": "identity-learning-service",
+      "kind": "approved_shared_postgresql_namespace",
+      "provisioned_for_production": false,
+      "backup_restore_verified": false
+    },
+    {
+      "id": "privacy-governance-postgres",
+      "owner_service": "privacy-governance-service",
+      "kind": "managed_postgresql",
+      "provisioned_for_production": false,
+      "backup_restore_verified": false
+    },
+    {
+      "id": "npl-postgres",
+      "owner_service": "npl-service",
+      "kind": "managed_postgresql",
+      "provisioned_for_production": false,
+      "backup_restore_verified": false
+    },
+    {
+      "id": "cultural-identity-postgres",
+      "owner_service": "cultural-identity-service",
+      "kind": "managed_postgresql",
+      "provisioned_for_production": false,
+      "backup_restore_verified": false
+    }
+  ],
+  "external_providers": [
+    {
+      "id": "oidc_identity_provider",
+      "purpose": "customer, merchant and admin identity/session lifecycle",
+      "configured_for_production": false,
+      "operationally_verified": false,
+      "release_gate": "REL-04"
+    },
+    {
+      "id": "stripe",
+      "purpose": "checkout, payment webhook and reconciliation",
+      "configured_for_production": false,
+      "operationally_verified": false,
+      "release_gate": "REL-05"
+    },
+    {
+      "id": "fx_provider",
+      "purpose": "market-specific executable FX quotes",
+      "configured_for_production": false,
+      "operationally_verified": false,
+      "release_gate": "REL-13"
+    },
+    {
+      "id": "tax_provider",
+      "purpose": "authoritative destination and product-category tax quotes",
+      "configured_for_production": false,
+      "operationally_verified": false,
+      "release_gate": "REL-13"
+    },
+    {
+      "id": "fulfillment_provider",
+      "purpose": "shipping, courier, merchant delivery, collection and local transport quotes",
+      "configured_for_production": false,
+      "operationally_verified": false,
+      "release_gate": "REL-13"
+    },
+    {
+      "id": "safety_evidence_provider",
+      "purpose": "independent current safety and legal eligibility evidence",
+      "configured_for_production": false,
+      "operationally_verified": false,
+      "release_gate": "REL-08"
+    },
+    {
+      "id": "fci_predictor_provider",
+      "purpose": "trained fit predictor with independently validated calibration",
+      "configured_for_production": false,
+      "operationally_verified": false,
+      "release_gate": "REL-08"
+    },
+    {
+      "id": "jurisdiction_resolver",
+      "purpose": "trusted applicable-jurisdiction resolution for photo processing and rights cases",
+      "configured_for_production": false,
+      "operationally_verified": false,
+      "release_gate": "REL-14"
+    },
+    {
+      "id": "content_lifecycle_provider",
+      "purpose": "asset version resolution, quarantine, unpublish, delete propagation and replica/cache/CDN handling",
+      "configured_for_production": false,
+      "operationally_verified": false,
+      "release_gate": "REL-14"
+    },
+    {
+      "id": "guardian_verification_provider",
+      "purpose": "purpose-bound independent guardian authority verification",
+      "configured_for_production": false,
+      "operationally_verified": false,
+      "release_gate": "REL-14"
+    },
+    {
+      "id": "rights_authority_verification_provider",
+      "purpose": "independent photographed-person or representative authority verification",
+      "configured_for_production": false,
+      "operationally_verified": false,
+      "release_gate": "REL-14"
+    },
+    {
+      "id": "vision_privacy_attestation_provider",
+      "purpose": "asset-bound masking attestation plus human privacy review",
+      "configured_for_production": false,
+      "operationally_verified": false,
+      "release_gate": "REL-14"
+    },
+    {
+      "id": "private_object_storage",
+      "purpose": "private media storage, immutable object versions and deletion lifecycle",
+      "configured_for_production": false,
+      "operationally_verified": false,
+      "release_gate": "REL-09"
+    },
+    {
+      "id": "licensed_renderer_model",
+      "purpose": "licensed and evaluated virtual try-on renderer",
+      "configured_for_production": false,
+      "operationally_verified": false,
+      "release_gate": "REL-12"
+    },
+    {
+      "id": "licensed_skin_model",
+      "purpose": "licensed, validated non-diagnostic DermalSight model",
+      "configured_for_production": false,
+      "operationally_verified": false,
+      "release_gate": "REL-12"
+    }
+  ]
+}

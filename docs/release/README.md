@@ -1,6 +1,6 @@
 # Production release evidence
 
-The machine-readable source of truth is [release-gates.json](release-gates.json). It is initialized as **blocked** because there is no complete, verified production evidence package in this repository.
+The machine-readable source of truth is [release-gates.json](release-gates.json). It contains 16 required gates and is **blocked** because there is no complete, verified production evidence package in this repository. The canonical provider-neutral deployment inventory is [infrastructure/deployment/canonical-stack.json](../../infrastructure/deployment/canonical-stack.json); it is not an executable deployment or operational proof.
 
 ## How to close a gate
 
@@ -29,7 +29,7 @@ Fail a release check unless every required gate is passed and carries evidence f
 python scripts/validate_release_gates.py --require-all-passed
 ```
 
-The release command is intentionally stricter than normal CI: ordinary pull requests can improve the architecture while production remains blocked. The production runbook remains [marketplace-production-readiness.md](../marketplace-production-readiness.md).
+The release command is intentionally stricter than normal CI: ordinary pull requests can improve the architecture while production remains blocked. The production runbook remains [marketplace-production-readiness.md](../marketplace-production-readiness.md). The expanded system gaps and acceptance criteria are in [system-readiness-and-quality-2026-11-09.md](../architecture/system-readiness-and-quality-2026-11-09.md).
 
 ## Change control
 

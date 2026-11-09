@@ -4,7 +4,7 @@
 
 Cirvanna is an identity-first beauty, fashion, fit, and commerce-intelligence platform. It is designed to help people evaluate whether products and complete looks fit their declared preferences, context, and available evidence before purchase. For merchants, the objective is to improve relevance and measure avoidable returns through controlled pilots—not to promise unverified conversion or return-reduction gains.
 
-> **Engineering status — 2 November 2026:** Cirvanna is an active multi-service codebase with deterministic domain contracts and runnable API foundations. Complementer Personal Aesthetic Intelligence and Catalog product-intelligence validation are merged in PR #72. PR #74 has merged these capabilities: a private identity-learning service, Commerce-verified subject binding (required by default), consent-gated persistent USI profiles, durable TAL event storage, live Catalog/Commerce discovery, signed safety/FCI evidence adapters, and CAL-only product-detail release. These are implemented code paths and regression-tested contracts; the existing PostgreSQL migration, provider credentials/attestations, production OIDC configuration, deployed identity service, backup/restore, and end-to-end deployment verification remain operational gates. No real safety provider or calibrated FCI provider is configured, so discovery intentionally withholds candidates as REVIEW. Validated DermalSight inference and longitudinal skin forecasting also remain incomplete. **Cirvanna is not production-ready.**
+> **Engineering status — 9 November 2026:** Cirvanna is an active multi-service engineering candidate, not a production-ready system. PR #180 is merged. PR #181 is merged on current `main` (merge commit `706fa2b3bed8ee14e35ae4fe703a11c3414bc804`) and adds the first multi-market Commerce schema foundation at revision `20261109_0007`; it does not activate markets or connect live FX, tax, fulfilment, or payment-capability providers. PR #102's substantial multi-market offer/comparison implementation is on a historical branch with conflicting migration history and must be ported after `20261109_0007`. PR #84 and #62 require current-main reconciliation; historical workflow results are not current integration evidence. PR #182 adds BFF consent/revocation and photographed-person rights routes, but does not enable Click It photo processing. No independent production safety provider, trained/calibrated FCI predictor, verified production identity lifecycle, operationally complete infrastructure, managed backup/restore evidence, or end-to-end deployed release is established. **Cirvanna is not production-ready.**
 
 ## Contents
 
@@ -20,6 +20,7 @@ Cirvanna is an identity-first beauty, fashion, fit, and commerce-intelligence pl
 - [Configuration](#configuration)
 - [Testing and CI](#testing-and-ci)
 - [Deployment](#deployment)
+- [System readiness and integration requirements](#system-readiness-and-integration-requirements)
 - [Security and responsible AI](#security-and-responsible-ai)
 - [Implementation status](#implementation-status)
 - [Release roadmap](#release-roadmap)
@@ -389,6 +390,9 @@ For every CI report, record the branch, commit SHA, workflow/job, exact test res
 
 ## Deployment
 
+The canonical provider-neutral service and dependency inventory is [infrastructure/deployment/canonical-stack.json](infrastructure/deployment/canonical-stack.json). It identifies the intended public BFF boundary, service owners, container build contexts, data-store owners, provider dependencies and release gates. It is an inventory and validation artifact only—not an executable deployment, a configured cloud environment, or evidence that a single canonical release is running. See [the system readiness register](docs/architecture/system-readiness-and-quality-2026-11-09.md).
+
+
 Deploy bounded services independently. Use the build context expected by each Dockerfile:
 
 - API Gateway — build from the repository root because the image copies shared domain packages:
@@ -435,6 +439,18 @@ There is no verified production deployment or full release certification represe
 - Unknown, incomplete, invalid, or untrusted evidence must fail closed to REVIEW or an unavailable response.
 - Never present a model narrative, heuristic, or visual score as a validated forecast.
 
+## System readiness and integration requirements
+
+The detailed, versioned gap register is [docs/architecture/system-readiness-and-quality-2026-11-09.md](docs/architecture/system-readiness-and-quality-2026-11-09.md). It governs the current integration order and release boundaries.
+
+- **FCI predictive validity:** the current package has an evidence contract and offline calibration metrics, not a trained predictor. A proposed subject-disjoint, out-of-time validator evaluates real fit outcomes; its synthetic CI fixtures are not model evidence and a candidate pass is not production approval.
+- **Infrastructure:** container builds and readiness contracts do not prove provider operation, provisioned databases, backup/restore, monitoring, alerting, on-call, rollback or a completed staging journey.
+- **Decision quality:** CAL must remain the sole SHOW/BLOCK/REVIEW authority. Decision receipts need complete gate/version provenance and must be durably committed before product details are released. Offline metrics are not live monitoring.
+- **Canonical deployment:** the service inventory is provider-neutral. One exact-commit deployment with immutable image digests, private service topology, database revisions, provider versions, monitoring and recovery ownership remains unverified.
+- **Inter-model calibration:** PNELLY, Complementer and baseline scores are not directly comparable probabilities. Each model requires independent calibration on a separate calibration split and comparison on the same untouched candidate pools, human-reviewed outcomes and market/category slices.
+- **Privacy and Click It:** purpose consent, revocation, deletion/retention, rights intake, child-specific safeguards and public-media route coverage are separate release gates. Click It remains disabled until real provider operations and every publication/delivery path are verified.
+- **Multi-market marketplace:** #181 supplies schema foundations only. #102 must be rebuilt on current main with a single migration lineage and real integration across Catalog, Commerce, Marketplace BFF, provider evidence, comparison and checkout.
+
 ## Implementation status
 
 Status below reflects repository contracts and code, not production deployment.
@@ -446,14 +462,15 @@ Status below reflects repository contracts and code, not production deployment.
 | NPL | Domain rules plus database-backed PostgreSQL-targeted service; candidate-bound signed evidence; optional API Gateway provider integration | Deployed PostgreSQL, backup/restore, trusted identity binding, production key rotation and E2E |
 | TAL | Durable API/schema for scoped consent receipts, idempotent event append, append-only same-feature corrections, expiry purge, export and deletion; scope-wide withdrawal revokes all active grants; gateway routes bind requests to verified Commerce subjects | Production PostgreSQL provisioning, migration execution, backup/restore evidence, scheduled retention, security review and deployed E2E |
 | Catalog | Canonical product API, version snapshots, optional typed product-intelligence metadata validation | Production DB and restore evidence, editorial/provenance operations, live personalised ranking |
+| FCI | Typed fit estimate, evidence-coverage contract and offline calibration metrics; an offline predictive release validator is proposed in the current architecture work | Trained and independently validated predictor, consented fit outcomes, temporal and subject-disjoint holdouts, subgroup/market calibration, signed model/report release and live provider operations |
 | CAL / decision gateway | Deterministic arbitration; verified-subject Catalog/Commerce discovery and weighted explicit-preference ranking; signed candidate-bound evidence adapters; only CAL SHOW candidates return product/offer details | Real independently validated safety and calibrated FCI providers/report attestations, managed audit, deployed end-to-end display enforcement |
 | Decision service | Authenticated API adapter and signed evidence verification | Trusted live evidence providers, managed audit/replay, identity binding |
 | Cultural Identity | Persistent explicit declaration service and signed candidate-bound evidence contract | Deployed DB, identity binding, key rotation, end-to-end operation |
 | DermalSight | Consent/image validation, ONNX adapter, signed model release gate | Approved model artifact, representative evaluation, validated inference, deployment readiness |
 | Longitudinal skin forecast | Explicitly disabled in capability contract | Licensed repeated-measures dataset, separate temporal model, calibrated ranges, subgroup validation, privacy review |
-| Commerce / marketplace | Backend APIs, merchant/offer/inventory/order/payment foundations, same-origin BFF | Real identity provider, managed database restore, payment/webhook validation, shipping/tax, operations and CAL-gated E2E |
+| Commerce / marketplace | Backend APIs and BFF; PR #181 merged the multi-market provider-evidence schema at `20261109_0007` | Port #102 after the current schema with a new migration; wire provider ingestion, market activation, localized prices, like-for-like offers, fulfilment/tax and checkout revalidation; prove live staging integration |
 | Twin / Try-On / Living Filters | Guarded service and orchestration foundations | Consent/asset authorization, validated renderer/tracking models, licensed assets, device/quality QA |
-| Production operations | CI workflows, container builds, readiness and capability endpoints; identity/TAL and provider release contracts added | Selected Render workspace, production DB/migration/restore proof, managed audit, key rotation, monitoring/alerts, staging smoke tests, rollback drills and operational sign-off |
+| Production operations | CI workflows, container builds, readiness contracts and a provider-neutral canonical service inventory | Select and provision one deployment environment; real provider operations; managed DB/migration/restore; durable decision audit; central monitoring/alerts; key rotation; staging smoke/load/failure tests; rollback and on-call sign-off |
 
 ### PR #72
 
@@ -497,6 +514,9 @@ Start with the [Source of truth and contributor guide](docs/architecture/source-
 - [Runtime source registry](docs/architecture/runtime-source-registry.json)
 - [CRFP marketplace/system-wide scope ADR](docs/architecture/adr/ADR-0003-crfp-marketplace-and-system-scopes.md)
 - [Production release evidence gates](docs/release/README.md)
+- [System readiness, FCI validity, decision monitoring and deployment gaps](docs/architecture/system-readiness-and-quality-2026-11-09.md)
+- [Inter-model recommendation calibration protocol](docs/evaluation/inter-model-recommendation-calibration.md)
+- [Canonical provider-neutral deployment inventory](infrastructure/deployment/canonical-stack.json)
 - [Catalog](services/catalog-service/README.md)
 - [Complementer](services/recommendation-service/README.md)
 - [NPL](services/npl-service/README.md)
