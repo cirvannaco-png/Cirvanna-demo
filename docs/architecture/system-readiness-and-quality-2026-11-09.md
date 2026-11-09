@@ -154,3 +154,19 @@ Thirty kilometres remains the default local radius, with explicit user expansion
 - No mock, fixture, heuristic, schema row, endpoint probe or provider-configured flag is described as live operation.
 - Missing, stale, uncertain, conflicting or untrusted evidence fails closed.
 - Do not merge a PR merely to make a milestone appear complete. A working, integrated, measurable system is the goal.
+
+
+## Workstream 8 — persistent Twin identity and private asset lineage
+
+The current-main reconciliation adds a provider-neutral Twin Registry contract. It owns only Twin metadata (owner subject, Twin ID, mesh asset reference, source image asset references, model release and validation-report provenance). It does not store image/mesh bytes or duplicate Asset Service's asset table.
+
+Every registration and authorization is designed to re-check:
+- resource-bound Identity Consent for the exact subject, consent bundle/version and Twin ID, including expiry and revocation;
+- Asset Service authorization of the mesh plus every source image under the same subject and Twin parent;
+- a signed validation attestation tied to the exact Twin, assets, model revision, release digest and validation report digest.
+
+The current Virtual Try-On contract already expects a Twin Registry authorization response containing an active full-body mesh and source-image asset IDs; the new registry is designed to satisfy that contract. Virtual Twin's current pose skeleton remains ephemeral and is not a mesh or a persistent Twin. A trusted full-body mesh generator and independent validation pipeline are still absent, so there is no production Twin creation path or validated full-body mesh claim.
+
+Identity consent expiry is added to the existing `ConsentReceipt` authority; no parallel consent-bundle table is created. Legacy null-expiry receipts are retained for compatibility. New consent grants can carry a timezone-aware expiry, and active profile/TAL/mesh authorization checks reject expired receipts. Consent and Asset Service health are checked in Twin Registry readiness; these checks do not replace live operational validation, database restore drills, or asset deletion propagation.
+
+**Gate:** REL-17 remains blocked until a licensed/pinned full-body mesh model, independent validation report signer, managed PostgreSQL, private Asset Service storage, consent expiry/revocation, deletion and restore procedures, and complete staging integration are evidenced.

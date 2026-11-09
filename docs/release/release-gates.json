@@ -163,6 +163,16 @@
       "acceptance": "One approved canonical deployment is running the exact release commit with immutable image digests, the full private/public service graph, versioned schemas, approved providers, secret-manager bindings, managed databases, encrypted backups and successful isolated restores, RPO/RTO, central logs/metrics/traces, actionable alerts, on-call/contact ownership, runbooks, dependency failure drills, rollback and staging-to-production promotion evidence.",
       "evidence_refs": [],
       "verified_commit": null
+    },
+    {
+      "id": "REL-17",
+      "name": "Persistent Twin identity, consent, assets and validated representation",
+      "required": true,
+      "status": "blocked",
+      "owner_role": "Twin / privacy / platform owner",
+      "acceptance": "Twin Registry is the sole persistent Twin metadata authority and is integrated with Identity Consent and Asset Service. Every create and authorization verifies exact subject, Twin resource, consent bundle/version/expiry, mesh asset and source-image assets. Asset bytes remain only in private Asset Service. A pinned licensed full-body mesh model and independently reviewed validation pipeline produce a signed release/report attestation. Managed PostgreSQL, Asset Service private object storage, consent expiry/revocation, asset deletion, restore/failure drills and exact-head integration tests are complete. No pose skeleton, mock attestation or registry metadata alone is described as a persistent or validated Twin.",
+      "evidence_refs": [],
+      "verified_commit": null
     }
   ]
 }

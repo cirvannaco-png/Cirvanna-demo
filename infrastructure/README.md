@@ -34,3 +34,10 @@ python -m unittest discover -s tests/architecture -v
 ```
 
 The validator checks inventory integrity, dependency references, service DAGs, build paths and the one-public-ingress invariant. It does not certify build output, production provisioning, network policy, provider readiness, database recovery, or a live deployment.
+
+
+## Persistent Twin dependency
+
+The canonical inventory now includes the private `twin-registry` service and its shared PostgreSQL namespace. Twin Registry owns Twin metadata and lineage only; it delegates binary ownership, authorization and deletion to Asset Service, and consent to Identity Learning. Virtual Twin and Virtual Try-On depend on the registry for owner-bound Twin authorization.
+
+The registry CI builds its service container, but the inventory deliberately marks the service unprovisioned. A full-body mesh generator and independent validation pipeline are not yet operational. Current pose-skeleton inference is not a persistent Twin. Release gate REL-17 remains blocked until the model, signed validation, managed data/store recovery, consent expiry/revocation, asset lifecycle and staging integration are proven.

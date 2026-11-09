@@ -1,3 +1,6 @@
+import os
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -188,19 +191,22 @@ def test_scope_revocation_revokes_every_active_grant(client):
 
 
 
-def _grant_resource_consent(client, *, subject, bundle, resource, scope, receipt):
+def _grant_resource_consent(client, *, subject, bundle, resource, scope, receipt, expires_at=None):
+    payload = {
+        "receipt_id": receipt,
+        "consent_id": bundle,
+        "resource_id": resource,
+        "scope": scope,
+        "consent_version": "media-2026-11-v1",
+        "granted": True,
+    }
+    if expires_at is not None:
+        payload["expires_at"] = expires_at
     return client.post(
         "/v1/tal/consents",
         params={"subject_id": subject},
         headers=auth(),
-        json={
-            "receipt_id": receipt,
-            "consent_id": bundle,
-            "resource_id": resource,
-            "scope": scope,
-            "consent_version": "media-2026-11-v1",
-            "granted": True,
-        },
+        json=payload,
     )
 
 
@@ -470,3 +476,153 @@ def test_personal_color_profile_is_included_in_export_and_deleted_with_user_data
     assert deleted.status_code == 200
     assert deleted.json()["deleted_color_profile"] is True
     assert client.get("/v1/color-profiles/user-verified-1", headers=auth()).status_code == 403
+
+
+def test_resource_bound_consent_expiry_is_returned_and_enforced(client):
+    expiry = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+    for index, scope in enumerate(["image_processing", "body_measurements", "virtual_twin_storage"]):
+        response = _grant_resource_consent(
+            client, subject="user-verified-1", bundle="bundle-expiring",
+            resource="twin-expiring", scope=scope,
+            receipt=f"expiry-receipt-{index:02d}", expires_at=expiry,
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["expires_at"] is not None
+    verified = _verify_resource_consent(
+        client, subject="user-verified-1", bundle="bundle-expiring", resource="twin-expiring",
+    )
+    assert verified.status_code == 200, verified.text
+    listed = client.get("/v1/tal/consents/user-verified-1", headers=auth()).json()
+    assert all(item["expires_at"] is not None for item in listed if item["consent_id"] == "bundle-expiring")
+    exported = client.get("/v1/tal/export/user-verified-1", headers=auth()).json()
+    assert all(item["expires_at"] is not None for item in exported["consent_receipts"] if item["consent_id"] == "bundle-expiring")
+
+
+def test_expired_resource_bound_consent_cannot_authorize_a_twin(client):
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    expired = datetime.now(timezone.utc) - timedelta(minutes=1)
+    for index, scope in enumerate(["image_processing", "body_measurements", "virtual_twin_storage"]):
+        db.add(main.ConsentReceipt(
+            receipt_id=f"expired-twin-{index:02d}",
+            subject_id="user-verified-1",
+            consent_id="bundle-expired",
+            resource_id="twin-expired",
+            scope=scope,
+            consent_version="media-2026-11-v1",
+            granted=True,
+            granted_at=expired - timedelta(hours=1),
+            revoked_at=None,
+            expires_at=expired,
+        ))
+    db.commit()
+    db.close()
+    response = _verify_resource_consent(
+        client, subject="user-verified-1", bundle="bundle-expired", resource="twin-expired",
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "CONSENT_BUNDLE_INCOMPLETE"
+
+
+def test_expired_consent_receipt_cannot_authorize_tal_event(client):
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    expired = datetime.now(timezone.utc) - timedelta(minutes=1)
+    db.add(main.ConsentReceipt(
+        receipt_id="expired-style-receipt",
+        subject_id="user-verified-1",
+        consent_id="expired-style-bundle",
+        resource_id=None,
+        scope="style_learning",
+        consent_version="2026-11-01",
+        granted=True,
+        granted_at=expired - timedelta(hours=1),
+        revoked_at=None,
+        expires_at=expired,
+    ))
+    db.commit()
+    db.close()
+    event = client.post(
+        "/v1/tal/events?subject_id=user-verified-1",
+        headers=auth(),
+        json=event_body(consent_receipt_id="expired-style-receipt"),
+    )
+    assert event.status_code == 403
+    assert event.json()["detail"]["code"] == "ACTIVE_TAL_CONSENT_REQUIRED"
+
+
+def test_consent_expiry_must_be_future_and_timezone_aware(client):
+    naive = client.post(
+        "/v1/tal/consents",
+        params={"subject_id": "user-verified-1"},
+        headers=auth(),
+        json={
+            "receipt_id": "naive-expiry-01", "scope": "virtual_twin_storage",
+            "consent_version": "media-2026-11-v1", "granted": True,
+            "consent_id": "bundle-naive", "resource_id": "twin-naive",
+            "expires_at": "2027-01-01T00:00:00",
+        },
+    )
+    past = client.post(
+        "/v1/tal/consents",
+        params={"subject_id": "user-verified-1"},
+        headers=auth(),
+        json={
+            "receipt_id": "past-expiry-01", "scope": "virtual_twin_storage",
+            "consent_version": "media-2026-11-v1", "granted": True,
+            "consent_id": "bundle-past", "resource_id": "twin-past",
+            "expires_at": "2020-01-01T00:00:00Z",
+        },
+    )
+    assert naive.status_code == 422
+    assert past.status_code == 422
+
+
+def test_expiring_consent_receipt_replay_is_idempotent_and_immutable(client):
+    expiry = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    created = _grant_resource_consent(
+        client, subject="user-verified-1", bundle="bundle-replay-expiry",
+        resource="twin-replay-expiry", scope="virtual_twin_storage",
+        receipt="receipt-replay-expiry", expires_at=expiry,
+    )
+    assert created.status_code == 200, created.text
+    replay = _grant_resource_consent(
+        client, subject="user-verified-1", bundle="bundle-replay-expiry",
+        resource="twin-replay-expiry", scope="virtual_twin_storage",
+        receipt="receipt-replay-expiry", expires_at=expiry,
+    )
+    assert replay.status_code == 200
+    assert replay.json()["status"] == "replayed"
+    changed = _grant_resource_consent(
+        client, subject="user-verified-1", bundle="bundle-replay-expiry",
+        resource="twin-replay-expiry", scope="virtual_twin_storage",
+        receipt="receipt-replay-expiry",
+        expires_at=(datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
+    )
+    assert changed.status_code == 409
+    assert changed.json()["detail"]["code"] == "CONSENT_RECEIPT_IMMUTABLE"
+
+
+def test_expired_profile_storage_consent_blocks_profile_and_color_operations(client):
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    expired = datetime.now(timezone.utc) - timedelta(minutes=1)
+    db.add(main.ConsentReceipt(
+        receipt_id="expired-profile-storage",
+        subject_id="user-verified-1",
+        consent_id="expired-profile-bundle",
+        resource_id=None,
+        scope="profile_storage",
+        consent_version="profile-v1",
+        granted=True,
+        granted_at=expired - timedelta(hours=1),
+        revoked_at=None,
+        expires_at=expired,
+    ))
+    db.commit()
+    db.close()
+    assert client.get("/v1/profiles/user-verified-1", headers=auth()).status_code == 403
+    assert client.put("/v1/profiles/user-verified-1", headers=auth(), json={
+        "preferences": [{"preference_id": "p1", "attribute": "classic"}],
+    }).status_code == 403
+    assert client.get("/v1/color-profiles/user-verified-1", headers=auth()).status_code == 403
+    assert client.put("/v1/color-profiles/user-verified-1", headers=auth(), json={
+        "expected_version": 0, "liked_colors": ["emerald"],
+    }).status_code == 403
