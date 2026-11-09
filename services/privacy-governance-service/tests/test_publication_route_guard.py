@@ -292,3 +292,68 @@ def test_nonpublication_media_adjacent_routes_remain_narrow_and_explicit():
     shared_body = ast.get_source_segment(skin_source, skin_handler) or ""
     assert "routine_json(row, include_owner=False)" in shared_body
     assert '"shared_view": True' in shared_body
+
+def test_binary_image_response_routes_are_private_owner_or_worker_scoped_and_no_store():
+    """The only raw-image HTTP responses must be private service-to-service paths."""
+    cases = [
+        (
+            "services/asset-service/app/main.py",
+            "GET",
+            "/internal/v1/assets/{asset_id}/content",
+            "read_asset_content",
+            "require_internal_token",
+        ),
+        (
+            "services/virtual-try-on/model-worker/app/main.py",
+            "POST",
+            "/v1/render",
+            "render",
+            "require_worker_auth",
+        ),
+    ]
+
+    for relative, method, route_path, handler_name, required_dependency in cases:
+        source_path = ROOT / relative
+        source = source_path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=relative)
+        handler = next(
+            node for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == handler_name
+        )
+        route_decorator = None
+        for decorator in handler.decorator_list:
+            if not isinstance(decorator, ast.Call) or not isinstance(decorator.func, ast.Attribute):
+                continue
+            if decorator.func.attr != method.lower() or not decorator.args:
+                continue
+            if isinstance(decorator.args[0], ast.Constant) and decorator.args[0].value == route_path:
+                route_decorator = decorator
+                break
+        assert route_decorator is not None, f"{relative} {method} {route_path} must remain explicitly inventoried"
+
+        dependencies = next(
+            (keyword.value for keyword in route_decorator.keywords if keyword.arg == "dependencies"),
+            None,
+        )
+        assert isinstance(dependencies, ast.List)
+        assert any(
+            isinstance(item, ast.Call)
+            and isinstance(item.func, ast.Name)
+            and item.func.id == "Depends"
+            and item.args
+            and isinstance(item.args[0], ast.Name)
+            and item.args[0].id == required_dependency
+            for item in dependencies.elts
+        ), f"{relative} must require {required_dependency}"
+
+        body = ast.get_source_segment(source, handler) or ""
+        assert '"Cache-Control": "no-store, private"' in source
+        if handler_name == "read_asset_content":
+            assert "_owned_asset(db, asset_id, subject_id, purpose, parent_id)" in body
+            assert "hashlib.sha256(data).hexdigest() != row.sha256" in body
+            assert '"X-Content-Type-Options": "nosniff"' in body
+        else:
+            assert "person_image.read" in body and "garment_image.read" in body
+            assert 'media_type="image/png"' in body
+            assert "put_object" not in body and "generate_presigned_url" not in body
