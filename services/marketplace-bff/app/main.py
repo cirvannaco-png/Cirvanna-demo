@@ -2087,6 +2087,31 @@ def compare_public_offers(payload: OfferComparisonIn) -> Response:
         headers={"Cache-Control": "no-store"},
     )
 
+def _authorized_commerce_path(method: str, path: str) -> bool:
+    parts = path.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
+        return False
+    if (method, path) in SERVICE_PATHS:
+        return True
+    if len(parts) == 2 and parts[0] == "saved-products" and UUID_RE.fullmatch(parts[1]):
+        return method in {"PUT", "DELETE"}
+    if len(parts) == 3 and parts[:2] == ["cart", "items"] and UUID_RE.fullmatch(parts[2]):
+        return method in {"PATCH", "DELETE"}
+    if len(parts) == 2 and parts[0] == "orders" and UUID_RE.fullmatch(parts[1]):
+        return method == "GET"
+    if len(parts) == 4 and parts[:2] == ["merchant", "listings"] and UUID_RE.fullmatch(parts[2]) and parts[3] == "variants":
+        return method == "POST"
+    if len(parts) == 4 and parts[:2] == ["merchant", "variants"] and UUID_RE.fullmatch(parts[2]) and parts[3] == "inventory-adjustments":
+        return method == "POST"
+    if len(parts) == 4 and parts[:2] == ["admin", "merchants"] and UUID_RE.fullmatch(parts[2]) and parts[3] == "decision":
+        return method == "POST"
+    if len(parts) == 4 and parts[:2] == ["admin", "merchants"] and UUID_RE.fullmatch(parts[2]) and parts[3] == "markets":
+        return method == "GET"
+    if len(parts) == 5 and parts[:2] == ["admin", "merchants"] and UUID_RE.fullmatch(parts[2]) and parts[3] == "markets" and re.fullmatch(r"[A-Za-z]{2}", parts[4]):
+        return method == "PUT"
+    return False
+
+
 @app.api_route("/api/commerce/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 async def commerce_proxy(path: str, request: Request) -> Response:
     """Forward customer operations only; admin/internal/webhook routes are not exposed."""
