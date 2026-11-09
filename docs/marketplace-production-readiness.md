@@ -3,7 +3,7 @@
 **Release status: BLOCKED — deployable code and CI coverage are not a substitute for live identity, database, payment and operating evidence.**  
 Last in-repository validation is tracked by the GitHub Actions workflows on the marketplace feature branch. This document is the required promotion record, not a claim that staging or production checks have already been executed.
 
-The machine-readable release ledger is [docs/release/release-gates.json](release/release-gates.json). All twelve required gates currently initialize as `blocked`. Keep the ledger and this runbook aligned; a gate can be changed to `passed` only with reviewable evidence tied to the exact full release commit. Run `python scripts/validate_release_gates.py --require-all-passed` as the final release gate. Ordinary CI only validates code and registry structure; it does not close operational gates.
+The machine-readable release ledger is [docs/release/release-gates.json](release/release-gates.json). All sixteen required gates currently initialize as `blocked`. Keep the ledger and this runbook aligned; a gate can be changed to `passed` only with reviewable evidence tied to the exact full release commit. Run `python scripts/validate_release_gates.py --require-all-passed` as the final release gate. Ordinary CI only validates code and registry structure; it does not close operational gates.
 
 ## 1. Deployment topology
 
@@ -54,11 +54,17 @@ Configure `CATALOG_API_URL` and `COMMERCE_API_URL` using deployed HTTPS endpoint
 
 1. Take an initial encrypted backup / database snapshot before schema changes.
 2. In the same release image and environment as the target service, run `alembic upgrade head` from `services/catalog-service` with `CATALOG_DATABASE_URL` set; then do the same in `services/commerce-service` with `COMMERCE_DATABASE_URL`.
-3. Confirm `alembic_version.version_num` is `20261104_0002` for Catalog and `20261109_0007` for Commerce on the current mainline. Do not enable automatic `create_all` in production. The Commerce `20261109_0007` revision is only the multi-market provider-evidence schema foundation; it does not implement provider ingestion, market activation, offer comparison or market-aware checkout.
+3. Confirm `alembic_version.version_num` is `20261104_0002` for Catalog and `20261109_0008` for Commerce on the integrated multi-market candidate. Do not enable automatic `create_all` in production. Commerce `20261109_0007` establishes the multi-market provider-evidence schema; `20261109_0008` adds zone-bound tax evidence, landed-cost order snapshots and charge persistence. The ported APIs implement market declarations, quote ingestion contracts, localized offers, offer comparison and market-aware checkout, but do not connect or operationally verify the external FX, tax, fulfilment or payment providers.
 4. Run and retain a backup restore drill to a clean, isolated database. Verify row counts, constraints, order/payment state and inventory invariants after restoration.
 5. Verify database connections and `/ready` for Catalog and Commerce return HTTP 200 only after schema, migration and mandatory configuration are all valid. Confirm they return 503 when a migration or required secret is missing.
 
-## 4. Multi-market integration boundary\n\nThe historical PR #102 branch cannot be merged as-is. Its migration revisions `20261105_0004` and `20261105_0005` conflict with the current Commerce migration history. Port its market-aware API and comparison/checkout behavior onto current main using a new migration revision after `20261109_0007`, with upgrade tests from a database already at `20261109_0007`. The multi-market path remains unavailable until fresh FX, authoritative tax, fulfilment and payment-capability evidence is present for the exact destination, merchant, canonical variant and order currency.\n\n## 5. Release and staging acceptance tests
+## 4. Multi-market integration boundary
+
+PR #102's historical migration files are not used: their `20261105_0004` and `20261105_0005` identifiers conflict with the current migration lineage. The current integration adds `20261109_0008` after `20261109_0007`. It binds tax quotes to the exact destination_key and supports offer prices in different source currencies only when fresh provider FX exists for the item, fulfilment and tax components. It requires the same canonical Catalog product and canonical variant, same destination zone, compatible tax jurisdiction/category/basis, active destination-market capability and card payment capability.
+
+The code and schema do not establish external provider readiness. Until operation-specific staging evidence exists, offers whose required FX, fulfilment, tax or payment evidence is missing, stale, mismatched or untrusted remain unavailable. Production activation still requires real provider integration and end-to-end staging verification.
+
+## 5. Release and staging acceptance tests
 
 Run these against staging with real provider/test-mode credentials before enabling a production domain:
 

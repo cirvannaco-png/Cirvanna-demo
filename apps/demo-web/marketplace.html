@@ -13,13 +13,13 @@ header{position:sticky;top:0;z-index:4;background:#101018ed;backdrop-filter:blur
 .nav{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:17px 0}.brand{font:32px/1 Georgia,serif;letter-spacing:.08em}.brand span{color:var(--gold)}.eyebrow{font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
 .nav-actions{display:flex;gap:9px;flex-wrap:wrap}.btn{border:1px solid var(--line);background:transparent;color:var(--cream);padding:9px 13px;border-radius:3px}.btn:hover,.btn:focus-visible{border-color:var(--gold)}.btn.primary{background:var(--gold);border-color:var(--gold);color:#17120a}.btn:disabled{opacity:.45;cursor:not-allowed}
 .hero{padding:36px 0 25px;display:grid;grid-template-columns:1.3fr .7fr;gap:24px;align-items:end}.hero h1{font:clamp(38px,6vw,66px)/.98 Georgia,serif;font-weight:400;max-width:760px;margin:12px 0}.hero p{color:var(--muted);max-width:590px}.hero-note{border-left:1px solid var(--gold);padding:8px 0 8px 17px;color:var(--muted);font-size:13px}
-.toolbar{display:grid;grid-template-columns:minmax(190px,1fr) minmax(150px,220px) auto;gap:10px;padding:16px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}input,select{width:100%;min-width:0;background:var(--panel);border:1px solid var(--line);color:var(--cream);border-radius:3px;padding:11px}input:focus,select:focus{outline:1px solid var(--gold);border-color:var(--gold)}
+.toolbar{display:grid;grid-template-columns:minmax(170px,1.3fr) minmax(130px,.8fr) auto minmax(100px,.55fr) minmax(170px,1fr) minmax(150px,.8fr) minmax(100px,.55fr) minmax(110px,.6fr);gap:9px;padding:16px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}input,select{width:100%;min-width:0;background:var(--panel);border:1px solid var(--line);color:var(--cream);border-radius:3px;padding:11px}input:focus,select:focus{outline:1px solid var(--gold);border-color:var(--gold)}
 .status{min-height:28px;padding:12px 0;color:var(--muted);font-size:12px}.status.error{color:var(--danger)}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:15px;padding:8px 0 45px}
 .card{background:var(--panel);border:1px solid #292734;min-width:0;display:flex;flex-direction:column}.visual{aspect-ratio:4/5;background:linear-gradient(145deg,#2b2730,#191922);position:relative;overflow:hidden;display:grid;place-items:center}.visual img{width:100%;height:100%;object-fit:cover}.placeholder{font:36px Georgia,serif;color:#777080}.tag{position:absolute;top:10px;left:10px;background:#111018dd;padding:4px 7px;font-size:9px;letter-spacing:.1em;text-transform:uppercase;color:var(--gold)}.card-body{padding:13px;display:flex;flex-direction:column;gap:7px;flex:1}.brandline{font-size:10px;letter-spacing:.12em;color:var(--muted);text-transform:uppercase}.name{font:22px/1.12 Georgia,serif;overflow-wrap:anywhere}.description{font-size:12px;color:var(--muted);min-height:35px}.price{font-size:14px;color:var(--cream);font-weight:650}.card-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:auto;padding-top:8px}.card-actions .btn{font-size:12px;padding:8px 5px}.card-actions .wide{grid-column:1/-1}
 .empty{grid-column:1/-1;border:1px dashed var(--line);padding:38px;text-align:center;color:var(--muted)}
 footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);font-size:12px}.drawer-backdrop{position:fixed;inset:0;background:#0009;z-index:8}.drawer{position:fixed;z-index:9;right:0;top:0;bottom:0;width:min(440px,100%);overflow:auto;background:var(--panel);border-left:1px solid var(--line);padding:22px}.drawer h2{font:30px Georgia,serif}.drawer-row{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid var(--line);padding:13px 0}.drawer-row small{display:block;color:var(--muted)}.hidden{display:none!important}.config{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0 15px}.config label{font-size:11px;color:var(--muted)}.config input{margin-top:4px}.config .wide{grid-column:1/-1}.config-note{font-size:11px;color:var(--muted)}
 @media(max-width:900px){.grid{grid-template-columns:repeat(3,minmax(0,1fr))}.hero{grid-template-columns:1fr}.hero-note{max-width:500px}}
-@media(max-width:620px){.shell{padding:0 13px}.grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.toolbar{grid-template-columns:1fr 1fr}.toolbar input{grid-column:1/-1}.brand{font-size:26px}.nav{align-items:flex-start}.nav-actions .btn{padding:7px 9px;font-size:12px}.card-body{padding:10px}.name{font-size:19px}.description{font-size:11px}}
+@media(max-width:620px){.shell{padding:0 13px}.grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}.toolbar{grid-template-columns:1fr 1fr}.toolbar #query,.toolbar #destinationKey{grid-column:1/-1}.brand{font-size:26px}.nav{align-items:flex-start}.nav-actions .btn{padding:7px 9px;font-size:12px}.card-body{padding:10px}.name{font-size:19px}.description{font-size:11px}}
 
 .ai-tools{border-bottom:1px solid var(--line);padding:18px 0 22px;margin-bottom:5px}
 .ai-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
@@ -42,7 +42,18 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
 <header><div class="shell nav"><div><div class="brand">CIRVANNA<span>.</span></div><div class="eyebrow">Purchase certainty begins before checkout</div></div><div class="nav-actions"><button class="btn" id="savedBtn">Saved <span id="savedCount">0</span></button><button class="btn" id="cartBtn">Bag <span id="cartCount">0</span></button><button class="btn" id="settingsBtn">Connect catalog</button></div></div></header>
 <main class="shell">
 <section class="hero"><div><div class="eyebrow">The Cirvanna marketplace</div><h1>Find what feels<br><span style="color:var(--gold)">like you.</span></h1><p>Explore beauty and fashion with product details in one place. Save pieces you love, compare options, and keep your choices intentional.</p></div><div class="hero-note"><strong style="color:var(--cream)">Identity first. Choice always yours.</strong><br>Catalog search is connected to Cirvanna's canonical catalog API when configured. This page does not pretend to perform AI fit analysis or virtual try-on when those services are unavailable.</div></section>
-<section class="toolbar" aria-label="Product filters"><input id="query" type="search" placeholder="Search product, brand or SKU…" aria-label="Search products"><select id="category" aria-label="Category"><option value="">All categories</option></select><button class="btn" id="searchBtn">Search</button></section>
+<section class="toolbar" aria-label="Product and market filters">
+<input id="query" type="search" placeholder="Search product, brand or SKU…" aria-label="Search products">
+<select id="category" aria-label="Category"><option value="">All categories</option></select>
+<button class="btn" id="searchBtn">Search</button>
+<input id="marketCountry" maxlength="2" pattern="[A-Za-z]{2}" placeholder="Market (KE)" aria-label="Market country code">
+<input id="destinationKey" maxlength="180" placeholder="Provider delivery zone key (e.g. Nakuru/Subukia)" aria-label="Destination delivery zone">
+<select id="fulfillmentMode" aria-label="Fulfilment mode">
+<option value="courier_delivery">Courier delivery</option><option value="shipping">Shipping</option><option value="merchant_delivery">Merchant delivery</option><option value="collection">Collection</option><option value="local_transport">Local transport</option>
+</select>
+<select id="radiusKm" aria-label="Search radius"><option value="30" selected>30 km radius</option><option value="50">50 km radius</option><option value="100">100 km radius</option><option value="200">200 km radius</option><option value="500">500 km radius</option></select>
+<input id="displayCurrency" maxlength="3" placeholder="Display currency" aria-label="Display currency code">
+</section>
 <section class="ai-tools" aria-label="AI product discovery">
   <div class="ai-grid">
     <section class="ai-panel" aria-labelledby="descriptionSearchTitle">
@@ -90,7 +101,8 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
   function readStore(key){try{return JSON.parse(localStorage.getItem(key)||"[]")}catch{return []}}
   function writeStore(){localStorage.setItem("cirvanna-marketplace-saved",JSON.stringify(saved));localStorage.setItem("cirvanna-marketplace-bag",JSON.stringify(cart));updateCounts()}
   function updateCounts(){$("savedCount").textContent=saved.length;$("cartCount").textContent=cart.reduce((n,x)=>n+x.quantity,0)}
-  function money(p){const currency=String(p.currency||"KES").toUpperCase();const minor=Number(p.price_minor);if(!Number.isSafeInteger(minor)||minor<0)return "Price unavailable";try{const formatter=new Intl.NumberFormat(undefined,{style:"currency",currency});const digits=formatter.resolvedOptions().maximumFractionDigits;return formatter.format(minor/Math.pow(10,digits))}catch{return currency+" "+(minor/100).toFixed(2)}}
+  function moneyMinor(minorValue,currencyValue){const currency=String(currencyValue||"KES").toUpperCase();const minor=Number(minorValue);if(!Number.isSafeInteger(minor)||minor<0)return "Price unavailable";try{const formatter=new Intl.NumberFormat(undefined,{style:"currency",currency});const digits=formatter.resolvedOptions().maximumFractionDigits;return formatter.format(minor/Math.pow(10,digits))}catch{return currency+" "+(minor/100).toFixed(2)}}
+  function money(p){const localized=p.display_price_status==="localized"&&Number.isSafeInteger(Number(p.display_price_minor));return localized?moneyMinor(p.display_price_minor,p.display_currency):moneyMinor(p.price_minor,p.currency)}
   function escapeHtml(s){return String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
   function setStatus(s,error=false){$("status").textContent=s;$("status").classList.toggle("error",error)}
   function getId(p){return String(p.variant_id||p.product_id||p.id||p.sku)}
@@ -101,7 +113,11 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     $("products").innerHTML=visible.length?visible.map(p=>{
       const id=getId(p),saveId=productSaveId(p),isSaved=saved.some(x=>x.product_id===saveId),inBag=cart.some(x=>x.product_id===id||x.variant_id===id);
       const image=Array.isArray(p.image_urls)&&p.image_urls[0]?'<img loading="lazy" alt="'+escapeHtml(p.name)+'" src="'+escapeHtml(p.image_urls[0])+'" referrerpolicy="no-referrer">':'<div class="placeholder" aria-hidden="true">C.</div>';
-      return '<article class="card"><div class="visual">'+image+'<span class="tag">'+(p.attributes&&p.attributes.demo?'Demo data':escapeHtml(p.category||'Product'))+'</span></div><div class="card-body"><div class="brandline">'+escapeHtml(p.brand||'Independent brand')+'</div><div class="name">'+escapeHtml(p.name)+'</div><div class="description">'+escapeHtml(p.description||'Product details have not been provided.')+'</div><div class="price">'+money(p)+'</div><div class="brandline">'+escapeHtml(p.sku||'')+'</div><div class="card-actions"><button class="btn" data-action="save" data-id="'+escapeHtml(id)+'">'+(isSaved?'Saved ✓':'Save')+'</button><button class="btn" data-action="bag" data-id="'+escapeHtml(id)+'">'+(inBag?'In bag ✓':'Add to bag')+'</button><button class="btn wide" data-action="tryon" data-id="'+escapeHtml(id)+'" disabled title="Virtual try-on adapter is not connected">Try on — unavailable</button></div></div></article>'
+      const fq=p.fulfillment_quote;
+      const transport=fq?'<div class="brandline">Delivery: '+moneyMinor(fq.display_conversion_status==="localized"?fq.display_amount_minor:fq.amount_minor,fq.display_conversion_status==="localized"?fq.display_currency:fq.currency)+' · '+escapeHtml(fq.distance_km)+' km</div>':'';
+      const comparablePeers=p.canonical_variant_id?items.filter(x=>x.canonical_variant_id===p.canonical_variant_id&&x.merchant_id!==p.merchant_id&&x.available_stock>0):[];
+      const compareAction=comparablePeers.length?'<button class="btn wide" data-action="compare" data-id="'+escapeHtml(id)+'">Compare merchant offers</button>':'';
+      return '<article class="card"><div class="visual">'+image+'<span class="tag">'+(p.attributes&&p.attributes.demo?'Demo data':escapeHtml(p.category||'Product'))+'</span></div><div class="card-body"><div class="brandline">'+escapeHtml(p.brand||'Independent brand')+'</div><div class="name">'+escapeHtml(p.name)+'</div><div class="description">'+escapeHtml(p.description||'Product details have not been provided.')+'</div><div class="price">'+money(p)+'</div>'+transport+'<div class="brandline">'+escapeHtml(p.sku||'')+'</div><div class="card-actions"><button class="btn" data-action="save" data-id="'+escapeHtml(id)+'">'+(isSaved?'Saved ✓':'Save')+'</button><button class="btn" data-action="bag" data-id="'+escapeHtml(id)+'">'+(inBag?'In bag ✓':'Add to bag')+'</button>'+compareAction+'<button class="btn wide" data-action="tryon" data-id="'+escapeHtml(id)+'" disabled title="Virtual try-on adapter is not connected">Try on — unavailable</button></div></div></article>'
     }).join(''):'<div class="empty">No products match this search. Try a broader term or clear the category filter.</div>';
     $("pageLabel").textContent='Page '+(page+1);$("prevBtn").disabled=page===0;$("nextBtn").disabled=(page+1)*20>=total;
   }
@@ -112,11 +128,25 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
   }
   async function load(){
     const q=$("query").value.trim(),category=$("category").value;
+    const marketCountry=$("marketCountry").value.trim().toUpperCase();
+    const destinationKey=$("destinationKey").value.trim();
+    const fulfillmentMode=$("fulfillmentMode").value;
+    const radiusKm=Number($("radiusKm").value||30);
+    const displayCurrency=$("displayCurrency").value.trim().toUpperCase();
+    if(marketCountry&&!/^[A-Z]{2}$/.test(marketCountry)){setStatus("Enter a two-letter market country code, such as KE or IN.",true);return}
+    if(displayCurrency&&!/^[A-Z]{3}$/.test(displayCurrency)){setStatus("Enter a three-letter ISO currency code, such as KES or INR.",true);return}
+    if(destinationKey&&!marketCountry){setStatus("Choose a market country before filtering by delivery area.",true);return}
+    const addMarketParams=url=>{
+      if(marketCountry)url.searchParams.set("market_country_code",marketCountry);
+      if(displayCurrency)url.searchParams.set("display_currency",displayCurrency);
+      if(destinationKey){url.searchParams.set("destination_key",destinationKey);url.searchParams.set("fulfillment_mode",fulfillmentMode);url.searchParams.set("radius_km",String(radiusKm))}
+    };
     if(bootstrap.publicOffersBase && !forceDemo && !(config.commerceBase&&config.userToken) && (!config.base || !config.token)){
       mode="public_offers";setStatus("Loading approved merchant offers…");
       try{
         const url=new URL(bootstrap.publicOffersBase.replace(/\/$/,"")+"/marketplace/offers",window.location.origin);
         if(q)url.searchParams.set("q",q);if(category)url.searchParams.set("category",category);
+        addMarketParams(url);
         url.searchParams.set("limit","20");url.searchParams.set("offset",String(page*20));
         const response=await fetch(url,{headers:{Accept:"application/json"}});
         if(!response.ok)throw new Error(response.status===503?"Marketplace API is not ready (503).":"Marketplace offers API returned HTTP "+response.status+".");
@@ -134,6 +164,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       try{
         const url=new URL(config.commerceBase+"/marketplace/offers");
         if(q)url.searchParams.set("q",q);if(category)url.searchParams.set("category",category);
+        addMarketParams(url);
         url.searchParams.set("limit","20");url.searchParams.set("offset",String(page*20));
         const headers={Authorization:"Bearer "+config.userToken,Accept:"application/json"};
         const offersResponse=await fetch(url,{headers});
@@ -167,8 +198,40 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     }catch(e){items=[];total=0;setStatus((e&&e.message?e.message:"Catalog request failed")+" Check the API URL, CORS policy, service health and token. Demo data is not substituted after a live API error.",true);render()}
   }
   function findProduct(id){return items.find(p=>getId(p)===id)||demoProducts.find(p=>getId(p)===id)}
+  async function compareOffers(p){
+    const marketCountry=$("marketCountry").value.trim().toUpperCase();
+    const destinationKey=$("destinationKey").value.trim();
+    const displayCurrency=$("displayCurrency").value.trim().toUpperCase()||p.display_currency||"";
+    if(!marketCountry||!destinationKey||!displayCurrency){setStatus("Choose a market, delivery area and display currency before comparing landed costs.",true);return}
+    const peer=items.find(x=>x.canonical_variant_id===p.canonical_variant_id&&x.merchant_id!==p.merchant_id&&x.available_stock>0);
+    if(!peer){setStatus("A second in-stock offer for this exact canonical variant is not on the current page.",true);return}
+    const base=mode==="commerce"?config.commerceBase:(bootstrap.publicOffersBase||"").replace(/\/$/,"");
+    if(!base){setStatus("The comparison API is not configured.",true);return}
+    const headers={Accept:"application/json","Content-Type":"application/json"};
+    if(mode==="commerce")headers.Authorization="Bearer "+config.userToken;
+    try{
+      const response=await fetch(base+"/marketplace/compare",{method:"POST",headers,body:JSON.stringify({
+        variant_ids:[p.variant_id,peer.variant_id],
+        destination_country_code:marketCountry,
+        destination_key:destinationKey,
+        fulfillment_mode:$("fulfillmentMode").value,
+        display_currency:displayCurrency,
+        payment_method:"card",
+        radius_km:Number($("radiusKm").value||30)
+      })});
+      const data=await response.json().catch(()=>null);
+      if(!response.ok)throw new Error((data&&data.detail&&data.detail.code)||"Comparison API returned HTTP "+response.status+".");
+      if(data.status!=="comparable"){
+        openDrawer("Comparison unavailable",'<p class="config-note">'+escapeHtml(data.reason_code||"Required market evidence is missing or stale.")+'</p><p class="config-note">No landed-cost ranking is shown until variant identity, stock, delivery, tax, FX and payment evidence all pass.</p>');
+        return;
+      }
+      const rows=(data.offers||[]).map(item=>'<div class="drawer-row"><div>'+escapeHtml(item.merchant_name)+'<small>Item '+moneyMinor(item.item_display_price_minor,data.display_currency)+' · Delivery '+moneyMinor(item.fulfillment_charge_minor,data.display_currency)+' · Tax added '+moneyMinor(item.tax&&item.tax.added_to_total_minor,data.display_currency)+'</small></div><strong>'+moneyMinor(item.landed_total_minor,data.display_currency)+'</strong></div>').join("");
+      openDrawer("Like-for-like comparison",rows+'<p class="config-note">Same canonical variant · '+escapeHtml(data.display_currency)+' · '+escapeHtml(data.fulfillment_mode)+' · '+escapeHtml(data.destination_key)+'. Tax, fulfilment and FX are provider-quoted and time-bound. This is not a guarantee after quote expiry.</p>');
+    }catch(error){setStatus(error.message||"Comparison could not be completed.",true)}
+  }
   async function act(action,id){
     const p=findProduct(id);if(!p)return;
+    if(action==="compare"){await compareOffers(p);return}
     if(mode==="commerce"){
       try{
         if(action==="save"){
@@ -190,7 +253,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     if(action==="tryon")alert("Virtual try-on is not connected. Cirvanna will not fabricate a preview or claim that a real try-on was completed.");
   }
   $("products").addEventListener("click",e=>{const b=e.target.closest("button[data-action]");if(b&&!b.disabled)act(b.dataset.action,b.dataset.id)});
-  $("searchBtn").addEventListener("click",()=>{page=0;load()});$("query").addEventListener("keydown",e=>{if(e.key==="Enter"){page=0;load()}});$("category").addEventListener("change",()=>{page=0;load()});
+  $("searchBtn").addEventListener("click",()=>{page=0;load()});$("query").addEventListener("keydown",e=>{if(e.key==="Enter"){page=0;load()}});$("category").addEventListener("change",()=>{page=0;load()});["marketCountry","destinationKey","fulfillmentMode","radiusKm","displayCurrency"].forEach(id=>$(id).addEventListener("change",()=>{page=0;load()}));$("destinationKey").addEventListener("keydown",e=>{if(e.key==="Enter"){page=0;load()}});
   $("prevBtn").addEventListener("click",()=>{if(page>0){page--;load()}});$("nextBtn").addEventListener("click",()=>{if((page+1)*20<total){page++;load()}});
   function closeDrawer(){$("drawerRoot").innerHTML=""}
   function openDrawer(title,content){
@@ -218,13 +281,29 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     }
     if(e.target.id==="checkoutBtn"){
       if(mode!=="commerce"||!config.commerceBase||!config.userToken)return;
+      const marketCountry=$("marketCountry").value.trim().toUpperCase();
+      const destinationKey=$("destinationKey").value.trim();
+      const fulfillmentMode=$("fulfillmentMode").value;
+      const displayCurrency=$("displayCurrency").value.trim().toUpperCase()||(items.find(item=>item.display_currency)?.display_currency||"");
+      const checkoutPayload={confirm:true};
+      if(marketCountry&&destinationKey){
+        if(!displayCurrency){alert("Choose a display currency before market-aware checkout.");return}
+        Object.assign(checkoutPayload,{
+          destination_country_code:marketCountry,
+          destination_key:destinationKey,
+          fulfillment_mode:fulfillmentMode,
+          display_currency:displayCurrency,
+          payment_method:"card"
+        });
+      }
       let key="";
       try{
-        const storageKey="cirvanna-checkout:"+config.commerceBase+":"+cartVersion;
+        const contextKey=[marketCountry,destinationKey,fulfillmentMode,displayCurrency].join("|");
+        const storageKey="cirvanna-checkout:"+config.commerceBase+":"+cartVersion+":"+contextKey;
         key=sessionStorage.getItem(storageKey)||"";
         if(!key){key=crypto.randomUUID();sessionStorage.setItem(storageKey,key)}
       }catch{key=key||crypto.randomUUID()}
-      fetch(config.commerceBase+"/checkout",{method:"POST",headers:{Authorization:"Bearer "+config.userToken,"Idempotency-Key":key,Accept:"application/json"}})
+      fetch(config.commerceBase+"/checkout",{method:"POST",headers:{Authorization:"Bearer "+config.userToken,"Idempotency-Key":key,Accept:"application/json","Content-Type":"application/json"},body:JSON.stringify(checkoutPayload)})
         .then(async response=>{let data;try{data=await response.json()}catch{throw new Error("Checkout API returned invalid JSON.")}if(!response.ok)throw new Error((data.detail&&data.detail.code)||"Checkout API returned HTTP "+response.status+".");let target;try{target=new URL(data.checkout_url||(data.order&&data.order.checkout_url))}catch{throw new Error("Checkout provider did not return a valid URL.")}if(target.protocol!=="https:"||target.hostname!=="checkout.stripe.com")throw new Error("Payment provider returned a URL outside the trusted Stripe Checkout host.");return target.href})
         .then(url=>{setStatus("Hosted checkout session created; opening Stripe Checkout…");window.location.assign(url)})
         .catch(err=>{setStatus((err.message||"Checkout could not start")+" Checkout is not confirmed paid.",true);alert(err.message||"Checkout could not start.")});

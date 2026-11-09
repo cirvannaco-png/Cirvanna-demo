@@ -10,7 +10,7 @@ Cirvanna has substantial domain contracts and service code, but the system is no
 
 PR #180 is merged. PR #181 is merged into current `main` and establishes Commerce schema revision `20261109_0007` for merchant home/legal country separation, source-price provenance, operating-market and quote/capability evidence tables. It does **not** activate markets, connect FX/tax/fulfilment providers, or implement the full comparison/checkout path.
 
-PR #102 is based on a historical mainline and currently conflicts with current `main`. It must be ported as a new integration on top of revision `20261109_0007`; its old migration identifiers `20261105_0004` and `20261105_0005` collide with revisions already used by current main. The port must create the next migration revision after `20261109_0007`, not replay the old branch migration files.
+PR #102's implementation is being ported on a branch based on the current-main integration point. Its old migration identifiers `20261105_0004` and `20261105_0005` are not reused; the port creates `20261109_0008` after `20261109_0007`. The port also tightens tax quotes to an exact destination zone and permits comparisons across different offer currencies only when fresh FX converts each cost component to one requested display currency. Exact-head Commerce, BFF, portal, migration-upgrade and integration checks remain required before merge.
 
 PR #84 and PR #62 also require current-main reconciliation. Their historical green/failing checks are not evidence about a rebuilt candidate. Click It remains disabled.
 
@@ -122,7 +122,7 @@ Provider `/ready` probes alone do not establish operation. Test real grant/revok
 
 ## Workstream 7 — multi-market marketplace (#102)
 
-Current main has the schema foundation from #181. The #102 implementation must be rebuilt on top of it, with the next unique Commerce migration revision chained after `20261109_0007`. Do not port old migration files unchanged.
+Current main has the schema foundation from #181. The current integration port adds revision `20261109_0008` chained after `20261109_0007`; it does not replay the old #102 migration files. The offer-comparison contract now permits different source offer currencies when current FX quotes are available for every component and requires exact canonical Catalog product/variant identity plus destination-zone tax evidence.
 
 The integrated offer contract must preserve:
 - brand-home country separately from legal entity country;
