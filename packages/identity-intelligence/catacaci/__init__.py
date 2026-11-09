@@ -10,6 +10,7 @@ from .core import (
     SignalState,
     arbitrate,
 )
+from .quality_monitor import DecisionQualityEvent, DecisionQualitySnapshot, summarize_decision_quality
 
 __all__ = [
     "CONTRACT_VERSION",
@@ -21,4 +22,7 @@ __all__ = [
     "SignalKind",
     "SignalState",
     "arbitrate",
+    "DecisionQualityEvent",
+    "DecisionQualitySnapshot",
+    "summarize_decision_quality",
 ]

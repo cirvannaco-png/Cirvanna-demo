@@ -40,3 +40,10 @@ The following pure contracts now accompany the CAL arbitration core:
 - **VSL** (`vsl.py`): versioned priority proposals require a distinct approver; safety and legal eligibility remain invariant top priorities.
 
 These are domain contracts and in-memory/pure-function implementations, not production services. Durable event storage, replay infrastructure, privacy-preserving aggregation, access controls, approval workflow, observability, and end-to-end tests remain open.
+
+
+## Decision-quality event aggregation
+
+The quality_monitor module defines a privacy-minimized event contract and offline snapshot for CAL verdict counts, non-SHOW display leaks, incomplete required evidence, provider failures, and fit outcomes that were actually observed after exposure. A displayed candidate with verdict other than SHOW is always critical. Missing outcomes are never imputed as failures or successes.
+
+This is not a live metrics exporter, durable audit store, dashboard, alerting integration, or production monitor. The serving path must first persist complete versioned decision receipts and publish these events to the approved telemetry system without user IDs, raw measurements, images, or other unnecessary personal data.

@@ -123,6 +123,46 @@
       "acceptance": "Each capability is labelled live, limited, unavailable, or deferred from actual evidence. Product owner signs off launch scope for FCI, safety, NPL/USI, CAL, DermalSight, Virtual Twin, Virtual Try-On, PNELLY, and all unresolved modules; no unsupported accuracy or production claims remain.",
       "evidence_refs": [],
       "verified_commit": null
+    },
+    {
+      "id": "REL-13",
+      "name": "Multi-market offer comparison and checkout",
+      "required": true,
+      "status": "blocked",
+      "owner_role": "Commerce / marketplace owner",
+      "acceptance": "The multi-market implementation is based on current main and one migration chain after 20261109_0007. It proves market-specific merchant capability, source/payable/display currency separation, fresh provider-sourced FX, shipping/courier/merchant delivery/collection/local transport, authoritative jurisdiction-matched tax, payment-method capability, exact cross-market canonical product/variant identity, like-for-like comparison, stale/missing-evidence unavailable reasons, radius behavior and checkout-time quote revalidation with consistent order/Stripe/webhook totals.",
+      "evidence_refs": [],
+      "verified_commit": null
+    },
+    {
+      "id": "REL-14",
+      "name": "Click It privacy, rights and child safeguards",
+      "required": true,
+      "status": "blocked",
+      "owner_role": "Security / privacy owner",
+      "acceptance": "Click It remains disabled until real purpose-bound consent and revocation, trusted jurisdiction policy, licensed pinned face-masking attestation, fail-closed uncertainty, zero public unmasked-face exposure, retention/purge and deletion propagation, photographed-person rights intake/review/quarantine, guardian verification where required, minor-specific restrictions and every public publish/restore/syndication/share/media-delivery route are exercised against real staging providers and immutable asset digests.",
+      "evidence_refs": [],
+      "verified_commit": null
+    },
+    {
+      "id": "REL-15",
+      "name": "Decision quality and inter-model recommendation calibration",
+      "required": true,
+      "status": "blocked",
+      "owner_role": "Decision / model-risk owner",
+      "acceptance": "Every released item has a durable pre-response CAL receipt with exact candidate/catalog version, verdict, gate results/reasons, provider/model/policy versions and timestamps. A monitoring path reports non-SHOW display leaks, missing evidence, provider failures, latency, verdict distribution and genuinely observed fit outcomes with privacy-safe retention and alert ownership. PNELLY, Complementer, future rankers and baseline are separately calibrated on a participant/time-disjoint calibration split and compared on identical human-reviewed untouched holdout pools, with market/category slices, uncertainty, sample counts and zero hard-exclusion violations.",
+      "evidence_refs": [],
+      "verified_commit": null
+    },
+    {
+      "id": "REL-16",
+      "name": "Canonical system deployment and operational recovery",
+      "required": true,
+      "status": "blocked",
+      "owner_role": "Platform / SRE owner",
+      "acceptance": "One approved canonical deployment is running the exact release commit with immutable image digests, the full private/public service graph, versioned schemas, approved providers, secret-manager bindings, managed databases, encrypted backups and successful isolated restores, RPO/RTO, central logs/metrics/traces, actionable alerts, on-call/contact ownership, runbooks, dependency failure drills, rollback and staging-to-production promotion evidence.",
+      "evidence_refs": [],
+      "verified_commit": null
     }
   ]
 }

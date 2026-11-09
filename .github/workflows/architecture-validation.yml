@@ -34,6 +34,8 @@ jobs:
         run: python scripts/build_code_snippet_inventory.py --check
       - name: Validate canonical source import boundaries
         run: python scripts/validate_source_boundaries.py
+      - name: Validate canonical deployment inventory
+        run: python scripts/validate_canonical_stack.py
       - name: Validate production release gate registry
         run: python scripts/validate_release_gates.py
       - name: Run architecture tests

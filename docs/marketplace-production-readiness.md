@@ -54,11 +54,11 @@ Configure `CATALOG_API_URL` and `COMMERCE_API_URL` using deployed HTTPS endpoint
 
 1. Take an initial encrypted backup / database snapshot before schema changes.
 2. In the same release image and environment as the target service, run `alembic upgrade head` from `services/catalog-service` with `CATALOG_DATABASE_URL` set; then do the same in `services/commerce-service` with `COMMERCE_DATABASE_URL`.
-3. Confirm `alembic_version.version_num` is `20261018_0001` for Catalog and `20261019_0002` for Commerce. Do not enable automatic `create_all` in production.
+3. Confirm `alembic_version.version_num` is `20261104_0002` for Catalog and `20261109_0007` for Commerce on the current mainline. Do not enable automatic `create_all` in production. The Commerce `20261109_0007` revision is only the multi-market provider-evidence schema foundation; it does not implement provider ingestion, market activation, offer comparison or market-aware checkout.
 4. Run and retain a backup restore drill to a clean, isolated database. Verify row counts, constraints, order/payment state and inventory invariants after restoration.
 5. Verify database connections and `/ready` for Catalog and Commerce return HTTP 200 only after schema, migration and mandatory configuration are all valid. Confirm they return 503 when a migration or required secret is missing.
 
-## 4. Release and staging acceptance tests
+## 4. Multi-market integration boundary\n\nThe historical PR #102 branch cannot be merged as-is. Its migration revisions `20261105_0004` and `20261105_0005` conflict with the current Commerce migration history. Port its market-aware API and comparison/checkout behavior onto current main using a new migration revision after `20261109_0007`, with upgrade tests from a database already at `20261109_0007`. The multi-market path remains unavailable until fresh FX, authoritative tax, fulfilment and payment-capability evidence is present for the exact destination, merchant, canonical variant and order currency.\n\n## 5. Release and staging acceptance tests
 
 Run these against staging with real provider/test-mode credentials before enabling a production domain:
 
