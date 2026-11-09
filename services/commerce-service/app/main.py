@@ -378,8 +378,6 @@ class OrderCharge(Base):
         CheckConstraint("amount_minor >= 0", name="ck_commerce_order_charge_amount_nonnegative"),
         CheckConstraint("charge_type IN ('fulfilment','tax')", name="ck_commerce_order_charge_type"),
         CheckConstraint("charge_basis IN ('per_unit','per_quote')", name="ck_commerce_order_charge_basis"),
-        Index("ix_commerce_order_charges_order_id", "order_id"),
-        Index("ix_commerce_order_charges_merchant_id", "merchant_id"),
     )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     order_id: Mapped[str] = mapped_column(ForeignKey("commerce_orders.id", ondelete="CASCADE"), nullable=False, index=True)
