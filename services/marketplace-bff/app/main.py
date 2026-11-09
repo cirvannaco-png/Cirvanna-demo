@@ -2065,114 +2065,27 @@ def public_offers(
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=MAX_PAGE_SIZE),
 ) -> dict:
-    """Expose active offers with localized display prices only when FX evidence exists."""
-    base = _upstream_base("COMMERCE_API_URL")
-    params: dict[str, str | int] = {"offset": offset, "limit": limit}
-    if q and q.strip():
-        params["q"] = q.strip()
-    if category and category.strip():
-        params["category"] = category.strip()
-    if currency and currency.strip():
-        params["currency"] = currency.strip().upper()
-    if market_country_code and market_country_code.strip():
-        params["market_country_code"] = market_country_code.strip().upper()
-    if display_currency and display_currency.strip():
-        params["display_currency"] = display_currency.strip().upper()
-    if destination_key and destination_key.strip():
-        params["destination_key"] = destination_key.strip()
-    if fulfillment_mode:
-        params["fulfillment_mode"] = fulfillment_mode
-    if destination_key:
-        params["radius_km"] = radius_km
-    try:
-        response = httpx.get(
-            base + "/marketplace/offers",
-            params=params,
-            headers={"Accept": "application/json"},
-            timeout=TIMEOUT_SECONDS,
-            follow_redirects=False,
-        )
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=503, detail={"code": "COMMERCE_OFFERS_UNAVAILABLE"}) from exc
-    if response.status_code != 200:
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "COMMERCE_OFFERS_UNAVAILABLE", "upstream_status": response.status_code},
-        )
-    try:
-        data = response.json()
-    except ValueError as exc:
-        raise HTTPException(status_code=502, detail={"code": "INVALID_COMMERCE_RESPONSE"}) from exc
-    if not isinstance(data, dict) or not isinstance(data.get("items"), list) or not isinstance(data.get("total"), int):
-        raise HTTPException(status_code=502, detail={"code": "INVALID_COMMERCE_RESPONSE"})
-    safe_payload = dict(data)
-    safe_items = []
-    for offer in data["items"]:
-        if not isinstance(offer, dict):
-            raise HTTPException(status_code=502, detail={"code": "INVALID_COMMERCE_RESPONSE"})
-        safe_offer = dict(offer)
-        # Defense in depth: public media stays hidden until an asset-bound privacy receipt is verified.
-        safe_offer["image_urls"] = []
-        if isinstance(safe_offer.get("product"), dict):
-            safe_product = dict(safe_offer["product"])
-            safe_product["image_urls"] = []
-            safe_offer["product"] = safe_product
-        safe_items.append(safe_offer)
-    safe_payload["items"] = safe_items
-    return safe_payload
-
+    """Fail closed: the anonymous offer feed bypasses authenticated CAL discovery."""
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "code": "CAL_GOVERNED_DISCOVERY_REQUIRED",
+            "message": "Public product browsing is paused until every offer is returned through authenticated CAL SHOW authorization.",
+        },
+        headers={"Cache-Control": "no-store"},
+    )
 
 @app.post("/api/commerce/marketplace/compare")
 def compare_public_offers(payload: OfferComparisonIn) -> Response:
-    """Proxy a Commerce-authored comparison response without inventing any costs."""
-    base = _upstream_base("COMMERCE_API_URL")
-    try:
-        response = httpx.post(
-            base + "/marketplace/compare",
-            json=payload.model_dump(mode="json"),
-            headers={"Accept": "application/json"},
-            timeout=TIMEOUT_SECONDS,
-            follow_redirects=False,
-        )
-    except httpx.TimeoutException as exc:
-        raise HTTPException(status_code=504, detail={"code": "COMMERCE_COMPARISON_TIMEOUT"}) from exc
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=503, detail={"code": "COMMERCE_COMPARISON_UNAVAILABLE"}) from exc
-    if response.status_code != 200:
-        raise HTTPException(status_code=503, detail={"code": "COMMERCE_COMPARISON_UNAVAILABLE"})
-    try:
-        data = response.json()
-    except ValueError as exc:
-        raise HTTPException(status_code=502, detail={"code": "INVALID_COMMERCE_COMPARISON_RESPONSE"}) from exc
-    if not isinstance(data, dict) or data.get("status") not in {"comparable", "unavailable"}:
-        raise HTTPException(status_code=502, detail={"code": "INVALID_COMMERCE_COMPARISON_RESPONSE"})
-    return JSONResponse(content=data, headers={"Cache-Control": "no-store, private"})
-
-
-def _authorized_commerce_path(method: str, path: str) -> bool:
-    parts = path.split("/")
-    if any(part in {"", ".", ".."} for part in parts):
-        return False
-    if (method, path) in SERVICE_PATHS:
-        return True
-    if len(parts) == 2 and parts[0] == "saved-products" and UUID_RE.fullmatch(parts[1]):
-        return method in {"PUT", "DELETE"}
-    if len(parts) == 3 and parts[:2] == ["cart", "items"] and UUID_RE.fullmatch(parts[2]):
-        return method in {"PATCH", "DELETE"}
-    if len(parts) == 2 and parts[0] == "orders" and UUID_RE.fullmatch(parts[1]):
-        return method == "GET"
-    if len(parts) == 4 and parts[:2] == ["merchant", "listings"] and UUID_RE.fullmatch(parts[2]) and parts[3] == "variants":
-        return method == "POST"
-    if len(parts) == 4 and parts[:2] == ["merchant", "variants"] and UUID_RE.fullmatch(parts[2]) and parts[3] == "inventory-adjustments":
-        return method == "POST"
-    if len(parts) == 4 and parts[:2] == ["admin", "merchants"] and UUID_RE.fullmatch(parts[2]) and parts[3] == "decision":
-        return method == "POST"
-    if len(parts) == 4 and parts[:2] == ["admin", "merchants"] and UUID_RE.fullmatch(parts[2]) and parts[3] == "markets":
-        return method == "GET"
-    if len(parts) == 5 and parts[:2] == ["admin", "merchants"] and UUID_RE.fullmatch(parts[2]) and parts[3] == "markets" and re.fullmatch(r"[A-Za-z]{2}", parts[4]):
-        return method == "PUT"
-    return False
-
+    """Fail closed until each candidate is bound to an authenticated CAL SHOW receipt."""
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "code": "CAL_AUTHORIZATION_REQUIRED",
+            "message": "Merchant comparison is unavailable until candidate-bound CAL authorization is enforced.",
+        },
+        headers={"Cache-Control": "no-store"},
+    )
 
 @app.api_route("/api/commerce/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 async def commerce_proxy(path: str, request: Request) -> Response:
