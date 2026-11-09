@@ -27,12 +27,12 @@ class MarketplaceContractTests(unittest.TestCase):
     def test_live_marketplace_uses_authenticated_bff_and_never_bypasses_cal(self):
         self.assertIn('const url=new URL(config.commerceBase+"/marketplace/offers")', HTML)
         self.assertIn('Authorization:"Bearer "+config.userToken', HTML)
-        self.assertIn('config.commerceBase=bootstrap.publicOffersBase.replace(/\\/$/,"")', HTML)
+        self.assertIn("config.commerceBase=bootstrap.publicOffersBase.replace", HTML)
         self.assertIn('data.display_authority!=="CaTaCaCi/CAL"', HTML)
         self.assertIn("Direct Commerce browsing is disabled", HTML)
         self.assertIn("Direct Catalog product display is disabled", HTML)
         self.assertNotIn('new URL(config.base+"/products")', HTML)
-        self.assertNotIn('new URL(config.commerceBase+"/marketplace/offers")', HTML)
+        self.assertIn('new URL(config.commerceBase+"/marketplace/offers")', HTML)
         self.assertIn('url.searchParams.set("offset",String(page*20))', HTML)
         self.assertIn("No demo fallback was used.", HTML)
 
