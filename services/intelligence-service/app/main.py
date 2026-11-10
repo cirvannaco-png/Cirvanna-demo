@@ -607,7 +607,7 @@ def start_perfectcorp_skin_analysis(payload: PerfectCorpSkinAnalysisIn):
             except Exception:
                 pass
             raise HTTPException(503, "Provider task ownership could not be persisted; task deletion was attempted") from exc
-        task["provider_task_id"] = task.pop("task_id")
+        task.pop("task_id", None)
         # The public handle is an opaque UUID stored in the task ledger, not the provider task ID.
         with SessionLocal() as db:
             stored = db.scalar(select(ProviderTask).where(ProviderTask.provider_task_id == task["provider_task_id"]))
@@ -668,7 +668,7 @@ def poll_perfectcorp_skin_analysis(
             task_row.deleted_at = now()
             db.commit()
             result["provider_task_deleted"] = True
-        result["provider_task_id"] = result.pop("task_id", None)
+        result.pop("task_id", None)
         result["task_id"] = task_row.task_id
         return result
     except PerfectCorpNotConfigured as exc:
