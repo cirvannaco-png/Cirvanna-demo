@@ -553,7 +553,7 @@ def test_cil_gateway_can_serve_validated_ingredient_with_attribution(client, mon
     from app import main as catalog_main
 
     monkeypatch.setenv("CIL_GATEWAY_URL", "https://cil.internal")
-    monkeypatch.setenv("CIL_SERVICE_TOKEN", "catalog-to-cil-token")
+    monkeypatch.setenv("CIL_CATALOG_SERVICE_TOKEN", "catalog-to-cil-token")
 
     class FakeResponse:
         def __init__(self, request_payload):
