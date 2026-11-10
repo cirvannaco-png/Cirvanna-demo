@@ -343,6 +343,7 @@ def test_missing_required_attribution_fails_closed(client):
         "claims": [{
             "claim_id": "cosmetic-claim",
             "claim_type": "cosmetic_intent",
+            "review_status": "approved",
             "evidence": {"evidence_id": "evidence-no-attribution", "source_id": "no-attribution"},
         }],
         "ingredient_declarations": [],
