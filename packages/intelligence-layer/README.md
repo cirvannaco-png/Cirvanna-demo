@@ -7,7 +7,7 @@ This package is the first implementation slice of the platform-wide Cirvanna Int
 - `source_registry.py`: explicit source ownership, access method, rights status, permitted purpose, attribution and expiry. Public visibility alone never authorizes commercial reuse.
 - `evidence.py`: evidence grade, scope-bound product claims and a fail-closed claim assessment. Ingredient-level evidence cannot establish finished-product efficacy.
 - `product.py`: canonical product ingredient declarations linked to product-specific evidence. Catalog remains the canonical product identity and version-history owner.
-- `models.py`: model cards, validation populations, limitations, metrics and calibration requirements. Only independently validated, calibrated models can be marked eligible for user-facing assessment.
+- `models.py`: model cards, validation populations, limitations, metrics and calibration requirements. User-facing readiness is assessed against an explicit versioned task policy with required populations, metric thresholds, maximum expected calibration error and maximum Brier score; independent validation alone is not enough.
 - `feedback.py`: purpose-bound-consent outcome events and cohort aggregation. Rejections, clicks, purchases and ignored recommendations are not converted into suitability outcomes without an explicit user report. A negative cohort signal requests review; it does not suppress or authorize a product.
 
 ## Run tests

@@ -8,10 +8,11 @@ sys.path.insert(0, str(ROOT / "packages" / "intelligence-layer"))
 from cirvanna_intelligence import (  # noqa: E402
     ClaimSupport, ClaimType, DataPurpose, EvidenceGrade, EvidenceRecord,
     EvidenceScope, FeedbackReason, IngredientDeclaration, ModelMetric,
+    MetricDirection, MetricThreshold, ModelReadinessPolicy,
     ModelValidationCard, ModelValidationStatus, ProductClaim,
     ProductIntelligenceRecord, RecommendationAction, RecommendationOutcome,
     RightsStatus, SourceKind, SourceRecord, SuitabilityResponse,
-    aggregate_feedback_cohort, assess_product_claim,
+    aggregate_feedback_cohort, assess_model_readiness, assess_product_claim,
 )
 
 TIMESTAMP = "2026-11-10T10:00:00Z"
@@ -156,7 +157,9 @@ class ModelValidationTests(unittest.TestCase):
             status=ModelValidationStatus.UNVALIDATED,
             intended_uses=(DataPurpose.COMMERCIAL_RECOMMENDATION,),
         )
-        self.assertFalse(card.eligible_for_user_facing_assessment)
+        result = assess_model_readiness(card, readiness_policy())
+        self.assertFalse(result.eligible)
+        self.assertIn("MODEL_NOT_INDEPENDENTLY_VALIDATED", result.reason_codes)
 
     def test_independent_validation_requires_calibration_and_population_evaluation(self):
         with self.assertRaises(ValueError):
@@ -185,7 +188,63 @@ class ModelValidationTests(unittest.TestCase):
             expected_calibration_error=0.04, brier_score=0.11,
             known_limitations=("Performance is not established outside the evaluated image conditions.",),
         )
-        self.assertTrue(card.eligible_for_user_facing_assessment)
+        result = assess_model_readiness(card, readiness_policy())
+        self.assertTrue(result.eligible)
+        self.assertEqual(result.reason_codes, ())
+
+
+    def test_independent_validation_is_not_enough_when_policy_thresholds_fail(self):
+        card = ModelValidationCard(
+            model_id="skin-attributes", model_version="1.0", provider="provider",
+            task="non-diagnostic cosmetic skin-attribute analysis",
+            status=ModelValidationStatus.INDEPENDENTLY_VALIDATED,
+            intended_uses=(DataPurpose.COMMERCIAL_RECOMMENDATION,),
+            evaluated_populations=("adult-image-set", "skin-tone-strata"),
+            metrics=(ModelMetric("macro_f1", 0.71, "adult-image-set", 800),),
+            validation_dataset_reference="dataset-2026", validation_report_reference="report-2026",
+            independent_reviewer="Independent Review Lab",
+            calibration_method="isotonic calibration on a held-out set",
+            expected_calibration_error=0.16, brier_score=0.27,
+            known_limitations=("Performance is not established outside the evaluated image conditions.",),
+        )
+        result = assess_model_readiness(card, readiness_policy())
+        self.assertFalse(result.eligible)
+        self.assertIn("EXPECTED_CALIBRATION_ERROR_THRESHOLD_NOT_MET", result.reason_codes)
+        self.assertIn("BRIER_SCORE_THRESHOLD_NOT_MET", result.reason_codes)
+        self.assertIn("MODEL_METRIC_MINIMUM_NOT_MET", result.reason_codes)
+
+    def test_readiness_policy_requires_metrics_for_each_required_population(self):
+        card = ModelValidationCard(
+            model_id="skin-attributes", model_version="1.0", provider="provider",
+            task="non-diagnostic cosmetic skin-attribute analysis",
+            status=ModelValidationStatus.INDEPENDENTLY_VALIDATED,
+            intended_uses=(DataPurpose.COMMERCIAL_RECOMMENDATION,),
+            evaluated_populations=("adult-image-set", "skin-tone-strata"),
+            metrics=(ModelMetric("macro_f1", 0.88, "adult-image-set", 800),),
+            validation_dataset_reference="dataset-2026", validation_report_reference="report-2026",
+            independent_reviewer="Independent Review Lab",
+            calibration_method="isotonic calibration on a held-out set",
+            expected_calibration_error=0.04, brier_score=0.11,
+            known_limitations=("Performance is not established outside the evaluated image conditions.",),
+        )
+        result = assess_model_readiness(card, readiness_policy())
+        self.assertFalse(result.eligible)
+        self.assertIn("REQUIRED_MODEL_METRIC_MISSING", result.reason_codes)
+
+
+def readiness_policy():
+    return ModelReadinessPolicy(
+        policy_id="skin-assessment-commercial-v1",
+        task="non-diagnostic cosmetic skin-attribute analysis",
+        intended_use=DataPurpose.COMMERCIAL_RECOMMENDATION,
+        required_populations=("adult-image-set", "skin-tone-strata"),
+        metric_thresholds=(
+            MetricThreshold("macro_f1", "adult-image-set", MetricDirection.MINIMUM, 0.80),
+            MetricThreshold("macro_f1", "skin-tone-strata", MetricDirection.MINIMUM, 0.78),
+        ),
+        maximum_expected_calibration_error=0.08,
+        maximum_brier_score=0.18,
+    )
 
 
 class FeedbackTests(unittest.TestCase):

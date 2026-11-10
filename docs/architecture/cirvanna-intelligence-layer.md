@@ -53,7 +53,7 @@ Product claims are limited to ingredient presence, cosmetic intent, formulation 
 
 A model card records model/provider identity, immutable version, task, intended use, validation dataset/report references, evaluated populations, per-population metrics, known limitations, calibration method, expected calibration error and Brier score.
 
-`UNVALIDATED` and `DEPRECATED` models are not eligible for user-facing assessment. The current readiness predicate requires independent validation, a validation report and dataset, evaluated populations, metrics, limitations, calibration method and calibration metrics, plus an explicit commercial-recommendation intended use.
+`UNVALIDATED` and `DEPRECATED` models are not eligible for user-facing assessment. User-facing readiness is assessed against an explicit versioned task policy. The policy names the task, intended use, required evaluation populations, metric thresholds by population, maximum expected calibration error and maximum Brier score. An independent validation badge or vendor-provided confidence score is not sufficient on its own. A model is ineligible when a required population or metric is missing or any policy threshold fails. Thresholds are task-specific; this package does not invent one universal beauty-model cutoff.
 
 A vendor-provided confidence score is not automatically calibrated confidence. Validation must include the actual intended population, relevant skin-tone/image-quality segments where applicable, failure analysis and held-out evaluation. CIL model readiness does not replace independent safety/FCI evidence or CAL arbitration.
 
@@ -89,7 +89,7 @@ CIL cannot authorize a display. A CIL-supported claim or positive outcome must s
 - Pure-Python rights-aware source registry contract.
 - Evidence grades, scope-aware product claim assessment and source-purpose checks.
 - Product ingredient declaration and product intelligence record contracts.
-- Model validation card with a fail-closed user-facing readiness predicate.
+- Model validation cards plus a policy-specific readiness assessor with per-population metric and calibration thresholds.
 - Consent-gated recommendation outcome contract and distinct-contributor aggregation.
 - Catalog schema extension for structured ingredient declarations and typed, non-approved claims.
 - Unit/contract tests for rights, evidence scope, model validation, consent, CAL SHOW binding, sample suppression and negative-feedback review signaling.

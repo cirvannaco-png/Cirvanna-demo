@@ -21,7 +21,11 @@ from .feedback import (
     SuitabilityResponse,
     aggregate_feedback_cohort,
 )
-from .models import ModelMetric, ModelValidationCard, ModelValidationStatus
+from .models import (
+    MetricDirection, MetricThreshold, ModelMetric, ModelReadinessPolicy,
+    ModelReadinessResult, ModelValidationCard, ModelValidationStatus,
+    assess_model_readiness,
+)
 from .product import IngredientDeclaration, ProductIntelligenceRecord, normalize_inci_label
 from .source_registry import DataPurpose, RightsStatus, SourceKind, SourceRecord
 
@@ -29,8 +33,9 @@ __all__ = [
     "ClaimAssessment", "ClaimSupport", "ClaimType", "DataPurpose",
     "EvidenceGrade", "EvidenceRecord", "EvidenceScope", "FeedbackAggregate",
     "FeedbackReason", "IngredientDeclaration", "ModelMetric", "ModelValidationCard",
-    "ModelValidationStatus", "ProductClaim", "ProductIntelligenceRecord",
+    "MetricDirection", "MetricThreshold", "ModelReadinessPolicy",
+    "ModelReadinessResult", "ModelValidationStatus", "ProductClaim", "ProductIntelligenceRecord",
     "RecommendationAction", "RecommendationOutcome", "RightsStatus", "SourceKind",
     "SourceRecord", "SuitabilityResponse", "aggregate_feedback_cohort",
-    "assess_product_claim", "normalize_inci_label",
+    "assess_model_readiness", "assess_product_claim", "normalize_inci_label",
 ]
