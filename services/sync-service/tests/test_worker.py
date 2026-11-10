@@ -323,3 +323,24 @@ def test_worker_observes_explicit_checkout_selection_without_marking_purchase():
     assert "/v1/tal/events" in calls
     assert "/v1/purchases/verified" not in calls
     assert calls[-1].endswith("/ack")
+
+
+
+def test_worker_does_not_ack_checkout_selection_without_consent_receipt():
+    event = checkout_started_event()
+    event["payload"].pop("personalization_consent_receipt_id")
+    calls = []
+
+    def handler(request: httpx.Request):
+        calls.append(request.url.path)
+        if request.url.path == "/internal/outbox/claim":
+            return httpx.Response(200, json={"events": [event]})
+        if request.url.path.endswith("/fail"):
+            return httpx.Response(200, json={"status": "retry_scheduled"})
+        raise AssertionError("invalid consent event must not reach TAL or be acknowledged")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    result = CommerceWardrobeWorker(tal_settings(), client).process_batch()
+    assert result == {"claimed": 1, "processed": 0, "retried": 1, "dead_lettered": 0}
+    assert "/v1/tal/events" not in calls
+    assert not any(path.endswith("/ack") for path in calls)
