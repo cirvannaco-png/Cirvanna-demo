@@ -9,7 +9,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.main import Base, app, get_db
+from app.main import Base, ProductVersion, app, get_db
 
 TEST_ENGINE = create_engine(
     "sqlite://",
@@ -370,11 +370,20 @@ def test_product_intelligence_metadata_is_validated_and_versioned(client):
     assert intelligence["cultural_usage"]["editorial_reviewed"] is True
     assert intelligence["observed_outcomes"]["sample_size"] == 45
 
+    # Customer-facing reads fail closed until the durable CIL gateway validates rights.
     history = client.get(
         f"/products/{product['product_id']}/versions", headers=auth_headers()
     )
     assert history.status_code == 200
-    assert history.json()[0]["snapshot"]["attributes"]["product_intelligence"]["schema_version"] == "1.0"
+    assert "product_intelligence" not in history.json()[0]["snapshot"]["attributes"]
+
+    # Catalog still retains the immutable versioned record internally.
+    db = TestSessionLocal()
+    try:
+        version = db.query(ProductVersion).filter_by(product_id=product["product_id"]).one()
+        assert version.snapshot["attributes"]["product_intelligence"]["schema_version"] == "1.0"
+    finally:
+        db.close()
 
 
 def test_cultural_product_metadata_requires_editorial_review_evidence(client):
