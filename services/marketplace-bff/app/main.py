@@ -2215,17 +2215,9 @@ def _authorized_commerce_path(method: str, path: str) -> bool:
 async def commerce_proxy(path: str, request: Request) -> Response:
     """Forward customer operations only; admin/internal/webhook routes are not exposed."""
     method = request.method.upper()
-    cart_item_match = re.fullmatch(r"cart/items/[0-9a-fA-F-]{36}", path)
-    if (
-        (method == "GET" and path == "cart")
-        or (method == "POST" and path in {"cart/items", "checkout"})
-        or (method == "PATCH" and cart_item_match is not None)
-    ):
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "CAL_CANDIDATE_PURCHASE_REAUTH_REQUIRED"},
-            headers={"Cache-Control": "no-store"},
-        )
+    # Commerce independently reauthorizes each cart and checkout candidate
+    # against a fresh, signed, candidate-bound CAL receipt. The BFF never
+    # manufactures or forwards caller-supplied authorization receipts.
     if not _authorized_commerce_path(method, path):
         raise HTTPException(status_code=404, detail={"code": "COMMERCE_ROUTE_NOT_AVAILABLE"})
     authorization = request.headers.get("authorization", "")
@@ -2259,6 +2251,8 @@ async def commerce_proxy(path: str, request: Request) -> Response:
         response_headers["Content-Type"] = upstream.headers["content-type"]
     if upstream.headers.get("retry-after"):
         response_headers["Retry-After"] = upstream.headers["retry-after"]
+    if path == "cart" or path == "checkout" or path.startswith("cart/items/") or path == "cart/items":
+        response_headers["Cache-Control"] = "no-store, private"
     return Response(content=upstream.content, status_code=upstream.status_code, headers=response_headers)
 
 
