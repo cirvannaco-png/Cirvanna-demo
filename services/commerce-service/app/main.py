@@ -2718,12 +2718,24 @@ def delete_saved_product(catalog_product_id: uuid.UUID, actor: Annotated[Actor, 
 
 
 @app.get("/cart")
-def get_cart(actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Session, Depends(get_db)]):
-    return cart_json(db, ensure_cart(db, actor.user_id))
+def get_cart(request: Request, actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Session, Depends(get_db)]):
+    cart = ensure_cart(db, actor.user_id)
+    rows = db.execute(select(CartItem, Variant, Listing, Merchant)
+        .join(Variant, CartItem.variant_id == Variant.id)
+        .join(Listing, Variant.listing_id == Listing.id)
+        .join(Merchant, Listing.merchant_id == Merchant.id)
+        .where(CartItem.cart_id == cart.id)).all()
+    _authorize_purchase_lines(
+        subject_id=actor.user_id,
+        action="cart_read",
+        rows=rows,
+        user_authorization=_user_authorization_header(request),
+    )
+    return cart_json(db, cart)
 
 
 @app.post("/cart/items", status_code=201)
-def add_cart_item(payload: CartItemIn, actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Session, Depends(get_db)]):
+def add_cart_item(request: Request, payload: CartItemIn, actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Session, Depends(get_db)]):
     joined = variant_triplet(db, payload.variant_id)
     if not joined:
         raise HTTPException(404, detail={"code": "VARIANT_NOT_FOUND"})
@@ -2737,10 +2749,22 @@ def add_cart_item(payload: CartItemIn, actor: Annotated[Actor, Depends(require_a
         raise HTTPException(422, detail={"code": "CART_QUANTITY_LIMIT", "maximum": MAX_QTY})
     if variant.on_hand - variant.reserved_qty < quantity:
         raise HTTPException(409, detail={"code": "INSUFFICIENT_AVAILABLE_STOCK", "available_stock": variant.on_hand - variant.reserved_qty})
+    candidate_line = CartItem(
+        id=item.id if item else str(uuid.uuid4()),
+        cart_id=cart.id,
+        variant_id=variant.id,
+        quantity=quantity,
+    )
+    _authorize_purchase_lines(
+        subject_id=actor.user_id,
+        action="cart_add",
+        rows=[(candidate_line, variant, listing, merchant)],
+        user_authorization=_user_authorization_header(request),
+    )
     if item:
         item.quantity = quantity
     else:
-        db.add(CartItem(id=str(uuid.uuid4()), cart_id=cart.id, variant_id=variant.id, quantity=quantity))
+        db.add(candidate_line)
     cart.version, cart.updated_at = cart.version + 1, now()
     try:
         db.commit()
@@ -2751,14 +2775,24 @@ def add_cart_item(payload: CartItemIn, actor: Annotated[Actor, Depends(require_a
 
 
 @app.patch("/cart/items/{variant_id}")
-def update_cart_item(variant_id: uuid.UUID, payload: QuantityIn, actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Session, Depends(get_db)]):
+def update_cart_item(request: Request, variant_id: uuid.UUID, payload: QuantityIn, actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Session, Depends(get_db)]):
     cart = ensure_cart(db, actor.user_id)
     item = db.scalar(select(CartItem).where(CartItem.cart_id == cart.id, CartItem.variant_id == str(variant_id)))
     if not item:
         raise HTTPException(404, detail={"code": "CART_ITEM_NOT_FOUND"})
-    variant = db.get(Variant, item.variant_id)
-    if not variant or variant.state != "active" or variant.on_hand - variant.reserved_qty < payload.quantity:
+    joined = variant_triplet(db, str(variant_id))
+    if not joined:
+        raise HTTPException(409, detail={"code": "OFFER_UNAVAILABLE"})
+    variant, listing, merchant = joined
+    if variant.state != "active" or listing.state != "active" or merchant.state != "approved" or variant.on_hand - variant.reserved_qty < payload.quantity:
         raise HTTPException(409, detail={"code": "INSUFFICIENT_AVAILABLE_STOCK"})
+    candidate_line = CartItem(id=item.id, cart_id=cart.id, variant_id=item.variant_id, quantity=payload.quantity)
+    _authorize_purchase_lines(
+        subject_id=actor.user_id,
+        action="cart_update",
+        rows=[(candidate_line, variant, listing, merchant)],
+        user_authorization=_user_authorization_header(request),
+    )
     item.quantity, cart.version, cart.updated_at = payload.quantity, cart.version + 1, now()
     db.commit()
     return cart_json(db, cart)
@@ -2903,6 +2937,7 @@ def _resolve_market_checkout_line(
 
 @app.post("/checkout", status_code=201)
 def checkout(
+    request: Request,
     actor: Annotated[Actor, Depends(require_actor)],
     db: Annotated[Session, Depends(get_db)],
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=255)],
@@ -3057,6 +3092,47 @@ def checkout(
         expiry = min(_aware_utc(value) for value in quote_expiries)
         if expiry <= now():
             raise HTTPException(409, detail={"code": "MARKET_QUOTE_EXPIRED_BEFORE_CHECKOUT"})
+    purchase_market_context = None
+    if market_context is not None:
+        purchase_market_context = {
+            "destination_country_code": market_context.destination_country_code,
+            "destination_key": market_context.destination_key,
+            "fulfillment_mode": market_context.fulfillment_mode,
+            "display_currency": market_context.display_currency,
+            "payment_method": market_context.payment_method,
+        }
+    checkout_line_snapshots = {
+        item["variant_id"]: item
+        for item in (quote_snapshot or {}).get("items", [])
+        if isinstance(item, dict) and isinstance(item.get("variant_id"), str)
+    }
+    checkout_totals = {
+        "currency": currency,
+        "subtotal_minor": item_subtotal,
+        "fulfillment_total_minor": fulfillment_total,
+        "tax_total_minor": tax_total,
+        "total_minor": total,
+    }
+    cal_authorizations = _authorize_purchase_lines(
+        subject_id=actor.user_id,
+        action="checkout",
+        rows=rows,
+        user_authorization=_user_authorization_header(request),
+        market_context=purchase_market_context,
+        checkout_line_snapshots=checkout_line_snapshots,
+        checkout_totals=checkout_totals,
+    )
+    cal_authorization_snapshot = {
+        "subject_id": actor.user_id,
+        "action": "checkout",
+        "market_context": purchase_market_context,
+        "checkout_totals": checkout_totals,
+        "authorizations": [
+            {"variant_id": row[1].id, "claims": authorization["claims"]}
+            for row, authorization in zip(rows, cal_authorizations)
+        ],
+        "authorized_at": now().isoformat(),
+    }
     order = CommerceOrder(
         id=str(uuid.uuid4()), order_number=f"CV-{now():%Y%m%d}-{uuid.uuid4().hex[:10].upper()}",
         buyer_user_id=actor.user_id, state="pending_payment", payment_state="pending", currency=currency,
@@ -3065,7 +3141,8 @@ def checkout(
         destination_country_code=market_context.destination_country_code if market_context else None,
         destination_key=market_context.destination_key if market_context else None,
         fulfillment_mode=market_context.fulfillment_mode if market_context else None,
-        checkout_context_hash=context_hash, tal_consent_receipt_id=tal_receipt_id, market_quote_snapshot=quote_snapshot,
+        checkout_context_hash=context_hash, tal_consent_receipt_id=tal_receipt_id,
+        cal_authorization_snapshot=cal_authorization_snapshot, market_quote_snapshot=quote_snapshot,
         commission_minor=0, idempotency_key=idempotency_key, expires_at=expiry,
     )
     charged_fulfillment_quotes: set[tuple[str, str, str]] = set()
