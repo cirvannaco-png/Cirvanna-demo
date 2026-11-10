@@ -20,6 +20,8 @@ on:
       - "services/marketplace-bff/**"
       - "services/asset-service/**"
       - "services/vision-intelligence/**"
+      - "services/privacy-governance-service/**"
+      - "services/intelligence-service/**"
       - ".github/workflows/container-image-builds.yml"
   workflow_dispatch:
 
