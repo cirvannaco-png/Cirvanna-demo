@@ -55,6 +55,12 @@ def require_internal_token(credentials: Annotated[HTTPAuthorizationCredentials |
         raise HTTPException(401, detail="Valid internal bearer authentication is required.", headers={"WWW-Authenticate": "Bearer"})
 
 
+def require_cal_review_operator(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]) -> None:
+    expected = _required_env("CAL_REVIEW_OPERATOR_TOKEN")
+    if credentials is None or not hmac.compare_digest(credentials.credentials, expected):
+        raise HTTPException(401, detail="Dedicated CAL review operator authentication is required.", headers={"WWW-Authenticate": "Bearer"})
+
+
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -346,7 +352,7 @@ async def list_cil_feedback_reviews() -> dict:
         raise HTTPException(503, detail={"code": "CIL_REVIEW_QUEUE_UNAVAILABLE"}) from exc
 
 
-@app.post("/v1/cal/feedback-reviews/{review_id}/decision", dependencies=[Depends(require_internal_token)])
+@app.post("/v1/cal/feedback-reviews/{review_id}/decision", dependencies=[Depends(require_cal_review_operator)])
 async def submit_cil_feedback_decision(review_id: str, payload: CALFeedbackDecisionIn) -> dict:
     base, _, cal_token = _cil_review_bridge()
     try:
