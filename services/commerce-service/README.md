@@ -121,6 +121,21 @@ Configure COMMERCE_MARKET_CONTEXT_TOKEN (at least 32 bytes) only for trusted quo
 The #181/#102 integration provides provider-neutral quote and capability ingestion contracts, not live FX, tax, courier, KYC or payment-provider onboarding adapters. Schema and internal ingestion endpoints do not themselves prove that an external provider is configured, authenticated or operational. Provider references and timestamps must be independently verified before admin activation. No production secrets or live provider integrations are configured by this change.
 
 
+## Candidate-bound CAL authorization for cart and checkout
+
+Commerce does not treat a successful marketplace display decision as permission to mutate a cart or create a payable order. Each user-controlled cart read, add, quantity update and checkout asks the Decision Gateway for a fresh action-specific authorization. Removing a cart line remains available without a product authorization so a buyer can always remove an item.
+
+The request contains the authenticated buyer identity and an offer snapshot hash covering the canonical Catalog product, variant, listing, merchant, variant version/state, SKU/options, source and authorized unit price/currency, quantity, available stock and, for market-aware checkout, the destination-zone hash, fulfilment mode, display currency and provider quote/FX/tax/payment evidence. No raw street address is sent to the Decision Gateway. Gateway independently resolves the end-user bearer through Commerce identity and returns a per-offer HMAC-SHA256 signed receipt bound to subject, candidate/variant, product, listing, merchant, action, offer hash, market, quantity, price, Catalog version, policy version, verdict and short expiry.
+
+Commerce verifies the receipt signature, authenticated subject, exact request binding, Catalog version presence, policy metadata, and issue/expiry window. Only SHOW with may_display=true is accepted. Missing configuration, timeouts, malformed receipts, signature failures, mismatched offers, stale receipts and BLOCK/REVIEW decisions fail closed. A batch is split so no Decision Gateway evaluation contains more than 25 unique Catalog products.
+
+Migration 20261110_0010_cal_purchase_authorizations.py creates the append-only commerce_cal_purchase_audits table. Successful cart-action receipts and denied decisions are recorded against the buyer and cart version. Checkout receipts are bound to the exact line snapshots and inserted in the same transaction as the order, stock reservations and immutable order lines. An idempotent payment-session retry is permitted only when every existing order line has its corresponding successful checkout authorization audit. Existing legacy orders without those audits cannot be reopened for payment.
+
+Configure DECISION_GATEWAY_URL, DECISION_GATEWAY_TOKEN and CAL_PURCHASE_RECEIPT_HMAC_SECRET in the secret manager. The URL must use HTTPS outside local development, the service token and HMAC key must each be at least 32 bytes, and the HMAC key must be the same dedicated secret in Commerce and the Decision Gateway. Never expose either value to a browser or merchant. /ready now requires a reachable, ready Decision Gateway and the current 20261110_0010 schema before reporting Commerce ready.
+
+The BFF and buyer-facing Cart/Checkout routes must remain disabled until this service-level authorization is deployed and its exact-head CI and non-production browse → cart → checkout → payment/webhook path have passed. Enabling a frontend button is not evidence that CAL is enforced.
+
+
 ## Optional checkout preference learning
 
 A checkout may include a personalization consent bundle ID and optional consent version. Commerce verifies that bundle with the canonical Identity Learning service against the authenticated buyer and the active, non-resource-bound personalization scope. The resolved receipt ID is snapshotted on the order. Commerce writes a consented checkout.started selection event in the same transaction that creates the pending order and immutable line snapshots; after payment, it writes the verified commerce.order.paid event. Checkout remains available without opting into personalization; no receipt means no checkout learning.
