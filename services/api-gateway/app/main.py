@@ -2201,6 +2201,10 @@ def _load_cil_feedback_signals(product_ids: list[str], context_key: str) -> tupl
                 count = item.get("contributor_count")
                 if isinstance(share, (int, float)) and not isinstance(share, bool) and 0 <= share <= 1 and isinstance(count, int) and count >= 30:
                     signals[item["product_id"]] = item
+            elif item.get("status") == "suppressed":
+                count = item.get("contributor_count")
+                if isinstance(count, int) and 0 <= count < 30:
+                    signals[item["product_id"]] = item
         return signals, "available"
     except (httpx.HTTPError, ValueError, TypeError):
         return {}, "unavailable"
@@ -2208,8 +2212,12 @@ def _load_cil_feedback_signals(product_ids: list[str], context_key: str) -> tupl
 
 def _feedback_adjusted_score(base_score: float, signal: dict | None, weight: float) -> tuple[float, dict]:
     if not signal:
-        return base_score, {"applied": False, "status": "suppressed_or_unavailable",
+        return base_score, {"applied": False, "status": "unavailable",
                             "unsuitable_share": None, "contributor_count": 0,
+                            "weight": weight, "penalty_fraction": 0.0}
+    if signal.get("status") != "available":
+        return base_score, {"applied": False, "status": "suppressed",
+                            "unsuitable_share": None, "contributor_count": int(signal.get("contributor_count", 0)),
                             "weight": weight, "penalty_fraction": 0.0}
     share = float(signal["unsuitable_share"])
     penalty = weight * share
