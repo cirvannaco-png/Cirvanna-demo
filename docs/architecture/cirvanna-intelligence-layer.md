@@ -22,7 +22,7 @@ Rights states are explicit:
 
 A source must not be treated as commercially reusable merely because a page, review, paper, API or catalogue entry is publicly reachable. The source registry records rights evidence; it does not make a legal determination. Legal review is still required where the source terms or jurisdiction are ambiguous.
 
-The Intelligence Service persists source rights and append-only revocation events, evidence references, recommendation outcomes and CAL review requests through PostgreSQL/SQLAlchemy with Alembic migrations. It provides a generic HTTPS provider adapter that requires an API token, licence ID and terms URL, disables redirects and accepts JSON only. No vendor-specific integration is enabled by default; no scraping, dataset copying or proprietary model extraction is permitted.
+The Intelligence Service persists source rights and append-only revocation events, evidence references, recommendation outcomes, CAL review requests and pseudonymous provider-task ownership through PostgreSQL/SQLAlchemy with Alembic migrations. Its Perfect Corp client implements the documented skin-analysis upload/task/poll/delete sequence behind adult-only, image-digest-bound consent and a DPA/retention approval flag. Revieve remains a documented integration candidate only; public SDK materials do not provide a verified current partner contract or deletion/retention SLA. It provides a generic HTTPS provider adapter that requires an API token, licence ID and terms URL, disables redirects and accepts JSON only. No vendor-specific integration is enabled by default; no scraping, dataset copying or proprietary model extraction is permitted.
 
 ## 3. Evidence classification and claim scope
 
