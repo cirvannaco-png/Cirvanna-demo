@@ -533,7 +533,7 @@ def test_perfectcorp_terminal_result_is_deleted_before_result_is_released(client
     db = SessionLocal()
     try:
         db.add(ProviderTask(
-            task_id="task-2", provider="perfectcorp", contributor_token=contributor,
+            task_id="task-2", provider_task_id="vendor-task-2", provider="perfectcorp", contributor_token=contributor,
             image_digest="a" * 64,
             consent_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
             status="running",
@@ -562,7 +562,7 @@ def test_perfectcorp_terminal_result_is_not_released_when_deletion_fails(client,
     db = SessionLocal()
     try:
         db.add(ProviderTask(
-            task_id="task-3", provider="perfectcorp", contributor_token=contributor,
+            task_id="task-3", provider_task_id="vendor-task-3", provider="perfectcorp", contributor_token=contributor,
             image_digest="b" * 64,
             consent_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
             status="running",
@@ -575,3 +575,47 @@ def test_perfectcorp_terminal_result_is_not_released_when_deletion_fails(client,
         headers={**auth("service-test"), "X-CIL-Contributor-Token": contributor},
     )
     assert response.status_code == 502
+
+
+def test_perfectcorp_polling_is_bound_to_the_same_pseudonymous_contributor(client, monkeypatch):
+    from app import main as cil_main
+    contributor = "hmac-sha256:" + "2" * 64
+    db = SessionLocal()
+    try:
+        db.add(ProviderTask(
+            task_id="task-owned", provider_task_id="vendor-owned", provider="perfectcorp",
+            contributor_token=contributor, image_digest="c" * 64,
+            consent_expires_at=datetime.now(timezone.utc) + timedelta(hours=1), status="running",
+        ))
+        db.commit()
+    finally:
+        db.close()
+    monkeypatch.setattr(cil_main, "perfectcorp_get_skin_analysis_status", lambda **kwargs: pytest.fail("foreign subject must not poll"))
+    response = client.get(
+        "/providers/perfectcorp/skin-analysis/task-owned",
+        headers={**auth("service-test"), "X-CIL-Contributor-Token": "hmac-sha256:" + "3" * 64},
+    )
+    assert response.status_code == 403
+
+
+def test_perfectcorp_reaper_deletes_abandoned_provider_tasks(client, monkeypatch):
+    from app import main as cil_main
+    monkeypatch.setenv("CIL_PERFECTCORP_TASK_TTL_MINUTES", "30")
+    calls = []
+    old = datetime.now(timezone.utc) - timedelta(hours=1)
+    db = SessionLocal()
+    try:
+        db.add(ProviderTask(
+            task_id="task-abandoned", provider_task_id="vendor-abandoned", provider="perfectcorp",
+            contributor_token="hmac-sha256:" + "4" * 64, image_digest="d" * 64,
+            consent_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            status="running", created_at=old,
+        ))
+        db.commit()
+    finally:
+        db.close()
+    monkeypatch.setattr(cil_main, "perfectcorp_delete_task", lambda **kwargs: calls.append(kwargs["task_id"]) or True)
+    response = client.post("/providers/perfectcorp/reap-tasks", headers=auth("admin-test"))
+    assert response.status_code == 200
+    assert response.json()["deleted"] == 1
+    assert calls == ["vendor-abandoned"]
