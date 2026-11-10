@@ -1036,7 +1036,8 @@ def capabilities():
                 "CIL_PROVIDER_BASE_URL", "CIL_PROVIDER_API_TOKEN", "CIL_PROVIDER_LICENCE_ID", "CIL_PROVIDER_TERMS_URL")),
             "perfectcorp_skin_analysis_configured": all(os.getenv(k) for k in (
                 "CIL_PERFECTCORP_ENABLED", "CIL_PERFECTCORP_DPA_APPROVED", "CIL_PERFECTCORP_API_TOKEN",
-                "CIL_PERFECTCORP_LICENCE_ID", "CIL_PERFECTCORP_TERMS_URL", "CIL_PERFECTCORP_RETENTION_POLICY_REF", "CIL_SKIN_ANALYSIS_CONSENT_KEY")),
+                "CIL_PERFECTCORP_LICENCE_ID", "CIL_PERFECTCORP_TERMS_URL", "CIL_PERFECTCORP_RETENTION_POLICY_REF",
+                "CIL_PERFECTCORP_ERASURE_SLA_CONFIRMED", "CIL_PERFECTCORP_MAX_RETENTION_HOURS", "CIL_SKIN_ANALYSIS_CONSENT_KEY")),
             "perfectcorp_skin_analysis_enabled": os.getenv("CIL_PERFECTCORP_ENABLED", "false").lower() == "true",
             "provider_task_retention_reaper_required": True,
             "revieve_integration_enabled": False,
