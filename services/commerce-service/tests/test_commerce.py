@@ -31,6 +31,38 @@ ORIGINAL_ENGINE = main.engine
 ORIGINAL_SESSION = main.SessionLocal
 
 
+
+REAL_CAL_PURCHASE_RECEIPT_REQUESTER = main._request_cal_purchase_receipts
+
+
+def fake_cal_receipts(request, subject_id: str, authorizations: list[dict], *, decision: str = "SHOW"):
+    issued_at = main.now()
+    expires_at = issued_at + main.timedelta(seconds=60)
+    request_id = str(uuid.uuid4())
+    receipts = []
+    for item in authorizations:
+        unsigned = {
+            "schema_version": "1",
+            "receipt_id": str(uuid.uuid4()),
+            "request_id": request_id,
+            "subject_id": subject_id,
+            "candidate_id": item["variant_id"],
+            **item,
+            "catalog_version": 1,
+            "decision": decision,
+            "may_display": decision == "SHOW",
+            "reason_codes": [] if decision == "SHOW" else ["TEST_CAL_DENIAL"],
+            "policy_version": "test-cal-policy-v1",
+            "issued_at": issued_at.isoformat(),
+            "expires_at": expires_at.isoformat(),
+        }
+        key = os.getenv("CAL_PURCHASE_RECEIPT_HMAC_SECRET", "test-cal-purchase-signing-key-more-than-32-bytes")
+        canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+        signature = hmac.new(key.encode(), canonical, hashlib.sha256).hexdigest()
+        receipts.append({**unsigned, "signature": signature})
+    return receipts
+
+
 def b64(value: dict) -> str:
     return base64.urlsafe_b64encode(json.dumps(value, separators=(",", ":")).encode()).rstrip(b"=").decode()
 
@@ -72,6 +104,10 @@ def client(monkeypatch):
     monkeypatch.delenv("COMMERCE_CHECKOUT_CANCEL_URL", raising=False)
     monkeypatch.delenv("COMMERCE_SHIPPING_COUNTRIES", raising=False)
     monkeypatch.delenv("COMMERCE_CRON_TOKEN", raising=False)
+    monkeypatch.delenv("DECISION_GATEWAY_URL", raising=False)
+    monkeypatch.delenv("DECISION_GATEWAY_TOKEN", raising=False)
+    monkeypatch.setenv("CAL_PURCHASE_RECEIPT_HMAC_SECRET", "test-cal-purchase-signing-key-more-than-32-bytes")
+    monkeypatch.setattr(main, "_request_cal_purchase_receipts", fake_cal_receipts)
     main.engine = TEST_ENGINE
     main.SessionLocal = TEST_SESSION
     with TEST_ENGINE.begin() as connection:
@@ -218,14 +254,14 @@ def test_tax_quote_requires_explicit_destination_zone(client, monkeypatch):
     assert response.json()["destination_key"] == "Nakuru/Subukia"
 
 
-def test_multi_market_and_checkout_learning_schema_revision_0009_is_registered():
-    from app.main import CommerceOrder, OrderCharge, OrderItem, OfferTaxQuote
+def test_multi_market_checkout_learning_and_cal_purchase_schema_revision_0010_is_registered():
+    from app.main import CommerceOrder, OrderCharge, OrderItem, OfferTaxQuote, CALPurchaseAudit
     assert "fulfillment_total_minor" in CommerceOrder.__table__.columns
     assert "total_minor" in CommerceOrder.__table__.columns
     assert "tal_consent_receipt_id" in CommerceOrder.__table__.columns
     assert "destination_key" in OfferTaxQuote.__table__.columns
     assert "source_unit_price_minor" in OrderItem.__table__.columns
-    assert OrderCharge.__tablename__ == "commerce_order_charges"
+    assert OrderCharge.__tablename__ == "commerce_order_charges"\n    assert CALPurchaseAudit.__tablename__ == "commerce_cal_purchase_audits"\n    assert "offer_snapshot_sha256" in CALPurchaseAudit.__table__.columns
 
 
 def test_readiness_requires_current_migration_before_production_ready(client, monkeypatch):
@@ -421,15 +457,18 @@ def test_persistent_cart_is_account_scoped_and_rechecks_available_stock(client):
     buyer2 = auth("buyer-two")
     add = client.post("/cart/items", json={"variant_id": offer["variant_id"], "quantity": 2}, headers=buyer1)
     assert add.status_code == 201
-    assert add.json()["items"][0]["available_stock"] == 3
-    assert add.json()["items"][0]["quantity"] == 2
-    assert client.get("/cart", headers=buyer1).json()["item_count"] == 2
+    assert add.json()["cart_refresh_required"] is True
+    buyer1_cart = client.get("/cart", headers=buyer1)
+    assert buyer1_cart.status_code == 200
+    assert buyer1_cart.json()["items"][0]["available_stock"] == 3
+    assert buyer1_cart.json()["items"][0]["quantity"] == 2
     assert client.get("/cart", headers=buyer2).json()["item_count"] == 0
     too_many = client.patch(f"/cart/items/{offer['variant_id']}", json={"quantity": 4}, headers=buyer1)
     assert too_many.status_code == 409
     remove = client.delete(f"/cart/items/{offer['variant_id']}", headers=buyer1)
     assert remove.status_code == 200
-    assert remove.json()["items"] == []
+    assert remove.json()["removed_variant_id"] == offer["variant_id"]
+    assert client.get("/cart", headers=buyer1).json()["items"] == []
 
 
 def test_inventory_adjustment_is_owner_scoped_and_cannot_cross_reserved_floor(client):
