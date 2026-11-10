@@ -465,15 +465,19 @@ def test_persistent_cart_is_account_scoped_and_rechecks_available_stock(client):
     buyer2 = auth("buyer-two")
     add = client.post("/cart/items", json={"variant_id": offer["variant_id"], "quantity": 2}, headers=buyer1)
     assert add.status_code == 201
-    assert add.json()["items"][0]["available_stock"] == 3
-    assert add.json()["items"][0]["quantity"] == 2
-    assert client.get("/cart", headers=buyer1).json()["item_count"] == 2
+    assert add.json()["status"] == "added"
+    cart_view = client.get("/cart", headers=buyer1)
+    assert cart_view.status_code == 200
+    assert cart_view.json()["items"][0]["available_stock"] == 3
+    assert cart_view.json()["items"][0]["quantity"] == 2
+    assert cart_view.json()["item_count"] == 2
     assert client.get("/cart", headers=buyer2).json()["item_count"] == 0
     too_many = client.patch(f"/cart/items/{offer['variant_id']}", json={"quantity": 4}, headers=buyer1)
     assert too_many.status_code == 409
     remove = client.delete(f"/cart/items/{offer['variant_id']}", headers=buyer1)
     assert remove.status_code == 200
-    assert remove.json()["items"] == []
+    assert remove.json()["status"] == "removed"
+    assert client.get("/cart", headers=buyer1).json()["items"] == []
 
 
 def test_inventory_adjustment_is_owner_scoped_and_cannot_cross_reserved_floor(client):
