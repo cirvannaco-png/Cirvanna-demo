@@ -20,6 +20,7 @@ from typing import Annotated, Any
 import httpx
 import numpy as np
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field
@@ -423,18 +424,32 @@ async def _live_offers() -> tuple[list[dict[str, Any]], bool]:
 
 
 def _withhold_unattested_image_urls(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Remove public image references until each exact asset has a verified privacy receipt."""
+    """Recursively remove all media references until exact assets have privacy receipts."""
+    blocked_fields = {
+        "image_urls", "image_url", "render_url", "thumbnail_url",
+        "image_asset_id", "face_crop", "face_crops", "media_url",
+        "media_urls", "preview_url", "original_image_url",
+    }
+
+    def scrub(value: Any) -> Any:
+        if isinstance(value, list):
+            return [scrub(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+        safe: dict[str, Any] = {}
+        for key, item in value.items():
+            normalized = str(key).casefold()
+            if normalized in blocked_fields:
+                safe[key] = [] if normalized.endswith("_urls") or normalized.endswith("_crops") else None
+            else:
+                safe[key] = scrub(item)
+        return safe
+
     safe_results: list[dict[str, Any]] = []
     for result in results:
         if not isinstance(result, dict):
             raise HTTPException(502, detail={"code": "INVALID_MARKETPLACE_RESPONSE"})
-        safe = dict(result)
-        safe["image_urls"] = []
-        if isinstance(safe.get("product"), dict):
-            product = dict(safe["product"])
-            product["image_urls"] = []
-            safe["product"] = product
-        safe_results.append(safe)
+        safe_results.append(scrub(result))
     return safe_results
 
 
