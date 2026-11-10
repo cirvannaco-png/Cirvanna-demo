@@ -27,8 +27,8 @@ ALLOWED_UPLOAD_SUFFIX = ".s3-accelerate.amazonaws.com"
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png"}
 ALLOWED_ACTIONS = {
-    "sd": {"wrinkle", "pore", "texture", "acne", "spot", "redness", "oiliness", "skin_type"},
-    "hd": {"hd_wrinkle", "hd_pore", "hd_texture", "hd_acne", "hd_spot", "hd_redness", "hd_oiliness"},
+    "sd": ["wrinkle","droopy_upper_eyelid","droopy_lower_eyelid","firmness","acne","moisture","eye_bag","dark_circle_v2","age_spot","radiance","redness","oiliness","pore","texture","tear_trough","skin_type"],
+    "hd": ["hd_redness","hd_oiliness","hd_age_spot","hd_radiance","hd_moisture","hd_dark_circle","hd_eye_bag","hd_droopy_upper_eyelid","hd_droopy_lower_eyelid","hd_firmness","hd_texture","hd_acne","hd_pore","hd_wrinkle","hd_tear_trough","hd_skin_type"],
 }
 
 
