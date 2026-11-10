@@ -594,7 +594,6 @@ def start_perfectcorp_skin_analysis(payload: PerfectCorpSkinAnalysisIn):
                 pass
             raise HTTPException(503, "Provider task ownership could not be persisted; task deletion was attempted") from exc
         task["provider_task_id"] = task.pop("task_id")
-        task["task_id"] = task_row_id = task.get("task_id") or ""
         # The public handle is an opaque UUID stored in the task ledger, not the provider task ID.
         with SessionLocal() as db:
             stored = db.scalar(select(ProviderTask).where(ProviderTask.provider_task_id == task["provider_task_id"]))
@@ -637,7 +636,7 @@ def poll_perfectcorp_skin_analysis(
     if os.getenv("CIL_PERFECTCORP_DPA_APPROVED", "false").lower() != "true":
         # When approval is withdrawn, cleanup is still mandatory and results are not released.
         try:
-            perfectcorp_delete_task(task_id=task_id)
+            perfectcorp_delete_task(task_id=task_row.provider_task_id)
             task_row.deleted_at = now()
             task_row.status = "deleted"
             db.commit()
@@ -649,7 +648,7 @@ def poll_perfectcorp_skin_analysis(
         if result.get("status") in {"success", "error"}:
             # Delete provider input/output files immediately after the terminal result is fetched.
             # Never return the result as releasable until deletion is confirmed.
-            perfectcorp_delete_task(task_id=task_id)
+            perfectcorp_delete_task(task_id=task_row.provider_task_id)
             task_row.status = str(result["status"])
             task_row.terminal_at = now()
             task_row.deleted_at = now()
@@ -678,7 +677,7 @@ def delete_perfectcorp_skin_analysis(
         raise HTTPException(404, "Provider task not found")
     _task_subject(contributor_token, task_row.contributor_token)
     if task_row.deleted_at is not None:
-        return {"task_id": task_id, "deleted": True, "already_deleted": True}
+        return {"task_id": task_row.task_id, "deleted": True, "already_deleted": True}
     try:
         deleted = perfectcorp_delete_task(task_id=task_row.provider_task_id)
         task_row.deleted_at = now()
