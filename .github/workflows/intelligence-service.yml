@@ -41,6 +41,7 @@ jobs:
           CIL_AUTO_CREATE_SCHEMA: "true"
           CIL_ADMIN_TOKEN: ci-admin-token
           CIL_SERVICE_TOKEN: ci-service-token
+          CIL_CATALOG_SERVICE_TOKEN: ci-catalog-token
           CIL_RECEIPT_SIGNING_KEY: "ci-only-signing-key-with-more-than-32-bytes"
         run: python -m pytest tests -q
       - name: Build intelligence service container
