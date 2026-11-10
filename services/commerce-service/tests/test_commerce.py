@@ -1686,3 +1686,28 @@ def test_checkout_learning_consent_verifier_auth_failure_is_operational_error(mo
         main._verify_checkout_personalization_consent("buyer-1", "consent-bundle-001", None)
     assert exc.value.status_code == 503
     assert exc.value.detail["code"] == "PERSONALIZATION_CONSENT_VERIFIER_AUTH_FAILED"
+
+
+
+def test_checkout_learning_consent_rejects_version_mismatch(monkeypatch):
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-service-token-at-least-32-bytes")
+
+    def post(url, **kwargs):
+        return main.httpx.Response(200, json={
+            "verified": True,
+            "active": True,
+            "subject_id": "buyer-1",
+            "consent_id": "consent-bundle-001",
+            "resource_id": None,
+            "consent_version": "personalization-v2",
+            "granted_scopes": ["personalization"],
+            "receipt_ids": ["receipt-personalization-001"],
+        })
+
+    monkeypatch.setattr(main.httpx, "post", post)
+    with pytest.raises(main.HTTPException) as exc:
+        main._verify_checkout_personalization_consent(
+            "buyer-1", "consent-bundle-001", "personalization-v1"
+        )
+    assert exc.value.status_code == 403
