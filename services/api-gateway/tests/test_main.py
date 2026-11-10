@@ -107,7 +107,7 @@ def test_purchase_authorization_returns_signed_offer_and_action_bound_receipt(cl
                     catalog_version=7,
                     verdict="show",
                     may_display=True,
-                    reasons=[main.ReasonOutput(code="CAL_SHOW")],
+                    reasons=[main.ReasonOutput(code="CAL_SHOW", explanation="The candidate passed the test decision pipeline.")],
                     policy_version="cal-policy-test-v3",
                     arbitration_contract_version="arbitration-v1",
                     decision_pipeline_contract_version="pipeline-v1",
