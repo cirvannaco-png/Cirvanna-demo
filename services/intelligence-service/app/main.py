@@ -278,13 +278,19 @@ def _admin(authorization: str | None = Header(default=None)):
 
 def _service(authorization: str | None = Header(default=None)):
     expected = os.getenv("CIL_SERVICE_TOKEN", "").strip()
-    if not expected or authorization != f"Bearer {expected}":
+    if not expected or not authorization or not hmac.compare_digest(authorization, f"Bearer {expected}"):
         raise HTTPException(401, "CIL service bearer token required")
+
+
+def _catalog_service(authorization: str | None = Header(default=None)):
+    expected = os.getenv("CIL_CATALOG_SERVICE_TOKEN", "").strip()
+    if not expected or not authorization or not hmac.compare_digest(authorization, f"Bearer {expected}"):
+        raise HTTPException(401, "CIL Catalog service bearer token required")
 
 
 def _cal_service(authorization: str | None = Header(default=None)):
     expected = os.getenv("CIL_CAL_SERVICE_TOKEN", "").strip()
-    if not expected or authorization != f"Bearer {expected}":
+    if not expected or not authorization or not hmac.compare_digest(authorization, f"Bearer {expected}"):
         raise HTTPException(401, "CAL service bearer token required")
 
 
@@ -468,7 +474,7 @@ def register_evidence(payload: EvidenceIn, db: Session = Depends(get_db)):
     return {"evidence_id": row.id, "source_id": row.source_id, "grade": row.grade, "scope": row.scope}
 
 
-@app.post("/serving/assessment", dependencies=[Depends(_service)])
+@app.post("/serving/assessment", dependencies=[Depends(_catalog_service)])
 def assess_serving(payload: ServingAssessmentIn, db: Session = Depends(get_db)):
     """Return claim-level eligibility; unknown or unlicensed evidence fails closed."""
     decisions = []
