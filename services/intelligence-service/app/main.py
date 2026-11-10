@@ -247,10 +247,7 @@ class PerfectCorpSkinAnalysisIn(StrictModel):
     content_type: Literal["image/jpeg", "image/png"]
     file_name: str = Field(default="skin-photo.jpg", min_length=1, max_length=100)
     mode: Literal["sd", "hd"] = "sd"
-    actions: list[Literal[
-        "wrinkle", "pore", "texture", "acne", "spot", "redness", "oiliness", "skin_type",
-        "hd_wrinkle", "hd_pore", "hd_texture", "hd_acne", "hd_spot", "hd_redness", "hd_oiliness",
-    ]] = Field(min_length=1, max_length=8)
+    actions: list[Literal["wrinkle", "droopy_upper_eyelid", "droopy_lower_eyelid", "firmness", "acne", "moisture", "eye_bag", "dark_circle_v2", "age_spot", "radiance", "redness", "oiliness", "pore", "texture", "tear_trough", "skin_type", "hd_redness", "hd_oiliness", "hd_age_spot", "hd_radiance", "hd_moisture", "hd_dark_circle", "hd_eye_bag", "hd_droopy_upper_eyelid", "hd_droopy_lower_eyelid", "hd_firmness", "hd_texture", "hd_acne", "hd_pore", "hd_wrinkle", "hd_tear_trough", "hd_skin_type"]] = Field(min_length=1, max_length=8)
     contributor_token: str
     consent_receipt: str = Field(min_length=20, max_length=5000)
 
