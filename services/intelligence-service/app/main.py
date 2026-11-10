@@ -219,6 +219,25 @@ class CALDecisionIn(StrictModel):
     rationale: str = Field(min_length=10, max_length=2000)
 
 
+class LearningSignalsIn(StrictModel):
+    product_ids: list[str] = Field(min_length=1, max_length=100)
+    context_key: str = Field(min_length=1, max_length=120)
+
+    @field_validator("context_key")
+    @classmethod
+    def controlled_learning_context(cls, value):
+        if not re.fullmatch(r"[a-z0-9][a-z0-9._:-]{0,119}", value):
+            raise ValueError("context_key must be a controlled non-identifying cohort key")
+        return value
+
+    @field_validator("product_ids")
+    @classmethod
+    def unique_products(cls, values):
+        if len(values) != len(set(values)):
+            raise ValueError("product_ids must be unique")
+        return values
+
+
 class OutcomeIn(StrictModel):
     event_id: str = Field(min_length=3, max_length=120)
     product_id: str = Field(min_length=1, max_length=120)
@@ -547,6 +566,45 @@ def record_outcome(payload: OutcomeIn, db: Session = Depends(get_db)):
     db.commit()
     return {"event_id": row.event_id, "stored": True, "consent_subject": consent.get("subject_token"),
             "cal_decision_id": cal.get("decision_id")}
+
+
+@app.post("/learning/signals", dependencies=[Depends(_service)])
+def learning_signals(payload: LearningSignalsIn, db: Session = Depends(get_db)):
+    """Return privacy-thresholded product/context suitability signals for ranking."""
+    rows = list(db.scalars(select(Outcome).where(
+        Outcome.product_id.in_(payload.product_ids),
+        Outcome.context_key == payload.context_key,
+    )).all())
+    grouped: dict[str, list[Outcome]] = {product_id: [] for product_id in payload.product_ids}
+    for row in rows:
+        if row.suitability in {"suitable", "unsuitable"}:
+            grouped.setdefault(row.product_id, []).append(row)
+    results = []
+    for product_id in payload.product_ids:
+        product_rows = grouped.get(product_id, [])
+        unique: dict[str, Outcome] = {}
+        for row in product_rows:
+            unique.setdefault(row.contributor_token, row)
+        contributors = len(unique)
+        if contributors < 30:
+            results.append({
+                "product_id": product_id, "context_key": payload.context_key,
+                "status": "suppressed", "contributor_count": contributors,
+                "minimum_contributors": 30, "unsuitable_share": None,
+            })
+            continue
+        unsuitable = sum(row.suitability == "unsuitable" for row in unique.values())
+        suitable = sum(row.suitability == "suitable" for row in unique.values())
+        denominator = unsuitable + suitable
+        share = unsuitable / denominator if denominator else None
+        results.append({
+            "product_id": product_id, "context_key": payload.context_key,
+            "status": "available", "contributor_count": contributors,
+            "reported_count": denominator, "suitable_count": suitable,
+            "unsuitable_count": unsuitable, "unsuitable_share": share,
+        })
+    return {"signals": results, "minimum_contributors": 30,
+            "semantics": "consented explicit suitability feedback; ranking input only, not efficacy evidence or a CAL verdict"}
 
 
 @app.get("/outcomes/aggregate", dependencies=[Depends(_service)])
