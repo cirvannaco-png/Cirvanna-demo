@@ -1465,23 +1465,25 @@ def _authorize_purchase_lines(
             "quantity": quantity,
         })
     try:
-        response = httpx.post(
-            base + "/v1/purchase-authorizations",
-            headers={
-                "Authorization": "Bearer " + gateway_token,
-                "X-End-User-Authorization": user_authorization,
-                "Accept": "application/json",
-            },
-            json={
-                "user_id": subject_id,
-                "action": action,
-                "market_context": market_context,
-                "candidates": candidates,
-            },
+        with httpx.Client(
             timeout=httpx.Timeout(8.0, connect=2.0),
-            follow_redirects=False,
             trust_env=False,
-        )
+            follow_redirects=False,
+        ) as client:
+            response = client.post(
+                base + "/v1/purchase-authorizations",
+                headers={
+                    "Authorization": "Bearer " + gateway_token,
+                    "X-End-User-Authorization": user_authorization,
+                    "Accept": "application/json",
+                },
+                json={
+                    "user_id": subject_id,
+                    "action": action,
+                    "market_context": market_context,
+                    "candidates": candidates,
+                },
+            )
     except httpx.HTTPError as exc:
         raise HTTPException(503, detail={"code": "CAL_PURCHASE_AUTHORIZATION_UNAVAILABLE"}) from exc
     if response.status_code != 200:
