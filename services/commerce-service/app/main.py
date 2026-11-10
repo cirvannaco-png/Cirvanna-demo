@@ -3128,6 +3128,7 @@ def _resolve_market_checkout_line(
 
 @app.post("/checkout", status_code=201)
 def checkout(
+    request: Request,
     actor: Annotated[Actor, Depends(require_actor)],
     db: Annotated[Session, Depends(get_db)],
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=255)],
@@ -3162,6 +3163,22 @@ def checkout(
             raise HTTPException(409, detail={"code": "IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PERSONALIZATION_CONSENT"})
         if existing.checkout_context_hash != context_hash:
             raise HTTPException(409, detail={"code": "IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_CHECKOUT_CONTEXT"})
+        existing_items = list(db.scalars(select(OrderItem).where(OrderItem.order_id == existing.id)).all())
+        existing_authorizations = list(db.scalars(select(CALPurchaseAudit).where(
+            CALPurchaseAudit.order_id == existing.id,
+            CALPurchaseAudit.action == "checkout",
+            CALPurchaseAudit.decision == "SHOW",
+        )).all())
+        authorized_lines = {
+            (item.catalog_product_id, item.variant_id, item.merchant_id)
+            for item in existing_authorizations
+        }
+        expected_lines = {
+            (item.catalog_product_id, item.variant_id, item.merchant_id)
+            for item in existing_items
+        }
+        if not existing_items or authorized_lines != expected_lines or len(existing_authorizations) != len(existing_items):
+            raise HTTPException(409, detail={"code": "EXISTING_ORDER_CAL_AUTHORIZATION_MISSING"})
         return persist_stripe_session(db, existing.id, actor.email, gateway)
 
     cart = ensure_cart(db, actor.user_id)
@@ -3282,6 +3299,31 @@ def checkout(
         expiry = min(_aware_utc(value) for value in quote_expiries)
         if expiry <= now():
             raise HTTPException(409, detail={"code": "MARKET_QUOTE_EXPIRED_BEFORE_CHECKOUT"})
+    purchase_authorization_inputs = [
+        _purchase_authorization_item(
+            (cart_item, variant, listing, merchant),
+            action="checkout",
+            quantity=cart_item.quantity,
+            market_context=market_context,
+            cost=market_costs.get(variant.id),
+        )
+        for cart_item, variant, listing, merchant in rows
+    ]
+    purchase_receipts = _request_cal_purchase_receipts(request, actor.user_id, purchase_authorization_inputs)
+    purchase_audits = [
+        _cal_audit_from_receipt(
+            receipt,
+            cart_id=cart.id,
+            cart_version=cart.version,
+        )
+        for receipt in purchase_receipts
+    ]
+    if any(audit.decision != "SHOW" or receipt.get("may_display") is not True
+           for audit, receipt in zip(purchase_audits, purchase_receipts)):
+        db.add_all(purchase_audits)
+        db.commit()
+        raise HTTPException(409, detail={"code": "CAL_CHECKOUT_AUTHORIZATION_DENIED"})
+
     order = CommerceOrder(
         id=str(uuid.uuid4()), order_number=f"CV-{now():%Y%m%d}-{uuid.uuid4().hex[:10].upper()}",
         buyer_user_id=actor.user_id, state="pending_payment", payment_state="pending", currency=currency,
@@ -3359,6 +3401,11 @@ def checkout(
                 delta=0, reason=f"reserve:{order.order_number}:qty={ci.quantity}"))
         db.add(order)
         db.flush()
+        for audit in purchase_audits:
+            audit.order_id = order.id
+            audit.cart_id = cart.id
+            audit.cart_version = cart.version
+        db.add_all(purchase_audits)
         if order.tal_consent_receipt_id:
             checkout_event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cirvanna:checkout-started:{order.id}"))
             order_lines = list(db.scalars(
