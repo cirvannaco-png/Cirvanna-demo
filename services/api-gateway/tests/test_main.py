@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
+import json
 
 import sqlite3
 import uuid
@@ -88,6 +90,129 @@ def pass_safety(product_payload):
         explanation="A test-only independent safety result was injected.",
         source_version="test-fixture-only",
     )
+
+
+
+
+def purchase_authorization_body(**overrides):
+    value = {
+        "user_id": "buyer-1",
+        "action": "cart_add",
+        "market_context": None,
+        "candidates": [{
+            "product_id": PRODUCT_ID,
+            "variant_id": "123e4567-e89b-42d3-a456-426614174000",
+            "merchant_id": "123e4567-e89b-42d3-a456-426614174001",
+            "offer_id": "listing-1:variant-1",
+            "offer_hash": "a" * 64,
+            "quantity": 2,
+        }],
+    }
+    value.update(overrides)
+    return value
+
+
+def test_purchase_authorization_requires_verified_identity_and_receipt_secret(client, monkeypatch):
+    monkeypatch.setenv("CIRVANNA_REQUIRE_VERIFIED_IDENTITY", "false")
+    monkeypatch.setenv("CAL_PURCHASE_RECEIPT_SECRET", "a" * 40)
+    response = client.post(
+        "/v1/purchase-authorizations",
+        json=purchase_authorization_body(),
+        headers=auth_headers(),
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "VERIFIED_IDENTITY_REQUIRED_FOR_PURCHASE_AUTHORIZATION"
+
+
+def test_purchase_authorization_mints_receipt_bound_to_cal_show_and_offer(client, monkeypatch):
+    secret = "purchase-receipt-secret-for-tests-0001"
+    monkeypatch.setenv("CAL_PURCHASE_RECEIPT_SECRET", secret)
+    monkeypatch.setattr(main, "_verified_identity_required", lambda: True)
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda value: "buyer-1")
+
+    def evaluate(payload, end_user_authorization):
+        assert payload.user_id == "buyer-1"
+        assert payload.product_ids == [PRODUCT_ID]
+        assert end_user_authorization == "Bearer user-session"
+        return main.DecisionResponse(
+            schema_version="1.0",
+            request_id="decision-request-0001",
+            created_at="2026-11-10T12:00:00+00:00",
+            candidates=[main.CandidateDecisionOutput(
+                product_id=PRODUCT_ID,
+                catalog_version=9,
+                verdict="show",
+                may_display=True,
+                reasons=[],
+                policy_version="policy-test-v1",
+                arbitration_contract_version="cal-v1",
+                decision_pipeline_contract_version="pipeline-v1",
+            )],
+        )
+
+    monkeypatch.setattr(main, "evaluate_decisions", evaluate)
+    response = client.post(
+        "/v1/purchase-authorizations",
+        json=purchase_authorization_body(),
+        headers={
+            **auth_headers(),
+            "X-End-User-Authorization": "Bearer user-session",
+        },
+    )
+    assert response.status_code == 200, response.text
+    result = response.json()["authorizations"][0]
+    assert result["authorized"] is True
+    encoded, signature = result["receipt"].split(".")
+    expected = base64.urlsafe_b64encode(
+        hmac.new(secret.encode(), encoded.encode("ascii"), hashlib.sha256).digest()
+    ).rstrip(b"=").decode("ascii")
+    assert hmac.compare_digest(signature, expected)
+    claims = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
+    assert claims["sub"] == "buyer-1"
+    assert claims["action"] == "cart_add"
+    assert claims["product_id"] == PRODUCT_ID
+    assert claims["variant_id"] == "123e4567-e89b-42d3-a456-426614174000"
+    assert claims["merchant_id"] == "123e4567-e89b-42d3-a456-426614174001"
+    assert claims["offer_hash"] == "a" * 64
+    assert claims["quantity"] == 2
+    assert claims["catalog_version"] == 9
+    assert claims["policy_version"] == "policy-test-v1"
+    assert claims["decision_request_id"] == "decision-request-0001"
+    assert claims["verdict"] == "show" and claims["may_display"] is True
+    assert claims["exp"] - claims["iat"] == 90
+
+
+def test_purchase_authorization_never_mints_receipt_for_review_candidate(client, monkeypatch):
+    monkeypatch.setenv("CAL_PURCHASE_RECEIPT_SECRET", "purchase-receipt-secret-for-tests-0001")
+    monkeypatch.setattr(main, "_verified_identity_required", lambda: True)
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda value: "buyer-1")
+    monkeypatch.setattr(main, "evaluate_decisions", lambda *args: main.DecisionResponse(
+        schema_version="1.0",
+        request_id="decision-request-review",
+        created_at="2026-11-10T12:00:00+00:00",
+        candidates=[main.CandidateDecisionOutput(
+            product_id=PRODUCT_ID,
+            catalog_version=9,
+            verdict="review",
+            may_display=False,
+            reasons=[],
+            policy_version="policy-test-v1",
+            arbitration_contract_version="cal-v1",
+            decision_pipeline_contract_version="pipeline-v1",
+        )],
+    ))
+    response = client.post(
+        "/v1/purchase-authorizations",
+        json=purchase_authorization_body(),
+        headers={**auth_headers(), "X-End-User-Authorization": "Bearer user-session"},
+    )
+    assert response.status_code == 200
+    result = response.json()["authorizations"][0]
+    assert result == {
+        "variant_id": "123e4567-e89b-42d3-a456-426614174000",
+        "authorized": False,
+        "reason_code": "CAL_SHOW_NOT_GRANTED",
+    }
 
 
 def test_decision_requires_verified_identity_when_setting_is_absent(client, monkeypatch):
