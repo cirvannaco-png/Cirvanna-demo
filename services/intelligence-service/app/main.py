@@ -68,6 +68,18 @@ class Source(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, nullable=False)
 
 
+class SourceRightsEvent(Base):
+    __tablename__ = "cil_source_rights_events"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    source_id: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    rights_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    permitted_purposes: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    rights_reference: Mapped[str] = mapped_column(Text, nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reviewed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, nullable=False)
+
+
 class Evidence(Base):
     __tablename__ = "cil_evidence"
     id: Mapped[str] = mapped_column(String(120), primary_key=True)
@@ -167,6 +179,12 @@ class ProviderResearchIn(StrictModel):
         if len(values) != len(set(values)) or any(v not in PURPOSES for v in values):
             raise ValueError("purposes must be unique recognized CIL purposes")
         return values
+
+
+class SourceRevocationIn(StrictModel):
+    rights_reference: str = Field(min_length=5, max_length=2000)
+    reason: str = Field(min_length=10, max_length=1000)
+    reviewed_at: datetime
 
 
 class EvidenceIn(StrictModel):
@@ -275,14 +293,21 @@ def _source_permits(db: Session, source_id: str, purpose: str) -> tuple[bool, st
     source = db.get(Source, source_id)
     if source is None:
         return False, "SOURCE_NOT_REGISTERED"
-    expiry = source.expires_at
+    latest = db.scalar(select(SourceRightsEvent).where(
+        SourceRightsEvent.source_id == source_id
+    ).order_by(SourceRightsEvent.created_at.desc(), SourceRightsEvent.id.desc()).limit(1))
+    rights_status = latest.rights_status if latest else source.rights_status
+    permitted_purposes = latest.permitted_purposes if latest else source.permitted_purposes
+    expiry = latest.expires_at if latest else source.expires_at
     if expiry and expiry.tzinfo is None:
         expiry = expiry.replace(tzinfo=timezone.utc)
-    if source.rights_status not in {"public_domain", "open_license", "licensed", "api_terms"}:
+    if rights_status == "prohibited":
+        return False, "SOURCE_RIGHTS_REVOKED"
+    if rights_status not in {"public_domain", "open_license", "licensed", "api_terms"}:
         return False, "SOURCE_RIGHTS_NOT_COMMERCIAL"
     if expiry and expiry <= now():
         return False, "SOURCE_RIGHTS_EXPIRED"
-    if purpose not in (source.permitted_purposes or []):
+    if purpose not in (permitted_purposes or []):
         return False, "PURPOSE_NOT_LICENSED"
     return True, "SOURCE_RIGHTS_VALID"
 
@@ -322,6 +347,11 @@ def register_source(payload: SourceIn, db: Session = Depends(get_db)):
     source_data["id"] = source_data.pop("source_id")
     row = Source(**source_data)
     db.add(row)
+    db.add(SourceRightsEvent(
+        source_id=row.id, rights_status=row.rights_status,
+        permitted_purposes=row.permitted_purposes, rights_reference=row.rights_reference,
+        expires_at=row.expires_at, reviewed_at=row.reviewed_at,
+    ))
     db.commit()
     return {"source_id": row.id, "rights_status": row.rights_status, "permitted_purposes": row.permitted_purposes}
 
@@ -358,9 +388,31 @@ def ingest_licensed_provider_research(payload: ProviderResearchIn, db: Session =
     )
     db.add(source)
     db.add(evidence)
+    db.add(SourceRightsEvent(
+        source_id=source.id, rights_status=source.rights_status,
+        permitted_purposes=source.permitted_purposes, rights_reference=source.rights_reference,
+        expires_at=source.expires_at, reviewed_at=source.reviewed_at,
+    ))
     db.commit()
     return {"source_id": source.id, "evidence_id": evidence.id, "rights_status": source.rights_status,
             "permitted_purposes": source.permitted_purposes, "provider_payload": provider_result["payload"]}
+
+
+@app.post("/sources/{source_id}/revoke", dependencies=[Depends(_admin)])
+def revoke_source_rights(source_id: str, payload: SourceRevocationIn, db: Session = Depends(get_db)):
+    """Append an immutable rights-revocation event; never erase source history."""
+    source = db.get(Source, source_id)
+    if source is None:
+        raise HTTPException(404, "source_id is not registered")
+    event = SourceRightsEvent(
+        source_id=source_id, rights_status="prohibited", permitted_purposes=[],
+        rights_reference=payload.rights_reference, reviewed_at=payload.reviewed_at,
+        expires_at=None,
+    )
+    db.add(event)
+    db.commit()
+    return {"source_id": source_id, "rights_status": "prohibited",
+            "revoked": True, "reason": payload.reason, "event_id": event.id}
 
 
 @app.post("/evidence", dependencies=[Depends(_admin)], status_code=201)
