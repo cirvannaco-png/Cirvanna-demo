@@ -1427,6 +1427,7 @@ def _authorize_purchase_lines(
     market_context: dict[str, Any] | None = None,
     checkout_line_snapshots: dict[str, dict[str, Any]] | None = None,
     checkout_totals: dict[str, Any] | None = None,
+    allow_withheld: bool = False,
 ) -> list[dict[str, Any]]:
     """Re-evaluate CAL and verify fresh signed receipts bound to current Commerce offer facts."""
     if not rows:
@@ -1505,12 +1506,19 @@ def _authorize_purchase_lines(
         raise HTTPException(502, detail={"code": "CAL_PURCHASE_AUTHORIZATION_RESPONSE_MISMATCH"})
     verified: dict[str, dict[str, Any]] = {}
     for item in authorizations:
-        if not isinstance(item, dict) or item.get("authorized") is not True or not isinstance(item.get("receipt"), str):
-            raise HTTPException(403, detail={"code": "CAL_SHOW_REQUIRED_FOR_PURCHASE"})
+        if not isinstance(item, dict):
+            raise HTTPException(502, detail={"code": "CAL_PURCHASE_AUTHORIZATION_RESPONSE_INVALID"})
         variant_id = item.get("variant_id")
         expected = expected_by_variant.get(variant_id)
         if expected is None or variant_id in verified:
             raise HTTPException(502, detail={"code": "CAL_PURCHASE_AUTHORIZATION_VARIANT_MISMATCH"})
+        if item.get("authorized") is False and allow_withheld:
+            if item.get("reason_code") != "CAL_SHOW_NOT_GRANTED":
+                raise HTTPException(502, detail={"code": "CAL_PURCHASE_AUTHORIZATION_RESPONSE_INVALID"})
+            verified[variant_id] = {"authorized": False, "reason_code": item["reason_code"]}
+            continue
+        if item.get("authorized") is not True or not isinstance(item.get("receipt"), str):
+            raise HTTPException(403, detail={"code": "CAL_SHOW_REQUIRED_FOR_PURCHASE"})
         claims = _decode_cal_purchase_receipt(item["receipt"], secret)
         for key, value in expected.items():
             if claims.get(key) != value:
@@ -1524,6 +1532,24 @@ def _authorize_purchase_lines(
     if set(verified) != set(expected_by_variant):
         raise HTTPException(403, detail={"code": "CAL_PURCHASE_AUTHORIZATION_INCOMPLETE"})
     return [verified[variant.id] for _, variant, _, _ in rows]
+
+
+def _cart_json_with_cal(db: Session, cart: Cart, rows: list[tuple[Any, Variant, Listing, Merchant]], authorizations: list[dict[str, Any]]) -> dict[str, Any]:
+    response = cart_json(db, cart)
+    items = response["items"]
+    for index, authorization in enumerate(authorizations):
+        if authorization.get("authorized") is False:
+            # Keep only the opaque variant key and quantity so the owner can
+            # remove an item that is no longer display-authorized.
+            variant = rows[index][1]
+            items[index] = {
+                "variant_id": variant.id,
+                "quantity": rows[index][0].quantity,
+                "redacted": True,
+                "remove_allowed": True,
+                "reason_code": "CAL_SHOW_NOT_GRANTED",
+            }
+    return response
 
 
 def _user_authorization_header(request: Request) -> str:
