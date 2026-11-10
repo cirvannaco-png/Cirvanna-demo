@@ -13,6 +13,16 @@ Complementer coordinates a complete look without treating the user's existing id
 - **Look completion:** proposes at most two optional finishing changes and explicitly preserves the chosen silhouette, identity and existing statement pieces.
 - **Explainability:** each domain returns the preference or current-look context that explains why a suggestion was made.
 
+## Checkout preference learning contract
+
+The checkout-learning module defines a versioned TAL handoff for explicit checkout choices. It can represent selected offers, selected fulfilment, selected payment-method family, explicit item removal/replacement reasons, and a verified paid-order event.
+
+- Checkout remains user-directed. Cirvanna never chooses or changes the merchant, variant, quantity, fulfilment, payment method, or final confirmation on the user's behalf.
+- The event builder requires an already verified, subject-bound personalization consent receipt. A client boolean alone is not sufficient evidence; the future gateway integration must verify the receipt with the canonical Identity Learning/consent owner.
+- Events carry only allowlisted identifiers, ISO currency and integer minor-unit price/total values, selected fulfilment mode, payment-method family, and explicitly supplied removal reasons. They exclude email, address, payment credentials/tokens, bank-account details, free-form notes and raw cart snapshots.
+- Every observation is weak evidence. A paid order is a verified transaction, not proof of enduring aesthetic preference. A removed item is not a dislike unless the user explicitly supplies a reason; abandonment, cancellation and payment failure are deliberately not accepted as negative preference signals.
+- Events cannot create NPL hard vetoes or silently mutate explicit USI preferences. TAL persistence, idempotent delivery, correction, revocation, export and deletion remain integration requirements; this module is a contract, not proof of durable learning.
+
 ## API
 
 ### `POST /v1/complementer/recommend`

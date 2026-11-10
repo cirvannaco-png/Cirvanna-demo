@@ -17,7 +17,7 @@ def auth():
 
 
 def identity_fields():
-    return {"subject_id": SUBJECT, "consent_id": CONSENT}
+    return {"subject_id": SUBJECT, "consent_id": CONSENT, "resource_id": "resource-click-it-123", "photographed_people_status": "no_people"}
 
 
 def mock_internal_config(monkeypatch, *, consent=True, twin_registry=True, vision=True):
@@ -301,8 +301,10 @@ def test_click_it_success_returns_candidates_but_never_claims_display_authorizat
     )
     assert response.status_code == 200
     body = response.json()
-    assert body["candidates"][0]["variant_id"] == "offer-1"
+    assert body["candidate_count"] == 1
+    assert "candidates" not in body
     assert "results" not in body
     assert body["display_authorized"] is False
     assert body["decision_status"] == "PENDING_CAL"
+    assert body["merchant_comparison"]["status"] == "pending_cal"
     assert body["image_persisted"] is False

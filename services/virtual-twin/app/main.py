@@ -530,29 +530,41 @@ async def click_it(
     _: Annotated[None, Depends(require_api_token)],
     subject_id: Annotated[str, Form(min_length=3, max_length=128)],
     consent_id: Annotated[str, Form(min_length=8, max_length=160)],
+    resource_id: Annotated[str, Form(min_length=8, max_length=180)],
     consent_image_processing: Annotated[bool, Form()],
     consent_click_it: Annotated[bool, Form()],
+    photographed_people_status: Annotated[str, Form()],
     product_image: Annotated[UploadFile, File()],
     twin_id: Annotated[str | None, Form(min_length=3, max_length=128)] = None,
     category: Annotated[str | None, Form(max_length=80)] = None,
     limit: Annotated[int, Form(ge=1, le=25)] = 10,
 ):
-    """Scan an uploaded product photo, retrieve live marketplace candidates, and stop.
+    """Mask photographed faces before retrieval; keep garment/product pixels.
 
-    Candidate ranking is not CAL authorization. Results cannot be displayed,
-    personalized, or purchased until downstream arbitration permits them.
+    Click It returns aggregate candidates only. Product details remain withheld
+    until each exact variant receives fresh candidate-bound CAL authorization.
     """
     try:
         if not consent_image_processing or not consent_click_it:
             raise HTTPException(400, detail={"code": "EXPLICIT_CLICK_IT_CONSENT_REQUIRED"})
+        if photographed_people_status not in {"no_people", "adults_only", "contains_minor"}:
+            raise HTTPException(403, detail={"code": "CHILD_SAFETY_STATUS_UNCONFIRMED"})
+        if photographed_people_status == "contains_minor" and twin_id:
+            raise HTTPException(403, detail={"code": "CHILD_TWIN_PERSONALIZATION_DISABLED"})
         if product_image.content_type not in {"image/jpeg", "image/png", "image/webp"}:
             raise HTTPException(415, detail={"code": "UNSUPPORTED_PRODUCT_IMAGE_TYPE"})
         if product_image.size is not None and product_image.size > MAX_IMAGE_BYTES:
             raise HTTPException(413, detail={"code": "PRODUCT_IMAGE_SIZE_LIMIT_EXCEEDED", "maximum_bytes": MAX_IMAGE_BYTES})
         if _internal_config("VISION_INTELLIGENCE_API_URL", "VISION_INTELLIGENCE_API_TOKEN") is None:
             raise HTTPException(503, detail={"code": "VISION_INFERENCE_NOT_CONFIGURED"})
+        declaration_scope = {
+            "no_people": "photographed_people_no_people_attestation",
+            "adults_only": "photographed_people_adult_attestation",
+            "contains_minor": "photographed_people_minor_attestation",
+        }[photographed_people_status]
         await _verify_consent(
-            subject_id, consent_id, ["image_processing", "click_it"], resource_id=twin_id
+            subject_id, consent_id, ["image_processing", "click_it", declaration_scope],
+            resource_id=resource_id,
         )
         if twin_id:
             await _authorize_twin(subject_id, twin_id)
@@ -564,28 +576,42 @@ async def click_it(
         fields = {
             "consent_image_processing": "true",
             "consent_click_it": "true",
+            "photographed_people_status": photographed_people_status,
             "limit": str(limit),
         }
         if category and category.strip():
             fields["category"] = category.strip()
         result = await _run_vision(
-            "/v1/click-it/scan",
-            fields,
-            "image",
-            product_image.filename or "product-reference",
-            content,
+            "/v1/click-it/scan", fields, "image",
+            product_image.filename or "product-reference", content,
             product_image.content_type or "application/octet-stream",
         )
-        # Keep candidates separate from policy-authorized display items. In
-        # particular, this endpoint does not bypass NPL or cultural requirements.
         candidates = result.pop("results", [])
-        result["candidates"] = candidates
-        result["display_authorized"] = False
-        result["decision_status"] = "PENDING_CAL"
-        result["decision_notice"] = "Candidates require the canonical CAL decision, NPL hard veto and cultural-identity checks before display or purchase."
-        result["twin_id"] = twin_id
-        result["personalization_available"] = bool(twin_id)
-        return JSONResponse(content=result, headers={"Cache-Control": "no-store, private"})
+        candidate_count = result.get("candidate_count")
+        if isinstance(candidate_count, bool) or not isinstance(candidate_count, int):
+            candidate_count = len(candidates) if isinstance(candidates, list) else 0
+        return JSONResponse(content={
+            "status": result.get("status", "complete"),
+            "scan_id": result.get("scan_id"),
+            "search_mode": result.get("search_mode", "image_to_catalog_text_similarity"),
+            "image_quality": result.get("image_quality"),
+            "privacy": result.get("privacy"),
+            "candidate_count": candidate_count,
+            "catalog_offer_count": result.get("catalog_offer_count"),
+            "catalog_truncated": result.get("catalog_truncated"),
+            "model": result.get("model"),
+            "scores_are_probabilities": False,
+            "image_persisted": False,
+            "display_authorized": False,
+            "decision_status": "PENDING_CAL",
+            "merchant_comparison": {
+                "status": "pending_cal",
+                "reason": "CANDIDATE_BOUND_CAL_RECEIPT_REQUIRED",
+                "landed_cost_included": False,
+            },
+            "twin_id": twin_id,
+            "personalization_available": bool(twin_id) and photographed_people_status != "contains_minor",
+            "photographed_people_status": photographed_people_status,
+        }, headers={"Cache-Control": "no-store, private"})
     finally:
         await product_image.close()
-

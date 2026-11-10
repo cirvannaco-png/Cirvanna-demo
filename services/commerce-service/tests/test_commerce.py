@@ -218,10 +218,11 @@ def test_tax_quote_requires_explicit_destination_zone(client, monkeypatch):
     assert response.json()["destination_key"] == "Nakuru/Subukia"
 
 
-def test_multi_market_checkout_schema_revision_0008_is_registered():
+def test_multi_market_and_checkout_learning_schema_revision_0009_is_registered():
     from app.main import CommerceOrder, OrderCharge, OrderItem, OfferTaxQuote
     assert "fulfillment_total_minor" in CommerceOrder.__table__.columns
     assert "total_minor" in CommerceOrder.__table__.columns
+    assert "tal_consent_receipt_id" in CommerceOrder.__table__.columns
     assert "destination_key" in OfferTaxQuote.__table__.columns
     assert "source_unit_price_minor" in OrderItem.__table__.columns
     assert OrderCharge.__tablename__ == "commerce_order_charges"
@@ -248,7 +249,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
         ))
         connection.execute(
             text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
-            {"revision": "20261109_0008"},
+            {"revision": "20261110_0009"},
         )
 
     ready = client.get("/ready")
@@ -261,7 +262,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
     assert payload["payment_configured"] is True
     assert payload["migrations_required"] is True
     assert payload["migrations_applied"] is True
-    assert payload["schema_revision"] == "20261109_0008"
+    assert payload["schema_revision"] == "20261110_0009"
     assert payload["ready"] is True
 
 
@@ -1573,3 +1574,140 @@ def test_compare_offers_respects_user_selected_radius(client, monkeypatch):
     })
     assert response.json()["status"] == "unavailable"
     assert response.json()["reason_code"] == "FULFILLMENT_QUOTE_OUTSIDE_RADIUS"
+
+
+
+def test_checkout_learning_consent_is_optional_and_does_not_call_identity(monkeypatch):
+    monkeypatch.delenv("IDENTITY_SERVICE_URL", raising=False)
+    monkeypatch.delenv("IDENTITY_SERVICE_TOKEN", raising=False)
+    assert main._verify_checkout_personalization_consent("buyer-1", None, None) is None
+
+
+def test_checkout_learning_consent_resolves_canonical_receipt(monkeypatch):
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-service-token-at-least-32-bytes")
+    calls = []
+
+    def post(url, **kwargs):
+        calls.append((url, kwargs))
+        return main.httpx.Response(200, json={
+            "verified": True,
+            "active": True,
+            "subject_id": "buyer-1",
+            "consent_id": "consent-bundle-001",
+            "resource_id": None,
+            "consent_version": "personalization-v1",
+            "granted_scopes": ["personalization"],
+            "receipt_ids": ["receipt-personalization-001"],
+        })
+
+    monkeypatch.setattr(main.httpx, "post", post)
+    receipt = main._verify_checkout_personalization_consent(
+        "buyer-1", "consent-bundle-001", "personalization-v1"
+    )
+    assert receipt == "receipt-personalization-001"
+    assert calls[0][0] == "https://identity.example.test/internal/v1/consents/verify"
+    assert calls[0][1]["json"]["subject_id"] == "buyer-1"
+    assert calls[0][1]["json"]["required_scopes"] == ["personalization"]
+    assert calls[0][1]["json"]["resource_id"] is None
+
+
+def test_checkout_learning_consent_rejects_mismatched_subject(monkeypatch):
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-service-token-at-least-32-bytes")
+
+    def post(url, **kwargs):
+        return main.httpx.Response(200, json={
+            "verified": True,
+            "active": True,
+            "subject_id": "some-other-user",
+            "consent_id": "consent-bundle-001",
+            "resource_id": None,
+            "consent_version": "personalization-v1",
+            "granted_scopes": ["personalization"],
+            "receipt_ids": ["receipt-personalization-001"],
+        })
+
+    monkeypatch.setattr(main.httpx, "post", post)
+    with pytest.raises(main.HTTPException) as exc:
+        main._verify_checkout_personalization_consent("buyer-1", "consent-bundle-001", None)
+    assert exc.value.status_code == 403
+
+
+
+def test_checkout_started_outbox_contains_only_consent_bound_selection_snapshot(client, monkeypatch):
+    offer = seed_offer(stock=5, price_minor=750)
+    buyer = auth("buyer-checkout-learning", email="buyer-learning@example.test")
+    added = client.post(
+        "/cart/items",
+        json={"variant_id": offer["variant_id"], "quantity": 1},
+        headers=buyer,
+    )
+    assert added.status_code == 201
+    configure_stripe(monkeypatch)
+    monkeypatch.setattr(
+        main,
+        "_verify_checkout_personalization_consent",
+        lambda subject_id, consent_id, consent_version: "tal-consent-receipt-0001",
+    )
+    response = client.post(
+        "/checkout",
+        headers={**buyer, "Idempotency-Key": "checkout-learning-key-0001"},
+        json={"personalization_consent_id": "consent-bundle-0001"},
+    )
+    assert response.status_code == 201, response.text
+    order_id = response.json()["order"]["order_id"]
+    db = TEST_SESSION()
+    event = db.query(main.CommerceOutboxEvent).filter_by(
+        aggregate_id=order_id,
+        event_type="commerce.checkout.started",
+    ).one()
+    assert event.payload["personalization_consent_receipt_id"] == "tal-consent-receipt-0001"
+    assert event.payload["buyer_user_id"] == "buyer-checkout-learning"
+    assert event.payload["items"][0]["catalog_product_id"] == offer["catalog_product_id"]
+    assert event.payload["items"][0]["quantity"] == 1
+    assert event.payload["payment_method_family"] == "card"
+    assert "email" not in event.payload
+    assert "address" not in event.payload
+    assert "product_name" not in event.payload["items"][0]
+    db.close()
+
+
+
+def test_checkout_learning_consent_verifier_auth_failure_is_operational_error(monkeypatch):
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-service-token-at-least-32-bytes")
+
+    def post(url, **kwargs):
+        return main.httpx.Response(401)
+
+    monkeypatch.setattr(main.httpx, "post", post)
+    with pytest.raises(main.HTTPException) as exc:
+        main._verify_checkout_personalization_consent("buyer-1", "consent-bundle-001", None)
+    assert exc.value.status_code == 503
+    assert exc.value.detail["code"] == "PERSONALIZATION_CONSENT_VERIFIER_AUTH_FAILED"
+
+
+
+def test_checkout_learning_consent_rejects_version_mismatch(monkeypatch):
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-service-token-at-least-32-bytes")
+
+    def post(url, **kwargs):
+        return main.httpx.Response(200, json={
+            "verified": True,
+            "active": True,
+            "subject_id": "buyer-1",
+            "consent_id": "consent-bundle-001",
+            "resource_id": None,
+            "consent_version": "personalization-v2",
+            "granted_scopes": ["personalization"],
+            "receipt_ids": ["receipt-personalization-001"],
+        })
+
+    monkeypatch.setattr(main.httpx, "post", post)
+    with pytest.raises(main.HTTPException) as exc:
+        main._verify_checkout_personalization_consent(
+            "buyer-1", "consent-bundle-001", "personalization-v1"
+        )
+    assert exc.value.status_code == 403

@@ -25,6 +25,18 @@ Delivery is **at least once**, not exactly once. The idempotent Wardrobe sink is
 
 Do not reuse end-user JWTs or expose either service credential to browsers. Use the secret manager for deployment.
 
+## Consent-bound checkout learning
+
+Commerce snapshots an optional canonical TAL consent receipt onto the order at checkout. The receipt is resolved only after the identity service verifies the authenticated buyer, active personalization scope, bundle version and non-resource-bound consent. Checkout remains available when the user does not opt into personalization; an invalid supplied consent bundle fails closed.
+
+For a consented checkout, Commerce emits a checkout.started event in the same transaction that creates the pending order and immutable order lines. Sync sends one bounded, idempotent checkout.selection observation per line to TAL. This records what the user explicitly chose to put through checkout, without claiming a purchase. After verified payment, Sync separately emits one checkout.purchase_choice observation per line after Wardrobe ownership is accepted and before acknowledging the paid-order outbox event. The observation contains only the buyer subject, opaque product/variant/merchant IDs, quantities, minor-unit prices, currency, order total, fulfilment mode and payment-method family. It excludes product names, email, delivery address, payment credentials, bank details and raw order snapshots. It is a weak transaction signal, never a permanent taste declaration, USI mutation or NPL hard veto. The TAL sink independently checks that the receipt is still active; revoked/invalid consent skips learning without blocking ownership synchronization. Identity sink outages retry the Commerce outbox event.
+
+Configuration for this optional sink:
+- IDENTITY_SERVICE_URL
+- IDENTITY_SERVICE_TOKEN — internal Identity Learning service credential, minimum 32 bytes. Configure both or neither. A consented order cannot be acknowledged as fully synchronized if the TAL sink is not configured.
+
+The checkout.started event captures the user's selected basket, fulfilment mode and payment-method family at the point they initiate checkout. It does not infer dislike from abandonment, cancellation, payment failure or non-purchase. Item removals/replacements before checkout still need separate explicit, consented interaction events.
+
 ## Run
 
     python -m pip install -r requirements.txt
