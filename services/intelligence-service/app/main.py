@@ -166,8 +166,6 @@ class ProviderResearchIn(StrictModel):
     def provider_purposes(cls, values):
         if len(values) != len(set(values)) or any(v not in PURPOSES for v in values):
             raise ValueError("purposes must be unique recognized CIL purposes")
-        if any(v in {"commercial_recommendation", "product_enrichment", "training"} for v in values) and not values:
-            raise ValueError("commercial purposes require an explicit licence")
         return values
 
 
@@ -335,14 +333,14 @@ def ingest_licensed_provider_research(payload: ProviderResearchIn, db: Session =
     """
     if db.get(Source, payload.source_id) or db.get(Evidence, payload.evidence_id):
         raise HTTPException(409, "source_id or evidence_id already exists")
+    if payload.rights_status == "research_only" and set(payload.permitted_purposes) - {"research", "model_evaluation"}:
+        raise HTTPException(422, "research-only provider licence cannot authorize commercial use")
     try:
         provider_result = fetch_licensed_research(path=payload.path, params=payload.params)
     except ProviderNotConfigured as exc:
         raise HTTPException(503, str(exc)) from exc
     except Exception as exc:
         raise HTTPException(502, "Licensed provider request failed") from exc
-    if payload.rights_status == "research_only" and set(payload.permitted_purposes) - {"research", "model_evaluation"}:
-        raise HTTPException(422, "research-only provider licence cannot authorize commercial use")
     provider_base = os.getenv("CIL_PROVIDER_BASE_URL", "").rstrip("/")
     source = Source(
         id=payload.source_id, owner=payload.owner, kind="licensed_provider_api",
