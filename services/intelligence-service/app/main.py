@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import DateTime, Float, Integer, JSON, String, Text, UniqueConstraint, create_engine, inspect, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -295,6 +295,7 @@ class OutcomeIn(StrictModel):
     contributor_token: str
     action: Literal["rejected", "ignored", "opened", "saved", "purchased"]
     suitability: Literal["suitable", "unsuitable", "uncertain", "not_reported"]
+    suitability_reported: bool = False
     reason_codes: list[str] = Field(default_factory=list, max_length=12)
     model_version: str | None = Field(default=None, max_length=240)
     candidate_id: str = Field(min_length=1, max_length=120)
@@ -329,6 +330,19 @@ class OutcomeIn(StrictModel):
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("observed_at must include a timezone")
         return value
+
+
+    @model_validator(mode="after")
+    def validate_explicit_suitability_report(self):
+        if self.action == "purchased" and (self.suitability != "not_reported" or self.suitability_reported):
+            raise ValueError("purchase is not proof of suitability; record a separate explicit suitability report")
+        if self.suitability in {"suitable", "unsuitable", "uncertain"} and not self.suitability_reported:
+            raise ValueError("suitability must be explicitly reported by the customer")
+        if self.suitability == "not_reported" and self.suitability_reported:
+            raise ValueError("suitability_reported cannot be true when suitability is not_reported")
+        if self.suitability == "not_reported" and self.reason_codes:
+            raise ValueError("reason_codes require an explicit suitability report")
+        return self
 
 
 def get_db():
@@ -822,8 +836,6 @@ def record_outcome(payload: OutcomeIn, db: Session = Depends(get_db)):
         raise HTTPException(403, "Consent subject does not match the pseudonymous contributor")
     if cal.get("candidate_id") != payload.candidate_id:
         raise HTTPException(403, "CAL receipt candidate does not match the recommendation event")
-    if payload.suitability == "not_reported" and payload.reason_codes:
-        raise HTTPException(422, "reason codes require an explicit suitability report")
     if db.get(Outcome, payload.event_id):
         raise HTTPException(409, "event_id already recorded")
     row = Outcome(
