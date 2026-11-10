@@ -40,6 +40,7 @@ from sqlalchemy import (
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 from starlette import status
+from starlette.responses import Response
 
 from app.product_intelligence import validate_product_intelligence_attributes
 
