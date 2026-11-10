@@ -8,8 +8,10 @@ is for local tests only. The initial schema is versioned with Alembic under
 
 ## Security and operation
 
-- Set `CIL_DATABASE_URL`, `CIL_ADMIN_TOKEN`, `CIL_SERVICE_TOKEN`, and a
-  random `CIL_RECEIPT_SIGNING_KEY` of at least 32 bytes.
+- Set `CIL_DATABASE_URL`, `CIL_ADMIN_TOKEN`, `CIL_SERVICE_TOKEN`,
+  `CIL_CATALOG_SERVICE_TOKEN`, `CIL_CAL_SERVICE_TOKEN`, and a random
+  `CIL_RECEIPT_SIGNING_KEY` of at least 32 bytes. Keep Catalog, internal service,
+  and CAL credentials separate.
 - Set `CIL_AUTO_CREATE_SCHEMA=false` in production and run `alembic upgrade head`
   as a release step. Verify PostgreSQL backup/restore before production traffic.
 - Source rights are append-only events. Registering a source creates the initial rights event; `POST /sources/{source_id}/revoke` appends a prohibition event that immediately blocks subsequent commercial serving assessments.
