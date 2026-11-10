@@ -431,3 +431,117 @@ def test_learning_signals_suppress_small_cohorts(client):
     assert signal["status"] == "suppressed"
     assert signal["contributor_count"] == 0
     assert signal["unsuitable_share"] is None
+
+
+def make_skin_image() -> bytes:
+    from io import BytesIO
+    from PIL import Image
+    image = Image.new("RGB", (512, 512), (220, 160, 130))
+    image.getexif()[270] = "private-exif-metadata"
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def sign_skin_consent(*, contributor_token: str, image_bytes: bytes, age: int = 25):
+    payload = {
+        "type": "consent",
+        "purpose": "perfectcorp_skin_analysis",
+        "provider": "perfectcorp",
+        "subject_token": contributor_token,
+        "image_sha256": hashlib.sha256(image_bytes).hexdigest(),
+        "single_subject": True,
+        "subject_age_years": age,
+        "expires_at": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()),
+    }
+    return receipt(payload)
+
+
+def test_perfectcorp_skin_analysis_requires_signed_adult_image_consent(client, monkeypatch):
+    import base64
+    from app import main as cil_main
+
+    monkeypatch.setenv("CIL_PERFECTCORP_ENABLED", "true")
+    monkeypatch.setattr(cil_main, "perfectcorp_start_skin_analysis", lambda **kwargs: {
+        "task_id": "perfectcorp-task-001", "status": "running", "provider": "perfectcorp_youcam_skin_analysis_v2_1"
+    })
+    image_bytes = make_skin_image()
+    contributor = "hmac-sha256:" + "c" * 64
+    payload = {
+        "image_base64": base64.b64encode(image_bytes).decode(),
+        "content_type": "image/png",
+        "file_name": "my-photo.png",
+        "mode": "sd",
+        "actions": ["pore", "texture"],
+        "contributor_token": contributor,
+        "consent_receipt": sign_skin_consent(contributor_token=contributor, image_bytes=image_bytes),
+    }
+    response = client.post("/providers/perfectcorp/skin-analysis", json=payload, headers=auth("service-test"))
+    assert response.status_code == 202, response.text
+    assert response.json()["task_id"] == "perfectcorp-task-001"
+
+
+def test_perfectcorp_skin_analysis_rejects_child_consent(client, monkeypatch):
+    import base64
+    from app import main as cil_main
+
+    monkeypatch.setenv("CIL_PERFECTCORP_ENABLED", "true")
+    def should_not_start(**kwargs):
+        raise AssertionError("provider must not receive child image")
+    monkeypatch.setattr(cil_main, "perfectcorp_start_skin_analysis", should_not_start)
+    image_bytes = make_skin_image()
+    contributor = "hmac-sha256:" + "d" * 64
+    payload = {
+        "image_base64": base64.b64encode(image_bytes).decode(),
+        "content_type": "image/png", "mode": "sd", "actions": ["pore"],
+        "contributor_token": contributor,
+        "consent_receipt": sign_skin_consent(contributor_token=contributor, image_bytes=image_bytes, age=16),
+    }
+    response = client.post("/providers/perfectcorp/skin-analysis", json=payload, headers=auth("service-test"))
+    assert response.status_code == 403
+
+
+def test_perfectcorp_skin_analysis_rejects_receipt_for_different_image(client, monkeypatch):
+    import base64
+    from app import main as cil_main
+
+    monkeypatch.setenv("CIL_PERFECTCORP_ENABLED", "true")
+    monkeypatch.setattr(cil_main, "perfectcorp_start_skin_analysis", lambda **kwargs: pytest.fail("provider called"))
+    image_bytes = make_skin_image()
+    other_image = make_skin_image() + b"different"
+    contributor = "hmac-sha256:" + "e" * 64
+    payload = {
+        "image_base64": base64.b64encode(image_bytes).decode(),
+        "content_type": "image/png", "mode": "sd", "actions": ["pore"],
+        "contributor_token": contributor,
+        "consent_receipt": sign_skin_consent(contributor_token=contributor, image_bytes=other_image),
+    }
+    response = client.post("/providers/perfectcorp/skin-analysis", json=payload, headers=auth("service-test"))
+    assert response.status_code == 403
+
+
+def test_perfectcorp_terminal_result_is_deleted_before_result_is_released(client, monkeypatch):
+    from app import main as cil_main
+
+    monkeypatch.setenv("CIL_PERFECTCORP_ENABLED", "true")
+    calls = []
+    monkeypatch.setattr(cil_main, "perfectcorp_get_skin_analysis_status", lambda **kwargs: {
+        "task_id": "task-2", "status": "success", "metrics": [{"type": "pore", "ui_score": 62}],
+    })
+    monkeypatch.setattr(cil_main, "perfectcorp_delete_task", lambda **kwargs: calls.append(kwargs["task_id"]) or True)
+    response = client.get("/providers/perfectcorp/skin-analysis/task-2", headers=auth("service-test"))
+    assert response.status_code == 200
+    assert response.json()["provider_task_deleted"] is True
+    assert calls == ["task-2"]
+
+
+def test_perfectcorp_terminal_result_is_not_released_when_deletion_fails(client, monkeypatch):
+    from app import main as cil_main
+
+    monkeypatch.setenv("CIL_PERFECTCORP_ENABLED", "true")
+    monkeypatch.setattr(cil_main, "perfectcorp_get_skin_analysis_status", lambda **kwargs: {
+        "task_id": "task-3", "status": "success", "metrics": [{"type": "pore", "ui_score": 62}],
+    })
+    monkeypatch.setattr(cil_main, "perfectcorp_delete_task", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("delete failed")))
+    response = client.get("/providers/perfectcorp/skin-analysis/task-3", headers=auth("service-test"))
+    assert response.status_code == 502
