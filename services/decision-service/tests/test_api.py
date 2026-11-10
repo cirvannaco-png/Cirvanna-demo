@@ -20,6 +20,7 @@ def config(monkeypatch):
     monkeypatch.setenv("FCI_EVIDENCE_HMAC_SECRET", "fci-provider-test-key-minimum-32-bytes")
     monkeypatch.setenv("NPL_EVIDENCE_HMAC_SECRET", "npl-provider-test-key-minimum-32-bytes")
     monkeypatch.setenv("CULTURAL_IDENTITY_HMAC_SECRET", "culture-provider-test-key-minimum-32-bytes")
+    monkeypatch.setenv("CAL_REVIEW_OPERATOR_TOKEN", "cal-review-operator-test-token-32-bytes")
 
 
 @pytest.fixture
@@ -337,7 +338,7 @@ def test_decision_service_bridges_cil_feedback_queue_and_final_cal_decision(clie
 
     decision = client.post(
         "/v1/cal/feedback-reviews/review-1/decision",
-        headers=headers,
+        headers={"Authorization": "Bearer cal-review-operator-test-token-32-bytes"},
         json={"verdict": "BLOCK", "decision_reference": "CAL-DECISION-1",
               "rationale": "Human review confirmed the recommendation should be blocked."},
     )
