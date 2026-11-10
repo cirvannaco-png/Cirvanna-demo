@@ -530,7 +530,8 @@ def test_perfectcorp_terminal_result_is_deleted_before_result_is_released(client
     monkeypatch.setenv("CIL_PERFECTCORP_DPA_APPROVED", "true")
     calls = []
     monkeypatch.setattr(cil_main, "perfectcorp_get_skin_analysis_status", lambda **kwargs: {
-        "task_id": "task-2", "status": "success", "metrics": [{"type": "pore", "ui_score": 62}],
+        **({"task_id": "vendor-task-2", "status": "success", "metrics": [{"type": "pore", "ui_score": 62}]}
+           if kwargs["task_id"] == "vendor-task-2" else pytest.fail("provider task ID mapping failed")),
     })
     monkeypatch.setattr(cil_main, "perfectcorp_delete_task", lambda **kwargs: calls.append(kwargs["task_id"]) or True)
     contributor = "hmac-sha256:" + "f" * 64
@@ -560,7 +561,7 @@ def test_perfectcorp_terminal_result_is_not_released_when_deletion_fails(client,
     monkeypatch.setenv("CIL_PERFECTCORP_ENABLED", "true")
     monkeypatch.setenv("CIL_PERFECTCORP_DPA_APPROVED", "true")
     monkeypatch.setattr(cil_main, "perfectcorp_get_skin_analysis_status", lambda **kwargs: {
-        "task_id": "task-3", "status": "success", "metrics": [{"type": "pore", "ui_score": 62}],
+        "task_id": "vendor-task-3", "status": "success", "metrics": [{"type": "pore", "ui_score": 62}],
     })
     monkeypatch.setattr(cil_main, "perfectcorp_delete_task", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("delete failed")))
     contributor = "hmac-sha256:" + "1" * 64
