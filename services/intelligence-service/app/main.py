@@ -46,7 +46,10 @@ def now() -> datetime:
 
 
 def make_engine():
-    url = os.getenv("CIL_DATABASE_URL", "sqlite:///./cil.db")
+    configured_url = os.getenv("CIL_DATABASE_URL", "").strip()
+    if not configured_url and os.getenv("CIL_ENVIRONMENT", "development").lower() == "production":
+        raise RuntimeError("CIL_DATABASE_URL is mandatory in production")
+    url = configured_url or "sqlite:///./cil.db"
     options = {"pool_pre_ping": True}
     if url.startswith("sqlite"):
         options["connect_args"] = {"check_same_thread": False}
