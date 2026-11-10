@@ -168,3 +168,85 @@ def test_worker_retries_when_wardrobe_is_unavailable_without_acknowledging():
     result = CommerceWardrobeWorker(settings(), client).process_batch()
     assert result == {"claimed": 1, "processed": 0, "retried": 1, "dead_lettered": 0}
     assert not any(path.endswith("/ack") for path in calls)
+
+
+
+def consented_paid_event():
+    event = paid_event()
+    payload = event["payload"]
+    payload["personalization_consent_receipt_id"] = "tal-consent-receipt-0001"
+    payload["total_minor"] = 500000
+    payload["fulfillment_mode"] = "collection"
+    payload["payment_method_family"] = "card"
+    payload["items"][0]["merchant_id"] = "merchant-1"
+    payload["items"][0]["merchant_variant_id"] = "variant-1"
+    return event
+
+
+def tal_settings():
+    return Settings(
+        commerce_url="https://commerce.internal",
+        commerce_token="c" * 40,
+        wardrobe_url="https://wardrobe.internal",
+        wardrobe_token="w" * 40,
+        worker_id="sync-test",
+        identity_learning_url="https://identity.internal",
+        identity_learning_token="i" * 40,
+        batch_size=10,
+    )
+
+
+def test_worker_sends_minimized_paid_choice_to_tal_before_ack():
+    calls = []
+
+    def handler(request: httpx.Request):
+        calls.append(request.url.path)
+        if request.url.path == "/internal/outbox/claim":
+            return httpx.Response(200, json={"events": [consented_paid_event()]})
+        if request.url.path == "/v1/purchases/verified":
+            return httpx.Response(201, json={"status": "created"})
+        if request.url.path == "/v1/tal/events":
+            body = __import__("json").loads(request.content)
+            value = __import__("json").loads(body["value"])
+            assert request.url.params["subject_id"] == "buyer-1"
+            assert body["consent_receipt_id"] == "tal-consent-receipt-0001"
+            assert body["feature_key"] == "checkout.purchase_choice"
+            assert value["signal_strength"] == "weak"
+            assert value["payment_method_family"] == "card"
+            assert value["fulfillment_mode"] == "collection"
+            assert value["may_change_explicit_preference"] is False
+            assert "product_name" not in value["items"][0]
+            assert "email" not in body["value"]
+            return httpx.Response(201, json={"status": "created"})
+        if request.url.path.endswith("/ack"):
+            return httpx.Response(200, json={"status": "delivered"})
+        raise AssertionError(request.url.path)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    result = CommerceWardrobeWorker(tal_settings(), client).process_batch()
+    assert result == {"claimed": 1, "processed": 1, "retried": 0, "dead_lettered": 0}
+    assert calls.index("/v1/purchases/verified") < calls.index("/v1/tal/events") < len(calls) - 1
+    assert calls[-1].endswith("/ack")
+
+
+def test_worker_skips_tal_write_when_consent_was_revoked_without_blocking_ownership():
+    calls = []
+
+    def handler(request: httpx.Request):
+        calls.append(request.url.path)
+        if request.url.path == "/internal/outbox/claim":
+            return httpx.Response(200, json={"events": [consented_paid_event()]})
+        if request.url.path == "/v1/purchases/verified":
+            return httpx.Response(201, json={"status": "created"})
+        if request.url.path == "/v1/tal/events":
+            return httpx.Response(403, json={"detail": {"code": "ACTIVE_TAL_CONSENT_REQUIRED"}})
+        if request.url.path.endswith("/ack"):
+            return httpx.Response(200, json={"status": "delivered"})
+        raise AssertionError(request.url.path)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    result = CommerceWardrobeWorker(tal_settings(), client).process_batch()
+    assert result == {"claimed": 1, "processed": 1, "retried": 0, "dead_lettered": 0}
+    assert "/v1/purchases/verified" in calls
+    assert "/v1/tal/events" in calls
+    assert calls[-1].endswith("/ack")
