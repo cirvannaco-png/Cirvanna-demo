@@ -215,7 +215,9 @@ def test_worker_sends_minimized_paid_choice_to_tal_before_ack():
             assert value["payment_method_family"] == "card"
             assert value["fulfillment_mode"] == "collection"
             assert value["may_change_explicit_preference"] is False
-            assert "product_name" not in value["items"][0]
+            assert value["catalog_product_id"] == "product-1"
+            assert "product_name" not in value
+            assert "items" not in value
             assert "email" not in body["value"]
             return httpx.Response(201, json={"status": "created"})
         if request.url.path.endswith("/ack"):
