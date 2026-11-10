@@ -12,8 +12,7 @@ is for local tests only. The initial schema is versioned with Alembic under
   random `CIL_RECEIPT_SIGNING_KEY` of at least 32 bytes.
 - Set `CIL_AUTO_CREATE_SCHEMA=false` in production and run `alembic upgrade head`
   as a release step. Verify PostgreSQL backup/restore before production traffic.
-- Source rights are immutable records. Revocation is implemented by inserting
-  a new source version in a future migration; do not edit historical evidence.
+- Source rights are append-only events. Registering a source creates the initial rights event; `POST /sources/{source_id}/revoke` appends a prohibition event that immediately blocks subsequent commercial serving assessments.
 - Unknown, expired, research-only or purpose-mismatched sources fail closed
   for commercial serving.
 - The provider adapter requires HTTPS, an API token, licence ID and terms URL.
@@ -27,6 +26,7 @@ is for local tests only. The initial schema is versioned with Alembic under
 ## Endpoints
 
 - `POST /sources`: admin registers rights and permitted purposes.
+- `POST /sources/{source_id}/revoke`: append an auditable rights-revocation event.
 - `POST /evidence`: admin registers immutable evidence against a source.
 - `POST /serving/assessment`: internal claim-level rights/evidence assessment.
 - `POST /outcomes`: internal consent- and CAL-receipt-verified event ingestion.
@@ -35,8 +35,4 @@ is for local tests only. The initial schema is versioned with Alembic under
 - `POST /cal/review-queue/{id}/decision`: persist a signed-in CAL service decision reference.
 - `GET /ready`, `GET /capabilities`.
 
-This is not yet a completed provider integration or a substitute for the Catalog
-serving path. Catalog must call `/serving/assessment` before exposing product
-intelligence claims and must remove ineligible claims fail-closed. Until that
-gateway is deployed and verified, CIL-backed claims must not be treated as
-approved for customer display.
+The Catalog serving gate is implemented and calls `/serving/assessment` before exposing product intelligence. Pending/rejected claims remain withheld; only individually eligible ingredient/claim records can pass, with attribution attached when required. Deployment must configure the CIL gateway and verify the end-to-end path before any CIL metadata is exposed.
