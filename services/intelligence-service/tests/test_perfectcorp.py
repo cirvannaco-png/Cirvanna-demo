@@ -132,6 +132,8 @@ def test_perfectcorp_poll_strips_masks_and_only_returns_score_fields(monkeypatch
     ]
     assert "mask_urls" not in json.dumps(result)
     assert "private/image" not in json.dumps(result)
+    assert "presentation score" in result["score_semantics"]["ui_score"]
+    assert "underlying metric" in result["score_semantics"]["raw_score"]
 
 
 def test_perfectcorp_delete_endpoint_calls_documented_task_delete(monkeypatch, configured):
