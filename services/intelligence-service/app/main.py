@@ -17,7 +17,7 @@ from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import DateTime, Integer, JSON, String, Text, UniqueConstraint, create_engine, select
+from sqlalchemy import DateTime, Float, Integer, JSON, String, Text, UniqueConstraint, create_engine, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -95,6 +95,22 @@ class Outcome(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, nullable=False)
 
 
+class CALReview(Base):
+    __tablename__ = "cil_cal_review_queue"
+    __table_args__ = (UniqueConstraint("product_id", "context_key", "status", name="uq_cil_cal_review_cohort_status"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    product_id: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    context_key: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
+    unsuitable_share: Mapped[float] = mapped_column(Float, nullable=False)
+    contributor_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
+    verdict: Mapped[str | None] = mapped_column(String(12))
+    decision_reference: Mapped[str | None] = mapped_column(String(240))
+    rationale: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, nullable=False)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -146,6 +162,12 @@ class ServingAssessmentIn(StrictModel):
     ingredient_declarations: list[dict[str, Any]] = Field(default_factory=list, max_length=250)
 
 
+class CALDecisionIn(StrictModel):
+    verdict: Literal["SHOW", "BLOCK"]
+    decision_reference: str = Field(min_length=3, max_length=240)
+    rationale: str = Field(min_length=10, max_length=2000)
+
+
 class OutcomeIn(StrictModel):
     event_id: str = Field(min_length=3, max_length=120)
     product_id: str = Field(min_length=1, max_length=120)
@@ -186,6 +208,12 @@ def _service(authorization: str | None = Header(default=None)):
     expected = os.getenv("CIL_SERVICE_TOKEN", "").strip()
     if not expected or authorization != f"Bearer {expected}":
         raise HTTPException(401, "CIL service bearer token required")
+
+
+def _cal_service(authorization: str | None = Header(default=None)):
+    expected = os.getenv("CIL_CAL_SERVICE_TOKEN", "").strip()
+    if not expected or authorization != f"Bearer {expected}":
+        raise HTTPException(401, "CAL service bearer token required")
 
 
 def _receipt(value: str, expected_type: str, product_id: str) -> dict:
@@ -358,11 +386,60 @@ def aggregate_outcomes(product_id: str, context_key: str, db: Session = Depends(
     threshold = float(os.getenv("CIL_UNSUITABLE_SHARE_REVIEW_THRESHOLD", "0.25"))
     if not 0.0 <= threshold <= 1.0:
         raise HTTPException(503, "CIL_UNSUITABLE_SHARE_REVIEW_THRESHOLD must be between 0 and 1")
+    review_id = None
+    review_status = None
+    if share is not None and share >= threshold:
+        pending = db.scalar(select(CALReview).where(
+            CALReview.product_id == product_id,
+            CALReview.context_key == context_key,
+            CALReview.status == "pending",
+        ))
+        if pending is None:
+            pending = CALReview(
+                product_id=product_id, context_key=context_key, unsuitable_share=share,
+                contributor_count=len(contributors), status="pending",
+            )
+            db.add(pending)
+            db.commit()
+            db.refresh(pending)
+        review_id, review_status = pending.id, pending.status
     return {"status": "review_required" if share is not None and share >= threshold else "collecting",
             "contributor_count": len(contributors), "reported_count": denominator,
             "suitable_count": suitable, "unsuitable_count": unsuitable,
-            "unsuitable_share": share, "cal_action": "REVIEW" if share is not None and share >= threshold else "NO_CHANGE",
+            "unsuitable_share": share,
+            "cal_action": "REVIEW_REQUESTED" if review_id else "NO_CHANGE",
+            "cal_review_id": review_id, "cal_review_status": review_status,
             "automatic_suppression": False}
+
+
+@app.get("/cal/review-queue", dependencies=[Depends(_service)])
+def cal_review_queue(db: Session = Depends(get_db)):
+    rows = list(db.scalars(select(CALReview).where(CALReview.status == "pending")
+                           .order_by(CALReview.created_at.asc()).limit(100)).all())
+    return {"items": [{
+        "review_id": row.id, "product_id": row.product_id, "context_key": row.context_key,
+        "unsuitable_share": row.unsuitable_share, "contributor_count": row.contributor_count,
+        "status": row.status, "created_at": row.created_at.isoformat(),
+    } for row in rows]}
+
+
+@app.post("/cal/review-queue/{review_id}/decision", dependencies=[Depends(_cal_service)])
+def record_cal_decision(review_id: str, payload: CALDecisionIn, db: Session = Depends(get_db)):
+    review = db.get(CALReview, review_id)
+    if review is None:
+        raise HTTPException(404, "CAL review request not found")
+    if review.status != "pending":
+        if review.decision_reference == payload.decision_reference and review.verdict == payload.verdict:
+            return {"review_id": review.id, "status": review.status, "verdict": review.verdict}
+        raise HTTPException(409, "CAL review request already has a final decision")
+    review.status = "decided"
+    review.verdict = payload.verdict
+    review.decision_reference = payload.decision_reference
+    review.rationale = payload.rationale
+    review.decided_at = now()
+    db.commit()
+    return {"review_id": review.id, "status": review.status, "verdict": review.verdict,
+            "decision_reference": review.decision_reference}
 
 
 @app.get("/capabilities")
