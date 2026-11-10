@@ -90,6 +90,113 @@ def pass_safety(product_payload):
     )
 
 
+def test_purchase_authorization_returns_signed_offer_and_action_bound_receipt(client, monkeypatch):
+    signing_key = "gateway-cal-receipt-test-key-more-than-thirty-two-bytes"
+    monkeypatch.setenv("CAL_PURCHASE_RECEIPT_HMAC_SECRET", signing_key)
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda token: "buyer-cal-1")
+    monkeypatch.setattr(
+        main,
+        "evaluate_decisions",
+        lambda payload, end_user_authorization=None: main.DecisionResponse(
+            schema_version="1.0",
+            request_id="decision-request-cal-1",
+            created_at="2026-11-10T00:00:00+00:00",
+            candidates=[
+                main.CandidateDecisionOutput(
+                    product_id=payload.product_ids[0],
+                    catalog_version=7,
+                    verdict="show",
+                    may_display=True,
+                    reasons=[main.ReasonOutput(code="CAL_SHOW")],
+                    policy_version="cal-policy-test-v3",
+                    arbitration_contract_version="arbitration-v1",
+                    decision_pipeline_contract_version="pipeline-v1",
+                )
+            ],
+        ),
+    )
+    product_id = str(uuid.uuid4())
+    variant_id = str(uuid.uuid4())
+    listing_id = str(uuid.uuid4())
+    merchant_id = str(uuid.uuid4())
+    payload = {
+        "user_id": "buyer-cal-1",
+        "authorizations": [{
+            "catalog_product_id": product_id,
+            "variant_id": variant_id,
+            "listing_id": listing_id,
+            "merchant_id": merchant_id,
+            "action": "checkout",
+            "offer_snapshot_sha256": "a" * 64,
+            "market_country_code": "KE",
+            "destination_key_sha256": "b" * 64,
+            "fulfillment_mode": "courier_delivery",
+            "display_currency": "KES",
+            "quantity": 2,
+            "unit_price_minor": 4500,
+            "currency": "KES",
+        }],
+    }
+    response = client.post(
+        "/v1/purchase-authorizations",
+        json=payload,
+        headers={**auth_headers(), "X-End-User-Authorization": "Bearer trusted-user-session"},
+    )
+    assert response.status_code == 200, response.text
+    result = response.json()
+    receipt = result["receipts"][0]
+    assert receipt["subject_id"] == "buyer-cal-1"
+    assert receipt["candidate_id"] == variant_id
+    assert receipt["catalog_product_id"] == product_id
+    assert receipt["listing_id"] == listing_id
+    assert receipt["merchant_id"] == merchant_id
+    assert receipt["action"] == "checkout"
+    assert receipt["offer_snapshot_sha256"] == "a" * 64
+    assert receipt["quantity"] == 2 and receipt["unit_price_minor"] == 4500
+    assert receipt["decision"] == "SHOW" and receipt["may_display"] is True
+    unsigned = {key: value for key, value in receipt.items() if key != "signature"}
+    canonical = __import__("json").dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+    expected = hmac.new(signing_key.encode(), canonical, hashlib.sha256).hexdigest()
+    assert hmac.compare_digest(receipt["signature"], expected)
+
+
+def test_purchase_authorization_rejects_identity_mismatch_and_missing_signer(client, monkeypatch):
+    monkeypatch.setenv("CAL_PURCHASE_RECEIPT_HMAC_SECRET", "gateway-cal-receipt-test-key-more-than-thirty-two-bytes")
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda token: "different-buyer")
+    payload = {
+        "user_id": "buyer-cal-1",
+        "authorizations": [{
+            "catalog_product_id": str(uuid.uuid4()),
+            "variant_id": str(uuid.uuid4()),
+            "listing_id": str(uuid.uuid4()),
+            "merchant_id": str(uuid.uuid4()),
+            "action": "cart_add",
+            "offer_snapshot_sha256": "c" * 64,
+            "quantity": 1,
+            "unit_price_minor": 500,
+            "currency": "KES",
+        }],
+    }
+    mismatch = client.post(
+        "/v1/purchase-authorizations",
+        json=payload,
+        headers={**auth_headers(), "X-End-User-Authorization": "Bearer other-session"},
+    )
+    assert mismatch.status_code == 403
+    assert mismatch.json()["detail"]["code"] == "REQUEST_SUBJECT_MISMATCH"
+
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda token: "buyer-cal-1")
+    monkeypatch.delenv("CAL_PURCHASE_RECEIPT_HMAC_SECRET", raising=False)
+    missing_key = client.post(
+        "/v1/purchase-authorizations",
+        json=payload,
+        headers={**auth_headers(), "X-End-User-Authorization": "Bearer trusted-user-session"},
+    )
+    assert missing_key.status_code == 503
+    assert missing_key.json()["detail"]["code"] == "CAL_PURCHASE_RECEIPT_SIGNER_NOT_CONFIGURED"
+
+
+
 def test_decision_requires_verified_identity_when_setting_is_absent(client, monkeypatch):
     monkeypatch.delenv("CIRVANNA_REQUIRE_VERIFIED_IDENTITY", raising=False)
     monkeypatch.setattr(main, "fetch_product", lambda _: pytest.fail("must reject before Catalog access"))
