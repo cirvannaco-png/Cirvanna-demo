@@ -6,9 +6,12 @@ internal outbox API and relies on Wardrobe's order-line idempotency for replay.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import time
+import uuid
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 from typing import Any
 
@@ -26,6 +29,8 @@ class Settings:
     wardrobe_url: str
     wardrobe_token: str
     worker_id: str
+    identity_learning_url: str | None = None
+    identity_learning_token: str | None = None
     batch_size: int = 20
     timeout_seconds: float = 10.0
     poll_seconds: float = 3.0
@@ -46,12 +51,20 @@ class Settings:
             raise ValueError("COMMERCE_SYNC_TOKEN must be at least 32 bytes")
         if len(required["WARDROBE_SERVICE_TOKEN"].encode()) < 32:
             raise ValueError("WARDROBE_SERVICE_TOKEN must be at least 32 bytes")
+        identity_url = os.getenv("IDENTITY_SERVICE_URL", "").strip().rstrip("/") or None
+        identity_token = os.getenv("IDENTITY_SERVICE_TOKEN", "").strip() or None
+        if bool(identity_url) != bool(identity_token):
+            raise ValueError("IDENTITY_SERVICE_URL and IDENTITY_SERVICE_TOKEN must be configured together")
+        if identity_token is not None and len(identity_token.encode()) < 32:
+            raise ValueError("IDENTITY_SERVICE_TOKEN must be at least 32 bytes")
         return cls(
             commerce_url=required["COMMERCE_SERVICE_URL"].rstrip("/"),
             commerce_token=required["COMMERCE_SYNC_TOKEN"],
             wardrobe_url=required["WARDROBE_SERVICE_URL"].rstrip("/"),
             wardrobe_token=required["WARDROBE_SERVICE_TOKEN"],
             worker_id=required["SYNC_WORKER_ID"],
+            identity_learning_url=identity_url,
+            identity_learning_token=identity_token,
             batch_size=max(1, min(int(os.getenv("SYNC_BATCH_SIZE", "20")), 100)),
             timeout_seconds=max(1.0, min(float(os.getenv("SYNC_TIMEOUT_SECONDS", "10")), 60.0)),
             poll_seconds=max(1.0, min(float(os.getenv("SYNC_POLL_SECONDS", "3")), 60.0)),
@@ -94,6 +107,88 @@ def _purchase_payload(event: dict[str, Any], item: dict[str, Any]) -> dict[str, 
         "currency": _required_string(item.get("currency") or payload.get("currency"), "currency", 3),
         "unit_price_minor": item.get("unit_price_minor"),
         "paid_at": _required_string(payload.get("paid_at"), "paid_at", 64),
+    }
+
+
+
+def _tal_checkout_payload(event: dict[str, Any]) -> tuple[str, dict[str, Any]] | None:
+    """Map a paid order to one minimal, weak TAL observation when consent was snapshotted."""
+    payload = event.get("payload")
+    if not isinstance(payload, dict):
+        raise SyncContractError("invalid_paid_order_payload")
+    receipt_id = payload.get("personalization_consent_receipt_id")
+    if receipt_id is None:
+        return None
+    receipt_id = _required_string(receipt_id, "personalization_consent_receipt_id", 128)
+    subject_id = _required_string(payload.get("buyer_user_id"), "buyer_user_id", 128)
+    event_id = _required_string(event.get("event_id"), "event_id", 36)
+    if (
+        payload.get("event_id") != event_id
+        or event.get("event_type") != "commerce.order.paid"
+        or payload.get("event_type") != "commerce.order.paid"
+        or event.get("schema_version") != 1
+        or payload.get("schema_version") != 1
+        or payload.get("ownership_authority") != "verified_payment"
+    ):
+        raise SyncContractError("invalid_paid_order_learning_authority")
+    items = payload.get("items")
+    if not isinstance(items, list) or not items:
+        raise SyncContractError("invalid_paid_order_learning_items")
+    safe_items = []
+    for item in items:
+        if not isinstance(item, dict):
+            raise SyncContractError("invalid_paid_order_learning_line")
+        quantity, price = item.get("quantity"), item.get("unit_price_minor")
+        if (
+            not isinstance(quantity, int) or isinstance(quantity, bool) or quantity < 1
+            or not isinstance(price, int) or isinstance(price, bool) or price < 0
+        ):
+            raise SyncContractError("invalid_paid_order_learning_amount")
+        currency = _required_string(item.get("currency") or payload.get("currency"), "currency", 3)
+        if len(currency) != 3 or not currency.isalpha() or currency != currency.upper():
+            raise SyncContractError("invalid_paid_order_learning_currency")
+        safe_items.append({
+            "catalog_product_id": _required_string(item.get("catalog_product_id"), "catalog_product_id", 128),
+            "variant_id": _required_string(item.get("merchant_variant_id"), "merchant_variant_id", 128),
+            "merchant_id": _required_string(item.get("merchant_id"), "merchant_id", 128),
+            "quantity": quantity,
+            "unit_price_minor": price,
+            "currency": currency,
+        })
+    total = payload.get("total_minor")
+    if not isinstance(total, int) or isinstance(total, bool) or total < 0:
+        raise SyncContractError("invalid_paid_order_learning_total")
+    observed_at = _required_string(payload.get("paid_at") or payload.get("occurred_at"), "paid_at", 64)
+    try:
+        observed = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise SyncContractError("invalid_paid_order_learning_timestamp") from exc
+    if observed.tzinfo is None:
+        raise SyncContractError("paid_order_learning_timestamp_requires_timezone")
+    value = {
+        "schema_version": "1.0",
+        "evidence_type": "verified_transaction",
+        "signal_strength": "weak",
+        "signal_semantics": "purchase_choice_is_not_a_declared_or_permanent_preference",
+        "order_id": _required_string(payload.get("order_id"), "order_id", 36),
+        "currency": _required_string(payload.get("currency"), "currency", 3),
+        "total_minor": total,
+        "fulfillment_mode": payload.get("fulfillment_mode"),
+        "payment_method_family": payload.get("payment_method_family"),
+        "items": safe_items,
+        "may_change_explicit_preference": False,
+        "may_create_hard_npl_veto": False,
+    }
+    tal_event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cirvanna:tal-checkout:{event_id}"))
+    return subject_id, {
+        "event_id": tal_event_id,
+        "idempotency_key": f"commerce-paid:{event_id}",
+        "consent_receipt_id": receipt_id,
+        "feature_key": "checkout.purchase_choice",
+        "value": json.dumps(value, sort_keys=True, separators=(",", ":")),
+        "observed_at": observed.isoformat(),
+        "expires_at": (observed + timedelta(days=180)).isoformat(),
+        "event_kind": "observation",
     }
 
 
@@ -157,6 +252,11 @@ class CommerceWardrobeWorker:
     def _wardrobe_headers(self) -> dict[str, str]:
         return {"Authorization": f"Bearer {self.settings.wardrobe_token}"}
 
+    def _tal_headers(self) -> dict[str, str]:
+        if not self.settings.identity_learning_token:
+            raise SyncContractError("TAL_SINK_NOT_CONFIGURED")
+        return {"Authorization": f"Bearer {self.settings.identity_learning_token}"}
+
     def process_batch(self) -> dict[str, int]:
         claim = self.client.post(
             f"{self.settings.commerce_url}/internal/outbox/claim",
@@ -186,6 +286,21 @@ class CommerceWardrobeWorker:
                             json=purchase,
                         )
                         response.raise_for_status()
+                    tal_event = _tal_checkout_payload(event)
+                    if tal_event is not None:
+                        if not self.settings.identity_learning_url:
+                            raise SyncContractError("TAL_SINK_NOT_CONFIGURED")
+                        subject_id, tal_request = tal_event
+                        tal_response = self.client.post(
+                            f"{self.settings.identity_learning_url}/v1/tal/events",
+                            params={"subject_id": subject_id},
+                            headers=self._tal_headers(),
+                            json=tal_request,
+                        )
+                        # A 403 means the receipt is no longer active/valid.
+                        # Skip learning but do not block verified ownership sync.
+                        if tal_response.status_code != 403:
+                            tal_response.raise_for_status()
                 elif event_type == "commerce.order.refund.updated":
                     refund = _refund_payload(event)
                     response = self.client.post(
