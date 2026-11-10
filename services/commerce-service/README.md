@@ -81,9 +81,9 @@ This repository does not issue login sessions or manage the user lifecycle. Conn
 - Run migration on PostgreSQL and test backup/restore plus concurrent last-unit checkout contention. SQLite tests do not prove production locking semantics.
 - Integrate the actual Cirvanna identity issuer and validate JWT claims, role administration and secret handling.
 - Configure a non-production catalog and verify real TLS, credentials and CORS from the intended origin.
-- Configure Stripe test mode and exercise real test payment, expiry, retry, webhook replay and reconciliation. This service currently charges item subtotal only; shipping/tax computation is not implemented.
+- Configure Stripe test mode and exercise real test payment, expiry, retry, webhook replay and reconciliation. Stripe/card is the only implemented payment rail; PayPal and bank rails are not integrated. Market-aware checkout can calculate totals only from fresh, validated FX/fulfilment/tax/payment capability records; live third-party quote-provider operations and market settlements still require staging evidence.
 - Seller payouts/Connect onboarding, physical returns, chargebacks, item-level refund allocation, fulfillment, fraud/rate limits, reconciliation dashboards, retention/deletion and alerting are not implemented.
-- CaTaCaCi eligibility, Click It reconstruction, Virtual Twin and try-on remain explicitly unavailable until real adapters/models are integrated and independently validated.
+- Full production enablement still requires the signed CAL purchase-authorisation path, BFF integration, live staging browse → cart → checkout → Stripe webhook reconciliation, and independent privacy evidence. Click It reconstruction, Virtual Twin mesh reconstruction and licensed try-on rendering remain unavailable until real adapters/models are integrated and independently validated.
 
 
 ## Canonical variants and offer freshness
