@@ -2617,7 +2617,8 @@ def _verify_checkout_personalization_consent(subject_id: str, consent_id: str | 
         raise HTTPException(502, detail={"code": "INVALID_PERSONALIZATION_CONSENT_RESPONSE"}) from exc
     receipt_ids = evidence.get("receipt_ids") if isinstance(evidence, dict) else None
     if (
-        evidence.get("verified") is not True
+        not isinstance(evidence, dict)
+        or evidence.get("verified") is not True
         or evidence.get("active") is not True
         or evidence.get("subject_id") != subject_id
         or evidence.get("consent_id") != consent_id
