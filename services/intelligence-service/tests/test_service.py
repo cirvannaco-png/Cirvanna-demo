@@ -462,8 +462,9 @@ def test_perfectcorp_skin_analysis_requires_signed_adult_image_consent(client, m
     from app import main as cil_main
 
     monkeypatch.setenv("CIL_PERFECTCORP_ENABLED", "true")
+    monkeypatch.setenv("CIL_PERFECTCORP_DPA_APPROVED", "true")
     monkeypatch.setattr(cil_main, "perfectcorp_start_skin_analysis", lambda **kwargs: {
-        "task_id": "perfectcorp-task-001", "status": "running", "provider": "perfectcorp_youcam_skin_analysis_v2_1"
+        "task_id": "perfectcorp-vendor-task-001", "status": "running", "provider": "perfectcorp_youcam_skin_analysis_v2_1"
     })
     image_bytes = make_skin_image()
     contributor = "hmac-sha256:" + "c" * 64
@@ -478,7 +479,9 @@ def test_perfectcorp_skin_analysis_requires_signed_adult_image_consent(client, m
     }
     response = client.post("/providers/perfectcorp/skin-analysis", json=payload, headers=auth("service-test"))
     assert response.status_code == 202, response.text
-    assert response.json()["task_id"] == "perfectcorp-task-001"
+    import uuid
+    uuid.UUID(response.json()["task_id"])
+    assert response.json()["provider_task_id"] == "perfectcorp-vendor-task-001"
 
 
 def test_perfectcorp_skin_analysis_rejects_child_consent(client, monkeypatch):
@@ -524,6 +527,7 @@ def test_perfectcorp_terminal_result_is_deleted_before_result_is_released(client
     from app import main as cil_main
 
     monkeypatch.setenv("CIL_PERFECTCORP_ENABLED", "true")
+    monkeypatch.setenv("CIL_PERFECTCORP_DPA_APPROVED", "true")
     calls = []
     monkeypatch.setattr(cil_main, "perfectcorp_get_skin_analysis_status", lambda **kwargs: {
         "task_id": "task-2", "status": "success", "metrics": [{"type": "pore", "ui_score": 62}],
@@ -554,6 +558,7 @@ def test_perfectcorp_terminal_result_is_not_released_when_deletion_fails(client,
     from app import main as cil_main
 
     monkeypatch.setenv("CIL_PERFECTCORP_ENABLED", "true")
+    monkeypatch.setenv("CIL_PERFECTCORP_DPA_APPROVED", "true")
     monkeypatch.setattr(cil_main, "perfectcorp_get_skin_analysis_status", lambda **kwargs: {
         "task_id": "task-3", "status": "success", "metrics": [{"type": "pore", "ui_score": 62}],
     })
