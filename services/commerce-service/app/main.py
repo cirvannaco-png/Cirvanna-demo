@@ -2833,7 +2833,7 @@ def add_cart_item(request: Request, payload: CartItemIn, actor: Annotated[Actor,
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(409, detail={"code": "CART_CONFLICT_RETRY"}) from exc
-    return _cart_authorized_json(request, actor, db, cart)
+    return {"status": "added", "cart_version": cart.version}
 
 
 @app.patch("/cart/items/{variant_id}")
@@ -2857,7 +2857,7 @@ def update_cart_item(request: Request, variant_id: uuid.UUID, payload: QuantityI
     )
     item.quantity, cart.version, cart.updated_at = payload.quantity, cart.version + 1, now()
     db.commit()
-    return _cart_authorized_json(request, actor, db, cart)
+    return {"status": "updated", "cart_version": cart.version}
 
 
 @app.delete("/cart/items/{variant_id}")
@@ -2866,7 +2866,7 @@ def remove_cart_item(request: Request, variant_id: uuid.UUID, actor: Annotated[A
     db.query(CartItem).filter(CartItem.cart_id == cart.id, CartItem.variant_id == str(variant_id)).delete(synchronize_session=False)
     cart.version, cart.updated_at = cart.version + 1, now()
     db.commit()
-    return _cart_authorized_json(request, actor, db, cart)
+    return {"status": "removed", "cart_version": cart.version}
 
 
 def _verify_checkout_personalization_consent(subject_id: str, consent_id: str | None, consent_version: str | None) -> str | None:
