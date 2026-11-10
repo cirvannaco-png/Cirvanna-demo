@@ -318,7 +318,9 @@ def register_source(payload: SourceIn, db: Session = Depends(get_db)):
     if payload.rights_status in {"research_only", "permission_required", "unknown", "prohibited"}:
         if set(payload.permitted_purposes) - {"research", "model_evaluation"}:
             raise HTTPException(422, "restricted source cannot be used for commercial purposes")
-    row = Source(**payload.model_dump())
+    source_data = payload.model_dump()
+    source_data["id"] = source_data.pop("source_id")
+    row = Source(**source_data)
     db.add(row)
     db.commit()
     return {"source_id": row.id, "rights_status": row.rights_status, "permitted_purposes": row.permitted_purposes}
