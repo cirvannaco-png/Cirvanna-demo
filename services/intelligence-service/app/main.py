@@ -17,13 +17,15 @@ from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import DateTime, Float, Integer, JSON, String, Text, UniqueConstraint, create_engine, select
+from sqlalchemy import DateTime, Float, Integer, JSON, String, Text, UniqueConstraint, create_engine, inspect, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.provider import ProviderNotConfigured, fetch_licensed_research
 
 SERVICE = "cirvanna-intelligence-service"
+EXPECTED_SCHEMA_REVISION = "20261110_0002"
+ALLOWED_FEEDBACK_REASONS = {"poor_match", "price", "availability", "shade_mismatch", "texture", "fragrance", "delivery", "other"}
 PURPOSES = {"research", "model_evaluation", "product_enrichment", "commercial_recommendation",
             "recommendation_outcome_learning", "training"}
 GRADES = {"E1", "E2", "E3", "E4", "E5", "E6"}
@@ -238,6 +240,27 @@ class OutcomeIn(StrictModel):
             raise ValueError("contributor_token must be a keyed HMAC-SHA256 pseudonym")
         return value
 
+    @field_validator("context_key")
+    @classmethod
+    def controlled_context_key(cls, value):
+        if not re.fullmatch(r"[a-z0-9][a-z0-9._:-]{0,119}", value):
+            raise ValueError("context_key must be a controlled non-identifying cohort key")
+        return value
+
+    @field_validator("reason_codes")
+    @classmethod
+    def controlled_reason_codes(cls, values):
+        if len(values) != len(set(values)) or any(value not in ALLOWED_FEEDBACK_REASONS for value in values):
+            raise ValueError("reason_codes must use unique controlled vocabulary values")
+        return values
+
+    @field_validator("observed_at")
+    @classmethod
+    def require_aware_observed_at(cls, value):
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("observed_at must include a timezone")
+        return value
+
 
 def get_db():
     db = SessionLocal()
@@ -249,7 +272,7 @@ def get_db():
 
 def _admin(authorization: str | None = Header(default=None)):
     expected = os.getenv("CIL_ADMIN_TOKEN", "").strip()
-    if not expected or authorization != f"Bearer {expected}":
+    if not expected or not authorization or not hmac.compare_digest(authorization, f"Bearer {expected}"):
         raise HTTPException(401, "CIL admin bearer token required")
 
 
@@ -273,6 +296,9 @@ def _receipt(value: str, expected_type: str, product_id: str) -> dict:
         encoded, signature = value.split(".", 1)
         payload_bytes = __import__("base64").urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
         payload = json.loads(payload_bytes)
+        if not isinstance(payload, dict):
+            raise ValueError("receipt payload must be an object")
+        expiry = int(payload.get("expires_at", 0))
     except Exception as exc:
         raise HTTPException(422, "Malformed signed receipt") from exc
     expected = hmac.new(key, encoded.encode(), hashlib.sha256).hexdigest()
@@ -280,7 +306,7 @@ def _receipt(value: str, expected_type: str, product_id: str) -> dict:
         raise HTTPException(403, "Invalid receipt signature")
     if payload.get("type") != expected_type or payload.get("product_id") != product_id:
         raise HTTPException(403, "Receipt scope does not match the event")
-    if int(payload.get("expires_at", 0)) <= int(now().timestamp()):
+    if expiry <= int(now().timestamp()):
         raise HTTPException(403, "Receipt expired")
     if expected_type == "consent" and payload.get("purpose") != "recommendation_outcome_learning":
         raise HTTPException(403, "Consent is not scoped to outcome learning")
@@ -331,9 +357,22 @@ def health():
 def ready(db: Session = Depends(get_db)):
     try:
         db.execute(select(Source.id).limit(1))
+        tables = set(inspect(engine).get_table_names())
+        if not set(Base.metadata.tables).issubset(tables):
+            raise HTTPException(503, "CIL schema is incomplete")
+        if os.getenv("CIL_AUTO_CREATE_SCHEMA", "true").lower() != "true":
+            if "alembic_version" not in tables:
+                raise HTTPException(503, "CIL Alembic migration is missing")
+            revision = db.execute(text("SELECT version_num FROM alembic_version LIMIT 1")).scalar_one_or_none()
+            if revision != EXPECTED_SCHEMA_REVISION:
+                raise HTTPException(503, "CIL schema migration is not current")
+        else:
+            revision = None
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(503, "CIL database unavailable") from exc
-    return {"status": "ready", "database": "connected"}
+    return {"status": "ready", "database": "connected", "schema_revision": revision}
 
 
 @app.post("/sources", dependencies=[Depends(_admin)], status_code=201)
