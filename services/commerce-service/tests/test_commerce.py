@@ -79,7 +79,16 @@ def client(monkeypatch):
         "_authorize_purchase_lines",
         lambda **kwargs: [
             {"receipt": "fixture-only-untrusted-receipt", "claims": {
-                "sub": kwargs["subject_id"], "action": kwargs["action"],
+                "sub": kwargs["subject_id"],
+                "action": kwargs["action"],
+                "verdict": "show",
+                "may_display": True,
+                "policy_version": "test-policy-v1",
+                "decision_request_id": "test-decision-request",
+                "catalog_version": 1,
+                "jti": str(uuid.uuid4()),
+                "iat": int(time.time()),
+                "exp": int(time.time()) + 90,
             }}
             for _line in kwargs["rows"]
         ],
@@ -571,6 +580,10 @@ def test_checkout_reserves_stock_idempotently_and_only_signed_paid_webhook_settl
     assert order["status"] == "pending_payment"
     assert order["subtotal_minor"] == 500
     assert order["commission_minor"] == 15
+    persisted_order = row(main.CommerceOrder, order["order_id"])
+    assert persisted_order.cal_authorization_snapshot["subject_id"] == "buyer-checkout"
+    assert persisted_order.cal_authorization_snapshot["action"] == "checkout"
+    assert persisted_order.cal_authorization_snapshot["authorizations"][0]["claims"]["verdict"] == "show"
     v = row(main.Variant, offer["variant_id"])
     assert v.on_hand == 8 and v.reserved_qty == 2
 
@@ -607,6 +620,34 @@ def test_checkout_reserves_stock_idempotently_and_only_signed_paid_webhook_settl
     db.close()
     replay = client.post("/webhooks/stripe", content=raw, headers={"Stripe-Signature": sig, "Content-Type": "application/json"})
     assert replay.status_code == 200 and replay.json()["duplicate"] is True
+
+
+
+
+def test_idempotent_checkout_retry_rejects_legacy_order_without_cal_snapshot(client, monkeypatch):
+    offer = seed_offer(stock=3, price_minor=900)
+    buyer = auth("buyer-legacy-idempotency")
+    added = client.post(
+        "/cart/items",
+        json={"variant_id": offer["variant_id"], "quantity": 1},
+        headers=buyer,
+    )
+    assert added.status_code == 201
+    configure_stripe(monkeypatch, session_id="cs_test_legacy_snapshot")
+    headers = {**buyer, "Idempotency-Key": "legacy-checkout-idempotency-01"}
+    created = client.post("/checkout", headers=headers)
+    assert created.status_code == 201
+    order_id = created.json()["order"]["order_id"]
+
+    db = TEST_SESSION()
+    stored = db.get(main.CommerceOrder, order_id)
+    stored.cal_authorization_snapshot = None
+    db.commit()
+    db.close()
+
+    retry = client.post("/checkout", headers=headers)
+    assert retry.status_code == 409
+    assert retry.json()["detail"]["code"] == "CAL_PURCHASE_REAUTH_REQUIRED_FOR_EXISTING_ORDER"
 
 
 def test_verified_charge_refund_is_monotonic_and_does_not_change_order_or_wardrobe_ownership(client, monkeypatch):
