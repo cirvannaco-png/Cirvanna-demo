@@ -1141,6 +1141,7 @@ class Readiness(BaseModel):
     authentication_mode: str
     catalog_configured: bool
     payment_configured: bool
+    cal_purchase_authorization_configured: bool
     migrations_required: bool
     migrations_applied: bool
     schema_revision: str | None
@@ -1815,6 +1816,14 @@ def health() -> dict[str, str]:
     return {"status": "alive", "service": SERVICE}
 
 
+def _cal_purchase_authorization_ready() -> bool:
+    try:
+        _purchase_authorization_config()
+        return True
+    except HTTPException:
+        return False
+
+
 @app.get("/ready", response_model=Readiness)
 def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
     """Require DB reachability, complete schema, current migration, and integrations."""
@@ -1839,6 +1848,11 @@ def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
     auth_ok = _authentication_configured()
     catalog_ok = bool(os.getenv("CATALOG_API_URL") and os.getenv("CATALOG_API_TOKEN"))
     payment_ok = StripeGateway().ready
+    try:
+        _purchase_authorization_config()
+        cal_purchase_ok = True
+    except HTTPException:
+        cal_purchase_ok = False
     migrations_applied = schema_revision == EXPECTED_SCHEMA_REVISION
     ready = (
         connected
@@ -1846,13 +1860,16 @@ def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
         and auth_ok
         and catalog_ok
         and payment_ok
+        and cal_purchase_ok
         and (not migrations_required or migrations_applied)
     )
     result = Readiness(status="ready" if ready else "not_ready", service=SERVICE,
         database_connected=connected, schema_present=schema_present,
         authentication_configured=auth_ok, authentication_mode=_commerce_auth_mode(),
-        catalog_configured=catalog_ok, payment_configured=payment_ok, migrations_required=migrations_required,
-        migrations_applied=migrations_applied, schema_revision=schema_revision, ready=ready)
+        catalog_configured=catalog_ok, payment_configured=payment_ok,
+        cal_purchase_authorization_configured=cal_purchase_ok,
+        migrations_required=migrations_required, migrations_applied=migrations_applied,
+        schema_revision=schema_revision, ready=ready)
     if not ready:
         raise HTTPException(503, detail=result.model_dump())
     return result
@@ -1868,6 +1885,7 @@ def capabilities() -> dict[str, Any]:
         "automated_seller_payouts": False, "shipping_tax_calculation": False,
         "multimarket_onboarding": True, "localized_offer_pricing": True,
         "provider_quote_ingestion": bool(os.getenv("COMMERCE_MARKET_CONTEXT_TOKEN")),
+        "cal_purchase_authorization_configured": _cal_purchase_authorization_ready(),
         "landed_cost_comparison": True, "checkout_landed_cost_revalidation": False,
         "catacaci_eligibility": False, "click_it_reconstruction": False,
         "virtual_twin_generation": False, "virtual_try_on": False}
