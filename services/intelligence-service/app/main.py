@@ -591,10 +591,11 @@ def start_perfectcorp_skin_analysis(payload: PerfectCorpSkinAnalysisIn):
             image=normalized, file_name="cirvanna-skin-analysis.jpg",
             content_type="image/jpeg", actions=list(payload.actions), mode=payload.mode,
         )
+        provider_task_id = task["task_id"]
         try:
             with SessionLocal() as db:
                 db.add(ProviderTask(
-                    task_id=str(uuid.uuid4()), provider_task_id=task["task_id"], provider="perfectcorp",
+                    task_id=str(uuid.uuid4()), provider_task_id=provider_task_id, provider="perfectcorp",
                     contributor_token=payload.contributor_token, image_digest=image_digest,
                     consent_expires_at=datetime.fromtimestamp(int(consent["expires_at"]), timezone.utc),
                     status="running",
@@ -603,14 +604,14 @@ def start_perfectcorp_skin_analysis(payload: PerfectCorpSkinAnalysisIn):
         except Exception as exc:
             # If durable ownership/audit persistence fails, do not leave an untracked provider task.
             try:
-                perfectcorp_delete_task(task_id=task["task_id"])
+                perfectcorp_delete_task(task_id=provider_task_id)
             except Exception:
                 pass
             raise HTTPException(503, "Provider task ownership could not be persisted; task deletion was attempted") from exc
         task.pop("task_id", None)
         # The public handle is an opaque UUID stored in the task ledger, not the provider task ID.
         with SessionLocal() as db:
-            stored = db.scalar(select(ProviderTask).where(ProviderTask.provider_task_id == task["provider_task_id"]))
+            stored = db.scalar(select(ProviderTask).where(ProviderTask.provider_task_id == provider_task_id))
             if stored is None:
                 raise HTTPException(503, "Provider task ledger entry is missing")
             task["task_id"] = stored.task_id
