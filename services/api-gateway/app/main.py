@@ -7,6 +7,7 @@ Only a CAL SHOW verdict authorizes the response to mark a candidate displayable.
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import base64
 import hashlib
 import hmac
 import json
@@ -167,6 +168,94 @@ class DiscoveryRequest(BaseModel):
     def normalize_discovery_query(cls, value: str) -> str:
         return " ".join(value.split()).strip()
 
+
+
+class PurchaseMarketContext(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    destination_country_code: str | None = Field(default=None, min_length=2, max_length=2)
+    destination_key: str | None = Field(default=None, min_length=3, max_length=180)
+    fulfillment_mode: Literal["shipping", "courier_delivery", "merchant_delivery", "collection", "local_transport"] | None = None
+    display_currency: str | None = Field(default=None, min_length=3, max_length=3)
+    payment_method: Literal["card"] | None = None
+
+    @field_validator("destination_country_code")
+    @classmethod
+    def valid_market_country(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"[A-Z]{2}", value.strip().upper()):
+            raise ValueError("destination country must be a two-letter ISO code")
+        return value.strip().upper() if value else None
+
+    @field_validator("display_currency")
+    @classmethod
+    def valid_market_currency(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"[A-Z]{3}", value.strip().upper()):
+            raise ValueError("display currency must be a three-letter ISO code")
+        return value.strip().upper() if value else None
+
+    @model_validator(mode="after")
+    def complete_market_context(self):
+        fields = (self.destination_country_code, self.destination_key, self.fulfillment_mode, self.display_currency, self.payment_method)
+        if any(item is not None for item in fields) and not all(item is not None for item in fields):
+            raise ValueError("purchase market context must be complete or omitted")
+        if self.destination_key is not None:
+            self.destination_key = self.destination_key.strip()
+        return self
+
+
+class PurchaseAuthorizationCandidate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    product_id: str = Field(min_length=36, max_length=36)
+    variant_id: str = Field(min_length=36, max_length=36)
+    merchant_id: str = Field(min_length=36, max_length=36)
+    offer_id: str = Field(min_length=8, max_length=180)
+    offer_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
+    quantity: int = Field(ge=1, le=50)
+
+    @field_validator("product_id", "variant_id", "merchant_id")
+    @classmethod
+    def valid_purchase_uuid(cls, value: str) -> str:
+        return str(uuid.UUID(value))
+
+
+class PurchaseAuthorizationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    user_id: str = Field(min_length=1, max_length=128)
+    action: Literal["cart_read", "cart_add", "cart_update", "checkout"]
+    market_context: PurchaseMarketContext | None = None
+    candidates: list[PurchaseAuthorizationCandidate] = Field(min_length=1, max_length=100)
+
+    @field_validator("user_id")
+    @classmethod
+    def normalized_purchase_user(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("user_id must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def unique_purchase_variants(self):
+        variants = [item.variant_id for item in self.candidates]
+        if len(variants) != len(set(variants)):
+            raise ValueError("purchase candidates must have unique variants")
+        return self
+
+
+def _purchase_receipt_secret() -> str:
+    secret = os.getenv("CAL_PURCHASE_RECEIPT_SECRET", "").strip()
+    if len(secret.encode("utf-8")) < 32:
+        raise HTTPException(503, detail={"code": "CAL_PURCHASE_RECEIPT_SIGNING_NOT_CONFIGURED"})
+    return secret
+
+
+def _b64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def _mint_purchase_receipt(claims: dict[str, Any]) -> str:
+    secret = _purchase_receipt_secret()
+    payload = _b64url(json.dumps(claims, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+    signature = _b64url(hmac.new(secret.encode("utf-8"), payload.encode("ascii"), hashlib.sha256).digest())
+    return payload + "." + signature
 
 
 class USIProfilePreferenceInput(BaseModel):
@@ -2150,6 +2239,87 @@ def _withhold_unverified_media(value: Any) -> Any:
                 sanitized[key] = _withhold_unverified_media(item)
         return sanitized
     return value
+
+
+@app.post(
+    "/v1/purchase-authorizations",
+    dependencies=[Depends(require_api_token)],
+    tags=["purchase decisions"],
+)
+def authorize_purchase_candidates(
+    payload: PurchaseAuthorizationRequest,
+    end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
+) -> dict[str, Any]:
+    """Mint short-lived receipts only for verified-user, candidate-bound CAL SHOW decisions."""
+    if not _verified_identity_required():
+        raise HTTPException(503, detail={"code": "VERIFIED_IDENTITY_REQUIRED_FOR_PURCHASE_AUTHORIZATION"})
+    subject = _resolve_verified_subject(end_user_authorization)
+    if not hmac.compare_digest(subject, payload.user_id):
+        raise HTTPException(403, detail={"code": "PURCHASE_AUTHORIZATION_SUBJECT_MISMATCH"})
+    _purchase_receipt_secret()
+    market_context = payload.market_context.model_dump(mode="json") if payload.market_context else None
+    decisions: dict[str, CandidateDecisionOutput] = {}
+    product_ids = list(dict.fromkeys(item.product_id for item in payload.candidates))
+    for start in range(0, len(product_ids), 25):
+        request = DecisionRequest(
+            user_id=subject,
+            product_ids=product_ids[start:start + 25],
+            context=ContextInput(),
+            use_wardrobe_context=False,
+            style_preferences=[],
+            negative_preferences=[],
+            cultural_requirements=[],
+            hard_constraints=[],
+        )
+        decision_response = evaluate_decisions(request, end_user_authorization)
+        for decision in decision_response.candidates:
+            decisions[decision.product_id] = decision
+
+    now_epoch = int(datetime.now(timezone.utc).timestamp())
+    authorizations = []
+    for candidate in payload.candidates:
+        decision = decisions.get(candidate.product_id)
+        if decision is None or decision.verdict != "show" or decision.may_display is not True:
+            authorizations.append({
+                "variant_id": candidate.variant_id,
+                "authorized": False,
+                "reason_code": "CAL_SHOW_NOT_GRANTED",
+            })
+            continue
+        claims = {
+            "iss": SERVICE_NAME,
+            "aud": "cirvanna-commerce",
+            "sub": subject,
+            "action": payload.action,
+            "product_id": candidate.product_id,
+            "variant_id": candidate.variant_id,
+            "merchant_id": candidate.merchant_id,
+            "offer_id": candidate.offer_id,
+            "offer_hash": candidate.offer_hash,
+            "quantity": candidate.quantity,
+            "market_context": market_context,
+            "catalog_version": decision.catalog_version,
+            "policy_version": decision.policy_version,
+            "decision_request_id": decision.catalog_version and decision.product_id and str(uuid.uuid4()),
+            "verdict": decision.verdict,
+            "may_display": decision.may_display,
+            "iat": now_epoch,
+            "exp": now_epoch + 90,
+            "jti": str(uuid.uuid4()),
+        }
+        authorizations.append({
+            "variant_id": candidate.variant_id,
+            "authorized": True,
+            "receipt": _mint_purchase_receipt(claims),
+            "expires_at": claims["exp"],
+        })
+    return {
+        "status": "evaluated",
+        "subject_id": subject,
+        "action": payload.action,
+        "market_context": market_context,
+        "authorizations": authorizations,
+    }
 
 
 @app.post(
