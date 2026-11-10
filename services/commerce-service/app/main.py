@@ -338,6 +338,7 @@ class CommerceOrder(Base):
     destination_key: Mapped[str | None] = mapped_column(String(180), nullable=True)
     fulfillment_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
     checkout_context_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    tal_consent_receipt_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     market_quote_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     commission_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -1075,6 +1076,8 @@ class CheckoutRequest(BaseModel):
     fulfillment_mode: Literal["shipping", "courier_delivery", "merchant_delivery", "collection", "local_transport"] | None = None
     display_currency: str | None = Field(default=None, min_length=3, max_length=3)
     payment_method: Literal["card"] = "card"
+    personalization_consent_id: str | None = Field(default=None, min_length=8, max_length=128)
+    personalization_consent_version: str | None = Field(default=None, min_length=1, max_length=80)
     confirm: bool | None = None
 
     @field_validator("destination_country_code")
@@ -1472,6 +1475,10 @@ def settle_paid(
             "occurred_at": now().isoformat(), "order_id": order.id, "order_number": order.order_number,
             "buyer_user_id": order.buyer_user_id, "currency": order.currency,
             "paid_at": order.paid_at.isoformat() if order.paid_at else None,
+            "total_minor": order.total_minor if order.total_minor is not None else order.subtotal_minor,
+            "fulfillment_mode": order.fulfillment_mode,
+            "payment_method_family": "card",
+            "personalization_consent_receipt_id": order.tal_consent_receipt_id,
             "items": [{
                 "order_item_id": item.id, "catalog_product_id": item.catalog_product_id,
                 "merchant_id": item.merchant_id, "merchant_variant_id": item.variant_id,
@@ -2567,6 +2574,65 @@ def remove_cart_item(variant_id: uuid.UUID, actor: Annotated[Actor, Depends(requ
     return cart_json(db, cart)
 
 
+def _verify_checkout_personalization_consent(subject_id: str, consent_id: str | None, consent_version: str | None) -> str | None:
+    """Resolve an optional, active personalization consent to its canonical receipt.
+
+    Checkout is still available without personalization consent. If the user
+    supplies a consent bundle, invalid or unavailable verification fails closed
+    rather than recording an unverified learning signal.
+    """
+    if consent_id is None:
+        if consent_version is not None:
+            raise HTTPException(422, detail={"code": "CONSENT_VERSION_WITHOUT_CONSENT_ID"})
+        return None
+    base = os.getenv("IDENTITY_SERVICE_URL", "").strip().rstrip("/")
+    token = os.getenv("IDENTITY_SERVICE_TOKEN", "").strip()
+    parsed = urlsplit(base)
+    if not base or len(token.encode("utf-8")) < 32 or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise HTTPException(503, detail={"code": "PERSONALIZATION_CONSENT_VERIFIER_NOT_CONFIGURED"})
+    if parsed.scheme != "https" and not (parsed.scheme == "http" and parsed.hostname.lower() in {"localhost", "127.0.0.1", "::1"}):
+        raise HTTPException(503, detail={"code": "PERSONALIZATION_CONSENT_VERIFIER_MUST_USE_HTTPS"})
+    try:
+        response = httpx.post(
+            f"{base}/internal/v1/consents/verify",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            json={
+                "subject_id": subject_id,
+                "consent_id": consent_id,
+                "required_scopes": ["personalization"],
+                "consent_version": consent_version,
+                "resource_id": None,
+            },
+            timeout=5.0,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "PERSONALIZATION_CONSENT_VERIFIER_UNAVAILABLE"}) from exc
+    if response.status_code in {401, 403, 404}:
+        raise HTTPException(403, detail={"code": "ACTIVE_PERSONALIZATION_CONSENT_REQUIRED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "PERSONALIZATION_CONSENT_VERIFICATION_FAILED"})
+    try:
+        evidence = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "INVALID_PERSONALIZATION_CONSENT_RESPONSE"}) from exc
+    receipt_ids = evidence.get("receipt_ids") if isinstance(evidence, dict) else None
+    if (
+        evidence.get("verified") is not True
+        or evidence.get("active") is not True
+        or evidence.get("subject_id") != subject_id
+        or evidence.get("consent_id") != consent_id
+        or evidence.get("resource_id") is not None
+        or "personalization" not in evidence.get("granted_scopes", [])
+        or not isinstance(receipt_ids, list)
+        or not receipt_ids
+    ):
+        raise HTTPException(403, detail={"code": "ACTIVE_PERSONALIZATION_CONSENT_REQUIRED"})
+    receipt = next((item for item in receipt_ids if isinstance(item, str) and item.strip()), None)
+    if receipt is None or len(receipt) > 128:
+        raise HTTPException(502, detail={"code": "INVALID_PERSONALIZATION_CONSENT_RECEIPT"})
+    return receipt
+
+
 def _resolve_market_checkout_line(
     db: Session, variant: Variant, listing: Listing, merchant: Merchant,
     payload: CheckoutRequest, gateway: StripeGateway,
@@ -2640,6 +2706,11 @@ def checkout(
     gateway = StripeGateway()
     if not gateway.ready:
         raise HTTPException(503, detail={"code": "PAYMENT_PROVIDER_NOT_CONFIGURED"})
+    tal_receipt_id = _verify_checkout_personalization_consent(
+        actor.user_id,
+        payload.personalization_consent_id if payload else None,
+        payload.personalization_consent_version if payload else None,
+    )
     market_context = payload if payload is not None and payload.market_aware else None
     context_hash = None
     if market_context is not None:
@@ -2649,12 +2720,16 @@ def checkout(
             "fulfillment_mode": market_context.fulfillment_mode,
             "display_currency": market_context.display_currency,
             "payment_method": market_context.payment_method,
+            "personalization_consent_id": market_context.personalization_consent_id,
+            "personalization_consent_version": market_context.personalization_consent_version,
         }, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
     existing = db.scalar(select(CommerceOrder).where(
         CommerceOrder.buyer_user_id == actor.user_id,
         CommerceOrder.idempotency_key == idempotency_key,
     ))
     if existing:
+        if existing.tal_consent_receipt_id != tal_receipt_id:
+            raise HTTPException(409, detail={"code": "IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PERSONALIZATION_CONSENT"})
         if existing.checkout_context_hash != context_hash:
             raise HTTPException(409, detail={"code": "IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_CHECKOUT_CONTEXT"})
         return persist_stripe_session(db, existing.id, actor.email, gateway)
@@ -2785,7 +2860,7 @@ def checkout(
         destination_country_code=market_context.destination_country_code if market_context else None,
         destination_key=market_context.destination_key if market_context else None,
         fulfillment_mode=market_context.fulfillment_mode if market_context else None,
-        checkout_context_hash=context_hash, market_quote_snapshot=quote_snapshot,
+        checkout_context_hash=context_hash, tal_consent_receipt_id=tal_receipt_id, market_quote_snapshot=quote_snapshot,
         commission_minor=0, idempotency_key=idempotency_key, expires_at=expiry,
     )
     charged_fulfillment_quotes: set[tuple[str, str, str]] = set()
