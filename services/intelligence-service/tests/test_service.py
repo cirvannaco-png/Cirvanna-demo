@@ -481,7 +481,7 @@ def test_perfectcorp_skin_analysis_requires_signed_adult_image_consent(client, m
     assert response.status_code == 202, response.text
     import uuid
     uuid.UUID(response.json()["task_id"])
-    assert response.json()["provider_task_id"] == "perfectcorp-vendor-task-001"
+    assert "provider_task_id" not in response.json()
 
 
 def test_perfectcorp_skin_analysis_rejects_child_consent(client, monkeypatch):
