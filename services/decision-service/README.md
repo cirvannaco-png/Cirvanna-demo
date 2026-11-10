@@ -35,6 +35,7 @@ The service independently canonicalizes and verifies the signature before evalua
 - `CIL_SERVICE_URL`: private HTTPS URL for the Intelligence Service (HTTP only for loopback development).
 - `CIL_SERVICE_TOKEN`: internal token for reading the CIL review queue.
 - `CIL_CAL_SERVICE_TOKEN`: CAL-only token for recording final review decisions in CIL.
+- `CAL_REVIEW_OPERATOR_TOKEN`: separate credential required by the final-decision endpoint; do not reuse the general Decision Service token.
 - DECISION_DOCS_ENABLED is not currently used; do not expose this internal service publicly.
 
 Run locally from this directory:
