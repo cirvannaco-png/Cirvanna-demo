@@ -1330,11 +1330,16 @@ def ensure_cart(db: Session, user_id: str) -> Cart:
     return cart
 
 
-def variant_triplet(db: Session, variant_id: str):
-    return db.execute(select(Variant, Listing, Merchant)
+def variant_triplet(db: Session, variant_id: str, *, for_update: bool = False):
+    statement = (select(Variant, Listing, Merchant)
         .join(Listing, Variant.listing_id == Listing.id)
         .join(Merchant, Listing.merchant_id == Merchant.id)
-        .where(Variant.id == variant_id)).first()
+        .where(Variant.id == variant_id))
+    if for_update:
+        # Keep the exact offer, merchant state, price and inventory snapshot
+        # stable across the remote CAL authorization call and the cart commit.
+        statement = statement.with_for_update()
+    return db.execute(statement).first()
 
 
 def _purchase_authorization_config() -> tuple[str, str, str]:
@@ -2816,7 +2821,7 @@ def get_cart(request: Request, actor: Annotated[Actor, Depends(require_actor)], 
 
 @app.post("/cart/items", status_code=201)
 def add_cart_item(request: Request, payload: CartItemIn, actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Session, Depends(get_db)]):
-    joined = variant_triplet(db, payload.variant_id)
+    joined = variant_triplet(db, payload.variant_id, for_update=True)
     if not joined:
         raise HTTPException(404, detail={"code": "VARIANT_NOT_FOUND"})
     variant, listing, merchant = joined
@@ -2860,7 +2865,7 @@ def update_cart_item(request: Request, variant_id: uuid.UUID, payload: QuantityI
     item = db.scalar(select(CartItem).where(CartItem.cart_id == cart.id, CartItem.variant_id == str(variant_id)))
     if not item:
         raise HTTPException(404, detail={"code": "CART_ITEM_NOT_FOUND"})
-    joined = variant_triplet(db, str(variant_id))
+    joined = variant_triplet(db, str(variant_id), for_update=True)
     if not joined:
         raise HTTPException(409, detail={"code": "OFFER_UNAVAILABLE"})
     variant, listing, merchant = joined
