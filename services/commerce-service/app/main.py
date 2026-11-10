@@ -3287,14 +3287,25 @@ def checkout(
             CALPurchaseAudit.decision == "SHOW",
         )).all())
         authorized_lines = {
-            (item.catalog_product_id, item.variant_id, item.merchant_id)
+            (item.catalog_product_id, item.variant_id, item.merchant_id): item
             for item in existing_authorizations
         }
         expected_lines = {
-            (item.catalog_product_id, item.variant_id, item.merchant_id)
+            (item.catalog_product_id, item.variant_id, item.merchant_id): item
             for item in existing_items
         }
-        if not existing_items or authorized_lines != expected_lines or len(existing_authorizations) != len(existing_items):
+        authorization_matches_snapshot = (
+            bool(existing_items)
+            and authorized_lines.keys() == expected_lines.keys()
+            and len(existing_authorizations) == len(existing_items)
+            and all(
+                authorized_lines[key].quantity == order_item.quantity
+                and authorized_lines[key].unit_price_minor == order_item.unit_price_minor
+                and authorized_lines[key].currency == existing.currency
+                for key, order_item in expected_lines.items()
+            )
+        )
+        if not authorization_matches_snapshot:
             raise HTTPException(409, detail={"code": "EXISTING_ORDER_CAL_AUTHORIZATION_MISSING"})
         return persist_stripe_session(db, existing.id, actor.email, gateway)
 
