@@ -391,6 +391,7 @@ def _verify_perfectcorp_consent(receipt: str, contributor_token: str, image_dige
     expected = hmac.new(key, encoded.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, signature):
         raise HTTPException(403, "Invalid image-processing consent signature")
+    subject_age = payload.get("subject_age_years")
     if (
         payload.get("type") != "consent"
         or payload.get("purpose") != "perfectcorp_skin_analysis"
@@ -398,7 +399,7 @@ def _verify_perfectcorp_consent(receipt: str, contributor_token: str, image_dige
         or payload.get("subject_token") != contributor_token
         or payload.get("image_sha256") != image_digest
         or payload.get("single_subject") is not True
-        or int(payload.get("subject_age_years", 0)) < 18
+        or type(subject_age) is not int or subject_age < 18
         or expiry <= int(now().timestamp())
     ):
         raise HTTPException(403, "Image consent is missing, expired, mismatched or not adult-scoped")
@@ -540,13 +541,19 @@ def start_perfectcorp_skin_analysis(payload: PerfectCorpSkinAnalysisIn):
 @app.get("/providers/perfectcorp/skin-analysis/{task_id}", dependencies=[Depends(_service)])
 def poll_perfectcorp_skin_analysis(task_id: str):
     try:
-        return perfectcorp_get_skin_analysis_status(task_id=task_id)
+        result = perfectcorp_get_skin_analysis_status(task_id=task_id)
+        if result.get("status") in {"success", "error"}:
+            # Delete provider input/output files immediately after the terminal result is fetched.
+            # Never return the result as releasable until deletion is confirmed.
+            perfectcorp_delete_task(task_id=task_id)
+            result["provider_task_deleted"] = True
+        return result
     except PerfectCorpNotConfigured as exc:
         raise HTTPException(503, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(502, "Perfect Corp skin-analysis status is unavailable") from exc
+        raise HTTPException(502, "Perfect Corp status retrieval or immediate file deletion failed") from exc
 
 
 @app.delete("/providers/perfectcorp/skin-analysis/{task_id}", dependencies=[Depends(_service)])
