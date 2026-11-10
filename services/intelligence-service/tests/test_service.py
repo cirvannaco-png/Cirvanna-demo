@@ -17,6 +17,7 @@ from app.provider import ProviderNotConfigured, fetch_licensed_research
 def client(monkeypatch):
     monkeypatch.setenv("CIL_ADMIN_TOKEN", "admin-test")
     monkeypatch.setenv("CIL_SERVICE_TOKEN", "service-test")
+    monkeypatch.setenv("CIL_CAL_SERVICE_TOKEN", "cal-test")
     monkeypatch.setenv("CIL_RECEIPT_SIGNING_KEY", "test-signing-key-that-is-at-least-32-bytes")
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
@@ -201,3 +202,55 @@ def test_provider_adapter_rejects_path_traversal(monkeypatch):
     monkeypatch.setenv("CIL_PROVIDER_TERMS_URL", "https://licensed.example/terms")
     with pytest.raises(ValueError):
         fetch_licensed_research(path="../private")
+
+
+def test_feedback_aggregate_opens_cal_review_and_records_final_cal_decision(client):
+    for index in range(30):
+        contributor = "hmac-sha256:" + f"{index:064x}"
+        common = {
+            "product_id": "product-review",
+            "expires_at": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()),
+        }
+        consent = receipt({
+            **common, "type": "consent", "purpose": "recommendation_outcome_learning",
+            "subject_token": contributor,
+        })
+        cal = receipt({
+            **common, "type": "cal", "verdict": "SHOW",
+            "candidate_id": "candidate-review", "decision_id": f"decision-{index}",
+        })
+        payload = {
+            "event_id": f"review-event-{index}", "product_id": "product-review",
+            "context_key": "humid-daily", "contributor_token": contributor,
+            "action": "saved", "suitability": "unsuitable", "reason_codes": ["poor_match"],
+            "candidate_id": "candidate-review", "observed_at": datetime.now(timezone.utc).isoformat(),
+            "consent_receipt": consent, "cal_decision_receipt": cal,
+        }
+        result = client.post("/outcomes", json=payload, headers=auth("service-test"))
+        assert result.status_code == 201, result.text
+
+    aggregate = client.get(
+        "/outcomes/aggregate",
+        params={"product_id": "product-review", "context_key": "humid-daily"},
+        headers=auth("service-test"),
+    )
+    assert aggregate.status_code == 200
+    result = aggregate.json()
+    assert result["status"] == "review_required"
+    assert result["cal_action"] == "REVIEW_REQUESTED"
+    assert result["automatic_suppression"] is False
+    review_id = result["cal_review_id"]
+
+    queue = client.get("/cal/review-queue", headers=auth("service-test"))
+    assert queue.status_code == 200
+    assert any(item["review_id"] == review_id for item in queue.json()["items"])
+
+    decision = client.post(
+        f"/cal/review-queue/{review_id}/decision",
+        headers=auth("cal-test"),
+        json={"verdict": "BLOCK", "decision_reference": "CAL-REVIEW-0001",
+              "rationale": "Independent review found a substantiated suitability concern."},
+    )
+    assert decision.status_code == 200
+    assert decision.json()["verdict"] == "BLOCK"
+    assert decision.json()["status"] == "decided"
