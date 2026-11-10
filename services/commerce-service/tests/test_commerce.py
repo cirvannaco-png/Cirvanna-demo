@@ -1671,3 +1671,18 @@ def test_checkout_started_outbox_contains_only_consent_bound_selection_snapshot(
     assert "address" not in event.payload
     assert "product_name" not in event.payload["items"][0]
     db.close()
+
+
+
+def test_checkout_learning_consent_verifier_auth_failure_is_operational_error(monkeypatch):
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-service-token-at-least-32-bytes")
+
+    def post(url, **kwargs):
+        return main.httpx.Response(401)
+
+    monkeypatch.setattr(main.httpx, "post", post)
+    with pytest.raises(main.HTTPException) as exc:
+        main._verify_checkout_personalization_consent("buyer-1", "consent-bundle-001", None)
+    assert exc.value.status_code == 503
+    assert exc.value.detail["code"] == "PERSONALIZATION_CONSENT_VERIFIER_AUTH_FAILED"
