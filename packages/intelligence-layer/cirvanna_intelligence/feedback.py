@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 from math import isfinite
+import re
 
 from .source_registry import _parse_aware, _required_text
 
@@ -69,6 +70,8 @@ class RecommendationOutcome:
             raise PermissionError("an active consent receipt is required")
         if self.consent_scope != "recommendation_outcome_learning":
             raise PermissionError("the consent receipt must cover recommendation_outcome_learning")
+        if not re.fullmatch(r"hmac-sha256:[0-9a-f]{64}", self.contributor_token):
+            raise ValueError("contributor_token must be a keyed HMAC-SHA256 pseudonym, not a raw identifier")
         if not isinstance(self.action, RecommendationAction):
             raise ValueError("action must be a RecommendationAction")
         if not isinstance(self.reported_suitability, SuitabilityResponse):

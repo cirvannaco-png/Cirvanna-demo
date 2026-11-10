@@ -59,7 +59,7 @@ A vendor-provided confidence score is not automatically calibrated confidence. V
 
 ## 6. Recommendation outcome learning
 
-A `RecommendationOutcome` is accepted only when the caller supplies an active, purpose-bound `recommendation_outcome_learning` consent receipt and a verified CAL `SHOW` decision reference. The package accepts a pseudonymous contributor token, not a raw user identifier, and does not accept free-text medical or health narratives.
+A `RecommendationOutcome` is accepted only when the caller supplies an active, purpose-bound `recommendation_outcome_learning` consent receipt and a verified CAL `SHOW` decision reference. The package accepts only a keyed HMAC-SHA256 contributor pseudonym in the form `hmac-sha256:<64 lowercase hex characters>`, not a raw user identifier. The key and token issuance belong to a trusted server-side event adapter; this package does not mint tokens or accept free-text medical or health narratives.
 
 User-declared suitability is distinct from the action taken:
 
@@ -89,7 +89,7 @@ CIL cannot authorize a display. A CIL-supported claim or positive outcome must s
 - Pure-Python rights-aware source registry contract.
 - Evidence grades, scope-aware product claim assessment and source-purpose checks.
 - Product ingredient declaration and product intelligence record contracts.
-- Model validation cards plus a policy-specific readiness assessor with per-population metric and calibration thresholds.
+- Model validation cards plus a policy-specific readiness assessor with per-population metric, minimum sample-size and calibration thresholds.
 - Consent-gated recommendation outcome contract and distinct-contributor aggregation.
 - Catalog schema extension for structured ingredient declarations and typed, non-approved claims.
 - Unit/contract tests for rights, evidence scope, model validation, consent, CAL SHOW binding, sample suppression and negative-feedback review signaling.

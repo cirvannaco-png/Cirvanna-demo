@@ -35,6 +35,7 @@ class MetricThreshold:
     population: str
     direction: MetricDirection
     threshold: float
+    minimum_sample_size: int
     def __post_init__(self) -> None:
         for field_name in ("name", "population"):
             object.__setattr__(self, field_name, _required_text(getattr(self, field_name), field_name, max_length=160))
@@ -42,6 +43,8 @@ class MetricThreshold:
             raise ValueError("direction must be a MetricDirection")
         if isinstance(self.threshold, bool) or not isinstance(self.threshold, (int, float)) or not isfinite(self.threshold):
             raise ValueError("metric threshold must be finite")
+        if not isinstance(self.minimum_sample_size, int) or isinstance(self.minimum_sample_size, bool) or self.minimum_sample_size < 1:
+            raise ValueError("minimum_sample_size must be a positive integer")
 
 @dataclass(frozen=True)
 class ModelValidationCard:
@@ -167,9 +170,12 @@ def assess_model_readiness(card: ModelValidationCard, policy: ModelReadinessPoli
         metric = metric_index.get((threshold.name, threshold.population))
         if metric is None:
             reasons.append("REQUIRED_MODEL_METRIC_MISSING")
-        elif threshold.direction is MetricDirection.MINIMUM and metric.value < threshold.threshold:
-            reasons.append("MODEL_METRIC_MINIMUM_NOT_MET")
-        elif threshold.direction is MetricDirection.MAXIMUM and metric.value > threshold.threshold:
-            reasons.append("MODEL_METRIC_MAXIMUM_EXCEEDED")
+        else:
+            if metric.sample_size < threshold.minimum_sample_size:
+                reasons.append("MODEL_METRIC_SAMPLE_SIZE_BELOW_MINIMUM")
+            if threshold.direction is MetricDirection.MINIMUM and metric.value < threshold.threshold:
+                reasons.append("MODEL_METRIC_MINIMUM_NOT_MET")
+            elif threshold.direction is MetricDirection.MAXIMUM and metric.value > threshold.threshold:
+                reasons.append("MODEL_METRIC_MAXIMUM_EXCEEDED")
     normalized_reasons = tuple(sorted(set(reasons)))
     return ModelReadinessResult(policy.policy_id, not normalized_reasons, normalized_reasons)

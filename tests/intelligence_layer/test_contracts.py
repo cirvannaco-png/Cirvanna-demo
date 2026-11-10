@@ -48,7 +48,7 @@ def outcome(index, suitability=SuitabilityResponse.NOT_REPORTED,
     return RecommendationOutcome(
         event_id=f"event-{index}", recommendation_id=f"recommendation-{index}",
         product_id="product-1", context_key="hot_humid:daily",
-        contributor_token=f"keyed-token-{index}", cal_decision_reference=f"cal-receipt-{index}",
+        contributor_token="hmac-sha256:" + f"{index:064x}", cal_decision_reference=f"cal-receipt-{index}",
         cal_verdict="SHOW", consent_granted=True, consent_receipt_id=f"consent-{index}",
         consent_scope="recommendation_outcome_learning", action=action,
         reported_suitability=suitability,
@@ -216,6 +216,27 @@ class ModelValidationTests(unittest.TestCase):
         self.assertIn("BRIER_SCORE_THRESHOLD_NOT_MET", result.reason_codes)
         self.assertIn("MODEL_METRIC_MINIMUM_NOT_MET", result.reason_codes)
 
+    def test_model_metric_requires_policy_minimum_sample_size(self):
+        card = ModelValidationCard(
+            model_id="skin-attributes", model_version="1.0", provider="provider",
+            task="non-diagnostic cosmetic skin-attribute analysis",
+            status=ModelValidationStatus.INDEPENDENTLY_VALIDATED,
+            intended_uses=(DataPurpose.COMMERCIAL_RECOMMENDATION,),
+            evaluated_populations=("adult-image-set", "skin-tone-strata"),
+            metrics=(
+                ModelMetric("macro_f1", 0.88, "adult-image-set", 800),
+                ModelMetric("macro_f1", 0.85, "skin-tone-strata", 80),
+            ),
+            validation_dataset_reference="dataset-2026", validation_report_reference="report-2026",
+            independent_reviewer="Independent Review Lab",
+            calibration_method="isotonic calibration on a held-out set",
+            expected_calibration_error=0.04, brier_score=0.11,
+            known_limitations=("Performance is not established outside the evaluated image conditions.",),
+        )
+        result = assess_model_readiness(card, readiness_policy())
+        self.assertFalse(result.eligible)
+        self.assertIn("MODEL_METRIC_SAMPLE_SIZE_BELOW_MINIMUM", result.reason_codes)
+
     def test_readiness_policy_requires_metrics_for_each_required_population(self):
         card = ModelValidationCard(
             model_id="skin-attributes", model_version="1.0", provider="provider",
@@ -242,8 +263,8 @@ def readiness_policy():
         intended_use=DataPurpose.COMMERCIAL_RECOMMENDATION,
         required_populations=("adult-image-set", "skin-tone-strata"),
         metric_thresholds=(
-            MetricThreshold("macro_f1", "adult-image-set", MetricDirection.MINIMUM, 0.80),
-            MetricThreshold("macro_f1", "skin-tone-strata", MetricDirection.MINIMUM, 0.78),
+            MetricThreshold("macro_f1", "adult-image-set", MetricDirection.MINIMUM, 0.80, 300),
+            MetricThreshold("macro_f1", "skin-tone-strata", MetricDirection.MINIMUM, 0.78, 200),
         ),
         maximum_expected_calibration_error=0.08,
         maximum_brier_score=0.18,
@@ -258,6 +279,16 @@ class FeedbackTests(unittest.TestCase):
                 context_key="daily", contributor_token="token", cal_decision_reference="cal-1",
                 cal_verdict="SHOW", consent_granted=False, consent_receipt_id=None,
                 consent_scope=None, action=RecommendationAction.REJECTED,
+                reported_suitability=SuitabilityResponse.NOT_REPORTED, reason_codes=(), observed_at=TIMESTAMP,
+            )
+
+    def test_feedback_rejects_raw_contributor_identifier(self):
+        with self.assertRaisesRegex(ValueError, "keyed HMAC-SHA256"):
+            RecommendationOutcome(
+                event_id="event-raw-id", recommendation_id="rec", product_id="product-1",
+                context_key="daily", contributor_token="kelson@example.test", cal_decision_reference="cal-1",
+                cal_verdict="SHOW", consent_granted=True, consent_receipt_id="consent-1",
+                consent_scope="recommendation_outcome_learning", action=RecommendationAction.REJECTED,
                 reported_suitability=SuitabilityResponse.NOT_REPORTED, reason_codes=(), observed_at=TIMESTAMP,
             )
 
