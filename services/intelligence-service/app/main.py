@@ -21,6 +21,8 @@ from sqlalchemy import DateTime, Float, Integer, JSON, String, Text, UniqueConst
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app.provider import ProviderNotConfigured, fetch_licensed_research
+
 SERVICE = "cirvanna-intelligence-service"
 PURPOSES = {"research", "model_evaluation", "product_enrichment", "commercial_recommendation",
             "recommendation_outcome_learning", "training"}
@@ -135,6 +137,37 @@ class SourceIn(StrictModel):
     def valid_purposes(cls, values):
         if len(values) != len(set(values)) or any(v not in PURPOSES for v in values):
             raise ValueError("purposes must be unique recognized CIL purposes")
+        return values
+
+
+class ProviderResearchIn(StrictModel):
+    source_id: str = Field(min_length=3, max_length=120)
+    evidence_id: str = Field(min_length=3, max_length=120)
+    owner: str = Field(min_length=2, max_length=180)
+    path: str = Field(min_length=1, max_length=500)
+    params: dict[str, str] = Field(default_factory=dict, max_length=30)
+    rights_status: Literal["licensed", "api_terms", "research_only"]
+    rights_reference: str = Field(min_length=5, max_length=2000)
+    permitted_purposes: list[str] = Field(default_factory=list, max_length=6)
+    grade: str
+    scope: Literal["finished_product", "ingredient", "model", "general"]
+    limitations: str = Field(min_length=10, max_length=2000)
+    reviewed_at: datetime
+
+    @field_validator("grade")
+    @classmethod
+    def provider_grade(cls, value):
+        if value not in GRADES:
+            raise ValueError("unknown evidence grade")
+        return value
+
+    @field_validator("permitted_purposes")
+    @classmethod
+    def provider_purposes(cls, values):
+        if len(values) != len(set(values)) or any(v not in PURPOSES for v in values):
+            raise ValueError("purposes must be unique recognized CIL purposes")
+        if any(v in {"commercial_recommendation", "product_enrichment", "training"} for v in values) and not values:
+            raise ValueError("commercial purposes require an explicit licence")
         return values
 
 
@@ -291,6 +324,43 @@ def register_source(payload: SourceIn, db: Session = Depends(get_db)):
     db.add(row)
     db.commit()
     return {"source_id": row.id, "rights_status": row.rights_status, "permitted_purposes": row.permitted_purposes}
+
+
+@app.post("/providers/research", dependencies=[Depends(_admin)], status_code=201)
+def ingest_licensed_provider_research(payload: ProviderResearchIn, db: Session = Depends(get_db)):
+    """Fetch a contract-authorized JSON response and register its provenance.
+
+    The payload itself is returned to the authenticated operator, not copied into
+    the CIL evidence ledger. Only source/evidence references and limitations persist.
+    """
+    if db.get(Source, payload.source_id) or db.get(Evidence, payload.evidence_id):
+        raise HTTPException(409, "source_id or evidence_id already exists")
+    try:
+        provider_result = fetch_licensed_research(path=payload.path, params=payload.params)
+    except ProviderNotConfigured as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, "Licensed provider request failed") from exc
+    if payload.rights_status == "research_only" and set(payload.permitted_purposes) - {"research", "model_evaluation"}:
+        raise HTTPException(422, "research-only provider licence cannot authorize commercial use")
+    provider_base = os.getenv("CIL_PROVIDER_BASE_URL", "").rstrip("/")
+    source = Source(
+        id=payload.source_id, owner=payload.owner, kind="licensed_provider_api",
+        locator=f"{provider_base}/{payload.path}", rights_status=payload.rights_status,
+        rights_reference=f"{payload.rights_reference} | {provider_result['terms_url']} | {provider_result['licence_id']}",
+        permitted_purposes=payload.permitted_purposes, attribution_required=True,
+        attribution_text=payload.owner, reviewed_at=payload.reviewed_at,
+    )
+    evidence = Evidence(
+        id=payload.evidence_id, source_id=payload.source_id, grade=payload.grade,
+        scope=payload.scope, locator=f"{provider_base}/{payload.path}",
+        limitations=payload.limitations,
+    )
+    db.add(source)
+    db.add(evidence)
+    db.commit()
+    return {"source_id": source.id, "evidence_id": evidence.id, "rights_status": source.rights_status,
+            "permitted_purposes": source.permitted_purposes, "provider_payload": provider_result["payload"]}
 
 
 @app.post("/evidence", dependencies=[Depends(_admin)], status_code=201)
