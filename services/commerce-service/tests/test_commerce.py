@@ -624,6 +624,8 @@ def test_real_cal_receipt_requester_rejects_modified_signed_offer(client, monkey
 
     class Response:
         status_code = 200
+        def __init__(self, payload):
+            self.payload = payload
         def json(self):
             return self.payload
 
@@ -654,12 +656,11 @@ def test_real_cal_receipt_requester_rejects_modified_signed_offer(client, monkey
             canonical = json_module_dumps(unsigned)
             signature = hmac.new(signing_key.encode(), canonical, hashlib.sha256).hexdigest()
             tampered = {**unsigned, "unit_price_minor": 1}
-            self.payload = {
+            return Response({
                 "subject_id": json["user_id"],
                 "request_id": "gateway-request-001",
                 "receipts": [{**tampered, "signature": signature}],
-            }
-            return Response()
+            })
 
     def json_module_dumps(value):
         return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
@@ -683,8 +684,23 @@ def test_real_cal_receipt_requester_fails_closed_without_trusted_gateway_config(
         "path": "/cart/items",
         "headers": [(b"authorization", b"Bearer user-access-token")],
     })
+    item = {
+        "catalog_product_id": str(uuid.uuid4()),
+        "variant_id": str(uuid.uuid4()),
+        "listing_id": str(uuid.uuid4()),
+        "merchant_id": str(uuid.uuid4()),
+        "action": "cart_add",
+        "offer_snapshot_sha256": "b" * 64,
+        "market_country_code": None,
+        "destination_key_sha256": None,
+        "fulfillment_mode": None,
+        "display_currency": None,
+        "quantity": 1,
+        "unit_price_minor": 10,
+        "currency": "KES",
+    }
     with pytest.raises(main.HTTPException) as exc:
-        REAL_CAL_PURCHASE_RECEIPT_REQUESTER(request, "buyer-cal-config", [])
+        REAL_CAL_PURCHASE_RECEIPT_REQUESTER(request, "buyer-cal-config", [item])
     assert exc.value.status_code == 503
     assert exc.value.detail["code"] == "CAL_PURCHASE_GATEWAY_NOT_CONFIGURED_OR_UNTRUSTED"
 
