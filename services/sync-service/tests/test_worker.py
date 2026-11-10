@@ -250,3 +250,34 @@ def test_worker_skips_tal_write_when_consent_was_revoked_without_blocking_owners
     assert "/v1/purchases/verified" in calls
     assert "/v1/tal/events" in calls
     assert calls[-1].endswith("/ack")
+
+
+
+def test_worker_splits_multi_item_purchase_into_bounded_tal_events():
+    event = consented_paid_event()
+    second = dict(event["payload"]["items"][0])
+    second["order_item_id"] = "123e4567-e89b-42d3-a456-426614174099"
+    second["catalog_product_id"] = "product-2"
+    second["merchant_variant_id"] = "variant-2"
+    event["payload"]["items"].append(second)
+    tal_event_ids = []
+
+    def handler(request: httpx.Request):
+        if request.url.path == "/internal/outbox/claim":
+            return httpx.Response(200, json={"events": [event]})
+        if request.url.path == "/v1/purchases/verified":
+            return httpx.Response(201, json={"status": "created"})
+        if request.url.path == "/v1/tal/events":
+            body = __import__("json").loads(request.content)
+            tal_event_ids.append(body["event_id"])
+            assert len(body["value"]) <= 2000
+            return httpx.Response(201, json={"status": "created"})
+        if request.url.path.endswith("/ack"):
+            return httpx.Response(200, json={"status": "delivered"})
+        raise AssertionError(request.url.path)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    result = CommerceWardrobeWorker(tal_settings(), client).process_batch()
+    assert result == {"claimed": 1, "processed": 1, "retried": 0, "dead_lettered": 0}
+    assert len(tal_event_ids) == 2
+    assert len(set(tal_event_ids)) == 2
