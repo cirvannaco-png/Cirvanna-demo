@@ -2618,6 +2618,7 @@ def _verify_checkout_personalization_consent(subject_id: str, consent_id: str | 
     except ValueError as exc:
         raise HTTPException(502, detail={"code": "INVALID_PERSONALIZATION_CONSENT_RESPONSE"}) from exc
     receipt_ids = evidence.get("receipt_ids") if isinstance(evidence, dict) else None
+    granted_scopes = evidence.get("granted_scopes") if isinstance(evidence, dict) else None
     if (
         not isinstance(evidence, dict)
         or evidence.get("verified") is not True
@@ -2625,9 +2626,11 @@ def _verify_checkout_personalization_consent(subject_id: str, consent_id: str | 
         or evidence.get("subject_id") != subject_id
         or evidence.get("consent_id") != consent_id
         or evidence.get("resource_id") is not None
-        or "personalization" not in evidence.get("granted_scopes", [])
+        or (consent_version is not None and evidence.get("consent_version") != consent_version)
+        or not isinstance(granted_scopes, list)
+        or "personalization" not in granted_scopes
         or not isinstance(receipt_ids, list)
-        or not receipt_ids
+        or len(receipt_ids) != 1
     ):
         raise HTTPException(403, detail={"code": "ACTIVE_PERSONALIZATION_CONSENT_REQUIRED"})
     receipt = next((item for item in receipt_ids if isinstance(item, str) and item.strip()), None)
