@@ -2930,6 +2930,40 @@ def checkout(
                 delta=0, reason=f"reserve:{order.order_number}:qty={ci.quantity}"))
         db.add(order)
         db.flush()
+        if order.tal_consent_receipt_id:
+            checkout_event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cirvanna:checkout-started:{order.id}"))
+            order_lines = list(db.scalars(
+                select(OrderItem).where(OrderItem.order_id == order.id).order_by(OrderItem.id)
+            ).all())
+            db.add(CommerceOutboxEvent(
+                event_id=checkout_event_id,
+                aggregate_type="commerce_order",
+                aggregate_id=order.id,
+                event_type="commerce.checkout.started",
+                schema_version=1,
+                payload={
+                    "event_id": checkout_event_id,
+                    "event_type": "commerce.checkout.started",
+                    "schema_version": 1,
+                    "occurred_at": now().isoformat(),
+                    "order_id": order.id,
+                    "buyer_user_id": order.buyer_user_id,
+                    "personalization_consent_receipt_id": order.tal_consent_receipt_id,
+                    "currency": order.currency,
+                    "total_minor": order.total_minor if order.total_minor is not None else order.subtotal_minor,
+                    "fulfillment_mode": order.fulfillment_mode,
+                    "payment_method_family": "card",
+                    "items": [{
+                        "order_item_id": item.id,
+                        "catalog_product_id": item.catalog_product_id,
+                        "merchant_id": item.merchant_id,
+                        "variant_id": item.variant_id,
+                        "quantity": item.quantity,
+                        "unit_price_minor": item.unit_price_minor,
+                        "currency": order.currency,
+                    } for item in order_lines],
+                },
+            ))
         db.commit()
     except HTTPException:
         db.rollback()
