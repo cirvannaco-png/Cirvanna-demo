@@ -17,8 +17,11 @@ is for local tests only. The initial schema is versioned with Alembic under
 - Source rights are append-only events. Registering a source creates the initial rights event; `POST /sources/{source_id}/revoke` appends a prohibition event that immediately blocks subsequent commercial serving assessments.
 - Unknown, expired, research-only or purpose-mismatched sources fail closed
   for commercial serving.
-- The provider adapter requires HTTPS, an API token, licence ID and terms URL.
-  It follows no redirects and does not scrape. No vendor is enabled by default.
+- The generic research adapter requires HTTPS, an API token, licence ID and terms URL. It follows no redirects and does not scrape.
+- Perfect Corp's YouCam Skin Analysis V2.1 client is disabled by default. Enable it only after signed commercial terms, DPA and retention approval, an API token, licence ID, terms URL and retention-policy reference are configured.
+- Perfect Corp photo tasks are adult-only and require a signed consent receipt bound to the exact image digest, provider, purpose and pseudonymous contributor. Images are normalized in memory and EXIF is stripped; only opaque task handles, pseudonymous ownership, digest and expiry metadata are persisted.
+- Terminal task results are not released until provider-side task/file deletion succeeds. Schedule the admin-only POST /providers/perfectcorp/reap-tasks route at least every 5 minutes with the CIL admin token; the default abandoned-task TTL is 30 minutes. Keep the provider API token available for deletions after disabling new processing.
+- Revieve is not connected. Public SDK material alone does not establish current production API, DPA, retention or deletion terms; see docs/integrations/beauty-provider-research.md.
 - Consent and CAL receipts are HMAC-signed, product-bound, purpose-bound and
   expiry checked. The upstream consent/CAL issuers must share the configured
   verification key and exact receipt schema before outcome ingestion is enabled.
@@ -35,6 +38,8 @@ is for local tests only. The initial schema is versioned with Alembic under
 - `POST /outcomes`: internal consent- and CAL-receipt-verified event ingestion.
 - `GET /outcomes/aggregate`: minimum-cohort aggregate and review signal.
 - `POST /learning/signals`: batch product/context suitability signals for the recommendation ranker; cohorts below 30 distinct contributors are suppressed.
+- `POST /providers/perfectcorp/skin-analysis`, `GET /providers/perfectcorp/skin-analysis/{task_id}`, `DELETE /providers/perfectcorp/skin-analysis/{task_id}`: opt-in, adult-only YouCam skin analysis, contributor-bound polling and provider-file deletion.
+- `POST /providers/perfectcorp/reap-tasks`: admin-only cron cleanup for abandoned provider tasks.
 - `GET /cal/review-queue`: pending review signals for CAL; the Decision Service exposes the authenticated `/v1/cal/feedback-reviews` proxy.
 - `POST /cal/review-queue/{id}/decision`: persist a final CAL service decision reference; the Decision Service forwards decisions from `/v1/cal/feedback-reviews/{id}/decision`.
 - `GET /ready`, `GET /capabilities`.
