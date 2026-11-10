@@ -245,6 +245,9 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
     monkeypatch.setenv("COMMERCE_AUTO_CREATE_SCHEMA", "false")
     monkeypatch.setenv("CATALOG_API_URL", "https://catalog.example.test")
     monkeypatch.setenv("CATALOG_API_TOKEN", "catalog-test-token")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-token-at-least-32-bytes")
+    monkeypatch.setenv("CAL_PURCHASE_RECEIPT_SECRET", "cal-purchase-receipt-secret-at-least-32")
     configure_stripe(monkeypatch)
 
     pending = client.get("/ready")
@@ -273,6 +276,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
     assert payload["authentication_configured"] is True
     assert payload["catalog_configured"] is True
     assert payload["payment_configured"] is True
+    assert payload["cal_purchase_authorization_configured"] is True
     assert payload["migrations_required"] is True
     assert payload["migrations_applied"] is True
     assert payload["schema_revision"] == "20261110_0010"
@@ -479,6 +483,42 @@ def test_persistent_cart_is_account_scoped_and_rechecks_available_stock(client):
     assert remove.json()["status"] == "removed"
     assert client.get("/cart", headers=buyer1).json()["items"] == []
 
+
+
+
+
+def test_cart_read_redacts_all_product_and_price_details_when_cal_withholds_candidate(client, monkeypatch):
+    offer = seed_offer(stock=4, price_minor=1250)
+    buyer = auth("buyer-cal-redacted-cart")
+    added = client.post(
+        "/cart/items",
+        json={"variant_id": offer["variant_id"], "quantity": 1},
+        headers=buyer,
+    )
+    assert added.status_code == 201
+
+    monkeypatch.setattr(
+        main,
+        "_authorize_purchase_lines",
+        lambda **kwargs: [
+            {"authorized": False, "reason_code": "CAL_SHOW_NOT_GRANTED"}
+            for _ in kwargs["rows"]
+        ],
+    )
+    response = client.get("/cart", headers=buyer)
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["item_count"] == 1
+    assert payload["items"] == [{
+        "variant_id": offer["variant_id"],
+        "quantity": 1,
+        "redacted": True,
+        "remove_allowed": True,
+        "reason_code": "CAL_SHOW_NOT_GRANTED",
+    }]
+    assert "Linen Shirt" not in response.text
+    assert offer["catalog_product_id"] not in response.text
+    assert "1250" not in response.text
 
 def test_inventory_adjustment_is_owner_scoped_and_cannot_cross_reserved_floor(client):
     offer = seed_offer(stock=3)
