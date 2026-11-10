@@ -11,7 +11,8 @@ depends_on = None
 def upgrade():
     op.create_table(
         "cil_provider_tasks",
-        sa.Column("task_id", sa.String(256), primary_key=True),
+        sa.Column("task_id", sa.String(36), primary_key=True),
+        sa.Column("provider_task_id", sa.String(256), nullable=False, unique=True),
         sa.Column("provider", sa.String(40), nullable=False),
         sa.Column("contributor_token", sa.String(80), nullable=False),
         sa.Column("image_digest", sa.String(64), nullable=False),
