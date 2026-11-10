@@ -3,14 +3,15 @@
 This service is the first durable runtime for platform-wide CIL source rights,
 evidence references, product-serving assessments and consented recommendation
 outcomes. It uses PostgreSQL in production through `CIL_DATABASE_URL`; SQLite
-is for local tests only.
+is for local tests only. The initial schema is versioned with Alembic under
+`migrations/versions`.
 
 ## Security and operation
 
 - Set `CIL_DATABASE_URL`, `CIL_ADMIN_TOKEN`, `CIL_SERVICE_TOKEN`, and a
   random `CIL_RECEIPT_SIGNING_KEY` of at least 32 bytes.
-- Set `CIL_AUTO_CREATE_SCHEMA=false` in production. A reviewed Alembic
-  migration and backup/restore gate are required before production deployment.
+- Set `CIL_AUTO_CREATE_SCHEMA=false` in production and run `alembic upgrade head`
+  as a release step. Verify PostgreSQL backup/restore before production traffic.
 - Source rights are immutable records. Revocation is implemented by inserting
   a new source version in a future migration; do not edit historical evidence.
 - Unknown, expired, research-only or purpose-mismatched sources fail closed
@@ -30,6 +31,8 @@ is for local tests only.
 - `POST /serving/assessment`: internal claim-level rights/evidence assessment.
 - `POST /outcomes`: internal consent- and CAL-receipt-verified event ingestion.
 - `GET /outcomes/aggregate`: minimum-cohort aggregate and review signal.
+- `GET /cal/review-queue`: pending review signals for CAL.
+- `POST /cal/review-queue/{id}/decision`: persist a signed-in CAL service decision reference.
 - `GET /ready`, `GET /capabilities`.
 
 This is not yet a completed provider integration or a substitute for the Catalog
