@@ -407,11 +407,15 @@ def assess_serving(payload: ServingAssessmentIn, db: Session = Depends(get_db)):
             else:
                 grade_ok = evidence_row.grade in {"E1", "E2", "E4"}
                 source_kind_ok = source_row is not None
-            eligible = allowed and scope_ok and grade_ok and source_kind_ok
+            attribution_ok = source_row is not None and (not source_row.attribution_required or bool(source_row.attribution_text))
+            eligible = allowed and scope_ok and grade_ok and source_kind_ok and attribution_ok
             decisions.append({"item_id": item.get("claim_id", item.get("inci_name", "unknown")),
                               "kind": kind, "eligible": eligible,
-                              "reason": reason if not allowed else ("EVIDENCE_SCOPE_GRADE_OR_SOURCE_MISMATCH" if not (scope_ok and grade_ok and source_kind_ok) else "ELIGIBLE"),
-                              "evidence_id": evidence_row.id})
+                              "reason": reason if not allowed else ("ATTRIBUTION_REQUIRED" if not attribution_ok else ("EVIDENCE_SCOPE_GRADE_OR_SOURCE_MISMATCH" if not (scope_ok and grade_ok and source_kind_ok) else "ELIGIBLE")),
+                              "evidence_id": evidence_row.id,
+                              "source_owner": source_row.owner if source_row else None,
+                              "attribution_required": source_row.attribution_required if source_row else True,
+                              "attribution_text": source_row.attribution_text if source_row else None})
     return {"product_id": payload.product_id, "catalog_version": payload.catalog_version,
             "purpose": payload.purpose, "decisions": decisions,
             "all_eligible": all(item["eligible"] for item in decisions)}
