@@ -72,6 +72,18 @@ def client(monkeypatch):
     monkeypatch.delenv("COMMERCE_CHECKOUT_CANCEL_URL", raising=False)
     monkeypatch.delenv("COMMERCE_SHIPPING_COUNTRIES", raising=False)
     monkeypatch.delenv("COMMERCE_CRON_TOKEN", raising=False)
+    # Existing domain-flow tests stub the external CAL signer; dedicated tests below
+    # exercise fail-closed configuration and signed receipt verification.
+    monkeypatch.setattr(
+        main,
+        "_authorize_purchase_lines",
+        lambda **kwargs: [
+            {"receipt": "fixture-only-untrusted-receipt", "claims": {
+                "sub": kwargs["subject_id"], "action": kwargs["action"],
+            }}
+            for _line in kwargs["rows"]
+        ],
+    )
     main.engine = TEST_ENGINE
     main.SessionLocal = TEST_SESSION
     with TEST_ENGINE.begin() as connection:
@@ -218,11 +230,12 @@ def test_tax_quote_requires_explicit_destination_zone(client, monkeypatch):
     assert response.json()["destination_key"] == "Nakuru/Subukia"
 
 
-def test_multi_market_and_checkout_learning_schema_revision_0009_is_registered():
+def test_multi_market_checkout_learning_and_cal_authorization_schema_revision_0010_is_registered():
     from app.main import CommerceOrder, OrderCharge, OrderItem, OfferTaxQuote
     assert "fulfillment_total_minor" in CommerceOrder.__table__.columns
     assert "total_minor" in CommerceOrder.__table__.columns
     assert "tal_consent_receipt_id" in CommerceOrder.__table__.columns
+    assert "cal_authorization_snapshot" in CommerceOrder.__table__.columns
     assert "destination_key" in OfferTaxQuote.__table__.columns
     assert "source_unit_price_minor" in OrderItem.__table__.columns
     assert OrderCharge.__tablename__ == "commerce_order_charges"
@@ -249,7 +262,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
         ))
         connection.execute(
             text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
-            {"revision": "20261110_0009"},
+            {"revision": "20261110_0010"},
         )
 
     ready = client.get("/ready")
@@ -262,8 +275,39 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
     assert payload["payment_configured"] is True
     assert payload["migrations_required"] is True
     assert payload["migrations_applied"] is True
-    assert payload["schema_revision"] == "20261110_0009"
+    assert payload["schema_revision"] == "20261110_0010"
     assert payload["ready"] is True
+
+
+
+
+def test_cal_purchase_authorization_fails_closed_without_provider_config(monkeypatch):
+    for key in ("DECISION_GATEWAY_URL", "DECISION_GATEWAY_TOKEN", "CAL_PURCHASE_RECEIPT_SECRET"):
+        monkeypatch.delenv(key, raising=False)
+    with pytest.raises(main.HTTPException) as exc:
+        main._purchase_authorization_config()
+    assert exc.value.status_code == 503
+    assert exc.value.detail["code"] == "CAL_PURCHASE_AUTHORIZATION_NOT_CONFIGURED"
+
+
+def test_cal_purchase_receipt_rejects_invalid_signature(monkeypatch):
+    secret = "cal-receipt-secret-with-32-or-more-bytes"
+    payload = base64.urlsafe_b64encode(json.dumps({
+        "iss": "cirvanna-decision-gateway",
+        "aud": "cirvanna-commerce",
+        "sub": "buyer-1",
+        "iat": int(time.time()),
+        "exp": int(time.time()) + 60,
+        "verdict": "show",
+        "may_display": True,
+        "policy_version": "policy-v1",
+        "decision_request_id": "decision-1",
+        "jti": str(uuid.uuid4()),
+    }).encode()).rstrip(b"=").decode()
+    with pytest.raises(main.HTTPException) as exc:
+        main._decode_cal_purchase_receipt(payload + ".invalid", secret)
+    assert exc.value.status_code == 503
+    assert exc.value.detail["code"] == "CAL_PURCHASE_RECEIPT_INVALID"
 
 
 def test_production_rejects_shared_secret_hs256_tokens(client, monkeypatch):
