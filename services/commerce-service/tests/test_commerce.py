@@ -72,6 +72,9 @@ def client(monkeypatch):
     monkeypatch.delenv("COMMERCE_CHECKOUT_CANCEL_URL", raising=False)
     monkeypatch.delenv("COMMERCE_SHIPPING_COUNTRIES", raising=False)
     monkeypatch.delenv("COMMERCE_CRON_TOKEN", raising=False)
+    monkeypatch.delenv("DECISION_GATEWAY_URL", raising=False)
+    monkeypatch.delenv("DECISION_GATEWAY_TOKEN", raising=False)
+    monkeypatch.delenv("CAL_PURCHASE_RECEIPT_SECRET", raising=False)
     # Existing domain-flow tests stub the external CAL signer; dedicated tests below
     # exercise fail-closed configuration and signed receipt verification.
     monkeypatch.setattr(
