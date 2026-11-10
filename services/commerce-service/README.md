@@ -119,3 +119,12 @@ The old PR #102 migration files must not be applied unchanged. The current mainl
 Configure COMMERCE_MARKET_CONTEXT_TOKEN (at least 32 bytes) only for trusted quote-provider ingress. Never expose it to the merchant browser.
 
 The #181/#102 integration provides provider-neutral quote and capability ingestion contracts, not live FX, tax, courier, KYC or payment-provider onboarding adapters. Schema and internal ingestion endpoints do not themselves prove that an external provider is configured, authenticated or operational. Provider references and timestamps must be independently verified before admin activation. No production secrets or live provider integrations are configured by this change.
+
+
+## Optional checkout preference learning
+
+A checkout may include a personalization consent bundle ID and optional consent version. Commerce verifies that bundle with the canonical Identity Learning service against the authenticated buyer and the active, non-resource-bound personalization scope. The resolved receipt ID is snapshotted on the order and copied into the verified paid-order outbox event. Checkout remains available without opting into personalization; no receipt means no checkout learning.
+
+Set IDENTITY_SERVICE_URL and IDENTITY_SERVICE_TOKEN together to enable this optional consent verification. The token must be at least 32 bytes. The service URL must use HTTPS outside local development. If a user supplies a consent bundle and verification is unavailable, invalid, expired or revoked, Commerce fails closed for that consented request rather than accepting an unverified learning signal.
+
+Migration 20261110_0009 adds the nullable tal_consent_receipt_id column to commerce_orders. Apply it after 20261109_0008 before enabling the new code in a shared environment. The Sync worker sends a minimized per-line weak purchase observation to durable TAL only after payment settlement; TAL rechecks that the receipt remains active. Purchase history is not a declared preference and cannot create a hard NPL veto.
