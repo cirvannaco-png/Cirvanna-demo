@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import base64
+from io import BytesIO
 import json
 import os
 import re
@@ -20,8 +22,15 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import DateTime, Float, Integer, JSON, String, Text, UniqueConstraint, create_engine, inspect, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
+from PIL import Image, ImageOps
 
 from app.provider import ProviderNotConfigured, fetch_licensed_research
+from app.perfectcorp import (
+    PerfectCorpNotConfigured, PerfectCorpRequestError,
+    delete_task as perfectcorp_delete_task,
+    get_skin_analysis_status as perfectcorp_get_skin_analysis_status,
+    start_skin_analysis as perfectcorp_start_skin_analysis,
+)
 
 SERVICE = "cirvanna-intelligence-service"
 EXPECTED_SCHEMA_REVISION = "20261110_0002"
@@ -219,6 +228,33 @@ class CALDecisionIn(StrictModel):
     rationale: str = Field(min_length=10, max_length=2000)
 
 
+class PerfectCorpSkinAnalysisIn(StrictModel):
+    image_base64: str = Field(min_length=32, max_length=14_000_000)
+    content_type: Literal["image/jpeg", "image/png"]
+    file_name: str = Field(default="skin-photo.jpg", min_length=1, max_length=100)
+    mode: Literal["sd", "hd"] = "sd"
+    actions: list[Literal[
+        "wrinkle", "pore", "texture", "acne", "spot", "redness", "oiliness", "skin_type",
+        "hd_wrinkle", "hd_pore", "hd_texture", "hd_acne", "hd_spot", "hd_redness", "hd_oiliness",
+    ]] = Field(min_length=1, max_length=8)
+    contributor_token: str
+    consent_receipt: str = Field(min_length=20, max_length=5000)
+
+    @field_validator("contributor_token")
+    @classmethod
+    def valid_contributor_token(cls, value):
+        if not TOKEN_RE.fullmatch(value):
+            raise ValueError("contributor_token must be a keyed HMAC-SHA256 pseudonym")
+        return value
+
+    @field_validator("actions")
+    @classmethod
+    def valid_action_set(cls, values):
+        if len(values) != len(set(values)):
+            raise ValueError("skin-analysis actions must be unique")
+        return values
+
+
 class LearningSignalsIn(StrictModel):
     product_ids: list[str] = Field(min_length=1, max_length=100)
     context_key: str = Field(min_length=1, max_length=120)
@@ -340,6 +376,62 @@ def _receipt(value: str, expected_type: str, product_id: str) -> dict:
     return payload
 
 
+def _verify_perfectcorp_consent(receipt: str, contributor_token: str, image_digest: str) -> dict:
+    key = os.getenv("CIL_RECEIPT_SIGNING_KEY", "").encode()
+    if len(key) < 32:
+        raise HTTPException(503, "CIL receipt verification is not configured")
+    try:
+        encoded, signature = receipt.split(".", 1)
+        payload = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
+        if not isinstance(payload, dict):
+            raise ValueError("receipt must be a JSON object")
+        expiry = int(payload.get("expires_at", 0))
+    except Exception as exc:
+        raise HTTPException(422, "Malformed image-processing consent receipt") from exc
+    expected = hmac.new(key, encoded.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, signature):
+        raise HTTPException(403, "Invalid image-processing consent signature")
+    if (
+        payload.get("type") != "consent"
+        or payload.get("purpose") != "perfectcorp_skin_analysis"
+        or payload.get("provider") != "perfectcorp"
+        or payload.get("subject_token") != contributor_token
+        or payload.get("image_sha256") != image_digest
+        or payload.get("single_subject") is not True
+        or int(payload.get("subject_age_years", 0)) < 18
+        or expiry <= int(now().timestamp())
+    ):
+        raise HTTPException(403, "Image consent is missing, expired, mismatched or not adult-scoped")
+    return payload
+
+
+def _normalize_skin_image(raw: bytes, content_type: str, mode: str) -> bytes:
+    if not raw or len(raw) >= 10 * 1024 * 1024:
+        raise HTTPException(413, "Skin-analysis image must be non-empty and smaller than 10 MB")
+    try:
+        with Image.open(BytesIO(raw)) as source:
+            expected_format = "JPEG" if content_type == "image/jpeg" else "PNG"
+            if source.format != expected_format:
+                raise HTTPException(415, "Image bytes do not match the declared content type")
+            image = ImageOps.exif_transpose(source).convert("RGB")
+            short_side = min(image.size)
+            required_short_side = 1080 if mode == "hd" else 480
+            if short_side < required_short_side:
+                raise HTTPException(422, f"{mode.upper()} skin analysis requires a minimum {required_short_side}px short side")
+            image.thumbnail((2560, 2560), Image.Resampling.LANCZOS)
+            output = BytesIO()
+            # Re-encoding as JPEG strips EXIF metadata and normalizes orientation.
+            image.save(output, format="JPEG", quality=90, optimize=True)
+            normalized = output.getvalue()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(422, "Image could not be decoded safely") from exc
+    if not normalized:
+        raise HTTPException(422, "Image normalization produced an empty image")
+    return normalized
+
+
 def _source_permits(db: Session, source_id: str, purpose: str) -> tuple[bool, str]:
     source = db.get(Source, source_id)
     if source is None:
@@ -418,6 +510,57 @@ def register_source(payload: SourceIn, db: Session = Depends(get_db)):
     ))
     db.commit()
     return {"source_id": row.id, "rights_status": row.rights_status, "permitted_purposes": row.permitted_purposes}
+
+
+@app.post("/providers/perfectcorp/skin-analysis", dependencies=[Depends(_service)], status_code=202)
+def start_perfectcorp_skin_analysis(payload: PerfectCorpSkinAnalysisIn):
+    """Start opt-in adult skin analysis; raw image bytes are memory-only and never persisted."""
+    if os.getenv("CIL_PERFECTCORP_ENABLED", "false").lower() != "true":
+        raise HTTPException(503, "Perfect Corp skin analysis is disabled")
+    try:
+        raw = base64.b64decode(payload.image_base64, validate=True)
+    except Exception as exc:
+        raise HTTPException(422, "image_base64 is not valid Base64") from exc
+    image_digest = hashlib.sha256(raw).hexdigest()
+    _verify_perfectcorp_consent(payload.consent_receipt, payload.contributor_token, image_digest)
+    normalized = _normalize_skin_image(raw, payload.content_type, payload.mode)
+    try:
+        return perfectcorp_start_skin_analysis(
+            image=normalized, file_name="cirvanna-skin-analysis.jpg",
+            content_type="image/jpeg", actions=list(payload.actions), mode=payload.mode,
+        )
+    except PerfectCorpNotConfigured as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, "Perfect Corp skin-analysis task could not be started") from exc
+
+
+@app.get("/providers/perfectcorp/skin-analysis/{task_id}", dependencies=[Depends(_service)])
+def poll_perfectcorp_skin_analysis(task_id: str):
+    try:
+        return perfectcorp_get_skin_analysis_status(task_id=task_id)
+    except PerfectCorpNotConfigured as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, "Perfect Corp skin-analysis status is unavailable") from exc
+
+
+@app.delete("/providers/perfectcorp/skin-analysis/{task_id}", dependencies=[Depends(_service)])
+def delete_perfectcorp_skin_analysis(task_id: str):
+    """Request deletion of the completed provider task, input file and generated files."""
+    try:
+        deleted = perfectcorp_delete_task(task_id=task_id)
+        return {"task_id": task_id, "deleted": deleted}
+    except PerfectCorpNotConfigured as exc:
+        raise HTTPException(503, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(502, "Perfect Corp task/file deletion could not be confirmed") from exc
 
 
 @app.post("/providers/research", dependencies=[Depends(_admin)], status_code=201)
@@ -689,4 +832,9 @@ def capabilities():
             "consent_and_cal_receipt_verification": bool(os.getenv("CIL_RECEIPT_SIGNING_KEY")),
             "licensed_provider_adapter_configurable": all(os.getenv(k) for k in (
                 "CIL_PROVIDER_BASE_URL", "CIL_PROVIDER_API_TOKEN", "CIL_PROVIDER_LICENCE_ID", "CIL_PROVIDER_TERMS_URL")),
+            "perfectcorp_skin_analysis_configured": all(os.getenv(k) for k in (
+                "CIL_PERFECTCORP_ENABLED", "CIL_PERFECTCORP_DPA_APPROVED", "CIL_PERFECTCORP_API_TOKEN",
+                "CIL_PERFECTCORP_LICENCE_ID", "CIL_PERFECTCORP_TERMS_URL", "CIL_PERFECTCORP_RETENTION_POLICY_REF")),
+            "perfectcorp_skin_analysis_enabled": os.getenv("CIL_PERFECTCORP_ENABLED", "false").lower() == "true",
+            "revieve_integration_enabled": False,
             "catalog_serving_gateway_required": True, "cal_remains_final_authority": True}
