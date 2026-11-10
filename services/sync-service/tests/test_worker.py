@@ -281,3 +281,45 @@ def test_worker_splits_multi_item_purchase_into_bounded_tal_events():
     assert result == {"claimed": 1, "processed": 1, "retried": 0, "dead_lettered": 0}
     assert len(tal_event_ids) == 2
     assert len(set(tal_event_ids)) == 2
+
+
+
+def checkout_started_event():
+    event = consented_paid_event()
+    event["event_type"] = "commerce.checkout.started"
+    payload = event["payload"]
+    payload["event_type"] = "commerce.checkout.started"
+    payload.pop("ownership_authority", None)
+    payload.pop("paid_at", None)
+    payload["occurred_at"] = "2026-11-10T16:00:00+00:00"
+    payload["items"][0]["variant_id"] = payload["items"][0].pop("merchant_variant_id")
+    return event
+
+
+def test_worker_observes_explicit_checkout_selection_without_marking_purchase():
+    calls = []
+
+    def handler(request: httpx.Request):
+        calls.append(request.url.path)
+        if request.url.path == "/internal/outbox/claim":
+            return httpx.Response(200, json={"events": [checkout_started_event()]})
+        if request.url.path == "/v1/tal/events":
+            body = __import__("json").loads(request.content)
+            value = __import__("json").loads(body["value"])
+            assert body["feature_key"] == "checkout.selection"
+            assert value["evidence_type"] == "explicit_checkout_selection"
+            assert value["source_event_type"] == "commerce.checkout.started"
+            assert value["signal_strength"] == "weak"
+            assert "purchase" in value["signal_semantics"]
+            assert value["may_change_explicit_preference"] is False
+            return httpx.Response(201, json={"status": "created"})
+        if request.url.path.endswith("/ack"):
+            return httpx.Response(200, json={"status": "delivered"})
+        raise AssertionError("checkout selection must not reach Wardrobe ownership: " + request.url.path)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    result = CommerceWardrobeWorker(tal_settings(), client).process_batch()
+    assert result == {"claimed": 1, "processed": 1, "retried": 0, "dead_lettered": 0}
+    assert "/v1/tal/events" in calls
+    assert "/v1/purchases/verified" not in calls
+    assert calls[-1].endswith("/ack")
