@@ -60,6 +60,8 @@ def configured(monkeypatch):
     monkeypatch.setenv("CIL_PERFECTCORP_ENABLED", "true")
     monkeypatch.setenv("CIL_PERFECTCORP_DPA_APPROVED", "true")
     monkeypatch.setenv("CIL_PERFECTCORP_RETENTION_POLICY_REF", "DPA-RETENTION-SCHEDULE-001")
+    monkeypatch.setenv("CIL_PERFECTCORP_ERASURE_SLA_CONFIRMED", "true")
+    monkeypatch.setenv("CIL_PERFECTCORP_MAX_RETENTION_HOURS", "0")
     monkeypatch.setenv("CIL_PERFECTCORP_API_TOKEN", "perfectcorp-test-token")
     monkeypatch.setenv("CIL_PERFECTCORP_LICENCE_ID", "partner-licence-001")
     monkeypatch.setenv("CIL_PERFECTCORP_TERMS_URL", "https://partner.example/terms")
@@ -69,7 +71,8 @@ def configured(monkeypatch):
 def test_perfectcorp_is_disabled_without_explicit_operator_approval(monkeypatch):
     for key in (
         "CIL_PERFECTCORP_ENABLED", "CIL_PERFECTCORP_DPA_APPROVED",
-        "CIL_PERFECTCORP_RETENTION_POLICY_REF", "CIL_PERFECTCORP_API_TOKEN",
+        "CIL_PERFECTCORP_RETENTION_POLICY_REF", "CIL_PERFECTCORP_ERASURE_SLA_CONFIRMED",
+        "CIL_PERFECTCORP_MAX_RETENTION_HOURS", "CIL_PERFECTCORP_API_TOKEN",
         "CIL_PERFECTCORP_LICENCE_ID", "CIL_PERFECTCORP_TERMS_URL",
     ):
         monkeypatch.delenv(key, raising=False)
@@ -151,3 +154,15 @@ def test_perfectcorp_hd_age_spot_and_skin_type_use_documented_action_names(confi
     assert "hd_age_spot" in perfectcorp.ALLOWED_ACTIONS["hd"]
     assert "hd_skin_type" in perfectcorp.ALLOWED_ACTIONS["hd"]
     assert "hd_spot" not in perfectcorp.ALLOWED_ACTIONS["hd"]
+
+
+def test_perfectcorp_is_blocked_without_verified_erasure_sla(monkeypatch, configured):
+    monkeypatch.setenv("CIL_PERFECTCORP_ERASURE_SLA_CONFIRMED", "false")
+    with pytest.raises(perfectcorp.PerfectCorpNotConfigured, match="erasure SLA"):
+        perfectcorp._settings()
+
+
+def test_perfectcorp_is_blocked_when_provider_retention_exceeds_one_hour(monkeypatch, configured):
+    monkeypatch.setenv("CIL_PERFECTCORP_MAX_RETENTION_HOURS", "720")
+    with pytest.raises(perfectcorp.PerfectCorpNotConfigured, match="capped at 1 hour"):
+        perfectcorp._settings()
