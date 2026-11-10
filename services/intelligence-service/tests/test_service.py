@@ -372,3 +372,35 @@ def test_pending_claim_is_never_eligible_for_customer_serving(client):
     assert result.status_code == 200
     assert result.json()["decisions"][0]["eligible"] is False
     assert result.json()["decisions"][0]["reason"] == "CLAIM_NOT_APPROVED"
+
+
+def test_source_rights_revocation_is_audited_and_immediately_blocks_serving(client):
+    register_source(client)
+    register_evidence(client)
+    revoked = client.post(
+        "/sources/source-licensed/revoke",
+        headers=auth("admin-test"),
+        json={
+            "rights_reference": "publisher-termination-notice-2026-11",
+            "reason": "The licensed research agreement was terminated by the publisher.",
+            "reviewed_at": datetime.now(timezone.utc).isoformat(),
+        },
+    )
+    assert revoked.status_code == 200
+    assert revoked.json()["revoked"] is True
+
+    payload = {
+        "purpose": "commercial_recommendation",
+        "product_id": "product-1",
+        "catalog_version": 1,
+        "claims": [{
+            "claim_id": "claim-1",
+            "claim_type": "cosmetic_intent",
+            "evidence": {"evidence_id": "evidence-1", "source_id": "source-licensed"},
+        }],
+        "ingredient_declarations": [],
+    }
+    assessment = client.post("/serving/assessment", json=payload, headers=auth("service-test"))
+    assert assessment.status_code == 200
+    assert assessment.json()["decisions"][0]["eligible"] is False
+    assert assessment.json()["decisions"][0]["reason"] == "SOURCE_RIGHTS_REVOKED"
