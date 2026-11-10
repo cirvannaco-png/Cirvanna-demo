@@ -369,7 +369,9 @@ def register_evidence(payload: EvidenceIn, db: Session = Depends(get_db)):
         raise HTTPException(409, "evidence_id already exists; evidence records are immutable")
     if db.get(Source, payload.source_id) is None:
         raise HTTPException(422, "source_id is not registered")
-    row = Evidence(**payload.model_dump())
+    evidence_data = payload.model_dump()
+    evidence_data["id"] = evidence_data.pop("evidence_id")
+    row = Evidence(**evidence_data)
     db.add(row)
     db.commit()
     return {"evidence_id": row.id, "source_id": row.source_id, "grade": row.grade, "scope": row.scope}
