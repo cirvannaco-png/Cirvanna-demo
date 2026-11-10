@@ -378,9 +378,10 @@ def _cal_service(authorization: str | None = Header(default=None)):
 
 
 def _receipt(value: str, expected_type: str, product_id: str) -> dict:
-    key = os.getenv("CIL_RECEIPT_SIGNING_KEY", "").encode()
+    key_name = "CIL_CONSENT_RECEIPT_KEY" if expected_type == "consent" else "CIL_CAL_RECEIPT_KEY"
+    key = os.getenv(key_name, "").encode()
     if len(key) < 32:
-        raise HTTPException(503, "CIL receipt verification is not configured")
+        raise HTTPException(503, f"{key_name} is not configured")
     try:
         encoded, signature = value.split(".", 1)
         payload_bytes = __import__("base64").urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
@@ -410,9 +411,9 @@ def _task_subject(authorization_token: str | None, expected_token: str) -> None:
 
 
 def _verify_perfectcorp_consent(receipt: str, contributor_token: str, image_digest: str) -> dict:
-    key = os.getenv("CIL_RECEIPT_SIGNING_KEY", "").encode()
+    key = os.getenv("CIL_SKIN_ANALYSIS_CONSENT_KEY", "").encode()
     if len(key) < 32:
-        raise HTTPException(503, "CIL receipt verification is not configured")
+        raise HTTPException(503, "CIL_SKIN_ANALYSIS_CONSENT_KEY is not configured")
     try:
         encoded, signature = receipt.split(".", 1)
         payload = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
