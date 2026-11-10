@@ -181,7 +181,10 @@ class ModelValidationTests(unittest.TestCase):
             status=ModelValidationStatus.INDEPENDENTLY_VALIDATED,
             intended_uses=(DataPurpose.COMMERCIAL_RECOMMENDATION,),
             evaluated_populations=("adult-image-set", "skin-tone-strata"),
-            metrics=(ModelMetric("macro_f1", 0.88, "adult-image-set", 800),),
+            metrics=(
+                ModelMetric("macro_f1", 0.88, "adult-image-set", 800),
+                ModelMetric("macro_f1", 0.85, "skin-tone-strata", 400),
+            ),
             validation_dataset_reference="dataset-2026", validation_report_reference="report-2026",
             independent_reviewer="Independent Review Lab",
             calibration_method="isotonic calibration on a held-out set",
