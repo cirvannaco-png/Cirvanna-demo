@@ -189,7 +189,7 @@ The 30-observation floor is a disclosure safeguard. It is not differential priva
 
 ### Cirvanna Intelligence Layer (CIL)
 
-The platform-wide CIL now has a durable Intelligence Service for source rights, append-only revocation events, evidence references, consented recommendation outcomes and CAL review requests. Catalog product/variant/version GET responses call the CIL serving gate; missing gateway configuration or failed evidence/rights checks withhold product-intelligence metadata. Claims remain withheld unless explicitly approved; ingredient declarations are assessed independently and carry required attribution. The generic provider adapter requires an explicit API token, licence ID and terms URL; no vendor is enabled by default. The narrower `catacaci.cil` cohort kernel remains a separate CaTaCaCi capability. See [CIL architecture](docs/architecture/cirvanna-intelligence-layer.md) and [Intelligence Service](services/intelligence-service/README.md).
+The platform-wide CIL now has a durable Intelligence Service for source rights, append-only revocation events, evidence references, consented recommendation outcomes and CAL review requests. Catalog product/variant/version GET responses call the CIL serving gate; missing gateway configuration or failed evidence/rights checks withhold product-intelligence metadata. Claims remain withheld unless explicitly approved; ingredient declarations are assessed independently and carry required attribution. The generic provider adapter requires an explicit API token, licence ID and terms URL; no vendor is enabled by default. Consented outcome aggregates are now queried by the API Gateway and can apply a configurable contextual ranking penalty after the 30-contributor floor; this is feedback-informed reranking, not automated model training. The narrower `catacaci.cil` cohort kernel remains a separate CaTaCaCi capability. See [CIL architecture](docs/architecture/cirvanna-intelligence-layer.md) and [Intelligence Service](services/intelligence-service/README.md).
 
 ## Modules and services
 ## Modules and services
@@ -199,7 +199,7 @@ The actual repository is a multi-service monorepo. Important areas are:
 | Path | Role |
 |---|---|
 | apps/demo-web | Demo and marketplace browser application |
-| services/api-gateway | Catalog and Commerce discovery, verified Commerce subject resolution, USI/TAL proxy, signed safety/FCI adapters, CAL arbitration, Complementer advisory proxy |
+| services/api-gateway | Catalog and Commerce discovery, verified Commerce subject resolution, USI/TAL proxy, signed safety/FCI adapters, CAL arbitration, CIL feedback-informed reranking, Complementer advisory proxy |
 | services/recommendation-service | Complementer advisory API and domain modules |
 | services/catalog-service | Canonical product CRUD, metadata validation, product versions, fail-closed CIL serving gate |
 | services/intelligence-service | Durable source/evidence registry, rights revocation, licensed-provider adapter, recommendation outcomes, CAL review queue |
