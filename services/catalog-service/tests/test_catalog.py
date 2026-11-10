@@ -9,7 +9,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.main import Base, app, get_db
+from app.main import Base, ProductVersion, app, get_db
 
 TEST_ENGINE = create_engine(
     "sqlite://",
@@ -370,11 +370,20 @@ def test_product_intelligence_metadata_is_validated_and_versioned(client):
     assert intelligence["cultural_usage"]["editorial_reviewed"] is True
     assert intelligence["observed_outcomes"]["sample_size"] == 45
 
+    # Customer-facing reads fail closed until the durable CIL gateway validates rights.
     history = client.get(
         f"/products/{product['product_id']}/versions", headers=auth_headers()
     )
     assert history.status_code == 200
-    assert history.json()[0]["snapshot"]["attributes"]["product_intelligence"]["schema_version"] == "1.0"
+    assert "product_intelligence" not in history.json()[0]["snapshot"]["attributes"]
+
+    # Catalog still retains the immutable versioned record internally.
+    db = TestSessionLocal()
+    try:
+        version = db.query(ProductVersion).filter_by(product_id=product["product_id"]).one()
+        assert version.snapshot["attributes"]["product_intelligence"]["schema_version"] == "1.0"
+    finally:
+        db.close()
 
 
 def test_cultural_product_metadata_requires_editorial_review_evidence(client):
@@ -506,3 +515,96 @@ def test_archived_canonical_variant_is_hidden_and_identity_cannot_be_reissued(cl
         json={"attributes": {"size": "medium", "colour": "blue"}},
     )
     assert duplicate.status_code == 409
+
+
+def test_cil_metadata_is_removed_from_product_get_when_gateway_is_not_configured(client, monkeypatch):
+    monkeypatch.delenv("CIL_GATEWAY_URL", raising=False)
+    monkeypatch.delenv("CIL_SERVICE_TOKEN", raising=False)
+    metadata = {
+        "schema_version": "1.0",
+        "claims": [{
+            "claim_id": "CLAIM-001",
+            "claim_type": "cosmetic_intent",
+            "statement": "A cosmetic formulation claim awaiting review.",
+            "evidence": {
+                "source_type": "manufacturer_declared",
+                "reference": "evidence-001",
+                "reviewed_at": "2026-11-10",
+                "source_id": "source-001",
+                "evidence_grade": "E4",
+                "scope": "finished_product",
+            },
+            "review_status": "pending_review",
+            "limitations": "This is not independent clinical efficacy evidence.",
+        }],
+    }
+    product = create_product(
+        client,
+        sku="CIL-GATE-001",
+        attributes={"product_intelligence": metadata, "finish": "satin"},
+    )
+    response = client.get(f"/products/{product['product_id']}", headers=auth_headers())
+    assert response.status_code == 200
+    assert response.json()["attributes"]["finish"] == "satin"
+    assert "product_intelligence" not in response.json()["attributes"]
+
+
+def test_cil_gateway_can_serve_validated_ingredient_with_attribution(client, monkeypatch):
+    from app import main as catalog_main
+
+    monkeypatch.setenv("CIL_GATEWAY_URL", "https://cil.internal")
+    monkeypatch.setenv("CIL_CATALOG_SERVICE_TOKEN", "catalog-to-cil-token")
+
+    class FakeResponse:
+        def __init__(self, request_payload):
+            self.request_payload = request_payload
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {
+                "product_id": self.request_payload["product_id"],
+                "catalog_version": self.request_payload["catalog_version"],
+                "all_eligible": True,
+                "decisions": [{
+                    "item_id": "Glycerin", "kind": "ingredient", "eligible": True,
+                    "attribution_required": True, "attribution_text": "Manufacturer label",
+                    "source_owner": "Manufacturer",
+                }],
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return None
+        async def post(self, url, json, headers):
+            assert url == "https://cil.internal/serving/assessment"
+            assert headers["Authorization"] == "Bearer catalog-to-cil-token"
+            return FakeResponse(json)
+
+    monkeypatch.setattr(catalog_main.httpx, "AsyncClient", FakeAsyncClient)
+    metadata = {
+        "schema_version": "1.0",
+        "ingredient_declarations": [{
+            "inci_name": "Glycerin",
+            "label_order": 2,
+            "evidence": {
+                "source_type": "manufacturer_declared",
+                "reference": "cil-evidence-001",
+                "reviewed_at": "2026-11-10",
+                "source_id": "cil-source-001",
+                "evidence_grade": "E4",
+                "scope": "finished_product",
+            },
+        }],
+    }
+    product = create_product(
+        client, sku="CIL-GATE-APPROVED-001",
+        attributes={"product_intelligence": metadata},
+    )
+    response = client.get(f"/products/{product['product_id']}", headers=auth_headers())
+    assert response.status_code == 200
+    intelligence = response.json()["attributes"]["product_intelligence"]
+    assert intelligence["ingredient_declarations"][0]["evidence"]["attribution"] == "Manufacturer label"

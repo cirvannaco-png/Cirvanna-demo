@@ -1,0 +1,50 @@
+name: Intelligence service checks
+
+on:
+  push:
+    branches: [main, "architecture/**", "integration/**"]
+    paths:
+      - "services/intelligence-service/**"
+      - ".github/workflows/intelligence-service.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "services/intelligence-service/**"
+      - ".github/workflows/intelligence-service.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/intelligence-service/requirements.txt
+      - run: python -m pip install -r services/intelligence-service/requirements.txt
+      - name: Apply CIL schema migration
+        working-directory: services/intelligence-service
+        env:
+          CIL_DATABASE_URL: sqlite:///./cil-migration-ci.db
+          CIL_AUTO_CREATE_SCHEMA: "false"
+        run: alembic upgrade head
+      - name: Run intelligence service tests
+        working-directory: services/intelligence-service
+        env:
+          CIL_DATABASE_URL: sqlite://
+          CIL_AUTO_CREATE_SCHEMA: "true"
+          CIL_ADMIN_TOKEN: ci-admin-token
+          CIL_SERVICE_TOKEN: ci-service-token
+          CIL_CATALOG_SERVICE_TOKEN: ci-catalog-token
+          CIL_CONSENT_RECEIPT_KEY: "ci-only-consent-receipt-key-with-more-than-32-bytes"
+          CIL_CAL_RECEIPT_KEY: "ci-only-cal-receipt-key-with-more-than-32-bytes"
+          CIL_SKIN_ANALYSIS_CONSENT_KEY: "ci-only-skin-consent-key-with-more-than-32-bytes"
+        run: python -m pytest tests -q
+      - name: Build intelligence service container
+        run: docker build -t cirvanna-intelligence-service:ci services/intelligence-service

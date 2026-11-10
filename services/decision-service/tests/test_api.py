@@ -20,6 +20,7 @@ def config(monkeypatch):
     monkeypatch.setenv("FCI_EVIDENCE_HMAC_SECRET", "fci-provider-test-key-minimum-32-bytes")
     monkeypatch.setenv("NPL_EVIDENCE_HMAC_SECRET", "npl-provider-test-key-minimum-32-bytes")
     monkeypatch.setenv("CULTURAL_IDENTITY_HMAC_SECRET", "culture-provider-test-key-minimum-32-bytes")
+    monkeypatch.setenv("CAL_REVIEW_OPERATOR_TOKEN", "cal-review-operator-test-token-32-bytes")
 
 
 @pytest.fixture
@@ -297,3 +298,49 @@ def test_client_cannot_inject_generated_cal_signal_kinds(client):
     body["fit_estimate_signature"] = signed_fit(body["fit_estimate"])
     response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
     assert response.status_code == 422
+
+
+def test_decision_service_bridges_cil_feedback_queue_and_final_cal_decision(client, monkeypatch):
+    monkeypatch.setenv("CIL_SERVICE_URL", "https://cil.internal")
+    monkeypatch.setenv("CIL_SERVICE_TOKEN", "cil-service-token-that-is-at-least-32-bytes")
+    monkeypatch.setenv("CIL_CAL_SERVICE_TOKEN", "cil-cal-service-token-that-is-at-least-32-bytes")
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return self.payload
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return None
+        async def get(self, url, headers):
+            assert url == "https://cil.internal/cal/review-queue"
+            assert headers["Authorization"].startswith("Bearer cil-service-token")
+            return FakeResponse({"items": [{"review_id": "review-1", "status": "pending"}]})
+        async def post(self, url, json, headers):
+            assert url == "https://cil.internal/cal/review-queue/review-1/decision"
+            assert headers["Authorization"].startswith("Bearer cil-cal-service-token")
+            assert json["verdict"] == "BLOCK"
+            return FakeResponse({"review_id": "review-1", "status": "decided", "verdict": "BLOCK"})
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", FakeAsyncClient)
+    headers = {"Authorization": "Bearer decision-service-test-token-32-bytes-min"}
+    queue = client.get("/v1/cal/feedback-reviews", headers=headers)
+    assert queue.status_code == 200
+    assert queue.json()["items"][0]["review_id"] == "review-1"
+
+    decision = client.post(
+        "/v1/cal/feedback-reviews/review-1/decision",
+        headers={"Authorization": "Bearer cal-review-operator-test-token-32-bytes"},
+        json={"verdict": "BLOCK", "decision_reference": "CAL-DECISION-1",
+              "rationale": "Human review confirmed the recommendation should be blocked."},
+    )
+    assert decision.status_code == 200
+    assert decision.json()["verdict"] == "BLOCK"

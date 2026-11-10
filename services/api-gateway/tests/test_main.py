@@ -446,3 +446,58 @@ def test_my_learning_delete_reports_partial_failure_and_never_claims_complete(mo
 def test_my_learning_export_requires_verified_end_user_bearer(client):
     response = client.get("/v1/me/learning/export", headers=auth_headers())
     assert response.status_code == 401
+
+
+def test_cil_feedback_adjustment_uses_only_available_minimum_cohort_signals():
+    score, adjustment = main._feedback_adjusted_score(
+        0.8,
+        {"status": "available", "unsuitable_share": 0.5, "contributor_count": 30},
+        0.10,
+    )
+    assert score == pytest.approx(0.76)
+    assert adjustment["applied"] is True
+    assert adjustment["penalty_fraction"] == pytest.approx(0.05)
+
+    unchanged, suppressed = main._feedback_adjusted_score(
+        0.8, {"status": "suppressed", "contributor_count": 12}, 0.10
+    )
+    assert unchanged == 0.8
+    assert suppressed["applied"] is False
+    assert suppressed["status"] == "suppressed"
+
+
+def test_cil_feedback_context_key_uses_coarse_context_only():
+    context = type("Context", (), {"climate": "Warm Humid", "occasion": "Everyday"})()
+    assert main._cil_feedback_context_key(context) == "warm-humid-everyday"
+
+
+def test_gateway_loads_only_validated_cil_feedback_signals(monkeypatch):
+    monkeypatch.setenv("CIL_SERVICE_URL", "https://cil.internal")
+    monkeypatch.setenv("CIL_SERVICE_TOKEN", "cil-service-token-that-is-at-least-32-bytes")
+
+    class FakeResponse:
+        status_code = 200
+        def json(self):
+            return {
+                "signals": [
+                    {"product_id": "p1", "context_key": "warm-everyday", "status": "available",
+                     "contributor_count": 35, "unsuitable_share": 0.4},
+                    {"product_id": "p2", "context_key": "warm-everyday", "status": "suppressed",
+                     "contributor_count": 12, "unsuitable_share": None},
+                    {"product_id": "foreign", "context_key": "warm-everyday", "status": "available",
+                     "contributor_count": 50, "unsuitable_share": 0.1},
+                ]
+            }
+
+    def fake_post(url, **kwargs):
+        assert url == "https://cil.internal/learning/signals"
+        assert kwargs["json"] == {"product_ids": ["p1", "p2"], "context_key": "warm-everyday"}
+        assert kwargs["headers"]["Authorization"].startswith("Bearer cil-service-token")
+        return FakeResponse()
+
+    monkeypatch.setattr(main.httpx, "post", fake_post)
+    signals, status = main._load_cil_feedback_signals(["p1", "p2"], "warm-everyday")
+    assert status == "available"
+    assert set(signals) == {"p1", "p2"}
+    assert signals["p1"]["unsuitable_share"] == 0.4
+    assert signals["p2"]["status"] == "suppressed"

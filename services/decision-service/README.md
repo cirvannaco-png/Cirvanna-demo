@@ -15,7 +15,9 @@ Only the actual CAL verdict SHOW authorizes display. BLOCK is a hard veto; REVIE
 
 POST /v1/eligibility/evaluate
 
-Requires Authorization: Bearer with the internal shared token. Request supplies candidate/context/policy and user-specific preference evidence; response includes verdict, may_display, reason codes, signal provenance and module outcomes.
+The service also exposes `GET /v1/cal/feedback-reviews` and `POST /v1/cal/feedback-reviews/{review_id}/decision` as the authenticated CAL bridge to the CIL review queue. The queue contains minimum-cohort recommendation feedback signals; CAL operators review them and submit a final SHOW/BLOCK verdict. CIL never auto-suppresses products.
+
+All endpoints require Authorization: Bearer with the internal shared token. Configure `CIL_SERVICE_URL`, `CIL_SERVICE_TOKEN`, and `CIL_CAL_SERVICE_TOKEN` to connect the bridge. The Decision Service uses its own internal token for callers, a service token to read the CIL queue, and the CAL-specific token to submit final decisions. Requests fail closed if the bridge is not configured or CIL is unavailable.
 
 ## Trusted fit evidence
 
@@ -30,6 +32,10 @@ The service independently canonicalizes and verifies the signature before evalua
 
 - DECISION_SERVICE_TOKEN: long random internal bearer token; protect service network access as well.
 - FCI_EVIDENCE_HMAC_SECRET: separate strong secret shared only with the approved fit provider.
+- `CIL_SERVICE_URL`: private HTTPS URL for the Intelligence Service (HTTP only for loopback development).
+- `CIL_SERVICE_TOKEN`: internal token for reading the CIL review queue.
+- `CIL_CAL_SERVICE_TOKEN`: CAL-only token for recording final review decisions in CIL.
+- `CAL_REVIEW_OPERATOR_TOKEN`: separate credential required by the final-decision endpoint; do not reuse the general Decision Service token.
 - DECISION_DOCS_ENABLED is not currently used; do not expose this internal service publicly.
 
 Run locally from this directory:

@@ -62,6 +62,12 @@ All metadata is versioned with the existing product record and appears in the pr
 The minimum cohort threshold is a disclosure safeguard, not a claim of differential privacy or statistical representativeness. Merchant-supplied evidence and editorial tags still require moderation, provenance checks, and audit before being trusted for user-facing claims. CaTaCaCi/CAL remains the final display authority.
 
 
+## CIL structured product fields
+
+The `attributes.product_intelligence` schema now accepts structured `ingredient_declarations` and typed `claims`. Each structured ingredient declaration requires product-label or product-test evidence with a CIL `source_id`, finished-product scope, and E1/E2/E4 evidence grade. This preserves provenance but does not validate that the source ID exists in a live registry; durable registry verification remains a runtime integration requirement.
+
+Claims are limited to `pending_review` or `rejected`. Catalog deliberately does not accept an `approved` status in this phase. The CIL claim assessor is a contract-only package and is not yet connected to the Catalog serving path. Existing Catalog product-version snapshots continue to preserve the metadata; no new Catalog table or migration is introduced.
+
 ## Canonical product variants
 
 Catalog is the canonical owner of purchasable variant identity. Create a variant with the write-scoped credential:
@@ -75,3 +81,8 @@ Catalog is the canonical owner of purchasable variant identity. Create a variant
 Catalog normalizes option keys and values, derives a deterministic identity key within the product, and issues an immutable UUID. Repeated equivalent option sets conflict rather than creating duplicate identities. Read-only internal services use `GET /variants/{variant_id}` to verify that an ID exists, is active, and belongs to an active canonical product. Catalog operators can deactivate an identity with write-scoped `DELETE /variants/{variant_id}`; an archived identity is never reissued. Merchant-local SKUs and Commerce variant IDs remain separate provenance fields; Commerce must validate the canonical ID with this endpoint rather than accepting merchant assertions.
 
 Variant-defining attributes are immutable. A materially different option set is a different canonical variant; corrections require a governed deactivation/replacement process rather than mutating the identity in place. This endpoint does not establish offer price, stock, or freshness—Commerce remains authoritative for those facts.
+
+
+## CIL serving gate
+
+Catalog GET representations for products, variants and version snapshots pass through the CIL serving gate. Set `CIL_GATEWAY_URL` and `CIL_CATALOG_SERVICE_TOKEN` to the internal Intelligence Service. If either is missing, the gateway is unavailable, the product/version does not match, or any claim/ingredient evidence is ineligible, Catalog strips `attributes.product_intelligence` from the response. Catalog never trusts client-supplied evidence as a display authorization. The Intelligence Service must contain the referenced CIL evidence ID (Catalog's `evidence.reference` is used as that ID) and source-rights record. The gate is fail-closed and does not change canonical Catalog persistence.

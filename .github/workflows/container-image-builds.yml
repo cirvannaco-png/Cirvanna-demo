@@ -9,6 +9,7 @@ on:
       - "services/marketplace-bff/**"
       - "services/asset-service/**"
       - "services/privacy-governance-service/**"
+      - "services/intelligence-service/**"
       - ".github/workflows/container-image-builds.yml"
   push:
     branches: [main]
@@ -19,6 +20,8 @@ on:
       - "services/marketplace-bff/**"
       - "services/asset-service/**"
       - "services/vision-intelligence/**"
+      - "services/privacy-governance-service/**"
+      - "services/intelligence-service/**"
       - ".github/workflows/container-image-builds.yml"
   workflow_dispatch:
 
@@ -45,3 +48,5 @@ jobs:
         run: docker build -f services/vision-intelligence/Dockerfile -t cirvanna-vision-intelligence:ci services/vision-intelligence
       - name: Build Privacy Governance service image
         run: docker build -f services/privacy-governance-service/Dockerfile -t cirvanna-privacy-governance:ci services/privacy-governance-service
+      - name: Build Cirvanna Intelligence Service image
+        run: docker build -f services/intelligence-service/Dockerfile -t cirvanna-intelligence:ci services/intelligence-service
