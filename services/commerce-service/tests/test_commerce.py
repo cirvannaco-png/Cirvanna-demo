@@ -261,13 +261,19 @@ def test_multi_market_checkout_learning_and_cal_purchase_schema_revision_0010_is
     assert "tal_consent_receipt_id" in CommerceOrder.__table__.columns
     assert "destination_key" in OfferTaxQuote.__table__.columns
     assert "source_unit_price_minor" in OrderItem.__table__.columns
-    assert OrderCharge.__tablename__ == "commerce_order_charges"\n    assert CALPurchaseAudit.__tablename__ == "commerce_cal_purchase_audits"\n    assert "offer_snapshot_sha256" in CALPurchaseAudit.__table__.columns
+    assert OrderCharge.__tablename__ == "commerce_order_charges"
+    assert CALPurchaseAudit.__tablename__ == "commerce_cal_purchase_audits"
+    assert "offer_snapshot_sha256" in CALPurchaseAudit.__table__.columns
 
 
 def test_readiness_requires_current_migration_before_production_ready(client, monkeypatch):
     monkeypatch.setenv("COMMERCE_AUTO_CREATE_SCHEMA", "false")
     monkeypatch.setenv("CATALOG_API_URL", "https://catalog.example.test")
     monkeypatch.setenv("CATALOG_API_TOKEN", "catalog-test-token")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-test-token-more-than-32-bytes")
+    monkeypatch.setenv("CAL_PURCHASE_RECEIPT_HMAC_SECRET", "test-cal-purchase-signing-key-more-than-32-bytes")
+    monkeypatch.setattr(main, "_cal_gateway_probe", lambda base, token: True)
     configure_stripe(monkeypatch)
 
     pending = client.get("/ready")
@@ -285,7 +291,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
         ))
         connection.execute(
             text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
-            {"revision": "20261110_0009"},
+            {"revision": "20261110_0010"},
         )
 
     ready = client.get("/ready")
@@ -298,7 +304,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
     assert payload["payment_configured"] is True
     assert payload["migrations_required"] is True
     assert payload["migrations_applied"] is True
-    assert payload["schema_revision"] == "20261110_0009"
+    assert payload["schema_revision"] == "20261110_0010"
     assert payload["ready"] is True
 
 
