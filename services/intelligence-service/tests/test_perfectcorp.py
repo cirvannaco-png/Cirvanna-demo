@@ -35,7 +35,7 @@ class FakeClient:
             return FakeResponse({"status": 200, "data": {"files": [{
                 "file_id": "opaque-file-id",
                 "requests": [{"method": "PUT", "url": self.upload_url,
-                              "headers": {"Content-Type": "image/jpeg", "Content-Length": "128"}}],
+                              "headers": {"Content-Type": "image/jpeg", "Content-Length": "10"}}],
             }]}})
         if url.endswith("/s2s/v2.1/task/skin-analysis"):
             return FakeResponse({"status": 200, "data": {"task_id": "task/with+reserved"}})
