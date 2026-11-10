@@ -14,7 +14,7 @@ import json
 import os
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -33,7 +33,7 @@ from app.perfectcorp import (
 )
 
 SERVICE = "cirvanna-intelligence-service"
-EXPECTED_SCHEMA_REVISION = "20261110_0002"
+EXPECTED_SCHEMA_REVISION = "20261110_0003"
 ALLOWED_FEEDBACK_REASONS = {"poor_match", "price", "availability", "shade_mismatch", "texture", "fragrance", "delivery", "other"}
 PURPOSES = {"research", "model_evaluation", "product_enrichment", "commercial_recommendation",
             "recommendation_outcome_learning", "training"}
@@ -126,6 +126,7 @@ class ProviderTask(Base):
     provider: Mapped[str] = mapped_column(String(40), nullable=False)
     contributor_token: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
     image_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    consent_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="running")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, nullable=False)
     terminal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -530,6 +531,34 @@ def register_source(payload: SourceIn, db: Session = Depends(get_db)):
     return {"source_id": row.id, "rights_status": row.rights_status, "permitted_purposes": row.permitted_purposes}
 
 
+@app.post("/providers/perfectcorp/reap-tasks", dependencies=[Depends(_admin)])
+def reap_abandoned_perfectcorp_tasks(db: Session = Depends(get_db)):
+    """Cron-facing cleanup for abandoned tasks; no images or direct identifiers are stored."""
+    try:
+        ttl_minutes = int(os.getenv("CIL_PERFECTCORP_TASK_TTL_MINUTES", "30"))
+    except ValueError as exc:
+        raise HTTPException(503, "CIL_PERFECTCORP_TASK_TTL_MINUTES must be an integer") from exc
+    if not 1 <= ttl_minutes <= 1440:
+        raise HTTPException(503, "CIL_PERFECTCORP_TASK_TTL_MINUTES must be between 1 and 1440")
+    cutoff = now() - timedelta(minutes=ttl_minutes)
+    rows = list(db.scalars(select(ProviderTask).where(
+        ProviderTask.deleted_at.is_(None), ProviderTask.created_at <= cutoff
+    ).order_by(ProviderTask.created_at.asc()).limit(200)).all())
+    deleted = 0
+    failed = 0
+    for row in rows:
+        try:
+            perfectcorp_delete_task(task_id=row.task_id)
+            row.status = "ttl_deleted"
+            row.deleted_at = now()
+            deleted += 1
+        except Exception:
+            failed += 1
+    db.commit()
+    return {"attempted": len(rows), "deleted": deleted, "failed": failed,
+            "ttl_minutes": ttl_minutes, "provider": "perfectcorp"}
+
+
 @app.post("/providers/perfectcorp/skin-analysis", dependencies=[Depends(_service)], status_code=202)
 def start_perfectcorp_skin_analysis(payload: PerfectCorpSkinAnalysisIn):
     """Start opt-in adult skin analysis; raw image bytes are memory-only and never persisted."""
@@ -540,20 +569,29 @@ def start_perfectcorp_skin_analysis(payload: PerfectCorpSkinAnalysisIn):
     except Exception as exc:
         raise HTTPException(422, "image_base64 is not valid Base64") from exc
     image_digest = hashlib.sha256(raw).hexdigest()
-    _verify_perfectcorp_consent(payload.consent_receipt, payload.contributor_token, image_digest)
+    consent = _verify_perfectcorp_consent(payload.consent_receipt, payload.contributor_token, image_digest)
     normalized = _normalize_skin_image(raw, payload.content_type, payload.mode)
     try:
         task = perfectcorp_start_skin_analysis(
             image=normalized, file_name="cirvanna-skin-analysis.jpg",
             content_type="image/jpeg", actions=list(payload.actions), mode=payload.mode,
         )
-        with SessionLocal() as db:
-            db.add(ProviderTask(
-                task_id=task["task_id"], provider="perfectcorp",
-                contributor_token=payload.contributor_token, image_digest=image_digest,
-                status="running",
-            ))
-            db.commit()
+        try:
+            with SessionLocal() as db:
+                db.add(ProviderTask(
+                    task_id=task["task_id"], provider="perfectcorp",
+                    contributor_token=payload.contributor_token, image_digest=image_digest,
+                    consent_expires_at=datetime.fromtimestamp(int(consent["expires_at"]), timezone.utc),
+                    status="running",
+                ))
+                db.commit()
+        except Exception as exc:
+            # If durable ownership/audit persistence fails, do not leave an untracked provider task.
+            try:
+                perfectcorp_delete_task(task_id=task["task_id"])
+            except Exception:
+                pass
+            raise HTTPException(503, "Provider task ownership could not be persisted; task deletion was attempted") from exc
         return task
     except PerfectCorpNotConfigured as exc:
         raise HTTPException(503, str(exc)) from exc
@@ -575,6 +613,18 @@ def poll_perfectcorp_skin_analysis(
     _task_subject(contributor_token, task_row.contributor_token)
     if task_row.deleted_at is not None:
         raise HTTPException(410, "Provider task files have already been deleted")
+    consent_expiry = task_row.consent_expires_at
+    if consent_expiry.tzinfo is None:
+        consent_expiry = consent_expiry.replace(tzinfo=timezone.utc)
+    if consent_expiry <= now():
+        try:
+            perfectcorp_delete_task(task_id=task_id)
+            task_row.deleted_at = now()
+            task_row.status = "consent_expired_deleted"
+            db.commit()
+        except Exception as exc:
+            raise HTTPException(502, "Consent expired but provider task deletion failed") from exc
+        raise HTTPException(410, "Provider consent expired; provider task files were deleted")
     if os.getenv("CIL_PERFECTCORP_DPA_APPROVED", "false").lower() != "true":
         # When approval is withdrawn, cleanup is still mandatory and results are not released.
         try:
