@@ -6,6 +6,7 @@ implement checkout, payments, fit prediction, personalized ranking, or rendering
 from __future__ import annotations
 
 import hashlib
+import httpx
 import hmac
 import json
 import os
@@ -16,7 +17,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Any, Iterator, Literal
 from urllib.parse import urlsplit
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -484,6 +485,96 @@ if _cors_origins:
         allow_methods=["GET", "OPTIONS"],
         allow_headers=["Authorization", "Accept"],
         max_age=600,
+    )
+
+
+async def _cil_gate_node(node: Any, client: httpx.AsyncClient, gateway: str, token: str) -> None:
+    """Fail closed for CIL metadata on every Catalog GET representation."""
+    if isinstance(node, list):
+        await __import__("asyncio").gather(*[
+            _cil_gate_node(item, client, gateway, token) for item in node if isinstance(item, (dict, list))
+        ])
+        return
+    if not isinstance(node, dict):
+        return
+    attributes = node.get("attributes")
+    intelligence = attributes.get("product_intelligence") if isinstance(attributes, dict) else None
+    if isinstance(intelligence, dict):
+        claims = intelligence.get("claims", [])
+        ingredients = intelligence.get("ingredient_declarations", [])
+        if not gateway or not token or not (claims or ingredients):
+            attributes.pop("product_intelligence", None)
+        else:
+            def bind_evidence(item: dict[str, Any]) -> dict[str, Any]:
+                result = dict(item)
+                evidence = dict(result.get("evidence") or {})
+                evidence["evidence_id"] = evidence.get("evidence_id") or evidence.get("reference")
+                result["evidence"] = evidence
+                return result
+            request_payload = {
+                "purpose": "commercial_recommendation",
+                "product_id": str(node.get("product_id") or node.get("id") or ""),
+                "catalog_version": int(node.get("catalog_version") or 1),
+                "claims": [bind_evidence(item) for item in claims],
+                "ingredient_declarations": [bind_evidence(item) for item in ingredients],
+            }
+            try:
+                response = await client.post(
+                    f"{gateway.rstrip('/')}/serving/assessment",
+                    json=request_payload,
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                response.raise_for_status()
+                assessment = response.json()
+                expected_count = len(claims) + len(ingredients)
+                decisions = assessment.get("decisions", [])
+                if (
+                    assessment.get("product_id") != request_payload["product_id"]
+                    or assessment.get("catalog_version") != request_payload["catalog_version"]
+                    or len(decisions) != expected_count
+                    or not assessment.get("all_eligible")
+                    or any(item.get("eligible") is not True for item in decisions)
+                ):
+                    attributes.pop("product_intelligence", None)
+                else:
+                    # Only fields explicitly assessed by the gateway can cross the serving boundary.
+                    attributes["product_intelligence"] = {
+                        "schema_version": intelligence.get("schema_version", "1.0"),
+                        "claims": claims,
+                        "ingredient_declarations": ingredients,
+                    }
+            except (httpx.HTTPError, ValueError, TypeError, KeyError):
+                attributes.pop("product_intelligence", None)
+    await __import__("asyncio").gather(*[
+        _cil_gate_node(value, client, gateway, token)
+        for key, value in node.items()
+        if key != "attributes" and isinstance(value, (dict, list))
+    ])
+
+
+@app.middleware("http")
+async def enforce_cil_before_catalog_serving(request: Request, call_next):
+    response = await call_next(request)
+    if request.method != "GET" or not request.url.path.startswith(("/products", "/variants")):
+        return response
+    body = b"".join([chunk async for chunk in response.body_iterator])
+    if response.status_code >= 400:
+        return Response(content=body, status_code=response.status_code, headers={
+            key: value for key, value in response.headers.items()
+            if key.lower() not in {"content-length", "content-encoding", "transfer-encoding"}
+        })
+    try:
+        payload = json.loads(body)
+    except (ValueError, UnicodeDecodeError):
+        return Response(content=body, status_code=response.status_code, media_type="application/json")
+    gateway = os.getenv("CIL_GATEWAY_URL", "").strip()
+    token = os.getenv("CIL_SERVICE_TOKEN", "").strip()
+    async with httpx.AsyncClient(timeout=httpx.Timeout(2.0, connect=1.0), follow_redirects=False) as client:
+        await _cil_gate_node(payload, client, gateway, token)
+    return Response(
+        content=json.dumps(payload, separators=(",", ":"), default=str),
+        status_code=response.status_code,
+        media_type="application/json",
     )
 
 
