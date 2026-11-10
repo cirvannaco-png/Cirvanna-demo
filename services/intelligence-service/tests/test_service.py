@@ -244,6 +244,16 @@ def test_feedback_aggregate_opens_cal_review_and_records_final_cal_decision(clie
     assert result["automatic_suppression"] is False
     review_id = result["cal_review_id"]
 
+    learning = client.post(
+        "/learning/signals", headers=auth("service-test"),
+        json={"product_ids": ["product-review"], "context_key": "humid-daily"},
+    )
+    assert learning.status_code == 200
+    feedback_signal = learning.json()["signals"][0]
+    assert feedback_signal["status"] == "available"
+    assert feedback_signal["contributor_count"] == 30
+    assert feedback_signal["unsuitable_share"] == 1.0
+
     queue = client.get("/cal/review-queue", headers=auth("service-test"))
     assert queue.status_code == 200
     assert any(item["review_id"] == review_id for item in queue.json()["items"])
@@ -408,3 +418,16 @@ def test_source_rights_revocation_is_audited_and_immediately_blocks_serving(clie
     assert assessment.status_code == 200
     assert assessment.json()["decisions"][0]["eligible"] is False
     assert assessment.json()["decisions"][0]["reason"] == "SOURCE_RIGHTS_REVOKED"
+
+
+def test_learning_signals_suppress_small_cohorts(client):
+    response = client.post(
+        "/learning/signals",
+        headers=auth("service-test"),
+        json={"product_ids": ["product-small-cohort"], "context_key": "humid-daily"},
+    )
+    assert response.status_code == 200
+    signal = response.json()["signals"][0]
+    assert signal["status"] == "suppressed"
+    assert signal["contributor_count"] == 0
+    assert signal["unsuitable_share"] is None
