@@ -133,12 +133,19 @@ class DecisionRequest(BaseModel):
 
 
 class DiscoveryRequest(BaseModel):
-    """Live catalog/offer search request; identity is verified separately."""
+    """Live Catalog/Commerce search; all returned products are gated by candidate-bound CAL."""
     model_config = ConfigDict(extra="forbid")
     user_id: str = Field(min_length=1, max_length=128)
-    query: str = Field(min_length=2, max_length=160)
+    # Empty query means browse the active merchant offers in the selected market.
+    query: str = Field(default="", max_length=160)
     category: str | None = Field(default=None, max_length=80)
     currency: str | None = Field(default=None, min_length=3, max_length=3)
+    market_country_code: str | None = Field(default=None, min_length=2, max_length=2)
+    display_currency: str | None = Field(default=None, min_length=3, max_length=3)
+    destination_key: str | None = Field(default=None, min_length=3, max_length=180)
+    fulfillment_mode: Literal["shipping", "courier_delivery", "merchant_delivery", "collection", "local_transport"] | None = None
+    radius_km: float = Field(default=30.0, ge=1.0, le=500.0)
+    offset: int = Field(default=0, ge=0)
     limit: int = Field(default=10, ge=1, le=25)
     context: ContextInput = Field(default_factory=ContextInput)
     use_wardrobe_context: bool = False
@@ -147,13 +154,18 @@ class DiscoveryRequest(BaseModel):
     cultural_requirements: list[CulturalRequirementInput] = Field(default_factory=list, max_length=60)
     hard_constraints: list[HardConstraintInput] = Field(default_factory=list, max_length=60)
 
-    @field_validator("user_id", "query")
+    @field_validator("user_id")
     @classmethod
-    def normalize_discovery_text(cls, value: str) -> str:
+    def normalize_discovery_user(cls, value: str) -> str:
         normalized = " ".join(value.split()).strip()
         if not normalized:
-            raise ValueError("value must not be blank")
+            raise ValueError("user_id must not be blank")
         return normalized
+
+    @field_validator("query")
+    @classmethod
+    def normalize_discovery_query(cls, value: str) -> str:
+        return " ".join(value.split()).strip()
 
 
 
@@ -1462,7 +1474,9 @@ def _discover_catalog_and_offers(payload: DiscoveryRequest) -> tuple[list[dict[s
         raise HTTPException(503, detail={"code": "CATALOG_DISCOVERY_NOT_CONFIGURED"})
     if not commerce_base or not _trusted_internal_base_url(commerce_base):
         raise HTTPException(503, detail={"code": "COMMERCE_OFFERS_NOT_CONFIGURED"})
-    params: dict[str, Any] = {"q": payload.query, "limit": payload.limit}
+    params: dict[str, Any] = {"limit": payload.limit, "offset": payload.offset}
+    if payload.query:
+        params["q"] = payload.query
     if payload.category:
         params["category"] = payload.category
     catalog_items: list[dict[str, Any]] = []
@@ -1480,11 +1494,22 @@ def _discover_catalog_and_offers(payload: DiscoveryRequest) -> tuple[list[dict[s
             if not isinstance(catalog_payload, dict) or not isinstance(catalog_payload.get("items"), list):
                 raise HTTPException(502, detail={"code": "CATALOG_DISCOVERY_RESPONSE_INVALID"})
             catalog_items = [x for x in catalog_payload["items"] if isinstance(x, dict) and x.get("status") == "active" and isinstance(x.get("product_id"), str)]
-            offer_params: dict[str, Any] = {"q": payload.query, "limit": payload.limit}
+            offer_params: dict[str, Any] = {"limit": payload.limit, "offset": payload.offset}
+            if payload.query:
+                offer_params["q"] = payload.query
             if payload.category:
                 offer_params["category"] = payload.category
             if payload.currency:
                 offer_params["currency"] = payload.currency.upper()
+            if payload.market_country_code:
+                offer_params["market_country_code"] = payload.market_country_code.upper()
+            if payload.display_currency:
+                offer_params["display_currency"] = payload.display_currency.upper()
+            if payload.destination_key:
+                offer_params["destination_key"] = payload.destination_key
+                offer_params["radius_km"] = payload.radius_km
+            if payload.fulfillment_mode:
+                offer_params["fulfillment_mode"] = payload.fulfillment_mode
             offer_response = client.get(commerce_base + "/marketplace/offers", params=offer_params, headers={"Accept": "application/json"})
             if offer_response.status_code != 200:
                 raise HTTPException(503, detail={"code": "COMMERCE_OFFERS_UNAVAILABLE"})

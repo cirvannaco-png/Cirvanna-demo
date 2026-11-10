@@ -39,65 +39,116 @@ def test_page_bootstraps_same_origin_live_offers_not_demo_data(client):
     assert response.headers["referrer-policy"] == "no-referrer"
 
 
-def test_public_offers_are_proxied_without_exposing_catalog_credentials(client, monkeypatch):
+def test_marketplace_offers_use_authenticated_gateway_cal_show_only(client, monkeypatch):
     configure_upstreams(monkeypatch)
-    seen = {}
-
-    def fake_get(url, **kwargs):
-        seen["url"] = url
-        seen.update(kwargs)
-        return FakeResponse({"items": [{"variant_id": "v1", "image_urls": ["https://cdn.example.test/unmasked.jpg"], "product": {"image_urls": ["https://cdn.example.test/nested.jpg"]}}], "total": 1, "offset": 0, "limit": 20})
-
-    monkeypatch.setattr(main.httpx, "get", fake_get)
-    response = client.get("/api/commerce/marketplace/offers?q=linen&category=Fashion&offset=20&limit=10")
-    assert response.status_code == 200
-    assert response.json()["total"] == 1
-    assert response.json()["items"][0]["image_urls"] == []
-    assert response.json()["items"][0]["product"]["image_urls"] == []
-    assert seen["url"] == "https://commerce.example.test/marketplace/offers"
-    assert seen["params"] == {"offset": 20, "limit": 10, "q": "linen", "category": "Fashion"}
-    assert "Authorization" not in seen["headers"]
-    assert "catalog-server-only-test-token" not in response.text
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({
+            "request_id": "req-marketplace-1",
+            "ranked_candidate_count": 2,
+            "displayable_products": [{
+                "product": {
+                    "product_id": "product-1", "name": "Linen shirt", "brand": "Cirvanna",
+                    "category": "Fashion", "description": "A linen shirt",
+                    "attributes": {"material": "linen"},
+                    "image_urls": ["https://cdn.example.test/unverified-product.jpg"],
+                },
+                "offer": {
+                    "catalog_product_id": "product-1", "variant_id": "variant-1",
+                    "merchant_id": "merchant-1", "merchant_name": "Merchant One",
+                    "product_name": "Linen shirt", "category": "Fashion", "sku": "LINEN-M",
+                    "options": {"size": "M"}, "price_minor": 2500, "currency": "KES",
+                    "available_stock": 3, "image_urls": ["https://cdn.example.test/unverified-offer.jpg"],
+                    "product": {"image_urls": ["https://cdn.example.test/nested.jpg"]},
+                },
+                "decision": {"verdict": "show", "may_display": True, "policy_version": "policy-1"},
+            }],
+            "withheld_candidate_ids": [{"product_id": "blocked-product-secret", "decision": "review"}],
+            "display_authority": "CaTaCaCi/CAL",
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get(
+        "/api/commerce/marketplace/offers?q=linen&category=Fashion&market_country_code=KE&display_currency=KES&destination_key=Nakuru%2FSubukia&fulfillment_mode=courier_delivery&radius_km=75&offset=20&limit=10",
+        headers={"Authorization": "Bearer signed-session"},
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["display_authority"] == "CaTaCaCi/CAL"
+    assert data["withheld_candidate_count"] == 1
+    assert "withheld_candidate_ids" not in data
+    assert "blocked-product-secret" not in response.text
+    assert len(data["items"]) == 1
+    item = data["items"][0]
+    assert item["variant_id"] == "variant-1"
+    assert item["product_name"] == "Linen shirt"
+    assert item["image_urls"] == []
+    assert item["product"]["image_urls"] == []
+    assert fake.calls[0][1] == "https://commerce.example.test/me"
+    assert fake.calls[1][1] == "https://decision.example.test/v1/discover"
+    assert fake.calls[1][2]["headers"]["X-End-User-Authorization"] == "Bearer signed-session"
+    sent = fake.calls[1][2]["json"]
+    assert sent["user_id"] == "signed-user-42"
+    assert sent["query"] == "linen"
+    assert sent["market_country_code"] == "KE"
+    assert sent["display_currency"] == "KES"
+    assert sent["destination_key"] == "Nakuru/Subukia"
+    assert sent["fulfillment_mode"] == "courier_delivery"
+    assert sent["radius_km"] == 75.0
+    assert sent["offset"] == 20
+    assert "Authorization" not in response.text
 
 
 def test_account_proxy_requires_bearer_and_blocks_admin_routes(client, monkeypatch):
     configure_upstreams(monkeypatch)
     calls = []
     monkeypatch.setattr(main.httpx, "request", lambda *args, **kwargs: calls.append(args) or FakeResponse({}))
-    assert client.get("/api/commerce/cart").status_code == 401
+    assert client.get("/api/commerce/me").status_code == 401
     denied = client.get("/api/commerce/admin/inventory/audit", headers={"Authorization": "Bearer customer-token"})
     assert denied.status_code == 404
     assert calls == []
 
 
-def test_account_proxy_forwards_only_allowlisted_headers_and_bearer(client, monkeypatch):
+def test_cart_and_checkout_require_candidate_bound_cal_reauthorization(client, monkeypatch):
     configure_upstreams(monkeypatch)
-    seen = {}
+    calls = []
+    monkeypatch.setattr(main.httpx, "request", lambda *args, **kwargs: calls.append((args, kwargs)) or FakeResponse({}))
+    headers = {"Authorization": "Bearer customer-token", "Content-Type": "application/json"}
+    variant = "123e4567-e89b-12d3-a456-426614174000"
+    requests = [
+        client.get("/api/commerce/cart", headers=headers),
+        client.post("/api/commerce/cart/items", headers=headers, json={"variant_id": variant, "quantity": 1}),
+        client.patch(f"/api/commerce/cart/items/{variant}", headers=headers, json={"quantity": 2}),
+        client.post("/api/commerce/checkout", headers=headers, json={"confirm": True}),
+    ]
+    assert [response.status_code for response in requests] == [503, 503, 503, 503]
+    assert all(response.json()["detail"]["code"] == "CAL_CANDIDATE_PURCHASE_REAUTH_REQUIRED" for response in requests)
+    assert calls == []
 
-    def fake_request(method, url, **kwargs):
-        seen["method"] = method
-        seen["url"] = url
-        seen.update(kwargs)
-        return FakeResponse({"order_id": "order-123"}, status_code=201)
+    # Removing an existing cart line is a safe cleanup operation and remains available.
+    removed = client.delete(f"/api/commerce/cart/items/{variant}", headers=headers)
+    assert removed.status_code == 200
+    assert calls and calls[0][0][0] == "DELETE"
 
-    monkeypatch.setattr(main.httpx, "request", fake_request)
+
+def test_account_proxy_does_not_forward_checkout_without_candidate_authorization(client, monkeypatch):
+    configure_upstreams(monkeypatch)
+    calls = []
+    monkeypatch.setattr(main.httpx, "request", lambda *args, **kwargs: calls.append((args, kwargs)) or FakeResponse({}))
     response = client.post(
         "/api/commerce/checkout",
         headers={
             "Authorization": "Bearer user-session-token",
             "Content-Type": "application/json",
             "Idempotency-Key": "checkout-test-key",
-            "Cookie": "untrusted=not-forwarded",
         },
         json={"confirm": True},
     )
-    assert response.status_code == 201
-    assert seen["method"] == "POST"
-    assert seen["url"] == "https://commerce.example.test/checkout"
-    assert seen["headers"]["Authorization"] == "Bearer user-session-token"
-    assert seen["headers"]["idempotency-key"] == "checkout-test-key"
-    assert "cookie" not in seen["headers"]
-    assert "follow_redirects" in seen and seen["follow_redirects"] is False
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "CAL_CANDIDATE_PURCHASE_REAUTH_REQUIRED"
+    assert calls == []
 
 
 def test_readiness_fails_closed_until_both_upstreams_are_ready(client, monkeypatch):
@@ -117,11 +168,14 @@ def test_readiness_fails_closed_until_both_upstreams_are_ready(client, monkeypat
     assert pending.json()["detail"]["ready"] is False
 
 
-def test_external_upstream_must_use_https(client, monkeypatch):
-    monkeypatch.setenv("COMMERCE_API_URL", "http://commerce.example.test")
+def test_marketplace_guest_browse_requires_verified_user_bearer(client, monkeypatch):
+    configure_upstreams(monkeypatch)
+    fake = FakeAsyncClient([])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.get("/api/commerce/marketplace/offers")
-    assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "COMMERCE_API_URL_MUST_BE_TRUSTED_HTTPS"
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "USER_BEARER_REQUIRED"
+    assert fake.calls == []
 
 class FakeAsyncClient:
     def __init__(self, responses):
@@ -164,16 +218,25 @@ def test_description_search_fails_closed_without_pnelly_or_legacy_credentials(cl
     assert response.json()["detail"]["code"] == "PNELLY_API_URL_NOT_CONFIGURED"
 
 
-def test_description_search_forwards_to_legacy_xari_alias_and_keeps_candidates_pending_cal(client, monkeypatch):
+def test_description_search_forwards_to_legacy_xari_alias_but_suppresses_all_candidates_until_cal(client, monkeypatch):
     monkeypatch.setenv("XARI_API_URL", "https://xari.example.test")
     monkeypatch.setenv("XARI_API_TOKEN", "xari-internal-token-at-least-thirty-two-bytes")
     fake = FakeAsyncClient([FakeResponse({
         "status": "complete",
         "query": "green linen dress",
         "candidate_count": 2,
-        "candidates": [{"variant_id": "offer-1", "product_name": "green dress", "image_urls": ["https://cdn.example.test/unverified.jpg"], "product": {"image_urls": ["https://cdn.example.test/nested.jpg"]}}],
-        "display_authorized": False,
-        "decision_status": "PENDING_CAL",
+        "candidates": [{
+            "variant_id": "offer-1",
+            "product_name": "green dress",
+            "merchant_name": "unapproved merchant",
+            "price_minor": 1234,
+            "image_urls": ["https://cdn.example.test/unverified.jpg"],
+            "product": {"name": "private product", "image_urls": ["https://cdn.example.test/nested.jpg"]},
+        }],
+        # PNELLY is not the CAL owner. These deliberately false/forged claims
+        # must never authorize disclosure through this retrieval-only route.
+        "display_authorized": True,
+        "decision_status": "SHOW",
         "scores_are_probabilities": False,
     })])
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
@@ -183,8 +246,9 @@ def test_description_search_forwards_to_legacy_xari_alias_and_keeps_candidates_p
     assert data["candidate_count"] == 2
     assert data["display_authorized"] is False
     assert data["decision_status"] == "PENDING_CAL"
-    assert data["candidates"][0]["image_urls"] == []
-    assert data["candidates"][0]["product"]["image_urls"] == []
+    assert "candidates" not in data
+    for private_value in ("offer-1", "green dress", "unapproved merchant", "1234", "private product", "cdn.example.test"):
+        assert private_value not in response.text
     assert fake.calls[0][1] == "https://xari.example.test/v1/marketplace/search"
     assert fake.calls[0][2]["json"]["query"] == "green linen dress"
     assert "Authorization" not in response.text
@@ -318,7 +382,7 @@ def test_marketplace_ui_does_not_solicit_click_it_photos_while_pipeline_is_block
     assert 'id="clickItForm"' not in response.text
     assert 'fetch("/api/vision/marketplace-search"' in response.text
     assert 'fetch("/api/vision/click-it"' not in response.text
-    assert "display_authorized===true" in response.text
+    assert "display_authorized===true" not in response.text
     assert "PENDING_CAL" in response.text
 
 def test_description_search_keeps_xari_credentials_as_legacy_fallback(client, monkeypatch):
@@ -502,8 +566,9 @@ def test_wardrobe_recommendations_forward_verified_token_to_cal_decision_gateway
                 "product": {"product_id": "product-1", "image_urls": ["https://cdn.example.test/product.jpg"]},
                 "offer": {"variant_id": "variant-1", "image_urls": ["https://cdn.example.test/offer.jpg"],
                           "product": {"image_urls": ["https://cdn.example.test/nested-offer.jpg"]}},
+                "decision": {"verdict": "show", "may_display": True},
             }],
-            "withheld_candidate_ids": [],
+            "withheld_candidate_ids": [{"product_id": "blocked-product-secret", "decision": "review"}],
             "display_authority": "CaTaCaCi/CAL",
         }),
     ])
@@ -531,6 +596,9 @@ def test_wardrobe_recommendations_forward_verified_token_to_cal_decision_gateway
     assert result["product"]["image_urls"] == []
     assert result["offer"]["image_urls"] == []
     assert result["offer"]["product"]["image_urls"] == []
+    assert response.json()["withheld_candidate_count"] == 1
+    assert "withheld_candidate_ids" not in response.json()
+    assert "blocked-product-secret" not in response.text
     assert "Authorization" not in response.text
 
 
@@ -1828,42 +1896,13 @@ def test_marketplace_comparison_route_is_registered_once():
 
 
 
-def test_public_offers_forwards_market_and_display_currency(client, monkeypatch):
+
+
+
+def test_offer_comparison_fails_closed_without_candidate_bound_cal_receipt(client, monkeypatch):
     configure_upstreams(monkeypatch)
-    seen = {}
-
-    def fake_get(url, **kwargs):
-        seen["url"] = url
-        seen.update(kwargs)
-        return FakeResponse({"items": [], "total": 0, "offset": 0, "limit": 20})
-
-    monkeypatch.setattr(main.httpx, "get", fake_get)
-    response = client.get(
-        "/api/commerce/marketplace/offers?market_country_code=KE&display_currency=KES&destination_key=Nakuru%2FSubukia&fulfillment_mode=courier_delivery&radius_km=75"
-    )
-    assert response.status_code == 200
-    assert seen["params"]["market_country_code"] == "KE"
-    assert seen["params"]["display_currency"] == "KES"
-    assert seen["params"]["destination_key"] == "Nakuru/Subukia"
-    assert seen["params"]["fulfillment_mode"] == "courier_delivery"
-    assert seen["params"]["radius_km"] == 75.0
-    assert "Authorization" not in seen["headers"]
-
-
-def test_offer_comparison_proxy_preserves_unavailable_reason_without_claiming_cost(client, monkeypatch):
-    configure_upstreams(monkeypatch)
-    seen = {}
-
-    def fake_post(url, **kwargs):
-        seen["url"] = url
-        seen.update(kwargs)
-        return FakeResponse({
-            "status": "unavailable",
-            "reason_code": "TAX_QUOTE_NOT_AUTHORITATIVE",
-            "comparison": None,
-        })
-
-    monkeypatch.setattr(main.httpx, "post", fake_post)
+    calls = []
+    monkeypatch.setattr(main.httpx, "post", lambda *args, **kwargs: calls.append((args, kwargs)))
     response = client.post("/api/commerce/marketplace/compare", json={
         "variant_ids": [
             "11111111-1111-4111-8111-111111111111",
@@ -1876,15 +1915,13 @@ def test_offer_comparison_proxy_preserves_unavailable_reason_without_claiming_co
         "payment_method": "card",
         "radius_km": 75,
     })
-    assert response.status_code == 200
-    assert response.json()["status"] == "unavailable"
-    assert response.json()["reason_code"] == "TAX_QUOTE_NOT_AUTHORITATIVE"
-    assert seen["url"] == "https://commerce.example.test/marketplace/compare"
-    assert seen["json"]["display_currency"] == "KES"
-    assert seen["json"]["radius_km"] == 75
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "CAL_AUTHORIZATION_REQUIRED"
+    assert "comparison" not in response.json()
+    assert calls == []
 
 
-def test_offer_comparison_rejects_invalid_variant_identity_before_upstream(client, monkeypatch):
+def test_offer_comparison_never_contacts_commerce_without_cal_authorization(client, monkeypatch):
     configure_upstreams(monkeypatch)
     calls = []
     monkeypatch.setattr(main.httpx, "post", lambda *args, **kwargs: calls.append(args))
@@ -1895,7 +1932,8 @@ def test_offer_comparison_rejects_invalid_variant_identity_before_upstream(clien
         "fulfillment_mode": "collection",
         "display_currency": "KES",
     })
-    assert response.status_code == 422
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "CAL_AUTHORIZATION_REQUIRED"
     assert calls == []
 
 class LookItLifecycleClient:

@@ -32,7 +32,8 @@ DEFAULT_PORTAL_ASSETS = ROOT / "apps" / "demo-web" / "assets"
 HTML_PATH = Path(os.getenv("MARKETPLACE_HTML_PATH", str(DEFAULT_HTML)))
 BRAND_PORTAL_HTML_PATH = Path(os.getenv("BRAND_PORTAL_HTML_PATH", str(DEFAULT_BRAND_PORTAL_HTML)))
 FOUNDER_CONSOLE_HTML_PATH = Path(os.getenv("FOUNDER_CONSOLE_HTML_PATH", str(DEFAULT_FOUNDER_CONSOLE_HTML)))
-PORTAL_ASSETS_DIR = Path(os.getenv("MARKETPLACE_ASSETS_DIR", str(DEFAULT_PORTAL_ASSETS)))
+# Public assets are repository-owned presentation files, never an upload or media store.
+PORTAL_ASSETS_DIR = DEFAULT_PORTAL_ASSETS
 TIMEOUT_SECONDS = 5.0
 MAX_PAGE_SIZE = 100
 MAX_VISION_IMAGE_BYTES = 10 * 1024 * 1024
@@ -69,7 +70,7 @@ async def security_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers.setdefault(
         "Content-Security-Policy",
-        "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline'; "
+        "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
         "script-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; "
         "base-uri 'self'; frame-ancestors 'none'",
     )
@@ -231,14 +232,17 @@ async def marketplace_description_search(payload: MarketplaceSearchIn) -> dict:
     if payload.category and payload.category.strip():
         request_body["category"] = payload.category.strip()
     data = await _safe_json_post(base, "/v1/marketplace/search", token, request_body)
-    # This endpoint intentionally forwards candidates separately from display authorization.
+    # PNELLY retrieval is never a CAL decision. Do not return candidate records,
+    # even if an upstream response incorrectly claims SHOW/display_authorized.
+    raw_count = data.get("candidate_count", len(data["candidates"]))
+    if isinstance(raw_count, bool) or not isinstance(raw_count, int) or raw_count < 0:
+        raise HTTPException(502, detail={"code": "VISION_SEARCH_INVALID_CANDIDATE_COUNT"})
     return {
         "status": "complete",
         "query": payload.normalized_query,
-        "candidate_count": data.get("candidate_count", len(data["candidates"])),
-        "candidates": _withhold_unverified_media(data["candidates"]),
-        "display_authorized": data.get("display_authorized") is True,
-        "decision_status": data.get("decision_status", "PENDING_CAL"),
+        "candidate_count": raw_count,
+        "display_authorized": False,
+        "decision_status": "PENDING_CAL",
         "scores_are_probabilities": False,
     }
 
@@ -2050,7 +2054,8 @@ def marketplace_page() -> HTMLResponse:
 
 
 @app.get("/api/commerce/marketplace/offers")
-def public_offers(
+async def public_offers(
+    request: Request,
     q: str | None = Query(default=None, max_length=160),
     category: str | None = Query(default=None, max_length=80),
     currency: str | None = Query(default=None, min_length=3, max_length=3),
@@ -2061,90 +2066,125 @@ def public_offers(
     radius_km: float = Query(default=30.0, ge=1.0, le=500.0),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=MAX_PAGE_SIZE),
-) -> dict:
-    """Expose active offers with localized display prices only when FX evidence exists."""
-    base = _upstream_base("COMMERCE_API_URL")
-    params: dict[str, str | int] = {"offset": offset, "limit": limit}
-    if q and q.strip():
-        params["q"] = q.strip()
-    if category and category.strip():
-        params["category"] = category.strip()
-    if currency and currency.strip():
-        params["currency"] = currency.strip().upper()
-    if market_country_code and market_country_code.strip():
-        params["market_country_code"] = market_country_code.strip().upper()
-    if display_currency and display_currency.strip():
-        params["display_currency"] = display_currency.strip().upper()
-    if destination_key and destination_key.strip():
-        params["destination_key"] = destination_key.strip()
-    if fulfillment_mode:
-        params["fulfillment_mode"] = fulfillment_mode
-    if destination_key:
-        params["radius_km"] = radius_km
-    try:
-        response = httpx.get(
-            base + "/marketplace/offers",
-            params=params,
-            headers={"Accept": "application/json"},
-            timeout=TIMEOUT_SECONDS,
-            follow_redirects=False,
-        )
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=503, detail={"code": "COMMERCE_OFFERS_UNAVAILABLE"}) from exc
+) -> Response:
+    """Authenticated marketplace browse through the canonical CAL discovery route."""
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(20.0, connect=3.0),
+        trust_env=False,
+        follow_redirects=False,
+    ) as client:
+        subject, user_token = await _verified_commerce_subject(client, request)
+        gateway_base, gateway_token = _decision_gateway()
+        body = {
+            "user_id": subject,
+            "query": " ".join((q or "").split()).strip(),
+            "category": category.strip() if category and category.strip() else None,
+            "currency": currency.upper() if currency else None,
+            "market_country_code": market_country_code.upper() if market_country_code else None,
+            "display_currency": display_currency.upper() if display_currency else None,
+            "destination_key": destination_key.strip() if destination_key and destination_key.strip() else None,
+            "fulfillment_mode": fulfillment_mode,
+            "radius_km": radius_km,
+            "offset": offset,
+            "limit": min(limit, 25),
+            "use_wardrobe_context": False,
+            "exclude_owned_products": True,
+        }
+        try:
+            response = await client.post(
+                gateway_base + "/v1/discover",
+                headers={
+                    "Authorization": "Bearer " + gateway_token,
+                    "X-End-User-Authorization": "Bearer " + user_token,
+                    "Accept": "application/json",
+                },
+                json=body,
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "CAL_MARKETPLACE_DISCOVERY_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "CAL_MARKETPLACE_DISCOVERY_UNAVAILABLE"}) from exc
+
+    if response.status_code in {400, 401, 403, 404, 409, 422}:
+        try:
+            detail = response.json().get("detail", {})
+            code = detail.get("code") if isinstance(detail, dict) else None
+        except ValueError:
+            code = None
+        raise HTTPException(response.status_code, detail={"code": code or "CAL_MARKETPLACE_DISCOVERY_REJECTED"})
     if response.status_code != 200:
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "COMMERCE_OFFERS_UNAVAILABLE", "upstream_status": response.status_code},
-        )
+        raise HTTPException(503, detail={"code": "CAL_MARKETPLACE_DISCOVERY_UNAVAILABLE"})
     try:
         data = response.json()
     except ValueError as exc:
-        raise HTTPException(status_code=502, detail={"code": "INVALID_COMMERCE_RESPONSE"}) from exc
-    if not isinstance(data, dict) or not isinstance(data.get("items"), list) or not isinstance(data.get("total"), int):
-        raise HTTPException(status_code=502, detail={"code": "INVALID_COMMERCE_RESPONSE"})
-    safe_payload = dict(data)
-    safe_items = []
-    for offer in data["items"]:
-        if not isinstance(offer, dict):
-            raise HTTPException(status_code=502, detail={"code": "INVALID_COMMERCE_RESPONSE"})
-        safe_offer = dict(offer)
-        # Defense in depth: public media stays hidden until an asset-bound privacy receipt is verified.
-        safe_offer["image_urls"] = []
-        if isinstance(safe_offer.get("product"), dict):
-            safe_product = dict(safe_offer["product"])
-            safe_product["image_urls"] = []
-            safe_offer["product"] = safe_product
-        safe_items.append(safe_offer)
-    safe_payload["items"] = safe_items
-    return safe_payload
+        raise HTTPException(502, detail={"code": "CAL_MARKETPLACE_DISCOVERY_RESPONSE_INVALID"}) from exc
+    if (
+        not isinstance(data, dict)
+        or not isinstance(data.get("displayable_products"), list)
+        or not isinstance(data.get("withheld_candidate_ids", []), list)
+        or isinstance(data.get("ranked_candidate_count"), bool)
+        or not isinstance(data.get("ranked_candidate_count", 0), int)
+        or data.get("ranked_candidate_count", 0) < 0
+    ):
+        raise HTTPException(502, detail={"code": "CAL_MARKETPLACE_DISCOVERY_RESPONSE_INVALID"})
 
+    items = []
+    for candidate in data["displayable_products"]:
+        if not isinstance(candidate, dict):
+            raise HTTPException(502, detail={"code": "CAL_MARKETPLACE_DISCOVERY_RESPONSE_INVALID"})
+        decision = candidate.get("decision")
+        product = candidate.get("product")
+        offer = candidate.get("offer")
+        if (
+            not isinstance(decision, dict)
+            or decision.get("verdict") != "show"
+            or decision.get("may_display") is not True
+            or not isinstance(product, dict)
+            or not isinstance(offer, dict)
+            or not isinstance(product.get("product_id"), str)
+            or offer.get("catalog_product_id") != product.get("product_id")
+            or not isinstance(offer.get("variant_id"), str)
+        ):
+            raise HTTPException(502, detail={"code": "CAL_MARKETPLACE_CANDIDATE_AUTHORIZATION_INVALID"})
+        safe_offer = _withhold_unverified_media(offer)
+        safe_offer["product_name"] = offer.get("product_name") or product.get("name")
+        safe_offer["brand"] = product.get("brand")
+        safe_offer["category"] = offer.get("category") or product.get("category")
+        safe_offer["description"] = product.get("description") or ""
+        safe_offer["attributes"] = product.get("attributes") if isinstance(product.get("attributes"), dict) else {}
+        safe_offer["image_urls"] = []
+        safe_offer["product"] = _withhold_unverified_media(product)
+        items.append(safe_offer)
+
+    withheld = data.get("withheld_candidate_ids", [])
+    ranked_count = data.get("ranked_candidate_count", len(items) + len(withheld))
+    has_more = ranked_count >= min(limit, 25)
+    total = offset + ranked_count + (1 if has_more else 0)
+    return JSONResponse(
+        content={
+            "items": items,
+            "total": total,
+            "offset": offset,
+            "limit": min(limit, 25),
+            "has_more": has_more,
+            "withheld_candidate_count": len(withheld),
+            "display_authority": "CaTaCaCi/CAL",
+            "display_rule": "Only authenticated, candidate-bound CAL SHOW decisions with may_display=true are returned with product and offer details.",
+        },
+        headers={"Cache-Control": "no-store, private"},
+    )
 
 @app.post("/api/commerce/marketplace/compare")
-def compare_public_offers(payload: OfferComparisonIn) -> Response:
-    """Proxy a Commerce-authored comparison response without inventing any costs."""
-    base = _upstream_base("COMMERCE_API_URL")
-    try:
-        response = httpx.post(
-            base + "/marketplace/compare",
-            json=payload.model_dump(mode="json"),
-            headers={"Accept": "application/json"},
-            timeout=TIMEOUT_SECONDS,
-            follow_redirects=False,
-        )
-    except httpx.TimeoutException as exc:
-        raise HTTPException(status_code=504, detail={"code": "COMMERCE_COMPARISON_TIMEOUT"}) from exc
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=503, detail={"code": "COMMERCE_COMPARISON_UNAVAILABLE"}) from exc
-    if response.status_code != 200:
-        raise HTTPException(status_code=503, detail={"code": "COMMERCE_COMPARISON_UNAVAILABLE"})
-    try:
-        data = response.json()
-    except ValueError as exc:
-        raise HTTPException(status_code=502, detail={"code": "INVALID_COMMERCE_COMPARISON_RESPONSE"}) from exc
-    if not isinstance(data, dict) or data.get("status") not in {"comparable", "unavailable"}:
-        raise HTTPException(status_code=502, detail={"code": "INVALID_COMMERCE_COMPARISON_RESPONSE"})
-    return JSONResponse(content=data, headers={"Cache-Control": "no-store, private"})
-
+async def compare_public_offers(request: Request) -> Response:
+    """Fail closed until each candidate is bound to an authenticated CAL SHOW receipt."""
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "code": "CAL_AUTHORIZATION_REQUIRED",
+            "message": "Merchant comparison is unavailable until candidate-bound CAL authorization is enforced.",
+        },
+        headers={"Cache-Control": "no-store"},
+    )
 
 def _authorized_commerce_path(method: str, path: str) -> bool:
     parts = path.split("/")
@@ -2175,6 +2215,17 @@ def _authorized_commerce_path(method: str, path: str) -> bool:
 async def commerce_proxy(path: str, request: Request) -> Response:
     """Forward customer operations only; admin/internal/webhook routes are not exposed."""
     method = request.method.upper()
+    cart_item_match = re.fullmatch(r"cart/items/[0-9a-fA-F-]{36}", path)
+    if (
+        (method == "GET" and path == "cart")
+        or (method == "POST" and path in {"cart/items", "checkout"})
+        or (method == "PATCH" and cart_item_match is not None)
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "CAL_CANDIDATE_PURCHASE_REAUTH_REQUIRED"},
+            headers={"Cache-Control": "no-store"},
+        )
     if not _authorized_commerce_path(method, path):
         raise HTTPException(status_code=404, detail={"code": "COMMERCE_ROUTE_NOT_AVAILABLE"})
     authorization = request.headers.get("authorization", "")
@@ -2439,10 +2490,41 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
         data = response.json()
     except ValueError as exc:
         raise HTTPException(502, detail={"code": "WARDROBE_RECOMMENDATIONS_RESPONSE_INVALID"}) from exc
-    # The decision gateway returns product/offer details only for CAL SHOW.
-    if not isinstance(data, dict) or not isinstance(data.get("displayable_products"), list):
+    # Treat the gateway decision as a candidate-bound authorization contract.
+    # Never pass withheld IDs or raw policy evidence to the browser.
+    if (
+        not isinstance(data, dict)
+        or not isinstance(data.get("displayable_products"), list)
+        or not isinstance(data.get("withheld_candidate_ids", []), list)
+    ):
         raise HTTPException(502, detail={"code": "WARDROBE_RECOMMENDATIONS_RESPONSE_INVALID"})
-    return _private_json_response(_withhold_unverified_media(data))
+
+    authorized_products = []
+    for candidate in data["displayable_products"]:
+        if not isinstance(candidate, dict):
+            raise HTTPException(502, detail={"code": "WARDROBE_RECOMMENDATIONS_RESPONSE_INVALID"})
+        decision = candidate.get("decision")
+        if (
+            not isinstance(decision, dict)
+            or decision.get("verdict") != "show"
+            or decision.get("may_display") is not True
+            or not isinstance(candidate.get("product"), dict)
+            or not isinstance(candidate.get("offer"), dict)
+        ):
+            raise HTTPException(502, detail={"code": "WARDROBE_CANDIDATE_CAL_AUTHORIZATION_INVALID"})
+        authorized_products.append(_withhold_unverified_media(candidate))
+
+    withheld = data.get("withheld_candidate_ids", [])
+    safe_payload = {
+        "request_id": data.get("request_id"),
+        "ranked_candidate_count": data.get("ranked_candidate_count", len(authorized_products) + len(withheld)),
+        "displayable_products": authorized_products,
+        "withheld_candidate_count": len(withheld),
+        "display_authority": "CaTaCaCi/CAL",
+        "display_rule": "Only candidate-bound CAL SHOW decisions with may_display=true are returned with product and offer details.",
+        "wardrobe_context": data.get("wardrobe_context") if isinstance(data.get("wardrobe_context"), dict) else {"used": True},
+    }
+    return _private_json_response(safe_payload)
 
 def _read_portal_page(path: Path, code: str) -> str:
     try:
