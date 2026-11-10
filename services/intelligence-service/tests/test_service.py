@@ -254,3 +254,57 @@ def test_feedback_aggregate_opens_cal_review_and_records_final_cal_decision(clie
     assert decision.status_code == 200
     assert decision.json()["verdict"] == "BLOCK"
     assert decision.json()["status"] == "decided"
+
+
+def test_provider_research_ingestion_requires_licence_and_persists_provenance(client, monkeypatch):
+    from app import main as cil_main
+
+    monkeypatch.setenv("CIL_PROVIDER_BASE_URL", "https://licensed.example/api")
+    monkeypatch.setattr(cil_main, "fetch_licensed_research", lambda **kwargs: {
+        "licence_id": "licence-123",
+        "terms_url": "https://licensed.example/terms",
+        "payload": {"study_id": "study-123", "summary": "A licensed research record."},
+    })
+    payload = {
+        "source_id": "provider-source-1",
+        "evidence_id": "provider-evidence-1",
+        "owner": "Licensed Research Provider",
+        "path": "v1/studies/123",
+        "params": {"locale": "en"},
+        "rights_status": "licensed",
+        "rights_reference": "signed-contract-123",
+        "permitted_purposes": ["research", "commercial_recommendation"],
+        "grade": "E2",
+        "scope": "ingredient",
+        "limitations": "Study scope is limited to the evaluated ingredient and conditions.",
+        "reviewed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    response = client.post("/providers/research", json=payload, headers=auth("admin-test"))
+    assert response.status_code == 201, response.text
+    result = response.json()
+    assert result["evidence_id"] == "provider-evidence-1"
+    assert result["provider_payload"]["study_id"] == "study-123"
+    assert "licence-123" in result["rights_status"] or result["rights_status"] == "licensed"
+
+
+def test_provider_research_rejects_research_only_commercial_scope_before_fetch(client, monkeypatch):
+    from app import main as cil_main
+
+    def should_not_call(**kwargs):
+        raise AssertionError("provider must not be called for incompatible rights")
+    monkeypatch.setattr(cil_main, "fetch_licensed_research", should_not_call)
+    payload = {
+        "source_id": "provider-source-research-only",
+        "evidence_id": "provider-evidence-research-only",
+        "owner": "University",
+        "path": "v1/studies/123",
+        "rights_status": "research_only",
+        "rights_reference": "research-terms",
+        "permitted_purposes": ["research", "commercial_recommendation"],
+        "grade": "E2",
+        "scope": "ingredient",
+        "limitations": "This evidence is restricted to non-commercial research use.",
+        "reviewed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    response = client.post("/providers/research", json=payload, headers=auth("admin-test"))
+    assert response.status_code == 422
