@@ -1183,6 +1183,9 @@ class Readiness(BaseModel):
     authentication_mode: str
     catalog_configured: bool
     payment_configured: bool
+    cal_purchase_gateway_configured: bool
+    cal_purchase_receipt_signer_configured: bool
+    cal_gateway_ready: bool
     migrations_required: bool
     migrations_applied: bool
     schema_revision: str | None
@@ -1928,6 +1931,15 @@ def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
     auth_ok = _authentication_configured()
     catalog_ok = bool(os.getenv("CATALOG_API_URL") and os.getenv("CATALOG_API_TOKEN"))
     payment_ok = StripeGateway().ready
+    try:
+        cal_base, cal_token, cal_signing_key = _cal_gateway_settings()
+        cal_gateway_configured = True
+        cal_signer_configured = len(cal_signing_key.encode("utf-8")) >= 32
+        cal_gateway_ready = _cal_gateway_probe(cal_base, cal_token)
+    except HTTPException:
+        cal_gateway_configured = False
+        cal_signer_configured = False
+        cal_gateway_ready = False
     migrations_applied = schema_revision == EXPECTED_SCHEMA_REVISION
     ready = (
         connected
@@ -1935,12 +1947,18 @@ def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
         and auth_ok
         and catalog_ok
         and payment_ok
+        and cal_gateway_configured
+        and cal_signer_configured
+        and cal_gateway_ready
         and (not migrations_required or migrations_applied)
     )
     result = Readiness(status="ready" if ready else "not_ready", service=SERVICE,
         database_connected=connected, schema_present=schema_present,
         authentication_configured=auth_ok, authentication_mode=_commerce_auth_mode(),
-        catalog_configured=catalog_ok, payment_configured=payment_ok, migrations_required=migrations_required,
+        catalog_configured=catalog_ok, payment_configured=payment_ok,
+        cal_purchase_gateway_configured=cal_gateway_configured,
+        cal_purchase_receipt_signer_configured=cal_signer_configured,
+        cal_gateway_ready=cal_gateway_ready, migrations_required=migrations_required,
         migrations_applied=migrations_applied, schema_revision=schema_revision, ready=ready)
     if not ready:
         raise HTTPException(503, detail=result.model_dump())
@@ -1958,7 +1976,7 @@ def capabilities() -> dict[str, Any]:
         "multimarket_onboarding": True, "localized_offer_pricing": True,
         "provider_quote_ingestion": bool(os.getenv("COMMERCE_MARKET_CONTEXT_TOKEN")),
         "landed_cost_comparison": True, "checkout_landed_cost_revalidation": False,
-        "catacaci_eligibility": False, "click_it_reconstruction": False,
+        "catacaci_eligibility": True, "candidate_bound_purchase_authorization": bool(os.getenv("DECISION_GATEWAY_URL") and os.getenv("DECISION_GATEWAY_TOKEN") and os.getenv("CAL_PURCHASE_RECEIPT_HMAC_SECRET")), "click_it_reconstruction": False,
         "virtual_twin_generation": False, "virtual_try_on": False}
 
 
@@ -2880,12 +2898,32 @@ def delete_saved_product(catalog_product_id: uuid.UUID, actor: Annotated[Actor, 
 
 
 @app.get("/cart")
-def get_cart(actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Session, Depends(get_db)]):
-    return cart_json(db, ensure_cart(db, actor.user_id))
+def get_cart(
+    request: Request,
+    actor: Annotated[Actor, Depends(require_actor)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    cart = ensure_cart(db, actor.user_id)
+    rows = db.execute(
+        select(CartItem, Variant, Listing, Merchant)
+        .join(Variant, CartItem.variant_id == Variant.id)
+        .join(Listing, Variant.listing_id == Listing.id)
+        .join(Merchant, Listing.merchant_id == Merchant.id)
+        .where(CartItem.cart_id == cart.id)
+        .order_by(CartItem.id)
+    ).all()
+    if rows:
+        _authorize_cart_rows(request, db, actor.user_id, cart, rows, "cart_view")
+    return cart_json(db, cart)
 
 
 @app.post("/cart/items", status_code=201)
-def add_cart_item(payload: CartItemIn, actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Session, Depends(get_db)]):
+def add_cart_item(
+    payload: CartItemIn,
+    request: Request,
+    actor: Annotated[Actor, Depends(require_actor)],
+    db: Annotated[Session, Depends(get_db)],
+):
     joined = variant_triplet(db, payload.variant_id)
     if not joined:
         raise HTTPException(404, detail={"code": "VARIANT_NOT_FOUND"})
@@ -2899,6 +2937,13 @@ def add_cart_item(payload: CartItemIn, actor: Annotated[Actor, Depends(require_a
         raise HTTPException(422, detail={"code": "CART_QUANTITY_LIMIT", "maximum": MAX_QTY})
     if variant.on_hand - variant.reserved_qty < quantity:
         raise HTTPException(409, detail={"code": "INSUFFICIENT_AVAILABLE_STOCK", "available_stock": variant.on_hand - variant.reserved_qty})
+    authorization = _purchase_authorization_item((item, variant, listing, merchant), action="cart_add", quantity=quantity)
+    receipts = _request_cal_purchase_receipts(request, actor.user_id, [authorization])
+    audits = [_cal_audit_from_receipt(receipts[0], cart_id=cart.id, cart_version=cart.version)]
+    db.add_all(audits)
+    if audits[0].decision != "SHOW" or receipts[0].get("may_display") is not True:
+        db.commit()
+        raise HTTPException(409, detail={"code": "CAL_CART_ADD_DENIED"})
     if item:
         item.quantity = quantity
     else:
@@ -2909,21 +2954,39 @@ def add_cart_item(payload: CartItemIn, actor: Annotated[Actor, Depends(require_a
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(409, detail={"code": "CART_CONFLICT_RETRY"}) from exc
-    return cart_json(db, ensure_cart(db, actor.user_id))
+    return {"cart_id": cart.id, "version": cart.version, "item_count": db.scalar(
+        select(func.coalesce(func.sum(CartItem.quantity), 0)).where(CartItem.cart_id == cart.id)
+    ) or 0, "updated": True, "cart_refresh_required": True}
 
 
 @app.patch("/cart/items/{variant_id}")
-def update_cart_item(variant_id: uuid.UUID, payload: QuantityIn, actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Session, Depends(get_db)]):
+def update_cart_item(
+    variant_id: uuid.UUID,
+    payload: QuantityIn,
+    request: Request,
+    actor: Annotated[Actor, Depends(require_actor)],
+    db: Annotated[Session, Depends(get_db)],
+):
     cart = ensure_cart(db, actor.user_id)
     item = db.scalar(select(CartItem).where(CartItem.cart_id == cart.id, CartItem.variant_id == str(variant_id)))
     if not item:
         raise HTTPException(404, detail={"code": "CART_ITEM_NOT_FOUND"})
-    variant = db.get(Variant, item.variant_id)
-    if not variant or variant.state != "active" or variant.on_hand - variant.reserved_qty < payload.quantity:
+    joined = variant_triplet(db, item.variant_id)
+    if not joined:
+        raise HTTPException(409, detail={"code": "CART_OFFER_UNAVAILABLE"})
+    variant, listing, merchant = joined
+    if variant.state != "active" or listing.state != "active" or merchant.state != "approved" or variant.on_hand - variant.reserved_qty < payload.quantity:
         raise HTTPException(409, detail={"code": "INSUFFICIENT_AVAILABLE_STOCK"})
+    authorization = _purchase_authorization_item((item, variant, listing, merchant), action="cart_update", quantity=payload.quantity)
+    receipts = _request_cal_purchase_receipts(request, actor.user_id, [authorization])
+    audit = _cal_audit_from_receipt(receipts[0], cart_id=cart.id, cart_version=cart.version)
+    db.add(audit)
+    if audit.decision != "SHOW" or receipts[0].get("may_display") is not True:
+        db.commit()
+        raise HTTPException(409, detail={"code": "CAL_CART_UPDATE_DENIED"})
     item.quantity, cart.version, cart.updated_at = payload.quantity, cart.version + 1, now()
     db.commit()
-    return cart_json(db, cart)
+    return {"cart_id": cart.id, "version": cart.version, "quantity": item.quantity, "updated": True, "cart_refresh_required": True}
 
 
 @app.delete("/cart/items/{variant_id}")
@@ -2932,7 +2995,7 @@ def remove_cart_item(variant_id: uuid.UUID, actor: Annotated[Actor, Depends(requ
     db.query(CartItem).filter(CartItem.cart_id == cart.id, CartItem.variant_id == str(variant_id)).delete(synchronize_session=False)
     cart.version, cart.updated_at = cart.version + 1, now()
     db.commit()
-    return cart_json(db, cart)
+    return {"cart_id": cart.id, "version": cart.version, "removed_variant_id": str(variant_id), "cart_refresh_required": True}
 
 
 def _verify_checkout_personalization_consent(subject_id: str, consent_id: str | None, consent_version: str | None) -> str | None:
