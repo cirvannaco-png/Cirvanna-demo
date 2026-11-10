@@ -23,6 +23,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFi
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field
+from app.click_it_privacy import anonymize_click_it_image, detector_configuration
 from starlette import status
 from urllib.parse import urlsplit
 
@@ -774,21 +775,85 @@ async def click_it_scan(
     consent_image_processing: Annotated[bool, Form()],
     consent_click_it: Annotated[bool, Form()],
     image: Annotated[UploadFile, File()],
+    photographed_people_status: Annotated[str, Form()] = "unknown",
     category: Annotated[str | None, Form()] = None,
     limit: Annotated[int, Form(ge=1, le=25)] = 10,
 ) -> dict[str, Any]:
-    # Fail closed: main does not yet include a verified face-masking stage.
-    # Never decode, score, embed, or forward an unmasked user photograph.
-    await image.close()
     if not consent_image_processing or not consent_click_it:
+        await image.close()
         raise HTTPException(403, detail={"code": "EXPLICIT_CLICK_IT_CONSENT_REQUIRED"})
-    raise HTTPException(
-        503,
-        detail={
-            "code": "CLICK_IT_PRIVACY_PIPELINE_NOT_RELEASED",
-            "message": "Image scanning is temporarily unavailable until privacy masking is enabled.",
-        },
-    )
+    if photographed_people_status not in {"no_people", "adults_only", "contains_minor"}:
+        await image.close()
+        raise HTTPException(403, detail={"code": "CHILD_SAFETY_STATUS_UNCONFIRMED"})
+    content_type = image.content_type or ""
+    try:
+        data = await image.read(MAX_IMAGE_BYTES + 1)
+    finally:
+        await image.close()
+    decoded = _decode_image(data, content_type)
+    del data  # Discard the original upload byte buffer after decoding.
+    # The original image is never used for quality scoring, embedding, or retrieval.
+    # Privacy detection and masking must complete first.
+    privacy_ready, privacy_reason = detector_configuration()
+    if not privacy_ready:
+        decoded.close()
+        raise HTTPException(
+            503,
+            detail={"code": "CLICK_IT_PRIVACY_DETECTOR_NOT_READY", "reason": privacy_reason},
+        )
+    try:
+        privacy_safe_image, faces_masked = anonymize_click_it_image(decoded)
+    finally:
+        decoded.close()  # Drop the unmasked decoded image even when masking fails.
+    # A caller who declares people in frame must receive a positive face detection
+    # and masking result. Zero detections are not treated as proof of a safe image.
+    if photographed_people_status in {"adults_only", "contains_minor"} and faces_masked < 1:
+        privacy_safe_image.close()
+        raise HTTPException(503, detail={"code": "CLICK_IT_PRIVACY_DETECTION_UNCERTAIN"})
+    try:
+        quality = evaluate_image_quality(privacy_safe_image)
+        if not quality["passed"]:
+            raise HTTPException(
+                422,
+                detail={
+                    "code": "IMAGE_QUALITY_REJECTED",
+                    "quality": quality,
+                    "message": "Retake the photo with better lighting, focus, contrast, and the product clearly in frame.",
+                },
+            )
+        query_vector = _image_embedding(privacy_safe_image)
+        offers, truncated = await _live_offers()
+        if category and category.strip():
+            selected = category.strip().casefold()
+            offers = [
+                item for item in offers
+                if str(item.get("category", "")).casefold() == selected
+                or str((item.get("product") or {}).get("category", "")).casefold() == selected
+            ]
+        results = _withhold_unattested_image_urls(_rank_offers(query_vector, offers, limit))
+        response_payload = {
+            "status": "complete",
+            "scan_id": str(uuid.uuid4()),
+            "search_mode": "image_to_catalog_text_similarity",
+            "image_quality": quality,
+            "privacy": {
+                "face_detection": "completed",
+                "faces_masked": faces_masked,
+                "face_recognition": False,
+                "original_image_persisted": False,
+            },
+            "candidate_count": len(results),
+            "catalog_offer_count": len(offers),
+            "results": results,
+            "catalog_truncated": truncated,
+            "model": {"id": MODEL_ID, "revision": os.getenv("CLIP_MODEL_REVISION")},
+            "scores_are_probabilities": False,
+            "warning": "Scores rank the live catalog but are not calibrated match probabilities; visually verify the result before buying.",
+            "image_persisted": False,
+        }
+    finally:
+        privacy_safe_image.close()  # Release the masked working image on success and every failure path.
+    return JSONResponse(content=response_payload, headers={"Cache-Control": "no-store, private"})
 
 
 @app.post("/v1/twin/infer", dependencies=[Depends(require_worker_auth)], tags=["virtual-twin"])
