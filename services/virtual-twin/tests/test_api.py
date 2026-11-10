@@ -17,7 +17,7 @@ def auth():
 
 
 def identity_fields():
-    return {"subject_id": SUBJECT, "consent_id": CONSENT, "resource_id": "resource-click-it-123"}
+    return {"subject_id": SUBJECT, "consent_id": CONSENT, "resource_id": "resource-click-it-123", "photographed_people_status": "no_people"}
 
 
 def mock_internal_config(monkeypatch, *, consent=True, twin_registry=True, vision=True):
