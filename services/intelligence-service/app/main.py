@@ -412,10 +412,11 @@ def assess_serving(payload: ServingAssessmentIn, db: Session = Depends(get_db)):
                 grade_ok = evidence_row.grade in {"E1", "E2", "E4"}
                 source_kind_ok = source_row is not None
             attribution_ok = source_row is not None and (not source_row.attribution_required or bool(source_row.attribution_text))
-            eligible = allowed and scope_ok and grade_ok and source_kind_ok and attribution_ok
+            review_ok = kind != "claim" or item.get("review_status") == "approved"
+            eligible = allowed and scope_ok and grade_ok and source_kind_ok and attribution_ok and review_ok
             decisions.append({"item_id": item.get("claim_id", item.get("inci_name", "unknown")),
                               "kind": kind, "eligible": eligible,
-                              "reason": reason if not allowed else ("ATTRIBUTION_REQUIRED" if not attribution_ok else ("EVIDENCE_SCOPE_GRADE_OR_SOURCE_MISMATCH" if not (scope_ok and grade_ok and source_kind_ok) else "ELIGIBLE")),
+                              "reason": reason if not allowed else ("CLAIM_NOT_APPROVED" if not review_ok else ("ATTRIBUTION_REQUIRED" if not attribution_ok else ("EVIDENCE_SCOPE_GRADE_OR_SOURCE_MISMATCH" if not (scope_ok and grade_ok and source_kind_ok) else "ELIGIBLE"))),
                               "evidence_id": evidence_row.id,
                               "source_owner": source_row.owner if source_row else None,
                               "attribution_required": source_row.attribution_required if source_row else True,
