@@ -32,15 +32,16 @@ ALLOWED_ACTIONS = {
 }
 
 
-def _settings() -> tuple[str, str]:
-    if os.getenv("CIL_PERFECTCORP_ENABLED", "false").lower() != "true":
-        raise PerfectCorpNotConfigured("Perfect Corp integration is disabled by default")
-    if os.getenv("CIL_PERFECTCORP_DPA_APPROVED", "false").lower() != "true":
-        raise PerfectCorpNotConfigured("Perfect Corp DPA/retention review is not approved")
-    if not os.getenv("CIL_PERFECTCORP_RETENTION_POLICY_REF", "").strip():
-        raise PerfectCorpNotConfigured("Perfect Corp retention policy reference is required")
-    if not os.getenv("CIL_PERFECTCORP_LICENCE_ID", "").strip() or not os.getenv("CIL_PERFECTCORP_TERMS_URL", "").strip():
-        raise PerfectCorpNotConfigured("Perfect Corp licence ID and terms URL are required")
+def _settings(*, for_delete: bool = False) -> tuple[str, str]:
+    if not for_delete:
+        if os.getenv("CIL_PERFECTCORP_ENABLED", "false").lower() != "true":
+            raise PerfectCorpNotConfigured("Perfect Corp integration is disabled by default")
+        if os.getenv("CIL_PERFECTCORP_DPA_APPROVED", "false").lower() != "true":
+            raise PerfectCorpNotConfigured("Perfect Corp DPA/retention review is not approved")
+        if not os.getenv("CIL_PERFECTCORP_RETENTION_POLICY_REF", "").strip():
+            raise PerfectCorpNotConfigured("Perfect Corp retention policy reference is required")
+        if not os.getenv("CIL_PERFECTCORP_LICENCE_ID", "").strip() or not os.getenv("CIL_PERFECTCORP_TERMS_URL", "").strip():
+            raise PerfectCorpNotConfigured("Perfect Corp licence ID and terms URL are required")
     token = os.getenv("CIL_PERFECTCORP_API_TOKEN", "").strip()
     base = os.getenv("CIL_PERFECTCORP_API_BASE_URL", API_BASE_DEFAULT).strip().rstrip("/")
     parsed = urlparse(base)
@@ -185,7 +186,8 @@ def get_skin_analysis_status(*, task_id: str) -> dict:
 
 
 def delete_task(*, task_id: str) -> bool:
-    base, token = _settings()
+    # Deletion remains available even after provider processing is disabled or DPA approval is withdrawn.
+    base, token = _settings(for_delete=True)
     if not task_id or len(task_id) > 256:
         raise ValueError("invalid task_id")
     with httpx.Client(timeout=httpx.Timeout(15.0, connect=5.0), follow_redirects=False, trust_env=False) as client:
