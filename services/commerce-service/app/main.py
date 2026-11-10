@@ -1535,21 +1535,68 @@ def _authorize_purchase_lines(
 
 
 def _cart_json_with_cal(db: Session, cart: Cart, rows: list[tuple[Any, Variant, Listing, Merchant]], authorizations: list[dict[str, Any]]) -> dict[str, Any]:
-    response = cart_json(db, cart)
-    items = response["items"]
-    for index, authorization in enumerate(authorizations):
+    items: list[dict[str, Any]] = []
+    subtotals: dict[str, int] = {}
+    currencies: set[str] = set()
+    for (cart_item, variant, listing, merchant), authorization in zip(rows, authorizations):
         if authorization.get("authorized") is False:
             # Keep only the opaque variant key and quantity so the owner can
             # remove an item that is no longer display-authorized.
-            variant = rows[index][1]
-            items[index] = {
+            items.append({
                 "variant_id": variant.id,
-                "quantity": rows[index][0].quantity,
+                "quantity": cart_item.quantity,
                 "redacted": True,
                 "remove_allowed": True,
                 "reason_code": "CAL_SHOW_NOT_GRANTED",
-            }
-    return response
+            })
+            continue
+        available = max(0, variant.on_hand - variant.reserved_qty)
+        valid = variant.state == "active" and listing.state == "active" and merchant.state == "approved"
+        line_total = variant.price_minor * cart_item.quantity
+        currencies.add(variant.currency)
+        subtotals[variant.currency] = subtotals.get(variant.currency, 0) + line_total
+        items.append({
+            "variant_id": variant.id,
+            "listing_id": listing.id,
+            "catalog_product_id": listing.catalog_product_id,
+            "product_name": listing.product_name,
+            "merchant_name": merchant.display_name,
+            "sku": variant.sku,
+            "options": variant.options,
+            "quantity": cart_item.quantity,
+            "price_minor": variant.price_minor,
+            "currency": variant.currency,
+            "line_total_minor": line_total,
+            "available_stock": available,
+            "availability": "in_stock" if valid and available >= cart_item.quantity else "unavailable",
+            "redacted": False,
+        })
+    return {
+        "cart_id": cart.id,
+        "version": cart.version,
+        "items": items,
+        "item_count": sum(item["quantity"] for item in items),
+        "subtotal_by_currency": subtotals,
+        "single_currency": len(currencies) <= 1,
+        "updated_at": cart.updated_at,
+    }
+
+
+def _cart_authorized_json(request: Request, actor: Actor, db: Session, cart: Cart) -> dict[str, Any]:
+    rows = db.execute(select(CartItem, Variant, Listing, Merchant)
+        .join(Variant, CartItem.variant_id == Variant.id)
+        .join(Listing, Variant.listing_id == Listing.id)
+        .join(Merchant, Listing.merchant_id == Merchant.id)
+        .where(CartItem.cart_id == cart.id)
+        .order_by(CartItem.variant_id)).all()
+    authorizations = _authorize_purchase_lines(
+        subject_id=actor.user_id,
+        action="cart_read",
+        rows=rows,
+        user_authorization=_user_authorization_header(request),
+        allow_withheld=True,
+    )
+    return _cart_json_with_cal(db, cart, rows, authorizations)
 
 
 def _user_authorization_header(request: Request) -> str:
@@ -2746,18 +2793,7 @@ def delete_saved_product(catalog_product_id: uuid.UUID, actor: Annotated[Actor, 
 @app.get("/cart")
 def get_cart(request: Request, actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Session, Depends(get_db)]):
     cart = ensure_cart(db, actor.user_id)
-    rows = db.execute(select(CartItem, Variant, Listing, Merchant)
-        .join(Variant, CartItem.variant_id == Variant.id)
-        .join(Listing, Variant.listing_id == Listing.id)
-        .join(Merchant, Listing.merchant_id == Merchant.id)
-        .where(CartItem.cart_id == cart.id)).all()
-    _authorize_purchase_lines(
-        subject_id=actor.user_id,
-        action="cart_read",
-        rows=rows,
-        user_authorization=_user_authorization_header(request),
-    )
-    return cart_json(db, cart)
+    return _cart_authorized_json(request, actor, db, cart)
 
 
 @app.post("/cart/items", status_code=201)
@@ -2797,7 +2833,7 @@ def add_cart_item(request: Request, payload: CartItemIn, actor: Annotated[Actor,
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(409, detail={"code": "CART_CONFLICT_RETRY"}) from exc
-    return cart_json(db, ensure_cart(db, actor.user_id))
+    return _cart_authorized_json(request, actor, db, cart)
 
 
 @app.patch("/cart/items/{variant_id}")
@@ -2821,16 +2857,16 @@ def update_cart_item(request: Request, variant_id: uuid.UUID, payload: QuantityI
     )
     item.quantity, cart.version, cart.updated_at = payload.quantity, cart.version + 1, now()
     db.commit()
-    return cart_json(db, cart)
+    return _cart_authorized_json(request, actor, db, cart)
 
 
 @app.delete("/cart/items/{variant_id}")
-def remove_cart_item(variant_id: uuid.UUID, actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Session, Depends(get_db)]):
+def remove_cart_item(request: Request, variant_id: uuid.UUID, actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Session, Depends(get_db)]):
     cart = ensure_cart(db, actor.user_id)
     db.query(CartItem).filter(CartItem.cart_id == cart.id, CartItem.variant_id == str(variant_id)).delete(synchronize_session=False)
     cart.version, cart.updated_at = cart.version + 1, now()
     db.commit()
-    return cart_json(db, cart)
+    return _cart_authorized_json(request, actor, db, cart)
 
 
 def _verify_checkout_personalization_consent(subject_id: str, consent_id: str | None, consent_version: str | None) -> str | None:
