@@ -25,6 +25,18 @@ Delivery is **at least once**, not exactly once. The idempotent Wardrobe sink is
 
 Do not reuse end-user JWTs or expose either service credential to browsers. Use the secret manager for deployment.
 
+## Consent-bound checkout learning
+
+Commerce snapshots an optional canonical TAL consent receipt onto the order at checkout. The receipt is resolved only after the identity service verifies the authenticated buyer, active personalization scope, bundle version and non-resource-bound consent. Checkout remains available when the user does not opt into personalization; an invalid supplied consent bundle fails closed.
+
+For a verified paid order with that receipt, Sync emits one idempotent checkout.purchase_choice observation to the Identity Learning/TAL service after Wardrobe purchase ownership has been accepted and before acknowledging the Commerce outbox event. The observation contains only the buyer subject, opaque product/variant/merchant IDs, quantities, minor-unit prices, currency, order total, fulfilment mode and payment-method family. It excludes product names, email, delivery address, payment credentials, bank details and raw order snapshots. It is a weak transaction signal, never a permanent taste declaration, USI mutation or NPL hard veto. The TAL sink independently checks that the receipt is still active; revoked/invalid consent skips learning without blocking ownership synchronization. Identity sink outages retry the Commerce outbox event.
+
+Configuration for this optional sink:
+- IDENTITY_SERVICE_URL
+- IDENTITY_SERVICE_TOKEN — internal Identity Learning service credential, minimum 32 bytes. Configure both or neither. A consented order cannot be acknowledged as fully synchronized if the TAL sink is not configured.
+
+This is paid-purchase learning only. It does not yet capture abandoned checkouts, item removals/replacements before purchase, or uncompleted payment-method/fulfilment selections. Those need separate consented checkout interaction events; absence of a purchase must never be interpreted as dislike.
+
 ## Run
 
     python -m pip install -r requirements.txt
