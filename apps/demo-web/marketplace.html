@@ -175,13 +175,22 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
         const savedResponse=await fetch(config.commerceBase+"/saved-products",{headers});
         if(!savedResponse.ok)throw new Error("Your account saved-products service is unavailable; no guest fallback was used.");
         const savedData=await savedResponse.json();
-        const cartResponse=await fetch(config.commerceBase+"/cart",{headers});
-        if(!cartResponse.ok)throw new Error(cartResponse.status===503?"Your cart is temporarily unavailable because purchase-time CAL reauthorization could not be completed.":"Cart API returned HTTP "+cartResponse.status+".");
-        const cartData=await cartResponse.json();
-        if(!Array.isArray(cartData.items)||!Number.isFinite(Number(cartData.version)))throw new Error("Cart API returned an invalid account cart.");
+        let cartData={items:[],version:0},cartLoadError="";
+        try{
+          const cartResponse=await fetch(config.commerceBase+"/cart",{headers});
+          if(!cartResponse.ok)throw new Error(cartResponse.status===503?"Purchase-time CAL reauthorization is temporarily unavailable.":"Cart API returned HTTP "+cartResponse.status+".");
+          cartData=await cartResponse.json();
+          if(!Array.isArray(cartData.items)||!Number.isFinite(Number(cartData.version)))throw new Error("Cart API returned an invalid account cart.");
+        }catch(error){
+          cartLoadError=error&&error.message?error.message:"Account cart is temporarily unavailable.";
+          cartData={items:[],version:0};
+          // If fresh CAL cannot be obtained, discard cached product detail from
+          // the browser state but preserve opaque variant IDs for safe removal.
+          cart=cart.map(x=>({variant_id:x.variant_id,quantity:x.quantity,name:"Item temporarily withheld",product_id:null,price_minor:null,currency:"",redacted:true}));
+        }
         items=data.items.map(p=>({...p,product_id:p.catalog_product_id,name:p.product_name,brand:p.merchant_name,description:p.description||Object.entries(p.options||{}).map(([k,v])=>k+": "+v).join(" · "),image_urls:p.image_urls||[],attributes:p.attributes||{}}));
         total=Number(data.total)||0;cartVersion=Number(cartData.version)||0;
-        cart=cartData.items.map(x=>x.redacted?({variant_id:x.variant_id,product_id:null,name:"Item withheld by current CAL rules",quantity:x.quantity,price_minor:null,currency:"",redacted:true}):({variant_id:x.variant_id,product_id:x.catalog_product_id,name:x.product_name,product_name:x.product_name,quantity:x.quantity,price_minor:x.price_minor,currency:x.currency,redacted:false}));
+        if(!cartLoadError)cart=cartData.items.map(x=>x.redacted?({variant_id:x.variant_id,product_id:null,name:"Item withheld by current CAL rules",quantity:x.quantity,price_minor:null,currency:"",redacted:true}):({variant_id:x.variant_id,product_id:x.catalog_product_id,name:x.product_name,product_name:x.product_name,quantity:x.quantity,price_minor:x.price_minor,currency:x.currency,redacted:false}));
         saved=(Array.isArray(savedData.items)?savedData.items:[]).map(x=>({product_id:x.catalog_product_id,name:x.catalog_product_id,currency:"",price_minor:null}));
         activeCheckoutConsent=null;
         try{
@@ -195,7 +204,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
           }
         }catch{activeCheckoutConsent=null}
         updateCategories(items);updateCounts();
-        setStatus("CAL-GOVERNED LIVE COMMERCE — "+items.length+" authorized offer(s) on this page. "+(Number(data.withheld_candidate_count)||0)+" candidate(s) withheld. Cart lines are reauthorized on read, add, edit and final checkout. Checkout remains under your control.");
+        setStatus("CAL-GOVERNED LIVE COMMERCE — "+items.length+" authorized offer(s) on this page. "+(Number(data.withheld_candidate_count)||0)+" candidate(s) withheld. Cart lines are reauthorized on read, add, edit and final checkout. Checkout remains under your control."+(cartLoadError?" Cart: "+cartLoadError+" Existing cart details were withheld; retry or remove items.":""));
         render();return;
       }catch(e){items=[];total=0;setStatus((e&&e.message?e.message:"Marketplace request failed")+" No demo fallback was used.",true);render();return}
     }
@@ -282,7 +291,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
   $("cartBtn").addEventListener("click",()=>{const rows=cart.map(x=>'<div class="drawer-row"><div>'+escapeHtml(x.name||x.product_name)+'<small>'+(x.redacted?'Qty '+x.quantity+' · Product details withheld by CAL':('Qty '+x.quantity+' · '+escapeHtml(money(x))+' each'))+'</small></div><button class="btn" '+(mode==="commerce"?'data-remove-cart="'+escapeHtml(x.variant_id||x.product_id)+'"':'data-remove="'+escapeHtml(x.product_id)+'"')+'>Remove</button></div>').join("");const note=mode==="commerce"?'Prices, offer status and stock are revalidated by Commerce. Every add, edit, cart read and checkout requires a fresh CAL decision.':'The bag is browser-local. No stock is reserved and no order is created.';const blocked=cart.some(x=>x.redacted);const consent='<label class="consent-line wide"><input id="checkoutLearningConsent" type="checkbox"><span>For this checkout, allow Cirvanna to use the selected items and completed transaction to improve my recommendations. Optional. This does not authorize automatic purchases or change my declared preferences.</span></label><p class="config-note">The permission is recorded separately and can be withdrawn in Personalization controls. Leaving this unchecked skips checkout learning for this order.</p>';const action=mode==="commerce"?(blocked?'<button class="btn primary" id="checkoutBtn" disabled>Remove withheld items before checkout</button>':'<button class="btn primary" id="checkoutBtn">Continue to secure checkout</button>'):'<button class="btn" disabled>Checkout unavailable</button>';openDrawer("Your bag",cart.length?rows+'<p class="config-note">'+note+'</p>'+(mode==="commerce"?consent:'')+action:'<p class="config-note">Your bag is empty.</p>')});
   $("drawerRoot").addEventListener("click",async e=>{const b=e.target.closest("button[data-remove],button[data-remove-saved],button[data-remove-cart]");if(!b)return;const title=$("drawerRoot").querySelector("aside h2")?.textContent||"Saved pieces";if(mode==="commerce"){const savedId=b.dataset.removeSaved,variantId=b.dataset.removeCart,url=savedId?config.commerceBase+"/saved-products/"+encodeURIComponent(savedId):config.commerceBase+"/cart/items/"+encodeURIComponent(variantId||"");fetch(url,{method:"DELETE",headers:{Authorization:"Bearer "+config.userToken,Accept:"application/json"}}).then(r=>{if(!r.ok)throw new Error("Remove request returned HTTP "+r.status+".");return load()}).then(()=>{if(title==="Your bag")$("cartBtn").click();else $("savedBtn").click()}).catch(err=>setStatus(err.message||"Could not remove item.",true));return}const id=b.dataset.remove;if(!id)return;saved=saved.filter(x=>x.product_id!==id);cart=cart.filter(x=>x.product_id!==id);writeStore();if(title==="Your bag")$("cartBtn").click();else $("savedBtn").click();render()});
   $("settingsBtn").addEventListener("click",()=>{const learningControl=activeCheckoutConsent?'<p class="config-note">Checkout-learning consent is active. It is separate from your declared preferences and does not authorize automatic purchases.</p><button class="btn wide" id="withdrawCheckoutLearningConsent">Withdraw checkout-learning consent</button>':'<p class="config-note">No active checkout-learning consent is loaded for this session.</p>';openDrawer("Connect Cirvanna services",'<p class="config-note">For account-backed saved products, persistent carts, live merchant offers and hosted checkout, connect the Marketplace BFF with a signed user JWT from Cirvanna authentication. The JWT stays in page memory only and is not written to browser storage. Never paste an admin or service token on a shared device.</p><div class="config"><label class="wide">Marketplace BFF base URL<input id="commerceBase" type="url" placeholder="https://your-marketplace-bff.example/api/commerce"></label><label class="wide">Cirvanna user JWT<input id="commerceToken" type="password" autocomplete="off" placeholder="Signed user access token"></label></div><button class="btn primary wide" id="commerceConnectBtn">Connect account-backed marketplace</button>'+learningControl+'<p class="config-note">Direct Catalog product display is disabled; product display must pass through the Marketplace BFF and CAL.</p><button class="btn wide" id="demoBtn">Use local demo data</button>')});
-  $("drawerRoot").addEventListener("click",e=>{
+  $("drawerRoot").addEventListener("click",async e=>{
     if(e.target.id==="commerceConnectBtn"){
       const base=$("commerceBase").value.trim(),token=$("commerceToken").value.trim();
       if(!base||!token){alert("Enter the Commerce API URL and your signed user JWT.");return}
