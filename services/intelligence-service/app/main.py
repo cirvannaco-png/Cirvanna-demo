@@ -23,6 +23,8 @@ from sqlalchemy import DateTime, Float, Integer, JSON, String, Text, UniqueConst
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
 from PIL import Image, ImageOps
+import cv2
+import numpy as np
 
 from app.provider import ProviderNotConfigured, fetch_licensed_research
 from app.perfectcorp import (
@@ -440,6 +442,61 @@ def _verify_perfectcorp_consent(receipt: str, contributor_token: str, image_dige
     return payload
 
 
+def _detect_visible_face_boxes(image_bytes: bytes) -> list[tuple[int, int, int, int]]:
+    """Conservative frontal/profile screening; never performs identity matching."""
+    decoded = cv2.imdecode(np.frombuffer(image_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if decoded is None or decoded.size == 0:
+        raise HTTPException(422, "Normalized image could not be decoded for face screening")
+    gray = cv2.cvtColor(decoded, cv2.COLOR_BGR2GRAY)
+    frontal_path = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+    profile_path = cv2.data.haarcascades + "haarcascade_profileface.xml"
+    frontal = cv2.CascadeClassifier(frontal_path)
+    profile = cv2.CascadeClassifier(profile_path)
+    if frontal.empty() or profile.empty():
+        raise HTTPException(503, "Single-face screening models are unavailable")
+    detections: list[tuple[int, int, int, int]] = []
+    for classifier, frame, mirrored in (
+        (frontal, gray, False), (profile, gray, False), (profile, cv2.flip(gray, 1), True),
+    ):
+        found = classifier.detectMultiScale(
+            frame, scaleFactor=1.1, minNeighbors=5, minSize=(64, 64),
+        )
+        for x, y, width, height in found:
+            box = (int(x), int(y), int(width), int(height))
+            if mirrored:
+                box = (decoded.shape[1] - box[0] - box[2], box[1], box[2], box[3])
+            detections.append(box)
+    # Merge overlapping frontal/profile hits for the same visible face.
+    merged: list[tuple[int, int, int, int]] = []
+    for box in sorted(detections, key=lambda item: item[2] * item[3], reverse=True):
+        x, y, width, height = box
+        duplicate = False
+        for existing in merged:
+            ex, ey, ew, eh = existing
+            ix1, iy1 = max(x, ex), max(y, ey)
+            ix2, iy2 = min(x + width, ex + ew), min(y + height, ey + eh)
+            intersection = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+            union = width * height + ew * eh - intersection
+            overlap = intersection / union if union else 0.0
+            center_distance = ((x + width / 2 - ex - ew / 2) ** 2 + (y + height / 2 - ey - eh / 2) ** 2) ** 0.5
+            if overlap >= 0.20 or center_distance <= 0.30 * max(width, height, ew, eh):
+                duplicate = True
+                break
+        if not duplicate:
+            merged.append(box)
+    return merged
+
+
+def _require_single_visible_face(image_bytes: bytes) -> None:
+    """Fail closed unless the normalized photo has exactly one detectable face."""
+    boxes = _detect_visible_face_boxes(image_bytes)
+    if len(boxes) != 1:
+        raise HTTPException(
+            422,
+            "Skin analysis accepts only a single-person image; no face or multiple faces were detected",
+        )
+
+
 def _normalize_skin_image(raw: bytes, content_type: str, mode: str) -> bytes:
     if not raw or len(raw) >= 10 * 1024 * 1024:
         raise HTTPException(413, "Skin-analysis image must be non-empty and smaller than 10 MB")
@@ -587,6 +644,7 @@ def start_perfectcorp_skin_analysis(payload: PerfectCorpSkinAnalysisIn):
     image_digest = hashlib.sha256(raw).hexdigest()
     consent = _verify_perfectcorp_consent(payload.consent_receipt, payload.contributor_token, image_digest)
     normalized = _normalize_skin_image(raw, payload.content_type, payload.mode)
+    _require_single_visible_face(normalized)
     try:
         task = perfectcorp_start_skin_analysis(
             image=normalized, file_name="cirvanna-skin-analysis.jpg",
