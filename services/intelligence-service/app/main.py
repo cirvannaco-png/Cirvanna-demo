@@ -122,7 +122,8 @@ class Outcome(Base):
 
 class ProviderTask(Base):
     __tablename__ = "cil_provider_tasks"
-    task_id: Mapped[str] = mapped_column(String(256), primary_key=True)
+    task_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    provider_task_id: Mapped[str] = mapped_column(String(256), nullable=False, unique=True)
     provider: Mapped[str] = mapped_column(String(40), nullable=False)
     contributor_token: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
     image_digest: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -548,7 +549,7 @@ def reap_abandoned_perfectcorp_tasks(db: Session = Depends(get_db)):
     failed = 0
     for row in rows:
         try:
-            perfectcorp_delete_task(task_id=row.task_id)
+            perfectcorp_delete_task(task_id=row.provider_task_id)
             row.status = "ttl_deleted"
             row.deleted_at = now()
             deleted += 1
@@ -579,7 +580,7 @@ def start_perfectcorp_skin_analysis(payload: PerfectCorpSkinAnalysisIn):
         try:
             with SessionLocal() as db:
                 db.add(ProviderTask(
-                    task_id=task["task_id"], provider="perfectcorp",
+                    task_id=str(uuid.uuid4()), provider_task_id=task["task_id"], provider="perfectcorp",
                     contributor_token=payload.contributor_token, image_digest=image_digest,
                     consent_expires_at=datetime.fromtimestamp(int(consent["expires_at"]), timezone.utc),
                     status="running",
@@ -592,6 +593,14 @@ def start_perfectcorp_skin_analysis(payload: PerfectCorpSkinAnalysisIn):
             except Exception:
                 pass
             raise HTTPException(503, "Provider task ownership could not be persisted; task deletion was attempted") from exc
+        task["provider_task_id"] = task.pop("task_id")
+        task["task_id"] = task_row_id = task.get("task_id") or ""
+        # The public handle is an opaque UUID stored in the task ledger, not the provider task ID.
+        with SessionLocal() as db:
+            stored = db.scalar(select(ProviderTask).where(ProviderTask.provider_task_id == task["provider_task_id"]))
+            if stored is None:
+                raise HTTPException(503, "Provider task ledger entry is missing")
+            task["task_id"] = stored.task_id
         return task
     except PerfectCorpNotConfigured as exc:
         raise HTTPException(503, str(exc)) from exc
@@ -618,7 +627,7 @@ def poll_perfectcorp_skin_analysis(
         consent_expiry = consent_expiry.replace(tzinfo=timezone.utc)
     if consent_expiry <= now():
         try:
-            perfectcorp_delete_task(task_id=task_id)
+            perfectcorp_delete_task(task_id=task_row.provider_task_id)
             task_row.deleted_at = now()
             task_row.status = "consent_expired_deleted"
             db.commit()
@@ -636,7 +645,7 @@ def poll_perfectcorp_skin_analysis(
             raise HTTPException(502, "DPA approval was withdrawn but provider task deletion failed") from exc
         raise HTTPException(410, "Provider processing approval was withdrawn; task files were deleted")
     try:
-        result = perfectcorp_get_skin_analysis_status(task_id=task_id)
+        result = perfectcorp_get_skin_analysis_status(task_id=task_row.provider_task_id)
         if result.get("status") in {"success", "error"}:
             # Delete provider input/output files immediately after the terminal result is fetched.
             # Never return the result as releasable until deletion is confirmed.
@@ -646,6 +655,8 @@ def poll_perfectcorp_skin_analysis(
             task_row.deleted_at = now()
             db.commit()
             result["provider_task_deleted"] = True
+        result["provider_task_id"] = result.pop("task_id", None)
+        result["task_id"] = task_row.task_id
         return result
     except PerfectCorpNotConfigured as exc:
         raise HTTPException(503, str(exc)) from exc
@@ -669,11 +680,11 @@ def delete_perfectcorp_skin_analysis(
     if task_row.deleted_at is not None:
         return {"task_id": task_id, "deleted": True, "already_deleted": True}
     try:
-        deleted = perfectcorp_delete_task(task_id=task_id)
+        deleted = perfectcorp_delete_task(task_id=task_row.provider_task_id)
         task_row.deleted_at = now()
         task_row.status = "deleted"
         db.commit()
-        return {"task_id": task_id, "deleted": deleted}
+        return {"task_id": task_row.task_id, "deleted": deleted}
     except PerfectCorpNotConfigured as exc:
         raise HTTPException(503, str(exc)) from exc
     except ValueError as exc:
