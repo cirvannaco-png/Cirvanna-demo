@@ -21,7 +21,8 @@ is for local tests only. The initial schema is versioned with Alembic under
   expiry checked. The upstream consent/CAL issuers must share the configured
   verification key and exact receipt schema before outcome ingestion is enabled.
 - Cohort metrics are suppressed below 30 distinct contributors. Feedback
-  creates a CAL REVIEW signal only; it never suppresses a product automatically.
+  creates a durable CAL review request; the Decision Service proxies the queue and
+  final decision callback. It never suppresses a product automatically.
 
 ## Endpoints
 
@@ -31,8 +32,8 @@ is for local tests only. The initial schema is versioned with Alembic under
 - `POST /serving/assessment`: internal claim-level rights/evidence assessment.
 - `POST /outcomes`: internal consent- and CAL-receipt-verified event ingestion.
 - `GET /outcomes/aggregate`: minimum-cohort aggregate and review signal.
-- `GET /cal/review-queue`: pending review signals for CAL.
-- `POST /cal/review-queue/{id}/decision`: persist a signed-in CAL service decision reference.
+- `GET /cal/review-queue`: pending review signals for CAL; the Decision Service exposes the authenticated `/v1/cal/feedback-reviews` proxy.
+- `POST /cal/review-queue/{id}/decision`: persist a final CAL service decision reference; the Decision Service forwards decisions from `/v1/cal/feedback-reviews/{id}/decision`.
 - `GET /ready`, `GET /capabilities`.
 
 The Catalog serving gate is implemented and calls `/serving/assessment` before exposing product intelligence. Pending/rejected claims remain withheld; only individually eligible ingredient/claim records can pass, with attribution attached when required. Deployment must configure the CIL gateway and verify the end-to-end path before any CIL metadata is exposed.
