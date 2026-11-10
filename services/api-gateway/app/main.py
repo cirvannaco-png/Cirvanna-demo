@@ -2259,6 +2259,7 @@ def authorize_purchase_candidates(
     _purchase_receipt_secret()
     market_context = payload.market_context.model_dump(mode="json") if payload.market_context else None
     decisions: dict[str, CandidateDecisionOutput] = {}
+    decision_request_ids: dict[str, str] = {}
     product_ids = list(dict.fromkeys(item.product_id for item in payload.candidates))
     for start in range(0, len(product_ids), 25):
         request = DecisionRequest(
@@ -2274,6 +2275,7 @@ def authorize_purchase_candidates(
         decision_response = evaluate_decisions(request, end_user_authorization)
         for decision in decision_response.candidates:
             decisions[decision.product_id] = decision
+            decision_request_ids[decision.product_id] = decision_response.request_id
 
     now_epoch = int(datetime.now(timezone.utc).timestamp())
     authorizations = []
@@ -2300,7 +2302,7 @@ def authorize_purchase_candidates(
             "market_context": market_context,
             "catalog_version": decision.catalog_version,
             "policy_version": decision.policy_version,
-            "decision_request_id": decision.catalog_version and decision.product_id and str(uuid.uuid4()),
+            "decision_request_id": decision_request_ids[candidate.product_id],
             "verdict": decision.verdict,
             "may_display": decision.may_display,
             "iat": now_epoch,
