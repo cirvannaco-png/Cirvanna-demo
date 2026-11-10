@@ -109,7 +109,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
   const bootstrap = window.CIRVANNA_MARKETPLACE_CONFIG || {};
   let forceDemo = false;
   let config = {base:"",token:"",commerceBase:"",userToken:""}, items=[], page=0, mode="demo", total=0, cartVersion=0;
-  let saved = readStore("cirvanna-marketplace-saved"), cart = readStore("cirvanna-marketplace-bag");
+  let saved = readStore("cirvanna-marketplace-saved"), cart = readStore("cirvanna-marketplace-bag"), activeCheckoutConsent = null;
   function readStore(key){try{return JSON.parse(localStorage.getItem(key)||"[]")}catch{return []}}
   function writeStore(){localStorage.setItem("cirvanna-marketplace-saved",JSON.stringify(saved));localStorage.setItem("cirvanna-marketplace-bag",JSON.stringify(cart));updateCounts()}
   function updateCounts(){$("savedCount").textContent=saved.length;$("cartCount").textContent=cart.reduce((n,x)=>n+x.quantity,0)}
@@ -129,7 +129,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       const transport=fq?'<div class="brandline">Delivery: '+moneyMinor(fq.display_conversion_status==="localized"?fq.display_amount_minor:fq.amount_minor,fq.display_conversion_status==="localized"?fq.display_currency:fq.currency)+' · '+escapeHtml(fq.distance_km)+' km</div>':'';
       const comparablePeers=p.canonical_variant_id?items.filter(x=>x.canonical_variant_id===p.canonical_variant_id&&x.merchant_id!==p.merchant_id&&x.available_stock>0):[];
       const compareAction=(mode!=="commerce"&&comparablePeers.length)?'<button class="btn wide" data-action="compare" data-id="'+escapeHtml(id)+'">Compare merchant offers</button>':'';
-      return '<article class="card"><div class="visual">'+image+'<span class="tag">'+(p.attributes&&p.attributes.demo?'Demo data':escapeHtml(p.category||'Product'))+'</span></div><div class="card-body"><div class="brandline">'+escapeHtml(p.brand||'Independent brand')+'</div><div class="name">'+escapeHtml(p.name)+'</div><div class="description">'+escapeHtml(p.description||'Product details have not been provided.')+'</div><div class="price">'+money(p)+'</div>'+transport+'<div class="brandline">'+escapeHtml(p.sku||'')+'</div><div class="card-actions"><button class="btn" data-action="save" data-id="'+escapeHtml(id)+'">'+(isSaved?'Saved ✓':'Save')+'</button>'+(mode==="commerce"?'<button class="btn" disabled title="Candidate-bound purchase reauthorization is not released">Bag — paused</button>':'<button class="btn" data-action="bag" data-id="'+escapeHtml(id)+'">'+(inBag?'In bag ✓':'Add to bag')+'</button>')+''+compareAction+'<button class="btn wide" data-action="tryon" data-id="'+escapeHtml(id)+'" disabled title="Virtual try-on adapter is not connected">Try on — unavailable</button></div></div></article>'
+      return '<article class="card"><div class="visual">'+image+'<span class="tag">'+(p.attributes&&p.attributes.demo?'Demo data':escapeHtml(p.category||'Product'))+'</span></div><div class="card-body"><div class="brandline">'+escapeHtml(p.brand||'Independent brand')+'</div><div class="name">'+escapeHtml(p.name)+'</div><div class="description">'+escapeHtml(p.description||'Product details have not been provided.')+'</div><div class="price">'+money(p)+'</div>'+transport+'<div class="brandline">'+escapeHtml(p.sku||'')+'</div><div class="card-actions"><button class="btn" data-action="save" data-id="'+escapeHtml(id)+'">'+(isSaved?'Saved ✓':'Save')+'</button>'+'<button class="btn" data-action="bag" data-id="'+escapeHtml(id)+'">'+(inBag?'In bag ✓':'Add to bag')+'</button>'+''+compareAction+'<button class="btn wide" data-action="tryon" data-id="'+escapeHtml(id)+'" disabled title="Virtual try-on adapter is not connected">Try on — unavailable</button></div></div></article>'
     }).join(''):'<div class="empty">No products match this search. Try a broader term or clear the category filter.</div>';
     $("pageLabel").textContent='Page '+(page+1);$("prevBtn").disabled=page===0;$("nextBtn").disabled=(page+1)*20>=total;
   }
@@ -175,11 +175,27 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
         const savedResponse=await fetch(config.commerceBase+"/saved-products",{headers});
         if(!savedResponse.ok)throw new Error("Your account saved-products service is unavailable; no guest fallback was used.");
         const savedData=await savedResponse.json();
+        const cartResponse=await fetch(config.commerceBase+"/cart",{headers});
+        if(!cartResponse.ok)throw new Error(cartResponse.status===503?"Your cart is temporarily unavailable because purchase-time CAL reauthorization could not be completed.":"Cart API returned HTTP "+cartResponse.status+".");
+        const cartData=await cartResponse.json();
+        if(!Array.isArray(cartData.items)||!Number.isFinite(Number(cartData.version)))throw new Error("Cart API returned an invalid account cart.");
         items=data.items.map(p=>({...p,product_id:p.catalog_product_id,name:p.product_name,brand:p.merchant_name,description:p.description||Object.entries(p.options||{}).map(([k,v])=>k+": "+v).join(" · "),image_urls:p.image_urls||[],attributes:p.attributes||{}}));
-        total=Number(data.total)||0;cartVersion=0;cart=[];
+        total=Number(data.total)||0;cartVersion=Number(cartData.version)||0;
+        cart=cartData.items.map(x=>x.redacted?({variant_id:x.variant_id,product_id:null,name:"Item withheld by current CAL rules",quantity:x.quantity,price_minor:null,currency:"",redacted:true}):({variant_id:x.variant_id,product_id:x.catalog_product_id,name:x.product_name,product_name:x.product_name,quantity:x.quantity,price_minor:x.price_minor,currency:x.currency,redacted:false}));
         saved=(Array.isArray(savedData.items)?savedData.items:[]).map(x=>({product_id:x.catalog_product_id,name:x.catalog_product_id,currency:"",price_minor:null}));
+        activeCheckoutConsent=null;
+        try{
+          const consentResponse=await fetch("/api/wardrobe/consents",{headers});
+          if(consentResponse.ok){
+            const consentData=await consentResponse.json();
+            const currentTime=Date.now();
+            const eligible=(Array.isArray(consentData.items)?consentData.items:[]).filter(x=>x.scope==="personalization"&&x.granted===true&&!x.revoked_at&&(!x.expires_at||Date.parse(x.expires_at)>currentTime)&&typeof x.receipt_id==="string"&&typeof x.consent_id==="string");
+            eligible.sort((a,b)=>Date.parse(b.granted_at||0)-Date.parse(a.granted_at||0));
+            if(eligible.length)activeCheckoutConsent={receipt_id:eligible[0].receipt_id,consent_id:eligible[0].consent_id,consent_version:eligible[0].consent_version||"wardrobe-pnelly-learning-v1"};
+          }
+        }catch{activeCheckoutConsent=null}
         updateCategories(items);updateCounts();
-        setStatus("CAL-GOVERNED LIVE COMMERCE — "+items.length+" authorized offer(s) on this page. "+(Number(data.withheld_candidate_count)||0)+" candidate(s) withheld. Cart and checkout remain paused until every purchase action has fresh candidate-bound CAL authorization.");
+        setStatus("CAL-GOVERNED LIVE COMMERCE — "+items.length+" authorized offer(s) on this page. "+(Number(data.withheld_candidate_count)||0)+" candidate(s) withheld. Cart lines are reauthorized on read, add, edit and final checkout. Checkout remains under your control.");
         render();return;
       }catch(e){items=[];total=0;setStatus((e&&e.message?e.message:"Marketplace request failed")+" No demo fallback was used.",true);render();return}
     }
