@@ -2607,8 +2607,10 @@ def _verify_checkout_personalization_consent(subject_id: str, consent_id: str | 
         )
     except httpx.HTTPError as exc:
         raise HTTPException(503, detail={"code": "PERSONALIZATION_CONSENT_VERIFIER_UNAVAILABLE"}) from exc
-    if response.status_code in {401, 403, 404}:
+    if response.status_code in {403, 404}:
         raise HTTPException(403, detail={"code": "ACTIVE_PERSONALIZATION_CONSENT_REQUIRED"})
+    if response.status_code == 401:
+        raise HTTPException(503, detail={"code": "PERSONALIZATION_CONSENT_VERIFIER_AUTH_FAILED"})
     if response.status_code != 200:
         raise HTTPException(503, detail={"code": "PERSONALIZATION_CONSENT_VERIFICATION_FAILED"})
     try:
