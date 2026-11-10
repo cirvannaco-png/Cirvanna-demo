@@ -182,6 +182,10 @@ def get_skin_analysis_status(*, task_id: str) -> dict:
                 if len(metric) > 1:
                     metrics.append(metric)
         result["metrics"] = metrics
+        result["score_semantics"] = {
+            "raw_score": "provider-reported underlying metric; requires independent validation before use in any CIL model or ranking",
+            "ui_score": "provider presentation score may be psychologically adjusted; display-only and must not be used as evidence or ranking input",
+        }
         result["disclaimer"] = "Image-based skincare indicators only; not clinical measurements, diagnosis or medical assessment."
     elif status == "error":
         result["error_code"] = str(data.get("error_code") or "PROVIDER_TASK_FAILED")[:120]
