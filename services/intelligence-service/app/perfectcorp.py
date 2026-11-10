@@ -119,6 +119,9 @@ def start_skin_analysis(*, image: bytes, file_name: str, content_type: str, acti
         }
         if safe_headers.get("Content-Type") not in {content_type, None}:
             raise PerfectCorpRequestError("Perfect Corp upload content type does not match image")
+        content_length = safe_headers.get("Content-Length")
+        if content_length is not None and (not str(content_length).isdigit() or int(content_length) != len(image)):
+            raise PerfectCorpRequestError("Perfect Corp upload length does not match normalized image")
         put_response = client.put(
             str(upload_url), content=image, headers=safe_headers,
         )
