@@ -593,7 +593,7 @@ async def enforce_cil_before_catalog_serving(request: Request, call_next):
     except (ValueError, UnicodeDecodeError):
         return Response(content=body, status_code=response.status_code, media_type="application/json")
     gateway = os.getenv("CIL_GATEWAY_URL", "").strip()
-    token = os.getenv("CIL_SERVICE_TOKEN", "").strip()
+    token = os.getenv("CIL_CATALOG_SERVICE_TOKEN", "").strip()
     async with httpx.AsyncClient(timeout=httpx.Timeout(2.0, connect=1.0), follow_redirects=False) as client:
         await _cil_gate_node(payload, client, gateway, token)
     return Response(
