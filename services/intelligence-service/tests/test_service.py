@@ -551,7 +551,7 @@ def test_perfectcorp_terminal_result_is_deleted_before_result_is_released(client
     )
     assert response.status_code == 200
     assert response.json()["provider_task_deleted"] is True
-    assert calls == ["task-2"]
+    assert calls == ["vendor-task-2"]
 
 
 def test_perfectcorp_terminal_result_is_not_released_when_deletion_fails(client, monkeypatch):
