@@ -568,7 +568,7 @@ async def _cil_gate_node(node: Any, client: httpx.AsyncClient, gateway: str, tok
                             "claims": approved_claims,
                             "ingredient_declarations": approved_ingredients,
                         }
-            except (httpx.HTTPError, ValueError, TypeError, KeyError):
+            except (httpx.HTTPError, ValueError, TypeError, KeyError, AttributeError):
                 attributes.pop("product_intelligence", None)
     await __import__("asyncio").gather(*[
         _cil_gate_node(value, client, gateway, token)
