@@ -56,7 +56,7 @@ def test_decision_uses_persisted_usi_profile_after_verified_subject_resolution(c
         ),),
     )
     loaded = []
-    monkeypatch.setattr(main, "_load_verified_usi_profile", lambda subject: loaded.append(subject) or profile)
+    monkeypatch.setattr(main, "_load_verified_usi_profile", lambda subject, allow_without_consent=False: loaded.append(subject) or profile)
     monkeypatch.setattr(main, "fetch_product", lambda _pid: {
         "product_id": PRODUCT_ID, "sku": "SKU-1", "name": "Candidate", "category": "shirt",
         "brand": None, "price_minor": 1000, "currency": "KES",
