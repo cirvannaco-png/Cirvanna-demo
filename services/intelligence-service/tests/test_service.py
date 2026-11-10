@@ -119,7 +119,7 @@ def test_ingredient_research_cannot_substantiate_finished_product_efficacy(clien
         }],
         "ingredient_declarations": [],
     }
-    result = client.post("/serving/assessment", json=payload, headers=auth("service-test"))
+    result = client.post("/serving/assessment", json=payload, headers=auth("catalog-test"))
     assert result.status_code == 200
     assert result.json()["decisions"][0]["eligible"] is False
 
@@ -153,7 +153,7 @@ def test_expired_licence_fails_closed_at_serving(client):
         }],
         "ingredient_declarations": [],
     }
-    result = client.post("/serving/assessment", json=payload, headers=auth("service-test"))
+    result = client.post("/serving/assessment", json=payload, headers=auth("catalog-test"))
     assert result.status_code == 200
     assert result.json()["decisions"][0]["eligible"] is False
     assert result.json()["decisions"][0]["reason"] == "SOURCE_RIGHTS_EXPIRED"
@@ -338,7 +338,7 @@ def test_manufacturer_declaration_cannot_substantiate_finished_product_efficacy(
         }],
         "ingredient_declarations": [],
     }
-    result = client.post("/serving/assessment", json=payload, headers=auth("service-test"))
+    result = client.post("/serving/assessment", json=payload, headers=auth("catalog-test"))
     assert result.status_code == 200
     assert result.json()["decisions"][0]["eligible"] is False
 
@@ -361,7 +361,7 @@ def test_missing_required_attribution_fails_closed(client):
         }],
         "ingredient_declarations": [],
     }
-    result = client.post("/serving/assessment", json=payload, headers=auth("service-test"))
+    result = client.post("/serving/assessment", json=payload, headers=auth("catalog-test"))
     assert result.status_code == 200
     assert result.json()["decisions"][0]["eligible"] is False
     assert result.json()["decisions"][0]["reason"] == "ATTRIBUTION_REQUIRED"
@@ -382,7 +382,7 @@ def test_pending_claim_is_never_eligible_for_customer_serving(client):
         }],
         "ingredient_declarations": [],
     }
-    result = client.post("/serving/assessment", json=payload, headers=auth("service-test"))
+    result = client.post("/serving/assessment", json=payload, headers=auth("catalog-test"))
     assert result.status_code == 200
     assert result.json()["decisions"][0]["eligible"] is False
     assert result.json()["decisions"][0]["reason"] == "CLAIM_NOT_APPROVED"
@@ -414,7 +414,7 @@ def test_source_rights_revocation_is_audited_and_immediately_blocks_serving(clie
         }],
         "ingredient_declarations": [],
     }
-    assessment = client.post("/serving/assessment", json=payload, headers=auth("service-test"))
+    assessment = client.post("/serving/assessment", json=payload, headers=auth("catalog-test"))
     assert assessment.status_code == 200
     assert assessment.json()["decisions"][0]["eligible"] is False
     assert assessment.json()["decisions"][0]["reason"] == "SOURCE_RIGHTS_REVOKED"
