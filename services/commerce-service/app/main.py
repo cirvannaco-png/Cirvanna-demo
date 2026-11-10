@@ -2967,6 +2967,7 @@ def add_cart_item(
     if variant.state != "active" or listing.state != "active" or merchant.state != "approved":
         raise HTTPException(409, detail={"code": "OFFER_UNAVAILABLE"})
     cart = ensure_cart(db, actor.user_id)
+    cart_version = cart.version
     item = db.scalar(select(CartItem).where(CartItem.cart_id == cart.id, CartItem.variant_id == variant.id))
     quantity = payload.quantity + (item.quantity if item else 0)
     if quantity > MAX_QTY:
@@ -2975,24 +2976,67 @@ def add_cart_item(
         raise HTTPException(409, detail={"code": "INSUFFICIENT_AVAILABLE_STOCK", "available_stock": variant.on_hand - variant.reserved_qty})
     authorization = _purchase_authorization_item((item, variant, listing, merchant), action="cart_add", quantity=quantity)
     receipts = _request_cal_purchase_receipts(request, actor.user_id, [authorization])
-    audits = [_cal_audit_from_receipt(receipts[0], cart_id=cart.id, cart_version=cart.version)]
-    db.add_all(audits)
-    if audits[0].decision != "SHOW" or receipts[0].get("may_display") is not True:
+    audit = _cal_audit_from_receipt(receipts[0], cart_id=cart.id, cart_version=cart_version)
+    if audit.decision != "SHOW" or receipts[0].get("may_display") is not True:
+        db.add(audit)
         db.commit()
         raise HTTPException(409, detail={"code": "CAL_CART_ADD_DENIED"})
-    if item:
-        item.quantity = quantity
+
+    locked_cart = db.scalar(
+        select(Cart).where(Cart.id == cart.id).with_for_update().execution_options(populate_existing=True)
+    )
+    current_item = db.scalar(
+        select(CartItem).where(CartItem.cart_id == cart.id, CartItem.variant_id == variant.id)
+        .with_for_update().execution_options(populate_existing=True)
+    )
+    current_offer = variant_triplet(db, variant.id, for_update=True)
+    if locked_cart is None or current_offer is None:
+        audit.reason_code = "OFFER_REMOVED_AFTER_CAL"
+        db.add(audit)
+        db.commit()
+        raise HTTPException(409, detail={"code": "CAL_CART_OFFER_CHANGED_REAUTHORIZE"})
+    current_variant, current_listing, current_merchant = current_offer
+    current_quantity = payload.quantity + (current_item.quantity if current_item else 0)
+    current_auth = _purchase_authorization_item(
+        (current_item, current_variant, current_listing, current_merchant),
+        action="cart_add",
+        quantity=current_quantity,
+    )
+    if (
+        locked_cart.version != cart_version
+        or current_quantity != quantity
+        or current_auth["offer_snapshot_sha256"] != authorization["offer_snapshot_sha256"]
+    ):
+        audit.reason_code = "OFFER_CHANGED_AFTER_CAL"
+        db.add(audit)
+        db.commit()
+        raise HTTPException(409, detail={"code": "CAL_CART_OFFER_CHANGED_REAUTHORIZE"})
+    if (
+        current_variant.state != "active" or current_listing.state != "active"
+        or current_merchant.state != "approved"
+        or current_quantity > MAX_QTY
+        or current_variant.on_hand - current_variant.reserved_qty < current_quantity
+    ):
+        audit.reason_code = "OFFER_OR_STOCK_UNAVAILABLE_AFTER_CAL"
+        db.add(audit)
+        db.commit()
+        raise HTTPException(409, detail={"code": "OFFER_OR_STOCK_CHANGED_AFTER_CAL"})
+    db.add(audit)
+    if current_item:
+        current_item.quantity = current_quantity
     else:
-        db.add(CartItem(id=str(uuid.uuid4()), cart_id=cart.id, variant_id=variant.id, quantity=quantity))
-    cart.version, cart.updated_at = cart.version + 1, now()
+        db.add(CartItem(id=str(uuid.uuid4()), cart_id=locked_cart.id, variant_id=current_variant.id, quantity=current_quantity))
+    locked_cart.version, locked_cart.updated_at = locked_cart.version + 1, now()
     try:
         db.commit()
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(409, detail={"code": "CART_CONFLICT_RETRY"}) from exc
-    return {"cart_id": cart.id, "version": cart.version, "item_count": db.scalar(
-        select(func.coalesce(func.sum(CartItem.quantity), 0)).where(CartItem.cart_id == cart.id)
-    ) or 0, "updated": True, "cart_refresh_required": True}
+    item_count = db.scalar(
+        select(func.coalesce(func.sum(CartItem.quantity), 0)).where(CartItem.cart_id == locked_cart.id)
+    ) or 0
+    return {"cart_id": locked_cart.id, "version": locked_cart.version, "item_count": item_count,
+            "updated": True, "cart_refresh_required": True}
 
 
 @app.patch("/cart/items/{variant_id}")
@@ -3004,6 +3048,7 @@ def update_cart_item(
     db: Annotated[Session, Depends(get_db)],
 ):
     cart = ensure_cart(db, actor.user_id)
+    cart_version = cart.version
     item = db.scalar(select(CartItem).where(CartItem.cart_id == cart.id, CartItem.variant_id == str(variant_id)))
     if not item:
         raise HTTPException(404, detail={"code": "CART_ITEM_NOT_FOUND"})
@@ -3015,14 +3060,50 @@ def update_cart_item(
         raise HTTPException(409, detail={"code": "INSUFFICIENT_AVAILABLE_STOCK"})
     authorization = _purchase_authorization_item((item, variant, listing, merchant), action="cart_update", quantity=payload.quantity)
     receipts = _request_cal_purchase_receipts(request, actor.user_id, [authorization])
-    audit = _cal_audit_from_receipt(receipts[0], cart_id=cart.id, cart_version=cart.version)
-    db.add(audit)
+    audit = _cal_audit_from_receipt(receipts[0], cart_id=cart.id, cart_version=cart_version)
     if audit.decision != "SHOW" or receipts[0].get("may_display") is not True:
+        db.add(audit)
         db.commit()
         raise HTTPException(409, detail={"code": "CAL_CART_UPDATE_DENIED"})
-    item.quantity, cart.version, cart.updated_at = payload.quantity, cart.version + 1, now()
+
+    locked_cart = db.scalar(
+        select(Cart).where(Cart.id == cart.id).with_for_update().execution_options(populate_existing=True)
+    )
+    current_item = db.scalar(
+        select(CartItem).where(CartItem.cart_id == cart.id, CartItem.variant_id == str(variant_id))
+        .with_for_update().execution_options(populate_existing=True)
+    )
+    current_offer = variant_triplet(db, str(variant_id), for_update=True)
+    if locked_cart is None or current_item is None or current_offer is None:
+        audit.reason_code = "CART_LINE_REMOVED_AFTER_CAL"
+        db.add(audit)
+        db.commit()
+        raise HTTPException(409, detail={"code": "CAL_CART_OFFER_CHANGED_REAUTHORIZE"})
+    current_variant, current_listing, current_merchant = current_offer
+    current_auth = _purchase_authorization_item(
+        (current_item, current_variant, current_listing, current_merchant),
+        action="cart_update",
+        quantity=payload.quantity,
+    )
+    if locked_cart.version != cart_version or current_auth["offer_snapshot_sha256"] != authorization["offer_snapshot_sha256"]:
+        audit.reason_code = "OFFER_CHANGED_AFTER_CAL"
+        db.add(audit)
+        db.commit()
+        raise HTTPException(409, detail={"code": "CAL_CART_OFFER_CHANGED_REAUTHORIZE"})
+    if (
+        current_variant.state != "active" or current_listing.state != "active"
+        or current_merchant.state != "approved"
+        or current_variant.on_hand - current_variant.reserved_qty < payload.quantity
+    ):
+        audit.reason_code = "OFFER_OR_STOCK_UNAVAILABLE_AFTER_CAL"
+        db.add(audit)
+        db.commit()
+        raise HTTPException(409, detail={"code": "OFFER_OR_STOCK_CHANGED_AFTER_CAL"})
+    db.add(audit)
+    current_item.quantity, locked_cart.version, locked_cart.updated_at = payload.quantity, locked_cart.version + 1, now()
     db.commit()
-    return {"cart_id": cart.id, "version": cart.version, "quantity": item.quantity, "updated": True, "cart_refresh_required": True}
+    return {"cart_id": locked_cart.id, "version": locked_cart.version, "quantity": current_item.quantity,
+            "updated": True, "cart_refresh_required": True}
 
 
 @app.delete("/cart/items/{variant_id}")
