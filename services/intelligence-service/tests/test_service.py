@@ -19,7 +19,9 @@ def client(monkeypatch):
     monkeypatch.setenv("CIL_SERVICE_TOKEN", "service-test")
     monkeypatch.setenv("CIL_CATALOG_SERVICE_TOKEN", "catalog-test")
     monkeypatch.setenv("CIL_CAL_SERVICE_TOKEN", "cal-test")
-    monkeypatch.setenv("CIL_RECEIPT_SIGNING_KEY", "test-signing-key-that-is-at-least-32-bytes")
+    monkeypatch.setenv("CIL_CONSENT_RECEIPT_KEY", "test-consent-receipt-key-that-is-over-32-bytes")
+    monkeypatch.setenv("CIL_CAL_RECEIPT_KEY", "test-cal-receipt-key-that-is-over-32-bytes")
+    monkeypatch.setenv("CIL_SKIN_ANALYSIS_CONSENT_KEY", "test-skin-consent-key-that-is-over-32-bytes")
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
     with TestClient(app) as test_client:
@@ -32,7 +34,13 @@ def auth(token):
 
 
 def receipt(payload):
-    key = b"test-signing-key-that-is-at-least-32-bytes"
+    purpose = payload.get("purpose")
+    if purpose == "perfectcorp_skin_analysis":
+        key = b"test-skin-consent-key-that-is-over-32-bytes"
+    elif payload.get("type") == "consent":
+        key = b"test-consent-receipt-key-that-is-over-32-bytes"
+    else:
+        key = b"test-cal-receipt-key-that-is-over-32-bytes"
     encoded = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode().rstrip("=")
     signature = hmac.new(key, encoded.encode(), hashlib.sha256).hexdigest()
     return f"{encoded}.{signature}"
