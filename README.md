@@ -189,7 +189,7 @@ The 30-observation floor is a disclosure safeguard. It is not differential priva
 
 ### Cirvanna Intelligence Layer (CIL)
 
-The platform-wide CIL contract package tracks source rights by usage purpose, evidence scope, product ingredients and claims, model-validation cards, and consented recommendation outcomes. Catalog continues to own product identity and version history; incoming claims remain pending or rejected until runtime CIL rights/evidence checks are wired. The narrower `catacaci.cil` cohort kernel remains a separate CaTaCaCi capability. See [CIL architecture](docs/architecture/cirvanna-intelligence-layer.md).
+The platform-wide CIL now has a durable Intelligence Service for source rights, append-only revocation events, evidence references, consented recommendation outcomes and CAL review requests. Catalog product/variant/version GET responses call the CIL serving gate; missing gateway configuration or failed evidence/rights checks withhold product-intelligence metadata. Claims remain withheld unless explicitly approved; ingredient declarations are assessed independently and carry required attribution. The generic provider adapter requires an explicit API token, licence ID and terms URL; no vendor is enabled by default. The narrower `catacaci.cil` cohort kernel remains a separate CaTaCaCi capability. See [CIL architecture](docs/architecture/cirvanna-intelligence-layer.md) and [Intelligence Service](services/intelligence-service/README.md).
 
 ## Modules and services
 ## Modules and services
@@ -201,7 +201,8 @@ The actual repository is a multi-service monorepo. Important areas are:
 | apps/demo-web | Demo and marketplace browser application |
 | services/api-gateway | Catalog and Commerce discovery, verified Commerce subject resolution, USI/TAL proxy, signed safety/FCI adapters, CAL arbitration, Complementer advisory proxy |
 | services/recommendation-service | Complementer advisory API and domain modules |
-| services/catalog-service | Canonical product CRUD, metadata validation, product versions |
+| services/catalog-service | Canonical product CRUD, metadata validation, product versions, fail-closed CIL serving gate |
+| services/intelligence-service | Durable source/evidence registry, rights revocation, licensed-provider adapter, recommendation outcomes, CAL review queue |
 | services/identity-learning-service | Durable USI profiles, consent receipts, TAL event persistence, replay/idempotency, correction, export, deletion and retention |
 | services/npl-service | Persistent NPL preference ledger and signed evidence API |
 | services/cultural-identity-service | Persistent explicit cultural declaration lifecycle and signed evidence |
@@ -216,7 +217,7 @@ The actual repository is a multi-service monorepo. Important areas are:
 | services/xari | PNELLY conversational discovery/orchestration (preserved Xari compatibility source path) |
 | services/graph-service, perception-service, sync-service | Supporting service foundations; inspect their READMEs before use |
 | packages/identity-intelligence | CaTaCaCi, USI, EEPL, TAL event contracts, and cultural identity domain contracts |
-| packages/intelligence-layer | Platform-wide CIL source-rights, evidence, ingredient, model-validation, and outcome-learning contracts (contract-only; no durable service yet) |
+| packages/intelligence-layer | Platform-wide CIL source-rights, evidence, ingredient, model-validation, and outcome-learning domain contracts |
 | packages/preferences/npl | Canonical NPL policy and evidence contract |
 | packages/fit-intelligence | Fit-confidence evidence contracts; no calibrated predictor is registered |
 | packages/shared-contracts | Shared contract package |
@@ -419,7 +420,7 @@ Deploy bounded services independently. Use the build context expected by each Do
 Before a shared or production deployment:
 
 1. Provision managed databases according to service ownership. The identity-learning service uses its own `identity_usi_*` and `identity_tal_*` table namespace in the already approved PostgreSQL instance; do not create a duplicate database for it. Provision secrets in a secret manager.
-2. Apply reviewed migrations, including `services/identity-learning-service/migrations/0001_identity_tal.sql`; do not rely on automatic schema creation in production.
+2. Apply reviewed migrations, including `services/identity-learning-service/migrations/0001_identity_tal.sql` and `alembic upgrade head` from `services/intelligence-service`; do not rely on automatic schema creation in production.
 3. Configure private service networking, HTTPS, least-privilege service tokens, and independently rotated signing keys.
 4. Verify /health, /ready, and /capabilities for each service. Liveness is not readiness.
 5. Run authenticated staging smoke tests across Commerce `/me`, gateway, identity-learning, Catalog, Commerce offers, NPL, Cultural Identity, evidence providers, and CAL. Confirm non-SHOW candidates never leak product or offer details.
