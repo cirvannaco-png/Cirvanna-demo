@@ -3299,9 +3299,11 @@ def checkout(
         return persist_stripe_session(db, existing.id, actor.email, gateway)
 
     cart = ensure_cart(db, actor.user_id)
+    cart_version_snapshot = cart.version
     rows = db.execute(select(CartItem, Variant, Listing, Merchant)
         .join(Variant, CartItem.variant_id == Variant.id).join(Listing, Variant.listing_id == Listing.id)
-        .join(Merchant, Listing.merchant_id == Merchant.id).where(CartItem.cart_id == cart.id).with_for_update()).all()
+        .join(Merchant, Listing.merchant_id == Merchant.id).where(CartItem.cart_id == cart.id)
+        .order_by(CartItem.id).execution_options(populate_existing=True)).all()
     if not rows:
         raise HTTPException(409, detail={"code": "EMPTY_CART"})
     if len(rows) > 100 or any(ci.quantity < 1 or ci.quantity > MAX_QTY for ci, *_ in rows):
@@ -3426,12 +3428,15 @@ def checkout(
         )
         for cart_item, variant, listing, merchant in rows
     ]
+    # Release the read transaction before the external CAL round trip. The
+    # service re-locks and revalidates the exact offer snapshots afterwards.
+    db.commit()
     purchase_receipts = _request_cal_purchase_receipts(request, actor.user_id, purchase_authorization_inputs)
     purchase_audits = [
         _cal_audit_from_receipt(
             receipt,
             cart_id=cart.id,
-            cart_version=cart.version,
+            cart_version=cart_version_snapshot,
         )
         for receipt in purchase_receipts
     ]
@@ -3440,6 +3445,65 @@ def checkout(
         db.add_all(purchase_audits)
         db.commit()
         raise HTTPException(409, detail={"code": "CAL_CHECKOUT_AUTHORIZATION_DENIED"})
+
+    locked_cart = db.scalar(
+        select(Cart).where(Cart.id == cart.id).with_for_update().execution_options(populate_existing=True)
+    )
+    locked_rows = db.execute(
+        select(CartItem, Variant, Listing, Merchant)
+        .join(Variant, CartItem.variant_id == Variant.id)
+        .join(Listing, Variant.listing_id == Listing.id)
+        .join(Merchant, Listing.merchant_id == Merchant.id)
+        .where(CartItem.cart_id == cart.id)
+        .order_by(CartItem.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).all()
+    if locked_cart is None or locked_cart.version != cart_version_snapshot or len(locked_rows) != len(rows):
+        for audit in purchase_audits:
+            audit.reason_code = "CART_CHANGED_AFTER_CAL"
+        db.add_all(purchase_audits)
+        db.commit()
+        raise HTTPException(409, detail={"code": "CAL_CHECKOUT_OFFER_CHANGED_REAUTHORIZE"})
+
+    locked_market_costs: dict[str, dict[str, Any]] = {}
+    try:
+        if market_context is not None:
+            for _, variant, listing, merchant in locked_rows:
+                locked_market_costs[variant.id] = _resolve_market_checkout_line(
+                    db, variant, listing, merchant, market_context, gateway,
+                )
+    except HTTPException:
+        for audit in purchase_audits:
+            audit.reason_code = "MARKET_QUOTE_CHANGED_AFTER_CAL"
+        db.add_all(purchase_audits)
+        db.commit()
+        raise
+
+    expected_hashes = {item["variant_id"]: item["offer_snapshot_sha256"] for item in purchase_authorization_inputs}
+    current_hashes = {
+        variant.id: _purchase_authorization_item(
+            (cart_item, variant, listing, merchant),
+            action="checkout",
+            quantity=cart_item.quantity,
+            market_context=market_context,
+            cost=locked_market_costs.get(variant.id),
+        )["offer_snapshot_sha256"]
+        for cart_item, variant, listing, merchant in locked_rows
+    }
+    if (
+        set(expected_hashes) != set(current_hashes)
+        or any(expected_hashes[key] != current_hashes[key] for key in expected_hashes)
+        or any(audit.expires_at <= now() for audit in purchase_audits)
+    ):
+        for audit in purchase_audits:
+            audit.reason_code = "OFFER_OR_RECEIPT_CHANGED_AFTER_CAL"
+        db.add_all(purchase_audits)
+        db.commit()
+        raise HTTPException(409, detail={"code": "CAL_CHECKOUT_OFFER_CHANGED_REAUTHORIZE"})
+
+    rows = locked_rows
+    market_costs = locked_market_costs
 
     order = CommerceOrder(
         id=str(uuid.uuid4()), order_number=f"CV-{now():%Y%m%d}-{uuid.uuid4().hex[:10].upper()}",
