@@ -39,7 +39,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 
 
 SERVICE = "cirvanna-commerce-service"
-EXPECTED_SCHEMA_REVISION = "20261110_0009"
+EXPECTED_SCHEMA_REVISION = "20261110_0010"
 MAX_QTY = 50
 RESERVATION_MINUTES = 60
 SKU_RE = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,79}$")
@@ -370,6 +370,49 @@ class OrderItem(Base):
     commission_minor: Mapped[int] = mapped_column(Integer, nullable=False)
     __table_args__ = (CheckConstraint("quantity > 0", name="ck_commerce_order_item_quantity_positive"), CheckConstraint("unit_price_minor >= 0 AND line_total_minor >= 0", name="ck_commerce_order_item_price_nonnegative"))
 
+
+
+
+class CALPurchaseAudit(Base):
+    """Immutable record of a signed candidate/offer/action-bound CAL purchase decision."""
+    __tablename__ = "commerce_cal_purchase_audits"
+    __table_args__ = (
+        Index("ix_commerce_cal_purchase_order", "order_id", "decision", "action"),
+        Index("ix_commerce_cal_purchase_buyer_created", "buyer_user_id", "created_at"),
+        Index("ix_commerce_cal_purchase_candidate_created", "candidate_id", "created_at"),
+        CheckConstraint("decision IN ('SHOW','BLOCK','REVIEW')", name="ck_commerce_cal_purchase_decision"),
+        CheckConstraint("action IN ('cart_view','cart_add','cart_update','checkout')", name="ck_commerce_cal_purchase_action"),
+        CheckConstraint("quantity > 0", name="ck_commerce_cal_purchase_quantity"),
+        CheckConstraint("unit_price_minor >= 0", name="ck_commerce_cal_purchase_price"),
+    )
+    audit_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    order_id: Mapped[str | None] = mapped_column(ForeignKey("commerce_orders.id", ondelete="SET NULL"), nullable=True)
+    cart_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    cart_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    buyer_user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(24), nullable=False)
+    catalog_product_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    candidate_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    variant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    listing_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    merchant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    offer_snapshot_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    market_country_code: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    destination_key_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    fulfillment_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    display_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    unit_price_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    catalog_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    request_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason_code: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    receipt: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
 
 
 
