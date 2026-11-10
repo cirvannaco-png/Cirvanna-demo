@@ -118,6 +118,8 @@ def _tal_checkout_payloads(event: dict[str, Any]) -> list[tuple[str, dict[str, A
         raise SyncContractError("invalid_checkout_learning_payload")
     receipt_id = payload.get("personalization_consent_receipt_id")
     if receipt_id is None:
+        if event.get("event_type") == "commerce.checkout.started":
+            raise SyncContractError("checkout_selection_missing_consent_receipt")
         return []
     receipt_id = _required_string(receipt_id, "personalization_consent_receipt_id", 128)
     subject_id = _required_string(payload.get("buyer_user_id"), "buyer_user_id", 128)
