@@ -84,7 +84,7 @@ def test_perfectcorp_uploads_then_creates_async_task_with_no_api_secret_on_presi
         image=b"jpeg-bytes",
         file_name="photo.jpg",
         content_type="image/jpeg",
-        actions=["hd_pore", "hd_texture"],
+        actions=["hd_pore", "hd_texture", "hd_age_spot", "hd_skin_type"],
         mode="hd",
     )
     assert result["task_id"] == "task/with+reserved"
@@ -96,7 +96,7 @@ def test_perfectcorp_uploads_then_creates_async_task_with_no_api_secret_on_presi
     task_call = next(c for c in client.calls if c[1].endswith("/s2s/v2.1/task/skin-analysis"))
     assert task_call[2]["json"] == {
         "src_file_id": "opaque-file-id",
-        "dst_actions": ["hd_pore", "hd_texture"],
+        "dst_actions": ["hd_pore", "hd_texture", "hd_age_spot", "hd_skin_type"],
         "format": "json",
     }
 
@@ -143,3 +143,9 @@ def test_perfectcorp_delete_endpoint_calls_documented_task_delete(monkeypatch, c
         and kwargs["json"] == {"task_id": "task-1"}
         for method, url, kwargs in client.calls
     )
+
+
+def test_perfectcorp_hd_age_spot_and_skin_type_use_documented_action_names(configured):
+    assert "hd_age_spot" in perfectcorp.ALLOWED_ACTIONS["hd"]
+    assert "hd_skin_type" in perfectcorp.ALLOWED_ACTIONS["hd"]
+    assert "hd_spot" not in perfectcorp.ALLOWED_ACTIONS["hd"]
