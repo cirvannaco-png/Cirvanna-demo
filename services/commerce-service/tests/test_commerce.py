@@ -593,6 +593,38 @@ def test_existing_idempotent_order_without_cal_audit_cannot_reopen_payment(clien
     assert retry.json()["detail"]["code"] == "EXISTING_ORDER_CAL_AUTHORIZATION_MISSING"
 
 
+def test_existing_order_retry_rejects_changed_line_quantity_or_price(client, monkeypatch):
+    offer = seed_offer(stock=5, price_minor=800)
+    buyer = auth("buyer-cal-line-change")
+    assert client.post(
+        "/cart/items",
+        json={"variant_id": offer["variant_id"], "quantity": 1},
+        headers=buyer,
+    ).status_code == 201
+    configure_stripe(monkeypatch)
+    first = client.post(
+        "/checkout",
+        headers={**buyer, "Idempotency-Key": "cal-line-change-retry-key-01"},
+    )
+    assert first.status_code == 201
+    order_id = first.json()["order"]["order_id"]
+
+    db = TEST_SESSION()
+    line = db.query(main.OrderItem).filter_by(order_id=order_id).one()
+    line.unit_price_minor += 1
+    db.commit()
+    db.close()
+
+    retry = client.post(
+        "/checkout",
+        headers={**buyer, "Idempotency-Key": "cal-line-change-retry-key-01"},
+    )
+    assert retry.status_code == 409
+    assert retry.json()["detail"]["code"] == "EXISTING_ORDER_CAL_AUTHORIZATION_MISSING"
+
+
+
+
 def test_real_cal_receipt_requester_rejects_modified_signed_offer(client, monkeypatch):
     from starlette.requests import Request
 
