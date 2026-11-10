@@ -1632,3 +1632,42 @@ def test_checkout_learning_consent_rejects_mismatched_subject(monkeypatch):
     with pytest.raises(main.HTTPException) as exc:
         main._verify_checkout_personalization_consent("buyer-1", "consent-bundle-001", None)
     assert exc.value.status_code == 403
+
+
+
+def test_checkout_started_outbox_contains_only_consent_bound_selection_snapshot(client, monkeypatch):
+    offer = seed_offer(stock=5, price_minor=750)
+    buyer = auth("buyer-checkout-learning", email="buyer-learning@example.test")
+    added = client.post(
+        "/cart/items",
+        json={"variant_id": offer["variant_id"], "quantity": 1},
+        headers=buyer,
+    )
+    assert added.status_code == 201
+    configure_stripe(monkeypatch)
+    monkeypatch.setattr(
+        main,
+        "_verify_checkout_personalization_consent",
+        lambda subject_id, consent_id, consent_version: "tal-consent-receipt-0001",
+    )
+    response = client.post(
+        "/checkout",
+        headers={**buyer, "Idempotency-Key": "checkout-learning-key-0001"},
+        json={"personalization_consent_id": "consent-bundle-0001"},
+    )
+    assert response.status_code == 201, response.text
+    order_id = response.json()["order"]["order_id"]
+    db = TEST_SESSION()
+    event = db.query(main.CommerceOutboxEvent).filter_by(
+        aggregate_id=order_id,
+        event_type="commerce.checkout.started",
+    ).one()
+    assert event.payload["personalization_consent_receipt_id"] == "tal-consent-receipt-0001"
+    assert event.payload["buyer_user_id"] == "buyer-checkout-learning"
+    assert event.payload["items"][0]["catalog_product_id"] == offer["catalog_product_id"]
+    assert event.payload["items"][0]["quantity"] == 1
+    assert event.payload["payment_method_family"] == "card"
+    assert "email" not in event.payload
+    assert "address" not in event.payload
+    assert "product_name" not in event.payload["items"][0]
+    db.close()
