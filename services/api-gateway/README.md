@@ -33,6 +33,7 @@ The gateway sends that user token to Commerce `GET /me` and uses only the verifi
 - `GET /capabilities` — reports enabled integrations and explicit unavailable capabilities.
 - `POST /v1/decisions` — evaluate 1–25 canonical Catalog product IDs through the decision pipeline; merchandising fields are present only for CAL SHOW, otherwise only the candidate ID and decision evidence are returned.
 - `POST /v1/discover` — live Catalog search + Commerce purchasable-offer retrieval, USI preference ranking, then CAL arbitration. Product and offer details are included only for SHOW candidates.
+- `POST /v1/purchase-authorizations` — re-evaluate each exact Commerce-supplied product candidate for the verified user and issue a 90-second HMAC-signed receipt only for CAL SHOW. Receipts are bound to action, product, merchant, listing/offer, variant, offer hash, quantity, market context, catalog version, policy version and decision request.
 - `POST /v1/complementer/recommend` — styling advice only; no product candidates or display authority.
 - `GET /v1/me/style-profile` and `PUT /v1/me/style-profile` — read/update the verified subject's USI profile.
 - `POST /v1/me/consents` and `POST /v1/me/consents/{receipt_id}/revoke` — create and revoke versioned consent receipts.
@@ -83,6 +84,7 @@ The adapter contract is not a substitute for independent scientific or safety ev
 | `CIRVANNA_REQUIRE_VERIFIED_IDENTITY` | Defaults to true; set false only for local/test-only request-scoped demo mode |
 | `CIRVANNA_AUDIT_DB` | Local/staging SQLite audit path; not production managed audit |
 | `CIRVANNA_POLICY_VERSION` | Decision policy version |
+| `CAL_PURCHASE_RECEIPT_SECRET` | Shared HMAC-SHA256 signing secret for 90-second purchase receipts; minimum 32 bytes. Provision the exact same secret to Commerce through secret storage, never commit it. |
 | `CIRVANNA_REQUIRED_CONTEXT_FIELDS` | EEPL context requirements |
 | `CIRVANNA_REQUIRED_PRODUCT_ATTRIBUTES` | Required Catalog metadata |
 | `COMMERCE_API_URL` | Trusted Commerce `/me` and offers API base URL |
@@ -145,3 +147,7 @@ The Decision Gateway workflow runs gateway HTTP/integration tests, container bui
 - Production marketplace offer API security and end-to-end display verification.
 
 Do not claim production readiness from unit tests, signed test fixtures, a passing container build, or a configured URL alone.
+
+## Purchase-time CAL authorization
+
+Commerce is the authoritative owner of merchant offer facts and invokes `POST /v1/purchase-authorizations` immediately before cart read/add/update and checkout. The gateway resolves the end-user through the trusted Commerce `/me` identity path; a request-body subject mismatch is rejected. Commerce computes the offer hash from its current database snapshot and verifies the signed receipt independently before committing the mutation. A missing or invalid signing secret returns 503 and no receipt is minted. A non-SHOW candidate receives only a withheld reason code, never a receipt. This route does not replace product-discovery CAL; it is an additional action-specific decision at the point of use.
