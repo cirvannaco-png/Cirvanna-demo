@@ -40,6 +40,14 @@ def _settings(*, for_delete: bool = False) -> tuple[str, str]:
             raise PerfectCorpNotConfigured("Perfect Corp DPA/retention review is not approved")
         if not os.getenv("CIL_PERFECTCORP_RETENTION_POLICY_REF", "").strip():
             raise PerfectCorpNotConfigured("Perfect Corp retention policy reference is required")
+        if os.getenv("CIL_PERFECTCORP_ERASURE_SLA_CONFIRMED", "false").lower() != "true":
+            raise PerfectCorpNotConfigured("Contractual image erasure SLA must be confirmed")
+        try:
+            max_retention_hours = int(os.getenv("CIL_PERFECTCORP_MAX_RETENTION_HOURS", "-1"))
+        except ValueError as exc:
+            raise PerfectCorpNotConfigured("Maximum provider retention must be an integer number of hours") from exc
+        if not 0 <= max_retention_hours <= 1:
+            raise PerfectCorpNotConfigured("Provider image retention must be contractually capped at 1 hour or less")
         if not os.getenv("CIL_PERFECTCORP_LICENCE_ID", "").strip() or not os.getenv("CIL_PERFECTCORP_TERMS_URL", "").strip():
             raise PerfectCorpNotConfigured("Perfect Corp licence ID and terms URL are required")
     token = os.getenv("CIL_PERFECTCORP_API_TOKEN", "").strip()
