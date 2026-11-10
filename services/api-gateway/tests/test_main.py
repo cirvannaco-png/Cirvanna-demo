@@ -112,6 +112,14 @@ def purchase_authorization_body(**overrides):
     return value
 
 
+
+
+def test_gateway_reports_purchase_receipt_signing_configuration(client, monkeypatch):
+    monkeypatch.delenv("CAL_PURCHASE_RECEIPT_SECRET", raising=False)
+    assert main.capabilities()["cal_purchase_authorization_receipts_configured"] is False
+    monkeypatch.setenv("CAL_PURCHASE_RECEIPT_SECRET", "purchase-receipt-secret-for-tests-0001")
+    assert main.capabilities()["cal_purchase_authorization_receipts_configured"] is True
+
 def test_purchase_authorization_requires_verified_identity_and_receipt_secret(client, monkeypatch):
     monkeypatch.setenv("CIRVANNA_REQUIRE_VERIFIED_IDENTITY", "false")
     monkeypatch.setenv("CAL_PURCHASE_RECEIPT_SECRET", "a" * 40)
