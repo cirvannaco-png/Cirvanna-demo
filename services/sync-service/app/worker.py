@@ -112,62 +112,69 @@ def _purchase_payload(event: dict[str, Any], item: dict[str, Any]) -> dict[str, 
 
 
 def _tal_checkout_payloads(event: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
-    """Map each paid line to a small, idempotent TAL observation when consent was snapshotted."""
+    """Map consented checkout selections or paid lines to bounded TAL observations."""
     payload = event.get("payload")
     if not isinstance(payload, dict):
-        raise SyncContractError("invalid_paid_order_payload")
+        raise SyncContractError("invalid_checkout_learning_payload")
     receipt_id = payload.get("personalization_consent_receipt_id")
     if receipt_id is None:
         return []
     receipt_id = _required_string(receipt_id, "personalization_consent_receipt_id", 128)
     subject_id = _required_string(payload.get("buyer_user_id"), "buyer_user_id", 128)
     event_id = _required_string(event.get("event_id"), "event_id", 36)
+    event_type = event.get("event_type")
     if (
         payload.get("event_id") != event_id
-        or event.get("event_type") != "commerce.order.paid"
-        or payload.get("event_type") != "commerce.order.paid"
+        or event_type not in {"commerce.checkout.started", "commerce.order.paid"}
+        or payload.get("event_type") != event_type
         or event.get("schema_version") != 1
         or payload.get("schema_version") != 1
-        or payload.get("ownership_authority") != "verified_payment"
     ):
-        raise SyncContractError("invalid_paid_order_learning_authority")
+        raise SyncContractError("invalid_checkout_learning_authority")
+    if event_type == "commerce.order.paid" and payload.get("ownership_authority") != "verified_payment":
+        raise SyncContractError("unverified_purchase_learning_authority")
     items = payload.get("items")
     if not isinstance(items, list) or not items:
-        raise SyncContractError("invalid_paid_order_learning_items")
+        raise SyncContractError("invalid_checkout_learning_items")
     total = payload.get("total_minor")
     if not isinstance(total, int) or isinstance(total, bool) or total < 0:
-        raise SyncContractError("invalid_paid_order_learning_total")
-    observed_at = _required_string(payload.get("paid_at") or payload.get("occurred_at"), "paid_at", 64)
+        raise SyncContractError("invalid_checkout_learning_total")
+    observed_at = _required_string(payload.get("paid_at") or payload.get("occurred_at"), "observed_at", 64)
     try:
         observed = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
     except ValueError as exc:
-        raise SyncContractError("invalid_paid_order_learning_timestamp") from exc
+        raise SyncContractError("invalid_checkout_learning_timestamp") from exc
     if observed.tzinfo is None:
-        raise SyncContractError("paid_order_learning_timestamp_requires_timezone")
+        raise SyncContractError("checkout_learning_timestamp_requires_timezone")
 
     events = []
     for item in items:
         if not isinstance(item, dict):
-            raise SyncContractError("invalid_paid_order_learning_line")
+            raise SyncContractError("invalid_checkout_learning_line")
         quantity, price = item.get("quantity"), item.get("unit_price_minor")
         if (
             not isinstance(quantity, int) or isinstance(quantity, bool) or quantity < 1
             or not isinstance(price, int) or isinstance(price, bool) or price < 0
         ):
-            raise SyncContractError("invalid_paid_order_learning_amount")
+            raise SyncContractError("invalid_checkout_learning_amount")
         currency = _required_string(item.get("currency") or payload.get("currency"), "currency", 3)
         if len(currency) != 3 or not currency.isalpha() or currency != currency.upper():
-            raise SyncContractError("invalid_paid_order_learning_currency")
+            raise SyncContractError("invalid_checkout_learning_currency")
         order_item_id = _required_string(item.get("order_item_id"), "order_item_id", 36)
         value = {
             "schema_version": "1.0",
-            "evidence_type": "verified_transaction",
+            "evidence_type": "verified_transaction" if event_type == "commerce.order.paid" else "explicit_checkout_selection",
             "signal_strength": "weak",
-            "signal_semantics": "purchase_choice_is_not_a_declared_or_permanent_preference",
+            "signal_semantics": (
+                "purchase_choice_is_not_a_declared_or_permanent_preference"
+                if event_type == "commerce.order.paid"
+                else "checkout_selection_is_not_a_purchase_or_declared_preference"
+            ),
+            "source_event_type": event_type,
             "order_id": _required_string(payload.get("order_id"), "order_id", 36),
             "order_item_id": order_item_id,
             "catalog_product_id": _required_string(item.get("catalog_product_id"), "catalog_product_id", 128),
-            "variant_id": _required_string(item.get("merchant_variant_id"), "merchant_variant_id", 128),
+            "variant_id": _required_string(item.get("merchant_variant_id") or item.get("variant_id"), "variant_id", 128),
             "merchant_id": _required_string(item.get("merchant_id"), "merchant_id", 128),
             "quantity": quantity,
             "unit_price_minor": price,
@@ -181,9 +188,9 @@ def _tal_checkout_payloads(event: dict[str, Any]) -> list[tuple[str, dict[str, A
         tal_event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cirvanna:tal-checkout:{event_id}:{order_item_id}"))
         events.append((subject_id, {
             "event_id": tal_event_id,
-            "idempotency_key": f"commerce-paid:{event_id}:{order_item_id}",
+            "idempotency_key": f"checkout-choice:{event_id}:{order_item_id}",
             "consent_receipt_id": receipt_id,
-            "feature_key": "checkout.purchase_choice",
+            "feature_key": "checkout.purchase_choice" if event_type == "commerce.order.paid" else "checkout.selection",
             "value": json.dumps(value, sort_keys=True, separators=(",", ":")),
             "observed_at": observed.isoformat(),
             "expires_at": (observed + timedelta(days=180)).isoformat(),
@@ -272,7 +279,21 @@ class CommerceWardrobeWorker:
             event_id = _required_string(event.get("event_id"), "event_id", 36)
             try:
                 event_type = event.get("event_type")
-                if event_type == "commerce.order.paid":
+                if event_type == "commerce.checkout.started":
+                    tal_events = _tal_checkout_payloads(event)
+                    if tal_events and not self.settings.identity_learning_url:
+                        raise SyncContractError("TAL_SINK_NOT_CONFIGURED")
+                    for subject_id, tal_request in tal_events:
+                        tal_response = self.client.post(
+                            f"{self.settings.identity_learning_url}/v1/tal/events",
+                            params={"subject_id": subject_id},
+                            headers=self._tal_headers(),
+                            json=tal_request,
+                        )
+                        if tal_response.status_code == 403:
+                            break
+                        tal_response.raise_for_status()
+                elif event_type == "commerce.order.paid":
                     payload = event.get("payload")
                     if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
                         raise SyncContractError("invalid_paid_order_payload")
@@ -296,8 +317,6 @@ class CommerceWardrobeWorker:
                             headers=self._tal_headers(),
                             json=tal_request,
                         )
-                        # A 403 means the receipt is no longer active/valid.
-                        # Skip learning but do not block verified ownership sync.
                         if tal_response.status_code == 403:
                             break
                         tal_response.raise_for_status()
