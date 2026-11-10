@@ -166,7 +166,7 @@ def test_outcome_requires_signed_consent_and_cal_show_receipts(client):
     cal = receipt({**common, "type": "cal", "verdict": "SHOW", "candidate_id": "candidate-1", "decision_id": "decision-1"})
     payload = {
         "event_id": "event-1", "product_id": "product-1", "context_key": "humid-daily",
-        "contributor_token": token, "action": "saved", "suitability": "suitable",
+        "contributor_token": token, "action": "saved", "suitability": "suitable", "suitability_reported": True,
         "reason_codes": [], "candidate_id": "candidate-1",
         "observed_at": datetime.now(timezone.utc).isoformat(),
         "consent_receipt": consent, "cal_decision_receipt": cal,
@@ -225,7 +225,7 @@ def test_feedback_aggregate_opens_cal_review_and_records_final_cal_decision(clie
         payload = {
             "event_id": f"review-event-{index}", "product_id": "product-review",
             "context_key": "humid-daily", "contributor_token": contributor,
-            "action": "saved", "suitability": "unsuitable", "reason_codes": ["poor_match"],
+            "action": "saved", "suitability": "unsuitable", "suitability_reported": True, "reason_codes": ["poor_match"],
             "candidate_id": "candidate-review", "observed_at": datetime.now(timezone.utc).isoformat(),
             "consent_receipt": consent, "cal_decision_receipt": cal,
         }
@@ -624,3 +624,35 @@ def test_perfectcorp_reaper_deletes_abandoned_provider_tasks(client, monkeypatch
     assert response.status_code == 200
     assert response.json()["deleted"] == 1
     assert calls == ["vendor-abandoned"]
+
+
+def test_purchase_event_cannot_be_misrepresented_as_suitability_feedback(client):
+    token = "hmac-sha256:" + "9" * 64
+    common = {"product_id": "product-purchase", "expires_at": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp())}
+    consent = receipt({**common, "type": "consent", "purpose": "recommendation_outcome_learning", "subject_token": token})
+    cal = receipt({**common, "type": "cal", "verdict": "SHOW", "candidate_id": "candidate-purchase"})
+    payload = {
+        "event_id": "purchase-is-not-satisfaction", "product_id": "product-purchase",
+        "context_key": "humid-daily", "contributor_token": token,
+        "action": "purchased", "suitability": "suitable", "suitability_reported": True,
+        "candidate_id": "candidate-purchase", "observed_at": datetime.now(timezone.utc).isoformat(),
+        "consent_receipt": consent, "cal_decision_receipt": cal,
+    }
+    response = client.post("/outcomes", json=payload, headers=auth("service-test"))
+    assert response.status_code == 422
+
+
+def test_outcome_requires_explicit_suitability_report_before_learning(client):
+    token = "hmac-sha256:" + "8" * 64
+    common = {"product_id": "product-feedback", "expires_at": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp())}
+    consent = receipt({**common, "type": "consent", "purpose": "recommendation_outcome_learning", "subject_token": token})
+    cal = receipt({**common, "type": "cal", "verdict": "SHOW", "candidate_id": "candidate-feedback"})
+    payload = {
+        "event_id": "implicit-suitability-denied", "product_id": "product-feedback",
+        "context_key": "humid-daily", "contributor_token": token,
+        "action": "saved", "suitability": "unsuitable",
+        "candidate_id": "candidate-feedback", "observed_at": datetime.now(timezone.utc).isoformat(),
+        "consent_receipt": consent, "cal_decision_receipt": cal,
+    }
+    response = client.post("/outcomes", json=payload, headers=auth("service-test"))
+    assert response.status_code == 422
