@@ -1928,6 +1928,7 @@ def authorize_purchase_candidates(
             "catalog_version": decision.catalog_version,
             "decision": decision.verdict.upper(),
             "may_display": decision.may_display is True,
+            "reason_codes": [reason.code for reason in decision.reasons],
             "policy_version": decision.policy_version,
             "issued_at": issued.isoformat(),
             "expires_at": expires.isoformat(),
