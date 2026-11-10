@@ -396,12 +396,21 @@ def assess_serving(payload: ServingAssessmentIn, db: Session = Depends(get_db)):
             scope_ok = (not required_scope or required_scope == evidence_row.scope) and (not requested_scope or requested_scope == evidence_row.scope)
             if evidence.get("source_id") and evidence.get("source_id") != evidence_row.source_id:
                 scope_ok = False
-            grade_ok = evidence_row.grade in ({"E1", "E2", "E4"} if claim_type == "finished_product_efficacy"
-                                              else {"E1", "E2", "E3", "E4", "E5"})
-            eligible = allowed and scope_ok and grade_ok
+            source_row = db.get(Source, evidence_row.source_id)
+            if kind == "ingredient":
+                grade_ok = evidence_row.grade in {"E1", "E2", "E4"}
+                source_kind_ok = source_row is not None and source_row.kind in {"manufacturer", "merchant", "licensed_provider_api"}
+            elif claim_type == "finished_product_efficacy":
+                # Manufacturer/merchant declarations and customer feedback are not efficacy proof.
+                grade_ok = evidence_row.grade in {"E1", "E2"}
+                source_kind_ok = source_row is not None and source_row.kind in {"public_research", "licensed_research", "licensed_provider_api", "regulatory"}
+            else:
+                grade_ok = evidence_row.grade in {"E1", "E2", "E4"}
+                source_kind_ok = source_row is not None
+            eligible = allowed and scope_ok and grade_ok and source_kind_ok
             decisions.append({"item_id": item.get("claim_id", item.get("inci_name", "unknown")),
                               "kind": kind, "eligible": eligible,
-                              "reason": reason if not allowed else ("EVIDENCE_SCOPE_OR_GRADE_MISMATCH" if not (scope_ok and grade_ok) else "ELIGIBLE"),
+                              "reason": reason if not allowed else ("EVIDENCE_SCOPE_GRADE_OR_SOURCE_MISMATCH" if not (scope_ok and grade_ok and source_kind_ok) else "ELIGIBLE"),
                               "evidence_id": evidence_row.id})
     return {"product_id": payload.product_id, "catalog_version": payload.catalog_version,
             "purpose": payload.purpose, "decisions": decisions,
