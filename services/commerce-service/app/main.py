@@ -1374,11 +1374,15 @@ def ensure_cart(db: Session, user_id: str) -> Cart:
     return cart
 
 
-def variant_triplet(db: Session, variant_id: str):
-    return db.execute(select(Variant, Listing, Merchant)
+def variant_triplet(db: Session, variant_id: str, *, for_update: bool = False):
+    stmt = (select(Variant, Listing, Merchant)
         .join(Listing, Variant.listing_id == Listing.id)
         .join(Merchant, Listing.merchant_id == Merchant.id)
-        .where(Variant.id == variant_id)).first()
+        .where(Variant.id == variant_id)
+        .execution_options(populate_existing=True))
+    if for_update:
+        stmt = stmt.with_for_update()
+    return db.execute(stmt).first()
 
 
 def _cal_gateway_settings() -> tuple[str, str, str]:
@@ -1683,19 +1687,51 @@ def _authorize_cart_rows(
     rows: list[tuple[CartItem, Variant, Listing, Merchant]],
     action: str,
 ) -> list[CALPurchaseAudit]:
+    cart_version = cart.version
     inputs = [
         _purchase_authorization_item(row, action=action, quantity=row[0].quantity)
         for row in rows
     ]
     receipts = _request_cal_purchase_receipts(request, subject_id, inputs)
     audits = [
-        _cal_audit_from_receipt(receipt, cart_id=cart.id, cart_version=cart.version)
+        _cal_audit_from_receipt(receipt, cart_id=cart.id, cart_version=cart_version)
         for receipt in receipts
     ]
     db.add_all(audits)
     db.commit()
     if any(item.decision != "SHOW" or item.receipt.get("may_display") is not True for item in audits):
         raise HTTPException(409, detail={"code": "CAL_CART_REAUTHORIZATION_DENIED"})
+    # No product data is returned from a snapshot that changed while the
+    # external Decision Gateway was evaluating it.
+    locked_cart = db.scalar(
+        select(Cart).where(Cart.id == cart.id).with_for_update().execution_options(populate_existing=True)
+    )
+    fresh_rows = db.execute(
+        select(CartItem, Variant, Listing, Merchant)
+        .join(Variant, CartItem.variant_id == Variant.id)
+        .join(Listing, Variant.listing_id == Listing.id)
+        .join(Merchant, Listing.merchant_id == Merchant.id)
+        .where(CartItem.cart_id == cart.id)
+        .order_by(CartItem.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).all()
+    expected = {item["variant_id"]: item["offer_snapshot_sha256"] for item in inputs}
+    actual = {
+        row[1].id: _purchase_authorization_item(row, action=action, quantity=row[0].quantity)["offer_snapshot_sha256"]
+        for row in fresh_rows
+    }
+    if (
+        locked_cart is None
+        or locked_cart.version != cart_version
+        or set(expected) != set(actual)
+        or any(expected[key] != actual[key] for key in expected)
+    ):
+        for audit in audits:
+            audit.reason_code = "OFFER_CHANGED_AFTER_CAL"
+        db.add_all(audits)
+        db.commit()
+        raise HTTPException(409, detail={"code": "CAL_CART_OFFER_CHANGED_REAUTHORIZE"})
     return audits
 
 
