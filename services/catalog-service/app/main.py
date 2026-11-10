@@ -539,6 +539,12 @@ async def _cil_gate_node(node: Any, client: httpx.AsyncClient, gateway: str, tok
                     attributes.pop("product_intelligence", None)
                 else:
                     # Only fields explicitly assessed by the gateway can cross the serving boundary.
+                    for item, decision in zip(claims + ingredients, decisions):
+                        if decision.get("attribution_required"):
+                            evidence = dict(item.get("evidence") or {})
+                            evidence["attribution"] = decision.get("attribution_text")
+                            evidence["source_owner"] = decision.get("source_owner")
+                            item["evidence"] = evidence
                     attributes["product_intelligence"] = {
                         "schema_version": intelligence.get("schema_version", "1.0"),
                         "claims": claims,
