@@ -19,6 +19,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import DateTime, Integer, JSON, String, Text, UniqueConstraint, create_engine, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 SERVICE = "cirvanna-intelligence-service"
 PURPOSES = {"research", "model_evaluation", "product_enrichment", "commercial_recommendation",
@@ -36,6 +37,8 @@ def make_engine():
     options = {"pool_pre_ping": True}
     if url.startswith("sqlite"):
         options["connect_args"] = {"check_same_thread": False}
+        if url in {"sqlite://", "sqlite:///:memory:"}:
+            options["poolclass"] = StaticPool
     return create_engine(url, **options)
 
 
