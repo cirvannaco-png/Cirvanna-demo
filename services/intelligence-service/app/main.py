@@ -120,6 +120,18 @@ class Outcome(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, nullable=False)
 
 
+class ProviderTask(Base):
+    __tablename__ = "cil_provider_tasks"
+    task_id: Mapped[str] = mapped_column(String(256), primary_key=True)
+    provider: Mapped[str] = mapped_column(String(40), nullable=False)
+    contributor_token: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    image_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="running")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, nullable=False)
+    terminal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class CALReview(Base):
     __tablename__ = "cil_cal_review_queue"
     __table_args__ = (UniqueConstraint("product_id", "context_key", "status", name="uq_cil_cal_review_cohort_status"),)
@@ -376,6 +388,11 @@ def _receipt(value: str, expected_type: str, product_id: str) -> dict:
     return payload
 
 
+def _task_subject(authorization_token: str | None, expected_token: str) -> None:
+    if not authorization_token or not hmac.compare_digest(authorization_token, expected_token):
+        raise HTTPException(403, "Provider task is not bound to this contributor")
+
+
 def _verify_perfectcorp_consent(receipt: str, contributor_token: str, image_digest: str) -> dict:
     key = os.getenv("CIL_RECEIPT_SIGNING_KEY", "").encode()
     if len(key) < 32:
@@ -526,10 +543,18 @@ def start_perfectcorp_skin_analysis(payload: PerfectCorpSkinAnalysisIn):
     _verify_perfectcorp_consent(payload.consent_receipt, payload.contributor_token, image_digest)
     normalized = _normalize_skin_image(raw, payload.content_type, payload.mode)
     try:
-        return perfectcorp_start_skin_analysis(
+        task = perfectcorp_start_skin_analysis(
             image=normalized, file_name="cirvanna-skin-analysis.jpg",
             content_type="image/jpeg", actions=list(payload.actions), mode=payload.mode,
         )
+        with SessionLocal() as db:
+            db.add(ProviderTask(
+                task_id=task["task_id"], provider="perfectcorp",
+                contributor_token=payload.contributor_token, image_digest=image_digest,
+                status="running",
+            ))
+            db.commit()
+        return task
     except PerfectCorpNotConfigured as exc:
         raise HTTPException(503, str(exc)) from exc
     except ValueError as exc:
@@ -539,13 +564,37 @@ def start_perfectcorp_skin_analysis(payload: PerfectCorpSkinAnalysisIn):
 
 
 @app.get("/providers/perfectcorp/skin-analysis/{task_id}", dependencies=[Depends(_service)])
-def poll_perfectcorp_skin_analysis(task_id: str):
+def poll_perfectcorp_skin_analysis(
+    task_id: str,
+    contributor_token: str | None = Header(default=None, alias="X-CIL-Contributor-Token"),
+    db: Session = Depends(get_db),
+):
+    task_row = db.get(ProviderTask, task_id)
+    if task_row is None:
+        raise HTTPException(404, "Provider task not found")
+    _task_subject(contributor_token, task_row.contributor_token)
+    if task_row.deleted_at is not None:
+        raise HTTPException(410, "Provider task files have already been deleted")
+    if os.getenv("CIL_PERFECTCORP_DPA_APPROVED", "false").lower() != "true":
+        # When approval is withdrawn, cleanup is still mandatory and results are not released.
+        try:
+            perfectcorp_delete_task(task_id=task_id)
+            task_row.deleted_at = now()
+            task_row.status = "deleted"
+            db.commit()
+        except Exception as exc:
+            raise HTTPException(502, "DPA approval was withdrawn but provider task deletion failed") from exc
+        raise HTTPException(410, "Provider processing approval was withdrawn; task files were deleted")
     try:
         result = perfectcorp_get_skin_analysis_status(task_id=task_id)
         if result.get("status") in {"success", "error"}:
             # Delete provider input/output files immediately after the terminal result is fetched.
             # Never return the result as releasable until deletion is confirmed.
             perfectcorp_delete_task(task_id=task_id)
+            task_row.status = str(result["status"])
+            task_row.terminal_at = now()
+            task_row.deleted_at = now()
+            db.commit()
             result["provider_task_deleted"] = True
         return result
     except PerfectCorpNotConfigured as exc:
@@ -557,10 +606,23 @@ def poll_perfectcorp_skin_analysis(task_id: str):
 
 
 @app.delete("/providers/perfectcorp/skin-analysis/{task_id}", dependencies=[Depends(_service)])
-def delete_perfectcorp_skin_analysis(task_id: str):
-    """Request deletion of the completed provider task, input file and generated files."""
+def delete_perfectcorp_skin_analysis(
+    task_id: str,
+    contributor_token: str | None = Header(default=None, alias="X-CIL-Contributor-Token"),
+    db: Session = Depends(get_db),
+):
+    """Request deletion of the provider task, input file and generated files."""
+    task_row = db.get(ProviderTask, task_id)
+    if task_row is None:
+        raise HTTPException(404, "Provider task not found")
+    _task_subject(contributor_token, task_row.contributor_token)
+    if task_row.deleted_at is not None:
+        return {"task_id": task_id, "deleted": True, "already_deleted": True}
     try:
         deleted = perfectcorp_delete_task(task_id=task_id)
+        task_row.deleted_at = now()
+        task_row.status = "deleted"
+        db.commit()
         return {"task_id": task_id, "deleted": deleted}
     except PerfectCorpNotConfigured as exc:
         raise HTTPException(503, str(exc)) from exc
@@ -843,5 +905,6 @@ def capabilities():
                 "CIL_PERFECTCORP_ENABLED", "CIL_PERFECTCORP_DPA_APPROVED", "CIL_PERFECTCORP_API_TOKEN",
                 "CIL_PERFECTCORP_LICENCE_ID", "CIL_PERFECTCORP_TERMS_URL", "CIL_PERFECTCORP_RETENTION_POLICY_REF")),
             "perfectcorp_skin_analysis_enabled": os.getenv("CIL_PERFECTCORP_ENABLED", "false").lower() == "true",
+            "provider_task_retention_reaper_required": True,
             "revieve_integration_enabled": False,
             "catalog_serving_gateway_required": True, "cal_remains_final_authority": True}
