@@ -2370,7 +2370,7 @@ async def wardrobe_create_consent(request: Request, payload: WardrobeConsentIn =
         data = response.json()
     except ValueError as exc:
         raise HTTPException(502, detail={"code": "IDENTITY_CONSENT_RESPONSE_INVALID"}) from exc
-    return _private_json_response({"subject_id": subject, "receipt_id": receipt_id, "scope": payload.scope, "granted": payload.granted, "result": data})
+    return _private_json_response({"subject_id": subject, "receipt_id": receipt_id, "consent_id": data.get("consent_id"), "consent_version": "wardrobe-pnelly-learning-v1", "scope": payload.scope, "granted": payload.granted, "result": data})
 
 
 @app.post("/api/wardrobe/consents/{receipt_id}/revoke")
