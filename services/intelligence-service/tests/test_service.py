@@ -657,3 +657,11 @@ def test_outcome_requires_explicit_suitability_report_before_learning(client):
     }
     response = client.post("/outcomes", json=payload, headers=auth("service-test"))
     assert response.status_code == 422
+
+
+def test_intelligence_service_refuses_sqlite_fallback_in_production(monkeypatch):
+    from app.main import make_engine
+    monkeypatch.setenv("CIL_ENVIRONMENT", "production")
+    monkeypatch.delenv("CIL_DATABASE_URL", raising=False)
+    with pytest.raises(RuntimeError, match="CIL_DATABASE_URL is mandatory in production"):
+        make_engine()
