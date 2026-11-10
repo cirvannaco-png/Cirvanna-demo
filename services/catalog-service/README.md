@@ -62,6 +62,12 @@ All metadata is versioned with the existing product record and appears in the pr
 The minimum cohort threshold is a disclosure safeguard, not a claim of differential privacy or statistical representativeness. Merchant-supplied evidence and editorial tags still require moderation, provenance checks, and audit before being trusted for user-facing claims. CaTaCaCi/CAL remains the final display authority.
 
 
+## CIL structured product fields
+
+The `attributes.product_intelligence` schema now accepts structured `ingredient_declarations` and typed `claims`. Each structured ingredient declaration requires product-label or product-test evidence with a CIL `source_id`, finished-product scope, and E1/E2/E4 evidence grade. This preserves provenance but does not validate that the source ID exists in a live registry; durable registry verification remains a runtime integration requirement.
+
+Claims are limited to `pending_review` or `rejected`. Catalog deliberately does not accept an `approved` status in this phase. The CIL claim assessor is a contract-only package and is not yet connected to the Catalog serving path. Existing Catalog product-version snapshots continue to preserve the metadata; no new Catalog table or migration is introduced.
+
 ## Canonical product variants
 
 Catalog is the canonical owner of purchasable variant identity. Create a variant with the write-scoped credential:

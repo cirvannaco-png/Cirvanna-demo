@@ -40,5 +40,7 @@ jobs:
         run: python scripts/validate_release_gates.py
       - name: Run architecture tests
         run: python -m unittest discover -s tests/architecture -v
+      - name: Run Cirvanna Intelligence Layer contract tests
+        run: python -m unittest discover -s tests/intelligence_layer -v
       - name: Audit source for credential patterns
         run: python scripts/scan_source_secrets.py

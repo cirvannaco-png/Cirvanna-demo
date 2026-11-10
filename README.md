@@ -187,6 +187,11 @@ Supported categories include:
 
 The 30-observation floor is a disclosure safeguard. It is not differential privacy, proof of representativeness, causal evidence, or a guarantee of future results. Product metadata is not a personalized ranking model. The current API Gateway does not claim that Complementer performs live product ranking from this metadata, and every candidate still needs CAL authorization.
 
+### Cirvanna Intelligence Layer (CIL)
+
+The platform-wide CIL contract package tracks source rights by usage purpose, evidence scope, product ingredients and claims, model-validation cards, and consented recommendation outcomes. Catalog continues to own product identity and version history; incoming claims remain pending or rejected until runtime CIL rights/evidence checks are wired. The narrower `catacaci.cil` cohort kernel remains a separate CaTaCaCi capability. See [CIL architecture](docs/architecture/cirvanna-intelligence-layer.md).
+
+## Modules and services
 ## Modules and services
 
 The actual repository is a multi-service monorepo. Important areas are:
@@ -211,6 +216,7 @@ The actual repository is a multi-service monorepo. Important areas are:
 | services/xari | PNELLY conversational discovery/orchestration (preserved Xari compatibility source path) |
 | services/graph-service, perception-service, sync-service | Supporting service foundations; inspect their READMEs before use |
 | packages/identity-intelligence | CaTaCaCi, USI, EEPL, TAL event contracts, and cultural identity domain contracts |
+| packages/intelligence-layer | Platform-wide CIL source-rights, evidence, ingredient, model-validation, and outcome-learning contracts (contract-only; no durable service yet) |
 | packages/preferences/npl | Canonical NPL policy and evidence contract |
 | packages/fit-intelligence | Fit-confidence evidence contracts; no calibrated predictor is registered |
 | packages/shared-contracts | Shared contract package |
@@ -502,6 +508,8 @@ Start with the [Source of truth and contributor guide](docs/architecture/source-
 11. Run the source-boundary and release-ledger validators; state their limits and do not mark a release gate passed without evidence for the exact commit.
 
 ## Architecture references
+
+- [Cirvanna Intelligence Layer](docs/architecture/cirvanna-intelligence-layer.md)
 
 - [Complementer, Marketplace Product Intelligence and Skin-State Forecasting](docs/architecture/complementer-product-intelligence-skin-forecast.md)
 - [PNELLY canonical assistant identity and Xari compatibility migration](docs/architecture/adr/ADR-0010-pnelly-canonical-assistant-identity.md)
