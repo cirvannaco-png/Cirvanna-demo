@@ -547,3 +547,64 @@ def test_cil_metadata_is_removed_from_product_get_when_gateway_is_not_configured
     assert response.status_code == 200
     assert response.json()["attributes"]["finish"] == "satin"
     assert "product_intelligence" not in response.json()["attributes"]
+
+
+def test_cil_gateway_can_serve_validated_ingredient_with_attribution(client, monkeypatch):
+    from app import main as catalog_main
+
+    monkeypatch.setenv("CIL_GATEWAY_URL", "https://cil.internal")
+    monkeypatch.setenv("CIL_SERVICE_TOKEN", "catalog-to-cil-token")
+
+    class FakeResponse:
+        def __init__(self, request_payload):
+            self.request_payload = request_payload
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {
+                "product_id": self.request_payload["product_id"],
+                "catalog_version": self.request_payload["catalog_version"],
+                "all_eligible": True,
+                "decisions": [{
+                    "item_id": "Glycerin", "kind": "ingredient", "eligible": True,
+                    "attribution_required": True, "attribution_text": "Manufacturer label",
+                    "source_owner": "Manufacturer",
+                }],
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return None
+        async def post(self, url, json, headers):
+            assert url == "https://cil.internal/serving/assessment"
+            assert headers["Authorization"] == "Bearer catalog-to-cil-token"
+            return FakeResponse(json)
+
+    monkeypatch.setattr(catalog_main.httpx, "AsyncClient", FakeAsyncClient)
+    metadata = {
+        "schema_version": "1.0",
+        "ingredient_declarations": [{
+            "inci_name": "Glycerin",
+            "label_order": 2,
+            "evidence": {
+                "source_type": "manufacturer_declared",
+                "reference": "cil-evidence-001",
+                "reviewed_at": "2026-11-10",
+                "source_id": "cil-source-001",
+                "evidence_grade": "E4",
+                "scope": "finished_product",
+            },
+        }],
+    }
+    product = create_product(
+        client, sku="CIL-GATE-APPROVED-001",
+        attributes={"product_intelligence": metadata},
+    )
+    response = client.get(f"/products/{product['product_id']}", headers=auth_headers())
+    assert response.status_code == 200
+    intelligence = response.json()["attributes"]["product_intelligence"]
+    assert intelligence["ingredient_declarations"][0]["evidence"]["attribution"] == "Manufacturer label"
