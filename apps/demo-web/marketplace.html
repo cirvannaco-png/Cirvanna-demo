@@ -304,6 +304,8 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       const fulfillmentMode=$("fulfillmentMode").value;
       const displayCurrency=$("displayCurrency").value.trim().toUpperCase()||(items.find(item=>item.display_currency)?.display_currency||"");
       const checkoutPayload={confirm:true};
+      if(marketCountry&&!destinationKey){alert("Choose a delivery area before starting a market-aware checkout.");return}
+      if(destinationKey&&!marketCountry){alert("Choose a market country before starting a market-aware checkout.");return}
       if(marketCountry&&destinationKey){
         if(!displayCurrency){alert("Choose a display currency before market-aware checkout.");return}
         Object.assign(checkoutPayload,{
@@ -314,17 +316,44 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
           payment_method:"card"
         });
       }
-      let key="";
       try{
-        const contextKey=[marketCountry,destinationKey,fulfillmentMode,displayCurrency].join("|");
-        const storageKey="cirvanna-checkout:"+config.commerceBase+":"+cartVersion+":"+contextKey;
-        key=sessionStorage.getItem(storageKey)||"";
-        if(!key){key=crypto.randomUUID();sessionStorage.setItem(storageKey,key)}
-      }catch{key=key||crypto.randomUUID()}
-      fetch(config.commerceBase+"/checkout",{method:"POST",headers:{Authorization:"Bearer "+config.userToken,"Idempotency-Key":key,Accept:"application/json","Content-Type":"application/json"},body:JSON.stringify(checkoutPayload)})
-        .then(async response=>{let data;try{data=await response.json()}catch{throw new Error("Checkout API returned invalid JSON.")}if(!response.ok)throw new Error((data.detail&&data.detail.code)||"Checkout API returned HTTP "+response.status+".");let target;try{target=new URL(data.checkout_url||(data.order&&data.order.checkout_url))}catch{throw new Error("Checkout provider did not return a valid URL.")}if(target.protocol!=="https:"||target.hostname!=="checkout.stripe.com")throw new Error("Payment provider returned a URL outside the trusted Stripe Checkout host.");return target.href})
-        .then(url=>{setStatus("Hosted checkout session created; opening Stripe Checkout…");window.location.assign(url)})
-        .catch(err=>{setStatus((err.message||"Checkout could not start")+" Checkout is not confirmed paid.",true);alert(err.message||"Checkout could not start.")});
+        if($("checkoutLearningConsent")?.checked){
+          if(!activeCheckoutConsent){
+            const consentResponse=await fetch("/api/wardrobe/consents",{method:"POST",headers:{Authorization:"Bearer "+config.userToken,Accept:"application/json","Content-Type":"application/json"},body:JSON.stringify({scope:"personalization",granted:true})});
+            const consentData=await consentResponse.json().catch(()=>({}));
+            if(!consentResponse.ok||!consentData.receipt_id||!consentData.consent_id||!consentData.consent_version)throw new Error((consentData.detail&&consentData.detail.code)||"Checkout-learning consent could not be recorded. Checkout can proceed without learning by leaving the box unchecked.");
+            activeCheckoutConsent={receipt_id:consentData.receipt_id,consent_id:consentData.consent_id,consent_version:consentData.consent_version};
+          }
+          checkoutPayload.personalization_consent_id=activeCheckoutConsent.consent_id;
+          checkoutPayload.personalization_consent_version=activeCheckoutConsent.consent_version;
+        }
+        let key="";
+        try{
+          const contextKey=[marketCountry,destinationKey,fulfillmentMode,displayCurrency,checkoutPayload.personalization_consent_id||"no-learning"].join("|");
+          const storageKey="cirvanna-checkout:"+config.commerceBase+":"+cartVersion+":"+contextKey;
+          key=sessionStorage.getItem(storageKey)||"";
+          if(!key){key=crypto.randomUUID();sessionStorage.setItem(storageKey,key)}
+        }catch{key=key||crypto.randomUUID()}
+        const response=await fetch(config.commerceBase+"/checkout",{method:"POST",headers:{Authorization:"Bearer "+config.userToken,"Idempotency-Key":key,Accept:"application/json","Content-Type":"application/json"},body:JSON.stringify(checkoutPayload)});
+        const data=await response.json().catch(()=>null);
+        if(!response.ok)throw new Error((data&&data.detail&&data.detail.code)||"Checkout API returned HTTP "+response.status+".");
+        let target;
+        try{target=new URL(data.checkout_url||(data.order&&data.order.checkout_url))}catch{throw new Error("Checkout provider did not return a valid URL.")}
+        if(target.protocol!=="https:"||target.hostname!=="checkout.stripe.com")throw new Error("Payment provider returned a URL outside the trusted Stripe Checkout host.");
+        setStatus("User-confirmed checkout session created; opening Stripe Checkout…");
+        window.location.assign(target.href);
+      }catch(err){setStatus((err.message||"Checkout could not start")+" Checkout is not confirmed paid.",true);alert(err.message||"Checkout could not start.")}
+    }
+    if(e.target.id==="withdrawCheckoutLearningConsent"){
+      if(!activeCheckoutConsent||!config.userToken)return;
+      try{
+        const response=await fetch("/api/wardrobe/consents/"+encodeURIComponent(activeCheckoutConsent.receipt_id)+"/revoke",{method:"POST",headers:{Authorization:"Bearer "+config.userToken,Accept:"application/json"}});
+        const data=await response.json().catch(()=>({}));
+        if(!response.ok)throw new Error((data.detail&&data.detail.code)||"Consent withdrawal failed.");
+        activeCheckoutConsent=null;
+        setStatus("Checkout-learning consent withdrawn. Checkout remains available without personalization learning.");
+        $("settingsBtn").click();
+      }catch(err){setStatus(err.message||"Could not withdraw checkout-learning consent.",true)}
     }
     if(e.target.id==="demoBtn"){
       forceDemo=true;config={base:"",token:"",commerceBase:"",userToken:""};saved=readStore("cirvanna-marketplace-saved");cart=readStore("cirvanna-marketplace-bag");cartVersion=0;page=0;closeDrawer();load();
