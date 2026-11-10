@@ -471,6 +471,7 @@ def test_perfectcorp_skin_analysis_requires_signed_adult_image_consent(client, m
 
     monkeypatch.setenv("CIL_PERFECTCORP_ENABLED", "true")
     monkeypatch.setenv("CIL_PERFECTCORP_DPA_APPROVED", "true")
+    monkeypatch.setattr(cil_main, "_detect_visible_face_boxes", lambda _: [(100, 80, 180, 180)])
     monkeypatch.setattr(cil_main, "perfectcorp_start_skin_analysis", lambda **kwargs: {
         "task_id": "perfectcorp-vendor-task-001", "status": "running", "provider": "perfectcorp_youcam_skin_analysis_v2_1"
     })
@@ -673,3 +674,26 @@ def test_intelligence_service_refuses_sqlite_fallback_in_production(monkeypatch)
     monkeypatch.delenv("CIL_DATABASE_URL", raising=False)
     with pytest.raises(RuntimeError, match="CIL_DATABASE_URL is mandatory in production"):
         make_engine()
+
+
+@pytest.mark.parametrize("detected_faces", [[], [(10, 10, 80, 80), (300, 10, 80, 80)]])
+def test_perfectcorp_skin_analysis_fails_closed_without_exactly_one_detected_face(client, monkeypatch, detected_faces):
+    import base64
+    from app import main as cil_main
+
+    monkeypatch.setenv("CIL_PERFECTCORP_ENABLED", "true")
+    monkeypatch.setenv("CIL_PERFECTCORP_DPA_APPROVED", "true")
+    monkeypatch.setattr(cil_main, "_detect_visible_face_boxes", lambda _: detected_faces)
+    monkeypatch.setattr(cil_main, "perfectcorp_start_skin_analysis", lambda **kwargs: pytest.fail("provider must not receive ambiguous photo"))
+    image_bytes = make_skin_image()
+    contributor = "hmac-sha256:" + "7" * 64
+    payload = {
+        "image_base64": base64.b64encode(image_bytes).decode(),
+        "content_type": "image/png",
+        "mode": "sd",
+        "actions": ["pore"],
+        "contributor_token": contributor,
+        "consent_receipt": sign_skin_consent(contributor_token=contributor, image_bytes=image_bytes),
+    }
+    response = client.post("/providers/perfectcorp/skin-analysis", json=payload, headers=auth("service-test"))
+    assert response.status_code == 422
