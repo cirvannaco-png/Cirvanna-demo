@@ -1,6 +1,6 @@
 # Cirvanna Intelligence Layer (CIL)
 
-**Status:** initial domain contracts and Catalog metadata extension implemented; no durable CIL service or automated ingestion is deployed.
+**Status:** domain contracts, a durable Intelligence Service foundation, a fail-closed Catalog serving gateway and consent/CAL-bound outcome ingestion are implemented on the active PR branch. No vendor-specific licensed provider is connected yet.
 
 ## 1. Purpose and ownership
 
@@ -22,7 +22,7 @@ Rights states are explicit:
 
 A source must not be treated as commercially reusable merely because a page, review, paper, API or catalogue entry is publicly reachable. The source registry records rights evidence; it does not make a legal determination. Legal review is still required where the source terms or jurisdiction are ambiguous.
 
-The current package validates source records in memory. It does not yet persist them or collect third-party content. No scraping, dataset copying, proprietary model extraction or provider integration is enabled by this change.
+The Intelligence Service persists source rights, evidence references and recommendation outcomes through PostgreSQL/SQLAlchemy with an Alembic initial migration. It provides a generic HTTPS provider adapter that requires an API token, licence ID and terms URL, disables redirects and accepts JSON only. No vendor-specific integration is enabled by default; no scraping, dataset copying or proprietary model extraction is permitted.
 
 ## 3. Evidence classification and claim scope
 
@@ -41,7 +41,7 @@ The claim assessor checks evidence IDs, source registry membership, rights for t
 
 The first Catalog integration adds structured ingredient declarations and typed product claims to the existing `attributes.product_intelligence` JSON namespace. These records remain versioned by Catalog's existing product-version snapshots; no second product store or schema migration is introduced. Each new structured ingredient/claim reference must carry a CIL `source_id`.
 
-**Catalog intentionally has no `approved` claim status in this phase.** Claims remain `pending_review` or `rejected`. The CIL rights/evidence assessment is not yet called by the Catalog write or serving path, so metadata cannot self-approve or become a user-facing efficacy statement. A later integration must verify source registry rights and signed review evidence before introducing claim publication.
+**Catalog intentionally has no `approved` claim status in this phase.** Claims remain `pending_review` or `rejected`. Catalog GET product/variant/version representations now call the Intelligence Service serving assessment when configured. If the gateway is missing, times out, returns a mismatch, or rejects any evidence, Catalog strips the entire product-intelligence namespace from the response. The gate only allows claim/ingredient records that have registered evidence and current rights for commercial recommendation. Unassessed metadata fields are not exposed.
 
 ## 4. Ingredient and product intelligence
 
@@ -69,7 +69,7 @@ User-declared suitability is distinct from the action taken:
 
 Cohort aggregation requires at least 30 distinct contributors with an explicit suitability response before publishing breakdown metrics. This is a disclosure floor, not differential privacy, statistical representativeness or causal proof. The unsuitable-share threshold is supplied by versioned policy rather than hard-coded as a universal benchmark.
 
-A high unsuitable share returns `review_required`. It does not automatically suppress a product, alter Catalog state, create an NPL hard veto, retrain a model or bypass CAL. Product suppression requires a separate reviewed rule and authorized Catalog/policy action. A single rejection is never a permanent user preference or product-level veto.
+A high unsuitable share creates a durable CAL review-queue record. CAL consumes the queue and records its own final `SHOW` or `BLOCK` verdict with a decision reference and rationale. The signal does not automatically suppress a product, alter Catalog state, create an NPL hard veto or retrain a model. Product suppression requires a separate reviewed rule and authorized Catalog/policy action. A single rejection is never a permanent user preference or product-level veto.
 
 ## 7. Runtime boundaries and security requirements
 
