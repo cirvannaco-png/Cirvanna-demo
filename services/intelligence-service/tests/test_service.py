@@ -308,3 +308,45 @@ def test_provider_research_rejects_research_only_commercial_scope_before_fetch(c
     }
     response = client.post("/providers/research", json=payload, headers=auth("admin-test"))
     assert response.status_code == 422
+
+
+def test_manufacturer_declaration_cannot_substantiate_finished_product_efficacy(client):
+    register_source(client, source_id="manufacturer-source", kind="manufacturer")
+    register_evidence(client, source_id="manufacturer-source", grade="E4", scope="finished_product")
+    payload = {
+        "purpose": "commercial_recommendation",
+        "product_id": "product-1",
+        "catalog_version": 1,
+        "claims": [{
+            "claim_id": "efficacy-claim",
+            "claim_type": "finished_product_efficacy",
+            "evidence": {"evidence_id": "evidence-1", "source_id": "manufacturer-source"},
+        }],
+        "ingredient_declarations": [],
+    }
+    result = client.post("/serving/assessment", json=payload, headers=auth("service-test"))
+    assert result.status_code == 200
+    assert result.json()["decisions"][0]["eligible"] is False
+
+
+def test_missing_required_attribution_fails_closed(client):
+    register_source(
+        client, source_id="no-attribution",
+        attribution_required=True, attribution_text=None,
+    )
+    register_evidence(client, source_id="no-attribution", evidence_id="evidence-no-attribution")
+    payload = {
+        "purpose": "commercial_recommendation",
+        "product_id": "product-1",
+        "catalog_version": 1,
+        "claims": [{
+            "claim_id": "cosmetic-claim",
+            "claim_type": "cosmetic_intent",
+            "evidence": {"evidence_id": "evidence-no-attribution", "source_id": "no-attribution"},
+        }],
+        "ingredient_declarations": [],
+    }
+    result = client.post("/serving/assessment", json=payload, headers=auth("service-test"))
+    assert result.status_code == 200
+    assert result.json()["decisions"][0]["eligible"] is False
+    assert result.json()["decisions"][0]["reason"] == "ATTRIBUTION_REQUIRED"
