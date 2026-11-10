@@ -1901,6 +1901,9 @@ def capabilities() -> dict[str, Any]:
     return {
         "service": SERVICE_NAME,
         "decision_http_api": True,
+        "cal_purchase_authorization_receipts_configured": len(
+            os.getenv("CAL_PURCHASE_RECEIPT_SECRET", "").encode("utf-8")
+        ) >= 32,
         "complementer_advisory_integration_configured": bool(
             os.getenv("COMPLEMENTER_SERVICE_URL")
             and len(os.getenv("COMPLEMENTER_SERVICE_TOKEN", "").encode("utf-8")) >= 32
@@ -2009,6 +2012,9 @@ def readiness() -> dict[str, Any]:
     identity_binding_configured = bool(
         identity_required and identity_ready and commerce_url and _trusted_internal_base_url(commerce_url)
     )
+    purchase_receipt_signing_configured = len(
+        os.getenv("CAL_PURCHASE_RECEIPT_SECRET", "").encode("utf-8")
+    ) >= 32
     ready = configured and catalog_ready and audit_ready and policy_configured and (not identity_required or identity_binding_configured)
     return {
         "status": "ready" if ready else "not_ready",
@@ -2020,6 +2026,7 @@ def readiness() -> dict[str, Any]:
         "policy_configuration_valid": policy_configured,
         "identity_provider_binding": identity_binding_configured,
         "identity_learning_service_ready": identity_ready,
+        "cal_purchase_authorization_receipts_configured": purchase_receipt_signing_configured,
         "fci_available": all(os.getenv(key, "").strip() for key in ("FCI_SERVICE_URL", "FCI_SERVICE_TOKEN", "FCI_EVIDENCE_HMAC_SECRET", "FCI_VALIDATION_HMAC_SECRET", "FCI_VALIDATION_REPORT_SHA256")),
         "safety_policy_available": all(os.getenv(key, "").strip() for key in ("SAFETY_SERVICE_URL", "SAFETY_SERVICE_TOKEN", "SAFETY_EVIDENCE_HMAC_SECRET", "SAFETY_VALIDATION_HMAC_SECRET", "SAFETY_VALIDATION_REPORT_SHA256")),
         "decision_evidence_ready": all(os.getenv(key, "").strip() for key in ("FCI_SERVICE_URL", "FCI_SERVICE_TOKEN", "FCI_EVIDENCE_HMAC_SECRET", "FCI_VALIDATION_HMAC_SECRET", "FCI_VALIDATION_REPORT_SHA256", "SAFETY_SERVICE_URL", "SAFETY_SERVICE_TOKEN", "SAFETY_EVIDENCE_HMAC_SECRET", "SAFETY_VALIDATION_HMAC_SECRET", "SAFETY_VALIDATION_REPORT_SHA256")),
