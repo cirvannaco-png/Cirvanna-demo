@@ -28,6 +28,12 @@ jobs:
           cache: pip
           cache-dependency-path: services/intelligence-service/requirements.txt
       - run: python -m pip install -r services/intelligence-service/requirements.txt
+      - name: Apply CIL schema migration
+        working-directory: services/intelligence-service
+        env:
+          CIL_DATABASE_URL: sqlite:///./cil-migration-ci.db
+          CIL_AUTO_CREATE_SCHEMA: "false"
+        run: alembic upgrade head
       - name: Run intelligence service tests
         working-directory: services/intelligence-service
         env:
