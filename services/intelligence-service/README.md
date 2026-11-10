@@ -34,8 +34,9 @@ is for local tests only. The initial schema is versioned with Alembic under
 - `POST /serving/assessment`: internal claim-level rights/evidence assessment.
 - `POST /outcomes`: internal consent- and CAL-receipt-verified event ingestion.
 - `GET /outcomes/aggregate`: minimum-cohort aggregate and review signal.
+- `POST /learning/signals`: batch product/context suitability signals for the recommendation ranker; cohorts below 30 distinct contributors are suppressed.
 - `GET /cal/review-queue`: pending review signals for CAL; the Decision Service exposes the authenticated `/v1/cal/feedback-reviews` proxy.
 - `POST /cal/review-queue/{id}/decision`: persist a final CAL service decision reference; the Decision Service forwards decisions from `/v1/cal/feedback-reviews/{id}/decision`.
 - `GET /ready`, `GET /capabilities`.
 
-The Catalog serving gate is implemented and calls `/serving/assessment` before exposing product intelligence. Pending/rejected claims remain withheld; only individually eligible ingredient/claim records can pass, with attribution attached when required. Deployment must configure the CIL gateway and verify the end-to-end path before any CIL metadata is exposed.
+The Catalog serving gate is implemented and calls `/serving/assessment` before exposing product intelligence. The API Gateway can query `/learning/signals` and apply a configurable ranking penalty to products with a high unsuitable share; this is a bounded feedback-informed rerank, not model training or efficacy evidence. The initial `CIL_FEEDBACK_RANKING_WEIGHT` is experimental and requires cohort A/B validation before it is treated as a production ranking policy. Pending/rejected claims remain withheld; only individually eligible ingredient/claim records can pass, with attribution attached when required. Deployment must configure the CIL gateway and verify the end-to-end path before any CIL metadata is exposed.
