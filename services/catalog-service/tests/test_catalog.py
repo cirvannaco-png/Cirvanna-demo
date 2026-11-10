@@ -506,3 +506,35 @@ def test_archived_canonical_variant_is_hidden_and_identity_cannot_be_reissued(cl
         json={"attributes": {"size": "medium", "colour": "blue"}},
     )
     assert duplicate.status_code == 409
+
+
+def test_cil_metadata_is_removed_from_product_get_when_gateway_is_not_configured(client, monkeypatch):
+    monkeypatch.delenv("CIL_GATEWAY_URL", raising=False)
+    monkeypatch.delenv("CIL_SERVICE_TOKEN", raising=False)
+    metadata = {
+        "schema_version": "1.0",
+        "claims": [{
+            "claim_id": "CLAIM-001",
+            "claim_type": "cosmetic_intent",
+            "statement": "A cosmetic formulation claim awaiting review.",
+            "evidence": {
+                "source_type": "manufacturer_declared",
+                "reference": "evidence-001",
+                "reviewed_at": "2026-11-10",
+                "source_id": "source-001",
+                "evidence_grade": "E4",
+                "scope": "finished_product",
+            },
+            "review_status": "pending_review",
+            "limitations": "This is not independent clinical efficacy evidence.",
+        }],
+    }
+    product = create_product(
+        client,
+        sku="CIL-GATE-001",
+        attributes={"product_intelligence": metadata, "finish": "satin"},
+    )
+    response = client.get(f"/products/{product['product_id']}", headers=auth_headers())
+    assert response.status_code == 200
+    assert response.json()["attributes"]["finish"] == "satin"
+    assert "product_intelligence" not in response.json()["attributes"]
