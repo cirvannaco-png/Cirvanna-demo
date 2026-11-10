@@ -2012,7 +2012,7 @@ def capabilities() -> dict[str, Any]:
         "multimarket_onboarding": True, "localized_offer_pricing": True,
         "provider_quote_ingestion": bool(os.getenv("COMMERCE_MARKET_CONTEXT_TOKEN")),
         "landed_cost_comparison": True, "checkout_landed_cost_revalidation": False,
-        "catacaci_eligibility": True, "candidate_bound_purchase_authorization": bool(os.getenv("DECISION_GATEWAY_URL") and os.getenv("DECISION_GATEWAY_TOKEN") and os.getenv("CAL_PURCHASE_RECEIPT_HMAC_SECRET")), "click_it_reconstruction": False,
+        "catacaci_eligibility": False, "candidate_bound_purchase_authorization_configured": bool(os.getenv("DECISION_GATEWAY_URL") and os.getenv("DECISION_GATEWAY_TOKEN") and os.getenv("CAL_PURCHASE_RECEIPT_HMAC_SECRET")), "click_it_reconstruction": False,
         "virtual_twin_generation": False, "virtual_try_on": False}
 
 
