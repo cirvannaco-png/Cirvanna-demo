@@ -85,6 +85,7 @@ class Outcome(Base):
     suitability: Mapped[str] = mapped_column(String(24), nullable=False)
     reason_codes: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     model_version: Mapped[str | None] = mapped_column(String(240))
+    candidate_id: Mapped[str] = mapped_column(String(120), nullable=False)
     consent_receipt_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     cal_receipt_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -151,6 +152,7 @@ class OutcomeIn(StrictModel):
     suitability: Literal["suitable", "unsuitable", "uncertain", "not_reported"]
     reason_codes: list[str] = Field(default_factory=list, max_length=12)
     model_version: str | None = Field(default=None, max_length=240)
+    candidate_id: str = Field(min_length=1, max_length=120)
     observed_at: datetime
     consent_receipt: str
     cal_decision_receipt: str
@@ -290,8 +292,11 @@ def assess_serving(payload: ServingAssessmentIn, db: Session = Depends(get_db)):
                 continue
             allowed, reason = _source_permits(db, evidence_row.source_id, payload.purpose)
             requested_scope = evidence.get("scope")
-            scope_ok = not requested_scope or requested_scope == evidence_row.scope
             claim_type = item.get("claim_type")
+            required_scope = "finished_product" if kind == "ingredient" or claim_type == "finished_product_efficacy" else requested_scope
+            scope_ok = (not required_scope or required_scope == evidence_row.scope) and (not requested_scope or requested_scope == evidence_row.scope)
+            if evidence.get("source_id") and evidence.get("source_id") != evidence_row.source_id:
+                scope_ok = False
             grade_ok = evidence_row.grade in ({"E1", "E2", "E4"} if claim_type == "finished_product_efficacy"
                                               else {"E1", "E2", "E3", "E4", "E5"})
             eligible = allowed and scope_ok and grade_ok
@@ -308,8 +313,10 @@ def assess_serving(payload: ServingAssessmentIn, db: Session = Depends(get_db)):
 def record_outcome(payload: OutcomeIn, db: Session = Depends(get_db)):
     consent = _receipt(payload.consent_receipt, "consent", payload.product_id)
     cal = _receipt(payload.cal_decision_receipt, "cal", payload.product_id)
-    if payload.action in {"rejected", "ignored"} and payload.suitability != "not_reported":
-        raise HTTPException(422, "action cannot be treated as a suitability outcome without an explicit report")
+    if consent.get("subject_token") != payload.contributor_token:
+        raise HTTPException(403, "Consent subject does not match the pseudonymous contributor")
+    if cal.get("candidate_id") != payload.candidate_id:
+        raise HTTPException(403, "CAL receipt candidate does not match the recommendation event")
     if payload.suitability == "not_reported" and payload.reason_codes:
         raise HTTPException(422, "reason codes require an explicit suitability report")
     if db.get(Outcome, payload.event_id):
@@ -317,7 +324,7 @@ def record_outcome(payload: OutcomeIn, db: Session = Depends(get_db)):
     row = Outcome(
         event_id=payload.event_id, product_id=payload.product_id, context_key=payload.context_key,
         contributor_token=payload.contributor_token, action=payload.action, suitability=payload.suitability,
-        reason_codes=payload.reason_codes, model_version=payload.model_version,
+        reason_codes=payload.reason_codes, model_version=payload.model_version, candidate_id=payload.candidate_id,
         consent_receipt_digest=hashlib.sha256(payload.consent_receipt.encode()).hexdigest(),
         cal_receipt_digest=hashlib.sha256(payload.cal_decision_receipt.encode()).hexdigest(),
         observed_at=payload.observed_at,
@@ -345,10 +352,13 @@ def aggregate_outcomes(product_id: str, context_key: str, db: Session = Depends(
     unsuitable = sum(row.suitability == "unsuitable" for row in unique.values())
     denominator = suitable + unsuitable
     share = unsuitable / denominator if denominator else None
-    return {"status": "review_required" if share is not None and share >= 0.25 else "collecting",
+    threshold = float(os.getenv("CIL_UNSUITABLE_SHARE_REVIEW_THRESHOLD", "0.25"))
+    if not 0.0 <= threshold <= 1.0:
+        raise HTTPException(503, "CIL_UNSUITABLE_SHARE_REVIEW_THRESHOLD must be between 0 and 1")
+    return {"status": "review_required" if share is not None and share >= threshold else "collecting",
             "contributor_count": len(contributors), "reported_count": denominator,
             "suitable_count": suitable, "unsuitable_count": unsuitable,
-            "unsuitable_share": share, "cal_action": "REVIEW" if share is not None and share >= 0.25 else "NO_CHANGE",
+            "unsuitable_share": share, "cal_action": "REVIEW" if share is not None and share >= threshold else "NO_CHANGE",
             "automatic_suppression": False}
 
 
