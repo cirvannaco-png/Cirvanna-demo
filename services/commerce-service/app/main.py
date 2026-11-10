@@ -39,7 +39,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 
 
 SERVICE = "cirvanna-commerce-service"
-EXPECTED_SCHEMA_REVISION = "20261110_0009"
+EXPECTED_SCHEMA_REVISION = "20261110_0010"
 MAX_QTY = 50
 RESERVATION_MINUTES = 60
 SKU_RE = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,79}$")
@@ -339,6 +339,7 @@ class CommerceOrder(Base):
     fulfillment_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
     checkout_context_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     tal_consent_receipt_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    cal_authorization_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     market_quote_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     commission_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     idempotency_key: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -1333,6 +1334,202 @@ def variant_triplet(db: Session, variant_id: str):
         .join(Listing, Variant.listing_id == Listing.id)
         .join(Merchant, Listing.merchant_id == Merchant.id)
         .where(Variant.id == variant_id)).first()
+
+
+def _purchase_authorization_config() -> tuple[str, str, str]:
+    base = os.getenv("DECISION_GATEWAY_URL", "").strip().rstrip("/")
+    token = os.getenv("DECISION_GATEWAY_TOKEN", "").strip()
+    secret = os.getenv("CAL_PURCHASE_RECEIPT_SECRET", "").strip()
+    parsed = urlsplit(base)
+    if (
+        not base or not parsed.hostname or parsed.username or parsed.password
+        or parsed.query or parsed.fragment
+        or (parsed.scheme != "https" and not (parsed.scheme == "http" and parsed.hostname.lower() in {"localhost", "127.0.0.1", "::1"}))
+        or len(token.encode("utf-8")) < 32 or len(secret.encode("utf-8")) < 32
+    ):
+        raise HTTPException(503, detail={"code": "CAL_PURCHASE_AUTHORIZATION_NOT_CONFIGURED"})
+    return base, token, secret
+
+
+def _canonical_purchase_offer_hash(
+    variant: Variant,
+    listing: Listing,
+    merchant: Merchant,
+    quantity: int,
+    market_context: dict[str, Any] | None,
+    checkout_line_snapshot: dict[str, Any] | None = None,
+    checkout_totals: dict[str, Any] | None = None,
+) -> str:
+    snapshot = {
+        "product_id": listing.catalog_product_id,
+        "listing_id": listing.id,
+        "variant_id": variant.id,
+        "merchant_id": merchant.id,
+        "sku": variant.sku,
+        "options": variant.options,
+        "price_minor": variant.price_minor,
+        "currency": variant.currency,
+        "variant_version": variant.version,
+        "canonical_variant_id": variant.canonical_variant_id,
+        "variant_state": variant.state,
+        "listing_state": listing.state,
+        "merchant_state": merchant.state,
+        "on_hand": variant.on_hand,
+        "reserved_qty": variant.reserved_qty,
+        "quantity": quantity,
+        "market_context": market_context,
+        "checkout_line_snapshot": checkout_line_snapshot,
+        "checkout_totals": checkout_totals,
+    }
+    encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _decode_cal_purchase_receipt(token: str, secret: str) -> dict[str, Any]:
+    try:
+        payload_part, signature_part = token.split(".", 1)
+        supplied = base64.urlsafe_b64decode(signature_part + "=" * (-len(signature_part) % 4))
+        expected = hmac.new(secret.encode("utf-8"), payload_part.encode("ascii"), hashlib.sha256).digest()
+        if not hmac.compare_digest(expected, supplied):
+            raise ValueError("signature")
+        raw = base64.urlsafe_b64decode(payload_part + "=" * (-len(payload_part) % 4))
+        claims = json.loads(raw)
+        if not isinstance(claims, dict):
+            raise ValueError("claims")
+    except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise HTTPException(503, detail={"code": "CAL_PURCHASE_RECEIPT_INVALID"}) from exc
+    current = int(time.time())
+    issued, expiry = claims.get("iat"), claims.get("exp")
+    if (
+        not isinstance(issued, int) or isinstance(issued, bool)
+        or not isinstance(expiry, int) or isinstance(expiry, bool)
+        or issued > current + 10 or expiry <= current
+        or expiry <= issued or expiry - issued > 90
+        or current - issued > 100
+        or claims.get("iss") != "cirvanna-decision-gateway"
+        or claims.get("aud") != "cirvanna-commerce"
+        or claims.get("verdict") != "show"
+        or claims.get("may_display") is not True
+        or not isinstance(claims.get("policy_version"), str) or not claims["policy_version"]
+        or not isinstance(claims.get("decision_request_id"), str) or not claims["decision_request_id"]
+        or not isinstance(claims.get("jti"), str) or not claims["jti"]
+    ):
+        raise HTTPException(503, detail={"code": "CAL_PURCHASE_RECEIPT_EXPIRED_OR_INVALID"})
+    return claims
+
+
+def _authorize_purchase_lines(
+    *,
+    subject_id: str,
+    action: str,
+    rows: list[tuple[Any, Variant, Listing, Merchant]],
+    user_authorization: str,
+    market_context: dict[str, Any] | None = None,
+    checkout_line_snapshots: dict[str, dict[str, Any]] | None = None,
+    checkout_totals: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Re-evaluate CAL and verify fresh signed receipts bound to current Commerce offer facts."""
+    if not rows:
+        return []
+    base, gateway_token, secret = _purchase_authorization_config()
+    scheme, _, bearer_token = user_authorization.partition(" ")
+    if scheme.lower() != "bearer" or not bearer_token.strip():
+        raise HTTPException(401, detail={"code": "USER_BEARER_REQUIRED"})
+    candidates = []
+    expected_by_variant: dict[str, dict[str, Any]] = {}
+    for cart_item, variant, listing, merchant in rows:
+        quantity = cart_item.quantity
+        line_snapshot = (checkout_line_snapshots or {}).get(variant.id)
+        offer_hash = _canonical_purchase_offer_hash(
+            variant, listing, merchant, quantity, market_context, line_snapshot, checkout_totals,
+        )
+        offer_id = listing.id + ":" + variant.id
+        expected = {
+            "sub": subject_id,
+            "action": action,
+            "product_id": listing.catalog_product_id,
+            "variant_id": variant.id,
+            "merchant_id": merchant.id,
+            "offer_id": offer_id,
+            "offer_hash": offer_hash,
+            "quantity": quantity,
+            "market_context": market_context,
+        }
+        expected_by_variant[variant.id] = expected
+        candidates.append({
+            "product_id": listing.catalog_product_id,
+            "variant_id": variant.id,
+            "merchant_id": merchant.id,
+            "offer_id": offer_id,
+            "offer_hash": offer_hash,
+            "quantity": quantity,
+        })
+    try:
+        response = httpx.post(
+            base + "/v1/purchase-authorizations",
+            headers={
+                "Authorization": "Bearer " + gateway_token,
+                "X-End-User-Authorization": user_authorization,
+                "Accept": "application/json",
+            },
+            json={
+                "user_id": subject_id,
+                "action": action,
+                "market_context": market_context,
+                "candidates": candidates,
+            },
+            timeout=httpx.Timeout(8.0, connect=2.0),
+            follow_redirects=False,
+            trust_env=False,
+        )
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "CAL_PURCHASE_AUTHORIZATION_UNAVAILABLE"}) from exc
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "CAL_PURCHASE_AUTHORIZATION_REJECTED"})
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "CAL_PURCHASE_AUTHORIZATION_RESPONSE_INVALID"}) from exc
+    authorizations = result.get("authorizations") if isinstance(result, dict) else None
+    if (
+        not isinstance(result, dict)
+        or result.get("status") != "evaluated"
+        or result.get("subject_id") != subject_id
+        or result.get("action") != action
+        or result.get("market_context") != market_context
+        or not isinstance(authorizations, list)
+        or len(authorizations) != len(expected_by_variant)
+    ):
+        raise HTTPException(502, detail={"code": "CAL_PURCHASE_AUTHORIZATION_RESPONSE_MISMATCH"})
+    verified: dict[str, dict[str, Any]] = {}
+    for item in authorizations:
+        if not isinstance(item, dict) or item.get("authorized") is not True or not isinstance(item.get("receipt"), str):
+            raise HTTPException(403, detail={"code": "CAL_SHOW_REQUIRED_FOR_PURCHASE"})
+        variant_id = item.get("variant_id")
+        expected = expected_by_variant.get(variant_id)
+        if expected is None or variant_id in verified:
+            raise HTTPException(502, detail={"code": "CAL_PURCHASE_AUTHORIZATION_VARIANT_MISMATCH"})
+        claims = _decode_cal_purchase_receipt(item["receipt"], secret)
+        for key, value in expected.items():
+            if claims.get(key) != value:
+                raise HTTPException(403, detail={"code": "CAL_PURCHASE_RECEIPT_BINDING_MISMATCH"})
+        if claims.get("catalog_version") is None:
+            raise HTTPException(502, detail={"code": "CAL_PURCHASE_RECEIPT_CATALOG_VERSION_MISSING"})
+        verified[variant_id] = {
+            "receipt": item["receipt"],
+            "claims": claims,
+        }
+    if set(verified) != set(expected_by_variant):
+        raise HTTPException(403, detail={"code": "CAL_PURCHASE_AUTHORIZATION_INCOMPLETE"})
+    return [verified[variant.id] for _, variant, _, _ in rows]
+
+
+def _user_authorization_header(request: Request) -> str:
+    value = request.headers.get("authorization", "")
+    scheme, _, token = value.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise HTTPException(401, detail={"code": "USER_BEARER_REQUIRED"})
+    return value
 
 
 def cart_json(db: Session, cart: Cart) -> dict[str, Any]:
