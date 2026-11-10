@@ -93,6 +93,7 @@ def test_serving_assessment_allows_only_registered_licensed_scope(client):
         "claims": [{
             "claim_id": "claim-1",
             "claim_type": "finished_product_efficacy",
+            "review_status": "approved",
             "evidence": {"evidence_id": "evidence-1", "source_id": "source-licensed", "scope": "finished_product"},
         }],
         "ingredient_declarations": [],
@@ -350,3 +351,24 @@ def test_missing_required_attribution_fails_closed(client):
     assert result.status_code == 200
     assert result.json()["decisions"][0]["eligible"] is False
     assert result.json()["decisions"][0]["reason"] == "ATTRIBUTION_REQUIRED"
+
+
+def test_pending_claim_is_never_eligible_for_customer_serving(client):
+    register_source(client)
+    register_evidence(client)
+    payload = {
+        "purpose": "commercial_recommendation",
+        "product_id": "product-1",
+        "catalog_version": 1,
+        "claims": [{
+            "claim_id": "pending-claim",
+            "claim_type": "cosmetic_intent",
+            "review_status": "pending_review",
+            "evidence": {"evidence_id": "evidence-1", "source_id": "source-licensed"},
+        }],
+        "ingredient_declarations": [],
+    }
+    result = client.post("/serving/assessment", json=payload, headers=auth("service-test"))
+    assert result.status_code == 200
+    assert result.json()["decisions"][0]["eligible"] is False
+    assert result.json()["decisions"][0]["reason"] == "CLAIM_NOT_APPROVED"
