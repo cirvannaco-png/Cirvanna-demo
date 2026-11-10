@@ -1378,6 +1378,324 @@ def variant_triplet(db: Session, variant_id: str):
         .where(Variant.id == variant_id)).first()
 
 
+def _cal_gateway_settings() -> tuple[str, str, str]:
+    base = os.getenv("DECISION_GATEWAY_URL", "").strip().rstrip("/")
+    token = os.getenv("DECISION_GATEWAY_TOKEN", "").strip()
+    signing_key = os.getenv("CAL_PURCHASE_RECEIPT_HMAC_SECRET", "").strip()
+    parsed = urlsplit(base)
+    host = (parsed.hostname or "").lower()
+    local = host in {"localhost", "127.0.0.1", "::1"}
+    if (
+        not host or parsed.username or parsed.password or parsed.query or parsed.fragment
+        or (parsed.scheme != "https" and not (parsed.scheme == "http" and local))
+        or len(token.encode("utf-8")) < 32
+        or len(signing_key.encode("utf-8")) < 32
+    ):
+        raise HTTPException(503, detail={"code": "CAL_PURCHASE_GATEWAY_NOT_CONFIGURED_OR_UNTRUSTED"})
+    return base, token, signing_key
+
+
+def _cal_gateway_probe(base: str, token: str) -> bool:
+    try:
+        with httpx.Client(
+            timeout=httpx.Timeout(3.0, connect=1.5),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            response = client.get(
+                base + "/ready",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+            )
+        if response.status_code != 200:
+            return False
+        body = response.json()
+        return isinstance(body, dict) and body.get("ready") is True
+    except (httpx.HTTPError, ValueError):
+        return False
+
+
+def _sha256_json(value: dict[str, Any]) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _quote_receipt_snapshot(cost: dict[str, Any] | None) -> dict[str, Any] | None:
+    if cost is None:
+        return None
+    def quote_fields(quote: Any, names: tuple[str, ...]) -> dict[str, Any] | None:
+        if quote is None:
+            return None
+        return {name: getattr(quote, name, None).isoformat()
+                if isinstance(getattr(quote, name, None), datetime)
+                else getattr(quote, name, None) for name in names}
+    return {
+        "item_display_minor": cost.get("item_display_minor"),
+        "item_fx": cost.get("item_fx"),
+        "fulfillment_display_minor": cost.get("fulfillment_display_minor"),
+        "fulfillment_fx": cost.get("fulfillment_fx"),
+        "fulfillment": quote_fields(cost.get("fulfillment"), (
+            "id", "charge_basis", "provider", "provider_quote_id", "amount_minor",
+            "currency", "observed_at", "expires_at", "status",
+        )),
+        "payable_tax_minor": cost.get("payable_tax_minor"),
+        "tax": quote_fields(cost.get("tax"), (
+            "id", "provider", "provider_quote_id", "amount_minor", "currency",
+            "basis", "authoritative", "jurisdiction", "tax_category", "rule_version",
+            "observed_at", "expires_at", "status",
+        )),
+        "tax_fx": cost.get("tax_fx"),
+        "payment_capability": quote_fields(cost.get("payment"), (
+            "provider", "provider_reference", "observed_at", "expires_at",
+        )),
+    }
+
+
+def _purchase_authorization_item(
+    row: tuple[CartItem | None, Variant, Listing, Merchant],
+    *,
+    action: str,
+    quantity: int,
+    market_context: CheckoutRequest | None = None,
+    cost: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    _, variant, listing, merchant = row
+    destination_hash = (
+        hashlib.sha256(market_context.destination_key.encode("utf-8")).hexdigest()
+        if market_context is not None and market_context.destination_key else None
+    )
+    market_country = market_context.destination_country_code if market_context else None
+    fulfillment_mode = market_context.fulfillment_mode if market_context else None
+    display_currency = market_context.display_currency if market_context else None
+    unit_price = cost["item_display_minor"] if cost is not None else variant.price_minor
+    currency = (market_context.display_currency or variant.currency).upper() if market_context else variant.currency.upper()
+    snapshot = {
+        "schema_version": 1,
+        "action": action,
+        "catalog_product_id": listing.catalog_product_id,
+        "variant_id": variant.id,
+        "listing_id": listing.id,
+        "merchant_id": merchant.id,
+        "variant_version": variant.version,
+        "variant_state": variant.state,
+        "listing_state": listing.state,
+        "merchant_state": merchant.state,
+        "sku": variant.sku,
+        "options": variant.options,
+        "source_price_minor": variant.price_minor,
+        "source_currency": variant.currency,
+        "authorized_unit_price_minor": unit_price,
+        "authorized_currency": currency,
+        "quantity": quantity,
+        "available_stock": max(0, variant.on_hand - variant.reserved_qty),
+        "market_country_code": market_country,
+        "destination_key_sha256": destination_hash,
+        "fulfillment_mode": fulfillment_mode,
+        "display_currency": display_currency,
+        "market_cost_quotes": _quote_receipt_snapshot(cost),
+    }
+    return {
+        "catalog_product_id": listing.catalog_product_id,
+        "variant_id": variant.id,
+        "listing_id": listing.id,
+        "merchant_id": merchant.id,
+        "action": action,
+        "offer_snapshot_sha256": _sha256_json(snapshot),
+        "market_country_code": market_country,
+        "destination_key_sha256": destination_hash,
+        "fulfillment_mode": fulfillment_mode,
+        "display_currency": display_currency,
+        "quantity": quantity,
+        "unit_price_minor": unit_price,
+        "currency": currency,
+    }
+
+
+def _request_cal_purchase_receipts(
+    request: Request,
+    subject_id: str,
+    authorizations: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not authorizations:
+        return []
+    base, service_token, signing_key = _cal_gateway_settings()
+    scheme, _, user_token = request.headers.get("authorization", "").partition(" ")
+    if scheme.lower() != "bearer" or not user_token.strip():
+        raise HTTPException(401, detail={"code": "USER_BEARER_REQUIRED"})
+    receipts: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
+    product_ids: set[str] = set()
+
+    def send_batch(batch: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        try:
+            with httpx.Client(
+                timeout=httpx.Timeout(8.0, connect=2.0),
+                trust_env=False,
+                follow_redirects=False,
+            ) as client:
+                response = client.post(
+                    base + "/v1/purchase-authorizations",
+                    headers={
+                        "Authorization": "Bearer " + service_token,
+                        "X-End-User-Authorization": "Bearer " + user_token.strip(),
+                        "Accept": "application/json",
+                    },
+                    json={"user_id": subject_id, "authorizations": batch},
+                )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(503, detail={"code": "CAL_PURCHASE_AUTHORIZATION_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "CAL_PURCHASE_AUTHORIZATION_UNAVAILABLE"}) from exc
+        if response.status_code != 200:
+            raise HTTPException(503, detail={"code": "CAL_PURCHASE_AUTHORIZATION_UNAVAILABLE", "upstream_status": response.status_code})
+        try:
+            result = response.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "CAL_PURCHASE_AUTHORIZATION_RESPONSE_INVALID"}) from exc
+        batch_receipts = result.get("receipts") if isinstance(result, dict) else None
+        request_id = result.get("request_id") if isinstance(result, dict) else None
+        if (
+            not isinstance(result, dict)
+            or result.get("subject_id") != subject_id
+            or not isinstance(request_id, str) or not request_id.strip()
+            or not isinstance(batch_receipts, list)
+            or len(batch_receipts) != len(batch)
+        ):
+            raise HTTPException(502, detail={"code": "CAL_PURCHASE_AUTHORIZATION_RESPONSE_INVALID"})
+        expected_by_key = {
+            (item["catalog_product_id"], item["variant_id"], item["listing_id"], item["merchant_id"], item["action"]): item
+            for item in batch
+        }
+        verified: list[dict[str, Any]] = []
+        for receipt in batch_receipts:
+            if not isinstance(receipt, dict):
+                raise HTTPException(502, detail={"code": "CAL_PURCHASE_RECEIPT_INVALID"})
+            key = (
+                receipt.get("catalog_product_id"), receipt.get("variant_id"),
+                receipt.get("listing_id"), receipt.get("merchant_id"), receipt.get("action"),
+            )
+            expected = expected_by_key.get(key)
+            signature = receipt.get("signature")
+            unsigned = {k: v for k, v in receipt.items() if k != "signature"}
+            canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+            expected_signature = hmac.new(signing_key.encode("utf-8"), canonical, hashlib.sha256).hexdigest()
+            if (
+                expected is None
+                or not isinstance(signature, str)
+                or not hmac.compare_digest(signature.lower(), expected_signature)
+                or receipt.get("subject_id") != subject_id
+                or receipt.get("request_id") != request_id
+                or receipt.get("candidate_id") != expected["variant_id"]
+                or any(receipt.get(field) != value for field, value in expected.items())
+                or receipt.get("decision") not in {"SHOW", "BLOCK", "REVIEW"}
+                or not isinstance(receipt.get("may_display"), bool)
+                or not isinstance(receipt.get("catalog_version"), int)
+                or isinstance(receipt.get("catalog_version"), bool)
+                or not isinstance(receipt.get("policy_version"), str)
+                or not receipt.get("policy_version", "").strip()
+            ):
+                raise HTTPException(502, detail={"code": "CAL_PURCHASE_RECEIPT_BINDING_OR_SIGNATURE_INVALID"})
+            try:
+                issued_at = datetime.fromisoformat(receipt["issued_at"].replace("Z", "+00:00"))
+                expires_at = datetime.fromisoformat(receipt["expires_at"].replace("Z", "+00:00"))
+                issued_at = _aware_utc(issued_at)
+                expires_at = _aware_utc(expires_at)
+            except (KeyError, TypeError, ValueError, AttributeError) as exc:
+                raise HTTPException(502, detail={"code": "CAL_PURCHASE_RECEIPT_EXPIRY_INVALID"}) from exc
+            current = now()
+            if (
+                issued_at > current + timedelta(seconds=5)
+                or expires_at <= current
+                or expires_at <= issued_at
+                or expires_at - issued_at > timedelta(seconds=65)
+            ):
+                raise HTTPException(409, detail={"code": "CAL_PURCHASE_RECEIPT_EXPIRED_OR_INVALID"})
+            verified.append(receipt)
+        return verified
+
+    # The deterministic Decision API accepts at most 25 unique Catalog products.
+    for item in authorizations:
+        product_id = item["catalog_product_id"]
+        if pending and product_id not in product_ids and len(product_ids) >= 25:
+            receipts.extend(send_batch(pending))
+            pending, product_ids = [], set()
+        pending.append(item)
+        product_ids.add(product_id)
+    if pending:
+        receipts.extend(send_batch(pending))
+    return receipts
+
+
+def _cal_audit_from_receipt(
+    receipt: dict[str, Any],
+    *,
+    order_id: str | None = None,
+    cart_id: str | None = None,
+    cart_version: int | None = None,
+) -> CALPurchaseAudit:
+    reasons = receipt.get("reason_codes")
+    reason_code = None
+    if isinstance(reasons, list):
+        reason_code = next((str(item)[:180] for item in reasons if isinstance(item, str) and item), None)
+    if reason_code is None and receipt.get("decision") != "SHOW":
+        reason_code = "CAL_" + str(receipt.get("decision", "REVIEW"))
+    issued = _aware_utc(datetime.fromisoformat(receipt["issued_at"].replace("Z", "+00:00")))
+    expires = _aware_utc(datetime.fromisoformat(receipt["expires_at"].replace("Z", "+00:00")))
+    return CALPurchaseAudit(
+        audit_id=str(uuid.uuid4()),
+        order_id=order_id,
+        cart_id=cart_id,
+        cart_version=cart_version,
+        buyer_user_id=receipt["subject_id"],
+        action=receipt["action"],
+        catalog_product_id=receipt["catalog_product_id"],
+        candidate_id=receipt["candidate_id"],
+        variant_id=receipt["variant_id"],
+        listing_id=receipt["listing_id"],
+        merchant_id=receipt["merchant_id"],
+        offer_snapshot_sha256=receipt["offer_snapshot_sha256"],
+        market_country_code=receipt.get("market_country_code"),
+        destination_key_sha256=receipt.get("destination_key_sha256"),
+        fulfillment_mode=receipt.get("fulfillment_mode"),
+        display_currency=receipt.get("display_currency"),
+        quantity=receipt["quantity"],
+        unit_price_minor=receipt["unit_price_minor"],
+        currency=receipt["currency"],
+        catalog_version=receipt["catalog_version"],
+        request_id=receipt["request_id"],
+        policy_version=receipt["policy_version"],
+        decision=receipt["decision"],
+        reason_code=reason_code,
+        receipt=receipt,
+        issued_at=issued,
+        expires_at=expires,
+        created_at=now(),
+    )
+
+
+def _authorize_cart_rows(
+    request: Request,
+    db: Session,
+    subject_id: str,
+    cart: Cart,
+    rows: list[tuple[CartItem, Variant, Listing, Merchant]],
+    action: str,
+) -> list[CALPurchaseAudit]:
+    inputs = [
+        _purchase_authorization_item(row, action=action, quantity=row[0].quantity)
+        for row in rows
+    ]
+    receipts = _request_cal_purchase_receipts(request, subject_id, inputs)
+    audits = [
+        _cal_audit_from_receipt(receipt, cart_id=cart.id, cart_version=cart.version)
+        for receipt in receipts
+    ]
+    db.add_all(audits)
+    db.commit()
+    if any(item.decision != "SHOW" or item.receipt.get("may_display") is not True for item in audits):
+        raise HTTPException(409, detail={"code": "CAL_CART_REAUTHORIZATION_DENIED"})
+    return audits
+
+
 def cart_json(db: Session, cart: Cart) -> dict[str, Any]:
     rows = db.execute(select(CartItem, Variant, Listing, Merchant)
         .join(Variant, CartItem.variant_id == Variant.id).join(Listing, Variant.listing_id == Listing.id)
