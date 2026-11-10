@@ -2152,6 +2152,77 @@ def _withhold_unverified_media(value: Any) -> Any:
     return value
 
 
+def _cil_feedback_context_key(context: Any) -> str:
+    parts = []
+    for value in (getattr(context, "climate", None), getattr(context, "occasion", None)):
+        if isinstance(value, str) and value.strip():
+            normalized = re.sub(r"[^a-z0-9._:-]+", "-", value.strip().lower()).strip("-")
+            if normalized:
+                parts.append(normalized[:40])
+    return "-".join(parts) or "general"
+
+
+def _load_cil_feedback_signals(product_ids: list[str], context_key: str) -> tuple[dict[str, dict], str]:
+    base = os.getenv("CIL_SERVICE_URL", "").strip()
+    token = os.getenv("CIL_SERVICE_TOKEN", "").strip()
+    if not base or len(token.encode("utf-8")) < 32:
+        return {}, "not_configured"
+    parts = urlsplit(base)
+    host = (parts.hostname or "").lower()
+    local = host in {"localhost", "127.0.0.1", "::1"}
+    if (
+        not host or parts.username is not None or parts.password is not None
+        or parts.query or parts.fragment
+        or (parts.scheme != "https" and not (parts.scheme == "http" and local))
+    ):
+        return {}, "misconfigured"
+    try:
+        response = httpx.post(
+            f"{base.rstrip('/')}/learning/signals",
+            json={"product_ids": product_ids, "context_key": context_key},
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=5.0,
+            trust_env=False,
+            follow_redirects=False,
+        )
+        if response.status_code != 200:
+            return {}, "unavailable"
+        payload = response.json()
+        if not isinstance(payload, dict) or not isinstance(payload.get("signals"), list):
+            return {}, "invalid_response"
+        signals = {}
+        for item in payload["signals"]:
+            if not isinstance(item, dict) or item.get("product_id") not in product_ids:
+                continue
+            if item.get("context_key") != context_key:
+                continue
+            if item.get("status") == "available":
+                share = item.get("unsuitable_share")
+                count = item.get("contributor_count")
+                if isinstance(share, (int, float)) and not isinstance(share, bool) and 0 <= share <= 1 and isinstance(count, int) and count >= 30:
+                    signals[item["product_id"]] = item
+        return signals, "available"
+    except (httpx.HTTPError, ValueError, TypeError):
+        return {}, "unavailable"
+
+
+def _feedback_adjusted_score(base_score: float, signal: dict | None, weight: float) -> tuple[float, dict]:
+    if not signal:
+        return base_score, {"applied": False, "status": "suppressed_or_unavailable",
+                            "unsuitable_share": None, "contributor_count": 0,
+                            "weight": weight, "penalty_fraction": 0.0}
+    share = float(signal["unsuitable_share"])
+    penalty = weight * share
+    return base_score * (1.0 - penalty), {
+        "applied": weight > 0 and share > 0,
+        "status": "available",
+        "unsuitable_share": share,
+        "contributor_count": int(signal["contributor_count"]),
+        "weight": weight,
+        "penalty_fraction": penalty,
+    }
+
+
 @app.post(
     "/v1/discover",
     dependencies=[Depends(require_api_token)],
@@ -2239,10 +2310,28 @@ def discover_marketplace(
         usi_score = _style_rank_score(product, profile)
         total_score = usi_score + wardrobe_match["score"]
         candidates.append((product_id, total_score, usi_score, wardrobe_match, offer))
-    candidates.sort(key=lambda item: (
+    try:
+        feedback_weight = float(os.getenv("CIL_FEEDBACK_RANKING_WEIGHT", "0.10"))
+    except ValueError as exc:
+        raise HTTPException(503, detail={"code": "INVALID_CIL_FEEDBACK_RANKING_WEIGHT"}) from exc
+    if not 0.0 <= feedback_weight <= 1.0:
+        raise HTTPException(503, detail={"code": "INVALID_CIL_FEEDBACK_RANKING_WEIGHT"})
+    feedback_signals, feedback_status = _load_cil_feedback_signals(
+        [item[0] for item in candidates], _cil_feedback_context_key(payload.context)
+    ) if candidates else ({}, "empty")
+    ranked_candidates = []
+    for product_id, base_score, usi_score, wardrobe_match, offer in candidates:
+        adjusted_score, feedback_adjustment = _feedback_adjusted_score(
+            base_score, feedback_signals.get(product_id), feedback_weight
+        )
+        feedback_adjustment["service_status"] = feedback_status
+        ranked_candidates.append((
+            product_id, adjusted_score, usi_score, wardrobe_match, offer, feedback_adjustment
+        ))
+    ranked_candidates.sort(key=lambda item: (
         -item[1], item[4]["currency"], item[4]["price_minor"], item[0]
     ))
-    ranked = candidates[:payload.limit]
+    ranked = ranked_candidates[:payload.limit]
     if not ranked:
         return {
             "request_id": str(uuid.uuid4()),
@@ -2284,7 +2373,7 @@ def discover_marketplace(
         {"product_id": pid, "decision": reason.lower(), "reason_code": reason}
         for pid, reason in sorted(withheld_reasons.items())
     ]
-    for product_id, score, usi_score, wardrobe_match, offer in ranked:
+    for product_id, score, usi_score, wardrobe_match, offer, feedback_adjustment in ranked:
         decision = decisions.get(product_id)
         if decision is None or not decision.may_display or decision.verdict != "show":
             withheld.append({"product_id": product_id, "rank_score": score, "decision": decision.verdict if decision else "review"})
@@ -2299,7 +2388,8 @@ def discover_marketplace(
                 "landed_cost_available": False,
             }),
             "rank_score": score,
-            "rank_score_semantics": "weighted explicit-USI match plus bounded exact wardrobe-attribute overlap; not probability",
+            "rank_score_semantics": "weighted explicit-USI match plus bounded exact wardrobe overlap and a minimum-cohort consented suitability-feedback penalty; not probability",
+            "feedback_adjustment": feedback_adjustment,
             "usi_rank_score": usi_score,
             "wardrobe_compatibility": {
                 "matched_owned_item_ids": wardrobe_match["owned_item_ids"],
