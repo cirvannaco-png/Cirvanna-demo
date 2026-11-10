@@ -11,8 +11,10 @@ import hashlib
 import hmac
 import json
 import os
+import httpx
 import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 from typing import Annotated, Literal
 
 from fastapi import Depends, FastAPI, HTTPException
@@ -55,6 +57,12 @@ def require_internal_token(credentials: Annotated[HTTPAuthorizationCredentials |
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class CALFeedbackDecisionIn(StrictModel):
+    verdict: Literal["SHOW", "BLOCK"]
+    decision_reference: str = Field(min_length=3, max_length=240)
+    rationale: str = Field(min_length=10, max_length=2000)
 
 
 class ContextIn(StrictModel):
@@ -166,6 +174,23 @@ class EligibilityRequest(StrictModel):
     upstream_signals: list[UpstreamSignalIn] = Field(default_factory=list, max_length=64)
     minimum_fit_confidence: float = Field(default=0.70, ge=0, le=1)
     minimum_alignment_score: float = Field(default=0.60, ge=0, le=1)
+
+
+def _cil_review_bridge() -> tuple[str, str, str]:
+    raw = os.getenv("CIL_SERVICE_URL", "").strip()
+    service_token = os.getenv("CIL_SERVICE_TOKEN", "").strip()
+    cal_token = os.getenv("CIL_CAL_SERVICE_TOKEN", "").strip()
+    parts = urlsplit(raw)
+    host = (parts.hostname or "").lower()
+    local = host in {"localhost", "127.0.0.1", "::1"}
+    if (
+        not host or parts.username is not None or parts.password is not None
+        or parts.query or parts.fragment
+        or (parts.scheme != "https" and not (parts.scheme == "http" and local))
+        or len(service_token.encode()) < 32 or len(cal_token.encode()) < 32
+    ):
+        raise HTTPException(503, detail={"code": "CIL_CAL_REVIEW_BRIDGE_NOT_CONFIGURED"})
+    return raw.rstrip("/"), service_token, cal_token
 
 
 def canonical_fit_payload(fit: FitEvidenceIn) -> bytes:
@@ -299,8 +324,49 @@ def capabilities() -> dict:
         "catacaci_cal_arbitration": True, "decision_explanations": True,
         "fci_prediction_model_available": False, "signed_npl_evidence_required": True,
         "persisted_user_preference_store": False, "signed_cultural_evidence_required": True,
+        "cil_feedback_review_bridge": bool(os.getenv("CIL_SERVICE_URL") and os.getenv("CIL_SERVICE_TOKEN") and os.getenv("CIL_CAL_SERVICE_TOKEN")),
         "decision_audit_persistence": False, "click_it_reconstruction": False,
         "virtual_twin_generation": False, "virtual_try_on": False}
+
+
+@app.get("/v1/cal/feedback-reviews", dependencies=[Depends(require_internal_token)])
+async def list_cil_feedback_reviews() -> dict:
+    base, service_token, _ = _cil_review_bridge()
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+            response = await client.get(f"{base}/cal/review-queue", headers={"Authorization": f"Bearer {service_token}"})
+            response.raise_for_status()
+            payload = response.json()
+        if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
+            raise HTTPException(502, detail={"code": "INVALID_CIL_REVIEW_QUEUE_RESPONSE"})
+        return payload
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(503, detail={"code": "CIL_REVIEW_QUEUE_UNAVAILABLE"}) from exc
+
+
+@app.post("/v1/cal/feedback-reviews/{review_id}/decision", dependencies=[Depends(require_internal_token)])
+async def submit_cil_feedback_decision(review_id: str, payload: CALFeedbackDecisionIn) -> dict:
+    base, _, cal_token = _cil_review_bridge()
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(5.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+            response = await client.post(
+                f"{base}/cal/review-queue/{review_id}/decision",
+                json=payload.model_dump(),
+                headers={"Authorization": f"Bearer {cal_token}"},
+            )
+            response.raise_for_status()
+            result = response.json()
+        if not isinstance(result, dict) or result.get("review_id") != review_id:
+            raise HTTPException(502, detail={"code": "INVALID_CIL_REVIEW_DECISION_RESPONSE"})
+        return result
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(exc.response.status_code, detail={"code": "CIL_REVIEW_DECISION_REJECTED"}) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(503, detail={"code": "CIL_REVIEW_DECISION_UNAVAILABLE"}) from exc
 
 
 @app.post("/v1/eligibility/evaluate", dependencies=[Depends(require_internal_token)])
