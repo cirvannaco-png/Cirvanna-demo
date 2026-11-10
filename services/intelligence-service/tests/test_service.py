@@ -17,6 +17,7 @@ from app.provider import ProviderNotConfigured, fetch_licensed_research
 def client(monkeypatch):
     monkeypatch.setenv("CIL_ADMIN_TOKEN", "admin-test")
     monkeypatch.setenv("CIL_SERVICE_TOKEN", "service-test")
+    monkeypatch.setenv("CIL_CATALOG_SERVICE_TOKEN", "catalog-test")
     monkeypatch.setenv("CIL_CAL_SERVICE_TOKEN", "cal-test")
     monkeypatch.setenv("CIL_RECEIPT_SIGNING_KEY", "test-signing-key-that-is-at-least-32-bytes")
     Base.metadata.drop_all(bind=engine)
@@ -98,7 +99,7 @@ def test_serving_assessment_allows_only_registered_licensed_scope(client):
         }],
         "ingredient_declarations": [],
     }
-    result = client.post("/serving/assessment", json=payload, headers=auth("service-test"))
+    result = client.post("/serving/assessment", json=payload, headers=auth("catalog-test"))
     assert result.status_code == 200
     assert result.json()["all_eligible"] is True
 
