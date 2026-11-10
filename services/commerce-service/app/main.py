@@ -3052,6 +3052,29 @@ def checkout(
             raise HTTPException(409, detail={"code": "IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PERSONALIZATION_CONSENT"})
         if existing.checkout_context_hash != context_hash:
             raise HTTPException(409, detail={"code": "IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_CHECKOUT_CONTEXT"})
+        authorization_snapshot = existing.cal_authorization_snapshot
+        snapshot_authorizations = (
+            authorization_snapshot.get("authorizations")
+            if isinstance(authorization_snapshot, dict)
+            and authorization_snapshot.get("subject_id") == actor.user_id
+            and authorization_snapshot.get("action") == "checkout"
+            else None
+        )
+        if (
+            not isinstance(snapshot_authorizations, list)
+            or not snapshot_authorizations
+            or any(
+                not isinstance(item, dict)
+                or not isinstance(item.get("variant_id"), str)
+                or not isinstance(item.get("claims"), dict)
+                or item["claims"].get("sub") != actor.user_id
+                or item["claims"].get("action") != "checkout"
+                or item["claims"].get("verdict") != "show"
+                or item["claims"].get("may_display") is not True
+                for item in snapshot_authorizations
+            )
+        ):
+            raise HTTPException(409, detail={"code": "CAL_PURCHASE_REAUTH_REQUIRED_FOR_EXISTING_ORDER"})
         return persist_stripe_session(db, existing.id, actor.email, gateway)
 
     cart = ensure_cart(db, actor.user_id)
