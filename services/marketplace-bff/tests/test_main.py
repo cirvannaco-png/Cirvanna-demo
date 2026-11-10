@@ -111,44 +111,36 @@ def test_account_proxy_requires_bearer_and_blocks_admin_routes(client, monkeypat
     assert calls == []
 
 
-def test_cart_and_checkout_require_candidate_bound_cal_reauthorization(client, monkeypatch):
+def test_cart_and_checkout_are_forwarded_to_commerce_for_service_level_cal_reauthorization(client, monkeypatch):
     configure_upstreams(monkeypatch)
     calls = []
-    monkeypatch.setattr(main.httpx, "request", lambda *args, **kwargs: calls.append((args, kwargs)) or FakeResponse({}))
+    monkeypatch.setattr(
+        main.httpx,
+        "request",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or FakeResponse({"status": "forwarded"}),
+    )
     headers = {"Authorization": "Bearer customer-token", "Content-Type": "application/json"}
     variant = "123e4567-e89b-12d3-a456-426614174000"
     requests = [
         client.get("/api/commerce/cart", headers=headers),
         client.post("/api/commerce/cart/items", headers=headers, json={"variant_id": variant, "quantity": 1}),
         client.patch(f"/api/commerce/cart/items/{variant}", headers=headers, json={"quantity": 2}),
-        client.post("/api/commerce/checkout", headers=headers, json={"confirm": True}),
+        client.post(
+            "/api/commerce/checkout",
+            headers={**headers, "Idempotency-Key": "checkout-test-key-0001"},
+            json={"confirm": True},
+        ),
+        client.delete(f"/api/commerce/cart/items/{variant}", headers=headers),
     ]
-    assert [response.status_code for response in requests] == [503, 503, 503, 503]
-    assert all(response.json()["detail"]["code"] == "CAL_CANDIDATE_PURCHASE_REAUTH_REQUIRED" for response in requests)
-    assert calls == []
-
-    # Removing an existing cart line is a safe cleanup operation and remains available.
-    removed = client.delete(f"/api/commerce/cart/items/{variant}", headers=headers)
-    assert removed.status_code == 200
-    assert calls and calls[0][0][0] == "DELETE"
-
-
-def test_account_proxy_does_not_forward_checkout_without_candidate_authorization(client, monkeypatch):
-    configure_upstreams(monkeypatch)
-    calls = []
-    monkeypatch.setattr(main.httpx, "request", lambda *args, **kwargs: calls.append((args, kwargs)) or FakeResponse({}))
-    response = client.post(
-        "/api/commerce/checkout",
-        headers={
-            "Authorization": "Bearer user-session-token",
-            "Content-Type": "application/json",
-            "Idempotency-Key": "checkout-test-key",
-        },
-        json={"confirm": True},
-    )
-    assert response.status_code == 503
-    assert response.json()["detail"]["code"] == "CAL_CANDIDATE_PURCHASE_REAUTH_REQUIRED"
-    assert calls == []
+    assert [response.status_code for response in requests] == [200, 200, 200, 200, 200]
+    assert len(calls) == 5
+    assert [call[0][0] for call in calls] == ["GET", "POST", "PATCH", "POST", "DELETE"]
+    assert [call[0][1].split("commerce.example.test", 1)[-1] for call in calls] == [
+        "/cart", "/cart/items", f"/cart/items/{variant}", "/checkout", f"/cart/items/{variant}",
+    ]
+    assert calls[3][1]["headers"]["Idempotency-Key"] == "checkout-test-key-0001"
+    assert all(call[1]["headers"]["Authorization"] == "Bearer customer-token" for call in calls)
+    assert all(response.headers.get("cache-control") == "no-store, private" for response in requests[:4])
 
 
 def test_readiness_fails_closed_until_both_upstreams_are_ready(client, monkeypatch):
