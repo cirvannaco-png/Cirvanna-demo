@@ -113,6 +113,7 @@ def test_ingredient_research_cannot_substantiate_finished_product_efficacy(clien
         "claims": [{
             "claim_id": "claim-1",
             "claim_type": "finished_product_efficacy",
+            "review_status": "approved",
             "evidence": {"evidence_id": "evidence-1", "source_id": "source-licensed"},
         }],
         "ingredient_declarations": [],
@@ -321,6 +322,7 @@ def test_manufacturer_declaration_cannot_substantiate_finished_product_efficacy(
         "claims": [{
             "claim_id": "efficacy-claim",
             "claim_type": "finished_product_efficacy",
+            "review_status": "approved",
             "evidence": {"evidence_id": "evidence-1", "source_id": "manufacturer-source"},
         }],
         "ingredient_declarations": [],
