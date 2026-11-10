@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import Base, Outcome, SessionLocal, app, engine
+from app.main import Base, Outcome, ProviderTask, SessionLocal, app, engine
 from app.provider import ProviderNotConfigured, fetch_licensed_research
 
 
@@ -529,7 +529,22 @@ def test_perfectcorp_terminal_result_is_deleted_before_result_is_released(client
         "task_id": "task-2", "status": "success", "metrics": [{"type": "pore", "ui_score": 62}],
     })
     monkeypatch.setattr(cil_main, "perfectcorp_delete_task", lambda **kwargs: calls.append(kwargs["task_id"]) or True)
-    response = client.get("/providers/perfectcorp/skin-analysis/task-2", headers=auth("service-test"))
+    contributor = "hmac-sha256:" + "f" * 64
+    db = SessionLocal()
+    try:
+        db.add(ProviderTask(
+            task_id="task-2", provider="perfectcorp", contributor_token=contributor,
+            image_digest="a" * 64,
+            consent_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            status="running",
+        ))
+        db.commit()
+    finally:
+        db.close()
+    response = client.get(
+        "/providers/perfectcorp/skin-analysis/task-2",
+        headers={**auth("service-test"), "X-CIL-Contributor-Token": contributor},
+    )
     assert response.status_code == 200
     assert response.json()["provider_task_deleted"] is True
     assert calls == ["task-2"]
@@ -543,5 +558,20 @@ def test_perfectcorp_terminal_result_is_not_released_when_deletion_fails(client,
         "task_id": "task-3", "status": "success", "metrics": [{"type": "pore", "ui_score": 62}],
     })
     monkeypatch.setattr(cil_main, "perfectcorp_delete_task", lambda **kwargs: (_ for _ in ()).throw(RuntimeError("delete failed")))
-    response = client.get("/providers/perfectcorp/skin-analysis/task-3", headers=auth("service-test"))
+    contributor = "hmac-sha256:" + "1" * 64
+    db = SessionLocal()
+    try:
+        db.add(ProviderTask(
+            task_id="task-3", provider="perfectcorp", contributor_token=contributor,
+            image_digest="b" * 64,
+            consent_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            status="running",
+        ))
+        db.commit()
+    finally:
+        db.close()
+    response = client.get(
+        "/providers/perfectcorp/skin-analysis/task-3",
+        headers={**auth("service-test"), "X-CIL-Contributor-Token": contributor},
+    )
     assert response.status_code == 502
