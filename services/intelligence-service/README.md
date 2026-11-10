@@ -10,8 +10,9 @@ is for local tests only. The initial schema is versioned with Alembic under
 
 - Set `CIL_DATABASE_URL`, `CIL_ADMIN_TOKEN`, `CIL_SERVICE_TOKEN`,
   `CIL_CATALOG_SERVICE_TOKEN`, `CIL_CAL_SERVICE_TOKEN`, and a random
-  `CIL_RECEIPT_SIGNING_KEY` of at least 32 bytes. Keep Catalog, internal service,
-  and CAL credentials separate.
+  `CIL_CONSENT_RECEIPT_KEY`, `CIL_CAL_RECEIPT_KEY`, and
+  `CIL_SKIN_ANALYSIS_CONSENT_KEY` of at least 32 bytes. Keep Catalog, internal
+  service, CAL and consent issuer credentials separate.
 - Set `CIL_AUTO_CREATE_SCHEMA=false` in production and run `alembic upgrade head`
   as a release step. Verify PostgreSQL backup/restore before production traffic.
 - Source rights are append-only events. Registering a source creates the initial rights event; `POST /sources/{source_id}/revoke` appends a prohibition event that immediately blocks subsequent commercial serving assessments.
@@ -22,9 +23,7 @@ is for local tests only. The initial schema is versioned with Alembic under
 - Perfect Corp photo tasks are adult-only and require a signed consent receipt bound to the exact image digest, provider, purpose and pseudonymous contributor. Images are normalized in memory and EXIF is stripped; only opaque task handles, pseudonymous ownership, digest and expiry metadata are persisted.
 - Terminal task results are not released until provider-side task/file deletion succeeds. Schedule the admin-only POST /providers/perfectcorp/reap-tasks route at least every 5 minutes with the CIL admin token; the default abandoned-task TTL is 30 minutes. Keep the provider API token available for deletions after disabling new processing.
 - Revieve is not connected. Public SDK material alone does not establish current production API, DPA, retention or deletion terms; see docs/integrations/beauty-provider-research.md.
-- Consent and CAL receipts are HMAC-signed, product-bound, purpose-bound and
-  expiry checked. The upstream consent/CAL issuers must share the configured
-  verification key and exact receipt schema before outcome ingestion is enabled.
+- Recommendation consent, CAL SHOW, and Perfect Corp skin-photo consent use three independent HMAC keys. Receipts are purpose/product/provider/subject scoped and expiry checked; an issuer cannot forge a receipt type owned by another trust domain.
 - Cohort metrics are suppressed below 30 distinct contributors. Feedback
   creates a durable CAL review request; the Decision Service proxies the queue and
   final decision callback. It never suppresses a product automatically.
