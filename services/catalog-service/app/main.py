@@ -529,27 +529,45 @@ async def _cil_gate_node(node: Any, client: httpx.AsyncClient, gateway: str, tok
                 assessment = response.json()
                 expected_count = len(claims) + len(ingredients)
                 decisions = assessment.get("decisions", [])
+                expected_items = [
+                    (item, "claim", item.get("claim_id")) for item in claims
+                ] + [
+                    (item, "ingredient", item.get("inci_name")) for item in ingredients
+                ]
                 if (
                     assessment.get("product_id") != request_payload["product_id"]
                     or assessment.get("catalog_version") != request_payload["catalog_version"]
                     or len(decisions) != expected_count
-                    or not assessment.get("all_eligible")
-                    or any(item.get("eligible") is not True for item in decisions)
+                    or any(
+                        decision.get("item_id") != expected_id
+                        or decision.get("kind") != expected_kind
+                        or not isinstance(decision.get("eligible"), bool)
+                        for decision, (_, expected_kind, expected_id) in zip(decisions, expected_items)
+                    )
                 ):
                     attributes.pop("product_intelligence", None)
                 else:
-                    # Only fields explicitly assessed by the gateway can cross the serving boundary.
-                    for item, decision in zip(claims + ingredients, decisions):
+                    # Filter item-by-item; pending claims never pass, while independently
+                    # evidenced ingredients may still be served with required attribution.
+                    approved_claims = []
+                    approved_ingredients = []
+                    for decision, (item, kind, _) in zip(decisions, expected_items):
+                        if not decision.get("eligible"):
+                            continue
+                        evidence = dict(item.get("evidence") or {})
                         if decision.get("attribution_required"):
-                            evidence = dict(item.get("evidence") or {})
                             evidence["attribution"] = decision.get("attribution_text")
                             evidence["source_owner"] = decision.get("source_owner")
-                            item["evidence"] = evidence
-                    attributes["product_intelligence"] = {
-                        "schema_version": intelligence.get("schema_version", "1.0"),
-                        "claims": claims,
-                        "ingredient_declarations": ingredients,
-                    }
+                        item["evidence"] = evidence
+                        (approved_claims if kind == "claim" else approved_ingredients).append(item)
+                    if not approved_claims and not approved_ingredients:
+                        attributes.pop("product_intelligence", None)
+                    else:
+                        attributes["product_intelligence"] = {
+                            "schema_version": intelligence.get("schema_version", "1.0"),
+                            "claims": approved_claims,
+                            "ingredient_declarations": approved_ingredients,
+                        }
             except (httpx.HTTPError, ValueError, TypeError, KeyError):
                 attributes.pop("product_intelligence", None)
     await __import__("asyncio").gather(*[
