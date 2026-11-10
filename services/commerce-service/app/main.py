@@ -2975,6 +2975,8 @@ def checkout(
             CommerceOrder.idempotency_key == idempotency_key,
         ))
         if existing:
+            if existing.tal_consent_receipt_id != tal_receipt_id:
+                raise HTTPException(409, detail={"code": "IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PERSONALIZATION_CONSENT"})
             if existing.checkout_context_hash != context_hash:
                 raise HTTPException(409, detail={"code": "IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_CHECKOUT_CONTEXT"})
             return persist_stripe_session(db, existing.id, actor.email, gateway)
