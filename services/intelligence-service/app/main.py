@@ -1177,5 +1177,6 @@ def capabilities():
                 "CIL_PERFECTCORP_ERASURE_SLA_CONFIRMED", "CIL_PERFECTCORP_MAX_RETENTION_HOURS", "CIL_SKIN_ANALYSIS_CONSENT_KEY")),
             "perfectcorp_skin_analysis_enabled": os.getenv("CIL_PERFECTCORP_ENABLED", "false").lower() == "true",
             "provider_task_retention_reaper_required": True,
+            "cal_feedback_block_lookup": True,
             "revieve_integration_enabled": False,
             "catalog_serving_gateway_required": True, "cal_remains_final_authority": True}
