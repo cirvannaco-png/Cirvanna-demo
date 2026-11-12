@@ -6,14 +6,17 @@ intentionally retained because an immutable audit row must not be deleted.
 from __future__ import annotations
 
 import os
+import sys
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from sqlalchemy import create_engine, delete, select, text, update
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.main import CALPurchaseAudit
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from app.main import CALPurchaseAudit  # noqa: E402
 
 
 def require_blocked(session: Session, statement, label: str) -> None:
