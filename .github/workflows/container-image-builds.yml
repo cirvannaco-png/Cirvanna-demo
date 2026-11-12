@@ -10,6 +10,7 @@ on:
       - "services/asset-service/**"
       - "services/privacy-governance-service/**"
       - "services/intelligence-service/**"
+      - "services/api-gateway/**"
       - ".github/workflows/container-image-builds.yml"
   push:
     branches: [main]
@@ -50,3 +51,5 @@ jobs:
         run: docker build -f services/privacy-governance-service/Dockerfile -t cirvanna-privacy-governance:ci services/privacy-governance-service
       - name: Build Cirvanna Intelligence Service image
         run: docker build -f services/intelligence-service/Dockerfile -t cirvanna-intelligence:ci services/intelligence-service
+      - name: Build API Gateway image
+        run: docker build -f services/api-gateway/Dockerfile -t cirvanna-api-gateway:ci .
