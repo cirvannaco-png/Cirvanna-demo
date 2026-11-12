@@ -724,3 +724,38 @@ def test_cal_show_is_withheld_when_cil_evidence_or_rights_review_is_required(cli
     assert decision["cil_serving_status"] == "review"
     assert decision["name"] is None
     assert any(reason["code"] == "CIL_EVIDENCE_OR_RIGHTS_REVIEW_REQUIRED" for reason in decision["reasons"])
+
+
+def test_complementer_requires_verified_end_user_subject(client, monkeypatch):
+    response = client.post(
+        "/v1/complementer/recommend",
+        json={
+            "request_id": "complementer-test-003",
+            "user_id": "customer-1",
+            "preferences": {},
+            "look": {"description": "blue shirt"},
+        },
+        headers=auth_headers(),
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "END_USER_BEARER_REQUIRED"
+
+
+def test_complementer_rejects_user_id_not_bound_to_commerce_subject(client, monkeypatch):
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda _authorization: "verified-customer-42")
+    monkeypatch.setattr(main, "_complementer_advisory", lambda _payload: pytest.fail("Mismatched identity must not reach Complementer"))
+    response = client.post(
+        "/v1/complementer/recommend",
+        json={
+            "request_id": "complementer-test-004",
+            "user_id": "attacker-controlled-user",
+            "preferences": {},
+            "look": {"description": "blue shirt"},
+        },
+        headers={
+            **auth_headers(),
+            "X-End-User-Authorization": "Bearer signed-customer-session",
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "REQUEST_SUBJECT_MISMATCH"
