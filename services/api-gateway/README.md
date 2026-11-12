@@ -2,6 +2,8 @@
 
 **Status:** the gateway now has a verified-Commerce-subject mode, USI profile hydration, consented TAL routes, live Catalog/Commerce discovery, deterministic preference ranking, signed independent safety/FCI provider adapters, and CAL-only product display. Production is still gated on real provider attestations, managed audit storage, and deployed operations verification.
 
+`CIRVANNA_ENVIRONMENT=production` makes final CIL feedback-review enforcement mandatory. Production cannot override this with `CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED=false`; the Gateway fails readiness when the CIL endpoint/credential is misconfigured and fails each decision request closed when the review store is unavailable. Local development may leave the feature optional. Set `CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED=true` in staging as well, and test BLOCK, SHOW-without-override, stale/malformed decisions, and CIL outages.
+
 ## Responsibilities
 
 - Authenticate internal API callers with the gateway service bearer token.
@@ -93,6 +95,8 @@ The adapter contract is not a substitute for independent scientific or safety ev
 | `IDENTITY_SERVICE_TOKEN` | Identity service bearer token, at least 32 bytes |
 | `COMPLEMENTER_SERVICE_URL` | Trusted Complementer API base URL |
 | `COMPLEMENTER_SERVICE_TOKEN` | Complementer service bearer token |
+
+The `/v1/complementer/recommend` route also requires `X-End-User-Authorization`. The Gateway resolves that bearer through Commerce `/me` and rejects any mismatch with the request `user_id`; an internal service token alone is not enough to personalize an advisory.
 | `NPL_SERVICE_URL`, `NPL_SERVICE_TOKEN`, `NPL_EVIDENCE_HMAC_SECRET` | Persistent NPL provider and signed evidence |
 | `CULTURAL_IDENTITY_SERVICE_URL`, `CULTURAL_IDENTITY_SERVICE_TOKEN`, `CULTURAL_IDENTITY_HMAC_SECRET` | Explicit cultural declaration provider and signed evidence |
 | `SAFETY_SERVICE_URL`, `SAFETY_SERVICE_TOKEN` | Independent product-safety provider |
@@ -103,6 +107,8 @@ The adapter contract is not a substitute for independent scientific or safety ev
 | `FCI_VALIDATION_HMAC_SECRET`, `FCI_VALIDATION_REPORT_SHA256` | Independent FCI attestation key and pinned report hash |
 | `CIL_SERVICE_URL` | Private Cirvanna Intelligence Service URL |
 | `CIL_CATALOG_SERVICE_TOKEN` | Separate bearer credential for CIL Catalog-serving assessment (at least 32 bytes) |
+| `CIL_CAL_SERVICE_TOKEN` | Separate bearer credential for final CAL feedback-review lookup (at least 32 bytes) |
+| `CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED` | When `true`, the CIL review store is mandatory before decisions are returned; BLOCK is an additional product/context veto, and store/configuration failures fail closed |
 
 All remote internal service URLs must use HTTPS, contain no embedded credentials/query/fragment, and be configured via secret storage. Use separate, independently rotated secrets for gateway auth, provider evidence signatures, and validation attestations.
 
