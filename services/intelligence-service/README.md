@@ -33,6 +33,7 @@ is for local tests only. The initial schema is versioned with Alembic under
 - `POST /evidence`: admin registers immutable evidence against a source.
 - `POST /serving/assessment`: internal claim-level rights/evidence assessment.
 - `POST /outcomes`: internal consent- and CAL-receipt-verified event ingestion.
+- The current BFF Wardrobe feedback path writes explicit item/soft-look signals to Wardrobe/Identity Learning and NPL. It is **not yet** a first-party caller of CIL `POST /outcomes`; CIL suitability cohorts remain empty/suppressed until a trusted adapter issues purpose-bound `recommendation_outcome_learning` consent receipts, binds feedback to a real CAL SHOW receipt, derives keyed contributor pseudonyms, and submits explicit suitability reports. Do not infer suitability from clicks, saves or purchases.
 - `GET /outcomes/aggregate`: minimum-cohort aggregate and review signal.
 - `POST /learning/signals`: batch product/context suitability signals for the recommendation ranker; cohorts below 30 distinct contributors are suppressed.
 - `POST /providers/perfectcorp/skin-analysis`, `GET /providers/perfectcorp/skin-analysis/{task_id}`, `DELETE /providers/perfectcorp/skin-analysis/{task_id}`: opt-in, adult-only YouCam skin analysis, contributor-bound polling and provider-file deletion.
