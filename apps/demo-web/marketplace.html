@@ -59,11 +59,17 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     <section class="ai-panel" aria-labelledby="descriptionSearchTitle">
       <div class="eyebrow">PNELLY · Describe it</div>
       <h2 id="descriptionSearchTitle">Search by description</h2>
-      <p>Describe what you want in everyday language. PNELLY searches marketplace candidates; product facts, merchant offers, prices and stock must come from Catalog and Commerce, and candidates remain hidden until CAL authorizes display. Complementer is designed as optional styling advice; it must not control product selection, product facts or prices.</p>
+      <p>Describe what you want in everyday language. PNELLY uses your active wardrobe and consented feedback as context, then retrieves current Catalog and Commerce offers. Only candidates with fresh CAL SHOW authorization appear below. Complementer remains optional styling advice and cannot select products or authorize display.</p>
       <div class="ai-controls">
         <input id="aiQuery" type="search" maxlength="1000" placeholder="e.g. a modest dark green linen dress for hot weather" aria-label="Describe a product">
         <select id="aiCategory" aria-label="AI search category">
           <option value="">All categories</option><option value="upper_body">Tops</option><option value="outerwear">Outerwear</option><option value="lower_body">Bottoms</option><option value="dress">Dresses</option><option value="full_outfit">Full outfit</option><option value="beauty">Beauty</option><option value="accessories">Accessories</option>
+        </select>
+        <select id="aiOccasion" aria-label="Occasion for this discovery">
+          <option value="">No occasion preference</option><option value="everyday">Everyday</option><option value="work">Work</option><option value="meeting">Meeting</option><option value="evening">Evening</option><option value="formal">Formal</option><option value="travel">Travel</option>
+        </select>
+        <select id="aiClimate" aria-label="Climate for this discovery">
+          <option value="">No climate preference</option><option value="hot_humid">Hot and humid</option><option value="hot_dry">Hot and dry</option><option value="temperate">Temperate</option><option value="cool">Cool</option>
         </select>
         <button class="btn primary wide" id="aiSearchBtn">Search marketplace with PNELLY</button>
       </div>
@@ -366,17 +372,52 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
   $("aiSearchBtn").addEventListener("click",async()=>{
     const query=$("aiQuery").value.trim(),category=$("aiCategory").value;
     if(query.length<3){setAiStatus("aiSearchStatus","Enter a product description of at least 3 characters.",true);return}
+    if(!config.userToken){setAiStatus("aiSearchStatus","Sign in with a verified Cirvanna account to use wardrobe-aware PNELLY discovery.",true);return}
     setAiBusy("aiSearchBtn",true,"Searching…");
-    setAiStatus("aiSearchStatus","Searching current marketplace offers with PNELLY…");
+    setAiStatus("aiSearchStatus","PNELLY is checking your active wardrobe and consented feedback, then requesting candidate-bound CAL decisions…");
     try{
-      const body={query,limit:10};if(category)body.category=category;
-      const response=await fetch("/api/vision/marketplace-search",{method:"POST",headers:{"Content-Type":"application/json",Accept:"application/json"},body:JSON.stringify(body)});
+      const body={
+        query,
+        category:category||null,
+        currency:$("displayCurrency").value.trim().toUpperCase()||null,
+        occasion:$("aiOccasion").value||null,
+        climate:$("aiClimate").value||null,
+        limit:10,
+        exclude_owned_products:true
+      };
+      const response=await fetch("/api/vision/conversational-discovery",{
+        method:"POST",
+        headers:{Authorization:"Bearer "+config.userToken,"Content-Type":"application/json",Accept:"application/json"},
+        body:JSON.stringify(body)
+      });
       const data=await response.json().catch(()=>({}));
-      if(!response.ok)throw new Error((data.detail&&data.detail.code)||("PNELLY marketplace search returned HTTP "+response.status+"."));
-      if(data.status!=="complete"||data.display_authorized!==false||data.decision_status!=="PENDING_CAL"||Object.prototype.hasOwnProperty.call(data,"candidates"))throw new Error("PNELLY returned an invalid or unsafe search response.");
-      presentAiSearchResult(data,"aiSearchStatus");
-    }catch(e){setAiStatus("aiSearchStatus",(e&&e.message?e.message:"Search is unavailable")+". No demo or fabricated results were shown.",true)}
-    finally{setAiBusy("aiSearchBtn",false,"Search marketplace with PNELLY")}
+      if(!response.ok)throw new Error((data.detail&&data.detail.code)||("PNELLY discovery returned HTTP "+response.status+"."));
+      if(data.display_authority!=="CaTaCaCi/CAL"||!Array.isArray(data.displayable_products)||!Array.isArray(data.withheld_candidate_count===undefined?[]:[data.withheld_candidate_count]))throw new Error("PNELLY returned an invalid or non-CAL-governed discovery response.");
+      items=data.displayable_products.map(candidate=>{
+        const product=candidate&&candidate.product||{},offer=candidate&&candidate.offer||{};
+        if(!candidate||!candidate.decision||candidate.decision.verdict!=="show"||candidate.decision.may_display!==true)throw new Error("A discovery candidate did not carry a valid CAL SHOW decision.");
+        return {
+          ...offer,
+          product_id:product.product_id,
+          catalog_product_id:product.product_id,
+          name:product.name||offer.product_name||"Product",
+          brand:product.brand||offer.merchant_name||"Independent brand",
+          category:product.category||offer.category||"Product",
+          description:product.description||"",
+          attributes:product.attributes||{},
+          image_urls:[],
+          decision:candidate.decision
+        };
+      });
+      mode="commerce";page=0;total=Number(data.ranked_candidate_count)||items.length;
+      render();
+      const withheld=Number(data.withheld_candidate_count)||0;
+      setAiStatus("CAL-GOVERNED PNELLY DISCOVERY — "+items.length+" authorized offer(s) shown; "+withheld+" candidate(s) withheld. Ranking used your active wardrobe; only consented style feedback was used. Product display authority: CaTaCaCi/CAL.");
+      $("products").scrollIntoView({behavior:"smooth",block:"start"});
+    }catch(e){
+      items=[];total=0;render();
+      setAiStatus("aiSearchStatus",(e&&e.message?e.message:"Search is unavailable")+". No demo or ungoverned candidate results were shown.",true);
+    }finally{setAiBusy("aiSearchBtn",false,"Search marketplace with PNELLY")}
   });
 
 
