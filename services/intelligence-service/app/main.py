@@ -1216,7 +1216,11 @@ def cal_feedback_decisions(payload: CALFeedbackDecisionLookupIn, db: Session = D
             "review_id": row.id,
             "verdict": row.verdict,
             "decision_reference": row.decision_reference,
-            "decided_at": row.decided_at.isoformat() if row.decided_at else None,
+            "decided_at": (
+                row.decided_at.replace(tzinfo=timezone.utc)
+                if row.decided_at and row.decided_at.tzinfo is None
+                else row.decided_at.astimezone(timezone.utc) if row.decided_at else None
+            ).isoformat() if row.decided_at else None,
         } for product_id, row in latest.items()],
     }
 
