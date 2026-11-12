@@ -34,6 +34,7 @@ class MarketplaceContractTests(unittest.TestCase):
         self.assertIn('fetch(config.commerceBase+"/cart",{headers})', HTML)
         self.assertIn("purchaseEnabled=true", HTML)
         self.assertIn("purchaseEnabled=false", HTML)
+        self.assertIn('mode="commerce";purchaseEnabled=false;saved=[];cart=[];cartVersion=0;updateCounts();', HTML)
         self.assertIn("Candidate-bound CAL purchase authorization is not ready", HTML)
         self.assertIn("Checkout paused — CAL authorization unavailable", HTML)
         self.assertNotIn('new URL(config.base+"/products")', HTML)
