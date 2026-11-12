@@ -151,6 +151,79 @@ def test_account_proxy_does_not_forward_checkout_without_candidate_authorization
     assert calls == []
 
 
+def test_cart_and_checkout_proxy_only_when_operator_flag_and_live_cal_readiness_pass(client, monkeypatch):
+    configure_upstreams(monkeypatch)
+    monkeypatch.setenv("COMMERCE_CAL_PURCHASE_PROXY_ENABLED", "true")
+    readiness = {
+        "ready": True,
+        "cal_purchase_gateway_configured": True,
+        "cal_purchase_receipt_signer_configured": True,
+        "cal_gateway_ready": True,
+        "migrations_applied": True,
+    }
+    capabilities = {"candidate_bound_purchase_authorization_configured": True}
+    probes = []
+    def fake_get(url, **kwargs):
+        probes.append(url)
+        if url.endswith("/ready"):
+            return FakeResponse(readiness)
+        if url.endswith("/capabilities"):
+            return FakeResponse(capabilities)
+        return FakeResponse({}, status_code=404)
+    monkeypatch.setattr(main.httpx, "get", fake_get)
+    forwarded = []
+    monkeypatch.setattr(
+        main.httpx,
+        "request",
+        lambda *args, **kwargs: forwarded.append((args, kwargs)) or FakeResponse({"accepted": True}),
+    )
+    headers = {"Authorization": "Bearer customer-token", "Content-Type": "application/json"}
+    variant = "123e4567-e89b-12d3-a456-426614174000"
+
+    responses = [
+        client.get("/api/commerce/cart", headers=headers),
+        client.post("/api/commerce/cart/items", headers=headers, json={"variant_id": variant, "quantity": 1}),
+        client.patch(f"/api/commerce/cart/items/{variant}", headers=headers, json={"quantity": 2}),
+        client.post("/api/commerce/checkout", headers={**headers, "Idempotency-Key": "cal-proxy-checkout-01"}, json={"confirm": True}),
+    ]
+    assert [response.status_code for response in responses] == [200, 200, 200, 200]
+    assert [call[0][0] for call in forwarded] == ["GET", "POST", "PATCH", "POST"]
+    assert [call[0][1] for call in forwarded] == [
+        "https://commerce.example.test/cart",
+        "https://commerce.example.test/cart/items",
+        f"https://commerce.example.test/cart/items/{variant}",
+        "https://commerce.example.test/checkout",
+    ]
+    assert all(call[1]["headers"]["Authorization"] == "Bearer customer-token" for call in forwarded)
+    assert all(url.endswith("/ready") or url.endswith("/capabilities") for url in probes)
+    assert probes.count("https://commerce.example.test/ready") == 4
+    assert probes.count("https://commerce.example.test/capabilities") == 4
+
+
+def test_cart_and_checkout_remain_blocked_when_live_cal_readiness_is_incomplete(client, monkeypatch):
+    configure_upstreams(monkeypatch)
+    monkeypatch.setenv("COMMERCE_CAL_PURCHASE_PROXY_ENABLED", "true")
+    monkeypatch.setattr(main.httpx, "get", lambda url, **kwargs: FakeResponse({
+        "ready": False,
+        "cal_purchase_gateway_configured": True,
+        "cal_purchase_receipt_signer_configured": True,
+        "cal_gateway_ready": False,
+        "migrations_applied": True,
+    }, status_code=503))
+    calls = []
+    monkeypatch.setattr(main.httpx, "request", lambda *args, **kwargs: calls.append(args) or FakeResponse({}))
+    response = client.post(
+        "/api/commerce/checkout",
+        headers={"Authorization": "Bearer customer-token", "Content-Type": "application/json"},
+        json={"confirm": True},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "CAL_CANDIDATE_PURCHASE_REAUTH_REQUIRED"
+    assert calls == []
+
+
+
+
 def test_readiness_fails_closed_until_both_upstreams_are_ready(client, monkeypatch):
     configure_upstreams(monkeypatch)
     monkeypatch.delenv("CATALOG_API_TOKEN", raising=False)
