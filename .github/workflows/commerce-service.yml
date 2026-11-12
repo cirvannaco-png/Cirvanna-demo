@@ -47,6 +47,7 @@ jobs:
         run: |
           alembic upgrade 20261109_0007
           alembic upgrade head
+          python scripts/verify_cal_purchase_audit_immutability.py
           alembic downgrade 20261109_0007
           alembic upgrade head
       - name: Validate model schema compilation
