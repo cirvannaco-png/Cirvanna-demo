@@ -782,6 +782,10 @@ def test_perfectcorp_consent_revocation_deletes_only_tasks_bound_to_that_consent
 
     deleted_vendor_ids = []
     monkeypatch.setattr(
+        cil_main, "perfectcorp_get_skin_analysis_status",
+        lambda **kwargs: {"task_id": kwargs["task_id"], "status": "success"},
+    )
+    monkeypatch.setattr(
         cil_main, "perfectcorp_delete_task",
         lambda **kwargs: deleted_vendor_ids.append(kwargs["task_id"]) or True,
     )
@@ -828,8 +832,75 @@ def test_perfectcorp_reaper_cleans_consent_expired_tasks_before_general_ttl(clie
     finally:
         db.close()
     deleted = []
+    monkeypatch.setattr(
+        cil_main, "perfectcorp_get_skin_analysis_status",
+        lambda **kwargs: {"task_id": kwargs["task_id"], "status": "success"},
+    )
     monkeypatch.setattr(cil_main, "perfectcorp_delete_task", lambda **kwargs: deleted.append(kwargs["task_id"]) or True)
     response = client.post("/providers/perfectcorp/reap-tasks", headers=auth("admin-test"))
     assert response.status_code == 200
     assert response.json()["deleted"] == 1
     assert deleted == ["vendor-expired-consent"]
+
+
+def test_revoked_in_flight_provider_task_is_never_released_and_waits_for_terminal_cleanup(client, monkeypatch):
+    from app import main as cil_main
+    contributor = "hmac-sha256:" + "c" * 64
+    db = SessionLocal()
+    try:
+        db.add(ProviderTask(
+            task_id="revoked-running", provider_task_id="vendor-revoked-running",
+            provider="perfectcorp", contributor_token=contributor, consent_id="revoked-consent",
+            image_digest="c" * 64,
+            consent_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            status="consent_revoked", revoked_at=datetime.now(timezone.utc),
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    monkeypatch.setattr(cil_main, "perfectcorp_get_skin_analysis_status", lambda **kwargs: {
+        "task_id": kwargs["task_id"], "status": "running",
+        "metrics": [{"type": "pore", "ui_score": 88}],
+    })
+    monkeypatch.setattr(cil_main, "perfectcorp_delete_task", lambda **kwargs: pytest.fail("provider delete is only valid after task completion"))
+    response = client.get(
+        "/providers/perfectcorp/skin-analysis/revoked-running",
+        headers={**auth("service-test"), "X-CIL-Contributor-Token": contributor},
+    )
+    assert response.status_code == 410
+    assert "metrics" not in response.json()
+
+    db = SessionLocal()
+    try:
+        row = db.get(ProviderTask, "revoked-running")
+        assert row.revoked_at is not None
+        assert row.deleted_at is None
+        assert row.status.startswith("consent_revoked_waiting")
+    finally:
+        db.close()
+
+
+def test_reaper_keeps_revoked_running_task_pending_until_provider_terminal_state(client, monkeypatch):
+    from app import main as cil_main
+    contributor = "hmac-sha256:" + "d" * 64
+    db = SessionLocal()
+    try:
+        db.add(ProviderTask(
+            task_id="revoked-pending", provider_task_id="vendor-revoked-pending",
+            provider="perfectcorp", contributor_token=contributor, consent_id="revoked-pending-consent",
+            image_digest="d" * 64,
+            consent_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            status="consent_revoked", revoked_at=datetime.now(timezone.utc),
+        ))
+        db.commit()
+    finally:
+        db.close()
+    monkeypatch.setattr(cil_main, "perfectcorp_get_skin_analysis_status", lambda **kwargs: {
+        "task_id": kwargs["task_id"], "status": "running",
+    })
+    monkeypatch.setattr(cil_main, "perfectcorp_delete_task", lambda **kwargs: pytest.fail("must await terminal state"))
+    response = client.post("/providers/perfectcorp/reap-tasks", headers=auth("admin-test"))
+    assert response.status_code == 200
+    assert response.json()["waiting_for_terminal"] == 1
+    assert response.json()["deleted"] == 0
