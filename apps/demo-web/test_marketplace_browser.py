@@ -125,7 +125,6 @@ class MarketplaceBrowserTests(unittest.TestCase):
         page.goto(f"{self.base_url}/marketplace.html", wait_until="domcontentloaded")
         page.wait_for_function("document.querySelector('#status').textContent.includes('Sign in')")
         page.locator("#settingsBtn").click()
-        page.locator("#commerceBase").fill("https://commerce.example.test")
         page.locator("#commerceToken").fill("signed-user-session-token")
         page.get_by_role("button", name="Connect account-backed marketplace").click()
         page.wait_for_function("document.querySelector('#status').textContent.includes('CAL-GOVERNED LIVE COMMERCE')")
@@ -162,20 +161,13 @@ class MarketplaceBrowserTests(unittest.TestCase):
         finally:
             page.close()
 
-    def test_non_https_remote_catalog_url_is_rejected_before_fetch(self):
+    def test_account_connection_never_asks_for_direct_service_urls(self):
         self.page.locator("#settingsBtn").click()
-        self.page.locator("#apiBase").fill("http://catalog.example.com")
-        self.page.locator("#apiToken").fill("test-token-not-a-secret")
-        messages = []
-
-        def accept_dialog(dialog):
-            messages.append(dialog.message)
-            dialog.accept()
-
-        self.page.once("dialog", accept_dialog)
-        self.page.get_by_role("button", name="Connect catalog only").click()
-        self.assertTrue(messages, "Expected the insecure URL warning dialog")
-        self.assertIn("only be sent to HTTPS", messages[0])
+        self.assertEqual(self.page.locator("#commerceBase").count(), 0)
+        self.assertEqual(self.page.locator("#apiBase").count(), 0)
+        self.assertEqual(self.page.locator("#apiToken").count(), 0)
+        self.assertEqual(self.page.locator("#commerceToken").count(), 1)
+        self.assertIn("same-origin Cirvanna Marketplace BFF", self.page.get_by_role("dialog").inner_text())
 
 
 if __name__ == "__main__":
