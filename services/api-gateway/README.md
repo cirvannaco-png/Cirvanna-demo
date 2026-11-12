@@ -12,6 +12,7 @@
 - Rank candidates using weighted explicit USI preference matches. This score is an ordering heuristic, not a probability, model confidence, or display authorization.
 - Retrieve and verify candidate-bound signed safety and FCI evidence from separately configured providers.
 - Submit every candidate to CaTaCaCi/CAL. Product and offer details are returned to the marketplace only for CAL SHOW. The lower-level `/v1/decisions` response also redacts SKU, name, category, brand, price, currency and images for BLOCK/REVIEW.
+- After CAL SHOW and before returning product/offer details, call CIL `POST /serving/assessment` with the exact Catalog product ID/version, claims and ingredient declarations. CIL checks commercial-use rights, permitted purpose, evidence grade/scope, attribution and human claim approval. Missing/mismatched assessments, stale versions, unlicensed sources, unsupported claims or CIL outages withhold the candidate. CAL remains the final display authority; CIL is an additional rights/evidence gate, not a replacement.
 - Keep Complementer styling guidance advisory-only.
 
 ## Authentication model
@@ -58,7 +59,7 @@ Rejected Complementer suggestions remain soft observations. They do not automati
 6. Runs the candidate IDs through the same decision pipeline as `/v1/decisions`.
 7. Returns full product and offer details only where the corresponding CAL result is `SHOW` and `may_display=true`. Other candidates are returned only as withheld IDs and decision states.
 
-The rank score is not a probability and never overrides CAL. In the current build the safety and FCI providers are not provisioned, so otherwise eligible candidates remain REVIEW and no product details are returned from discovery. This is intentional fail-closed behavior, not a marketplace ranking failure.
+The rank score is not a probability and never overrides CAL. The CIL serving assessment is mandatory after CAL SHOW; configure `CIL_SERVICE_URL` and the distinct `CIL_CATALOG_SERVICE_TOKEN` before discovery can return details. In the current build the safety and FCI providers are not provisioned, so otherwise eligible candidates remain REVIEW and no product details are returned from discovery. This is intentional fail-closed behavior, not a marketplace ranking failure.
 
 ## Independent safety and calibrated FCI evidence
 
@@ -100,6 +101,8 @@ The adapter contract is not a substitute for independent scientific or safety ev
 | `FCI_SERVICE_URL`, `FCI_SERVICE_TOKEN` | Calibrated FCI provider |
 | `FCI_EVIDENCE_HMAC_SECRET` | FCI evidence signature key |
 | `FCI_VALIDATION_HMAC_SECRET`, `FCI_VALIDATION_REPORT_SHA256` | Independent FCI attestation key and pinned report hash |
+| `CIL_SERVICE_URL` | Private Cirvanna Intelligence Service URL |
+| `CIL_CATALOG_SERVICE_TOKEN` | Separate bearer credential for CIL Catalog-serving assessment (at least 32 bytes) |
 
 All remote internal service URLs must use HTTPS, contain no embedded credentials/query/fragment, and be configured via secret storage. Use separate, independently rotated secrets for gateway auth, provider evidence signatures, and validation attestations.
 
