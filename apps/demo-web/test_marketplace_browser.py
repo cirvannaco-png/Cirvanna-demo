@@ -69,7 +69,7 @@ class MarketplaceBrowserTests(unittest.TestCase):
         page.add_init_script("""
             localStorage.setItem("cirvanna-marketplace-saved", JSON.stringify([{product_id:"demo-saved"}]));
             localStorage.setItem("cirvanna-marketplace-bag", JSON.stringify([{product_id:"demo-bag",quantity:1}]));
-            window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce"});
+            window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce",allowDeveloperTokenInput:true});
         """)
         cart_payload = {
             "cart_id": "test-cart",
