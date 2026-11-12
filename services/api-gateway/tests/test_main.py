@@ -55,6 +55,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("CIRVANNA_AUDIT_DB", str(tmp_path / "audit.sqlite3"))
     # Legacy request-scoped profile tests explicitly opt into local/demo mode.
     monkeypatch.setenv("CIRVANNA_REQUIRE_VERIFIED_IDENTITY", "false")
+    monkeypatch.setattr(main, "_assess_cil_product_serving", lambda _product, purpose="commercial_recommendation": {"product_id": PRODUCT_ID, "catalog_version": 3, "purpose": purpose, "decisions": [], "all_eligible": True})
     monkeypatch.delenv("CATALOG_SERVICE_URL", raising=False)
     monkeypatch.delenv("CATALOG_API_TOKEN", raising=False)
     return TestClient(main.app)
