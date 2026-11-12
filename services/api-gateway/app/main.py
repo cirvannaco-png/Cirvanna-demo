@@ -380,6 +380,7 @@ class CandidateDecisionOutput(BaseModel):
     policy_version: str
     arbitration_contract_version: str
     decision_pipeline_contract_version: str
+    cil_serving_status: Literal["not_assessed", "eligible", "review"] = "not_assessed"
 
 
 class DecisionResponse(BaseModel):
@@ -2298,6 +2299,60 @@ def _withhold_unverified_media(value: Any) -> Any:
     return value
 
 
+def _assess_cil_product_serving(product: dict[str, Any], purpose: str = "commercial_recommendation") -> dict[str, Any]:
+    """Require CIL source-rights/evidence approval before product claims are served."""
+    base = os.getenv("CIL_SERVICE_URL", "").strip()
+    token = os.getenv("CIL_CATALOG_SERVICE_TOKEN", "").strip()
+    if not base or len(token.encode("utf-8")) < 32 or not _trusted_internal_base_url(base):
+        raise HTTPException(503, detail={"code": "CIL_SERVING_ASSESSMENT_NOT_CONFIGURED"})
+    product_id = product.get("product_id")
+    catalog_version = product.get("catalog_version")
+    if not isinstance(product_id, str) or isinstance(catalog_version, bool) or not isinstance(catalog_version, int) or catalog_version < 1:
+        raise HTTPException(502, detail={"code": "CATALOG_PRODUCT_VERSION_INVALID_FOR_CIL"})
+    claims = product.get("claims", [])
+    ingredients = product.get("ingredient_declarations", product.get("ingredients", []))
+    if not isinstance(claims, list) or not isinstance(ingredients, list):
+        raise HTTPException(502, detail={"code": "CATALOG_CIL_EVIDENCE_SCHEMA_INVALID"})
+    if any(not isinstance(item, dict) for item in claims):
+        raise HTTPException(502, detail={"code": "CATALOG_CIL_CLAIM_SCHEMA_INVALID"})
+    ingredients = [item if isinstance(item, dict) else {"inci_name": str(item)} for item in ingredients]
+    payload = {
+        "purpose": purpose,
+        "product_id": product_id,
+        "catalog_version": catalog_version,
+        "claims": claims,
+        "ingredient_declarations": ingredients,
+    }
+    try:
+        response = httpx.post(
+            base.rstrip("/") + "/serving/assessment",
+            json=payload,
+            headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+            timeout=5.0,
+            trust_env=False,
+            follow_redirects=False,
+        )
+        if response.status_code != 200:
+            raise HTTPException(503, detail={"code": "CIL_SERVING_ASSESSMENT_UNAVAILABLE"})
+        result = response.json()
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        raise HTTPException(503, detail={"code": "CIL_SERVING_ASSESSMENT_UNAVAILABLE"}) from exc
+    if (
+        not isinstance(result, dict)
+        or result.get("product_id") != product_id
+        or result.get("catalog_version") != catalog_version
+        or result.get("purpose") != purpose
+        or not isinstance(result.get("all_eligible"), bool)
+        or not isinstance(result.get("decisions"), list)
+        or any(not isinstance(item, dict) or not isinstance(item.get("eligible"), bool) for item in result["decisions"])
+        or result["all_eligible"] != all(item["eligible"] for item in result["decisions"])
+    ):
+        raise HTTPException(502, detail={"code": "CIL_SERVING_ASSESSMENT_RESPONSE_INVALID"})
+    return result
+
+
 def _cil_feedback_context_key(context: Any) -> str:
     parts = []
     for value in (getattr(context, "climate", None), getattr(context, "occasion", None)):
@@ -2530,7 +2585,16 @@ def discover_marketplace(
     for product_id, score, usi_score, wardrobe_match, offer, feedback_adjustment in ranked:
         decision = decisions.get(product_id)
         if decision is None or not decision.may_display or decision.verdict != "show":
-            withheld.append({"product_id": product_id, "rank_score": score, "decision": decision.verdict if decision else "review"})
+            withheld.append({
+                "product_id": product_id,
+                "rank_score": score,
+                "decision": decision.verdict if decision else "review",
+                "reason_code": (
+                    "CIL_EVIDENCE_OR_RIGHTS_REVIEW_REQUIRED"
+                    if decision is not None and decision.cil_serving_status == "review"
+                    else "CAL_DISPLAY_NOT_AUTHORIZED"
+                ),
+            })
             continue
         displayable.append({
             "product": _withhold_unverified_media(by_product[product_id]),
@@ -2550,6 +2614,7 @@ def discover_marketplace(
                 "matched_attributes": wardrobe_match["matched_attributes"],
             },
             "decision": decision.model_dump(),
+            "cil_serving_assessment": {"status": decision.cil_serving_status, "assessed_catalog_version": decision.catalog_version},
         })
     return {
         "request_id": decision_response.request_id,
@@ -2710,7 +2775,19 @@ def evaluate_decisions(
                 detail={"code": "DECISION_AUDIT_UNAVAILABLE", "message": "Decision audit persistence failed; no candidate decision is being released."},
             ) from exc
 
-        display_authorized = verdict == "show" and arbitration.may_display
+        cil_status = "not_assessed"
+        cil_eligible = False
+        if verdict == "show" and arbitration.may_display:
+            cil_assessment = _assess_cil_product_serving(product)
+            cil_eligible = cil_assessment["all_eligible"]
+            cil_status = "eligible" if cil_eligible else "review"
+            if not cil_eligible:
+                reasons.append(ReasonOutput(
+                    code="CIL_EVIDENCE_OR_RIGHTS_REVIEW_REQUIRED",
+                    signal_id="cirvanna_intelligence_layer",
+                    explanation="CAL returned SHOW, but CIL did not authorize commercial serving of one or more claims or ingredient declarations.",
+                ))
+        display_authorized = verdict == "show" and arbitration.may_display and cil_eligible
         candidates.append(CandidateDecisionOutput(
             product_id=product_id,
             sku=str(product["sku"]) if display_authorized else None,
@@ -2729,6 +2806,7 @@ def evaluate_decisions(
             policy_version=arbitration.policy_version,
             arbitration_contract_version=arbitration.contract_version,
             decision_pipeline_contract_version=result.contract_version,
+            cil_serving_status=cil_status,
         ))
 
     return DecisionResponse(

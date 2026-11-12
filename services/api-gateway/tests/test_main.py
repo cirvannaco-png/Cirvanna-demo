@@ -55,6 +55,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("CIRVANNA_AUDIT_DB", str(tmp_path / "audit.sqlite3"))
     # Legacy request-scoped profile tests explicitly opt into local/demo mode.
     monkeypatch.setenv("CIRVANNA_REQUIRE_VERIFIED_IDENTITY", "false")
+    monkeypatch.setattr(main, "_assess_cil_product_serving", lambda _product, purpose="commercial_recommendation": {"product_id": PRODUCT_ID, "catalog_version": 3, "purpose": purpose, "decisions": [], "all_eligible": True})
     monkeypatch.delenv("CATALOG_SERVICE_URL", raising=False)
     monkeypatch.delenv("CATALOG_API_TOKEN", raising=False)
     return TestClient(main.app)
@@ -608,3 +609,118 @@ def test_gateway_loads_only_validated_cil_feedback_signals(monkeypatch):
     assert set(signals) == {"p1", "p2"}
     assert signals["p1"]["unsuitable_share"] == 0.4
     assert signals["p2"]["status"] == "suppressed"
+
+
+def test_cil_serving_assessment_requires_exact_product_version_and_eligible_evidence(monkeypatch):
+    monkeypatch.setenv("CIL_SERVICE_URL", "https://cil.internal")
+    monkeypatch.setenv("CIL_CATALOG_SERVICE_TOKEN", "cil-catalog-token-that-is-at-least-32-bytes")
+
+    class FakeResponse:
+        status_code = 200
+        def json(self):
+            return {
+                "product_id": PRODUCT_ID,
+                "catalog_version": 3,
+                "purpose": "commercial_recommendation",
+                "decisions": [
+                    {"item_id": "claim-1", "eligible": True},
+                    {"item_id": "inci-1", "eligible": True},
+                ],
+                "all_eligible": True,
+            }
+
+    seen = {}
+    def fake_post(url, **kwargs):
+        seen.update({"url": url, **kwargs})
+        return FakeResponse()
+
+    monkeypatch.setattr(main.httpx, "post", fake_post)
+    result = main._assess_cil_product_serving(product(
+        claims=[{"claim_id": "claim-1"}],
+        ingredient_declarations=[{"inci_name": "inci-1"}],
+    ))
+    assert result["all_eligible"] is True
+    assert seen["url"] == "https://cil.internal/serving/assessment"
+    assert seen["headers"]["Authorization"].startswith("Bearer cil-catalog-token")
+    assert seen["json"]["product_id"] == PRODUCT_ID
+    assert seen["json"]["catalog_version"] == 3
+    assert len(seen["json"]["claims"]) == 1
+    assert len(seen["json"]["ingredient_declarations"]) == 1
+
+
+def test_cil_serving_assessment_fails_closed_when_evidence_is_not_eligible(monkeypatch):
+    monkeypatch.setenv("CIL_SERVICE_URL", "https://cil.internal")
+    monkeypatch.setenv("CIL_CATALOG_SERVICE_TOKEN", "cil-catalog-token-that-is-at-least-32-bytes")
+
+    class FakeResponse:
+        status_code = 200
+        def json(self):
+            return {
+                "product_id": PRODUCT_ID,
+                "catalog_version": 3,
+                "purpose": "commercial_recommendation",
+                "decisions": [{"item_id": "claim-1", "eligible": False}],
+                "all_eligible": False,
+            }
+
+    monkeypatch.setattr(main.httpx, "post", lambda *args, **kwargs: FakeResponse())
+    result = main._assess_cil_product_serving(product(claims=[{"claim_id": "claim-1"}]))
+    assert result["all_eligible"] is False
+    assert result["decisions"][0]["eligible"] is False
+
+
+def test_cil_serving_assessment_rejects_stale_or_mismatched_catalog_version(monkeypatch):
+    monkeypatch.setenv("CIL_SERVICE_URL", "https://cil.internal")
+    monkeypatch.setenv("CIL_CATALOG_SERVICE_TOKEN", "cil-catalog-token-that-is-at-least-32-bytes")
+
+    class FakeResponse:
+        status_code = 200
+        def json(self):
+            return {
+                "product_id": PRODUCT_ID,
+                "catalog_version": 2,
+                "purpose": "commercial_recommendation",
+                "decisions": [],
+                "all_eligible": True,
+            }
+
+    monkeypatch.setattr(main.httpx, "post", lambda *args, **kwargs: FakeResponse())
+    with pytest.raises(main.HTTPException) as exc:
+        main._assess_cil_product_serving(product())
+    assert exc.value.status_code == 502
+
+
+def test_cil_serving_assessment_fails_closed_when_service_is_unavailable(monkeypatch):
+    monkeypatch.setenv("CIL_SERVICE_URL", "https://cil.internal")
+    monkeypatch.setenv("CIL_CATALOG_SERVICE_TOKEN", "cil-catalog-token-that-is-at-least-32-bytes")
+    monkeypatch.setattr(main.httpx, "post", lambda *args, **kwargs: (_ for _ in ()).throw(main.httpx.ConnectError("offline")))
+    with pytest.raises(main.HTTPException) as exc:
+        main._assess_cil_product_serving(product())
+    assert exc.value.status_code == 503
+
+
+def test_cal_show_is_withheld_when_cil_evidence_or_rights_review_is_required(client, monkeypatch):
+    monkeypatch.setattr(main, "fetch_product", lambda _: product(claims=[{"claim_id": "claim-unlicensed"}]))
+    monkeypatch.setattr(main, "_safety_signal", pass_safety)
+    monkeypatch.setattr(main, "_fit_estimate", calibrated_fit)
+    monkeypatch.setattr(
+        main, "_fit_evidence_fields",
+        lambda _estimate: (
+            ("body_measurements", "garment_size_chart", "garment_geometry"),
+            ("body_measurements", "garment_size_chart", "garment_geometry"),
+        ),
+    )
+    monkeypatch.setattr(main, "_assess_cil_product_serving", lambda *_args, **_kwargs: {
+        "product_id": PRODUCT_ID, "catalog_version": 3,
+        "purpose": "commercial_recommendation",
+        "decisions": [{"item_id": "claim-unlicensed", "eligible": False}],
+        "all_eligible": False,
+    })
+    response = client.post("/v1/decisions", json=request_body(), headers=auth_headers())
+    assert response.status_code == 200
+    decision = response.json()["candidates"][0]
+    assert decision["verdict"] == "show"
+    assert decision["may_display"] is False
+    assert decision["cil_serving_status"] == "review"
+    assert decision["name"] is None
+    assert any(reason["code"] == "CIL_EVIDENCE_OR_RIGHTS_REVIEW_REQUIRED" for reason in decision["reasons"])
