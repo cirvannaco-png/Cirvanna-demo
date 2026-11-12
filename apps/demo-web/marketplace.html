@@ -74,7 +74,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
         <input id="aiLocation" type="text" maxlength="120" placeholder="Location (optional)" aria-label="Declared location">
         <input id="aiOccasion" type="text" maxlength="120" placeholder="Occasion (optional)" aria-label="Declared occasion">
         <input id="aiClimate" type="text" maxlength="120" placeholder="Climate (optional)" aria-label="Declared climate">
-        <button class="btn primary wide" id="aiSearchBtn">Search my wardrobe-aware marketplace</button>
+        <button class="btn primary wide" id="aiSearchBtn">Search marketplace with PNELLY</button>
       </div>
       <div class="ai-status" id="aiSearchStatus" role="status" aria-live="polite">Connect a signed-in customer session. Search is fail-closed if Wardrobe, NPL, Catalog, Commerce, CAL or required CIL evidence is unavailable.</div>
       <div id="aiDiscoveryResults" class="ai-discovery-results" aria-live="polite"></div>
@@ -476,7 +476,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       setAiStatus("aiSearchStatus","PNELLY evaluated "+data.ranked_candidate_count+" candidates using your active Wardrobe. "+shown+" passed CAL SHOW and CIL serving checks; "+data.withheld_candidate_count+" were withheld. Only authorized candidates are shown.");
     }catch(e){
       setAiStatus("aiSearchStatus",(e&&e.message?e.message:"Wardrobe-aware discovery is unavailable")+". No demo or unreviewed product details were shown.",true);
-    }finally{setAiBusy("aiSearchBtn",false,"Search my wardrobe-aware marketplace")}
+    }finally{setAiBusy("aiSearchBtn",false,"Search marketplace with PNELLY")}
   });
 
 
