@@ -111,6 +111,36 @@ def _upstream_ready(base: str) -> bool:
         return False
 
 
+def _commerce_purchase_authorization_ready() -> bool:
+    """Require an explicit operator opt-in plus live Commerce/CAL readiness."""
+    if os.getenv("COMMERCE_CAL_PURCHASE_PROXY_ENABLED", "").strip().lower() != "true":
+        return False
+    try:
+        base = _upstream_base("COMMERCE_API_URL")
+        ready = httpx.get(base + "/ready", timeout=TIMEOUT_SECONDS, follow_redirects=False)
+        if ready.status_code != 200:
+            return False
+        readiness = ready.json()
+        if not isinstance(readiness, dict) or readiness.get("ready") is not True:
+            return False
+        if readiness.get("cal_purchase_gateway_configured") is not True:
+            return False
+        if readiness.get("cal_purchase_receipt_signer_configured") is not True:
+            return False
+        if readiness.get("cal_gateway_ready") is not True or readiness.get("migrations_applied") is not True:
+            return False
+        capabilities = httpx.get(base + "/capabilities", timeout=TIMEOUT_SECONDS, follow_redirects=False)
+        if capabilities.status_code != 200:
+            return False
+        declared = capabilities.json()
+        return (
+            isinstance(declared, dict)
+            and declared.get("candidate_bound_purchase_authorization_configured") is True
+        )
+    except (httpx.HTTPError, ValueError, HTTPException):
+        return False
+
+
 def _internal_service(url_key: str, token_key: str) -> tuple[str, str]:
     base = _upstream_base(url_key)
     token = os.getenv(token_key, "").strip()
@@ -2216,11 +2246,12 @@ async def commerce_proxy(path: str, request: Request) -> Response:
     """Forward customer operations only; admin/internal/webhook routes are not exposed."""
     method = request.method.upper()
     cart_item_match = re.fullmatch(r"cart/items/[0-9a-fA-F-]{36}", path)
-    if (
+    is_purchase_path = (
         (method == "GET" and path == "cart")
         or (method == "POST" and path in {"cart/items", "checkout"})
         or (method == "PATCH" and cart_item_match is not None)
-    ):
+    )
+    if is_purchase_path and not _commerce_purchase_authorization_ready():
         raise HTTPException(
             status_code=503,
             detail={"code": "CAL_CANDIDATE_PURCHASE_REAUTH_REQUIRED"},
