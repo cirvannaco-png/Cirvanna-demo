@@ -2,6 +2,8 @@
 
 **Status:** the gateway now has a verified-Commerce-subject mode, USI profile hydration, consented TAL routes, live Catalog/Commerce discovery, deterministic preference ranking, signed independent safety/FCI provider adapters, and CAL-only product display. Production is still gated on real provider attestations, managed audit storage, and deployed operations verification.
 
+`CIRVANNA_ENVIRONMENT=production` makes final CIL feedback-review enforcement mandatory. Production cannot override this with `CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED=false`; the Gateway fails readiness when the CIL endpoint/credential is misconfigured and fails each decision request closed when the review store is unavailable. Local development may leave the feature optional. Set `CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED=true` in staging as well, and test BLOCK, SHOW-without-override, stale/malformed decisions, and CIL outages.
+
 ## Responsibilities
 
 - Authenticate internal API callers with the gateway service bearer token.
