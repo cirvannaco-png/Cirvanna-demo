@@ -69,6 +69,16 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       </div>
       <div class="ai-status" id="aiSearchStatus" role="status" aria-live="polite">PNELLY description search requires the private vision worker. Candidate matches are not product recommendations until CAL authorizes display; price comparisons must use current Commerce offers, not generated estimates.</div>
     </section>
+    <section class="ai-panel" aria-labelledby="complementerTitle">
+      <div class="eyebrow">Complementer · Personal style advisory</div>
+      <h2 id="complementerTitle">Refine the look</h2>
+      <p>Ask for styling guidance on a look, fragrance direction, colour balance or accessories. Complementer is advisory only: it cannot authorize products, invent merchant offers or create durable personal memory.</p>
+      <div class="ai-controls">
+        <input id="complementerLook" type="text" maxlength="1000" placeholder="e.g. navy trousers, cream knit and white sneakers" aria-label="Describe a look for Complementer">
+        <button class="btn primary wide" id="complementerBtn">Ask Complementer</button>
+      </div>
+      <div class="ai-status" id="complementerStatus" role="status" aria-live="polite">Requires a signed-in customer session. Advice is request-scoped and is not a product or purchasing decision.</div>
+    </section>
     <section class="ai-panel" aria-labelledby="lookItTitle">
       <div class="eyebrow">PNELLY · Look It</div>
       <h2 id="lookItTitle">Search from an outfit reference</h2>
@@ -328,6 +338,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       : "Search completed: no marketplace candidates met the current retrieval criteria. Try a different description or photo."+scoreNote);
   }
   $("lookItBtn").addEventListener("click",async()=>{
+    if(!config.userToken){setAiStatus("lookItStatus","Connect your signed-in Cirvanna customer session before using Look It.",true);return}
     const image=$("lookItImage").files&&$("lookItImage").files[0];
     if(!image){setAiStatus("lookItStatus","Choose an outfit reference image first.",true);return}
     if(!$("lookItImageConsent").checked||!$("lookItPurposeConsent").checked){setAiStatus("lookItStatus","Both separate Look It consent controls are required.",true);return}
@@ -341,7 +352,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       form.append("consent_look_it","true");
       form.append("reference_image",image,image.name||"look-it-reference");
       if($("aiCategory").value)form.append("category",$("aiCategory").value);
-      const response=await fetch("/api/vision/look-it",{method:"POST",headers:{Accept:"application/json"},body:form});
+      const response=await fetch("/api/vision/look-it",{method:"POST",headers:{Authorization:"Bearer "+config.userToken,Accept:"application/json"},body:form});
       const data=await response.json().catch(()=>({}));
       if(!response.ok)throw new Error((data.detail&&data.detail.code)||("Look It returned HTTP "+response.status+"."));
       if(data.status!=="complete"||data.display_authorized!==false||data.decision_status!=="PENDING_CAL"||data.image_persisted!==false||!Array.isArray(data.outfit_decomposition&&data.outfit_decomposition.components))throw new Error("Look It returned an invalid or unsafe response.");
@@ -361,6 +372,31 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     }catch(e){
       setAiStatus("lookItStatus",(e&&e.message?e.message:"Look It is unavailable")+". The image is not displayed or stored by this page.",true);
     }finally{setAiBusy("lookItBtn",false,"Search this outfit with Look It")}
+  });
+
+  $("complementerBtn").addEventListener("click",async()=>{
+    const description=$("complementerLook").value.trim();
+    if(description.length<3){setAiStatus("complementerStatus","Describe the look using at least 3 characters.",true);return}
+    if(!config.userToken){setAiStatus("complementerStatus","Connect your signed-in Cirvanna customer session first.",true);return}
+    setAiBusy("complementerBtn",true,"Asking…");
+    setAiStatus("complementerStatus","Requesting verified, request-scoped styling advice…");
+    try{
+      const response=await fetch("/api/vision/complementer",{
+        method:"POST",
+        headers:{Authorization:"Bearer "+config.userToken,"Content-Type":"application/json",Accept:"application/json"},
+        body:JSON.stringify({
+          request_id:"complementer-"+Date.now(),
+          preferences:{},
+          look:{description}
+        })
+      });
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok)throw new Error((data.detail&&data.detail.code)||("Complementer returned HTTP "+response.status+"."));
+      if(data.mode!=="advisory_only"||data.display_authorized!==false||data.durable_personal_memory!==false||!data.recommendation)throw new Error("Complementer returned an invalid advisory response.");
+      setAiStatus("complementerStatus",JSON.stringify(data.recommendation,null,2));
+    }catch(e){
+      setAiStatus("complementerStatus",(e&&e.message?e.message:"Complementer is unavailable")+". PNELLY marketplace discovery remains separate.",true);
+    }finally{setAiBusy("complementerBtn",false,"Ask Complementer")}
   });
 
   $("aiSearchBtn").addEventListener("click",async()=>{
