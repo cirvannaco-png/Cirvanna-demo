@@ -151,6 +151,30 @@ def test_account_proxy_does_not_forward_checkout_without_candidate_authorization
     assert calls == []
 
 
+def test_cart_proxy_requires_bearer_before_cal_readiness_probe(client, monkeypatch):
+    configure_upstreams(monkeypatch)
+    monkeypatch.setenv("COMMERCE_CAL_PURCHASE_PROXY_ENABLED", "true")
+    probes = []
+    forwarded = []
+    monkeypatch.setattr(
+        main.httpx,
+        "get",
+        lambda url, **kwargs: probes.append(url) or FakeResponse({"ready": True}),
+    )
+    monkeypatch.setattr(
+        main.httpx,
+        "request",
+        lambda *args, **kwargs: forwarded.append(args) or FakeResponse({}),
+    )
+
+    response = client.get("/api/commerce/cart")
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "USER_BEARER_REQUIRED"
+    assert probes == []
+    assert forwarded == []
+
+
 def test_cart_and_checkout_proxy_only_when_operator_flag_and_live_cal_readiness_pass(client, monkeypatch):
     configure_upstreams(monkeypatch)
     monkeypatch.setenv("COMMERCE_CAL_PURCHASE_PROXY_ENABLED", "true")
