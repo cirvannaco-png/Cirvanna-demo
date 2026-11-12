@@ -33,7 +33,11 @@ jobs:
         env:
           CIL_DATABASE_URL: sqlite:///./cil-migration-ci.db
           CIL_AUTO_CREATE_SCHEMA: "false"
-        run: alembic upgrade head
+        run: |
+          alembic upgrade 20261110_0003
+          alembic upgrade head
+          alembic downgrade 20261110_0003
+          alembic upgrade head
       - name: Run intelligence service tests
         working-directory: services/intelligence-service
         env:
