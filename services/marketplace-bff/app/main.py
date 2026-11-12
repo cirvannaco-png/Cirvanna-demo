@@ -2251,12 +2251,6 @@ async def commerce_proxy(path: str, request: Request) -> Response:
         or (method == "POST" and path in {"cart/items", "checkout"})
         or (method == "PATCH" and cart_item_match is not None)
     )
-    if is_purchase_path and not _commerce_purchase_authorization_ready():
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "CAL_CANDIDATE_PURCHASE_REAUTH_REQUIRED"},
-            headers={"Cache-Control": "no-store"},
-        )
     if not _authorized_commerce_path(method, path):
         raise HTTPException(status_code=404, detail={"code": "COMMERCE_ROUTE_NOT_AVAILABLE"})
     authorization = request.headers.get("authorization", "")
@@ -2266,6 +2260,12 @@ async def commerce_proxy(path: str, request: Request) -> Response:
             status_code=401,
             detail={"code": "USER_BEARER_REQUIRED"},
             headers={"WWW-Authenticate": "Bearer"},
+        )
+    if is_purchase_path and not _commerce_purchase_authorization_ready():
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "CAL_CANDIDATE_PURCHASE_REAUTH_REQUIRED"},
+            headers={"Cache-Control": "no-store"},
         )
     base = _upstream_base("COMMERCE_API_URL")
     headers = {"Authorization": authorization, "Accept": request.headers.get("accept", "application/json")}
