@@ -284,6 +284,7 @@ def test_feedback_aggregate_opens_cal_review_and_records_final_cal_decision(clie
     assert lookup.status_code == 200
     assert lookup.json()["decisions"][0]["verdict"] == "BLOCK"
     assert lookup.json()["decisions"][0]["decision_reference"] == "CAL-REVIEW-0001"
+    assert lookup.json()["decisions"][0]["decided_at"].endswith("+00:00")
 
     # Once that review is finalized, a new cohort window may open another
     # review for the same product/context; the original decision remains auditable.
