@@ -380,7 +380,7 @@ def test_marketplace_ui_does_not_solicit_click_it_photos_while_pipeline_is_block
     assert 'id="clickItImage"' not in response.text
     assert 'id="clickItConsentId"' not in response.text
     assert 'id="clickItForm"' not in response.text
-    assert 'fetch("/api/vision/marketplace-search"' in response.text
+    assert 'fetch("/api/vision/conversational-discovery"' in response.text
     assert 'fetch("/api/vision/click-it"' not in response.text
     assert "display_authorized===true" not in response.text
     assert "PENDING_CAL" in response.text
