@@ -153,6 +153,13 @@ class MarketplaceSearchIn(BaseModel):
         return " ".join(self.query.split()).strip()
 
 
+class ComplementerRequestIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: str = Field(min_length=8, max_length=128)
+    preferences: dict = Field(default_factory=dict, max_length=64)
+    look: dict = Field(default_factory=dict, max_length=32)
+
+
 class OfferComparisonIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     variant_ids: list[str] = Field(min_length=2, max_length=2)
@@ -245,6 +252,68 @@ async def marketplace_description_search(payload: MarketplaceSearchIn) -> dict:
         "decision_status": "PENDING_CAL",
         "scores_are_probabilities": False,
     }
+
+
+@app.post("/api/vision/complementer")
+async def marketplace_complementer(request: Request, payload: ComplementerRequestIn) -> Response:
+    """Send optional styling advice through the verified user and internal gateway identities."""
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(10.0, connect=2.0),
+        trust_env=False,
+        follow_redirects=False,
+    ) as client:
+        subject, user_token = await _verified_commerce_subject(client, request)
+        gateway_base, gateway_token = _decision_gateway()
+        try:
+            upstream = await client.post(
+                gateway_base + "/v1/complementer/recommend",
+                headers={
+                    "Authorization": "Bearer " + gateway_token,
+                    "X-End-User-Authorization": "Bearer " + user_token,
+                    "Accept": "application/json",
+                },
+                json={
+                    "request_id": payload.request_id,
+                    "user_id": subject,
+                    "preferences": payload.preferences,
+                    "look": payload.look,
+                },
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "COMPLEMENTER_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "COMPLEMENTER_UNAVAILABLE"}) from exc
+
+    try:
+        data = upstream.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "COMPLEMENTER_INVALID_RESPONSE"}) from exc
+
+    if upstream.status_code == 200:
+        if (
+            not isinstance(data, dict)
+            or data.get("mode") != "advisory_only"
+            or data.get("display_authorized") is not False
+            or data.get("durable_personal_memory") is not False
+            or not isinstance(data.get("recommendation"), dict)
+        ):
+            raise HTTPException(502, detail={"code": "COMPLEMENTER_SCOPE_INVALID"})
+        # Whitelist styling advice only. No product candidate, merchant, price or asset
+        # fields can be elevated into the marketplace by this advisory endpoint.
+        return _private_json_response({
+            "mode": "advisory_only",
+            "display_authorized": False,
+            "durable_personal_memory": False,
+            "recommendation": data["recommendation"],
+        })
+
+    detail = data.get("detail", {}) if isinstance(data, dict) else {}
+    code = detail.get("code") if isinstance(detail, dict) and isinstance(detail.get("code"), str) else "COMPLEMENTER_REQUEST_FAILED"
+    if upstream.status_code in {400, 401, 403, 422}:
+        raise HTTPException(upstream.status_code, detail={"code": code})
+    if upstream.status_code in {502, 503, 504}:
+        raise HTTPException(503 if upstream.status_code == 503 else upstream.status_code, detail={"code": code})
+    raise HTTPException(502, detail={"code": "COMPLEMENTER_FAILED"})
 
 
 
@@ -2504,14 +2573,28 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
         if not isinstance(candidate, dict):
             raise HTTPException(502, detail={"code": "WARDROBE_RECOMMENDATIONS_RESPONSE_INVALID"})
         decision = candidate.get("decision")
+        product = candidate.get("product")
+        offer = candidate.get("offer")
+        cil = candidate.get("cil_serving_assessment")
+        product_id = product.get("product_id") if isinstance(product, dict) else None
+        catalog_version = product.get("catalog_version") if isinstance(product, dict) else None
         if (
             not isinstance(decision, dict)
             or decision.get("verdict") != "show"
             or decision.get("may_display") is not True
-            or not isinstance(candidate.get("product"), dict)
-            or not isinstance(candidate.get("offer"), dict)
+            or decision.get("product_id") != product_id
+            or decision.get("catalog_version") != catalog_version
+            or not isinstance(product_id, str)
+            or isinstance(catalog_version, bool)
+            or not isinstance(catalog_version, int)
+            or not isinstance(offer, dict)
+            or offer.get("catalog_product_id") != product_id
+            or not isinstance(offer.get("variant_id"), str)
+            or not isinstance(cil, dict)
+            or cil.get("status") != "eligible"
+            or cil.get("assessed_catalog_version") != catalog_version
         ):
-            raise HTTPException(502, detail={"code": "WARDROBE_CANDIDATE_CAL_AUTHORIZATION_INVALID"})
+            raise HTTPException(502, detail={"code": "WARDROBE_CANDIDATE_CAL_CIL_AUTHORIZATION_INVALID"})
         authorized_products.append(_withhold_unverified_media(candidate))
 
     withheld = data.get("withheld_candidate_ids", [])
