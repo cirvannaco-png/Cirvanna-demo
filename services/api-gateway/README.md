@@ -12,7 +12,12 @@
 - Rank candidates using weighted explicit USI preference matches. This score is an ordering heuristic, not a probability, model confidence, or display authorization.
 - Retrieve and verify candidate-bound signed safety and FCI evidence from separately configured providers.
 - Submit every candidate to CaTaCaCi/CAL. Product and offer details are returned to the marketplace only for CAL SHOW. The lower-level `/v1/decisions` response also redacts SKU, name, category, brand, price, currency and images for BLOCK/REVIEW.
+- When `CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED=true`, apply the latest human-reviewed CIL feedback decision for the matching product and coarse climate/occasion context before candidate output or purchase authorization. A matching CAL BLOCK is a hard veto; feedback SHOW cannot override the normal decision pipeline.
 - Keep Complementer styling guidance advisory-only.
+
+## CIL feedback review enforcement
+
+Set `CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED=true` only after the Intelligence Service is deployed and `CIL_SERVICE_URL` plus `CIL_CAL_SERVICE_TOKEN` are provisioned. Before releasing any candidate details, `/v1/decisions` loads the latest final CAL feedback decision for the same product and normalized climate/occasion context. A matching `BLOCK` suppresses merchandising fields and emits `CIL_FEEDBACK_REVIEW_BLOCK`; a feedback `SHOW` is recorded only as a review outcome and cannot override safety, legal, NPL, USI, FCI or CaTaCaCi. If enforcement is enabled but CIL is unavailable or returns an invalid response, the Gateway fails closed. Commerce still has to revalidate its signed short-lived purchase receipts and current offer snapshot at cart/checkout.
 
 ## Authentication model
 
@@ -133,7 +138,7 @@ From the repository root:
     python -m unittest discover -s tests/architecture -v
     python scripts/scan_source_secrets.py
 
-The Decision Gateway workflow runs gateway HTTP/integration tests, container build, architecture checks and secret scanning. The identity-learning workflow runs its own persistence and consent regression tests plus container build. Check the exact branch commit's CI before merge.
+The Decision Gateway workflow runs gateway HTTP/integration tests, container build, architecture checks and secret scanning. If CIL feedback enforcement is enabled, configure the private `CIL_SERVICE_URL` and dedicated `CIL_CAL_SERVICE_TOKEN`; the gateway fails closed when the review store is unavailable. The identity-learning workflow runs its own persistence and consent regression tests plus container build. Check the exact branch commit's CI before merge.
 
 ## Current production blockers
 
