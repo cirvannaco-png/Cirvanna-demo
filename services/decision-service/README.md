@@ -57,7 +57,7 @@ The module imports existing packages from the monorepo. Do not run this Dockerfi
 - No FCI prediction model, model weights, inference provider or empirical calibration study is part of this repository. The signed estimate contract validates provenance shape, not model accuracy.
 - The internal gateway must provide independently computed safety/legal/cultural signals; missing required evidence yields REVIEW.
 - Durable decision audit/replay storage, access audit, key rotation, policy approval and retention/deletion need operational integration.
-- CaTaCaCi only governs product display when downstream consumers actually honor may_display. The commerce and marketplace services are not yet wired to suppress products using this endpoint, so no current marketplace page should claim decisions are being applied end-to-end.
+- The Marketplace API Gateway's live `/v1/decisions` path consumes the latest context-scoped CIL feedback decision when `CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED=true`; a final human CAL BLOCK becomes a candidate veto and a later SHOW never overrides the ordinary policy pipeline. Commerce must still independently verify the signed candidate-bound purchase authorization at cart and checkout. Do not enable the enforcement flag until the CIL service and separate CAL credential are deployed and the cross-service staging test passes.
 - This adapter does not produce Click It reconstructions, Virtual Twin geometry or try-on imagery; those require validated model/rendering integrations.
 
 
