@@ -72,7 +72,7 @@ class MarketplaceContractTests(unittest.TestCase):
     def test_pnelly_describe_it_uses_verified_wardrobe_and_cal_discovery(self):
         self.assertIn('fetch("/api/vision/conversational-discovery"', HTML)
         self.assertIn('Authorization:"Bearer "+config.userToken', HTML)
-        self.assertIn('use', WARDROBE_HTML.lower())
+        self.assertIn("PNELLY creates an Everyday, Elevated and Explore look", WARDROBE_HTML)
         self.assertIn("active wardrobe", HTML)
         self.assertIn("consented feedback", HTML)
         self.assertIn('data.display_authority!=="CaTaCaCi/CAL"', HTML)
