@@ -921,6 +921,53 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
           button.addEventListener("click", () => sendLookFeedback(look, signal));
           actions.append(button);
         }
+        const refineButton = document.createElement("button");
+        refineButton.type = "button";
+        refineButton.className = "btn primary";
+        refineButton.textContent = "Refine with Complementer";
+        refineButton.disabled = !token;
+        refineButton.title = token ? "Ask for request-scoped styling advice about this Wardrobe look" : "Connect your signed-in session first";
+        refineButton.addEventListener("click", async () => {
+          const description = (look.items || []).map(item =>
+            [item.display_name, item.category, ...(item.attributes || [])].filter(Boolean).join(" ")
+          ).join("; ");
+          if (description.length < 3) {
+            status("pnellyStatus", "This look does not contain enough wardrobe detail for styling advice.", "error");
+            return;
+          }
+          refineButton.disabled = true;
+          refineButton.textContent = "Asking…";
+          try {
+            const result = await api("/api/vision/complementer", {
+              method: "POST",
+              body: JSON.stringify({
+                request_id: crypto.randomUUID(),
+                preferences: {
+                  occasion: $("pnellyOccasion").value || "unspecified",
+                  climate: $("pnellyClimate").value || "unspecified"
+                },
+                look: {description}
+              })
+            });
+            if (
+              result.mode !== "advisory_only" ||
+              result.display_authorized !== false ||
+              result.durable_personal_memory !== false ||
+              !result.recommendation
+            ) throw new Error("Complementer returned an invalid advisory response.");
+            card.append(text(
+              "p",
+              "Complementer advisory (request-scoped): " + JSON.stringify(result.recommendation),
+              "pnelly-note"
+            ));
+          } catch (error) {
+            status("pnellyStatus", "Complementer is unavailable: " + error.message, "error");
+          } finally {
+            refineButton.disabled = !token;
+            refineButton.textContent = "Refine with Complementer";
+          }
+        });
+        actions.append(refineButton);
         card.append(actions);
       }
       root.append(card);
