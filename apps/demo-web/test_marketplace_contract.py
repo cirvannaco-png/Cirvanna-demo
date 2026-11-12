@@ -68,6 +68,17 @@ class MarketplaceContractTests(unittest.TestCase):
         self.assertIn("data.durable_personal_memory !== false", WARDROBE_HTML)
         self.assertIn("One-session advice only", WARDROBE_HTML)
 
+
+    def test_pnelly_describe_it_uses_verified_wardrobe_and_cal_discovery(self):
+        self.assertIn('fetch("/api/vision/conversational-discovery"', HTML)
+        self.assertIn('Authorization:"Bearer "+config.userToken', HTML)
+        self.assertIn('use', WARDROBE_HTML.lower())
+        self.assertIn("active wardrobe", HTML)
+        self.assertIn("consented feedback", HTML)
+        self.assertIn('data.display_authority!=="CaTaCaCi/CAL"', HTML)
+        self.assertIn('candidate.decision.verdict!=="show"', HTML)
+        self.assertIn('image_urls:[]', HTML)
+
     def test_try_on_remains_visible_but_disabled_until_real_adapters_exist(self):
         self.assertIn("Try on — unavailable", HTML)
         self.assertIn("Virtual try-on adapter is not connected", HTML)
