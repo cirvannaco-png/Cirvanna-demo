@@ -8,6 +8,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 HTML = (ROOT / "apps/demo-web" / "marketplace.html").read_text(encoding="utf-8")
+WARDROBE_HTML = (ROOT / "apps/demo-web" / "wardrobe.html").read_text(encoding="utf-8")
 CATALOG = (ROOT / "services/catalog-service" / "app" / "main.py").read_text(encoding="utf-8")
 
 
@@ -51,12 +52,32 @@ class MarketplaceContractTests(unittest.TestCase):
     def test_pnelly_is_the_marketplace_assistant_and_complementer_is_advisory(self):
         self.assertIn("PNELLY · Describe it", HTML)
         self.assertIn("Search marketplace with PNELLY", HTML)
-        self.assertIn("Complementer is designed as optional styling advice", HTML)
+        self.assertIn("Complementer remains optional styling advice", HTML)
         self.assertIn("price comparisons must use current Commerce offers", HTML)
         self.assertNotIn("Xari · Describe it", HTML)
         self.assertNotIn("Search marketplace with Xari", HTML)
         self.assertNotIn("with Tari", HTML)
         self.assertNotIn("search with Tari", HTML)
+
+
+    def test_daily_looks_offer_identity_bound_stateless_complementer_advice(self):
+        self.assertIn("Ask Complementer", WARDROBE_HTML)
+        self.assertIn('api("/api/vision/complementer"', WARDROBE_HTML)
+        self.assertIn('data.mode !== "advisory_only"', WARDROBE_HTML)
+        self.assertIn("data.display_authorized !== false", WARDROBE_HTML)
+        self.assertIn("data.durable_personal_memory !== false", WARDROBE_HTML)
+        self.assertIn("One-session advice only", WARDROBE_HTML)
+
+
+    def test_pnelly_describe_it_uses_verified_wardrobe_and_cal_discovery(self):
+        self.assertIn('fetch("/api/vision/conversational-discovery"', HTML)
+        self.assertIn('Authorization:"Bearer "+config.userToken', HTML)
+        self.assertIn("PNELLY creates an Everyday, Elevated and Explore look", WARDROBE_HTML)
+        self.assertIn("active wardrobe", HTML)
+        self.assertIn("consented feedback", HTML)
+        self.assertIn('data.display_authority!=="CaTaCaCi/CAL"', HTML)
+        self.assertIn('candidate.decision.verdict!=="show"', HTML)
+        self.assertIn('image_urls:[]', HTML)
 
     def test_try_on_remains_visible_but_disabled_until_real_adapters_exist(self):
         self.assertIn("Try on — unavailable", HTML)

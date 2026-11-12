@@ -68,6 +68,11 @@ class FakeHttpClient:
     def __exit__(self, *_args):
         return False
 
+    def get(self, url, *, headers):
+        assert url == "https://commerce.example.test/me"
+        assert headers["Authorization"] == "Bearer verified-customer-token"
+        return FakeResponse(200, {"user_id": self.expected_body["user_id"]})
+
     def post(self, url, *, headers, json):
         assert url == "https://complementer.internal/v1/complementer/recommend"
         assert headers["Authorization"] == f"Bearer {COMPLEMENTER_TOKEN}"
@@ -77,6 +82,7 @@ class FakeHttpClient:
 
 def configure_complementer(monkeypatch):
     monkeypatch.setenv("CIRVANNA_API_TOKEN", GATEWAY_TOKEN)
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
     monkeypatch.setenv("COMPLEMENTER_SERVICE_URL", "https://complementer.internal")
     monkeypatch.setenv("COMPLEMENTER_SERVICE_TOKEN", COMPLEMENTER_TOKEN)
 
@@ -101,7 +107,7 @@ def test_gateway_complementer_proxy_calls_contract_and_remains_advisory(monkeypa
         monkeypatch.setattr(main.httpx, "Client", Client)
         response = client.post(
             "/v1/complementer/recommend",
-            headers={"Authorization": f"Bearer {GATEWAY_TOKEN}"},
+            headers={"Authorization": f"Bearer {GATEWAY_TOKEN}", "X-End-User-Authorization": "Bearer verified-customer-token"},
             json=body,
         )
 
@@ -116,12 +122,13 @@ def test_gateway_complementer_proxy_calls_contract_and_remains_advisory(monkeypa
 
 def test_gateway_fails_closed_when_complementer_is_not_configured(monkeypatch):
     monkeypatch.setenv("CIRVANNA_API_TOKEN", GATEWAY_TOKEN)
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda _header: advisory_request()["user_id"])
     monkeypatch.delenv("COMPLEMENTER_SERVICE_URL", raising=False)
     monkeypatch.delenv("COMPLEMENTER_SERVICE_TOKEN", raising=False)
     with TestClient(main.app) as client:
         response = client.post(
             "/v1/complementer/recommend",
-            headers={"Authorization": f"Bearer {GATEWAY_TOKEN}"},
+            headers={"Authorization": f"Bearer {GATEWAY_TOKEN}", "X-End-User-Authorization": "Bearer verified-customer-token"},
             json=advisory_request(),
         )
     assert response.status_code == 503
@@ -142,7 +149,7 @@ def test_gateway_rejects_upstream_scope_mismatch(monkeypatch):
         monkeypatch.setattr(main.httpx, "Client", Client)
         response = client.post(
             "/v1/complementer/recommend",
-            headers={"Authorization": f"Bearer {GATEWAY_TOKEN}"},
+            headers={"Authorization": f"Bearer {GATEWAY_TOKEN}", "X-End-User-Authorization": "Bearer verified-customer-token"},
             json=body,
         )
     assert response.status_code == 502
@@ -163,7 +170,7 @@ def test_gateway_rejects_upstream_claim_of_persistent_memory(monkeypatch):
         monkeypatch.setattr(main.httpx, "Client", Client)
         response = client.post(
             "/v1/complementer/recommend",
-            headers={"Authorization": f"Bearer {GATEWAY_TOKEN}"},
+            headers={"Authorization": f"Bearer {GATEWAY_TOKEN}", "X-End-User-Authorization": "Bearer verified-customer-token"},
             json=body,
         )
     assert response.status_code == 502
@@ -178,3 +185,31 @@ def test_gateway_complementer_capability_is_optional_and_explicit(monkeypatch):
     assert capabilities["complementer_product_retrieval"] is False
     assert capabilities["complementer_display_authority"] is False
     assert capabilities["durable_complementer_memory"] is False
+
+
+def test_gateway_complementer_requires_verified_end_user_session(monkeypatch):
+    configure_complementer(monkeypatch)
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/v1/complementer/recommend",
+            headers={"Authorization": f"Bearer {GATEWAY_TOKEN}"},
+            json=advisory_request(),
+        )
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "END_USER_BEARER_REQUIRED"
+
+
+def test_gateway_complementer_rejects_payload_subject_mismatch(monkeypatch):
+    configure_complementer(monkeypatch)
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda _header: "verified-user-other")
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/v1/complementer/recommend",
+            headers={
+                "Authorization": f"Bearer {GATEWAY_TOKEN}",
+                "X-End-User-Authorization": "Bearer verified-customer-token",
+            },
+            json=advisory_request(),
+        )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "REQUEST_SUBJECT_MISMATCH"

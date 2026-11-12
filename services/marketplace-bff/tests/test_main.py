@@ -380,7 +380,7 @@ def test_marketplace_ui_does_not_solicit_click_it_photos_while_pipeline_is_block
     assert 'id="clickItImage"' not in response.text
     assert 'id="clickItConsentId"' not in response.text
     assert 'id="clickItForm"' not in response.text
-    assert 'fetch("/api/vision/marketplace-search"' in response.text
+    assert 'fetch("/api/vision/conversational-discovery"' in response.text
     assert 'fetch("/api/vision/click-it"' not in response.text
     assert "display_authorized===true" not in response.text
     assert "PENDING_CAL" in response.text
@@ -2173,3 +2173,44 @@ def test_complementer_requires_authenticated_user_before_upstream_calls(client, 
     )
     assert response.status_code == 401
     assert response.json()["detail"]["code"] == "USER_BEARER_REQUIRED"
+
+
+def test_pnelly_conversational_discovery_delegates_to_wardrobe_cal_pipeline(client, monkeypatch):
+    seen = {}
+
+    async def fake_wardrobe_recommendations(request, payload):
+        seen["path"] = request.url.path
+        seen["query"] = payload.query
+        seen["occasion"] = payload.occasion
+        seen["climate"] = payload.climate
+        return main.JSONResponse(
+            content={
+                "display_authority": "CaTaCaCi/CAL",
+                "displayable_products": [],
+                "withheld_candidate_count": 2,
+                "wardrobe_context": {"used": True},
+            },
+            headers={"Cache-Control": "no-store, private"},
+        )
+
+    monkeypatch.setattr(main, "wardrobe_recommendations", fake_wardrobe_recommendations)
+    response = client.post(
+        "/api/vision/conversational-discovery",
+        headers={"Authorization": "Bearer signed-user-session"},
+        json={
+            "query": "a light layer that works with my blue shirt",
+            "occasion": "work",
+            "climate": "hot_humid",
+            "limit": 10,
+            "exclude_owned_products": True,
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["display_authority"] == "CaTaCaCi/CAL"
+    assert response.json()["wardrobe_context"]["used"] is True
+    assert seen == {
+        "path": "/api/vision/conversational-discovery",
+        "query": "a light layer that works with my blue shirt",
+        "occasion": "work",
+        "climate": "hot_humid",
+    }
