@@ -380,6 +380,7 @@ class CandidateDecisionOutput(BaseModel):
     policy_version: str
     arbitration_contract_version: str
     decision_pipeline_contract_version: str
+    cil_serving_status: Literal["not_assessed", "eligible", "review"] = "not_assessed"
 
 
 class DecisionResponse(BaseModel):
@@ -2774,7 +2775,19 @@ def evaluate_decisions(
                 detail={"code": "DECISION_AUDIT_UNAVAILABLE", "message": "Decision audit persistence failed; no candidate decision is being released."},
             ) from exc
 
-        display_authorized = verdict == "show" and arbitration.may_display
+        cil_status = "not_assessed"
+        cil_eligible = False
+        if verdict == "show" and arbitration.may_display:
+            cil_assessment = _assess_cil_product_serving(product)
+            cil_eligible = cil_assessment["all_eligible"]
+            cil_status = "eligible" if cil_eligible else "review"
+            if not cil_eligible:
+                reasons.append(ReasonOutput(
+                    code="CIL_EVIDENCE_OR_RIGHTS_REVIEW_REQUIRED",
+                    signal_id="cirvanna_intelligence_layer",
+                    explanation="CAL returned SHOW, but CIL did not authorize commercial serving of one or more claims or ingredient declarations.",
+                ))
+        display_authorized = verdict == "show" and arbitration.may_display and cil_eligible
         candidates.append(CandidateDecisionOutput(
             product_id=product_id,
             sku=str(product["sku"]) if display_authorized else None,
@@ -2793,6 +2806,7 @@ def evaluate_decisions(
             policy_version=arbitration.policy_version,
             arbitration_contract_version=arbitration.contract_version,
             decision_pipeline_contract_version=result.contract_version,
+            cil_serving_status=cil_status,
         ))
 
     return DecisionResponse(
