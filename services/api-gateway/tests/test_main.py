@@ -674,7 +674,7 @@ def test_human_cil_cal_show_cannot_override_a_normal_review_decision(client, mon
         lambda product_payload: main.DecisionSignal(
             signal_id=f"test-safety-review:{product_payload['product_id']}",
             kind=main.SignalKind.SAFETY,
-            state=main.SignalState.REVIEW,
+            state=main.SignalState.UNKNOWN,
             reason_code="SAFETY_EVIDENCE_PENDING",
             explanation="Safety evidence is pending.",
             source_version="test-fixture-only",
