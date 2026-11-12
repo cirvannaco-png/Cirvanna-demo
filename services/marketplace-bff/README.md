@@ -2,7 +2,7 @@
 
 **Status: deployable integration boundary; production remains gated on verified upstream services and identity-provider integration.**
 
-This is the server-side browser boundary for marketplace browsing, visual discovery and the authenticated personal Wardrobe UI. It serves the marketplace UI, proxies public offers, forwards allowlisted account operations, routes natural-language search and consented Look It reference search to PNELLY, and stops Click It at the BFF boundary until verified masking and publication attestation are released. It does not issue identities, hold user tokens in storage, bypass Commerce authorization, or invent fit/try-on results.
+This is the server-side browser boundary for marketplace browsing, visual discovery and the authenticated personal Wardrobe UI. It serves the marketplace UI, proxies public offers, forwards allowlisted account operations, routes natural-language search and consented Look It reference search to PNELLY, and exposes a request-scoped Complementer advisory through the verified Decision Gateway, and stops Click It at the BFF boundary until verified masking and publication attestation are released. It does not issue identities, hold user tokens in storage, bypass Commerce authorization, or invent fit/try-on results.
 
 ## Why this boundary exists
 
