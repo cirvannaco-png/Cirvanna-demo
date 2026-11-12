@@ -2153,6 +2153,57 @@ def _withhold_unverified_media(value: Any) -> Any:
     return value
 
 
+def _assess_cil_product_serving(product: dict[str, Any], purpose: str = "commercial_recommendation") -> dict[str, Any]:
+    """Require CIL source-rights/evidence approval before product claims are served."""
+    base = os.getenv("CIL_SERVICE_URL", "").strip()
+    token = os.getenv("CIL_CATALOG_SERVICE_TOKEN", "").strip()
+    if not base or len(token.encode("utf-8")) < 32 or not _trusted_internal_base_url(base):
+        raise HTTPException(503, detail={"code": "CIL_SERVING_ASSESSMENT_NOT_CONFIGURED"})
+    product_id = product.get("product_id")
+    catalog_version = product.get("catalog_version")
+    if not isinstance(product_id, str) or isinstance(catalog_version, bool) or not isinstance(catalog_version, int) or catalog_version < 1:
+        raise HTTPException(502, detail={"code": "CATALOG_PRODUCT_VERSION_INVALID_FOR_CIL"})
+    claims = product.get("claims", [])
+    ingredients = product.get("ingredient_declarations", product.get("ingredients", []))
+    if not isinstance(claims, list) or not isinstance(ingredients, list):
+        raise HTTPException(502, detail={"code": "CATALOG_CIL_EVIDENCE_SCHEMA_INVALID"})
+    payload = {
+        "purpose": purpose,
+        "product_id": product_id,
+        "catalog_version": catalog_version,
+        "claims": claims,
+        "ingredient_declarations": ingredients,
+    }
+    try:
+        response = httpx.post(
+            base.rstrip("/") + "/serving/assessment",
+            json=payload,
+            headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+            timeout=5.0,
+            trust_env=False,
+            follow_redirects=False,
+        )
+        if response.status_code != 200:
+            raise HTTPException(503, detail={"code": "CIL_SERVING_ASSESSMENT_UNAVAILABLE"})
+        result = response.json()
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        raise HTTPException(503, detail={"code": "CIL_SERVING_ASSESSMENT_UNAVAILABLE"}) from exc
+    if (
+        not isinstance(result, dict)
+        or result.get("product_id") != product_id
+        or result.get("catalog_version") != catalog_version
+        or result.get("purpose") != purpose
+        or not isinstance(result.get("all_eligible"), bool)
+        or not isinstance(result.get("decisions"), list)
+        or any(not isinstance(item, dict) or not isinstance(item.get("eligible"), bool) for item in result["decisions"])
+        or result["all_eligible"] != all(item["eligible"] for item in result["decisions"])
+    ):
+        raise HTTPException(502, detail={"code": "CIL_SERVING_ASSESSMENT_RESPONSE_INVALID"})
+    return result
+
+
 def _cil_feedback_context_key(context: Any) -> str:
     parts = []
     for value in (getattr(context, "climate", None), getattr(context, "occasion", None)):
@@ -2387,6 +2438,17 @@ def discover_marketplace(
         if decision is None or not decision.may_display or decision.verdict != "show":
             withheld.append({"product_id": product_id, "rank_score": score, "decision": decision.verdict if decision else "review"})
             continue
+        # CAL SHOW is necessary but not sufficient: CIL independently verifies
+        # commercial-use rights, evidence scope/grade, attribution and claim review.
+        cil_assessment = _assess_cil_product_serving(by_product[product_id])
+        if not cil_assessment["all_eligible"]:
+            withheld.append({
+                "product_id": product_id,
+                "rank_score": score,
+                "decision": "review",
+                "reason_code": "CIL_EVIDENCE_OR_RIGHTS_REVIEW_REQUIRED",
+            })
+            continue
         displayable.append({
             "product": _withhold_unverified_media(by_product[product_id]),
             "offer": _withhold_unverified_media(offer),
@@ -2405,6 +2467,7 @@ def discover_marketplace(
                 "matched_attributes": wardrobe_match["matched_attributes"],
             },
             "decision": decision.model_dump(),
+            "cil_serving_assessment": {"status": "eligible", "assessed_catalog_version": cil_assessment["catalog_version"]},
         })
     return {
         "request_id": decision_response.request_id,
