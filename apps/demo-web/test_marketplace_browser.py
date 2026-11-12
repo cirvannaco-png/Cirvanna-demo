@@ -141,8 +141,8 @@ class MarketplaceBrowserTests(unittest.TestCase):
             self.assertTrue(bag_button.is_disabled())
             page.locator("#cartBtn").click()
             dialog = page.get_by_role("dialog")
-            checkout = dialog.get_by_role("button", name="Checkout paused — CAL authorization unavailable")
-            self.assertTrue(checkout.is_disabled())
+            self.assertEqual(dialog.get_by_role("button", name="Continue to secure checkout").count(), 0)
+            self.assertEqual(dialog.get_by_role("button", name="Checkout paused — CAL authorization unavailable").count(), 0)
             self.assertIn("operator gate", dialog.inner_text())
         finally:
             page.close()
