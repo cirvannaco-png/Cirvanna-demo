@@ -19,7 +19,21 @@ permissions:
 jobs:
   test-and-build:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cil
+          POSTGRES_PASSWORD: cil
+          POSTGRES_DB: cil_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cil -d cil_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -33,7 +47,21 @@ jobs:
         env:
           CIL_DATABASE_URL: sqlite:///./cil-migration-ci.db
           CIL_AUTO_CREATE_SCHEMA: "false"
-        run: alembic upgrade head
+        run: |
+          alembic upgrade 20261110_0003
+          alembic upgrade head
+          alembic downgrade 20261110_0003
+          alembic upgrade head
+      - name: Upgrade, downgrade and re-upgrade CIL schema on PostgreSQL
+        working-directory: services/intelligence-service
+        env:
+          CIL_DATABASE_URL: postgresql+psycopg://cil:cil@localhost:5432/cil_ci
+          CIL_AUTO_CREATE_SCHEMA: "false"
+        run: |
+          alembic upgrade 20261110_0003
+          alembic upgrade head
+          alembic downgrade 20261110_0003
+          alembic upgrade head
       - name: Run intelligence service tests
         working-directory: services/intelligence-service
         env:
