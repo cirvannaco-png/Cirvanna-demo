@@ -32,6 +32,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
 .pnelly-piece strong{display:block;font-size:13px}
 .pnelly-piece span{display:block;font-size:11px;color:var(--muted)}
 .pnelly-note{font-size:12px;color:var(--muted);margin-top:10px}
+.pnelly-advisory{border-top:1px solid var(--line);margin-top:12px;padding-top:10px}.pnelly-advisory p{font-size:12px;color:var(--muted);margin:6px 0}.pnelly-advisory .btn{margin-top:5px}
 @media(max-width:800px){.pnelly-grid{grid-template-columns:1fr}}
 </style>
 </head>
@@ -885,6 +886,62 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
   };
   $("refreshTwinReadiness").addEventListener("click", loadTwinCapabilities);
 
+  const requestComplementerAdvice = async (look, statusNode, button) => {
+    button.disabled = true;
+    statusNode.textContent = "Requesting one-session styling advice…";
+    try {
+      const wardrobePieces = (Array.isArray(look.items) ? look.items : []).map(item => ({
+        name: String(item.display_name || "").slice(0, 120),
+        category: String(item.category || "").slice(0, 80),
+        attributes: (Array.isArray(item.attributes) ? item.attributes : []).filter(value => typeof value === "string").slice(0, 12)
+      }));
+      const data = await api("/api/vision/complementer", {
+        method: "POST",
+        body: JSON.stringify({
+          request_id: crypto.randomUUID(),
+          preferences: {},
+          look: {
+            role: String(look.role || "").slice(0, 40),
+            occasion: $("pnellyOccasion").value || null,
+            climate: $("pnellyClimate").value || null,
+            wardrobe_pieces: wardrobePieces,
+            reason: String(look.reason || "").slice(0, 400)
+          }
+        })
+      });
+      if (data.mode !== "advisory_only" || data.display_authorized !== false || data.durable_personal_memory !== false || !data.recommendation || typeof data.recommendation !== "object") {
+        throw new Error("COMPLEMENTER_SCOPE_INVALID");
+      }
+      const snippets = [];
+      const ignored = new Set(["request_id", "user_id", "contract_version", "schema_version", "status", "persistence"]);
+      const collect = (value, label, depth) => {
+        if (snippets.length >= 8 || depth > 3) return;
+        if (typeof value === "string" && value.trim() && !ignored.has(label)) {
+          snippets.push((label.replace(/_/g, " ") + ": " + value.trim()).slice(0, 420));
+        } else if (Array.isArray(value)) {
+          for (const entry of value.slice(0, 5)) collect(entry, label, depth + 1);
+        } else if (value && typeof value === "object") {
+          for (const [key, child] of Object.entries(value)) {
+            if (!ignored.has(key.toLowerCase())) collect(child, key, depth + 1);
+            if (snippets.length >= 8) break;
+          }
+        }
+      };
+      collect(data.recommendation, "advice", 0);
+      statusNode.replaceChildren();
+      if (!snippets.length) {
+        statusNode.append(text("p", "Complementer returned no additional styling guidance for this look."));
+      } else {
+        for (const snippet of snippets) statusNode.append(text("p", snippet));
+      }
+      statusNode.append(text("p", "One-session advice only. It does not select products, authorize display, or update your learned profile.", "small"));
+    } catch (error) {
+      statusNode.textContent = error.message || "Complementer is unavailable.";
+    } finally {
+      button.disabled = false;
+    }
+  };
+
   const renderPNELLYLooks = data => {
     pnellyData = data;
     const root = $("pnellyLooks");
@@ -910,6 +967,14 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
       card.append(text("p", look.reason || "", "pnelly-note"));
       card.append(text("p", "Virtual Twin preview: unavailable until your persistent Twin and a validated renderer are connected.", "pnelly-note"));
       if (look.status === "ready") {
+        const advisory = document.createElement("section");
+        advisory.className = "pnelly-advisory";
+        const advisoryStatus = text("div", "Complementer has not been asked about this look.", "pnelly-note");
+        const askComplementer = text("button", "Ask Complementer", "btn");
+        askComplementer.type = "button";
+        askComplementer.addEventListener("click", () => requestComplementerAdvice(look, advisoryStatus, askComplementer));
+        advisory.append(askComplementer, advisoryStatus);
+        card.append(advisory);
         const actions = document.createElement("div");
         actions.className = "actions";
         for (const [signal, label] of [["wear", "Mark this look worn"], ["dislike", "Not my style"]]) {
