@@ -344,3 +344,149 @@ def test_decision_service_bridges_cil_feedback_queue_and_final_cal_decision(clie
     )
     assert decision.status_code == 200
     assert decision.json()["verdict"] == "BLOCK"
+
+
+def test_production_decision_service_cannot_disable_cil_feedback_review_enforcement(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_ENVIRONMENT", "production")
+    monkeypatch.setenv("CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED", "false")
+    assert main._cil_cal_review_enforcement_required() is True
+
+
+def test_development_decision_service_can_keep_cil_feedback_review_optional(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_ENVIRONMENT", "development")
+    monkeypatch.setenv("CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED", "false")
+    assert main._cil_cal_review_enforcement_required() is False
+
+
+def test_cil_feedback_review_block_is_enforced_by_live_eligibility_evaluation(client, monkeypatch):
+    monkeypatch.setenv("CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED", "true")
+    monkeypatch.setenv("CIL_SERVICE_URL", "https://cil.internal")
+    monkeypatch.setenv("CIL_SERVICE_TOKEN", "cil-service-token-that-is-at-least-32-bytes")
+    monkeypatch.setenv("CIL_CAL_SERVICE_TOKEN", "cil-cal-service-token-that-is-at-least-32-bytes")
+
+    class FakeResponse:
+        status_code = 200
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {
+                "context_key": "warm-everyday",
+                "decisions": [{
+                    "product_id": "catalog-product-001",
+                    "context_key": "warm-everyday",
+                    "review_id": "feedback-review-001",
+                    "verdict": "BLOCK",
+                    "decision_reference": "CAL-FEEDBACK-001",
+                    "decided_at": "2026-11-12T10:00:00+00:00",
+                }],
+            }
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return None
+        def post(self, url, json, headers):
+            assert url == "https://cil.internal/cal/feedback-decisions"
+            assert json == {
+                "product_ids": ["catalog-product-001"],
+                "context_key": "warm-everyday",
+            }
+            assert headers["Authorization"].startswith("Bearer cil-cal-service-token")
+            return FakeResponse()
+
+    monkeypatch.setattr(main.httpx, "Client", FakeClient)
+    response = client.post(
+        "/v1/eligibility/evaluate",
+        json=request_body(),
+        headers=headers(),
+    )
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["decision"] == "BLOCK"
+    assert result["may_display"] is False
+    assert result["gates"]["cil_feedback_review"]["applied_as_veto"] is True
+    assert result["gates"]["cil_feedback_review"]["decision_reference"] == "CAL-FEEDBACK-001"
+    assert any(
+        reason["code"] == "CIL_FEEDBACK_REVIEW_BLOCK"
+        for reason in result["arbitration"]["reasons"]
+    )
+
+
+def test_cil_feedback_review_show_never_overrides_normal_cal_decision(client, monkeypatch):
+    monkeypatch.setenv("CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED", "true")
+    monkeypatch.setenv("CIL_SERVICE_URL", "https://cil.internal")
+    monkeypatch.setenv("CIL_SERVICE_TOKEN", "cil-service-token-that-is-at-least-32-bytes")
+    monkeypatch.setenv("CIL_CAL_SERVICE_TOKEN", "cil-cal-service-token-that-is-at-least-32-bytes")
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+        def json(self):
+            return {
+                "context_key": "warm-everyday",
+                "decisions": [{
+                    "product_id": "catalog-product-001",
+                    "context_key": "warm-everyday",
+                    "review_id": "feedback-review-002",
+                    "verdict": "SHOW",
+                    "decision_reference": "CAL-FEEDBACK-002",
+                    "decided_at": "2026-11-12T10:15:00+00:00",
+                }],
+            }
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return None
+        def post(self, url, json, headers):
+            return FakeResponse()
+
+    monkeypatch.setattr(main.httpx, "Client", FakeClient)
+    response = client.post(
+        "/v1/eligibility/evaluate",
+        json=request_body(),
+        headers=headers(),
+    )
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["decision"] == "SHOW"
+    assert result["may_display"] is True
+    assert result["gates"]["cil_feedback_review"]["applied_as_veto"] is False
+
+
+def test_required_cil_feedback_review_enforcement_fails_closed_when_service_unavailable(client, monkeypatch):
+    import httpx
+
+    monkeypatch.setenv("CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED", "true")
+    monkeypatch.setenv("CIL_SERVICE_URL", "https://cil.internal")
+    monkeypatch.setenv("CIL_SERVICE_TOKEN", "cil-service-token-that-is-at-least-32-bytes")
+    monkeypatch.setenv("CIL_CAL_SERVICE_TOKEN", "cil-cal-service-token-that-is-at-least-32-bytes")
+
+    def unavailable(*args, **kwargs):
+        raise httpx.ConnectError("CIL unavailable")
+
+    monkeypatch.setattr(main.httpx, "post", unavailable)
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return None
+        def post(self, *args, **kwargs):
+            raise httpx.ConnectError("CIL unavailable")
+    monkeypatch.setattr(main.httpx, "Client", FakeClient)
+
+    response = client.post(
+        "/v1/eligibility/evaluate",
+        json=request_body(),
+        headers=headers(),
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "CIL_CAL_FEEDBACK_DECISION_UNAVAILABLE"
