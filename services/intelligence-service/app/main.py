@@ -697,21 +697,27 @@ def reap_abandoned_perfectcorp_tasks(db: Session = Depends(get_db)):
         raise HTTPException(503, "CIL_PERFECTCORP_TASK_TTL_MINUTES must be between 1 and 1440")
     current = now()
     cutoff = current - timedelta(minutes=ttl_minutes)
-    rows = list(db.scalars(select(ProviderTask).where(
-        ProviderTask.deleted_at.is_(None),
-        or_(
-            ProviderTask.created_at <= cutoff,
-            ProviderTask.consent_expires_at <= current,
-            ProviderTask.revoked_at.is_not(None),
-        ),
-    ).order_by(ProviderTask.created_at.asc()).limit(200)).all())
+    active_rows = list(db.scalars(
+        select(ProviderTask)
+        .where(ProviderTask.deleted_at.is_(None))
+        .order_by(ProviderTask.created_at.asc())
+        .limit(5000)
+    ).all())
+    rows = []
+    for row in active_rows:
+        created = row.created_at.replace(tzinfo=timezone.utc) if row.created_at.tzinfo is None else row.created_at
+        consent_expiry = row.consent_expires_at.replace(tzinfo=timezone.utc) if row.consent_expires_at.tzinfo is None else row.consent_expires_at
+        if row.revoked_at is not None or created <= cutoff or consent_expiry <= current:
+            rows.append((row, consent_expiry <= current))
+            if len(rows) >= 200:
+                break
     deleted = 0
     failed = 0
-    for row in rows:
+    for row, consent_expired in rows:
         try:
             perfectcorp_delete_task(task_id=row.provider_task_id)
             row.status = "consent_revoked_deleted" if row.revoked_at is not None else (
-                "consent_expired_deleted" if row.consent_expires_at <= current else "ttl_deleted"
+                "consent_expired_deleted" if consent_expired else "ttl_deleted"
             )
             row.deleted_at = now()
             deleted += 1
