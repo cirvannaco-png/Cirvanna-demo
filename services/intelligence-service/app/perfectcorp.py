@@ -154,8 +154,8 @@ def start_skin_analysis(*, image: bytes, file_name: str, content_type: str, acti
     }
 
 
-def get_skin_analysis_status(*, task_id: str) -> dict:
-    base, token = _settings()
+def get_skin_analysis_status(*, task_id: str, for_cleanup: bool = False) -> dict:
+    base, token = _settings(for_delete=for_cleanup)
     if not task_id or len(task_id) > 256:
         raise ValueError("invalid task_id")
     with httpx.Client(timeout=httpx.Timeout(15.0, connect=5.0), follow_redirects=False, trust_env=False) as client:
