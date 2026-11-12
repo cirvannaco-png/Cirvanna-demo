@@ -556,9 +556,9 @@ def test_cil_serving_assessment_fails_closed_when_evidence_is_not_eligible(monke
             }
 
     monkeypatch.setattr(main.httpx, "post", lambda *args, **kwargs: FakeResponse())
-    with pytest.raises(main.HTTPException) as exc:
-        main._assess_cil_product_serving(product(claims=[{"claim_id": "claim-1"}]))
-    assert exc.value.status_code == 503 or exc.value.status_code == 200
+    result = main._assess_cil_product_serving(product(claims=[{"claim_id": "claim-1"}]))
+    assert result["all_eligible"] is False
+    assert result["decisions"][0]["eligible"] is False
 
 
 def test_cil_serving_assessment_rejects_stale_or_mismatched_catalog_version(monkeypatch):
