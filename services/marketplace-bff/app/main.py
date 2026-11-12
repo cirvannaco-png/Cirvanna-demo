@@ -2597,6 +2597,16 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
     }
     return _private_json_response(safe_payload)
 
+
+@app.post("/api/vision/conversational-discovery")
+async def pnelly_conversational_discovery(
+    request: Request,
+    payload: WardrobeRecommendationIn,
+) -> Response:
+    """PNELLY discovery alias: verified subject, active wardrobe, feedback and CAL."""
+    return await wardrobe_recommendations(request, payload)
+
+
 def _read_portal_page(path: Path, code: str) -> str:
     try:
         return path.read_text(encoding="utf-8")
