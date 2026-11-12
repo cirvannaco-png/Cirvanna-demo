@@ -759,3 +759,192 @@ def test_complementer_rejects_user_id_not_bound_to_commerce_subject(client, monk
     )
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "REQUEST_SUBJECT_MISMATCH"
+
+
+def test_human_cil_cal_block_is_enforced_before_marketplace_candidate_details_are_returned(client, monkeypatch):
+    monkeypatch.setenv("CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED", "true")
+    monkeypatch.setenv("CIL_SERVICE_URL", "https://cil.internal")
+    monkeypatch.setenv("CIL_CAL_SERVICE_TOKEN", "cil-cal-service-token-that-is-at-least-32-bytes")
+    monkeypatch.setattr(main, "fetch_product", lambda _: product())
+    monkeypatch.setattr(main, "_safety_signal", pass_safety)
+    monkeypatch.setattr(main, "_fit_estimate", calibrated_fit)
+    monkeypatch.setattr(
+        main, "_fit_evidence_fields",
+        lambda _estimate: (
+            ("body_measurements", "garment_size_chart", "garment_geometry"),
+            ("body_measurements", "garment_size_chart", "garment_geometry"),
+        ),
+    )
+
+    class FakeResponse:
+        status_code = 200
+        def json(self):
+            return {
+                "context_key": "warm-everyday",
+                "decisions": [{
+                    "product_id": PRODUCT_ID,
+                    "context_key": "warm-everyday",
+                    "review_id": "cil-review-001",
+                    "verdict": "BLOCK",
+                    "decision_reference": "CAL-REVIEW-BLOCK-001",
+                    "decided_at": "2026-11-12T10:00:00+00:00",
+                }],
+            }
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return None
+        def post(self, url, json, headers, **kwargs):
+            assert url == "https://cil.internal/cal/feedback-decisions"
+            assert json == {"product_ids": [PRODUCT_ID], "context_key": "warm-everyday"}
+            assert headers["Authorization"].startswith("Bearer cil-cal-service-token")
+            return FakeResponse()
+
+    monkeypatch.setattr(main.httpx, "Client", FakeClient)
+    response = client.post("/v1/decisions", json=request_body(), headers=auth_headers())
+    assert response.status_code == 200, response.text
+    decision = response.json()["candidates"][0]
+    assert decision["verdict"] == "block"
+    assert decision["may_display"] is False
+    assert decision["name"] is None
+    assert decision["price_minor"] is None
+    assert any(reason["code"] == "CIL_FEEDBACK_REVIEW_BLOCK" for reason in decision["reasons"])
+
+
+def test_human_cil_cal_show_cannot_override_a_normal_review_decision(client, monkeypatch):
+    monkeypatch.setenv("CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED", "true")
+    monkeypatch.setenv("CIL_SERVICE_URL", "https://cil.internal")
+    monkeypatch.setenv("CIL_CAL_SERVICE_TOKEN", "cil-cal-service-token-that-is-at-least-32-bytes")
+    monkeypatch.setattr(main, "fetch_product", lambda _: product())
+    monkeypatch.setattr(
+        main, "_safety_signal",
+        lambda product_payload: main.DecisionSignal(
+            signal_id=f"test-safety-review:{product_payload['product_id']}",
+            kind=main.SignalKind.SAFETY,
+            state=main.SignalState.UNKNOWN,
+            reason_code="SAFETY_EVIDENCE_PENDING",
+            explanation="Safety evidence is pending.",
+            source_version="test-fixture-only",
+        ),
+    )
+    monkeypatch.setattr(main, "_fit_estimate", calibrated_fit)
+    monkeypatch.setattr(
+        main, "_fit_evidence_fields",
+        lambda _estimate: (
+            ("body_measurements", "garment_size_chart", "garment_geometry"),
+            ("body_measurements", "garment_size_chart", "garment_geometry"),
+        ),
+    )
+
+    class FakeResponse:
+        status_code = 200
+        def json(self):
+            return {
+                "context_key": "warm-everyday",
+                "decisions": [{
+                    "product_id": PRODUCT_ID,
+                    "context_key": "warm-everyday",
+                    "review_id": "cil-review-show-001",
+                    "verdict": "SHOW",
+                    "decision_reference": "CAL-REVIEW-SHOW-001",
+                    "decided_at": "2026-11-12T10:15:00+00:00",
+                }],
+            }
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return None
+        def post(self, *args, **kwargs):
+            return FakeResponse()
+
+    monkeypatch.setattr(main.httpx, "Client", FakeClient)
+    response = client.post("/v1/decisions", json=request_body(), headers=auth_headers())
+    assert response.status_code == 200, response.text
+    decision = response.json()["candidates"][0]
+    assert decision["verdict"] == "review"
+    assert decision["may_display"] is False
+    assert decision["name"] is None
+
+
+def test_required_cil_cal_enforcement_fails_closed_when_review_store_is_unavailable(client, monkeypatch):
+    import httpx
+
+    monkeypatch.setenv("CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED", "true")
+    monkeypatch.setenv("CIL_SERVICE_URL", "https://cil.internal")
+    monkeypatch.setenv("CIL_CAL_SERVICE_TOKEN", "cil-cal-service-token-that-is-at-least-32-bytes")
+    monkeypatch.setattr(main, "fetch_product", lambda _: product())
+    monkeypatch.setattr(main, "_safety_signal", pass_safety)
+    monkeypatch.setattr(main, "_fit_estimate", calibrated_fit)
+    monkeypatch.setattr(
+        main, "_fit_evidence_fields",
+        lambda _estimate: (
+            ("body_measurements", "garment_size_chart", "garment_geometry"),
+            ("body_measurements", "garment_size_chart", "garment_geometry"),
+        ),
+    )
+
+    class FailingClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return None
+        def post(self, *args, **kwargs):
+            raise httpx.ConnectError("CIL unavailable")
+
+    monkeypatch.setattr(main.httpx, "Client", FailingClient)
+    response = client.post("/v1/decisions", json=request_body(), headers=auth_headers())
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "CIL_CAL_FEEDBACK_DECISIONS_UNAVAILABLE"
+
+
+def test_production_gateway_cannot_disable_cil_cal_feedback_review_enforcement(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_ENVIRONMENT", "production")
+    monkeypatch.setenv("CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED", "false")
+    assert main._cil_cal_review_enforcement_required() is True
+
+
+def test_development_gateway_can_keep_cil_cal_feedback_review_enforcement_optional(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_ENVIRONMENT", "development")
+    monkeypatch.setenv("CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED", "false")
+    assert main._cil_cal_review_enforcement_required() is False
+
+
+def test_complementer_returns_only_advisory_for_verified_customer(client, monkeypatch):
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda authorization: "verified-customer-42")
+    captured = {}
+    def advisory(payload):
+        captured["payload"] = payload
+        return {
+            "mode": "advisory_only",
+            "display_authorized": False,
+            "durable_personal_memory": False,
+            "recommendation": {"summary": "Use warm neutrals and a structured layer."},
+        }
+    monkeypatch.setattr(main, "_complementer_advisory", advisory)
+    response = client.post(
+        "/v1/complementer/recommend",
+        json={
+            "request_id": "complementer-test-005",
+            "user_id": "verified-customer-42",
+            "preferences": {"style": "minimal"},
+            "look": {"description": "navy trousers and cream knit"},
+        },
+        headers={
+            **auth_headers(),
+            "X-End-User-Authorization": "Bearer signed-customer-session",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["mode"] == "advisory_only"
+    assert captured["payload"].user_id == "verified-customer-42"
+    assert captured["payload"].look["description"] == "navy trousers and cream knit"
