@@ -126,7 +126,7 @@ class MarketplaceBrowserTests(unittest.TestCase):
         page.wait_for_function("document.querySelector('#status').textContent.includes('Sign in')")
         page.locator("#settingsBtn").click()
         page.locator("#commerceToken").fill("signed-user-session-token")
-        page.get_by_role("button", name="Connect account-backed marketplace").click()
+        page.get_by_role("button", name="Connect test customer session").click()
         page.wait_for_function("document.querySelector('#status').textContent.includes('CAL-GOVERNED LIVE COMMERCE')")
         return page
 
@@ -161,13 +161,14 @@ class MarketplaceBrowserTests(unittest.TestCase):
         finally:
             page.close()
 
-    def test_account_connection_never_asks_for_direct_service_urls(self):
+    def test_account_connection_never_asks_for_direct_service_urls_or_pasted_tokens_by_default(self):
         self.page.locator("#settingsBtn").click()
         self.assertEqual(self.page.locator("#commerceBase").count(), 0)
         self.assertEqual(self.page.locator("#apiBase").count(), 0)
         self.assertEqual(self.page.locator("#apiToken").count(), 0)
-        self.assertEqual(self.page.locator("#commerceToken").count(), 1)
+        self.assertEqual(self.page.locator("#commerceToken").count(), 0)
         self.assertIn("same-origin Cirvanna Marketplace BFF", self.page.get_by_role("dialog").inner_text())
+        self.assertIn("Account sign-in is unavailable", self.page.get_by_role("dialog").inner_text())
 
 
 if __name__ == "__main__":
