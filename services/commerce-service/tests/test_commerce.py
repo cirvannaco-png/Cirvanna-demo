@@ -31,6 +31,38 @@ ORIGINAL_ENGINE = main.engine
 ORIGINAL_SESSION = main.SessionLocal
 
 
+
+REAL_CAL_PURCHASE_RECEIPT_REQUESTER = main._request_cal_purchase_receipts
+
+
+def fake_cal_receipts(request, subject_id: str, authorizations: list[dict], *, decision: str = "SHOW"):
+    issued_at = main.now()
+    expires_at = issued_at + main.timedelta(seconds=60)
+    request_id = str(uuid.uuid4())
+    receipts = []
+    for item in authorizations:
+        unsigned = {
+            "schema_version": "1",
+            "receipt_id": str(uuid.uuid4()),
+            "request_id": request_id,
+            "subject_id": subject_id,
+            "candidate_id": item["variant_id"],
+            **item,
+            "catalog_version": 1,
+            "decision": decision,
+            "may_display": decision == "SHOW",
+            "reason_codes": [] if decision == "SHOW" else ["TEST_CAL_DENIAL"],
+            "policy_version": "test-cal-policy-v1",
+            "issued_at": issued_at.isoformat(),
+            "expires_at": expires_at.isoformat(),
+        }
+        key = os.getenv("CAL_PURCHASE_RECEIPT_HMAC_SECRET", "test-cal-purchase-signing-key-more-than-32-bytes")
+        canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
+        signature = hmac.new(key.encode(), canonical, hashlib.sha256).hexdigest()
+        receipts.append({**unsigned, "signature": signature})
+    return receipts
+
+
 def b64(value: dict) -> str:
     return base64.urlsafe_b64encode(json.dumps(value, separators=(",", ":")).encode()).rstrip(b"=").decode()
 
@@ -72,6 +104,10 @@ def client(monkeypatch):
     monkeypatch.delenv("COMMERCE_CHECKOUT_CANCEL_URL", raising=False)
     monkeypatch.delenv("COMMERCE_SHIPPING_COUNTRIES", raising=False)
     monkeypatch.delenv("COMMERCE_CRON_TOKEN", raising=False)
+    monkeypatch.delenv("DECISION_GATEWAY_URL", raising=False)
+    monkeypatch.delenv("DECISION_GATEWAY_TOKEN", raising=False)
+    monkeypatch.setenv("CAL_PURCHASE_RECEIPT_HMAC_SECRET", "test-cal-purchase-signing-key-more-than-32-bytes")
+    monkeypatch.setattr(main, "_request_cal_purchase_receipts", fake_cal_receipts)
     main.engine = TEST_ENGINE
     main.SessionLocal = TEST_SESSION
     with TEST_ENGINE.begin() as connection:
@@ -218,20 +254,26 @@ def test_tax_quote_requires_explicit_destination_zone(client, monkeypatch):
     assert response.json()["destination_key"] == "Nakuru/Subukia"
 
 
-def test_multi_market_and_checkout_learning_schema_revision_0009_is_registered():
-    from app.main import CommerceOrder, OrderCharge, OrderItem, OfferTaxQuote
+def test_multi_market_checkout_learning_and_cal_purchase_schema_revision_0010_is_registered():
+    from app.main import CommerceOrder, OrderCharge, OrderItem, OfferTaxQuote, CALPurchaseAudit
     assert "fulfillment_total_minor" in CommerceOrder.__table__.columns
     assert "total_minor" in CommerceOrder.__table__.columns
     assert "tal_consent_receipt_id" in CommerceOrder.__table__.columns
     assert "destination_key" in OfferTaxQuote.__table__.columns
     assert "source_unit_price_minor" in OrderItem.__table__.columns
     assert OrderCharge.__tablename__ == "commerce_order_charges"
+    assert CALPurchaseAudit.__tablename__ == "commerce_cal_purchase_audits"
+    assert "offer_snapshot_sha256" in CALPurchaseAudit.__table__.columns
 
 
 def test_readiness_requires_current_migration_before_production_ready(client, monkeypatch):
     monkeypatch.setenv("COMMERCE_AUTO_CREATE_SCHEMA", "false")
     monkeypatch.setenv("CATALOG_API_URL", "https://catalog.example.test")
     monkeypatch.setenv("CATALOG_API_TOKEN", "catalog-test-token")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-test-token-more-than-32-bytes")
+    monkeypatch.setenv("CAL_PURCHASE_RECEIPT_HMAC_SECRET", "test-cal-purchase-signing-key-more-than-32-bytes")
+    monkeypatch.setattr(main, "_cal_gateway_probe", lambda base, token: True)
     configure_stripe(monkeypatch)
 
     pending = client.get("/ready")
@@ -249,7 +291,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
         ))
         connection.execute(
             text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
-            {"revision": "20261110_0009"},
+            {"revision": "20261110_0010"},
         )
 
     ready = client.get("/ready")
@@ -262,7 +304,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
     assert payload["payment_configured"] is True
     assert payload["migrations_required"] is True
     assert payload["migrations_applied"] is True
-    assert payload["schema_revision"] == "20261110_0009"
+    assert payload["schema_revision"] == "20261110_0010"
     assert payload["ready"] is True
 
 
@@ -421,15 +463,279 @@ def test_persistent_cart_is_account_scoped_and_rechecks_available_stock(client):
     buyer2 = auth("buyer-two")
     add = client.post("/cart/items", json={"variant_id": offer["variant_id"], "quantity": 2}, headers=buyer1)
     assert add.status_code == 201
-    assert add.json()["items"][0]["available_stock"] == 3
-    assert add.json()["items"][0]["quantity"] == 2
-    assert client.get("/cart", headers=buyer1).json()["item_count"] == 2
+    assert add.json()["cart_refresh_required"] is True
+    buyer1_cart = client.get("/cart", headers=buyer1)
+    assert buyer1_cart.status_code == 200
+    assert buyer1_cart.json()["items"][0]["available_stock"] == 3
+    assert buyer1_cart.json()["items"][0]["quantity"] == 2
     assert client.get("/cart", headers=buyer2).json()["item_count"] == 0
     too_many = client.patch(f"/cart/items/{offer['variant_id']}", json={"quantity": 4}, headers=buyer1)
     assert too_many.status_code == 409
     remove = client.delete(f"/cart/items/{offer['variant_id']}", headers=buyer1)
     assert remove.status_code == 200
-    assert remove.json()["items"] == []
+    assert remove.json()["removed_variant_id"] == offer["variant_id"]
+    assert client.get("/cart", headers=buyer1).json()["items"] == []
+
+
+
+def test_cart_add_blocks_and_audits_non_show_purchase_decision(client, monkeypatch):
+    offer = seed_offer(stock=4)
+    monkeypatch.setattr(
+        main,
+        "_request_cal_purchase_receipts",
+        lambda request, subject, items: fake_cal_receipts(request, subject, items, decision="BLOCK"),
+    )
+    response = client.post(
+        "/cart/items",
+        json={"variant_id": offer["variant_id"], "quantity": 1},
+        headers=auth("buyer-cal-block"),
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "CAL_CART_ADD_DENIED"
+    db = TEST_SESSION()
+    assert db.query(main.CartItem).count() == 0
+    audit = db.query(main.CALPurchaseAudit).one()
+    assert audit.action == "cart_add" and audit.decision == "BLOCK"
+    assert audit.catalog_product_id == offer["catalog_product_id"]
+    assert audit.variant_id == offer["variant_id"]
+    assert audit.merchant_id == offer["merchant_id"]
+    assert len(audit.offer_snapshot_sha256) == 64
+    db.close()
+
+
+def test_checkout_cal_review_creates_no_order_or_stock_reservation(client, monkeypatch):
+    offer = seed_offer(stock=5, price_minor=900)
+    buyer = auth("buyer-cal-review", email="review@example.test")
+    assert client.post(
+        "/cart/items",
+        json={"variant_id": offer["variant_id"], "quantity": 2},
+        headers=buyer,
+    ).status_code == 201
+    configure_stripe(monkeypatch)
+
+    def deny_checkout(request, subject, items):
+        assert items[0]["action"] == "checkout"
+        assert items[0]["offer_snapshot_sha256"]
+        return fake_cal_receipts(request, subject, items, decision="REVIEW")
+
+    monkeypatch.setattr(main, "_request_cal_purchase_receipts", deny_checkout)
+    response = client.post(
+        "/checkout",
+        headers={**buyer, "Idempotency-Key": "cal-review-checkout-key-01"},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "CAL_CHECKOUT_AUTHORIZATION_DENIED"
+    assert row(main.Variant, offer["variant_id"]).reserved_qty == 0
+    db = TEST_SESSION()
+    assert db.query(main.CommerceOrder).count() == 0
+    audit = db.query(main.CALPurchaseAudit).filter_by(action="checkout").one()
+    assert audit.decision == "REVIEW"
+    assert audit.order_id is None
+    assert audit.offer_snapshot_sha256
+    db.close()
+
+
+def test_checkout_order_persists_exact_offer_bound_cal_receipt(client, monkeypatch):
+    offer = seed_offer(stock=4, price_minor=700)
+    buyer = auth("buyer-cal-audit")
+    assert client.post(
+        "/cart/items",
+        json={"variant_id": offer["variant_id"], "quantity": 1},
+        headers=buyer,
+    ).status_code == 201
+    configure_stripe(monkeypatch)
+    response = client.post(
+        "/checkout",
+        headers={**buyer, "Idempotency-Key": "cal-audit-checkout-key-01"},
+    )
+    assert response.status_code == 201, response.text
+    order_id = response.json()["order"]["order_id"]
+    db = TEST_SESSION()
+    audit = db.query(main.CALPurchaseAudit).filter_by(order_id=order_id, action="checkout").one()
+    assert audit.decision == "SHOW"
+    assert audit.catalog_product_id == offer["catalog_product_id"]
+    assert audit.variant_id == offer["variant_id"]
+    assert audit.listing_id == offer["listing_id"]
+    assert audit.merchant_id == offer["merchant_id"]
+    assert audit.quantity == 1
+    assert audit.unit_price_minor == 700
+    assert audit.currency == "KES"
+    assert audit.policy_version == "test-cal-policy-v1"
+    assert audit.receipt["signature"]
+    assert audit.expires_at > audit.issued_at
+    db.close()
+
+
+def test_existing_idempotent_order_without_cal_audit_cannot_reopen_payment(client, monkeypatch):
+    offer = seed_offer(stock=5)
+    buyer = auth("buyer-cal-legacy")
+    assert client.post(
+        "/cart/items",
+        json={"variant_id": offer["variant_id"], "quantity": 1},
+        headers=buyer,
+    ).status_code == 201
+    configure_stripe(monkeypatch)
+    first = client.post(
+        "/checkout",
+        headers={**buyer, "Idempotency-Key": "legacy-no-cal-audit-key-01"},
+    )
+    assert first.status_code == 201
+    order_id = first.json()["order"]["order_id"]
+    db = TEST_SESSION()
+    db.query(main.CALPurchaseAudit).filter_by(order_id=order_id, action="checkout").delete()
+    db.commit()
+    db.close()
+    retry = client.post(
+        "/checkout",
+        headers={**buyer, "Idempotency-Key": "legacy-no-cal-audit-key-01"},
+    )
+    assert retry.status_code == 409
+    assert retry.json()["detail"]["code"] == "EXISTING_ORDER_CAL_AUTHORIZATION_MISSING"
+
+
+def test_existing_order_retry_rejects_changed_line_quantity_or_price(client, monkeypatch):
+    offer = seed_offer(stock=5, price_minor=800)
+    buyer = auth("buyer-cal-line-change")
+    assert client.post(
+        "/cart/items",
+        json={"variant_id": offer["variant_id"], "quantity": 1},
+        headers=buyer,
+    ).status_code == 201
+    configure_stripe(monkeypatch)
+    first = client.post(
+        "/checkout",
+        headers={**buyer, "Idempotency-Key": "cal-line-change-retry-key-01"},
+    )
+    assert first.status_code == 201
+    order_id = first.json()["order"]["order_id"]
+
+    db = TEST_SESSION()
+    line = db.query(main.OrderItem).filter_by(order_id=order_id).one()
+    line.unit_price_minor += 1
+    db.commit()
+    db.close()
+
+    retry = client.post(
+        "/checkout",
+        headers={**buyer, "Idempotency-Key": "cal-line-change-retry-key-01"},
+    )
+    assert retry.status_code == 409
+    assert retry.json()["detail"]["code"] == "EXISTING_ORDER_CAL_AUTHORIZATION_MISSING"
+
+
+
+
+def test_real_cal_receipt_requester_rejects_modified_signed_offer(client, monkeypatch):
+    from starlette.requests import Request
+
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-token-with-more-than-32-bytes")
+    signing_key = "cal-signing-key-with-more-than-thirty-two-bytes-long"
+    monkeypatch.setenv("CAL_PURCHASE_RECEIPT_HMAC_SECRET", signing_key)
+    item = {
+        "catalog_product_id": str(uuid.uuid4()),
+        "variant_id": str(uuid.uuid4()),
+        "listing_id": str(uuid.uuid4()),
+        "merchant_id": str(uuid.uuid4()),
+        "action": "cart_add",
+        "offer_snapshot_sha256": "a" * 64,
+        "market_country_code": None,
+        "destination_key_sha256": None,
+        "fulfillment_mode": None,
+        "display_currency": None,
+        "quantity": 1,
+        "unit_price_minor": 500,
+        "currency": "KES",
+    }
+    request = Request({
+        "type": "http",
+        "method": "POST",
+        "path": "/cart/items",
+        "headers": [(b"authorization", b"Bearer user-access-token")],
+    })
+
+    class Response:
+        status_code = 200
+        def __init__(self, payload):
+            self.payload = payload
+        def json(self):
+            return self.payload
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            self.payload = None
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def post(self, url, headers, json):
+            issued = main.now()
+            unsigned = {
+                "schema_version": "1",
+                "receipt_id": str(uuid.uuid4()),
+                "request_id": "gateway-request-001",
+                "subject_id": json["user_id"],
+                "candidate_id": item["variant_id"],
+                **json["authorizations"][0],
+                "catalog_version": 5,
+                "decision": "SHOW",
+                "may_display": True,
+                "reason_codes": [],
+                "policy_version": "test-policy-v1",
+                "issued_at": issued.isoformat(),
+                "expires_at": (issued + main.timedelta(seconds=45)).isoformat(),
+            }
+            canonical = json_module_dumps(unsigned)
+            signature = hmac.new(signing_key.encode(), canonical, hashlib.sha256).hexdigest()
+            tampered = {**unsigned, "unit_price_minor": 1}
+            return Response({
+                "subject_id": json["user_id"],
+                "request_id": "gateway-request-001",
+                "receipts": [{**tampered, "signature": signature}],
+            })
+
+    def json_module_dumps(value):
+        return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+
+    monkeypatch.setattr(main.httpx, "Client", FakeClient)
+    with pytest.raises(main.HTTPException) as exc:
+        REAL_CAL_PURCHASE_RECEIPT_REQUESTER(request, "buyer-cal-signature", [item])
+    assert exc.value.status_code == 502
+    assert exc.value.detail["code"] == "CAL_PURCHASE_RECEIPT_BINDING_OR_SIGNATURE_INVALID"
+
+
+def test_real_cal_receipt_requester_fails_closed_without_trusted_gateway_config(client, monkeypatch):
+    from starlette.requests import Request
+
+    monkeypatch.delenv("DECISION_GATEWAY_URL", raising=False)
+    monkeypatch.delenv("DECISION_GATEWAY_TOKEN", raising=False)
+    monkeypatch.delenv("CAL_PURCHASE_RECEIPT_HMAC_SECRET", raising=False)
+    request = Request({
+        "type": "http",
+        "method": "POST",
+        "path": "/cart/items",
+        "headers": [(b"authorization", b"Bearer user-access-token")],
+    })
+    item = {
+        "catalog_product_id": str(uuid.uuid4()),
+        "variant_id": str(uuid.uuid4()),
+        "listing_id": str(uuid.uuid4()),
+        "merchant_id": str(uuid.uuid4()),
+        "action": "cart_add",
+        "offer_snapshot_sha256": "b" * 64,
+        "market_country_code": None,
+        "destination_key_sha256": None,
+        "fulfillment_mode": None,
+        "display_currency": None,
+        "quantity": 1,
+        "unit_price_minor": 10,
+        "currency": "KES",
+    }
+    with pytest.raises(main.HTTPException) as exc:
+        REAL_CAL_PURCHASE_RECEIPT_REQUESTER(request, "buyer-cal-config", [item])
+    assert exc.value.status_code == 503
+    assert exc.value.detail["code"] == "CAL_PURCHASE_GATEWAY_NOT_CONFIGURED_OR_UNTRUSTED"
+
 
 
 def test_inventory_adjustment_is_owner_scoped_and_cannot_cross_reserved_floor(client):

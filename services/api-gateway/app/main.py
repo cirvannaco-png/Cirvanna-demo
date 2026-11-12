@@ -109,6 +109,8 @@ class DecisionRequest(BaseModel):
     negative_preferences: list[NegativePreferenceInput] = Field(default_factory=list, max_length=100)
     cultural_requirements: list[CulturalRequirementInput] = Field(default_factory=list, max_length=60)
     hard_constraints: list[HardConstraintInput] = Field(default_factory=list, max_length=60)
+    # Purchase authorization may use a transient empty style profile without granting profile storage.
+    allow_without_profile_consent: bool = False
 
     @field_validator("user_id")
     @classmethod
@@ -131,6 +133,70 @@ class DecisionRequest(BaseModel):
             raise ValueError("product_ids must be unique")
         return normalized
 
+
+
+class PurchaseAuthorizationItem(BaseModel):
+    """Exact commerce offer snapshot bound to one fresh CAL evaluation."""
+    model_config = ConfigDict(extra="forbid")
+    catalog_product_id: str = Field(min_length=36, max_length=36)
+    variant_id: str = Field(min_length=36, max_length=36)
+    listing_id: str = Field(min_length=36, max_length=36)
+    merchant_id: str = Field(min_length=36, max_length=36)
+    action: Literal["cart_view", "cart_add", "cart_update", "checkout"]
+    offer_snapshot_sha256: str = Field(min_length=64, max_length=64)
+    market_country_code: str | None = Field(default=None, min_length=2, max_length=2)
+    destination_key_sha256: str | None = Field(default=None, min_length=64, max_length=64)
+    fulfillment_mode: Literal["shipping", "courier_delivery", "merchant_delivery", "collection", "local_transport"] | None = None
+    display_currency: str | None = Field(default=None, min_length=3, max_length=3)
+    quantity: int = Field(ge=1, le=50)
+    unit_price_minor: int = Field(ge=0, le=2_000_000_000)
+    currency: str = Field(min_length=3, max_length=3)
+
+    @field_validator("catalog_product_id", "variant_id", "listing_id", "merchant_id")
+    @classmethod
+    def normalize_purchase_uuid(cls, value: str) -> str:
+        return str(uuid.UUID(value))
+
+    @field_validator("offer_snapshot_sha256", "destination_key_sha256")
+    @classmethod
+    def validate_purchase_hash(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise ValueError("purchase snapshot hashes must be lowercase SHA-256 hex")
+        return value
+
+    @field_validator("market_country_code")
+    @classmethod
+    def normalize_market_code(cls, value: str | None) -> str | None:
+        if value is not None:
+            normalized = value.strip().upper()
+            if not re.fullmatch(r"[A-Z]{2}", normalized):
+                raise ValueError("market_country_code must be ISO alpha-2")
+            return normalized
+        return value
+
+    @field_validator("display_currency", "currency")
+    @classmethod
+    def normalize_purchase_currency(cls, value: str | None) -> str | None:
+        if value is not None:
+            normalized = value.strip().upper()
+            if not re.fullmatch(r"[A-Z]{3}", normalized):
+                raise ValueError("currency must be ISO alpha-3")
+            return normalized
+        return value
+
+
+class PurchaseAuthorizationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    user_id: str = Field(min_length=1, max_length=128)
+    authorizations: list[PurchaseAuthorizationItem] = Field(min_length=1, max_length=100)
+
+    @field_validator("user_id")
+    @classmethod
+    def normalize_purchase_subject(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("user_id must not be blank")
+        return normalized
 
 
 class DiscoveryRequest(BaseModel):
@@ -1803,6 +1869,85 @@ app = FastAPI(
 )
 
 
+def _purchase_receipt_signature(unsigned: dict[str, Any], secret: str) -> str:
+    canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    return hmac.new(secret.encode("utf-8"), canonical, hashlib.sha256).hexdigest()
+
+
+@app.post(
+    "/v1/purchase-authorizations",
+    dependencies=[Depends(require_api_token)],
+    tags=["purchase decisions"],
+)
+def authorize_purchase_candidates(
+    payload: PurchaseAuthorizationRequest,
+    end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
+) -> dict[str, Any]:
+    """Sign a short-lived CAL decision bound to the exact Commerce offer snapshot."""
+    subject = _resolve_verified_subject(end_user_authorization)
+    if not hmac.compare_digest(subject, payload.user_id):
+        raise HTTPException(403, detail={"code": "REQUEST_SUBJECT_MISMATCH"})
+    signing_secret = os.getenv("CAL_PURCHASE_RECEIPT_HMAC_SECRET", "").strip()
+    if len(signing_secret.encode("utf-8")) < 32:
+        raise HTTPException(503, detail={"code": "CAL_PURCHASE_RECEIPT_SIGNER_NOT_CONFIGURED"})
+
+    product_ids = sorted({item.catalog_product_id for item in payload.authorizations})
+    decision_request = DecisionRequest(
+        user_id=subject,
+        product_ids=product_ids,
+        allow_without_profile_consent=True,
+    )
+    decisions = evaluate_decisions(decision_request, end_user_authorization)
+    decision_by_product = {item.product_id: item for item in decisions.candidates}
+    issued = datetime.now(timezone.utc)
+    expires = issued + timedelta(seconds=60)
+    receipts: list[dict[str, Any]] = []
+    for item in payload.authorizations:
+        decision = decision_by_product.get(item.catalog_product_id)
+        if decision is None:
+            raise HTTPException(503, detail={"code": "CAL_PURCHASE_DECISION_MISSING"})
+        unsigned = {
+            "schema_version": "1",
+            "receipt_id": str(uuid.uuid4()),
+            "request_id": decisions.request_id,
+            "subject_id": subject,
+            "candidate_id": item.variant_id,
+            "catalog_product_id": item.catalog_product_id,
+            "variant_id": item.variant_id,
+            "listing_id": item.listing_id,
+            "merchant_id": item.merchant_id,
+            "action": item.action,
+            "offer_snapshot_sha256": item.offer_snapshot_sha256,
+            "market_country_code": item.market_country_code,
+            "destination_key_sha256": item.destination_key_sha256,
+            "fulfillment_mode": item.fulfillment_mode,
+            "display_currency": item.display_currency,
+            "quantity": item.quantity,
+            "unit_price_minor": item.unit_price_minor,
+            "currency": item.currency,
+            "catalog_version": decision.catalog_version,
+            "decision": decision.verdict.upper(),
+            "may_display": decision.may_display is True,
+            "reason_codes": [reason.code for reason in decision.reasons],
+            "policy_version": decision.policy_version,
+            "issued_at": issued.isoformat(),
+            "expires_at": expires.isoformat(),
+        }
+        receipts.append({
+            **unsigned,
+            "signature": _purchase_receipt_signature(unsigned, signing_secret),
+        })
+    return {
+        "request_id": decisions.request_id,
+        "subject_id": subject,
+        "issued_at": issued.isoformat(),
+        "expires_at": expires.isoformat(),
+        "receipts": receipts,
+    }
+
+
+
+
 @app.get("/health", tags=["operations"])
 def health() -> dict[str, str]:
     return {"status": "alive", "service": SERVICE_NAME}
@@ -2438,8 +2583,10 @@ def evaluate_decisions(
         verified_subject = _resolve_verified_subject(end_user_authorization)
         if not hmac.compare_digest(verified_subject, payload.user_id):
             raise HTTPException(403, detail={"code": "REQUEST_SUBJECT_MISMATCH"})
-        profile = (_load_verified_usi_profile(verified_subject, allow_without_consent=True)
-                   if payload.use_wardrobe_context else _load_verified_usi_profile(verified_subject))
+        profile = _load_verified_usi_profile(
+            verified_subject,
+            allow_without_consent=(payload.use_wardrobe_context or payload.allow_without_profile_consent),
+        )
     else:
         profile = USIProfile(
             profile_id=f"request-profile:{request_id}",

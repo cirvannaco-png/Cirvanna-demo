@@ -39,7 +39,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 
 
 SERVICE = "cirvanna-commerce-service"
-EXPECTED_SCHEMA_REVISION = "20261110_0009"
+EXPECTED_SCHEMA_REVISION = "20261110_0010"
 MAX_QTY = 50
 RESERVATION_MINUTES = 60
 SKU_RE = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,79}$")
@@ -370,6 +370,49 @@ class OrderItem(Base):
     commission_minor: Mapped[int] = mapped_column(Integer, nullable=False)
     __table_args__ = (CheckConstraint("quantity > 0", name="ck_commerce_order_item_quantity_positive"), CheckConstraint("unit_price_minor >= 0 AND line_total_minor >= 0", name="ck_commerce_order_item_price_nonnegative"))
 
+
+
+
+class CALPurchaseAudit(Base):
+    """Immutable record of a signed candidate/offer/action-bound CAL purchase decision."""
+    __tablename__ = "commerce_cal_purchase_audits"
+    __table_args__ = (
+        Index("ix_commerce_cal_purchase_order", "order_id", "decision", "action"),
+        Index("ix_commerce_cal_purchase_buyer_created", "buyer_user_id", "created_at"),
+        Index("ix_commerce_cal_purchase_candidate_created", "candidate_id", "created_at"),
+        CheckConstraint("decision IN ('SHOW','BLOCK','REVIEW')", name="ck_commerce_cal_purchase_decision"),
+        CheckConstraint("action IN ('cart_view','cart_add','cart_update','checkout')", name="ck_commerce_cal_purchase_action"),
+        CheckConstraint("quantity > 0", name="ck_commerce_cal_purchase_quantity"),
+        CheckConstraint("unit_price_minor >= 0", name="ck_commerce_cal_purchase_price"),
+    )
+    audit_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    order_id: Mapped[str | None] = mapped_column(ForeignKey("commerce_orders.id", ondelete="SET NULL"), nullable=True)
+    cart_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    cart_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    buyer_user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(24), nullable=False)
+    catalog_product_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    candidate_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    variant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    listing_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    merchant_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    offer_snapshot_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    market_country_code: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    destination_key_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    fulfillment_mode: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    display_currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    quantity: Mapped[int] = mapped_column(Integer, nullable=False)
+    unit_price_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    catalog_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    request_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    decision: Mapped[str] = mapped_column(String(16), nullable=False)
+    reason_code: Mapped[str | None] = mapped_column(String(180), nullable=True)
+    receipt: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
 
 
 
@@ -1140,6 +1183,9 @@ class Readiness(BaseModel):
     authentication_mode: str
     catalog_configured: bool
     payment_configured: bool
+    cal_purchase_gateway_configured: bool
+    cal_purchase_receipt_signer_configured: bool
+    cal_gateway_ready: bool
     migrations_required: bool
     migrations_applied: bool
     schema_revision: str | None
@@ -1328,11 +1374,365 @@ def ensure_cart(db: Session, user_id: str) -> Cart:
     return cart
 
 
-def variant_triplet(db: Session, variant_id: str):
-    return db.execute(select(Variant, Listing, Merchant)
+def variant_triplet(db: Session, variant_id: str, *, for_update: bool = False):
+    stmt = (select(Variant, Listing, Merchant)
         .join(Listing, Variant.listing_id == Listing.id)
         .join(Merchant, Listing.merchant_id == Merchant.id)
-        .where(Variant.id == variant_id)).first()
+        .where(Variant.id == variant_id)
+        .execution_options(populate_existing=True))
+    if for_update:
+        stmt = stmt.with_for_update()
+    return db.execute(stmt).first()
+
+
+def _cal_gateway_settings() -> tuple[str, str, str]:
+    base = os.getenv("DECISION_GATEWAY_URL", "").strip().rstrip("/")
+    token = os.getenv("DECISION_GATEWAY_TOKEN", "").strip()
+    signing_key = os.getenv("CAL_PURCHASE_RECEIPT_HMAC_SECRET", "").strip()
+    parsed = urlsplit(base)
+    host = (parsed.hostname or "").lower()
+    local = host in {"localhost", "127.0.0.1", "::1"}
+    if (
+        not host or parsed.username or parsed.password or parsed.query or parsed.fragment
+        or (parsed.scheme != "https" and not (parsed.scheme == "http" and local))
+        or len(token.encode("utf-8")) < 32
+        or len(signing_key.encode("utf-8")) < 32
+    ):
+        raise HTTPException(503, detail={"code": "CAL_PURCHASE_GATEWAY_NOT_CONFIGURED_OR_UNTRUSTED"})
+    return base, token, signing_key
+
+
+def _cal_gateway_probe(base: str, token: str) -> bool:
+    try:
+        with httpx.Client(
+            timeout=httpx.Timeout(3.0, connect=1.5),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            response = client.get(
+                base + "/ready",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+            )
+        if response.status_code != 200:
+            return False
+        body = response.json()
+        return isinstance(body, dict) and body.get("ready") is True
+    except (httpx.HTTPError, ValueError):
+        return False
+
+
+def _sha256_json(value: dict[str, Any]) -> str:
+    encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True, default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _quote_receipt_snapshot(cost: dict[str, Any] | None) -> dict[str, Any] | None:
+    if cost is None:
+        return None
+    def quote_fields(quote: Any, names: tuple[str, ...]) -> dict[str, Any] | None:
+        if quote is None:
+            return None
+        return {name: getattr(quote, name, None).isoformat()
+                if isinstance(getattr(quote, name, None), datetime)
+                else getattr(quote, name, None) for name in names}
+    return {
+        "item_display_minor": cost.get("item_display_minor"),
+        "item_fx": cost.get("item_fx"),
+        "fulfillment_display_minor": cost.get("fulfillment_display_minor"),
+        "fulfillment_fx": cost.get("fulfillment_fx"),
+        "fulfillment": quote_fields(cost.get("fulfillment"), (
+            "id", "charge_basis", "provider", "provider_quote_id", "amount_minor",
+            "currency", "observed_at", "expires_at", "status",
+        )),
+        "payable_tax_minor": cost.get("payable_tax_minor"),
+        "tax": quote_fields(cost.get("tax"), (
+            "id", "provider", "provider_quote_id", "amount_minor", "currency",
+            "basis", "authoritative", "jurisdiction", "tax_category", "rule_version",
+            "observed_at", "expires_at", "status",
+        )),
+        "tax_fx": cost.get("tax_fx"),
+        "payment_capability": quote_fields(cost.get("payment"), (
+            "provider", "provider_reference", "observed_at", "expires_at",
+        )),
+    }
+
+
+def _purchase_authorization_item(
+    row: tuple[CartItem | None, Variant, Listing, Merchant],
+    *,
+    action: str,
+    quantity: int,
+    market_context: CheckoutRequest | None = None,
+    cost: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    _, variant, listing, merchant = row
+    destination_hash = (
+        hashlib.sha256(market_context.destination_key.encode("utf-8")).hexdigest()
+        if market_context is not None and market_context.destination_key else None
+    )
+    market_country = market_context.destination_country_code if market_context else None
+    fulfillment_mode = market_context.fulfillment_mode if market_context else None
+    display_currency = market_context.display_currency if market_context else None
+    unit_price = cost["item_display_minor"] if cost is not None else variant.price_minor
+    currency = (market_context.display_currency or variant.currency).upper() if market_context else variant.currency.upper()
+    snapshot = {
+        "schema_version": 1,
+        "action": action,
+        "catalog_product_id": listing.catalog_product_id,
+        "variant_id": variant.id,
+        "listing_id": listing.id,
+        "merchant_id": merchant.id,
+        "variant_version": variant.version,
+        "variant_state": variant.state,
+        "listing_state": listing.state,
+        "merchant_state": merchant.state,
+        "sku": variant.sku,
+        "options": variant.options,
+        "source_price_minor": variant.price_minor,
+        "source_currency": variant.currency,
+        "authorized_unit_price_minor": unit_price,
+        "authorized_currency": currency,
+        "quantity": quantity,
+        "available_stock": max(0, variant.on_hand - variant.reserved_qty),
+        "market_country_code": market_country,
+        "destination_key_sha256": destination_hash,
+        "fulfillment_mode": fulfillment_mode,
+        "display_currency": display_currency,
+        "market_cost_quotes": _quote_receipt_snapshot(cost),
+    }
+    return {
+        "catalog_product_id": listing.catalog_product_id,
+        "variant_id": variant.id,
+        "listing_id": listing.id,
+        "merchant_id": merchant.id,
+        "action": action,
+        "offer_snapshot_sha256": _sha256_json(snapshot),
+        "market_country_code": market_country,
+        "destination_key_sha256": destination_hash,
+        "fulfillment_mode": fulfillment_mode,
+        "display_currency": display_currency,
+        "quantity": quantity,
+        "unit_price_minor": unit_price,
+        "currency": currency,
+    }
+
+
+def _request_cal_purchase_receipts(
+    request: Request,
+    subject_id: str,
+    authorizations: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not authorizations:
+        return []
+    base, service_token, signing_key = _cal_gateway_settings()
+    scheme, _, user_token = request.headers.get("authorization", "").partition(" ")
+    if scheme.lower() != "bearer" or not user_token.strip():
+        raise HTTPException(401, detail={"code": "USER_BEARER_REQUIRED"})
+    receipts: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
+    product_ids: set[str] = set()
+
+    def send_batch(batch: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        try:
+            with httpx.Client(
+                timeout=httpx.Timeout(8.0, connect=2.0),
+                trust_env=False,
+                follow_redirects=False,
+            ) as client:
+                response = client.post(
+                    base + "/v1/purchase-authorizations",
+                    headers={
+                        "Authorization": "Bearer " + service_token,
+                        "X-End-User-Authorization": "Bearer " + user_token.strip(),
+                        "Accept": "application/json",
+                    },
+                    json={"user_id": subject_id, "authorizations": batch},
+                )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(503, detail={"code": "CAL_PURCHASE_AUTHORIZATION_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "CAL_PURCHASE_AUTHORIZATION_UNAVAILABLE"}) from exc
+        if response.status_code != 200:
+            raise HTTPException(503, detail={"code": "CAL_PURCHASE_AUTHORIZATION_UNAVAILABLE", "upstream_status": response.status_code})
+        try:
+            result = response.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "CAL_PURCHASE_AUTHORIZATION_RESPONSE_INVALID"}) from exc
+        batch_receipts = result.get("receipts") if isinstance(result, dict) else None
+        request_id = result.get("request_id") if isinstance(result, dict) else None
+        if (
+            not isinstance(result, dict)
+            or result.get("subject_id") != subject_id
+            or not isinstance(request_id, str) or not request_id.strip()
+            or not isinstance(batch_receipts, list)
+            or len(batch_receipts) != len(batch)
+        ):
+            raise HTTPException(502, detail={"code": "CAL_PURCHASE_AUTHORIZATION_RESPONSE_INVALID"})
+        expected_by_key = {
+            (item["catalog_product_id"], item["variant_id"], item["listing_id"], item["merchant_id"], item["action"]): item
+            for item in batch
+        }
+        verified: list[dict[str, Any]] = []
+        for receipt in batch_receipts:
+            if not isinstance(receipt, dict):
+                raise HTTPException(502, detail={"code": "CAL_PURCHASE_RECEIPT_INVALID"})
+            key = (
+                receipt.get("catalog_product_id"), receipt.get("variant_id"),
+                receipt.get("listing_id"), receipt.get("merchant_id"), receipt.get("action"),
+            )
+            expected = expected_by_key.get(key)
+            signature = receipt.get("signature")
+            unsigned = {k: v for k, v in receipt.items() if k != "signature"}
+            canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+            expected_signature = hmac.new(signing_key.encode("utf-8"), canonical, hashlib.sha256).hexdigest()
+            if (
+                expected is None
+                or not isinstance(signature, str)
+                or not hmac.compare_digest(signature.lower(), expected_signature)
+                or receipt.get("subject_id") != subject_id
+                or receipt.get("request_id") != request_id
+                or receipt.get("candidate_id") != expected["variant_id"]
+                or any(receipt.get(field) != value for field, value in expected.items())
+                or receipt.get("decision") not in {"SHOW", "BLOCK", "REVIEW"}
+                or not isinstance(receipt.get("may_display"), bool)
+                or not isinstance(receipt.get("catalog_version"), int)
+                or isinstance(receipt.get("catalog_version"), bool)
+                or not isinstance(receipt.get("policy_version"), str)
+                or not receipt.get("policy_version", "").strip()
+            ):
+                raise HTTPException(502, detail={"code": "CAL_PURCHASE_RECEIPT_BINDING_OR_SIGNATURE_INVALID"})
+            try:
+                issued_at = datetime.fromisoformat(receipt["issued_at"].replace("Z", "+00:00"))
+                expires_at = datetime.fromisoformat(receipt["expires_at"].replace("Z", "+00:00"))
+                issued_at = _aware_utc(issued_at)
+                expires_at = _aware_utc(expires_at)
+            except (KeyError, TypeError, ValueError, AttributeError) as exc:
+                raise HTTPException(502, detail={"code": "CAL_PURCHASE_RECEIPT_EXPIRY_INVALID"}) from exc
+            current = now()
+            if (
+                issued_at > current + timedelta(seconds=5)
+                or expires_at <= current
+                or expires_at <= issued_at
+                or expires_at - issued_at > timedelta(seconds=65)
+            ):
+                raise HTTPException(409, detail={"code": "CAL_PURCHASE_RECEIPT_EXPIRED_OR_INVALID"})
+            verified.append(receipt)
+        return verified
+
+    # The deterministic Decision API accepts at most 25 unique Catalog products.
+    for item in authorizations:
+        product_id = item["catalog_product_id"]
+        if pending and product_id not in product_ids and len(product_ids) >= 25:
+            receipts.extend(send_batch(pending))
+            pending, product_ids = [], set()
+        pending.append(item)
+        product_ids.add(product_id)
+    if pending:
+        receipts.extend(send_batch(pending))
+    return receipts
+
+
+def _cal_audit_from_receipt(
+    receipt: dict[str, Any],
+    *,
+    order_id: str | None = None,
+    cart_id: str | None = None,
+    cart_version: int | None = None,
+) -> CALPurchaseAudit:
+    reasons = receipt.get("reason_codes")
+    reason_code = None
+    if isinstance(reasons, list):
+        reason_code = next((str(item)[:180] for item in reasons if isinstance(item, str) and item), None)
+    if reason_code is None and receipt.get("decision") != "SHOW":
+        reason_code = "CAL_" + str(receipt.get("decision", "REVIEW"))
+    issued = _aware_utc(datetime.fromisoformat(receipt["issued_at"].replace("Z", "+00:00")))
+    expires = _aware_utc(datetime.fromisoformat(receipt["expires_at"].replace("Z", "+00:00")))
+    return CALPurchaseAudit(
+        audit_id=str(uuid.uuid4()),
+        order_id=order_id,
+        cart_id=cart_id,
+        cart_version=cart_version,
+        buyer_user_id=receipt["subject_id"],
+        action=receipt["action"],
+        catalog_product_id=receipt["catalog_product_id"],
+        candidate_id=receipt["candidate_id"],
+        variant_id=receipt["variant_id"],
+        listing_id=receipt["listing_id"],
+        merchant_id=receipt["merchant_id"],
+        offer_snapshot_sha256=receipt["offer_snapshot_sha256"],
+        market_country_code=receipt.get("market_country_code"),
+        destination_key_sha256=receipt.get("destination_key_sha256"),
+        fulfillment_mode=receipt.get("fulfillment_mode"),
+        display_currency=receipt.get("display_currency"),
+        quantity=receipt["quantity"],
+        unit_price_minor=receipt["unit_price_minor"],
+        currency=receipt["currency"],
+        catalog_version=receipt["catalog_version"],
+        request_id=receipt["request_id"],
+        policy_version=receipt["policy_version"],
+        decision=receipt["decision"],
+        reason_code=reason_code,
+        receipt=receipt,
+        issued_at=issued,
+        expires_at=expires,
+        created_at=now(),
+    )
+
+
+def _authorize_cart_rows(
+    request: Request,
+    db: Session,
+    subject_id: str,
+    cart: Cart,
+    rows: list[tuple[CartItem, Variant, Listing, Merchant]],
+    action: str,
+) -> list[CALPurchaseAudit]:
+    cart_version = cart.version
+    inputs = [
+        _purchase_authorization_item(row, action=action, quantity=row[0].quantity)
+        for row in rows
+    ]
+    receipts = _request_cal_purchase_receipts(request, subject_id, inputs)
+    audits = [
+        _cal_audit_from_receipt(receipt, cart_id=cart.id, cart_version=cart_version)
+        for receipt in receipts
+    ]
+    db.add_all(audits)
+    db.commit()
+    if any(item.decision != "SHOW" or item.receipt.get("may_display") is not True for item in audits):
+        raise HTTPException(409, detail={"code": "CAL_CART_REAUTHORIZATION_DENIED"})
+    # No product data is returned from a snapshot that changed while the
+    # external Decision Gateway was evaluating it.
+    locked_cart = db.scalar(
+        select(Cart).where(Cart.id == cart.id).with_for_update().execution_options(populate_existing=True)
+    )
+    fresh_rows = db.execute(
+        select(CartItem, Variant, Listing, Merchant)
+        .join(Variant, CartItem.variant_id == Variant.id)
+        .join(Listing, Variant.listing_id == Listing.id)
+        .join(Merchant, Listing.merchant_id == Merchant.id)
+        .where(CartItem.cart_id == cart.id)
+        .order_by(CartItem.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).all()
+    expected = {item["variant_id"]: item["offer_snapshot_sha256"] for item in inputs}
+    actual = {
+        row[1].id: _purchase_authorization_item(row, action=action, quantity=row[0].quantity)["offer_snapshot_sha256"]
+        for row in fresh_rows
+    }
+    if (
+        locked_cart is None
+        or locked_cart.version != cart_version
+        or set(expected) != set(actual)
+        or any(expected[key] != actual[key] for key in expected)
+    ):
+        for audit in audits:
+            audit.reason_code = "OFFER_CHANGED_AFTER_CAL"
+        db.add_all(audits)
+        db.commit()
+        raise HTTPException(409, detail={"code": "CAL_CART_OFFER_CHANGED_REAUTHORIZE"})
+    return audits
 
 
 def cart_json(db: Session, cart: Cart) -> dict[str, Any]:
@@ -1567,6 +1967,15 @@ def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
     auth_ok = _authentication_configured()
     catalog_ok = bool(os.getenv("CATALOG_API_URL") and os.getenv("CATALOG_API_TOKEN"))
     payment_ok = StripeGateway().ready
+    try:
+        cal_base, cal_token, cal_signing_key = _cal_gateway_settings()
+        cal_gateway_configured = True
+        cal_signer_configured = len(cal_signing_key.encode("utf-8")) >= 32
+        cal_gateway_ready = _cal_gateway_probe(cal_base, cal_token)
+    except HTTPException:
+        cal_gateway_configured = False
+        cal_signer_configured = False
+        cal_gateway_ready = False
     migrations_applied = schema_revision == EXPECTED_SCHEMA_REVISION
     ready = (
         connected
@@ -1574,12 +1983,18 @@ def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
         and auth_ok
         and catalog_ok
         and payment_ok
+        and cal_gateway_configured
+        and cal_signer_configured
+        and cal_gateway_ready
         and (not migrations_required or migrations_applied)
     )
     result = Readiness(status="ready" if ready else "not_ready", service=SERVICE,
         database_connected=connected, schema_present=schema_present,
         authentication_configured=auth_ok, authentication_mode=_commerce_auth_mode(),
-        catalog_configured=catalog_ok, payment_configured=payment_ok, migrations_required=migrations_required,
+        catalog_configured=catalog_ok, payment_configured=payment_ok,
+        cal_purchase_gateway_configured=cal_gateway_configured,
+        cal_purchase_receipt_signer_configured=cal_signer_configured,
+        cal_gateway_ready=cal_gateway_ready, migrations_required=migrations_required,
         migrations_applied=migrations_applied, schema_revision=schema_revision, ready=ready)
     if not ready:
         raise HTTPException(503, detail=result.model_dump())
@@ -1597,7 +2012,7 @@ def capabilities() -> dict[str, Any]:
         "multimarket_onboarding": True, "localized_offer_pricing": True,
         "provider_quote_ingestion": bool(os.getenv("COMMERCE_MARKET_CONTEXT_TOKEN")),
         "landed_cost_comparison": True, "checkout_landed_cost_revalidation": False,
-        "catacaci_eligibility": False, "click_it_reconstruction": False,
+        "catacaci_eligibility": False, "candidate_bound_purchase_authorization_configured": bool(os.getenv("DECISION_GATEWAY_URL") and os.getenv("DECISION_GATEWAY_TOKEN") and os.getenv("CAL_PURCHASE_RECEIPT_HMAC_SECRET")), "click_it_reconstruction": False,
         "virtual_twin_generation": False, "virtual_try_on": False}
 
 
@@ -2519,12 +2934,32 @@ def delete_saved_product(catalog_product_id: uuid.UUID, actor: Annotated[Actor, 
 
 
 @app.get("/cart")
-def get_cart(actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Session, Depends(get_db)]):
-    return cart_json(db, ensure_cart(db, actor.user_id))
+def get_cart(
+    request: Request,
+    actor: Annotated[Actor, Depends(require_actor)],
+    db: Annotated[Session, Depends(get_db)],
+):
+    cart = ensure_cart(db, actor.user_id)
+    rows = db.execute(
+        select(CartItem, Variant, Listing, Merchant)
+        .join(Variant, CartItem.variant_id == Variant.id)
+        .join(Listing, Variant.listing_id == Listing.id)
+        .join(Merchant, Listing.merchant_id == Merchant.id)
+        .where(CartItem.cart_id == cart.id)
+        .order_by(CartItem.id)
+    ).all()
+    if rows:
+        _authorize_cart_rows(request, db, actor.user_id, cart, rows, "cart_view")
+    return cart_json(db, cart)
 
 
 @app.post("/cart/items", status_code=201)
-def add_cart_item(payload: CartItemIn, actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Session, Depends(get_db)]):
+def add_cart_item(
+    payload: CartItemIn,
+    request: Request,
+    actor: Annotated[Actor, Depends(require_actor)],
+    db: Annotated[Session, Depends(get_db)],
+):
     joined = variant_triplet(db, payload.variant_id)
     if not joined:
         raise HTTPException(404, detail={"code": "VARIANT_NOT_FOUND"})
@@ -2532,37 +2967,143 @@ def add_cart_item(payload: CartItemIn, actor: Annotated[Actor, Depends(require_a
     if variant.state != "active" or listing.state != "active" or merchant.state != "approved":
         raise HTTPException(409, detail={"code": "OFFER_UNAVAILABLE"})
     cart = ensure_cart(db, actor.user_id)
+    cart_version = cart.version
     item = db.scalar(select(CartItem).where(CartItem.cart_id == cart.id, CartItem.variant_id == variant.id))
     quantity = payload.quantity + (item.quantity if item else 0)
     if quantity > MAX_QTY:
         raise HTTPException(422, detail={"code": "CART_QUANTITY_LIMIT", "maximum": MAX_QTY})
     if variant.on_hand - variant.reserved_qty < quantity:
         raise HTTPException(409, detail={"code": "INSUFFICIENT_AVAILABLE_STOCK", "available_stock": variant.on_hand - variant.reserved_qty})
-    if item:
-        item.quantity = quantity
+    authorization = _purchase_authorization_item((item, variant, listing, merchant), action="cart_add", quantity=quantity)
+    receipts = _request_cal_purchase_receipts(request, actor.user_id, [authorization])
+    audit = _cal_audit_from_receipt(receipts[0], cart_id=cart.id, cart_version=cart_version)
+    if audit.decision != "SHOW" or receipts[0].get("may_display") is not True:
+        db.add(audit)
+        db.commit()
+        raise HTTPException(409, detail={"code": "CAL_CART_ADD_DENIED"})
+
+    locked_cart = db.scalar(
+        select(Cart).where(Cart.id == cart.id).with_for_update().execution_options(populate_existing=True)
+    )
+    current_item = db.scalar(
+        select(CartItem).where(CartItem.cart_id == cart.id, CartItem.variant_id == variant.id)
+        .with_for_update().execution_options(populate_existing=True)
+    )
+    current_offer = variant_triplet(db, variant.id, for_update=True)
+    if locked_cart is None or current_offer is None:
+        audit.reason_code = "OFFER_REMOVED_AFTER_CAL"
+        db.add(audit)
+        db.commit()
+        raise HTTPException(409, detail={"code": "CAL_CART_OFFER_CHANGED_REAUTHORIZE"})
+    current_variant, current_listing, current_merchant = current_offer
+    current_quantity = payload.quantity + (current_item.quantity if current_item else 0)
+    current_auth = _purchase_authorization_item(
+        (current_item, current_variant, current_listing, current_merchant),
+        action="cart_add",
+        quantity=current_quantity,
+    )
+    if (
+        locked_cart.version != cart_version
+        or current_quantity != quantity
+        or current_auth["offer_snapshot_sha256"] != authorization["offer_snapshot_sha256"]
+    ):
+        audit.reason_code = "OFFER_CHANGED_AFTER_CAL"
+        db.add(audit)
+        db.commit()
+        raise HTTPException(409, detail={"code": "CAL_CART_OFFER_CHANGED_REAUTHORIZE"})
+    if (
+        current_variant.state != "active" or current_listing.state != "active"
+        or current_merchant.state != "approved"
+        or current_quantity > MAX_QTY
+        or current_variant.on_hand - current_variant.reserved_qty < current_quantity
+    ):
+        audit.reason_code = "OFFER_OR_STOCK_UNAVAILABLE_AFTER_CAL"
+        db.add(audit)
+        db.commit()
+        raise HTTPException(409, detail={"code": "OFFER_OR_STOCK_CHANGED_AFTER_CAL"})
+    db.add(audit)
+    if current_item:
+        current_item.quantity = current_quantity
     else:
-        db.add(CartItem(id=str(uuid.uuid4()), cart_id=cart.id, variant_id=variant.id, quantity=quantity))
-    cart.version, cart.updated_at = cart.version + 1, now()
+        db.add(CartItem(id=str(uuid.uuid4()), cart_id=locked_cart.id, variant_id=current_variant.id, quantity=current_quantity))
+    locked_cart.version, locked_cart.updated_at = locked_cart.version + 1, now()
     try:
         db.commit()
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(409, detail={"code": "CART_CONFLICT_RETRY"}) from exc
-    return cart_json(db, ensure_cart(db, actor.user_id))
+    item_count = db.scalar(
+        select(func.coalesce(func.sum(CartItem.quantity), 0)).where(CartItem.cart_id == locked_cart.id)
+    ) or 0
+    return {"cart_id": locked_cart.id, "version": locked_cart.version, "item_count": item_count,
+            "updated": True, "cart_refresh_required": True}
 
 
 @app.patch("/cart/items/{variant_id}")
-def update_cart_item(variant_id: uuid.UUID, payload: QuantityIn, actor: Annotated[Actor, Depends(require_actor)], db: Annotated[Session, Depends(get_db)]):
+def update_cart_item(
+    variant_id: uuid.UUID,
+    payload: QuantityIn,
+    request: Request,
+    actor: Annotated[Actor, Depends(require_actor)],
+    db: Annotated[Session, Depends(get_db)],
+):
     cart = ensure_cart(db, actor.user_id)
+    cart_version = cart.version
     item = db.scalar(select(CartItem).where(CartItem.cart_id == cart.id, CartItem.variant_id == str(variant_id)))
     if not item:
         raise HTTPException(404, detail={"code": "CART_ITEM_NOT_FOUND"})
-    variant = db.get(Variant, item.variant_id)
-    if not variant or variant.state != "active" or variant.on_hand - variant.reserved_qty < payload.quantity:
+    joined = variant_triplet(db, item.variant_id)
+    if not joined:
+        raise HTTPException(409, detail={"code": "CART_OFFER_UNAVAILABLE"})
+    variant, listing, merchant = joined
+    if variant.state != "active" or listing.state != "active" or merchant.state != "approved" or variant.on_hand - variant.reserved_qty < payload.quantity:
         raise HTTPException(409, detail={"code": "INSUFFICIENT_AVAILABLE_STOCK"})
-    item.quantity, cart.version, cart.updated_at = payload.quantity, cart.version + 1, now()
+    authorization = _purchase_authorization_item((item, variant, listing, merchant), action="cart_update", quantity=payload.quantity)
+    receipts = _request_cal_purchase_receipts(request, actor.user_id, [authorization])
+    audit = _cal_audit_from_receipt(receipts[0], cart_id=cart.id, cart_version=cart_version)
+    if audit.decision != "SHOW" or receipts[0].get("may_display") is not True:
+        db.add(audit)
+        db.commit()
+        raise HTTPException(409, detail={"code": "CAL_CART_UPDATE_DENIED"})
+
+    locked_cart = db.scalar(
+        select(Cart).where(Cart.id == cart.id).with_for_update().execution_options(populate_existing=True)
+    )
+    current_item = db.scalar(
+        select(CartItem).where(CartItem.cart_id == cart.id, CartItem.variant_id == str(variant_id))
+        .with_for_update().execution_options(populate_existing=True)
+    )
+    current_offer = variant_triplet(db, str(variant_id), for_update=True)
+    if locked_cart is None or current_item is None or current_offer is None:
+        audit.reason_code = "CART_LINE_REMOVED_AFTER_CAL"
+        db.add(audit)
+        db.commit()
+        raise HTTPException(409, detail={"code": "CAL_CART_OFFER_CHANGED_REAUTHORIZE"})
+    current_variant, current_listing, current_merchant = current_offer
+    current_auth = _purchase_authorization_item(
+        (current_item, current_variant, current_listing, current_merchant),
+        action="cart_update",
+        quantity=payload.quantity,
+    )
+    if locked_cart.version != cart_version or current_auth["offer_snapshot_sha256"] != authorization["offer_snapshot_sha256"]:
+        audit.reason_code = "OFFER_CHANGED_AFTER_CAL"
+        db.add(audit)
+        db.commit()
+        raise HTTPException(409, detail={"code": "CAL_CART_OFFER_CHANGED_REAUTHORIZE"})
+    if (
+        current_variant.state != "active" or current_listing.state != "active"
+        or current_merchant.state != "approved"
+        or current_variant.on_hand - current_variant.reserved_qty < payload.quantity
+    ):
+        audit.reason_code = "OFFER_OR_STOCK_UNAVAILABLE_AFTER_CAL"
+        db.add(audit)
+        db.commit()
+        raise HTTPException(409, detail={"code": "OFFER_OR_STOCK_CHANGED_AFTER_CAL"})
+    db.add(audit)
+    current_item.quantity, locked_cart.version, locked_cart.updated_at = payload.quantity, locked_cart.version + 1, now()
     db.commit()
-    return cart_json(db, cart)
+    return {"cart_id": locked_cart.id, "version": locked_cart.version, "quantity": current_item.quantity,
+            "updated": True, "cart_refresh_required": True}
 
 
 @app.delete("/cart/items/{variant_id}")
@@ -2571,7 +3112,7 @@ def remove_cart_item(variant_id: uuid.UUID, actor: Annotated[Actor, Depends(requ
     db.query(CartItem).filter(CartItem.cart_id == cart.id, CartItem.variant_id == str(variant_id)).delete(synchronize_session=False)
     cart.version, cart.updated_at = cart.version + 1, now()
     db.commit()
-    return cart_json(db, cart)
+    return {"cart_id": cart.id, "version": cart.version, "removed_variant_id": str(variant_id), "cart_refresh_required": True}
 
 
 def _verify_checkout_personalization_consent(subject_id: str, consent_id: str | None, consent_version: str | None) -> str | None:
@@ -2704,6 +3245,7 @@ def _resolve_market_checkout_line(
 
 @app.post("/checkout", status_code=201)
 def checkout(
+    request: Request,
     actor: Annotated[Actor, Depends(require_actor)],
     db: Annotated[Session, Depends(get_db)],
     idempotency_key: Annotated[str, Header(alias="Idempotency-Key", min_length=8, max_length=255)],
@@ -2738,12 +3280,41 @@ def checkout(
             raise HTTPException(409, detail={"code": "IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PERSONALIZATION_CONSENT"})
         if existing.checkout_context_hash != context_hash:
             raise HTTPException(409, detail={"code": "IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_CHECKOUT_CONTEXT"})
+        existing_items = list(db.scalars(select(OrderItem).where(OrderItem.order_id == existing.id)).all())
+        existing_authorizations = list(db.scalars(select(CALPurchaseAudit).where(
+            CALPurchaseAudit.order_id == existing.id,
+            CALPurchaseAudit.action == "checkout",
+            CALPurchaseAudit.decision == "SHOW",
+        )).all())
+        authorized_lines = {
+            (item.catalog_product_id, item.variant_id, item.merchant_id): item
+            for item in existing_authorizations
+        }
+        expected_lines = {
+            (item.catalog_product_id, item.variant_id, item.merchant_id): item
+            for item in existing_items
+        }
+        authorization_matches_snapshot = (
+            bool(existing_items)
+            and authorized_lines.keys() == expected_lines.keys()
+            and len(existing_authorizations) == len(existing_items)
+            and all(
+                authorized_lines[key].quantity == order_item.quantity
+                and authorized_lines[key].unit_price_minor == order_item.unit_price_minor
+                and authorized_lines[key].currency == existing.currency
+                for key, order_item in expected_lines.items()
+            )
+        )
+        if not authorization_matches_snapshot:
+            raise HTTPException(409, detail={"code": "EXISTING_ORDER_CAL_AUTHORIZATION_MISSING"})
         return persist_stripe_session(db, existing.id, actor.email, gateway)
 
     cart = ensure_cart(db, actor.user_id)
+    cart_version_snapshot = cart.version
     rows = db.execute(select(CartItem, Variant, Listing, Merchant)
         .join(Variant, CartItem.variant_id == Variant.id).join(Listing, Variant.listing_id == Listing.id)
-        .join(Merchant, Listing.merchant_id == Merchant.id).where(CartItem.cart_id == cart.id).with_for_update()).all()
+        .join(Merchant, Listing.merchant_id == Merchant.id).where(CartItem.cart_id == cart.id)
+        .order_by(CartItem.id).execution_options(populate_existing=True)).all()
     if not rows:
         raise HTTPException(409, detail={"code": "EMPTY_CART"})
     if len(rows) > 100 or any(ci.quantity < 1 or ci.quantity > MAX_QTY for ci, *_ in rows):
@@ -2858,6 +3429,93 @@ def checkout(
         expiry = min(_aware_utc(value) for value in quote_expiries)
         if expiry <= now():
             raise HTTPException(409, detail={"code": "MARKET_QUOTE_EXPIRED_BEFORE_CHECKOUT"})
+    purchase_authorization_inputs = [
+        _purchase_authorization_item(
+            (cart_item, variant, listing, merchant),
+            action="checkout",
+            quantity=cart_item.quantity,
+            market_context=market_context,
+            cost=market_costs.get(variant.id),
+        )
+        for cart_item, variant, listing, merchant in rows
+    ]
+    # Release the read transaction before the external CAL round trip. The
+    # service re-locks and revalidates the exact offer snapshots afterwards.
+    db.commit()
+    purchase_receipts = _request_cal_purchase_receipts(request, actor.user_id, purchase_authorization_inputs)
+    purchase_audits = [
+        _cal_audit_from_receipt(
+            receipt,
+            cart_id=cart.id,
+            cart_version=cart_version_snapshot,
+        )
+        for receipt in purchase_receipts
+    ]
+    if any(audit.decision != "SHOW" or receipt.get("may_display") is not True
+           for audit, receipt in zip(purchase_audits, purchase_receipts)):
+        db.add_all(purchase_audits)
+        db.commit()
+        raise HTTPException(409, detail={"code": "CAL_CHECKOUT_AUTHORIZATION_DENIED"})
+
+    locked_cart = db.scalar(
+        select(Cart).where(Cart.id == cart.id).with_for_update().execution_options(populate_existing=True)
+    )
+    locked_rows = db.execute(
+        select(CartItem, Variant, Listing, Merchant)
+        .join(Variant, CartItem.variant_id == Variant.id)
+        .join(Listing, Variant.listing_id == Listing.id)
+        .join(Merchant, Listing.merchant_id == Merchant.id)
+        .where(CartItem.cart_id == cart.id)
+        .order_by(CartItem.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).all()
+    if locked_cart is None or locked_cart.version != cart_version_snapshot or len(locked_rows) != len(rows):
+        for audit in purchase_audits:
+            audit.reason_code = "CART_CHANGED_AFTER_CAL"
+        db.add_all(purchase_audits)
+        db.commit()
+        raise HTTPException(409, detail={"code": "CAL_CHECKOUT_OFFER_CHANGED_REAUTHORIZE"})
+
+    locked_market_costs: dict[str, dict[str, Any]] = {}
+    try:
+        if market_context is not None:
+            for _, variant, listing, merchant in locked_rows:
+                locked_market_costs[variant.id] = _resolve_market_checkout_line(
+                    db, variant, listing, merchant, market_context, gateway,
+                )
+    except HTTPException:
+        for audit in purchase_audits:
+            audit.reason_code = "MARKET_QUOTE_CHANGED_AFTER_CAL"
+        db.add_all(purchase_audits)
+        db.commit()
+        raise
+
+    expected_hashes = {item["variant_id"]: item["offer_snapshot_sha256"] for item in purchase_authorization_inputs}
+    current_hashes = {
+        variant.id: _purchase_authorization_item(
+            (cart_item, variant, listing, merchant),
+            action="checkout",
+            quantity=cart_item.quantity,
+            market_context=market_context,
+            cost=locked_market_costs.get(variant.id),
+        )["offer_snapshot_sha256"]
+        for cart_item, variant, listing, merchant in locked_rows
+    }
+    if (
+        set(expected_hashes) != set(current_hashes)
+        or any(expected_hashes[key] != current_hashes[key] for key in expected_hashes)
+        or any(audit.expires_at <= now() for audit in purchase_audits)
+    ):
+        for audit in purchase_audits:
+            audit.reason_code = "OFFER_OR_RECEIPT_CHANGED_AFTER_CAL"
+        db.add_all(purchase_audits)
+        db.commit()
+        raise HTTPException(409, detail={"code": "CAL_CHECKOUT_OFFER_CHANGED_REAUTHORIZE"})
+
+    rows = locked_rows
+    market_costs = locked_market_costs
+
     order = CommerceOrder(
         id=str(uuid.uuid4()), order_number=f"CV-{now():%Y%m%d}-{uuid.uuid4().hex[:10].upper()}",
         buyer_user_id=actor.user_id, state="pending_payment", payment_state="pending", currency=currency,
@@ -2935,6 +3593,11 @@ def checkout(
                 delta=0, reason=f"reserve:{order.order_number}:qty={ci.quantity}"))
         db.add(order)
         db.flush()
+        for audit in purchase_audits:
+            audit.order_id = order.id
+            audit.cart_id = cart.id
+            audit.cart_version = cart.version
+        db.add_all(purchase_audits)
         if order.tal_consent_receipt_id:
             checkout_event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cirvanna:checkout-started:{order.id}"))
             order_lines = list(db.scalars(
