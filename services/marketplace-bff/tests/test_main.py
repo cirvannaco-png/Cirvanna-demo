@@ -2173,3 +2173,45 @@ def test_complementer_requires_authenticated_user_before_upstream_calls(client, 
     )
     assert response.status_code == 401
     assert response.json()["detail"]["code"] == "USER_BEARER_REQUIRED"
+
+
+def test_marketplace_pnelly_search_uses_wardrobe_cil_path_and_complementer_advisory(client):
+    response = client.get("/")
+    assert response.status_code == 200
+    assert 'id="aiDiscoveryResults"' in response.text
+    assert '"/api/wardrobe/recommendations"' in response.text
+    assert '"/api/vision/complementer"' in response.text
+    assert "CAL SHOW" in response.text
+    assert "wardrobe-aware marketplace" in response.text
+    # Click It stays explicitly unavailable while its publication lifecycle remains unverified.
+    assert "Click It · Temporarily paused" in response.text
+    assert "No photo is requested or sent from this page" in response.text
+
+
+def test_wardrobe_recommendations_reject_candidate_id_mismatch_before_display(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({
+            "request_id": "req-mismatch",
+            "ranked_candidate_count": 1,
+            "displayable_products": [{
+                "product": {"product_id": "product-1", "catalog_version": 3},
+                "offer": {"catalog_product_id": "different-product", "variant_id": "variant-1"},
+                "decision": {"product_id": "product-1", "catalog_version": 3,
+                             "verdict": "show", "may_display": True},
+                "cil_serving_assessment": {"status": "eligible", "assessed_catalog_version": 3},
+            }],
+            "withheld_candidate_ids": [],
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/recommendations",
+        headers={"Authorization": "Bearer signed-session"},
+        json={"query": "linen layer for a blue shirt"},
+    )
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "WARDROBE_CANDIDATE_CAL_CIL_AUTHORIZATION_INVALID"
