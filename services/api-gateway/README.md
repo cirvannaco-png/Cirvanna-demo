@@ -34,7 +34,7 @@ The gateway sends that user token to Commerce `GET /me` and uses only the verifi
 - `GET /capabilities` — reports enabled integrations and explicit unavailable capabilities.
 - `POST /v1/decisions` — evaluate 1–25 canonical Catalog product IDs through the decision pipeline; merchandising fields are present only for CAL SHOW, otherwise only the candidate ID and decision evidence are returned.
 - `POST /v1/discover` — live Catalog search + Commerce purchasable-offer retrieval, USI preference ranking, then CAL arbitration. Product and offer details are included only for SHOW candidates.
-- `POST /v1/complementer/recommend` — styling advice only; no product candidates or display authority.
+- `POST /v1/complementer/recommend` — requires a Commerce-verified end-user token whose subject exactly matches the request; returns stateless styling advice only, with no product candidates or display authority.
 - `GET /v1/me/style-profile` and `PUT /v1/me/style-profile` — read/update the verified subject's USI profile.
 - `POST /v1/me/consents` and `POST /v1/me/consents/{receipt_id}/revoke` — create and revoke versioned consent receipts.
 - `POST /v1/me/tal/events` — append consented observations or append-only correction events.
@@ -46,6 +46,8 @@ The gateway sends that user token to Commerce `GET /me` and uses only the verifi
 The gateway resolves the end-user subject through Commerce `/me`, then calls the identity-learning service using its private service token. The identity service owns prefixed tables in the existing approved Postgres database; it does not create a second database. Profile reads and writes require an active `profile_storage` consent receipt. TAL writes require active `personalization` or `style_learning` consent. Event IDs and per-subject idempotency keys prevent duplicate writes; changed replays return 409. Corrections are append-only and identify the event they supersede. A denial receipt or revocation revokes every active grant for the same subject and consent scope, so parallel older receipts cannot keep authorizing writes. A later grant creates a new receipt; revoked receipts remain revoked. Retention purge, export and deletion are implemented by the canonical identity service.
 
 Rejected Complementer suggestions remain soft observations. They do not automatically become NPL hard vetoes.
+
+Complementer requests are bound to the same Commerce `/me` identity resolution used by `/v1/discover`. The service rejects missing identity and subject mismatch before contacting the Complementer provider. Advice remains request-scoped and cannot be persisted as a user preference without a separate, consented TAL action.
 
 ## Marketplace discovery and display control
 
