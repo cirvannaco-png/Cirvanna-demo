@@ -29,6 +29,19 @@ def configure_upstreams(monkeypatch):
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
 
 
+def test_marketplace_pnelly_search_uses_wardrobe_cil_path_and_complementer_advisory(client):
+    response = client.get("/")
+    assert response.status_code == 200
+    assert 'id="aiDiscoveryResults"' in response.text
+    assert '"/api/wardrobe/recommendations"' in response.text
+    assert '"/api/vision/complementer"' in response.text
+    assert "CAL SHOW" in response.text
+    assert "wardrobe-aware marketplace" in response.text
+    # Click It stays explicitly unavailable while its publication lifecycle remains unverified.
+    assert "Click It · Temporarily paused" in response.text
+    assert "No photo is requested or sent from this page" in response.text
+
+
 def test_page_bootstraps_same_origin_live_offers_not_demo_data(client):
     response = client.get("/")
     assert response.status_code == 200
@@ -613,6 +626,8 @@ def test_wardrobe_page_exposes_feedback_and_consent_controls(client):
     assert "Dislike" in response.text
     assert "Avoid" in response.text
     assert "/api/wardrobe/recommendations" in response.text
+    assert "/api/vision/complementer" in response.text
+    assert "Refine with Complementer" in response.text
     assert "profile_storage" in response.text
     assert "Edit piece" in response.text
     assert "/api/wardrobe/items/" in response.text
