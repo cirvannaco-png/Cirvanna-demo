@@ -2023,14 +2023,25 @@ async def marketplace_click_it(request: Request) -> Response:
     )
 
 
+def _developer_token_input_allowed() -> bool:
+    """Allow manual bearer entry only in an explicitly opted-in non-production environment."""
+    environment = os.getenv("MARKETPLACE_ENVIRONMENT", "").strip().lower()
+    if environment in {"production", "prod"}:
+        return False
+    return os.getenv("MARKETPLACE_ENABLE_DEVELOPER_TOKEN_INPUT", "false").strip().lower() == "true"
+
+
 def _page_html() -> str:
     try:
         html = HTML_PATH.read_text(encoding="utf-8")
     except OSError as exc:
         raise HTTPException(status_code=503, detail={"code": "MARKETPLACE_PAGE_UNAVAILABLE"}) from exc
     marker = "<script>\n(() => {"
+    developer_token_input = "true" if _developer_token_input_allowed() else "false"
     bootstrap = (
-        '<script>window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce"});</script>\n'
+        '<script>window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce",allowDeveloperTokenInput:'
+        + developer_token_input
+        + '});</script>\n'
         + "<script>\n(() => {"
     )
     if 'window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({' not in html:
