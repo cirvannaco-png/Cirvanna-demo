@@ -1976,7 +1976,7 @@ def capabilities() -> dict[str, Any]:
         "complementer_product_retrieval": False,
         "complementer_display_authority": False,
         "durable_complementer_memory": False,
-        "cil_cal_review_enforcement_required": os.getenv("CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED", "false").strip().lower() == "true",
+        "cil_cal_review_enforcement_required": _cil_cal_review_enforcement_required(),
         "cil_cal_review_enforcement_configured": bool(
             os.getenv("CIL_SERVICE_URL", "").strip()
             and len(os.getenv("CIL_CAL_SERVICE_TOKEN", "").encode("utf-8")) >= 32
@@ -2073,7 +2073,7 @@ def readiness() -> dict[str, Any]:
     identity_binding_configured = bool(
         identity_required and identity_ready and commerce_url and _trusted_internal_base_url(commerce_url)
     )
-    feedback_review_required = os.getenv("CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED", "false").strip().lower() == "true"
+    feedback_review_required = _cil_cal_review_enforcement_required()
     feedback_review_configured = bool(
         os.getenv("CIL_SERVICE_URL", "").strip()
         and len(os.getenv("CIL_CAL_SERVICE_TOKEN", "").encode("utf-8")) >= 32
@@ -2377,6 +2377,15 @@ def _assess_cil_product_serving(product: dict[str, Any], purpose: str = "commerc
     return result
 
 
+def _cil_cal_review_enforcement_required() -> bool:
+    """Production cannot opt out of the final CIL feedback veto integration."""
+    environment = os.getenv(
+        "CIRVANNA_ENVIRONMENT", os.getenv("COMMERCE_ENVIRONMENT", "development")
+    ).strip().lower()
+    configured = os.getenv("CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED", "false").strip().lower()
+    return environment == "production" or configured == "true"
+
+
 def _cil_feedback_context_key(context: Any) -> str:
     parts = []
     for value in (getattr(context, "climate", None), getattr(context, "occasion", None)):
@@ -2389,7 +2398,7 @@ def _cil_feedback_context_key(context: Any) -> str:
 
 def _load_cil_feedback_decisions(product_ids: list[str], context_key: str) -> dict[str, dict]:
     """Load final, human-reviewed CAL decisions before candidate details can leave the gateway."""
-    if os.getenv("CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED", "false").strip().lower() != "true":
+    if not _cil_cal_review_enforcement_required():
         return {}
 
     base = os.getenv("CIL_SERVICE_URL", "").strip()
