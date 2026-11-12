@@ -2325,14 +2325,16 @@ def _load_cil_feedback_decisions(product_ids: list[str], context_key: str) -> di
     ):
         raise HTTPException(503, detail={"code": "CIL_CAL_REVIEW_ENFORCEMENT_MISCONFIGURED"})
     try:
-        response = httpx.post(
-            f"{base.rstrip('/')}/cal/feedback-decisions",
-            json={"product_ids": product_ids, "context_key": context_key},
-            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
-            timeout=3.0,
+        with httpx.Client(
+            timeout=httpx.Timeout(3.0, connect=1.0),
             trust_env=False,
             follow_redirects=False,
-        )
+        ) as client:
+            response = client.post(
+                f"{base.rstrip('/')}/cal/feedback-decisions",
+                json={"product_ids": product_ids, "context_key": context_key},
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            )
         if response.status_code != 200:
             raise HTTPException(503, detail={"code": "CIL_CAL_FEEDBACK_DECISIONS_UNAVAILABLE"})
         payload = response.json()
