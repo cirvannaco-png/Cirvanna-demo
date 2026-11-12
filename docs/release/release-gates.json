@@ -50,7 +50,7 @@
       "required": true,
       "status": "blocked",
       "owner_role": "Commerce/payment owner",
-      "acceptance": "Stripe test-mode checkout, currency/amount metadata, idempotency, inventory reservation, failed/expired sessions, duplicate and invalid-signature webhook replay, paid transition, expiry and ambiguous-payment reconciliation pass. Redirect alone is not payment evidence.",
+      "acceptance": "Stripe test-mode checkout, currency/amount metadata, idempotency, inventory reservation, failed/expired sessions, duplicate and invalid-signature webhook replay, paid transition, expiry and ambiguous-payment reconciliation pass. Every cart read/add/update and checkout must use a fresh subject-, action-, candidate-, offer-snapshot-, quantity- and price-bound CAL receipt, with successful checkout audits committed alongside immutable order/line snapshots and reservations. Redirect alone is not payment evidence.",
       "evidence_refs": [],
       "verified_commit": null
     },
@@ -66,11 +66,11 @@
     },
     {
       "id": "REL-07",
-      "name": "CAL display gate and durable decision receipts",
+      "name": "CAL display and purchase authorization receipts",
       "required": true,
       "status": "blocked",
       "owner_role": "Decision-platform owner",
-      "acceptance": "Every surfaced candidate passes through the sole CAL authority; only SHOW is released; BLOCK and REVIEW details stay withheld; durable decision receipts are committed before response release and include policy, contract, candidate, and evidence source versions.",
+      "acceptance": "Every surfaced candidate passes through the sole CAL authority; only SHOW is released; BLOCK and REVIEW details stay withheld; durable versioned display receipts are committed before response release. Every cart_view, cart_add, cart_update and checkout action receives a fresh subject/action/candidate/offer-snapshot-bound signed purchase receipt, verified by Commerce and recorded in append-only purchase audit storage before mutation/order commit. Missing, stale, mismatched, expired or non-SHOW evidence fails closed.",
       "evidence_refs": [],
       "verified_commit": null
     },
@@ -110,7 +110,7 @@
       "required": true,
       "status": "blocked",
       "owner_role": "QA/release owner",
-      "acceptance": "A real deployed staging journey covers identity, consented profile, discovery, hard constraints, CAL arbitration, checkout, webhook reconciliation, persistence, failure paths and audit. Evidence uses redacted request IDs and identifies the exact candidate commit.",
+      "acceptance": "A real deployed staging journey covers provider-issued identity and browser session lifecycle, discovery and hard constraints, CAL display authorization, candidate-bound cart_view/cart_add/cart_update/checkout receipts, durable Commerce purchase audits, Stripe test payment, webhook signature and duplicate replay, order/stock reconciliation, persistence, failure paths and audit. Evidence uses redacted request IDs and identifies the exact candidate commit.",
       "evidence_refs": [],
       "verified_commit": null
     },
