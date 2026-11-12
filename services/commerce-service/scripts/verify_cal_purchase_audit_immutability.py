@@ -101,6 +101,12 @@ def main() -> None:
                     connection.rollback()
                 else:
                     raise SystemExit("FAIL: database allowed CAL audit TRUNCATE")
+            with Session(engine) as session:
+                retained = session.scalar(
+                    select(CALPurchaseAudit).where(CALPurchaseAudit.audit_id == audit_id)
+                )
+                if retained is None:
+                    raise SystemExit("FAIL: CAL audit row disappeared after rejected TRUNCATE")
 
         print("PASS: CAL purchase audit UPDATE/DELETE are rejected by the database")
         if engine.dialect.name == "postgresql":
