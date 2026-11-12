@@ -2585,15 +2585,15 @@ def discover_marketplace(
     for product_id, score, usi_score, wardrobe_match, offer, feedback_adjustment in ranked:
         decision = decisions.get(product_id)
         if decision is None or not decision.may_display or decision.verdict != "show":
-            withheld.append({"product_id": product_id, "rank_score": score, "decision": decision.verdict if decision else "review"})
-            continue
-        cil_assessment = _assess_cil_product_serving(by_product[product_id])
-        if not cil_assessment["all_eligible"]:
             withheld.append({
                 "product_id": product_id,
                 "rank_score": score,
-                "decision": "review",
-                "reason_code": "CIL_EVIDENCE_OR_RIGHTS_REVIEW_REQUIRED",
+                "decision": decision.verdict if decision else "review",
+                "reason_code": (
+                    "CIL_EVIDENCE_OR_RIGHTS_REVIEW_REQUIRED"
+                    if decision is not None and decision.cil_serving_status == "review"
+                    else "CAL_DISPLAY_NOT_AUTHORIZED"
+                ),
             })
             continue
         displayable.append({
@@ -2614,7 +2614,7 @@ def discover_marketplace(
                 "matched_attributes": wardrobe_match["matched_attributes"],
             },
             "decision": decision.model_dump(),
-            "cil_serving_assessment": {"status": "eligible", "assessed_catalog_version": cil_assessment["catalog_version"]},
+            "cil_serving_assessment": {"status": decision.cil_serving_status, "assessed_catalog_version": decision.catalog_version},
         })
     return {
         "request_id": decision_response.request_id,
