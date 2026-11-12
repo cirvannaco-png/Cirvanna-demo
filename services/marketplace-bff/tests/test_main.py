@@ -29,14 +29,37 @@ def configure_upstreams(monkeypatch):
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
 
 
-def test_page_bootstraps_same_origin_live_offers_not_demo_data(client):
+def test_page_bootstraps_same_origin_live_offers_with_developer_token_entry_off_by_default(client, monkeypatch):
+    monkeypatch.delenv("MARKETPLACE_ENABLE_DEVELOPER_TOKEN_INPUT", raising=False)
+    monkeypatch.delenv("MARKETPLACE_ENVIRONMENT", raising=False)
     response = client.get("/")
     assert response.status_code == 200
-    assert 'window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce"});' in response.text
+    assert 'window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce",allowDeveloperTokenInput:false});' in response.text
     assert "bootstrap.publicOffersBase" in response.text
+    assert "bootstrap.allowDeveloperTokenInput===true" in response.text
+    assert "Account sign-in is unavailable" in response.text
     assert "connect-src 'self'" in response.headers["content-security-policy"]
     assert response.headers["x-content-type-options"] == "nosniff"
     assert response.headers["referrer-policy"] == "no-referrer"
+
+
+def test_developer_token_entry_requires_explicit_nonproduction_opt_in(client, monkeypatch):
+    monkeypatch.setenv("MARKETPLACE_ENVIRONMENT", "development")
+    monkeypatch.setenv("MARKETPLACE_ENABLE_DEVELOPER_TOKEN_INPUT", "true")
+    response = client.get("/")
+    assert response.status_code == 200
+    assert 'allowDeveloperTokenInput:true' in response.text
+    assert "Signed customer test token" in response.text
+
+
+def test_production_never_renders_developer_token_entry_even_when_opted_in(client, monkeypatch):
+    monkeypatch.setenv("MARKETPLACE_ENVIRONMENT", "production")
+    monkeypatch.setenv("MARKETPLACE_ENABLE_DEVELOPER_TOKEN_INPUT", "true")
+    response = client.get("/")
+    assert response.status_code == 200
+    assert 'allowDeveloperTokenInput:false' in response.text
+    assert "Signed customer test token" in response.text
+    assert "Account sign-in is unavailable" in response.text
 
 
 def test_marketplace_offers_use_authenticated_gateway_cal_show_only(client, monkeypatch):
