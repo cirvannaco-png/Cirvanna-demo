@@ -19,7 +19,7 @@ from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy import DateTime, Float, Integer, JSON, String, Text, UniqueConstraint, create_engine, inspect, select, text
+from sqlalchemy import DateTime, Float, Index, Integer, JSON, String, Text, UniqueConstraint, create_engine, inspect, or_, select, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
 from PIL import Image, ImageOps
@@ -35,7 +35,7 @@ from app.perfectcorp import (
 )
 
 SERVICE = "cirvanna-intelligence-service"
-EXPECTED_SCHEMA_REVISION = "20261110_0003"
+EXPECTED_SCHEMA_REVISION = "20261112_0005"
 ALLOWED_FEEDBACK_REASONS = {"poor_match", "price", "availability", "shade_mismatch", "texture", "fragrance", "delivery", "other"}
 PURPOSES = {"research", "model_evaluation", "product_enrichment", "commercial_recommendation",
             "recommendation_outcome_learning", "training"}
@@ -131,17 +131,28 @@ class ProviderTask(Base):
     provider_task_id: Mapped[str] = mapped_column(String(256), nullable=False, unique=True)
     provider: Mapped[str] = mapped_column(String(40), nullable=False)
     contributor_token: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    consent_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     image_digest: Mapped[str] = mapped_column(String(64), nullable=False)
     consent_expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="running")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, nullable=False)
     terminal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class CALReview(Base):
     __tablename__ = "cil_cal_review_queue"
-    __table_args__ = (UniqueConstraint("product_id", "context_key", "status", name="uq_cil_cal_review_cohort_status"),)
+    __table_args__ = (
+        Index(
+            "uq_cil_cal_review_pending_cohort",
+            "product_id",
+            "context_key",
+            unique=True,
+            sqlite_where=text("status = 'pending'"),
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     product_id: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
     context_key: Mapped[str] = mapped_column(String(120), nullable=False, index=True)
@@ -269,6 +280,38 @@ class PerfectCorpSkinAnalysisIn(StrictModel):
         if len(values) != len(set(values)):
             raise ValueError("skin-analysis actions must be unique")
         return values
+
+
+class CALFeedbackDecisionLookupIn(StrictModel):
+    product_ids: list[str] = Field(min_length=1, max_length=100)
+    context_key: str = Field(min_length=1, max_length=120)
+
+    @field_validator("context_key")
+    @classmethod
+    def valid_decision_context(cls, value):
+        if not re.fullmatch(r"[a-z0-9][a-z0-9._:-]{0,119}", value):
+            raise ValueError("context_key must be a controlled cohort key")
+        return value
+
+    @field_validator("product_ids")
+    @classmethod
+    def unique_decision_products(cls, values):
+        if len(values) != len(set(values)):
+            raise ValueError("product_ids must be unique")
+        return values
+
+
+class ProviderConsentRevocationIn(StrictModel):
+    consent_id: str = Field(min_length=8, max_length=128)
+    contributor_token: str
+    revocation_reference: str = Field(min_length=8, max_length=240)
+
+    @field_validator("contributor_token")
+    @classmethod
+    def valid_revocation_contributor(cls, value):
+        if not TOKEN_RE.fullmatch(value):
+            raise ValueError("contributor_token must be a keyed HMAC-SHA256 pseudonym")
+        return value
 
 
 class LearningSignalsIn(StrictModel):
@@ -428,8 +471,10 @@ def _verify_perfectcorp_consent(receipt: str, contributor_token: str, image_dige
     if not hmac.compare_digest(expected, signature):
         raise HTTPException(403, "Invalid image-processing consent signature")
     subject_age = payload.get("subject_age_years")
+    consent_id = payload.get("consent_id")
     if (
-        payload.get("type") != "consent"
+        not isinstance(consent_id, str) or len(consent_id) < 8 or len(consent_id) > 128
+        or payload.get("type") != "consent"
         or payload.get("purpose") != "perfectcorp_skin_analysis"
         or payload.get("provider") != "perfectcorp"
         or payload.get("subject_token") != contributor_token
@@ -604,6 +649,43 @@ def register_source(payload: SourceIn, db: Session = Depends(get_db)):
     return {"source_id": row.id, "rights_status": row.rights_status, "permitted_purposes": row.permitted_purposes}
 
 
+@app.post("/providers/perfectcorp/revoke-consent", dependencies=[Depends(_service)])
+def revoke_perfectcorp_consent(payload: ProviderConsentRevocationIn, db: Session = Depends(get_db)):
+    """Apply an upstream consent-revocation event to all active provider tasks."""
+    rows = list(db.scalars(select(ProviderTask).where(
+        ProviderTask.contributor_token == payload.contributor_token,
+        ProviderTask.consent_id == payload.consent_id,
+        ProviderTask.deleted_at.is_(None),
+    )).all())
+    revoked_at = now()
+    for row in rows:
+        row.revoked_at = revoked_at
+        row.status = "consent_revoked"
+    db.commit()
+    deleted = 0
+    failed = 0
+    for row in rows:
+        try:
+            perfectcorp_delete_task(task_id=row.provider_task_id)
+            row.deleted_at = now()
+            row.status = "consent_revoked_deleted"
+            deleted += 1
+        except Exception:
+            failed += 1
+    db.commit()
+    if failed:
+        raise HTTPException(502, {
+            "code": "PROVIDER_CONSENT_REVOKED_CLEANUP_INCOMPLETE",
+            "revoked_tasks": len(rows), "deleted_tasks": deleted, "failed_tasks": failed,
+            "revocation_reference": payload.revocation_reference,
+        })
+    return {
+        "consent_id": payload.consent_id, "revoked": True,
+        "revocation_reference": payload.revocation_reference,
+        "matched_tasks": len(rows), "deleted_tasks": deleted,
+    }
+
+
 @app.post("/providers/perfectcorp/reap-tasks", dependencies=[Depends(_admin)])
 def reap_abandoned_perfectcorp_tasks(db: Session = Depends(get_db)):
     """Cron-facing cleanup for abandoned tasks; no images or direct identifiers are stored."""
@@ -613,16 +695,24 @@ def reap_abandoned_perfectcorp_tasks(db: Session = Depends(get_db)):
         raise HTTPException(503, "CIL_PERFECTCORP_TASK_TTL_MINUTES must be an integer") from exc
     if not 1 <= ttl_minutes <= 1440:
         raise HTTPException(503, "CIL_PERFECTCORP_TASK_TTL_MINUTES must be between 1 and 1440")
-    cutoff = now() - timedelta(minutes=ttl_minutes)
+    current = now()
+    cutoff = current - timedelta(minutes=ttl_minutes)
     rows = list(db.scalars(select(ProviderTask).where(
-        ProviderTask.deleted_at.is_(None), ProviderTask.created_at <= cutoff
+        ProviderTask.deleted_at.is_(None),
+        or_(
+            ProviderTask.created_at <= cutoff,
+            ProviderTask.consent_expires_at <= current,
+            ProviderTask.revoked_at.is_not(None),
+        ),
     ).order_by(ProviderTask.created_at.asc()).limit(200)).all())
     deleted = 0
     failed = 0
     for row in rows:
         try:
             perfectcorp_delete_task(task_id=row.provider_task_id)
-            row.status = "ttl_deleted"
+            row.status = "consent_revoked_deleted" if row.revoked_at is not None else (
+                "consent_expired_deleted" if row.consent_expires_at <= current else "ttl_deleted"
+            )
             row.deleted_at = now()
             deleted += 1
         except Exception:
@@ -655,7 +745,8 @@ def start_perfectcorp_skin_analysis(payload: PerfectCorpSkinAnalysisIn):
             with SessionLocal() as db:
                 db.add(ProviderTask(
                     task_id=str(uuid.uuid4()), provider_task_id=provider_task_id, provider="perfectcorp",
-                    contributor_token=payload.contributor_token, image_digest=image_digest,
+                    contributor_token=payload.contributor_token, consent_id=consent["consent_id"],
+                    image_digest=image_digest,
                     consent_expires_at=datetime.fromtimestamp(int(consent["expires_at"]), timezone.utc),
                     status="running",
                 ))
@@ -695,6 +786,15 @@ def poll_perfectcorp_skin_analysis(
     _task_subject(contributor_token, task_row.contributor_token)
     if task_row.deleted_at is not None:
         raise HTTPException(410, "Provider task files have already been deleted")
+    if task_row.revoked_at is not None:
+        try:
+            perfectcorp_delete_task(task_id=task_row.provider_task_id)
+            task_row.deleted_at = now()
+            task_row.status = "consent_revoked_deleted"
+            db.commit()
+        except Exception as exc:
+            raise HTTPException(502, "Consent was revoked but provider task deletion failed") from exc
+        raise HTTPException(410, "Provider consent was revoked; provider task files were deleted")
     consent_expiry = task_row.consent_expires_at
     if consent_expiry.tzinfo is None:
         consent_expiry = consent_expiry.replace(tzinfo=timezone.utc)
@@ -707,7 +807,10 @@ def poll_perfectcorp_skin_analysis(
         except Exception as exc:
             raise HTTPException(502, "Consent expired but provider task deletion failed") from exc
         raise HTTPException(410, "Provider consent expired; provider task files were deleted")
-    if os.getenv("CIL_PERFECTCORP_DPA_APPROVED", "false").lower() != "true":
+    if (
+        os.getenv("CIL_PERFECTCORP_ENABLED", "false").lower() != "true"
+        or os.getenv("CIL_PERFECTCORP_DPA_APPROVED", "false").lower() != "true"
+    ):
         # When approval is withdrawn, cleanup is still mandatory and results are not released.
         try:
             perfectcorp_delete_task(task_id=task_row.provider_task_id)
@@ -918,7 +1021,7 @@ def learning_signals(payload: LearningSignalsIn, db: Session = Depends(get_db)):
     rows = list(db.scalars(select(Outcome).where(
         Outcome.product_id.in_(payload.product_ids),
         Outcome.context_key == payload.context_key,
-    )).all())
+    ).order_by(Outcome.observed_at.desc(), Outcome.created_at.desc(), Outcome.event_id.desc())).all())
     grouped: dict[str, list[Outcome]] = {product_id: [] for product_id in payload.product_ids}
     for row in rows:
         if row.suitability in {"suitable", "unsuitable"}:
@@ -955,7 +1058,7 @@ def learning_signals(payload: LearningSignalsIn, db: Session = Depends(get_db)):
 def aggregate_outcomes(product_id: str, context_key: str, db: Session = Depends(get_db)):
     rows = list(db.scalars(select(Outcome).where(
         Outcome.product_id == product_id, Outcome.context_key == context_key
-    )).all())
+    ).order_by(Outcome.observed_at.desc(), Outcome.created_at.desc(), Outcome.event_id.desc())).all())
     reported = [row for row in rows if row.suitability in {"suitable", "unsuitable"}]
     contributors = {row.contributor_token for row in reported}
     if len(contributors) < 30:
@@ -985,8 +1088,18 @@ def aggregate_outcomes(product_id: str, context_key: str, db: Session = Depends(
                 contributor_count=len(contributors), status="pending",
             )
             db.add(pending)
-            db.commit()
-            db.refresh(pending)
+            try:
+                db.commit()
+                db.refresh(pending)
+            except Exception:
+                db.rollback()
+                pending = db.scalar(select(CALReview).where(
+                    CALReview.product_id == product_id,
+                    CALReview.context_key == context_key,
+                    CALReview.status == "pending",
+                ))
+                if pending is None:
+                    raise
         review_id, review_status = pending.id, pending.status
     return {"status": "review_required" if share is not None and share >= threshold else "collecting",
             "contributor_count": len(contributors), "reported_count": denominator,
@@ -1025,6 +1138,30 @@ def record_cal_decision(review_id: str, payload: CALDecisionIn, db: Session = De
     db.commit()
     return {"review_id": review.id, "status": review.status, "verdict": review.verdict,
             "decision_reference": review.decision_reference}
+
+
+@app.post("/cal/feedback-decisions", dependencies=[Depends(_cal_service)])
+def cal_feedback_decisions(payload: CALFeedbackDecisionLookupIn, db: Session = Depends(get_db)):
+    """Return the latest CAL-issued context-scoped decision for each reviewed product."""
+    rows = list(db.scalars(select(CALReview).where(
+        CALReview.product_id.in_(payload.product_ids),
+        CALReview.context_key == payload.context_key,
+        CALReview.status == "decided",
+    ).order_by(CALReview.decided_at.desc(), CALReview.created_at.desc(), CALReview.id.desc())).all())
+    latest: dict[str, CALReview] = {}
+    for row in rows:
+        latest.setdefault(row.product_id, row)
+    return {
+        "context_key": payload.context_key,
+        "decisions": [{
+            "product_id": product_id,
+            "context_key": payload.context_key,
+            "review_id": row.id,
+            "verdict": row.verdict,
+            "decision_reference": row.decision_reference,
+            "decided_at": row.decided_at.isoformat() if row.decided_at else None,
+        } for product_id, row in latest.items()],
+    }
 
 
 @app.get("/capabilities")
