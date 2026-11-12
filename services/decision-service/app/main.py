@@ -199,6 +199,93 @@ def _cil_review_bridge() -> tuple[str, str, str]:
     return raw.rstrip("/"), service_token, cal_token
 
 
+def _cil_feedback_context_key(context: ContextIn) -> str:
+    parts = []
+    for value in (context.climate, context.occasion):
+        if isinstance(value, str) and value.strip():
+            normalized = __import__("re").sub(r"[^a-z0-9._:-]+", "-", value.strip().lower()).strip("-")
+            if normalized:
+                parts.append(normalized[:40])
+    return "-".join(parts) or "general"
+
+
+def _load_cil_cal_feedback_decision(payload: "EligibilityRequest") -> dict | None:
+    required = os.getenv("CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED", "false").lower() == "true"
+    if not required:
+        return None
+    base, _, cal_token = _cil_review_bridge()
+    context_key = _cil_feedback_context_key(payload.context)
+    try:
+        with httpx.Client(
+            timeout=httpx.Timeout(3.0, connect=1.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            response = client.post(
+                f"{base}/cal/feedback-decisions",
+                json={"product_ids": [payload.candidate_id], "context_key": context_key},
+                headers={"Authorization": f"Bearer {cal_token}", "Accept": "application/json"},
+            )
+        response.raise_for_status()
+        result = response.json()
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(503, detail={"code": "CIL_CAL_FEEDBACK_DECISION_REJECTED"}) from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(503, detail={"code": "CIL_CAL_FEEDBACK_DECISION_UNAVAILABLE"}) from exc
+    if not isinstance(result, dict) or result.get("context_key") != context_key or not isinstance(result.get("decisions"), list):
+        raise HTTPException(502, detail={"code": "CIL_CAL_FEEDBACK_DECISION_SCHEMA_INVALID"})
+    matches = [
+        item for item in result["decisions"]
+        if isinstance(item, dict)
+        and item.get("product_id") == payload.candidate_id
+        and item.get("context_key") == context_key
+    ]
+    if len(matches) > 1:
+        raise HTTPException(502, detail={"code": "CIL_CAL_FEEDBACK_DECISION_AMBIGUOUS"})
+    if not matches:
+        return None
+    item = matches[0]
+    if (
+        item.get("verdict") not in {"SHOW", "BLOCK"}
+        or not isinstance(item.get("review_id"), str)
+        or not isinstance(item.get("decision_reference"), str)
+        or not item.get("decision_reference")
+    ):
+        raise HTTPException(502, detail={"code": "CIL_CAL_FEEDBACK_DECISION_INVALID"})
+    return item
+
+
+def _apply_cil_cal_feedback_veto(result_json: dict, review: dict | None) -> dict:
+    if review is None:
+        return result_json
+    # A feedback-review SHOW only records the review result; it never overrides
+    # the normal EEPL/NPL/FCI/CaTaCaCi decision. A CAL-issued BLOCK is a
+    # context-scoped additional veto and must prevent product details leaving CAL.
+    result_json.setdefault("gates", {})["cil_feedback_review"] = {
+        "review_id": review["review_id"],
+        "decision_reference": review["decision_reference"],
+        "verdict": review["verdict"],
+        "context_key": review["context_key"],
+        "decided_at": review.get("decided_at"),
+        "applied_as_veto": review["verdict"] == "BLOCK",
+    }
+    if review["verdict"] == "BLOCK":
+        result_json["decision"] = "BLOCK"
+        result_json["may_display"] = False
+        result_json.setdefault("arbitration", {}).setdefault("evaluated_signal_ids", []).append(
+            f"cil-feedback-review:{review['review_id']}"
+        )
+        result_json.setdefault("arbitration", {}).setdefault("reasons", []).append({
+            "code": "CIL_FEEDBACK_REVIEW_BLOCK",
+            "signal_id": f"cil-feedback-review:{review['review_id']}",
+            "explanation": (
+                "CAL's human-reviewed customer-feedback decision blocks this product "
+                "for the matching recommendation context."
+            ),
+        })
+    return result_json
+
+
 def canonical_fit_payload(fit: FitEvidenceIn) -> bytes:
     normalized = fit.model_dump(mode="json", exclude_none=False)
     return json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
@@ -331,6 +418,7 @@ def capabilities() -> dict:
         "fci_prediction_model_available": False, "signed_npl_evidence_required": True,
         "persisted_user_preference_store": False, "signed_cultural_evidence_required": True,
         "cil_feedback_review_bridge": bool(os.getenv("CIL_SERVICE_URL") and os.getenv("CIL_SERVICE_TOKEN") and os.getenv("CIL_CAL_SERVICE_TOKEN")),
+        "cil_feedback_review_enforcement_required": os.getenv("CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED", "false").lower() == "true",
         "decision_audit_persistence": False, "click_it_reconstruction": False,
         "virtual_twin_generation": False, "virtual_try_on": False}
 
@@ -446,6 +534,8 @@ def evaluate_eligibility(payload: EligibilityRequest) -> dict:
             minimum_fit_confidence=payload.minimum_fit_confidence,
             minimum_alignment_score=payload.minimum_alignment_score, policy_version=payload.policy_version,
         )
-        return _result_json(result, payload)
+        response_payload = _result_json(result, payload)
+        feedback_review = _load_cil_cal_feedback_decision(payload)
+        return _apply_cil_cal_feedback_veto(response_payload, feedback_review)
     except ValueError as exc:
         raise HTTPException(422, detail={"code": "INVALID_DECISION_EVIDENCE", "detail": str(exc)}) from exc
