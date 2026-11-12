@@ -199,6 +199,15 @@ def _cil_review_bridge() -> tuple[str, str, str]:
     return raw.rstrip("/"), service_token, cal_token
 
 
+def _cil_cal_review_enforcement_required() -> bool:
+    """Production decision service cannot opt out of final CIL feedback review vetoes."""
+    environment = os.getenv(
+        "CIRVANNA_ENVIRONMENT", os.getenv("COMMERCE_ENVIRONMENT", "development")
+    ).strip().lower()
+    configured = os.getenv("CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED", "false").strip().lower()
+    return environment == "production" or configured == "true"
+
+
 def _cil_feedback_context_key(context: ContextIn) -> str:
     parts = []
     for value in (context.climate, context.occasion):
@@ -210,7 +219,7 @@ def _cil_feedback_context_key(context: ContextIn) -> str:
 
 
 def _load_cil_cal_feedback_decision(payload: "EligibilityRequest") -> dict | None:
-    required = os.getenv("CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED", "false").lower() == "true"
+    required = _cil_cal_review_enforcement_required()
     if not required:
         return None
     base, _, cal_token = _cil_review_bridge()
@@ -418,7 +427,7 @@ def capabilities() -> dict:
         "fci_prediction_model_available": False, "signed_npl_evidence_required": True,
         "persisted_user_preference_store": False, "signed_cultural_evidence_required": True,
         "cil_feedback_review_bridge": bool(os.getenv("CIL_SERVICE_URL") and os.getenv("CIL_SERVICE_TOKEN") and os.getenv("CIL_CAL_SERVICE_TOKEN")),
-        "cil_feedback_review_enforcement_required": os.getenv("CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED", "false").lower() == "true",
+        "cil_feedback_review_enforcement_required": _cil_cal_review_enforcement_required(),
         "decision_audit_persistence": False, "click_it_reconstruction": False,
         "virtual_twin_generation": False, "virtual_try_on": False}
 
