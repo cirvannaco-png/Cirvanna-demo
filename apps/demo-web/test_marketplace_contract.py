@@ -52,7 +52,7 @@ class MarketplaceContractTests(unittest.TestCase):
     def test_pnelly_is_the_marketplace_assistant_and_complementer_is_advisory(self):
         self.assertIn("PNELLY · Describe it", HTML)
         self.assertIn("Search marketplace with PNELLY", HTML)
-        self.assertIn("Complementer is designed as optional styling advice", HTML)
+        self.assertIn("Complementer remains optional styling advice", HTML)
         self.assertIn("price comparisons must use current Commerce offers", HTML)
         self.assertNotIn("Xari · Describe it", HTML)
         self.assertNotIn("Search marketplace with Xari", HTML)
