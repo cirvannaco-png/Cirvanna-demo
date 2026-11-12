@@ -170,8 +170,8 @@ class MarketplaceBrowserTests(unittest.TestCase):
         self.assertEqual(self.page.locator("#apiBase").count(), 0)
         self.assertEqual(self.page.locator("#apiToken").count(), 0)
         self.assertEqual(self.page.locator("#commerceToken").count(), 0)
-        self.assertIn("same-origin Cirvanna Marketplace BFF", self.page.get_by_role("dialog").inner_text())
-        self.assertIn("Account sign-in is unavailable", self.page.get_by_role("dialog").inner_text())
+        self.assertIn("approved Cirvanna OIDC browser session", self.page.get_by_role("dialog").inner_text())
+        self.assertIn("does not accept pasted access tokens", self.page.get_by_role("dialog").inner_text())
 
 
 if __name__ == "__main__":
