@@ -30,7 +30,7 @@
       "required": true,
       "status": "blocked",
       "owner_role": "Database/reliability owner",
-      "acceptance": "Catalog and Commerce managed PostgreSQL schemas are migrated; identity-learning migration is applied to its approved shared PostgreSQL database; exact schema versions are verified; encrypted backup restores to an isolated clean database and row/constraint/order/payment/inventory invariants pass.",
+      "acceptance": "Catalog and Commerce managed PostgreSQL schemas are migrated; Commerce CAL purchase audit immutability guards are installed and UPDATE/DELETE (and PostgreSQL TRUNCATE) attempts are rejected; identity-learning migration is applied to its approved shared PostgreSQL database; exact schema versions are verified; encrypted backup restores to an isolated clean database and row/constraint/order/payment/inventory invariants pass.",
       "evidence_refs": [],
       "verified_commit": null
     },
@@ -70,7 +70,7 @@
       "required": true,
       "status": "blocked",
       "owner_role": "Decision-platform owner",
-      "acceptance": "Every surfaced candidate passes through the sole CAL authority; only SHOW is released; BLOCK and REVIEW details stay withheld; durable versioned display receipts are committed before response release. Every cart_view, cart_add, cart_update and checkout action receives a fresh subject/action/candidate/offer-snapshot-bound signed purchase receipt, verified by Commerce and recorded in append-only purchase audit storage before mutation/order commit. Missing, stale, mismatched, expired or non-SHOW evidence fails closed.",
+      "acceptance": "Every surfaced candidate passes through the sole CAL authority; only SHOW is released; BLOCK and REVIEW details stay withheld; durable versioned display receipts are committed before response release. Every cart_view, cart_add, cart_update and checkout action receives a fresh subject/action/candidate/offer-snapshot-bound signed purchase receipt, verified by Commerce and recorded in the commerce_cal_purchase_audits table. Database triggers reject audit UPDATE/DELETE (and PostgreSQL TRUNCATE); missing, stale, mismatched, expired or non-SHOW evidence fails closed.",
       "evidence_refs": [],
       "verified_commit": null
     },
