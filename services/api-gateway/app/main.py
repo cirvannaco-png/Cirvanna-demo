@@ -2363,6 +2363,66 @@ def _cil_feedback_context_key(context: Any) -> str:
     return "-".join(parts) or "general"
 
 
+def _load_cil_feedback_decisions(product_ids: list[str], context_key: str) -> dict[str, dict]:
+    """Load final human CAL feedback decisions for the live candidate-serving path."""
+    if os.getenv("CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED", "false").lower() != "true":
+        return {}
+    base = os.getenv("CIL_SERVICE_URL", "").strip()
+    token = os.getenv("CIL_CAL_SERVICE_TOKEN", "").strip()
+    parts = urlsplit(base)
+    host = (parts.hostname or "").lower()
+    local = host in {"localhost", "127.0.0.1", "::1"}
+    if (
+        not host or parts.username is not None or parts.password is not None
+        or parts.query or parts.fragment
+        or (parts.scheme != "https" and not (parts.scheme == "http" and local))
+        or len(token.encode("utf-8")) < 32
+    ):
+        raise HTTPException(503, detail={"code": "CIL_CAL_REVIEW_ENFORCEMENT_MISCONFIGURED"})
+    try:
+        with httpx.Client(
+            timeout=httpx.Timeout(3.0, connect=1.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            response = client.post(
+                f"{base.rstrip('/')}/cal/feedback-decisions",
+                json={"product_ids": product_ids, "context_key": context_key},
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            )
+        if response.status_code != 200:
+            raise HTTPException(503, detail={"code": "CIL_CAL_FEEDBACK_DECISIONS_UNAVAILABLE"})
+        payload = response.json()
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        raise HTTPException(503, detail={"code": "CIL_CAL_FEEDBACK_DECISIONS_UNAVAILABLE"}) from exc
+    if not isinstance(payload, dict) or payload.get("context_key") != context_key or not isinstance(payload.get("decisions"), list):
+        raise HTTPException(502, detail={"code": "CIL_CAL_FEEDBACK_DECISIONS_INVALID"})
+    decisions: dict[str, dict] = {}
+    for item in payload["decisions"]:
+        if (
+            not isinstance(item, dict)
+            or item.get("product_id") not in product_ids
+            or item.get("context_key") != context_key
+        ):
+            continue
+        if (
+            item.get("verdict") not in {"SHOW", "BLOCK"}
+            or not isinstance(item.get("review_id"), str)
+            or not isinstance(item.get("decision_reference"), str)
+            or not item.get("decision_reference")
+        ):
+            raise HTTPException(502, detail={"code": "CIL_CAL_FEEDBACK_DECISION_INVALID"})
+        product_id = item["product_id"]
+        existing = decisions.get(product_id)
+        if existing and existing.get("review_id") != item.get("review_id"):
+            raise HTTPException(502, detail={"code": "CIL_CAL_FEEDBACK_DECISION_AMBIGUOUS"})
+        decisions[product_id] = item
+    return decisions
+
+
+
 def _load_cil_feedback_signals(product_ids: list[str], context_key: str) -> tuple[dict[str, dict], str]:
     base = os.getenv("CIL_SERVICE_URL", "").strip()
     token = os.getenv("CIL_SERVICE_TOKEN", "").strip()
@@ -2702,6 +2762,9 @@ def evaluate_decisions(
     with ThreadPoolExecutor(max_workers=min(5, len(payload.product_ids))) as executor:
         products = list(executor.map(fetch_product, payload.product_ids))
 
+    feedback_review_decisions = _load_cil_feedback_decisions(
+        payload.product_ids, _cil_feedback_context_key(payload.context)
+    )
     for product_id, product in zip(payload.product_ids, products):
         attributes = _catalog_attributes(product)
         complete = _catalog_attributes_complete(product)
@@ -2758,6 +2821,17 @@ def evaluate_decisions(
             for reason in arbitration.reasons
         ]
         verdict = arbitration.verdict.value
+        feedback_review = feedback_review_decisions.get(product_id)
+        if feedback_review and feedback_review["verdict"] == "BLOCK":
+            verdict = "block"
+            reasons.append(ReasonOutput(
+                code="CIL_FEEDBACK_REVIEW_BLOCK",
+                signal_id=f"cil-feedback-review:{feedback_review['review_id']}",
+                explanation=(
+                    "CAL's human-reviewed customer-feedback decision blocks this product "
+                    "for the matching recommendation context."
+                ),
+            ))
         try:
             _record_audit(
                 request_id=request_id,
