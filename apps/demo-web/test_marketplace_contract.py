@@ -45,7 +45,9 @@ class MarketplaceContractTests(unittest.TestCase):
     def test_account_connection_uses_same_origin_bff_without_upstream_urls(self):
         self.assertIn("same-origin Cirvanna Marketplace BFF", HTML)
         self.assertIn("bootstrap.publicOffersBase", HTML)
-        self.assertIn("Enter your signed Cirvanna user session token", HTML)
+        self.assertIn("bootstrap.allowDeveloperTokenInput===true", HTML)
+        self.assertIn("Account sign-in is unavailable until the approved Cirvanna OIDC browser session is configured", HTML)
+        self.assertIn("Signed customer test token", HTML)
         self.assertNotIn('id="commerceBase"', HTML)
         self.assertNotIn('id="apiBase"', HTML)
         self.assertNotIn('id="apiToken"', HTML)
