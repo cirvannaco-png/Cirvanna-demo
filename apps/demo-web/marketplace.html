@@ -392,7 +392,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       });
       const data=await response.json().catch(()=>({}));
       if(!response.ok)throw new Error((data.detail&&data.detail.code)||("PNELLY discovery returned HTTP "+response.status+"."));
-      if(data.display_authority!=="CaTaCaCi/CAL"||!Array.isArray(data.displayable_products)||!Array.isArray(data.withheld_candidate_count===undefined?[]:[data.withheld_candidate_count]))throw new Error("PNELLY returned an invalid or non-CAL-governed discovery response.");
+      if(data.display_authority!=="CaTaCaCi/CAL"||!Array.isArray(data.displayable_products)||!Number.isInteger(Number(data.withheld_candidate_count))||Number(data.withheld_candidate_count)<0)throw new Error("PNELLY returned an invalid or non-CAL-governed discovery response.");
       items=data.displayable_products.map(candidate=>{
         const product=candidate&&candidate.product||{},offer=candidate&&candidate.offer||{};
         if(!candidate||!candidate.decision||candidate.decision.verdict!=="show"||candidate.decision.may_display!==true)throw new Error("A discovery candidate did not carry a valid CAL SHOW decision.");
