@@ -2573,14 +2573,28 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
         if not isinstance(candidate, dict):
             raise HTTPException(502, detail={"code": "WARDROBE_RECOMMENDATIONS_RESPONSE_INVALID"})
         decision = candidate.get("decision")
+        product = candidate.get("product")
+        offer = candidate.get("offer")
+        cil = candidate.get("cil_serving_assessment")
+        product_id = product.get("product_id") if isinstance(product, dict) else None
+        catalog_version = product.get("catalog_version") if isinstance(product, dict) else None
         if (
             not isinstance(decision, dict)
             or decision.get("verdict") != "show"
             or decision.get("may_display") is not True
-            or not isinstance(candidate.get("product"), dict)
-            or not isinstance(candidate.get("offer"), dict)
+            or decision.get("product_id") != product_id
+            or decision.get("catalog_version") != catalog_version
+            or not isinstance(product_id, str)
+            or isinstance(catalog_version, bool)
+            or not isinstance(catalog_version, int)
+            or not isinstance(offer, dict)
+            or offer.get("catalog_product_id") != product_id
+            or not isinstance(offer.get("variant_id"), str)
+            or not isinstance(cil, dict)
+            or cil.get("status") != "eligible"
+            or cil.get("assessed_catalog_version") != catalog_version
         ):
-            raise HTTPException(502, detail={"code": "WARDROBE_CANDIDATE_CAL_AUTHORIZATION_INVALID"})
+            raise HTTPException(502, detail={"code": "WARDROBE_CANDIDATE_CAL_CIL_AUTHORIZATION_INVALID"})
         authorized_products.append(_withhold_unverified_media(candidate))
 
     withheld = data.get("withheld_candidate_ids", [])
