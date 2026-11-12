@@ -42,9 +42,14 @@ class MarketplaceContractTests(unittest.TestCase):
         self.assertIn('url.searchParams.set("offset",String(page*20))', HTML)
         self.assertIn("No demo fallback was used.", HTML)
 
-    def test_bearer_token_requires_tls_except_local_development(self):
-        self.assertIn("bearer tokens may only be sent to HTTPS endpoints", HTML)
-        self.assertIn('u.protocol!=="https:"', HTML)
+    def test_account_connection_uses_same_origin_bff_without_upstream_urls(self):
+        self.assertIn("same-origin Cirvanna Marketplace BFF", HTML)
+        self.assertIn("bootstrap.publicOffersBase", HTML)
+        self.assertIn("Enter your signed Cirvanna user session token", HTML)
+        self.assertNotIn('id="commerceBase"', HTML)
+        self.assertNotIn('id="apiBase"', HTML)
+        self.assertNotIn('id="apiToken"', HTML)
+        self.assertNotIn("validateApiBase", HTML)
 
     def test_price_formatting_respects_currency_fraction_digits(self):
         self.assertIn("formatter.resolvedOptions().maximumFractionDigits", HTML)
