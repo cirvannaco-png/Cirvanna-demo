@@ -36,10 +36,11 @@ is for local tests only. The initial schema is versioned with Alembic under
 - `GET /outcomes/aggregate`: minimum-cohort aggregate and review signal.
 - `POST /learning/signals`: batch product/context suitability signals for the recommendation ranker; cohorts below 30 distinct contributors are suppressed.
 - `POST /providers/perfectcorp/skin-analysis`, `GET /providers/perfectcorp/skin-analysis/{task_id}`, `DELETE /providers/perfectcorp/skin-analysis/{task_id}`: opt-in, adult-only YouCam skin analysis, contributor-bound polling and provider-file deletion.
-- `POST /providers/perfectcorp/revoke-consent`: internal callback for consent revocation, scoped to one consent ID and pseudonymous contributor.
+- `POST /providers/perfectcorp/revoke-consent`: internal callback for consent revocation, scoped to one consent ID and pseudonymous contributor. The upstream canonical Identity Learning service must invoke it with the same pseudonymous contributor mapping and consent bundle ID; that event adapter remains a deployment gate.
 - `POST /providers/perfectcorp/reap-tasks`: admin-only cron cleanup for abandoned, expired-consent or revoked provider tasks.
 - `GET /cal/review-queue`: pending review signals for CAL; the Decision Service exposes the authenticated `/v1/cal/feedback-reviews` proxy.
 - `POST /cal/review-queue/{id}/decision`: persist a final CAL service decision reference; the Decision Service forwards decisions from `/v1/cal/feedback-reviews/{id}/decision`.
+- `POST /cal/feedback-decisions`: batch lookup of the latest final CAL verdict for requested product/context pairs. The Gateway and Decision Service enforce a returned BLOCK only when `CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED=true`.
 - `POST /cal/feedback-decisions`: return latest final CAL feedback decisions for product/context pairs. Decision Service and Marketplace API Gateway consume these decisions when `CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED=true`; BLOCK is a context-scoped veto, while SHOW never overrides normal CAL checks.
 - `GET /ready`, `GET /capabilities`.
 
