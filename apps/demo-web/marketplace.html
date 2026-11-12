@@ -154,9 +154,9 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       if(destinationKey){url.searchParams.set("destination_key",destinationKey);url.searchParams.set("fulfillment_mode",fulfillmentMode);url.searchParams.set("radius_km",String(radiusKm))}
     };
     if(bootstrap.publicOffersBase && !forceDemo){
-      mode="commerce";purchaseEnabled=false;
+      mode="commerce";purchaseEnabled=false;saved=[];cart=[];cartVersion=0;updateCounts();
       if(!config.userToken){
-        items=[];total=0;
+        items=[];total=0;updateCounts();
         setStatus("Sign in with a verified Cirvanna account to browse live products. Guest offer listings are disabled until candidate-bound CAL authorization is available.",true);
         render();return;
       }
