@@ -2090,8 +2090,14 @@ def readiness() -> dict[str, Any]:
     dependencies=[Depends(require_api_token)],
     tags=["personal aesthetic intelligence"],
 )
-def recommend_complementary_look(payload: ComplementerAdvisoryRequest) -> dict[str, Any]:
-    """Return styling guidance only; product candidates require the separate CAL decision path."""
+def recommend_complementary_look(
+    payload: ComplementerAdvisoryRequest,
+    end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
+) -> dict[str, Any]:
+    """Return stateless styling guidance bound to the verified Commerce subject."""
+    subject = _resolve_verified_subject(end_user_authorization)
+    if not hmac.compare_digest(subject, payload.user_id):
+        raise HTTPException(403, detail={"code": "REQUEST_SUBJECT_MISMATCH"})
     return _complementer_advisory(payload)
 
 
