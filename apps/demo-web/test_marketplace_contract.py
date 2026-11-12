@@ -8,6 +8,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 HTML = (ROOT / "apps/demo-web" / "marketplace.html").read_text(encoding="utf-8")
+WARDROBE_HTML = (ROOT / "apps/demo-web" / "wardrobe.html").read_text(encoding="utf-8")
 CATALOG = (ROOT / "services/catalog-service" / "app" / "main.py").read_text(encoding="utf-8")
 
 
@@ -57,6 +58,15 @@ class MarketplaceContractTests(unittest.TestCase):
         self.assertNotIn("Search marketplace with Xari", HTML)
         self.assertNotIn("with Tari", HTML)
         self.assertNotIn("search with Tari", HTML)
+
+
+    def test_daily_looks_offer_identity_bound_stateless_complementer_advice(self):
+        self.assertIn("Ask Complementer", WARDROBE_HTML)
+        self.assertIn('api("/api/vision/complementer"', WARDROBE_HTML)
+        self.assertIn('"mode": "advisory_only"', WARDROBE_HTML)
+        self.assertIn('"display_authorized": false', WARDROBE_HTML)
+        self.assertIn('"durable_personal_memory": false', WARDROBE_HTML)
+        self.assertIn("One-session advice only", WARDROBE_HTML)
 
     def test_try_on_remains_visible_but_disabled_until_real_adapters_exist(self):
         self.assertIn("Try on — unavailable", HTML)
