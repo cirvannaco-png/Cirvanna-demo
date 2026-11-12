@@ -450,6 +450,19 @@ def _receipt(value: str, expected_type: str, product_id: str) -> dict:
     return payload
 
 
+def _delete_perfectcorp_task_when_terminal(provider_task_id: str) -> tuple[bool, str]:
+    """The provider delete API accepts completed tasks; in-flight tasks stay blocked until terminal."""
+    status = perfectcorp_get_skin_analysis_status(
+        task_id=provider_task_id,
+        for_cleanup=True,
+    )
+    task_status = str(status.get("status", "unknown")).lower()
+    if task_status not in {"success", "error"}:
+        return False, task_status
+    perfectcorp_delete_task(task_id=provider_task_id)
+    return True, task_status
+
+
 def _task_subject(authorization_token: str | None, expected_token: str) -> None:
     if not authorization_token or not hmac.compare_digest(authorization_token, expected_token):
         raise HTTPException(403, "Provider task is not bound to this contributor")
@@ -663,26 +676,34 @@ def revoke_perfectcorp_consent(payload: ProviderConsentRevocationIn, db: Session
         row.status = "consent_revoked"
     db.commit()
     deleted = 0
+    pending = 0
     failed = 0
     for row in rows:
         try:
-            perfectcorp_delete_task(task_id=row.provider_task_id)
-            row.deleted_at = now()
-            row.status = "consent_revoked_deleted"
-            deleted += 1
+            is_deleted, provider_status = _delete_perfectcorp_task_when_terminal(row.provider_task_id)
+            if is_deleted:
+                row.deleted_at = now()
+                row.status = "consent_revoked_deleted"
+                deleted += 1
+            else:
+                row.status = f"consent_revoked_waiting_{provider_status}"[:24]
+                pending += 1
         except Exception:
+            row.status = "consent_revoked_cleanup_retry"
             failed += 1
     db.commit()
     if failed:
         raise HTTPException(502, {
             "code": "PROVIDER_CONSENT_REVOKED_CLEANUP_INCOMPLETE",
-            "revoked_tasks": len(rows), "deleted_tasks": deleted, "failed_tasks": failed,
+            "revoked_tasks": len(rows), "deleted_tasks": deleted,
+            "waiting_for_terminal": pending, "failed_tasks": failed,
             "revocation_reference": payload.revocation_reference,
         })
     return {
         "consent_id": payload.consent_id, "revoked": True,
         "revocation_reference": payload.revocation_reference,
         "matched_tasks": len(rows), "deleted_tasks": deleted,
+        "waiting_for_terminal": pending,
     }
 
 
@@ -712,20 +733,31 @@ def reap_abandoned_perfectcorp_tasks(db: Session = Depends(get_db)):
             if len(rows) >= 200:
                 break
     deleted = 0
+    pending = 0
     failed = 0
     for row, consent_expired in rows:
         try:
-            perfectcorp_delete_task(task_id=row.provider_task_id)
-            row.status = "consent_revoked_deleted" if row.revoked_at is not None else (
-                "consent_expired_deleted" if consent_expired else "ttl_deleted"
-            )
-            row.deleted_at = now()
-            deleted += 1
+            is_deleted, provider_status = _delete_perfectcorp_task_when_terminal(row.provider_task_id)
+            if is_deleted:
+                row.status = "consent_revoked_deleted" if row.revoked_at is not None else (
+                    "consent_expired_deleted" if consent_expired else "ttl_deleted"
+                )
+                row.deleted_at = now()
+                deleted += 1
+            else:
+                if row.revoked_at is not None:
+                    row.status = f"consent_revoked_waiting_{provider_status}"[:24]
+                elif consent_expired:
+                    row.status = f"consent_expired_waiting_{provider_status}"[:24]
+                else:
+                    row.status = f"ttl_waiting_{provider_status}"[:24]
+                pending += 1
         except Exception:
+            row.status = "cleanup_retry"
             failed += 1
     db.commit()
-    return {"attempted": len(rows), "deleted": deleted, "failed": failed,
-            "ttl_minutes": ttl_minutes, "provider": "perfectcorp"}
+    return {"attempted": len(rows), "deleted": deleted, "waiting_for_terminal": pending,
+            "failed": failed, "ttl_minutes": ttl_minutes, "provider": "perfectcorp"}
 
 
 @app.post("/providers/perfectcorp/skin-analysis", dependencies=[Depends(_service)], status_code=202)
@@ -794,38 +826,48 @@ def poll_perfectcorp_skin_analysis(
         raise HTTPException(410, "Provider task files have already been deleted")
     if task_row.revoked_at is not None:
         try:
-            perfectcorp_delete_task(task_id=task_row.provider_task_id)
-            task_row.deleted_at = now()
-            task_row.status = "consent_revoked_deleted"
+            deleted, provider_status = _delete_perfectcorp_task_when_terminal(task_row.provider_task_id)
+            if deleted:
+                task_row.deleted_at = now()
+                task_row.status = "consent_revoked_deleted"
+            else:
+                task_row.status = f"consent_revoked_waiting_{provider_status}"[:24]
             db.commit()
         except Exception as exc:
-            raise HTTPException(502, "Consent was revoked but provider task deletion failed") from exc
-        raise HTTPException(410, "Provider consent was revoked; provider task files were deleted")
+            raise HTTPException(502, "Consent was revoked but provider cleanup is awaiting retry") from exc
+        raise HTTPException(410, "Provider consent was revoked; no further result will be released")
     consent_expiry = task_row.consent_expires_at
     if consent_expiry.tzinfo is None:
         consent_expiry = consent_expiry.replace(tzinfo=timezone.utc)
     if consent_expiry <= now():
         try:
-            perfectcorp_delete_task(task_id=task_row.provider_task_id)
-            task_row.deleted_at = now()
-            task_row.status = "consent_expired_deleted"
+            deleted, provider_status = _delete_perfectcorp_task_when_terminal(task_row.provider_task_id)
+            if deleted:
+                task_row.deleted_at = now()
+                task_row.status = "consent_expired_deleted"
+            else:
+                task_row.status = f"consent_expired_waiting_{provider_status}"[:24]
             db.commit()
         except Exception as exc:
-            raise HTTPException(502, "Consent expired but provider task deletion failed") from exc
-        raise HTTPException(410, "Provider consent expired; provider task files were deleted")
+            raise HTTPException(502, "Consent expired but provider cleanup is awaiting retry") from exc
+        raise HTTPException(410, "Provider consent expired; no further result will be released")
     if (
         os.getenv("CIL_PERFECTCORP_ENABLED", "false").lower() != "true"
         or os.getenv("CIL_PERFECTCORP_DPA_APPROVED", "false").lower() != "true"
     ):
         # When approval is withdrawn, cleanup is still mandatory and results are not released.
         try:
-            perfectcorp_delete_task(task_id=task_row.provider_task_id)
-            task_row.deleted_at = now()
-            task_row.status = "deleted"
+            task_row.revoked_at = task_row.revoked_at or now()
+            deleted, provider_status = _delete_perfectcorp_task_when_terminal(task_row.provider_task_id)
+            if deleted:
+                task_row.deleted_at = now()
+                task_row.status = "dpa_withdrawn_deleted"
+            else:
+                task_row.status = f"dpa_withdrawn_waiting_{provider_status}"[:24]
             db.commit()
         except Exception as exc:
-            raise HTTPException(502, "DPA approval was withdrawn but provider task deletion failed") from exc
-        raise HTTPException(410, "Provider processing approval was withdrawn; task files were deleted")
+            raise HTTPException(502, "DPA approval was withdrawn but provider cleanup is awaiting retry") from exc
+        raise HTTPException(410, "Provider approval was withdrawn; no further result will be released")
     try:
         result = perfectcorp_get_skin_analysis_status(task_id=task_row.provider_task_id)
         if result.get("status") in {"success", "error"}:
@@ -862,11 +904,20 @@ def delete_perfectcorp_skin_analysis(
     if task_row.deleted_at is not None:
         return {"task_id": task_row.task_id, "deleted": True, "already_deleted": True}
     try:
-        deleted = perfectcorp_delete_task(task_id=task_row.provider_task_id)
-        task_row.deleted_at = now()
-        task_row.status = "deleted"
+        task_row.revoked_at = task_row.revoked_at or now()
+        deleted, provider_status = _delete_perfectcorp_task_when_terminal(task_row.provider_task_id)
+        if deleted:
+            task_row.deleted_at = now()
+            task_row.status = "deleted"
+        else:
+            task_row.status = f"delete_requested_waiting_{provider_status}"[:24]
         db.commit()
-        return {"task_id": task_row.task_id, "deleted": deleted}
+        return {
+            "task_id": task_row.task_id,
+            "deleted": deleted,
+            "waiting_for_terminal": not deleted,
+            "provider_status": provider_status,
+        }
     except PerfectCorpNotConfigured as exc:
         raise HTTPException(503, str(exc)) from exc
     except ValueError as exc:
