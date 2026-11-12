@@ -1,6 +1,6 @@
 # Cirvanna Intelligence Layer (CIL)
 
-**Status:** domain contracts, a durable Intelligence Service foundation, a fail-closed Catalog serving gateway and consent/CAL-bound outcome ingestion are implemented on the active PR branch. No vendor-specific licensed provider is connected yet.
+**Status:** the CIL domain contracts and durable Intelligence Service are merged into `main`; Catalog has a fail-closed serving gate; the API Gateway and Decision Service can consume final human CAL feedback decisions as context-scoped BLOCK vetoes. Vendor providers remain gated; no production vendor credentials or deployment have been verified.
 
 ## 1. Purpose and ownership
 
@@ -69,7 +69,7 @@ User-declared suitability is distinct from the action taken:
 
 Cohort aggregation requires at least 30 distinct contributors with an explicit suitability response before publishing breakdown metrics. This is a disclosure floor, not differential privacy, statistical representativeness or causal proof. The unsuitable-share threshold is supplied by versioned policy rather than hard-coded as a universal benchmark.
 
-A high unsuitable share creates a durable CAL review-queue record. CAL consumes the queue and records its own final `SHOW` or `BLOCK` verdict with a decision reference and rationale. The signal does not automatically suppress a product, alter Catalog state, create an NPL hard veto or retrain a model. Product suppression requires a separate reviewed rule and authorized Catalog/policy action. A single rejection is never a permanent user preference or product-level veto.
+A high unsuitable share creates a durable CAL review-queue record. CAL consumes the queue and records its own final `SHOW` or `BLOCK` verdict with a decision reference and rationale. When `CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED=true`, the live API Gateway and Decision Service query the latest final decision for the product and normalized climate/occasion context. `BLOCK` is a context-scoped candidate veto; `SHOW` never overrides normal safety, legal, NPL, USI, FCI or CaTaCaCi checks. CIL never generates an autonomous verdict or changes Catalog state. A single rejection is never a permanent user preference or product-level veto.
 
 ## 7. Runtime boundaries and security requirements
 
@@ -103,6 +103,8 @@ CIL cannot authorize a display. A CIL-supported claim or positive outcome must s
 - Signed source-rights decisions and runtime CIL-to-Catalog approval enforcement.
 - Production outcome event ingestion, contributor-token issuance, deletion/replay and privacy-preserving analytics.
 - Model training, online learning, model deployment or automatic product suppression.
+- Automatic propagation from the canonical Identity Learning revocation event to `/providers/perfectcorp/revoke-consent`; the upstream consent owner must call the scoped CIL callback until that service integration is deployed.
+- Deployment of `CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED=true` in production, with distinct CAL tokens, health/readiness checks and staging verification against the live Gateway and checkout path.
 - End-to-end wiring from PNELLY, DermalSight, RadianceScore, Wardrobe and Marketplace.
 
-These are separate release gates, not capabilities implied by the contract package. The next safe increment is a durable source registry and authenticated ingestion/assessment API, followed by provider adapters and a consent-verified outcome event path.
+These are separate release gates, not capabilities implied by the contract package. The next release gates are the Identity Learning-to-CIL provider consent-revocation event integration, production deployment and backup/restore evidence, vendor DPA/retention commitments, the CAL enforcement rollout flag and cohort A/B validation of the feedback ranking weight.
