@@ -697,3 +697,30 @@ def test_cil_serving_assessment_fails_closed_when_service_is_unavailable(monkeyp
     with pytest.raises(main.HTTPException) as exc:
         main._assess_cil_product_serving(product())
     assert exc.value.status_code == 503
+
+
+def test_cal_show_is_withheld_when_cil_evidence_or_rights_review_is_required(client, monkeypatch):
+    monkeypatch.setattr(main, "fetch_product", lambda _: product(claims=[{"claim_id": "claim-unlicensed"}]))
+    monkeypatch.setattr(main, "_safety_signal", pass_safety)
+    monkeypatch.setattr(main, "_fit_estimate", calibrated_fit)
+    monkeypatch.setattr(
+        main, "_fit_evidence_fields",
+        lambda _estimate: (
+            ("body_measurements", "garment_size_chart", "garment_geometry"),
+            ("body_measurements", "garment_size_chart", "garment_geometry"),
+        ),
+    )
+    monkeypatch.setattr(main, "_assess_cil_product_serving", lambda *_args, **_kwargs: {
+        "product_id": PRODUCT_ID, "catalog_version": 3,
+        "purpose": "commercial_recommendation",
+        "decisions": [{"item_id": "claim-unlicensed", "eligible": False}],
+        "all_eligible": False,
+    })
+    response = client.post("/v1/decisions", json=request_body(), headers=auth_headers())
+    assert response.status_code == 200
+    decision = response.json()["candidates"][0]
+    assert decision["verdict"] == "show"
+    assert decision["may_display"] is False
+    assert decision["cil_serving_status"] == "review"
+    assert decision["name"] is None
+    assert any(reason["code"] == "CIL_EVIDENCE_OR_RIGHTS_REVIEW_REQUIRED" for reason in decision["reasons"])
