@@ -67,9 +67,12 @@ class MarketplaceBrowserTests(unittest.TestCase):
     def _open_live_marketplace(self, cart_status=503):
         page = self.browser.new_page()
         page.add_init_script("""
-            localStorage.setItem("cirvanna-marketplace-saved", JSON.stringify([{product_id:"demo-saved"}]));
-            localStorage.setItem("cirvanna-marketplace-bag", JSON.stringify([{product_id:"demo-bag",quantity:1}]));
+            // Set bootstrap first: this script may run for the initial opaque about:blank document.
             window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce",allowDeveloperTokenInput:true});
+            try {
+                localStorage.setItem("cirvanna-marketplace-saved", JSON.stringify([{product_id:"demo-saved"}]));
+                localStorage.setItem("cirvanna-marketplace-bag", JSON.stringify([{product_id:"demo-bag",quantity:1}]));
+            } catch (_) {}
         """)
         cart_payload = {
             "cart_id": "test-cart",
