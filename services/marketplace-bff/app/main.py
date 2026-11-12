@@ -142,6 +142,13 @@ def _pnelly_internal_service() -> tuple[str, str]:
     return base, token
 
 
+class ComplementerRequestIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: str = Field(min_length=8, max_length=128)
+    preferences: dict[str, Any] = Field(default_factory=dict, max_length=32)
+    look: dict[str, Any] = Field(default_factory=dict, max_length=32)
+
+
 class MarketplaceSearchIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     query: str = Field(min_length=3, max_length=1000)
@@ -222,6 +229,70 @@ async def _safe_json_post(
     if not isinstance(data, dict) or data.get("status") != "complete" or not isinstance(data.get("candidates"), list):
         raise HTTPException(502, detail={"code": "VISION_SEARCH_INVALID_RESPONSE"})
     return data
+
+
+@app.post("/api/vision/complementer")
+async def marketplace_complementer(request: Request, payload: ComplementerRequestIn) -> Response:
+    """Invoke Complementer with verified identity; return styling advice only."""
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(10.0, connect=2.0),
+        trust_env=False,
+        follow_redirects=False,
+    ) as client:
+        subject, user_token = await _verified_commerce_subject(client, request)
+        gateway_base, gateway_token = _decision_gateway()
+        advisory = {
+            "request_id": payload.request_id.strip(),
+            "user_id": subject,
+            "preferences": payload.preferences,
+            "look": payload.look,
+        }
+        try:
+            response = await client.post(
+                gateway_base + "/v1/complementer/recommend",
+                headers={
+                    "Authorization": "Bearer " + gateway_token,
+                    "X-End-User-Authorization": "Bearer " + user_token,
+                    "Accept": "application/json",
+                },
+                json=advisory,
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "COMPLEMENTER_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "COMPLEMENTER_UNAVAILABLE"}) from exc
+    if response.status_code in {400, 401, 403, 409, 422}:
+        try:
+            detail = response.json().get("detail", {})
+            code = detail.get("code") if isinstance(detail, dict) else None
+        except ValueError:
+            code = None
+        raise HTTPException(response.status_code, detail={"code": code or "COMPLEMENTER_REQUEST_REJECTED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "COMPLEMENTER_UNAVAILABLE"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "COMPLEMENTER_RESPONSE_INVALID"}) from exc
+    if (
+        not isinstance(data, dict)
+        or data.get("mode") != "advisory_only"
+        or data.get("display_authorized") is not False
+        or data.get("durable_personal_memory") is not False
+        or not isinstance(data.get("recommendation"), dict)
+    ):
+        raise HTTPException(502, detail={"code": "COMPLEMENTER_SCOPE_INVALID"})
+    # Explicitly allowlist the advisory envelope. Upstream merchandising fields,
+    # candidate IDs and offer details can never pass through this endpoint.
+    return JSONResponse(
+        content={
+            "mode": "advisory_only",
+            "display_authorized": False,
+            "durable_personal_memory": False,
+            "recommendation": data["recommendation"],
+        },
+        headers={"Cache-Control": "no-store, private"},
+    )
 
 
 @app.post("/api/vision/marketplace-search")
