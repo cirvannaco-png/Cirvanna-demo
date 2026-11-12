@@ -872,6 +872,49 @@ def test_required_cil_cal_enforcement_fails_closed_when_review_store_is_unavaila
     assert response.json()["detail"]["code"] == "CIL_CAL_FEEDBACK_DECISIONS_UNAVAILABLE"
 
 
+def test_production_gateway_cannot_disable_cil_cal_feedback_review_enforcement(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_ENVIRONMENT", "production")
+    monkeypatch.setenv("CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED", "false")
+    assert main._cil_cal_review_enforcement_required() is True
+
+
+def test_development_gateway_can_keep_cil_cal_feedback_review_enforcement_optional(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_ENVIRONMENT", "development")
+    monkeypatch.setenv("CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED", "false")
+    assert main._cil_cal_review_enforcement_required() is False
+
+
+def test_complementer_returns_only_advisory_for_verified_customer(client, monkeypatch):
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda authorization: "verified-customer-42")
+    captured = {}
+    def advisory(payload):
+        captured["payload"] = payload
+        return {
+            "mode": "advisory_only",
+            "display_authorized": False,
+            "durable_personal_memory": False,
+            "recommendation": {"summary": "Use warm neutrals and a structured layer."},
+        }
+    monkeypatch.setattr(main, "_complementer_advisory", advisory)
+    response = client.post(
+        "/v1/complementer/recommend",
+        json={
+            "request_id": "complementer-test-005",
+            "user_id": "verified-customer-42",
+            "preferences": {"style": "minimal"},
+            "look": {"description": "navy trousers and cream knit"},
+        },
+        headers={
+            **auth_headers(),
+            "X-End-User-Authorization": "Bearer signed-customer-session",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["mode"] == "advisory_only"
+    assert captured["payload"].user_id == "verified-customer-42"
+    assert captured["payload"].look["description"] == "navy trousers and cream knit"
+
+
 def test_complementer_requires_verified_end_user_subject(client):
     response = client.post(
         "/v1/complementer/recommend",
