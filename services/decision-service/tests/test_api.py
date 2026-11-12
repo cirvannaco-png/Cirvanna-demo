@@ -346,6 +346,18 @@ def test_decision_service_bridges_cil_feedback_queue_and_final_cal_decision(clie
     assert decision.json()["verdict"] == "BLOCK"
 
 
+def test_production_decision_service_cannot_disable_cil_feedback_review_enforcement(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_ENVIRONMENT", "production")
+    monkeypatch.setenv("CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED", "false")
+    assert main._cil_cal_review_enforcement_required() is True
+
+
+def test_development_decision_service_can_keep_cil_feedback_review_optional(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_ENVIRONMENT", "development")
+    monkeypatch.setenv("CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED", "false")
+    assert main._cil_cal_review_enforcement_required() is False
+
+
 def test_cil_feedback_review_block_is_enforced_by_live_eligibility_evaluation(client, monkeypatch):
     monkeypatch.setenv("CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED", "true")
     monkeypatch.setenv("CIL_SERVICE_URL", "https://cil.internal")
