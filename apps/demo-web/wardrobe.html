@@ -921,6 +921,44 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
           button.addEventListener("click", () => sendLookFeedback(look, signal));
           actions.append(button);
         }
+        const saveButton = document.createElement("button");
+        saveButton.type = "button";
+        saveButton.className = "btn";
+        saveButton.textContent = look.savedOutfitId ? "Saved to Wardrobe" : "Save to Wardrobe";
+        saveButton.disabled = Boolean(look.savedOutfitId);
+        saveButton.addEventListener("click", async () => {
+          const itemIds = (look.items || []).map(item => item && item.item_id);
+          if (!itemIds.length || itemIds.some(itemId => typeof itemId !== "string" || !itemId) ||
+              new Set(itemIds).size !== itemIds.length) {
+            status("pnellyStatus", "This look does not contain a valid, unique set of active Wardrobe items.", "error");
+            return;
+          }
+          const saveEventId = look.saveEventId || (look.saveEventId = crypto.randomUUID());
+          saveButton.disabled = true;
+          saveButton.textContent = "Saving…";
+          try {
+            const saved = await api("/api/wardrobe/pnelly/save-look", {
+              method: "POST",
+              body: JSON.stringify({
+                item_ids: itemIds,
+                save_event_id: saveEventId,
+                name: "PNELLY " + look.role + " " + new Date().toISOString().slice(0, 10)
+              })
+            });
+            if (!saved.outfit_id || !["created", "replayed"].includes(saved.status)) {
+              throw new Error("Wardrobe did not confirm that this look was saved.");
+            }
+            look.savedOutfitId = saved.outfit_id;
+            saveButton.textContent = "Saved to Wardrobe";
+            status("pnellyStatus", look.role + " has been saved to your Wardrobe. Saving did not record it as worn or change your learned preferences.", "good");
+            loadOutfits().catch(() => {});
+          } catch (error) {
+            saveButton.disabled = false;
+            saveButton.textContent = "Save to Wardrobe";
+            status("pnellyStatus", error.message, "error");
+          }
+        });
+        actions.append(saveButton);
         const refineButton = document.createElement("button");
         refineButton.type = "button";
         refineButton.className = "btn primary";
