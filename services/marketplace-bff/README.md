@@ -23,6 +23,12 @@ This is the server-side browser boundary for marketplace browsing, visual discov
 - The TAL value deliberately excludes the raw look description. It is retained as a private, idempotent learning observation with a 180-day event expiry.
 - A durable TAL event is not automatically a changed USI/NPL preference or a CIL suitability outcome. A downstream, reviewed learning consumer must be implemented and validated before feedback changes recommendation ranking. CIL suitability ingestion still requires its own purpose-bound consent and candidate-bound CAL SHOW receipt.
 
+## Partner portal boundary
+
+- /brand-portal currently serves the merchant/seller onboarding and Commerce workspace. It is not a separate brand-owner tenant system.
+- A dedicated distributor tenant, authorization graph and /distributor-portal are not implemented. Do not reuse a merchant role or grant distributor access from a brand-name field.
+- The required organization/membership model, brand/distributor authorization relationships, tenant-scoped analytics and cross-tenant acceptance tests are specified in docs/architecture/brand-and-distributor-portals.md. Release gate REL-19 remains blocked until these APIs, portals and staging tests are delivered.
+
 ## Runtime configuration
 
 Set through the deployment secret manager:
