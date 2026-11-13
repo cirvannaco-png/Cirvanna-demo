@@ -2217,3 +2217,100 @@ def test_complementer_requires_authenticated_user_before_upstream_calls(client, 
     )
     assert response.status_code == 401
     assert response.json()["detail"]["code"] == "USER_BEARER_REQUIRED"
+
+
+
+def test_complementer_feedback_writes_only_consented_minimal_event_to_verified_tal(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "verified-customer-42", "role": "customer"}),
+        FakeResponse({
+            "status": "recorded",
+            "event_id": "feedback-event-001",
+            "durable_persistence": True,
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/vision/complementer/feedback",
+        headers={"Authorization": "Bearer signed-customer-session"},
+        json={
+            "feedback_id": "feedback-event-001",
+            "request_id": "complementer-request-001",
+            "outcome": "rejected",
+            "consent_receipt_id": "personalization-consent-001",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "status": "recorded",
+        "feedback_id": "feedback-event-001",
+        "durable_persistence": True,
+        "learning_owner": "TAL",
+    }
+    assert fake.calls[0][0] == "GET"
+    assert fake.calls[0][1] == "https://commerce.example.test/me"
+    assert fake.calls[1][0] == "POST"
+    assert fake.calls[1][1] == "https://decision.example.test/v1/me/tal/events"
+    sent = fake.calls[1][2]
+    assert sent["headers"]["X-End-User-Authorization"] == "Bearer signed-customer-session"
+    assert sent["json"]["event_id"] == "feedback-event-001"
+    assert sent["json"]["idempotency_key"] == "feedback-event-001"
+    assert sent["json"]["consent_receipt_id"] == "personalization-consent-001"
+    assert sent["json"]["feature_key"] == "complementer.recommendation_feedback"
+    assert json.loads(sent["json"]["value"]) == {
+        "request_id": "complementer-request-001",
+        "outcome": "rejected",
+    }
+    assert "navy trousers" not in response.text
+    assert response.headers["cache-control"] == "no-store, private"
+
+
+def test_complementer_feedback_requires_authenticated_user(client, monkeypatch):
+    class ForbiddenAsyncClient:
+        def __init__(self, **kwargs):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return False
+        async def get(self, *args, **kwargs):
+            pytest.fail("Feedback must reject before Commerce identity lookup without a bearer")
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", ForbiddenAsyncClient)
+    response = client.post(
+        "/api/vision/complementer/feedback",
+        json={
+            "feedback_id": "feedback-event-002",
+            "request_id": "complementer-request-002",
+            "outcome": "approved",
+            "consent_receipt_id": "personalization-consent-002",
+        },
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "USER_BEARER_REQUIRED"
+
+
+def test_complementer_feedback_does_not_claim_persistence_on_upstream_rejection(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "verified-customer-42", "role": "customer"}),
+        FakeResponse({"detail": {"code": "ACTIVE_TAL_CONSENT_REQUIRED"}}, status_code=403),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/vision/complementer/feedback",
+        headers={"Authorization": "Bearer signed-customer-session"},
+        json={
+            "feedback_id": "feedback-event-003",
+            "request_id": "complementer-request-003",
+            "outcome": "approved",
+            "consent_receipt_id": "revoked-consent-003",
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "ACTIVE_TAL_CONSENT_REQUIRED"
