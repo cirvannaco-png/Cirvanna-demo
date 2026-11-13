@@ -446,6 +446,13 @@ class RecordPNELLYLookWearIn(BaseModel):
     context: dict[str, str] = Field(default_factory=dict, max_length=8)
 
 
+class SavePNELLYLookIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    item_ids: list[str] = Field(min_length=1, max_length=20)
+    save_event_id: str = Field(min_length=8, max_length=128)
+    name: str = Field(min_length=1, max_length=160)
+
+
 class EditWardrobeOutfitPieceIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expected_version: int = Field(ge=1)
@@ -1110,6 +1117,164 @@ async def create_wardrobe_outfit(request: Request, payload: CreateWardrobeOutfit
     if not isinstance(outfit, dict) or outfit.get("owner_user_id") != subject:
         raise HTTPException(502, detail={"code": "WARDROBE_OUTFIT_SCOPE_MISMATCH"})
     return _private_json_response(data, status_code=201)
+
+
+@app.post("/api/wardrobe/pnelly/save-look", status_code=201)
+async def save_pnelly_look(request: Request, payload: SavePNELLYLookIn) -> Response:
+    """Save a generated PNELLY look as an owner-scoped outfit without recording it as worn."""
+    item_ids = [value.strip() for value in payload.item_ids]
+    save_event_id = payload.save_event_id.strip()
+    name = payload.name.strip()
+    if any(not item_id for item_id in item_ids) or len(set(item_ids)) != len(item_ids):
+        raise HTTPException(422, detail={"code": "PNELLY_SAVE_ITEM_IDS_INVALID"})
+    if not save_event_id or not name:
+        raise HTTPException(422, detail={"code": "PNELLY_SAVE_LOOK_INPUT_INVALID"})
+
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(12.0, connect=2.0),
+        trust_env=False,
+        follow_redirects=False,
+    ) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        wardrobe_base, wardrobe_token = _wardrobe_service()
+        headers = {
+            "Authorization": "Bearer " + wardrobe_token,
+            "Accept": "application/json",
+        }
+        try:
+            items_response = await client.get(
+                wardrobe_base + "/v1/items",
+                params={"owner_user_id": subject, "include_archived": "false"},
+                headers=headers,
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "PNELLY_SAVE_WARDROBE_UNAVAILABLE"}) from exc
+        if items_response.status_code != 200:
+            raise HTTPException(503, detail={"code": "PNELLY_SAVE_WARDROBE_UNAVAILABLE"})
+        try:
+            items_data = items_response.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "PNELLY_SAVE_WARDROBE_RESPONSE_INVALID"}) from exc
+        if (
+            not isinstance(items_data, dict)
+            or items_data.get("owner_user_id") != subject
+            or not isinstance(items_data.get("items"), list)
+            or any(
+                not isinstance(item, dict) or item.get("owner_user_id") != subject
+                for item in items_data.get("items", [])
+            )
+        ):
+            raise HTTPException(502, detail={"code": "PNELLY_SAVE_WARDROBE_SCOPE_MISMATCH"})
+        active_item_ids = {
+            item.get("item_id")
+            for item in items_data["items"]
+            if item.get("status") == "active" and isinstance(item.get("item_id"), str)
+        }
+        if any(item_id not in active_item_ids for item_id in item_ids):
+            raise HTTPException(422, detail={"code": "PNELLY_SAVE_ITEM_NOT_ACTIVE_OR_NOT_OWNED"})
+
+        # Stable IDs make a retry after a lost response resolve to the same saved outfit.
+        outfit_id = str(uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"cirvanna:pnelly-save:{subject}:{save_event_id}",
+        ))
+        pieces = [{
+            "slot_id": str(uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"cirvanna:pnelly-save-slot:{subject}:{save_event_id}:{item_id}",
+            )),
+            "wardrobe_item_id": item_id,
+        } for item_id in item_ids]
+        create_body = {
+            "owner_user_id": subject,
+            "outfit_id": outfit_id,
+            "name": name,
+            "pieces": pieces,
+        }
+        try:
+            create_response = await client.post(
+                wardrobe_base + "/v1/outfits",
+                headers=headers,
+                json=create_body,
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "PNELLY_SAVE_OUTFIT_CREATE_UNAVAILABLE"}) from exc
+
+        status_value = "created"
+        if create_response.status_code == 201:
+            try:
+                outfit_data = create_response.json().get("outfit")
+            except (ValueError, AttributeError) as exc:
+                raise HTTPException(502, detail={"code": "PNELLY_SAVE_OUTFIT_RESPONSE_INVALID"}) from exc
+        elif create_response.status_code in {409, 503}:
+            # The create may have committed before the client lost the response.
+            try:
+                list_response = await client.get(
+                    wardrobe_base + "/v1/outfits",
+                    params={"owner_user_id": subject},
+                    headers=headers,
+                )
+                listed = list_response.json() if list_response.status_code == 200 else None
+            except (httpx.HTTPError, ValueError) as exc:
+                raise HTTPException(503, detail={"code": "PNELLY_SAVE_OUTFIT_RELOAD_UNAVAILABLE"}) from exc
+            if (
+                not isinstance(listed, dict)
+                or listed.get("owner_user_id") != subject
+                or not isinstance(listed.get("outfits"), list)
+            ):
+                raise HTTPException(503, detail={"code": "PNELLY_SAVE_OUTFIT_RELOAD_UNAVAILABLE"})
+            existing = next(
+                (
+                    outfit for outfit in listed["outfits"]
+                    if isinstance(outfit, dict) and outfit.get("outfit_id") == outfit_id
+                ),
+                None,
+            )
+            if not isinstance(existing, dict):
+                if create_response.status_code == 409:
+                    raise HTTPException(409, detail={"code": "PNELLY_SAVE_OUTFIT_IDEMPOTENCY_CONFLICT"})
+                raise HTTPException(503, detail={"code": "PNELLY_SAVE_OUTFIT_CREATE_UNAVAILABLE"})
+            existing_pieces = existing.get("pieces")
+            existing_ids = sorted(
+                piece.get("wardrobe_item_id")
+                for piece in existing_pieces
+                if isinstance(piece, dict) and isinstance(piece.get("wardrobe_item_id"), str)
+            ) if isinstance(existing_pieces, list) else []
+            if (
+                existing.get("owner_user_id") != subject
+                or existing.get("name") != name
+                or existing_ids != sorted(item_ids)
+                or len(existing_ids) != len(item_ids)
+            ):
+                raise HTTPException(409, detail={"code": "PNELLY_SAVE_OUTFIT_IDEMPOTENCY_CONFLICT"})
+            outfit_data = existing
+            status_value = "replayed"
+        elif create_response.status_code in {400, 403, 404, 422}:
+            try:
+                detail = create_response.json().get("detail", {})
+            except ValueError:
+                detail = {"code": "PNELLY_SAVE_OUTFIT_CREATE_REJECTED"}
+            raise HTTPException(create_response.status_code, detail=detail)
+        else:
+            raise HTTPException(503, detail={"code": "PNELLY_SAVE_OUTFIT_CREATE_UNAVAILABLE"})
+
+    if (
+        not isinstance(outfit_data, dict)
+        or outfit_data.get("owner_user_id") != subject
+        or outfit_data.get("outfit_id") != outfit_id
+        or outfit_data.get("name") != name
+        or isinstance(outfit_data.get("version"), bool)
+        or not isinstance(outfit_data.get("version"), int)
+        or outfit_data["version"] < 1
+    ):
+        raise HTTPException(502, detail={"code": "PNELLY_SAVE_OUTFIT_SCOPE_MISMATCH"})
+    return _private_json_response({
+        "status": status_value,
+        "outfit_id": outfit_id,
+        "outfit_version": outfit_data["version"],
+        "name": name,
+        "wardrobe_item_ids": item_ids,
+    }, status_code=201)
 
 
 @app.post("/api/wardrobe/looks/wear", status_code=201)
