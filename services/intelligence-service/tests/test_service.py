@@ -456,6 +456,7 @@ def sign_skin_consent(*, contributor_token: str, image_bytes: bytes, age: int = 
         "type": "consent",
         "purpose": "perfectcorp_skin_analysis",
         "provider": "perfectcorp",
+        "consent_id": "skin-consent-test-001",
         "subject_token": contributor_token,
         "image_sha256": hashlib.sha256(image_bytes).hexdigest(),
         "single_subject": True,
@@ -548,7 +549,7 @@ def test_perfectcorp_terminal_result_is_deleted_before_result_is_released(client
     try:
         db.add(ProviderTask(
             task_id="task-2", provider_task_id="vendor-task-2", provider="perfectcorp", contributor_token=contributor,
-            image_digest="a" * 64,
+            consent_id="skin-consent-task-2", image_digest="a" * 64,
             consent_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
             status="running",
         ))
@@ -578,7 +579,7 @@ def test_perfectcorp_terminal_result_is_not_released_when_deletion_fails(client,
     try:
         db.add(ProviderTask(
             task_id="task-3", provider_task_id="vendor-task-3", provider="perfectcorp", contributor_token=contributor,
-            image_digest="b" * 64,
+            consent_id="skin-consent-task-3", image_digest="b" * 64,
             consent_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
             status="running",
         ))
@@ -599,7 +600,7 @@ def test_perfectcorp_polling_is_bound_to_the_same_pseudonymous_contributor(clien
     try:
         db.add(ProviderTask(
             task_id="task-owned", provider_task_id="vendor-owned", provider="perfectcorp",
-            contributor_token=contributor, image_digest="c" * 64,
+            contributor_token=contributor, consent_id="skin-consent-owned", image_digest="c" * 64,
             consent_expires_at=datetime.now(timezone.utc) + timedelta(hours=1), status="running",
         ))
         db.commit()
@@ -622,7 +623,7 @@ def test_perfectcorp_reaper_deletes_abandoned_provider_tasks(client, monkeypatch
     try:
         db.add(ProviderTask(
             task_id="task-abandoned", provider_task_id="vendor-abandoned", provider="perfectcorp",
-            contributor_token="hmac-sha256:" + "4" * 64, image_digest="d" * 64,
+            contributor_token="hmac-sha256:" + "4" * 64, consent_id="skin-consent-abandoned", image_digest="d" * 64,
             consent_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
             status="running", created_at=old,
         ))
