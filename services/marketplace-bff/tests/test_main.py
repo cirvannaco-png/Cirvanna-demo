@@ -2343,7 +2343,10 @@ def test_pnelly_save_look_creates_owner_bound_saved_outfit(client, monkeypatch):
         FakeResponse({"owner_user_id": "signed-user-42", "items": wardrobe_items}),
         FakeResponse({"outfit": {
             "outfit_id": expected_outfit_id, "owner_user_id": "signed-user-42",
-            "name": "PNELLY Everyday", "version": 1, "pieces": [],
+            "name": "PNELLY Everyday", "version": 1, "pieces": [
+                {"slot_id": "slot-shirt", "wardrobe_item_id": "shirt-001"},
+                {"slot_id": "slot-trousers", "wardrobe_item_id": "trousers-001"},
+            ],
         }, "status": "created"}, status_code=201),
     ])
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
