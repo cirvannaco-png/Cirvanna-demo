@@ -13,6 +13,7 @@ P2 = "3e4c0b5a-d9b4-4b96-87f0-5c92f120d14f"
 @pytest.fixture
 def client(monkeypatch, tmp_path):
     monkeypatch.setenv("CIRVANNA_API_TOKEN", TOKEN)
+    monkeypatch.setenv("COMMERCE_MARKETPLACE_READ_TOKEN", "gateway-commerce-read-test-token-with-32-bytes")
     monkeypatch.setenv("CIRVANNA_AUDIT_DB", str(tmp_path / "audit.sqlite3"))
     monkeypatch.setenv("CIRVANNA_REQUIRE_VERIFIED_IDENTITY", "true")
     return TestClient(main.app)
@@ -390,10 +391,27 @@ def test_stale_wardrobe_context_is_downgraded_to_eepl_review_not_inferred():
     assert result.verdict is GateVerdict.REVIEW
     assert "EEPL_REQUIRED_CONTEXT_MISSING_LOCATION" in result.reason_codes
 
+def test_discovery_requires_dedicated_commerce_offer_read_token(monkeypatch):
+    monkeypatch.setenv("CATALOG_SERVICE_URL", "https://catalog.example.test")
+    monkeypatch.setenv("CATALOG_API_TOKEN", "catalog-internal-token-more-than-thirty-two-bytes")
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.delenv("COMMERCE_MARKETPLACE_READ_TOKEN", raising=False)
+    request = main.DiscoveryRequest(
+        user_id="subject-verified-1", query="", category="shirt",
+        market_country_code="KE", offset=0, limit=10,
+    )
+    with pytest.raises(main.HTTPException) as error:
+        main._discover_catalog_and_offers(request)
+    assert error.value.status_code == 503
+    assert error.value.detail["code"] == "COMMERCE_OFFERS_NOT_CONFIGURED"
+
+
 def test_discovery_forwards_market_destination_and_fulfilment_filters_to_commerce(monkeypatch):
     monkeypatch.setenv("CATALOG_SERVICE_URL", "https://catalog.example.test")
     monkeypatch.setenv("CATALOG_API_TOKEN", "catalog-internal-token-more-than-thirty-two-bytes")
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    commerce_read_token = "gateway-commerce-read-test-token-with-32-bytes"
+    monkeypatch.setenv("COMMERCE_MARKETPLACE_READ_TOKEN", commerce_read_token)
     calls = []
 
     class FakeResponse:
@@ -442,6 +460,7 @@ def test_discovery_forwards_market_destination_and_fulfilment_filters_to_commerc
     assert calls[0][0] == "https://catalog.example.test/products"
     assert calls[0][1]["params"] == {"limit": 15, "offset": 20, "category": "shirt"}
     assert calls[1][0] == "https://commerce.example.test/marketplace/offers"
+    assert calls[1][1]["headers"]["X-Commerce-Marketplace-Read-Token"] == commerce_read_token
     assert calls[1][1]["params"] == {
         "limit": 15,
         "offset": 20,

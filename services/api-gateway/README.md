@@ -54,7 +54,7 @@ Rejected Complementer suggestions remain soft observations. They do not automati
 `POST /v1/discover` accepts a search query, optional category/currency, context, and explicit constraints. The gateway:
 
 1. Queries Catalog `GET /products` for active canonical product records.
-2. Queries Commerce `GET /marketplace/offers` for active offers with available inventory.
+2. Queries the internal-only Commerce `GET /marketplace/offers` for active offers with available inventory, using the dedicated `COMMERCE_MARKETPLACE_READ_TOKEN`. Commerce rejects direct requests without this service identity.
 3. Joins offers to Catalog by exact `catalog_product_id`; orphan offers are discarded.
 4. Keeps the lowest-priced purchasable offer per canonical product.
 5. Ranks by weighted explicit USI preference matches, then price and product ID.
@@ -88,7 +88,8 @@ The adapter contract is not a substitute for independent scientific or safety ev
 | `CIRVANNA_POLICY_VERSION` | Decision policy version |
 | `CIRVANNA_REQUIRED_CONTEXT_FIELDS` | EEPL context requirements |
 | `CIRVANNA_REQUIRED_PRODUCT_ATTRIBUTES` | Required Catalog metadata |
-| `COMMERCE_API_URL` | Trusted Commerce `/me` and offers API base URL |
+| `COMMERCE_API_URL` | Trusted Commerce `/me` and internal offers API base URL |
+| `COMMERCE_MARKETPLACE_READ_TOKEN` | Dedicated 32-byte minimum secret used only by the Decision Gateway for `X-Commerce-Marketplace-Read-Token` on raw Commerce offer and comparison reads |
 | `CATALOG_SERVICE_URL` | Trusted Catalog API base URL |
 | `CATALOG_API_TOKEN` | Catalog read credential |
 | `IDENTITY_SERVICE_URL` | Private USI/TAL service URL |

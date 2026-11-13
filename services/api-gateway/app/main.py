@@ -1538,9 +1538,10 @@ def _discover_catalog_and_offers(payload: DiscoveryRequest) -> tuple[list[dict[s
     catalog_base = os.getenv("CATALOG_SERVICE_URL", "").strip().rstrip("/")
     catalog_token = os.getenv("CATALOG_API_TOKEN", "").strip()
     commerce_base = os.getenv("COMMERCE_API_URL", "").strip().rstrip("/")
+    commerce_read_token = os.getenv("COMMERCE_MARKETPLACE_READ_TOKEN", "").strip()
     if not catalog_base or not _trusted_internal_base_url(catalog_base) or len(catalog_token.encode("utf-8")) < 32:
         raise HTTPException(503, detail={"code": "CATALOG_DISCOVERY_NOT_CONFIGURED"})
-    if not commerce_base or not _trusted_internal_base_url(commerce_base):
+    if not commerce_base or not _trusted_internal_base_url(commerce_base) or len(commerce_read_token.encode("utf-8")) < 32:
         raise HTTPException(503, detail={"code": "COMMERCE_OFFERS_NOT_CONFIGURED"})
     params: dict[str, Any] = {"limit": payload.limit, "offset": payload.offset}
     if payload.query:
@@ -1578,7 +1579,14 @@ def _discover_catalog_and_offers(payload: DiscoveryRequest) -> tuple[list[dict[s
                 offer_params["radius_km"] = payload.radius_km
             if payload.fulfillment_mode:
                 offer_params["fulfillment_mode"] = payload.fulfillment_mode
-            offer_response = client.get(commerce_base + "/marketplace/offers", params=offer_params, headers={"Accept": "application/json"})
+            offer_response = client.get(
+                commerce_base + "/marketplace/offers",
+                params=offer_params,
+                headers={
+                    "X-Commerce-Marketplace-Read-Token": commerce_read_token,
+                    "Accept": "application/json",
+                },
+            )
             if offer_response.status_code != 200:
                 raise HTTPException(503, detail={"code": "COMMERCE_OFFERS_UNAVAILABLE"})
             offer_payload = offer_response.json()
@@ -1984,6 +1992,7 @@ def capabilities() -> dict[str, Any]:
         ),
 
         "catalog_service_integration": True,
+        "commerce_marketplace_read_auth_configured": len(os.getenv("COMMERCE_MARKETPLACE_READ_TOKEN", "").encode("utf-8")) >= 32,
         "deterministic_cal_arbitration": True,
         "explicit_negative_preferences": True,
         "persistent_npl_service_integrated": bool(
@@ -2032,10 +2041,12 @@ def capabilities() -> dict[str, Any]:
 @app.get("/ready", tags=["operations"])
 def readiness() -> dict[str, Any]:
     base_url = os.getenv("CATALOG_SERVICE_URL", "").strip().rstrip("/")
+    commerce_marketplace_read_auth_configured = len(os.getenv("COMMERCE_MARKETPLACE_READ_TOKEN", "").encode("utf-8")) >= 32
     configured = bool(
         os.getenv("CIRVANNA_API_TOKEN")
         and os.getenv("CATALOG_API_TOKEN")
         and base_url
+        and commerce_marketplace_read_auth_configured
     )
     catalog_ready = False
     if base_url:
@@ -2089,6 +2100,7 @@ def readiness() -> dict[str, Any]:
         "service": SERVICE_NAME,
         "gateway_auth_configured": bool(os.getenv("CIRVANNA_API_TOKEN")),
         "catalog_auth_configured": bool(os.getenv("CATALOG_API_TOKEN")),
+        "commerce_marketplace_read_auth_configured": commerce_marketplace_read_auth_configured,
         "catalog_ready": catalog_ready,
         "audit_store_ready": audit_ready,
         "policy_configuration_valid": policy_configured,
