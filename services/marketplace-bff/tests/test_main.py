@@ -393,8 +393,13 @@ def test_marketplace_ui_does_not_solicit_click_it_photos_while_pipeline_is_block
     assert 'id="clickItImage"' not in response.text
     assert 'id="clickItConsentId"' not in response.text
     assert 'id="clickItForm"' not in response.text
-    assert 'fetch("/api/vision/marketplace-search"' in response.text
+    # PNELLY now uses the authenticated, wardrobe-aware discovery path.
+    # The retrieval-only legacy endpoint is not a customer-facing product-card path.
+    assert 'fetch("/api/wardrobe/recommendations"' in response.text
+    assert 'fetch("/api/vision/marketplace-search"' not in response.text
     assert 'fetch("/api/vision/click-it"' not in response.text
+    assert 'data.display_authority!=="CaTaCaCi/CAL"' in response.text
+    assert 'decision.verdict!=="show"' in response.text
     assert "display_authorized===true" not in response.text
     assert "PENDING_CAL" in response.text
 
