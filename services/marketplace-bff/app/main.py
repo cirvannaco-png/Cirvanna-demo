@@ -6,6 +6,7 @@ fabricates decision, fit, Click It, Virtual Twin, or try-on outputs.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import uuid
@@ -158,6 +159,22 @@ class ComplementerRequestIn(BaseModel):
     request_id: str = Field(min_length=8, max_length=128)
     preferences: dict = Field(default_factory=dict, max_length=64)
     look: dict = Field(default_factory=dict, max_length=32)
+
+
+class ComplementerFeedbackIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    feedback_id: str = Field(min_length=8, max_length=128)
+    request_id: str = Field(min_length=8, max_length=128)
+    outcome: Literal["approved", "rejected"]
+    consent_receipt_id: str = Field(min_length=8, max_length=128)
+
+    @field_validator("feedback_id", "request_id", "consent_receipt_id")
+    @classmethod
+    def valid_feedback_identifiers(cls, value: str) -> str:
+        normalized = value.strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{7,127}", normalized):
+            raise ValueError("feedback identifiers must use the controlled opaque ID format")
+        return normalized
 
 
 class OfferComparisonIn(BaseModel):
@@ -314,6 +331,78 @@ async def marketplace_complementer(request: Request, payload: ComplementerReques
     if upstream.status_code in {502, 503, 504}:
         raise HTTPException(503 if upstream.status_code == 503 else upstream.status_code, detail={"code": code})
     raise HTTPException(502, detail={"code": "COMPLEMENTER_FAILED"})
+
+
+@app.post("/api/vision/complementer/feedback")
+async def marketplace_complementer_feedback(
+    request: Request,
+    payload: ComplementerFeedbackIn,
+) -> Response:
+    """Persist an explicit, separately consented advisory reaction in the user's TAL ledger."""
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(10.0, connect=2.0),
+        trust_env=False,
+        follow_redirects=False,
+    ) as client:
+        _subject, user_token = await _verified_commerce_subject(client, request)
+        gateway_base, gateway_token = _decision_gateway()
+        observed_at = datetime.now(timezone.utc)
+        event = {
+            "event_id": payload.feedback_id,
+            "idempotency_key": payload.feedback_id,
+            "consent_receipt_id": payload.consent_receipt_id,
+            "feature_key": "complementer.recommendation_feedback",
+            # Store the reaction and opaque advisory reference, never the raw look text.
+            "value": json.dumps(
+                {"request_id": payload.request_id, "outcome": payload.outcome},
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            "observed_at": observed_at.isoformat().replace("+00:00", "Z"),
+            "expires_at": (observed_at + timedelta(days=180)).isoformat().replace("+00:00", "Z"),
+            "event_kind": "observation",
+        }
+        try:
+            upstream = await client.post(
+                gateway_base + "/v1/me/tal/events",
+                headers={
+                    "Authorization": "Bearer " + gateway_token,
+                    "X-End-User-Authorization": "Bearer " + user_token,
+                    "Accept": "application/json",
+                },
+                json=event,
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "COMPLEMENTER_FEEDBACK_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "COMPLEMENTER_FEEDBACK_UNAVAILABLE"}) from exc
+
+    if upstream.status_code in {401, 403, 404, 409, 422}:
+        try:
+            detail = upstream.json().get("detail", {})
+            code = detail.get("code") if isinstance(detail, dict) else None
+        except ValueError:
+            code = None
+        raise HTTPException(upstream.status_code, detail={"code": code or "COMPLEMENTER_FEEDBACK_REJECTED"})
+    if upstream.status_code != 200:
+        raise HTTPException(503, detail={"code": "COMPLEMENTER_FEEDBACK_UNAVAILABLE"})
+    try:
+        result = upstream.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "COMPLEMENTER_FEEDBACK_RESPONSE_INVALID"}) from exc
+    if (
+        not isinstance(result, dict)
+        or result.get("event_id") != payload.feedback_id
+        or result.get("status") not in {"recorded", "replayed"}
+        or (result.get("status") == "recorded" and result.get("durable_persistence") is not True)
+    ):
+        raise HTTPException(502, detail={"code": "COMPLEMENTER_FEEDBACK_PERSISTENCE_UNCONFIRMED"})
+    return _private_json_response({
+        "status": result["status"],
+        "feedback_id": payload.feedback_id,
+        "durable_persistence": True,
+        "learning_owner": "TAL",
+    })
 
 
 
