@@ -635,6 +635,7 @@ def test_wardrobe_page_exposes_feedback_and_consent_controls(client):
     assert "Refine with Complementer" in response.text
     assert "Save to Wardrobe" in response.text
     assert "/api/wardrobe/pnelly/save-look" in response.text
+    assert "/api/wardrobe/pnelly/look-feedback" in response.text
     assert "profile_storage" in response.text
     assert "Edit piece" in response.text
     assert "/api/wardrobe/items/" in response.text
@@ -2439,4 +2440,111 @@ def test_pnelly_save_look_rejects_non_owned_or_inactive_wardrobe_item(client, mo
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "PNELLY_SAVE_ITEM_NOT_ACTIVE_OR_NOT_OWNED"
     assert len(fake.calls) == 2
+
+
+
+
+def test_pnelly_look_rejection_is_one_tal_event_not_item_level_npl_feedback(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-internal-token-more-than-thirty-two-bytes")
+    item_ids = ["shirt-001", "trousers-001"]
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"owner_user_id": "signed-user-42", "items": [
+            {"owner_user_id": "signed-user-42", "item_id": item_id, "status": "active"}
+            for item_id in item_ids
+        ]}),
+        FakeResponse([{
+            "receipt_id": "style-receipt-001", "scope": "style_learning",
+            "granted": True, "revoked_at": None, "expires_at": None,
+        }]),
+        FakeResponse({"status": "recorded", "event_id": "pnelly-look-reject-001"}, status_code=200),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/pnelly/look-feedback",
+        headers={"Authorization": "Bearer signed-session"},
+        json={
+            "event_id": "pnelly-look-reject-001", "look_role": "everyday",
+            "item_ids": item_ids, "signal": "rejected",
+            "consent_receipt_id": "style-receipt-001",
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["learning_owner"] == "TAL"
+    assert response.json()["item_level_npl_rejection_created"] is False
+    event_call = fake.calls[3]
+    assert event_call[1] == "https://identity.example.test/v1/tal/events"
+    assert event_call[2]["params"]["subject_id"] == "signed-user-42"
+    assert event_call[2]["json"]["feature_key"] == "pnelly.look.feedback.rejected"
+    assert event_call[2]["json"]["idempotency_key"] == "pnelly-look:pnelly-look-reject-001"
+    assert '"wardrobe_item_ids":["shirt-001","trousers-001"]' in event_call[2]["json"]["value"]
+
+
+def test_pnelly_look_feedback_rejects_revoked_consent_before_tal_write(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42"}),
+        FakeResponse({"owner_user_id": "signed-user-42", "items": [
+            {"owner_user_id": "signed-user-42", "item_id": "shirt-001", "status": "active"},
+        ]}),
+        FakeResponse([{
+            "receipt_id": "style-receipt-002", "scope": "style_learning",
+            "granted": True, "revoked_at": "2026-11-13T18:00:00+00:00", "expires_at": None,
+        }]),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/pnelly/look-feedback",
+        headers={"Authorization": "Bearer signed-session"},
+        json={
+            "event_id": "pnelly-look-reject-002", "look_role": "explore",
+            "item_ids": ["shirt-001"], "signal": "rejected",
+            "consent_receipt_id": "style-receipt-002",
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "ACTIVE_STYLE_LEARNING_CONSENT_REQUIRED"
+    assert len(fake.calls) == 3
+
+
+def test_pnelly_look_feedback_rejects_expired_consent_before_tal_write(client, monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-internal-token-more-than-thirty-two-bytes")
+    expired = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42"}),
+        FakeResponse({"owner_user_id": "signed-user-42", "items": [
+            {"owner_user_id": "signed-user-42", "item_id": "shirt-001", "status": "active"},
+        ]}),
+        FakeResponse([{
+            "receipt_id": "style-receipt-003", "scope": "personalization",
+            "granted": True, "revoked_at": None, "expires_at": expired,
+        }]),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/pnelly/look-feedback",
+        headers={"Authorization": "Bearer signed-session"},
+        json={
+            "event_id": "pnelly-look-reject-003", "look_role": "elevated",
+            "item_ids": ["shirt-001"], "signal": "rejected",
+            "consent_receipt_id": "style-receipt-003",
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "ACTIVE_STYLE_LEARNING_CONSENT_REQUIRED"
+    assert len(fake.calls) == 3
+
 
