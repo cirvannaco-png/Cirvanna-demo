@@ -29,6 +29,19 @@ def configure_upstreams(monkeypatch):
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
 
 
+def test_marketplace_pnelly_search_uses_wardrobe_cil_path_and_complementer_advisory(client):
+    response = client.get("/")
+    assert response.status_code == 200
+    assert 'id="aiDiscoveryResults"' in response.text
+    assert '"/api/wardrobe/recommendations"' in response.text
+    assert '"/api/vision/complementer"' in response.text
+    assert "CAL SHOW" in response.text
+    assert "wardrobe-aware marketplace" in response.text
+    # Click It stays explicitly unavailable while its publication lifecycle remains unverified.
+    assert "Click It · Temporarily paused" in response.text
+    assert "No photo is requested or sent from this page" in response.text
+
+
 def test_page_bootstraps_same_origin_live_offers_not_demo_data(client):
     response = client.get("/")
     assert response.status_code == 200
@@ -563,10 +576,14 @@ def test_wardrobe_recommendations_forward_verified_token_to_cal_decision_gateway
             "request_id": "req-1",
             "ranked_candidate_count": 1,
             "displayable_products": [{
-                "product": {"product_id": "product-1", "image_urls": ["https://cdn.example.test/product.jpg"]},
-                "offer": {"variant_id": "variant-1", "image_urls": ["https://cdn.example.test/offer.jpg"],
+                "product": {"product_id": "product-1", "catalog_version": 3,
+                            "image_urls": ["https://cdn.example.test/product.jpg"]},
+                "offer": {"catalog_product_id": "product-1", "variant_id": "variant-1",
+                          "image_urls": ["https://cdn.example.test/offer.jpg"],
                           "product": {"image_urls": ["https://cdn.example.test/nested-offer.jpg"]}},
-                "decision": {"verdict": "show", "may_display": True},
+                "decision": {"product_id": "product-1", "catalog_version": 3,
+                             "verdict": "show", "may_display": True},
+                "cil_serving_assessment": {"status": "eligible", "assessed_catalog_version": 3},
             }],
             "withheld_candidate_ids": [{"product_id": "blocked-product-secret", "decision": "review"}],
             "display_authority": "CaTaCaCi/CAL",
@@ -609,6 +626,8 @@ def test_wardrobe_page_exposes_feedback_and_consent_controls(client):
     assert "Dislike" in response.text
     assert "Avoid" in response.text
     assert "/api/wardrobe/recommendations" in response.text
+    assert "/api/vision/complementer" in response.text
+    assert "Refine with Complementer" in response.text
     assert "profile_storage" in response.text
     assert "Edit piece" in response.text
     assert "/api/wardrobe/items/" in response.text
@@ -2105,89 +2124,6 @@ def test_look_it_requires_both_consents_before_identity_consent_or_pnelly_calls(
     assert response.json()["detail"]["code"] == "EXPLICIT_LOOK_IT_CONSENT_REQUIRED"
 
 
-
-def test_complementer_bff_uses_verified_subject_and_returns_advisory_only(client, monkeypatch):
-    configure_upstreams(monkeypatch)
-    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
-    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-at-least-32-bytes")
-    fake = FakeAsyncClient([
-        FakeResponse({"user_id": "verified-customer-42", "role": "customer"}),
-        FakeResponse({
-            "mode": "advisory_only",
-            "display_authorized": False,
-            "durable_personal_memory": False,
-            "recommendation": {"summary": "Try a softer contrast and a structured layer."},
-            "candidates": [{"product_name": "must not escape"}],
-            "merchant_name": "must not escape",
-            "price_minor": 999,
-        }),
-    ])
-    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
-    response = client.post(
-        "/api/vision/complementer",
-        headers={"Authorization": "Bearer signed-customer-session"},
-        json={
-            "request_id": "complementer-test-001",
-            "preferences": {"style": "minimal"},
-            "look": {"description": "navy trousers and cream knit"},
-        },
-    )
-    assert response.status_code == 200, response.text
-    data = response.json()
-    assert data == {
-        "mode": "advisory_only",
-        "display_authorized": False,
-        "durable_personal_memory": False,
-        "recommendation": {"summary": "Try a softer contrast and a structured layer."},
-    }
-    assert response.headers["cache-control"] == "no-store, private"
-    assert "must not escape" not in response.text
-    assert "merchant_name" not in response.text
-    assert "price_minor" not in response.text
-    assert fake.calls[0][0] == "GET"
-    assert fake.calls[0][1] == "https://commerce.example.test/me"
-    assert fake.calls[1][0] == "POST"
-    assert fake.calls[1][1] == "https://decision.example.test/v1/complementer/recommend"
-    assert fake.calls[1][2]["headers"]["Authorization"].startswith("Bearer decision-gateway-internal-token")
-    assert fake.calls[1][2]["headers"]["X-End-User-Authorization"] == "Bearer signed-customer-session"
-    assert fake.calls[1][2]["json"]["user_id"] == "verified-customer-42"
-
-
-def test_complementer_requires_authenticated_user_before_upstream_calls(client, monkeypatch):
-    calls = []
-
-    class ForbiddenAsyncClient:
-        def __init__(self, **kwargs):
-            calls.append("client-created")
-        async def __aenter__(self):
-            return self
-        async def __aexit__(self, *args):
-            return False
-        async def get(self, *args, **kwargs):
-            pytest.fail("Missing user bearer must be rejected before Commerce identity lookup")
-
-    monkeypatch.setattr(main.httpx, "AsyncClient", ForbiddenAsyncClient)
-    response = client.post(
-        "/api/vision/complementer",
-        json={"request_id": "complementer-test-002", "look": {"description": "blue shirt"}},
-    )
-    assert response.status_code == 401
-    assert response.json()["detail"]["code"] == "USER_BEARER_REQUIRED"
-
-
-def test_marketplace_pnelly_search_uses_wardrobe_cil_path_and_complementer_advisory(client):
-    response = client.get("/")
-    assert response.status_code == 200
-    assert 'id="aiDiscoveryResults"' in response.text
-    assert '"/api/wardrobe/recommendations"' in response.text
-    assert '"/api/vision/complementer"' in response.text
-    assert "CAL SHOW" in response.text
-    assert "wardrobe-aware marketplace" in response.text
-    # Click It stays explicitly unavailable while its publication lifecycle remains unverified.
-    assert "Click It · Temporarily paused" in response.text
-    assert "No photo is requested or sent from this page" in response.text
-
-
 def test_wardrobe_recommendations_reject_candidate_id_mismatch_before_display(client, monkeypatch):
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
     monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
@@ -2215,3 +2151,166 @@ def test_wardrobe_recommendations_reject_candidate_id_mismatch_before_display(cl
     )
     assert response.status_code == 502
     assert response.json()["detail"]["code"] == "WARDROBE_CANDIDATE_CAL_CIL_AUTHORIZATION_INVALID"
+
+
+def test_complementer_bff_uses_verified_subject_and_returns_advisory_only(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "verified-customer-42", "role": "customer"}),
+        FakeResponse({
+            "mode": "advisory_only",
+            "display_authorized": False,
+            "durable_personal_memory": False,
+            "recommendation": {"summary": "Try softer contrast and a structured layer."},
+            "candidates": [{"product_name": "must not escape"}],
+            "merchant_name": "must not escape",
+            "price_minor": 999,
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/vision/complementer",
+        headers={"Authorization": "Bearer signed-customer-session"},
+        json={
+            "request_id": "complementer-test-001",
+            "preferences": {"style": "minimal"},
+            "look": {"description": "navy trousers and cream knit"},
+        },
+    )
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data == {
+        "mode": "advisory_only",
+        "display_authorized": False,
+        "durable_personal_memory": False,
+        "recommendation": {"summary": "Try softer contrast and a structured layer."},
+    }
+    assert response.headers["cache-control"] == "no-store, private"
+    assert "must not escape" not in response.text
+    assert "merchant_name" not in response.text
+    assert "price_minor" not in response.text
+    assert fake.calls[0][0] == "GET"
+    assert fake.calls[0][1] == "https://commerce.example.test/me"
+    assert fake.calls[1][0] == "POST"
+    assert fake.calls[1][1] == "https://decision.example.test/v1/complementer/recommend"
+    assert fake.calls[1][2]["headers"]["X-End-User-Authorization"] == "Bearer signed-customer-session"
+    assert fake.calls[1][2]["json"]["user_id"] == "verified-customer-42"
+
+
+def test_complementer_requires_authenticated_user_before_upstream_calls(client, monkeypatch):
+    class ForbiddenAsyncClient:
+        def __init__(self, **kwargs):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return False
+        async def get(self, *args, **kwargs):
+            pytest.fail("Missing user bearer must be rejected before Commerce identity lookup")
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", ForbiddenAsyncClient)
+    response = client.post(
+        "/api/vision/complementer",
+        json={"request_id": "complementer-test-002", "look": {"description": "blue shirt"}},
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "USER_BEARER_REQUIRED"
+
+
+
+def test_complementer_feedback_writes_only_consented_minimal_event_to_verified_tal(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "verified-customer-42", "role": "customer"}),
+        FakeResponse({
+            "status": "recorded",
+            "event_id": "feedback-event-001",
+            "durable_persistence": True,
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/vision/complementer/feedback",
+        headers={"Authorization": "Bearer signed-customer-session"},
+        json={
+            "feedback_id": "feedback-event-001",
+            "request_id": "complementer-request-001",
+            "outcome": "rejected",
+            "consent_receipt_id": "personalization-consent-001",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "status": "recorded",
+        "feedback_id": "feedback-event-001",
+        "durable_persistence": True,
+        "learning_owner": "TAL",
+    }
+    assert fake.calls[0][0] == "GET"
+    assert fake.calls[0][1] == "https://commerce.example.test/me"
+    assert fake.calls[1][0] == "POST"
+    assert fake.calls[1][1] == "https://decision.example.test/v1/me/tal/events"
+    sent = fake.calls[1][2]
+    assert sent["headers"]["X-End-User-Authorization"] == "Bearer signed-customer-session"
+    assert sent["json"]["event_id"] == "feedback-event-001"
+    assert sent["json"]["idempotency_key"] == "feedback-event-001"
+    assert sent["json"]["consent_receipt_id"] == "personalization-consent-001"
+    assert sent["json"]["feature_key"] == "complementer.recommendation_feedback"
+    assert json.loads(sent["json"]["value"]) == {
+        "request_id": "complementer-request-001",
+        "outcome": "rejected",
+    }
+    assert "navy trousers" not in response.text
+    assert response.headers["cache-control"] == "no-store, private"
+
+
+def test_complementer_feedback_requires_authenticated_user(client, monkeypatch):
+    class ForbiddenAsyncClient:
+        def __init__(self, **kwargs):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return False
+        async def get(self, *args, **kwargs):
+            pytest.fail("Feedback must reject before Commerce identity lookup without a bearer")
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", ForbiddenAsyncClient)
+    response = client.post(
+        "/api/vision/complementer/feedback",
+        json={
+            "feedback_id": "feedback-event-002",
+            "request_id": "complementer-request-002",
+            "outcome": "approved",
+            "consent_receipt_id": "personalization-consent-002",
+        },
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "USER_BEARER_REQUIRED"
+
+
+def test_complementer_feedback_does_not_claim_persistence_on_upstream_rejection(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "verified-customer-42", "role": "customer"}),
+        FakeResponse({"detail": {"code": "ACTIVE_TAL_CONSENT_REQUIRED"}}, status_code=403),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/vision/complementer/feedback",
+        headers={"Authorization": "Bearer signed-customer-session"},
+        json={
+            "feedback_id": "feedback-event-003",
+            "request_id": "complementer-request-003",
+            "outcome": "approved",
+            "consent_receipt_id": "revoked-consent-003",
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "ACTIVE_TAL_CONSENT_REQUIRED"
