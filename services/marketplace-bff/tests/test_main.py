@@ -633,6 +633,8 @@ def test_wardrobe_page_exposes_feedback_and_consent_controls(client):
     assert "/api/wardrobe/recommendations" in response.text
     assert "/api/vision/complementer" in response.text
     assert "Refine with Complementer" in response.text
+    assert "Save to Wardrobe" in response.text
+    assert "/api/wardrobe/pnelly/save-look" in response.text
     assert "profile_storage" in response.text
     assert "Edit piece" in response.text
     assert "/api/wardrobe/items/" in response.text
@@ -2319,3 +2321,119 @@ def test_complementer_feedback_does_not_claim_persistence_on_upstream_rejection(
     )
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "ACTIVE_TAL_CONSENT_REQUIRED"
+
+
+
+def test_pnelly_save_look_creates_owner_bound_saved_outfit(client, monkeypatch):
+    import uuid
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    save_event_id = "pnelly-save-look-001"
+    item_ids = ["shirt-001", "trousers-001"]
+    expected_outfit_id = str(uuid.uuid5(
+        uuid.NAMESPACE_URL,
+        f"cirvanna:pnelly-save:signed-user-42:{save_event_id}",
+    ))
+    wardrobe_items = [{
+        "owner_user_id": "signed-user-42", "item_id": item_id, "status": "active",
+    } for item_id in item_ids]
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"owner_user_id": "signed-user-42", "items": wardrobe_items}),
+        FakeResponse({"outfit": {
+            "outfit_id": expected_outfit_id, "owner_user_id": "signed-user-42",
+            "name": "PNELLY Everyday", "version": 1, "pieces": [],
+        }, "status": "created"}, status_code=201),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/pnelly/save-look",
+        headers={"Authorization": "Bearer signed-session"},
+        json={
+            "item_ids": item_ids,
+            "save_event_id": save_event_id,
+            "name": "PNELLY Everyday",
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.headers["cache-control"] == "no-store, private"
+    result = response.json()
+    assert result["status"] == "created"
+    assert result["outfit_id"] == expected_outfit_id
+    create_body = fake.calls[2][2]["json"]
+    assert create_body["owner_user_id"] == "signed-user-42"
+    assert [piece["wardrobe_item_id"] for piece in create_body["pieces"]] == item_ids
+    assert len({piece["slot_id"] for piece in create_body["pieces"]}) == len(item_ids)
+
+
+def test_pnelly_save_look_replays_existing_outfit_after_uncertain_create(client, monkeypatch):
+    import uuid
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    save_event_id = "pnelly-save-look-retry-001"
+    item_ids = ["shirt-002", "skirt-002"]
+    outfit_id = str(uuid.uuid5(
+        uuid.NAMESPACE_URL,
+        f"cirvanna:pnelly-save:signed-user-42:{save_event_id}",
+    ))
+    existing = {
+        "outfit_id": outfit_id,
+        "owner_user_id": "signed-user-42",
+        "name": "PNELLY Elevated",
+        "version": 1,
+        "pieces": [
+            {"slot_id": "slot-a", "wardrobe_item_id": "shirt-002"},
+            {"slot_id": "slot-b", "wardrobe_item_id": "skirt-002"},
+        ],
+    }
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"owner_user_id": "signed-user-42", "items": [
+            {"owner_user_id": "signed-user-42", "item_id": item_id, "status": "active"}
+            for item_id in item_ids
+        ]}),
+        FakeResponse({"detail": {"code": "WARDROBE_OUTFIT_STORE_UNAVAILABLE"}}, status_code=503),
+        FakeResponse({"owner_user_id": "signed-user-42", "outfits": [existing]}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/pnelly/save-look",
+        headers={"Authorization": "Bearer signed-session"},
+        json={
+            "item_ids": item_ids,
+            "save_event_id": save_event_id,
+            "name": "PNELLY Elevated",
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["status"] == "replayed"
+    assert response.json()["outfit_id"] == outfit_id
+    assert len(fake.calls) == 4
+
+
+def test_pnelly_save_look_rejects_non_owned_or_inactive_wardrobe_item(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"owner_user_id": "signed-user-42", "items": [
+            {"owner_user_id": "signed-user-42", "item_id": "shirt-003", "status": "active"},
+        ]}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/pnelly/save-look",
+        headers={"Authorization": "Bearer signed-session"},
+        json={
+            "item_ids": ["foreign-or-inactive-item"],
+            "save_event_id": "pnelly-save-invalid-001",
+            "name": "PNELLY Explore",
+        },
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "PNELLY_SAVE_ITEM_NOT_ACTIVE_OR_NOT_OWNED"
+    assert len(fake.calls) == 2
+
