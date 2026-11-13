@@ -39,7 +39,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
 </style>
 </head>
 <body>
-<header><div class="shell nav"><div><div class="brand">CIRVANNA<span>.</span></div><div class="eyebrow">Purchase certainty begins before checkout</div></div><div class="nav-actions"><button class="btn" id="savedBtn">Saved <span id="savedCount">0</span></button><button class="btn" id="cartBtn">Bag <span id="cartCount">0</span></button><button class="btn" id="settingsBtn">Connect catalog</button></div></div></header>
+<header><div class="shell nav"><div><div class="brand">CIRVANNA<span>.</span></div><div class="eyebrow">Purchase certainty begins before checkout</div></div><div class="nav-actions"><button class="btn" id="savedBtn">Saved <span id="savedCount">0</span></button><button class="btn" id="cartBtn">Bag <span id="cartCount">0</span></button><button class="btn" id="settingsBtn">Connect account</button></div></div></header>
 <main class="shell">
 <section class="hero"><div><div class="eyebrow">The Cirvanna marketplace</div><h1>Find what feels<br><span style="color:var(--gold)">like you.</span></h1><p>Explore beauty and fashion with product details in one place. Save pieces you love, compare options, and keep your choices intentional.</p></div><div class="hero-note"><strong style="color:var(--cream)">Identity first. Choice always yours.</strong><br>Catalog search is connected to Cirvanna's canonical catalog API when configured. This page does not pretend to perform AI fit analysis or virtual try-on when those services are unavailable.</div></section>
 <section class="toolbar" aria-label="Product and market filters">
@@ -108,7 +108,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
   const $ = id => document.getElementById(id);
   const bootstrap = window.CIRVANNA_MARKETPLACE_CONFIG || {};
   let forceDemo = false;
-  let config = {base:"",token:"",commerceBase:"",userToken:""}, items=[], page=0, mode="demo", total=0, cartVersion=0;
+  let config = {base:"",token:"",commerceBase:"",userToken:""}, items=[], page=0, mode="demo", total=0, cartVersion=0, purchaseEnabled=false, purchaseMessage="Cart and checkout are paused until live CAL purchase authorization is ready."; 
   let saved = readStore("cirvanna-marketplace-saved"), cart = readStore("cirvanna-marketplace-bag");
   function readStore(key){try{return JSON.parse(localStorage.getItem(key)||"[]")}catch{return []}}
   function writeStore(){localStorage.setItem("cirvanna-marketplace-saved",JSON.stringify(saved));localStorage.setItem("cirvanna-marketplace-bag",JSON.stringify(cart));updateCounts()}
@@ -119,7 +119,6 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
   function setStatus(s,error=false){$("status").textContent=s;$("status").classList.toggle("error",error)}
   function getId(p){return String(p.variant_id||p.product_id||p.id||p.sku)}
   function productSaveId(p){return String(p.catalog_product_id||p.product_id||getId(p))}
-  function validateApiBase(raw){let u;try{u=new URL(raw)}catch{throw new Error("Enter a valid absolute API URL.")}const host=(u.hostname||"").toLowerCase();const local=["localhost","127.0.0.1","::1","[::1]"].includes(host);if(u.username||u.password||u.search||u.hash)throw new Error("Use an API base URL without credentials, query parameters or fragments.");if(u.protocol!=="https:"&&!(u.protocol==="http:"&&local))throw new Error("For security, bearer tokens may only be sent to HTTPS endpoints (HTTP is allowed for localhost development).");return u.origin+u.pathname.replace(/\/$/,"")}
   function render(){
     const visible=items;
     $("products").innerHTML=visible.length?visible.map(p=>{
@@ -129,7 +128,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       const transport=fq?'<div class="brandline">Delivery: '+moneyMinor(fq.display_conversion_status==="localized"?fq.display_amount_minor:fq.amount_minor,fq.display_conversion_status==="localized"?fq.display_currency:fq.currency)+' · '+escapeHtml(fq.distance_km)+' km</div>':'';
       const comparablePeers=p.canonical_variant_id?items.filter(x=>x.canonical_variant_id===p.canonical_variant_id&&x.merchant_id!==p.merchant_id&&x.available_stock>0):[];
       const compareAction=(mode!=="commerce"&&comparablePeers.length)?'<button class="btn wide" data-action="compare" data-id="'+escapeHtml(id)+'">Compare merchant offers</button>':'';
-      return '<article class="card"><div class="visual">'+image+'<span class="tag">'+(p.attributes&&p.attributes.demo?'Demo data':escapeHtml(p.category||'Product'))+'</span></div><div class="card-body"><div class="brandline">'+escapeHtml(p.brand||'Independent brand')+'</div><div class="name">'+escapeHtml(p.name)+'</div><div class="description">'+escapeHtml(p.description||'Product details have not been provided.')+'</div><div class="price">'+money(p)+'</div>'+transport+'<div class="brandline">'+escapeHtml(p.sku||'')+'</div><div class="card-actions"><button class="btn" data-action="save" data-id="'+escapeHtml(id)+'">'+(isSaved?'Saved ✓':'Save')+'</button>'+(mode==="commerce"?'<button class="btn" disabled title="Candidate-bound purchase reauthorization is not released">Bag — paused</button>':'<button class="btn" data-action="bag" data-id="'+escapeHtml(id)+'">'+(inBag?'In bag ✓':'Add to bag')+'</button>')+''+compareAction+'<button class="btn wide" data-action="tryon" data-id="'+escapeHtml(id)+'" disabled title="Virtual try-on adapter is not connected">Try on — unavailable</button></div></div></article>'
+      return '<article class="card"><div class="visual">'+image+'<span class="tag">'+(p.attributes&&p.attributes.demo?'Demo data':escapeHtml(p.category||'Product'))+'</span></div><div class="card-body"><div class="brandline">'+escapeHtml(p.brand||'Independent brand')+'</div><div class="name">'+escapeHtml(p.name)+'</div><div class="description">'+escapeHtml(p.description||'Product details have not been provided.')+'</div><div class="price">'+money(p)+'</div>'+transport+'<div class="brandline">'+escapeHtml(p.sku||'')+'</div><div class="card-actions"><button class="btn" data-action="save" data-id="'+escapeHtml(id)+'">'+(isSaved?'Saved ✓':'Save')+'</button>'+(mode==="commerce"?(purchaseEnabled?'<button class="btn" data-action="bag" data-id="'+escapeHtml(id)+'">'+(inBag?'In bag ✓':'Add to bag')+'</button>':'<button class="btn" disabled title="Candidate-bound CAL purchase authorization is not ready">Bag — paused</button>'):'<button class="btn" data-action="bag" data-id="'+escapeHtml(id)+'">'+(inBag?'In bag ✓':'Add to bag')+'</button>')+''+compareAction+'<button class="btn wide" data-action="tryon" data-id="'+escapeHtml(id)+'" disabled title="Virtual try-on adapter is not connected">Try on — unavailable</button></div></div></article>'
     }).join(''):'<div class="empty">No products match this search. Try a broader term or clear the category filter.</div>';
     $("pageLabel").textContent='Page '+(page+1);$("prevBtn").disabled=page===0;$("nextBtn").disabled=(page+1)*20>=total;
   }
@@ -154,9 +153,9 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       if(destinationKey){url.searchParams.set("destination_key",destinationKey);url.searchParams.set("fulfillment_mode",fulfillmentMode);url.searchParams.set("radius_km",String(radiusKm))}
     };
     if(bootstrap.publicOffersBase && !forceDemo){
-      mode="commerce";
+      mode="commerce";purchaseEnabled=false;saved=[];cart=[];cartVersion=0;updateCounts();
       if(!config.userToken){
-        items=[];total=0;
+        items=[];total=0;updateCounts();
         setStatus("Sign in with a verified Cirvanna account to browse live products. Guest offer listings are disabled until candidate-bound CAL authorization is available.",true);
         render();return;
       }
@@ -175,11 +174,24 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
         const savedResponse=await fetch(config.commerceBase+"/saved-products",{headers});
         if(!savedResponse.ok)throw new Error("Your account saved-products service is unavailable; no guest fallback was used.");
         const savedData=await savedResponse.json();
+        const cartResponse=await fetch(config.commerceBase+"/cart",{headers});
+        cart=[];cartVersion=0;purchaseEnabled=false;
+        if(cartResponse.ok){
+          const cartData=await cartResponse.json();
+          if(!cartData||!Array.isArray(cartData.items)||!Number.isSafeInteger(Number(cartData.version)))throw new Error("Account cart returned an invalid response; purchase controls remain locked.");
+          cart=cartData.items;cartVersion=Number(cartData.version);purchaseEnabled=true;
+          purchaseMessage="Cart and checkout are available. Every cart view, change and checkout is reauthorized by CAL.";
+        }else{
+          let gateCode="";try{const gateData=await cartResponse.json();gateCode=gateData&&gateData.detail&&gateData.detail.code||""}catch{}
+          purchaseMessage=cartResponse.status===503||gateCode==="CAL_CANDIDATE_PURCHASE_REAUTH_REQUIRED"
+            ?"Cart and checkout remain paused because the operator gate or live CAL purchase readiness is not enabled."
+            :"Cart and checkout remain paused because the account cart could not be authorized ("+(gateCode||("HTTP "+cartResponse.status))+").";
+        }
         items=data.items.map(p=>({...p,product_id:p.catalog_product_id,name:p.product_name,brand:p.merchant_name,description:p.description||Object.entries(p.options||{}).map(([k,v])=>k+": "+v).join(" · "),image_urls:p.image_urls||[],attributes:p.attributes||{}}));
-        total=Number(data.total)||0;cartVersion=0;cart=[];
+        total=Number(data.total)||0;
         saved=(Array.isArray(savedData.items)?savedData.items:[]).map(x=>({product_id:x.catalog_product_id,name:x.catalog_product_id,currency:"",price_minor:null}));
         updateCategories(items);updateCounts();
-        setStatus("CAL-GOVERNED LIVE COMMERCE — "+items.length+" authorized offer(s) on this page. "+(Number(data.withheld_candidate_count)||0)+" candidate(s) withheld. Cart and checkout remain paused until every purchase action has fresh candidate-bound CAL authorization.");
+        setStatus("CAL-GOVERNED LIVE COMMERCE — "+items.length+" authorized offer(s) on this page. "+(Number(data.withheld_candidate_count)||0)+" candidate(s) withheld. "+purchaseMessage);
         render();return;
       }catch(e){items=[];total=0;setStatus((e&&e.message?e.message:"Marketplace request failed")+" No demo fallback was used.",true);render();return}
     }
@@ -235,6 +247,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     const p=findProduct(id);if(!p)return;
     if(action==="compare"){await compareOffers(p);return}
     if(mode==="commerce"){
+      if(action==="bag"&&!purchaseEnabled){setStatus(purchaseMessage,true);return}
       try{
         if(action==="save"){
           const pid=productSaveId(p),already=saved.some(x=>x.product_id===pid),url=config.commerceBase+"/saved-products/"+encodeURIComponent(pid);
@@ -263,26 +276,23 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     $("drawerRoot").querySelector('[data-close]').addEventListener("click",closeDrawer);$("closeDrawer").addEventListener("click",closeDrawer);
   }
   $("savedBtn").addEventListener("click",()=>openDrawer("Saved pieces",saved.length?saved.map(x=>'<div class="drawer-row"><div>'+escapeHtml(x.name)+'<small>'+(mode==="commerce"?"Saved to your account":escapeHtml(money(x)))+'</small></div><button class="btn" '+(mode==="commerce"?'data-remove-saved="'+escapeHtml(x.product_id)+'"':'data-remove="'+escapeHtml(x.product_id)+'"')+'>Remove</button></div>').join(""):'<p class="config-note">Your saved pieces will appear here.</p>'));
-  $("cartBtn").addEventListener("click",()=>{const rows=cart.map(x=>'<div class="drawer-row"><div>'+escapeHtml(x.name||x.product_name)+'<small>Qty '+x.quantity+' · '+escapeHtml(money(x))+' each</small></div><button class="btn" '+(mode==="commerce"?'data-remove-cart="'+escapeHtml(x.variant_id||x.product_id)+'"':'data-remove="'+escapeHtml(x.product_id)+'"')+'>Remove</button></div>').join("");const note=mode==="commerce"?'Prices and availability are revalidated at checkout. Stock is reserved by the server during checkout.':'The bag is browser-local. No stock is reserved and no order is created.';const action=mode==="commerce"?'<button class="btn primary" id="checkoutBtn">Continue to secure checkout</button>':'<button class="btn" disabled>Checkout unavailable</button>';openDrawer("Your bag",cart.length?rows+'<p class="config-note">'+note+'</p>'+action:'<p class="config-note">Your bag is empty.</p>')});
+  $("cartBtn").addEventListener("click",()=>{const rows=cart.map(x=>'<div class="drawer-row"><div>'+escapeHtml(x.name||x.product_name)+'<small>Qty '+x.quantity+' · '+escapeHtml(money(x))+' each</small></div><button class="btn" '+(mode==="commerce"?'data-remove-cart="'+escapeHtml(x.variant_id||x.product_id)+'"':'data-remove="'+escapeHtml(x.product_id)+'"')+'>Remove</button></div>').join("");const note=mode==="commerce"?purchaseMessage+' Stock is reserved only during a successful checkout.':'The bag is browser-local. No stock is reserved and no order is created.';const action=mode==="commerce"?(purchaseEnabled?'<button class="btn primary" id="checkoutBtn">Continue to secure checkout</button>':'<button class="btn" disabled>Checkout paused — CAL authorization unavailable</button>'):'<button class="btn" disabled>Checkout unavailable</button>';const empty=mode==="commerce"&&!purchaseEnabled?'<p class="config-note">'+escapeHtml(purchaseMessage)+' Your account cart has not been changed.</p>':'<p class="config-note">Your bag is empty.</p>';openDrawer("Your bag",cart.length?rows+'<p class="config-note">'+escapeHtml(note)+'</p>'+action:empty)});
   $("drawerRoot").addEventListener("click",e=>{const b=e.target.closest("button[data-remove],button[data-remove-saved],button[data-remove-cart]");if(!b)return;const title=$("drawerRoot").querySelector("aside h2")?.textContent||"Saved pieces";if(mode==="commerce"){const savedId=b.dataset.removeSaved,variantId=b.dataset.removeCart,url=savedId?config.commerceBase+"/saved-products/"+encodeURIComponent(savedId):config.commerceBase+"/cart/items/"+encodeURIComponent(variantId||"");fetch(url,{method:"DELETE",headers:{Authorization:"Bearer "+config.userToken,Accept:"application/json"}}).then(r=>{if(!r.ok)throw new Error("Remove request returned HTTP "+r.status+".");return load()}).then(()=>{if(title==="Your bag")$("cartBtn").click();else $("savedBtn").click()}).catch(err=>setStatus(err.message||"Could not remove item.",true));return}const id=b.dataset.remove;if(!id)return;saved=saved.filter(x=>x.product_id!==id);cart=cart.filter(x=>x.product_id!==id);writeStore();if(title==="Your bag")$("cartBtn").click();else $("savedBtn").click();render()});
-  $("settingsBtn").addEventListener("click",()=>openDrawer("Connect Cirvanna services",'<p class="config-note">For account-backed saved products, persistent carts, live merchant offers and hosted checkout, connect the Commerce API with a signed user JWT from Cirvanna authentication. The JWT stays in page memory only and is not written to browser storage. Never paste an admin or service token on a shared device.</p><div class="config"><label class="wide">Commerce API base URL<input id="commerceBase" type="url" placeholder="https://your-commerce-service.example"></label><label class="wide">Cirvanna user JWT<input id="commerceToken" type="password" autocomplete="off" placeholder="Signed user access token"></label></div><button class="btn primary wide" id="commerceConnectBtn">Connect account-backed marketplace</button><p class="config-note">For read-only catalog browsing without an account cart or checkout, connect the canonical Catalog API below.</p><div class="config"><label class="wide">Catalog API base URL<input id="apiBase" type="url" placeholder="https://your-catalog-service.example"></label><label class="wide">Catalog bearer token<input id="apiToken" type="password" autocomplete="off" placeholder="Catalog API token"></label></div><button class="btn wide" id="connectBtn">Connect catalog only</button><button class="btn wide" id="demoBtn">Use local demo data</button>'));
+  const accountAuthPanel=bootstrap.allowDeveloperTokenInput===true
+    ? '<p class="config-note">Developer-only integration mode. Paste a short-lived signed customer test token only on a non-production environment where the operator explicitly enabled this input. Never use an admin, merchant or service token. The token stays in page memory.</p><div class="config"><label class="wide">Signed customer test token<input id="commerceToken" type="password" autocomplete="off" placeholder="Short-lived customer test token"></label></div><button class="btn primary wide" id="commerceConnectBtn">Connect test customer session</button>'
+    : '<p class="config-note">Account sign-in is unavailable until the approved Cirvanna OIDC browser session is configured. This page does not accept pasted access tokens in this environment.</p>';
+  $("settingsBtn").addEventListener("click",()=>openDrawer("Connect Cirvanna account",accountAuthPanel+'<p class="config-note">Local demo mode uses sample products and browser-local saves and bag. It cannot reserve stock, create orders or process payment.</p><button class="btn wide" id="demoBtn">Use local demo data</button>'));
   $("drawerRoot").addEventListener("click",e=>{
     if(e.target.id==="commerceConnectBtn"){
-      const base=$("commerceBase").value.trim(),token=$("commerceToken").value.trim();
-      if(!base||!token){alert("Enter the Commerce API URL and your signed user JWT.");return}
-      try{config={base:"",token:"",commerceBase:validateApiBase(base),userToken:token}}
-      catch(err){alert(err.message||"Invalid Commerce API URL.");return}
+      if(bootstrap.allowDeveloperTokenInput!==true){setStatus("Pasted access tokens are disabled in this environment.",true);return}
+      const token=$("commerceToken").value.trim();
+      if(!token){alert("Enter your signed Cirvanna user session token.");return}
+      if(!bootstrap.publicOffersBase){setStatus("The same-origin Cirvanna Marketplace BFF is not configured on this page.",true);alert("The same-origin Cirvanna Marketplace BFF is not configured.");return}
+      config={base:"",token:"",commerceBase:bootstrap.publicOffersBase.replace(/\/$/,""),userToken:token};
       forceDemo=false;page=0;closeDrawer();load();
     }
-    if(e.target.id==="connectBtn"){
-      const base=$("apiBase").value.trim(),token=$("apiToken").value.trim();
-      if(!base||!token){alert("Enter both Catalog API URL and bearer token.");return}
-      try{config={...config,base:validateApiBase(base),token,commerceBase:"",userToken:""}}
-      catch(err){alert(err.message||"Invalid Catalog API URL.");return}
-      forceDemo=false;saved=readStore("cirvanna-marketplace-saved");cart=readStore("cirvanna-marketplace-bag");page=0;closeDrawer();load();
-    }
     if(e.target.id==="checkoutBtn"){
-      if(mode!=="commerce"||!config.commerceBase||!config.userToken)return;
+      if(mode!=="commerce"||!config.commerceBase||!config.userToken||!purchaseEnabled){setStatus(purchaseMessage,true);return}
       const marketCountry=$("marketCountry").value.trim().toUpperCase();
       const destinationKey=$("destinationKey").value.trim();
       const fulfillmentMode=$("fulfillmentMode").value;

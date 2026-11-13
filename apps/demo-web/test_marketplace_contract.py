@@ -31,14 +31,27 @@ class MarketplaceContractTests(unittest.TestCase):
         self.assertIn('data.display_authority!=="CaTaCaCi/CAL"', HTML)
         self.assertIn("Direct Commerce browsing is disabled", HTML)
         self.assertIn("Direct Catalog product display is disabled", HTML)
+        self.assertIn('fetch(config.commerceBase+"/cart",{headers})', HTML)
+        self.assertIn("purchaseEnabled=true", HTML)
+        self.assertIn("purchaseEnabled=false", HTML)
+        self.assertIn('mode="commerce";purchaseEnabled=false;saved=[];cart=[];cartVersion=0;updateCounts();', HTML)
+        self.assertIn("Candidate-bound CAL purchase authorization is not ready", HTML)
+        self.assertIn("Checkout paused — CAL authorization unavailable", HTML)
         self.assertNotIn('new URL(config.base+"/products")', HTML)
         self.assertIn('new URL(config.commerceBase+"/marketplace/offers",window.location.origin)', HTML)
         self.assertIn('url.searchParams.set("offset",String(page*20))', HTML)
         self.assertIn("No demo fallback was used.", HTML)
 
-    def test_bearer_token_requires_tls_except_local_development(self):
-        self.assertIn("bearer tokens may only be sent to HTTPS endpoints", HTML)
-        self.assertIn('u.protocol!=="https:"', HTML)
+    def test_account_connection_uses_same_origin_bff_without_upstream_urls(self):
+        self.assertIn("same-origin Cirvanna Marketplace BFF", HTML)
+        self.assertIn("bootstrap.publicOffersBase", HTML)
+        self.assertIn("bootstrap.allowDeveloperTokenInput===true", HTML)
+        self.assertIn("Account sign-in is unavailable until the approved Cirvanna OIDC browser session is configured", HTML)
+        self.assertIn("Signed customer test token", HTML)
+        self.assertNotIn('id="commerceBase"', HTML)
+        self.assertNotIn('id="apiBase"', HTML)
+        self.assertNotIn('id="apiToken"', HTML)
+        self.assertNotIn("validateApiBase", HTML)
 
     def test_price_formatting_respects_currency_fraction_digits(self):
         self.assertIn("formatter.resolvedOptions().maximumFractionDigits", HTML)

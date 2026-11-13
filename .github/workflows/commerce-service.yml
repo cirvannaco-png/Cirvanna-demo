@@ -27,7 +27,21 @@ permissions:
 jobs:
   commerce-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: commerce
+          POSTGRES_PASSWORD: commerce
+          POSTGRES_DB: commerce_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U commerce -d commerce_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     defaults:
       run:
         working-directory: services/commerce-service
@@ -47,6 +61,17 @@ jobs:
         run: |
           alembic upgrade 20261109_0007
           alembic upgrade head
+          python scripts/verify_cal_purchase_audit_immutability.py
+          alembic downgrade 20261109_0007
+          alembic upgrade head
+      - name: Verify CAL purchase audit immutability on PostgreSQL
+        env:
+          COMMERCE_DATABASE_URL: postgresql+psycopg://commerce:commerce@localhost:5432/commerce_ci
+          COMMERCE_AUTO_CREATE_SCHEMA: "false"
+        run: |
+          alembic upgrade 20261109_0007
+          alembic upgrade head
+          python scripts/verify_cal_purchase_audit_immutability.py
           alembic downgrade 20261109_0007
           alembic upgrade head
       - name: Validate model schema compilation

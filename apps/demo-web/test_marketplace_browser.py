@@ -1,5 +1,6 @@
 """Headless browser smoke tests for the marketplace demo UI."""
 from pathlib import Path
+import json
 from threading import Thread
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 import unittest
@@ -62,20 +63,115 @@ class MarketplaceBrowserTests(unittest.TestCase):
         self.page.locator("#cartBtn").click()
         self.assertTrue(self.page.get_by_role("dialog").get_by_role("button", name="Checkout unavailable").is_disabled())
 
-    def test_non_https_remote_catalog_url_is_rejected_before_fetch(self):
+
+    def _open_live_marketplace(self, cart_status=503):
+        page = self.browser.new_page()
+        page.add_init_script("""
+            // Set bootstrap first: this script may run for the initial opaque about:blank document.
+            window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce",allowDeveloperTokenInput:true});
+            try {
+                localStorage.setItem("cirvanna-marketplace-saved", JSON.stringify([{product_id:"demo-saved"}]));
+                localStorage.setItem("cirvanna-marketplace-bag", JSON.stringify([{product_id:"demo-bag",quantity:1}]));
+            } catch (_) {}
+        """)
+        cart_payload = {
+            "cart_id": "test-cart",
+            "version": 3,
+            "items": [{
+                "variant_id": "123e4567-e89b-12d3-a456-426614174000",
+                "catalog_product_id": "223e4567-e89b-12d3-a456-426614174000",
+                "product_name": "Live governed serum",
+                "merchant_name": "Test Merchant",
+                "quantity": 1,
+                "price_minor": 1200,
+                "currency": "KES",
+                "line_total_minor": 1200,
+                "available_stock": 4,
+                "availability": "in_stock"
+            }],
+            "item_count": 1,
+            "single_currency": True
+        }
+        product = {
+            "catalog_product_id": "223e4567-e89b-12d3-a456-426614174000",
+            "variant_id": "123e4567-e89b-12d3-a456-426614174000",
+            "product_name": "Live governed serum",
+            "merchant_name": "Test Merchant",
+            "price_minor": 1200,
+            "currency": "KES",
+            "category": "Beauty",
+            "image_urls": [],
+            "available_stock": 4,
+            "options": {}
+        }
+
+        def api(route):
+            path = route.request.url.split("?", 1)[0]
+            if path.endswith("/marketplace/offers"):
+                route.fulfill(status=200, content_type="application/json", body=json.dumps({
+                    "items": [product], "total": 1, "display_authority": "CaTaCaCi/CAL",
+                    "withheld_candidate_count": 0
+                }))
+            elif path.endswith("/saved-products"):
+                route.fulfill(status=200, content_type="application/json", body='{"items":[],"total":0}')
+            elif path.endswith("/cart"):
+                if cart_status == 200:
+                    route.fulfill(status=200, content_type="application/json", body=json.dumps(cart_payload))
+                else:
+                    route.fulfill(status=cart_status, content_type="application/json", body=json.dumps({
+                        "detail": {"code": "CAL_CANDIDATE_PURCHASE_REAUTH_REQUIRED"}
+                    }))
+            else:
+                route.fulfill(status=404, content_type="application/json", body='{"detail":"not found"}')
+
+        page.route("**/api/commerce/**", api)
+        page.goto(f"{self.base_url}/marketplace.html", wait_until="domcontentloaded")
+        page.wait_for_function("document.querySelector('#status').textContent.includes('Sign in')")
+        page.locator("#settingsBtn").click()
+        page.locator("#commerceToken").fill("signed-user-session-token")
+        page.get_by_role("button", name="Connect test customer session").click()
+        page.wait_for_function("document.querySelector('#status').textContent.includes('CAL-GOVERNED LIVE COMMERCE')")
+        return page
+
+    def test_live_bff_cart_gate_off_keeps_purchase_controls_locked_and_demo_state_out(self):
+        page = self._open_live_marketplace(cart_status=503)
+        try:
+            self.assertEqual(page.locator("#cartCount").inner_text(), "0")
+            self.assertEqual(page.locator("#savedCount").inner_text(), "0")
+            bag_button = page.locator('.card button:has-text("Bag — paused")')
+            self.assertEqual(bag_button.count(), 1)
+            self.assertTrue(bag_button.is_disabled())
+            page.locator("#cartBtn").click()
+            dialog = page.get_by_role("dialog")
+            self.assertEqual(dialog.get_by_role("button", name="Continue to secure checkout").count(), 0)
+            self.assertEqual(dialog.get_by_role("button", name="Checkout paused — CAL authorization unavailable").count(), 0)
+            self.assertIn("operator gate", dialog.inner_text())
+        finally:
+            page.close()
+
+    def test_live_bff_cart_success_loads_account_cart_and_unlocks_controls(self):
+        page = self._open_live_marketplace(cart_status=200)
+        try:
+            self.assertEqual(page.locator("#cartCount").inner_text(), "1")
+            self.assertEqual(page.locator("#savedCount").inner_text(), "0")
+            bag_button = page.locator('.card button[data-action="bag"]')
+            self.assertEqual(bag_button.count(), 1)
+            self.assertFalse(bag_button.is_disabled())
+            page.locator("#cartBtn").click()
+            dialog = page.get_by_role("dialog")
+            self.assertTrue(dialog.get_by_role("button", name="Continue to secure checkout").is_enabled())
+            self.assertIn("Every cart view, change and checkout is reauthorized by CAL.", dialog.inner_text())
+        finally:
+            page.close()
+
+    def test_account_connection_never_asks_for_direct_service_urls_or_pasted_tokens_by_default(self):
         self.page.locator("#settingsBtn").click()
-        self.page.locator("#apiBase").fill("http://catalog.example.com")
-        self.page.locator("#apiToken").fill("test-token-not-a-secret")
-        messages = []
-
-        def accept_dialog(dialog):
-            messages.append(dialog.message)
-            dialog.accept()
-
-        self.page.once("dialog", accept_dialog)
-        self.page.get_by_role("button", name="Connect catalog only").click()
-        self.assertTrue(messages, "Expected the insecure URL warning dialog")
-        self.assertIn("only be sent to HTTPS", messages[0])
+        self.assertEqual(self.page.locator("#commerceBase").count(), 0)
+        self.assertEqual(self.page.locator("#apiBase").count(), 0)
+        self.assertEqual(self.page.locator("#apiToken").count(), 0)
+        self.assertEqual(self.page.locator("#commerceToken").count(), 0)
+        self.assertIn("approved Cirvanna OIDC browser session", self.page.get_by_role("dialog").inner_text())
+        self.assertIn("does not accept pasted access tokens", self.page.get_by_role("dialog").inner_text())
 
 
 if __name__ == "__main__":
