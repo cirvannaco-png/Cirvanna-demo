@@ -65,7 +65,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     <section class="ai-panel" aria-labelledby="descriptionSearchTitle">
       <div class="eyebrow">PNELLY · Describe it</div>
       <h2 id="descriptionSearchTitle">Search by description</h2>
-      <p>Describe the item or outfit you want. PNELLY reads your active Wardrobe and consented style signals, checks live Catalog and Commerce offers, and returns only candidate-bound CAL SHOW products that also pass CIL rights and evidence review. This is not a generated catalogue. Complementer is designed as optional styling advice and cannot authorize products.</p>
+      <p>Describe the item or outfit you want. PNELLY reads your active Wardrobe and consented style signals, checks live Catalog and Commerce offers, and returns only candidate-bound CAL SHOW products that also pass CIL rights and evidence review. This is not a generated catalogue.</p>
       <div class="ai-controls">
         <input id="aiQuery" type="search" maxlength="160" placeholder="e.g. a modest dark green linen dress for hot weather" aria-label="Describe a product">
         <select id="aiCategory" aria-label="AI search category">
@@ -74,7 +74,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
         <input id="aiLocation" type="text" maxlength="120" placeholder="Location (optional)" aria-label="Declared location">
         <input id="aiOccasion" type="text" maxlength="120" placeholder="Occasion (optional)" aria-label="Declared occasion">
         <input id="aiClimate" type="text" maxlength="120" placeholder="Climate (optional)" aria-label="Declared climate">
-        <button class="btn primary wide" id="aiSearchBtn">Search marketplace with PNELLY</button>
+        <button class="btn primary wide" id="aiSearchBtn">Search my wardrobe-aware marketplace</button>
       </div>
       <div class="ai-status" id="aiSearchStatus" role="status" aria-live="polite">Connect a signed-in customer session. Search is fail-closed if Wardrobe, NPL, Catalog, Commerce, CAL or required CIL evidence is unavailable.</div>
       <div id="aiDiscoveryResults" class="ai-discovery-results" aria-live="polite"></div>
@@ -88,6 +88,12 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
         <button class="btn primary wide" id="complementerBtn">Ask Complementer</button>
       </div>
       <div class="ai-status" id="complementerStatus" role="status" aria-live="polite">Requires a signed-in customer session. Advice is request-scoped and is not a product or purchasing decision.</div>
+      <label class="consent-line wide"><input id="complementerLearningConsent" type="checkbox"><span>Store my approval or rejection in my private personalization learning timeline. I can withdraw this consent in Wardrobe. The raw look description is not stored with this feedback.</span></label>
+      <div class="ai-controls">
+        <button class="btn" id="complementerApproveBtn" type="button" disabled>Helpful</button>
+        <button class="btn" id="complementerRejectBtn" type="button" disabled>Not for me</button>
+      </div>
+      <div class="ai-status" id="complementerFeedbackStatus" role="status" aria-live="polite">Feedback is optional and is not collected until you grant personalization consent.</div>
     </section>
     <section class="ai-panel" aria-labelledby="lookItTitle">
       <div class="eyebrow">PNELLY · Look It</div>
@@ -129,6 +135,9 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
   const bootstrap = window.CIRVANNA_MARKETPLACE_CONFIG || {};
   let forceDemo = false;
   let config = {base:"",token:"",commerceBase:"",userToken:""}, items=[], page=0, mode="demo", total=0, cartVersion=0;
+  let activeComplementerRequestId = null;
+  let complementerConsentReceiptId = null;
+  let complementerFeedbackSubmitted = false;
   let saved = readStore("cirvanna-marketplace-saved"), cart = readStore("cirvanna-marketplace-bag");
   function readStore(key){try{return JSON.parse(localStorage.getItem(key)||"[]")}catch{return []}}
   function writeStore(){localStorage.setItem("cirvanna-marketplace-saved",JSON.stringify(saved));localStorage.setItem("cirvanna-marketplace-bag",JSON.stringify(cart));updateCounts()}
@@ -384,18 +393,101 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
     }finally{setAiBusy("lookItBtn",false,"Search this outfit with Look It")}
   });
 
+  function updateComplementerFeedbackControls(){
+    const enabled=Boolean(activeComplementerRequestId&&complementerConsentReceiptId&&!complementerFeedbackSubmitted);
+    $("complementerApproveBtn").disabled=!enabled;
+    $("complementerRejectBtn").disabled=!enabled;
+  }
+  $("complementerLearningConsent").addEventListener("change",async()=>{
+    const checkbox=$("complementerLearningConsent");
+    if(!config.userToken){
+      checkbox.checked=false;
+      setAiStatus("complementerFeedbackStatus","Connect a signed-in customer session before granting learning consent.",true);
+      return;
+    }
+    checkbox.disabled=true;
+    try{
+      if(checkbox.checked){
+        const response=await fetch("/api/wardrobe/consents",{
+          method:"POST",
+          headers:{Authorization:"Bearer "+config.userToken,"Content-Type":"application/json",Accept:"application/json"},
+          body:JSON.stringify({scope:"personalization",granted:true})
+        });
+        const data=await response.json().catch(()=>({}));
+        if(!response.ok||typeof data.receipt_id!=="string")throw new Error((data.detail&&data.detail.code)||"PERSONALIZATION_CONSENT_FAILED");
+        complementerConsentReceiptId=data.receipt_id;
+        setAiStatus("complementerFeedbackStatus","Personalization consent is active. You can now rate this advice; the feedback event contains only the opaque request ID and your response.");
+      }else if(complementerConsentReceiptId){
+        const response=await fetch("/api/wardrobe/consents/"+encodeURIComponent(complementerConsentReceiptId)+"/revoke",{
+          method:"POST",
+          headers:{Authorization:"Bearer "+config.userToken,Accept:"application/json"}
+        });
+        const data=await response.json().catch(()=>({}));
+        if(!response.ok)throw new Error((data.detail&&data.detail.code)||"PERSONALIZATION_CONSENT_REVOKE_FAILED");
+        complementerConsentReceiptId=null;
+        setAiStatus("complementerFeedbackStatus","Personalization consent revoked. No further Complementer feedback will be submitted.");
+      }
+    }catch(e){
+      checkbox.checked=Boolean(complementerConsentReceiptId);
+      setAiStatus("complementerFeedbackStatus",(e&&e.message?e.message:"Personalization consent is unavailable"),true);
+    }finally{
+      checkbox.disabled=false;
+      updateComplementerFeedbackControls();
+    }
+  });
+
+  async function submitComplementerFeedback(outcome,buttonId){
+    if(!activeComplementerRequestId||!complementerConsentReceiptId||complementerFeedbackSubmitted){
+      setAiStatus("complementerFeedbackStatus","Generate advice and grant personalization consent before sending feedback.",true);
+      return;
+    }
+    $("complementerApproveBtn").disabled=true;
+    $("complementerRejectBtn").disabled=true;
+    $(buttonId).textContent="Saving…";
+    try{
+      const feedbackId="complementer-feedback-"+Date.now()+"-"+Math.random().toString(36).slice(2,10);
+      const response=await fetch("/api/vision/complementer/feedback",{
+        method:"POST",
+        headers:{Authorization:"Bearer "+config.userToken,"Content-Type":"application/json",Accept:"application/json"},
+        body:JSON.stringify({
+          feedback_id:feedbackId,
+          request_id:activeComplementerRequestId,
+          outcome,
+          consent_receipt_id:complementerConsentReceiptId
+        })
+      });
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok)throw new Error((data.detail&&data.detail.code)||("Feedback returned HTTP "+response.status+"."));
+      if(data.status!=="recorded"&&data.status!=="replayed")throw new Error("Feedback persistence was not confirmed.");
+      complementerFeedbackSubmitted=true;
+      setAiStatus("complementerFeedbackStatus","Your response is stored in your private TAL learning timeline. It is not a CAL decision and does not directly change product eligibility.");
+    }catch(e){
+      setAiStatus("complementerFeedbackStatus",(e&&e.message?e.message:"Feedback could not be stored")+". Check that your personalization consent is still active.",true);
+    }finally{
+      $("complementerApproveBtn").textContent="Helpful";
+      $("complementerRejectBtn").textContent="Not for me";
+      updateComplementerFeedbackControls();
+    }
+  }
+  $("complementerApproveBtn").addEventListener("click",()=>submitComplementerFeedback("approved","complementerApproveBtn"));
+  $("complementerRejectBtn").addEventListener("click",()=>submitComplementerFeedback("rejected","complementerRejectBtn"));
+
   $("complementerBtn").addEventListener("click",async()=>{
     const description=$("complementerLook").value.trim();
     if(description.length<3){setAiStatus("complementerStatus","Describe the look using at least 3 characters.",true);return}
     if(!config.userToken){setAiStatus("complementerStatus","Connect your signed-in Cirvanna customer session first.",true);return}
     setAiBusy("complementerBtn",true,"Asking…");
+    activeComplementerRequestId=null;
+    complementerFeedbackSubmitted=false;
+    updateComplementerFeedbackControls();
+    const requestId="complementer-"+Date.now()+"-"+Math.random().toString(36).slice(2,10);
     setAiStatus("complementerStatus","Requesting verified, request-scoped styling advice…");
     try{
       const response=await fetch("/api/vision/complementer",{
         method:"POST",
         headers:{Authorization:"Bearer "+config.userToken,"Content-Type":"application/json",Accept:"application/json"},
         body:JSON.stringify({
-          request_id:"complementer-"+Date.now(),
+          request_id:requestId,
           preferences:{},
           look:{description}
         })
@@ -403,10 +495,14 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       const data=await response.json().catch(()=>({}));
       if(!response.ok)throw new Error((data.detail&&data.detail.code)||("Complementer returned HTTP "+response.status+"."));
       if(data.mode!=="advisory_only"||data.display_authorized!==false||data.durable_personal_memory!==false||!data.recommendation)throw new Error("Complementer returned an invalid advisory response.");
+      activeComplementerRequestId=requestId;
       setAiStatus("complementerStatus",JSON.stringify(data.recommendation,null,2));
     }catch(e){
       setAiStatus("complementerStatus",(e&&e.message?e.message:"Complementer is unavailable")+". PNELLY marketplace discovery remains separate.",true);
-    }finally{setAiBusy("complementerBtn",false,"Ask Complementer")}
+    }finally{
+      setAiBusy("complementerBtn",false,"Ask Complementer");
+      updateComplementerFeedbackControls();
+    }
   });
 
   function renderWardrobeDiscovery(data){
@@ -476,7 +572,7 @@ footer{border-top:1px solid var(--line);padding:24px 0 38px;color:var(--muted);f
       setAiStatus("aiSearchStatus","PNELLY evaluated "+data.ranked_candidate_count+" candidates using your active Wardrobe. "+shown+" passed CAL SHOW and CIL serving checks; "+data.withheld_candidate_count+" were withheld. Only authorized candidates are shown.");
     }catch(e){
       setAiStatus("aiSearchStatus",(e&&e.message?e.message:"Wardrobe-aware discovery is unavailable")+". No demo or unreviewed product details were shown.",true);
-    }finally{setAiBusy("aiSearchBtn",false,"Search marketplace with PNELLY")}
+    }finally{setAiBusy("aiSearchBtn",false,"Search my wardrobe-aware marketplace")}
   });
 
 
