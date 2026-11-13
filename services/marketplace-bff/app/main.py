@@ -1258,6 +1258,12 @@ async def save_pnelly_look(request: Request, payload: SavePNELLYLookIn) -> Respo
         else:
             raise HTTPException(503, detail={"code": "PNELLY_SAVE_OUTFIT_CREATE_UNAVAILABLE"})
 
+    persisted_pieces = outfit_data.get("pieces") if isinstance(outfit_data, dict) else None
+    persisted_item_ids = sorted(
+        piece.get("wardrobe_item_id")
+        for piece in persisted_pieces
+        if isinstance(piece, dict) and isinstance(piece.get("wardrobe_item_id"), str)
+    ) if isinstance(persisted_pieces, list) else []
     if (
         not isinstance(outfit_data, dict)
         or outfit_data.get("owner_user_id") != subject
@@ -1266,8 +1272,10 @@ async def save_pnelly_look(request: Request, payload: SavePNELLYLookIn) -> Respo
         or isinstance(outfit_data.get("version"), bool)
         or not isinstance(outfit_data.get("version"), int)
         or outfit_data["version"] < 1
+        or persisted_item_ids != sorted(item_ids)
+        or len(persisted_item_ids) != len(item_ids)
     ):
-        raise HTTPException(502, detail={"code": "PNELLY_SAVE_OUTFIT_SCOPE_MISMATCH"})
+        raise HTTPException(502, detail={"code": "PNELLY_SAVE_OUTFIT_SCOPE_OR_CONTENT_MISMATCH"})
     return _private_json_response({
         "status": status_value,
         "outfit_id": outfit_id,
