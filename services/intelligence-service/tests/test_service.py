@@ -630,6 +630,11 @@ def test_perfectcorp_reaper_deletes_abandoned_provider_tasks(client, monkeypatch
         db.commit()
     finally:
         db.close()
+    # The provider only permits deletion after a terminal state; make the
+    # abandoned task terminal before asserting that the reaper erases it.
+    monkeypatch.setattr(cil_main, "perfectcorp_get_skin_analysis_status", lambda **kwargs: {
+        "task_id": kwargs["task_id"], "status": "success",
+    })
     monkeypatch.setattr(cil_main, "perfectcorp_delete_task", lambda **kwargs: calls.append(kwargs["task_id"]) or True)
     response = client.post("/providers/perfectcorp/reap-tasks", headers=auth("admin-test"))
     assert response.status_code == 200
