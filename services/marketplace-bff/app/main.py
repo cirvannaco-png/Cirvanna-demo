@@ -446,6 +446,15 @@ class RecordPNELLYLookWearIn(BaseModel):
     context: dict[str, str] = Field(default_factory=dict, max_length=8)
 
 
+class PNELLYLookFeedbackIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    event_id: str = Field(min_length=8, max_length=128)
+    look_role: Literal["everyday", "elevated", "explore"]
+    item_ids: list[str] = Field(min_length=1, max_length=20)
+    signal: Literal["approved", "rejected", "modified"]
+    consent_receipt_id: str = Field(min_length=8, max_length=128)
+
+
 class SavePNELLYLookIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     item_ids: list[str] = Field(min_length=1, max_length=20)
@@ -1282,6 +1291,129 @@ async def save_pnelly_look(request: Request, payload: SavePNELLYLookIn) -> Respo
         "outfit_version": outfit_data["version"],
         "name": name,
         "wardrobe_item_ids": item_ids,
+    }, status_code=201)
+
+
+@app.post("/api/wardrobe/pnelly/look-feedback", status_code=201)
+async def record_pnelly_look_feedback(request: Request, payload: PNELLYLookFeedbackIn) -> Response:
+    """Record one consented combination-level TAL event; do not create item-level NPL vetoes."""
+    item_ids = [value.strip() for value in payload.item_ids]
+    event_id = payload.event_id.strip()
+    if any(not item_id for item_id in item_ids) or len(set(item_ids)) != len(item_ids):
+        raise HTTPException(422, detail={"code": "PNELLY_LOOK_FEEDBACK_ITEM_IDS_INVALID"})
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        wardrobe_base, wardrobe_token = _wardrobe_service()
+        wardrobe_headers = {"Authorization": "Bearer " + wardrobe_token, "Accept": "application/json"}
+        try:
+            wardrobe_response = await client.get(
+                wardrobe_base + "/v1/items",
+                params={"owner_user_id": subject, "include_archived": "false"},
+                headers=wardrobe_headers,
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "PNELLY_LOOK_FEEDBACK_WARDROBE_UNAVAILABLE"}) from exc
+        if wardrobe_response.status_code != 200:
+            raise HTTPException(503, detail={"code": "PNELLY_LOOK_FEEDBACK_WARDROBE_UNAVAILABLE"})
+        try:
+            wardrobe_data = wardrobe_response.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "PNELLY_LOOK_FEEDBACK_WARDROBE_RESPONSE_INVALID"}) from exc
+        if (
+            not isinstance(wardrobe_data, dict)
+            or wardrobe_data.get("owner_user_id") != subject
+            or not isinstance(wardrobe_data.get("items"), list)
+            or any(not isinstance(item, dict) or item.get("owner_user_id") != subject
+                   for item in wardrobe_data.get("items", []))
+        ):
+            raise HTTPException(502, detail={"code": "PNELLY_LOOK_FEEDBACK_WARDROBE_SCOPE_MISMATCH"})
+        active_ids = {
+            item.get("item_id") for item in wardrobe_data["items"]
+            if item.get("status") == "active" and isinstance(item.get("item_id"), str)
+        }
+        if any(item_id not in active_ids for item_id in item_ids):
+            raise HTTPException(422, detail={"code": "PNELLY_LOOK_FEEDBACK_ITEM_NOT_ACTIVE_OR_NOT_OWNED"})
+
+        identity_base, identity_token = _identity_learning_service()
+        identity_headers = {"Authorization": "Bearer " + identity_token, "Accept": "application/json"}
+        try:
+            consent_response = await client.get(identity_base + f"/v1/tal/consents/{subject}", headers=identity_headers)
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "IDENTITY_CONSENT_UNAVAILABLE"}) from exc
+        if consent_response.status_code != 200:
+            raise HTTPException(503, detail={"code": "IDENTITY_CONSENT_UNAVAILABLE"})
+        try:
+            consents = consent_response.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "IDENTITY_CONSENT_RESPONSE_INVALID"}) from exc
+        if not isinstance(consents, list):
+            raise HTTPException(502, detail={"code": "IDENTITY_CONSENT_RESPONSE_INVALID"})
+        receipt = next((row for row in consents if isinstance(row, dict) and row.get("receipt_id") == payload.consent_receipt_id), None)
+        expires_at = None
+        if isinstance(receipt, dict) and receipt.get("expires_at") is not None:
+            try:
+                expires_at = datetime.fromisoformat(str(receipt["expires_at"]).replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise HTTPException(502, detail={"code": "IDENTITY_CONSENT_RESPONSE_INVALID"}) from exc
+            if expires_at.tzinfo is None or expires_at.utcoffset() is None:
+                raise HTTPException(502, detail={"code": "IDENTITY_CONSENT_RESPONSE_INVALID"})
+            expires_at = expires_at.astimezone(timezone.utc)
+        now = datetime.now(timezone.utc)
+        if (
+            not isinstance(receipt, dict)
+            or receipt.get("scope") not in {"style_learning", "personalization"}
+            or receipt.get("granted") is not True
+            or receipt.get("revoked_at") is not None
+            or (expires_at is not None and expires_at <= now)
+        ):
+            raise HTTPException(403, detail={"code": "ACTIVE_STYLE_LEARNING_CONSENT_REQUIRED"})
+
+        observed_at = now.isoformat().replace("+00:00", "Z")
+        value = json.dumps({
+            "signal": payload.signal,
+            "look_role": payload.look_role,
+            "wardrobe_item_ids": item_ids,
+        }, sort_keys=True, separators=(",", ":"))
+        try:
+            event_response = await client.post(
+                identity_base + "/v1/tal/events",
+                params={"subject_id": subject},
+                headers=identity_headers,
+                json={
+                    "event_id": event_id,
+                    "idempotency_key": "pnelly-look:" + event_id,
+                    "consent_receipt_id": payload.consent_receipt_id,
+                    "feature_key": "pnelly.look.feedback." + payload.signal,
+                    "value": value,
+                    "observed_at": observed_at,
+                    "expires_at": (now + timedelta(days=180)).isoformat().replace("+00:00", "Z"),
+                },
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "PNELLY_LOOK_FEEDBACK_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "PNELLY_LOOK_FEEDBACK_UNAVAILABLE"}) from exc
+
+    if event_response.status_code == 403:
+        raise HTTPException(403, detail={"code": "ACTIVE_STYLE_LEARNING_CONSENT_REQUIRED"})
+    if event_response.status_code == 409:
+        raise HTTPException(409, detail={"code": "PNELLY_LOOK_FEEDBACK_EVENT_CONFLICT"})
+    if event_response.status_code != 200:
+        raise HTTPException(503, detail={"code": "PNELLY_LOOK_FEEDBACK_UNAVAILABLE"})
+    try:
+        result = event_response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "PNELLY_LOOK_FEEDBACK_RESPONSE_INVALID"}) from exc
+    if not isinstance(result, dict) or result.get("event_id") != event_id or result.get("status") not in {"recorded", "replayed"}:
+        raise HTTPException(502, detail={"code": "PNELLY_LOOK_FEEDBACK_RESPONSE_INVALID"})
+    return _private_json_response({
+        "status": result["status"],
+        "event_id": event_id,
+        "signal": payload.signal,
+        "look_role": payload.look_role,
+        "learning_owner": "TAL",
+        "item_level_npl_rejection_created": False,
     }, status_code=201)
 
 
