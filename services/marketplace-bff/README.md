@@ -16,6 +16,13 @@ This is the server-side browser boundary for marketplace browsing, visual discov
 - Only customer cart, saved-product, checkout and order routes are proxied. Admin, merchant-management, webhooks, cron, and internal endpoints are not exposed through this gateway.
 - No CORS allowlist is added to this same-origin UI/API. Security headers include CSP, nosniff, no-referrer, frame denial, and disabled camera/microphone/geolocation.
 
+## PNELLY Complementer feedback
+
+- `POST /api/vision/complementer` derives the customer subject through Commerce `/me` and forwards the user token separately to the Decision Gateway. The result is advisory-only and contains no CAL display authorization or product offer.
+- `POST /api/vision/complementer/feedback` requires a currently active, subject-owned Identity Learning `personalization` receipt. The BFF forwards an opaque request ID and the explicit `approved`/`rejected` reaction to `/v1/me/tal/events` using the same verified user session.
+- The TAL value deliberately excludes the raw look description. It is retained as a private, idempotent learning observation with a 180-day event expiry.
+- A durable TAL event is not automatically a changed USI/NPL preference or a CIL suitability outcome. A downstream, reviewed learning consumer must be implemented and validated before feedback changes recommendation ranking. CIL suitability ingestion still requires its own purpose-bound consent and candidate-bound CAL SHOW receipt.
+
 ## Runtime configuration
 
 Set through the deployment secret manager:
