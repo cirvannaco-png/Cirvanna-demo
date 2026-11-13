@@ -55,6 +55,13 @@ class MarketplaceBrowserTests(unittest.TestCase):
         self.page.get_by_role("dialog").get_by_text("Checkout unavailable").wait_for()
         self.assertIn("No stock is reserved and no order is created.", self.page.get_by_role("dialog").inner_text())
 
+    def test_complementer_feedback_is_disabled_until_advice_and_explicit_consent(self):
+        self.assertFalse(self.page.locator("#complementerLearningConsent").is_checked())
+        self.assertTrue(self.page.locator("#complementerApproveBtn").is_disabled())
+        self.assertTrue(self.page.locator("#complementerRejectBtn").is_disabled())
+        self.assertIn("withdraw this consent in Wardrobe", self.page.locator("body").inner_text())
+        self.assertIn("raw look description is not stored", self.page.locator("body").inner_text())
+
     def test_try_on_and_checkout_are_not_misrepresented_as_live(self):
         try_on = self.page.locator('.card button[data-action="tryon"]').first
         self.assertTrue(try_on.is_disabled())
