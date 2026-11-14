@@ -14,7 +14,9 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel
 from starlette import status
 
+from .dsi.api import router as dsi_analysis_router
 from .dsi.capture import CapturePlanRequest, build_capture_plan
+from .dsi.media import read_and_decode_image
 from .dsi.router import router as dsi_router
 from .model_adapter import ModelConfigurationError, SkinAnalysisEngine
 from .validation import verify_signed_validation_report
@@ -36,6 +38,7 @@ app = FastAPI(
     ),
 )
 app.include_router(dsi_router)
+app.include_router(dsi_analysis_router)
 bearer = HTTPBearer(auto_error=False)
 
 
@@ -183,48 +186,14 @@ def capabilities() -> dict[str, object]:
 
 
 async def _read_and_decode_image(upload: UploadFile) -> np.ndarray:
-    if upload.content_type not in ALLOWED_MIME_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail={"code": "UNSUPPORTED_IMAGE_TYPE", "allowed": sorted(ALLOWED_MIME_TYPES)},
-        )
-    try:
-        content = await upload.read(MAX_IMAGE_BYTES + 1)
-    finally:
-        await upload.close()
-    if len(content) > MAX_IMAGE_BYTES:
-        raise HTTPException(
-            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-            detail={"code": "IMAGE_SIZE_LIMIT_EXCEEDED", "maximum_bytes": MAX_IMAGE_BYTES},
-        )
-    if not content:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "EMPTY_IMAGE"},
-        )
-
-    try:
-        with Image.open(io.BytesIO(content)) as source:
-            if source.format != MIME_TO_FORMAT[upload.content_type]:
-                raise HTTPException(
-                    status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-                    detail={"code": "IMAGE_MIME_MISMATCH"},
-                )
-            if source.width <= 0 or source.height <= 0 or source.width * source.height > MAX_IMAGE_PIXELS:
-                raise HTTPException(
-                    status_code=status.HTTP_413_CONTENT_TOO_LARGE,
-                    detail={"code": "IMAGE_PIXEL_LIMIT_EXCEEDED", "maximum_pixels": MAX_IMAGE_PIXELS},
-                )
-            image = ImageOps.exif_transpose(source).convert("RGB")
-            image.load()
-    except HTTPException:
-        raise
-    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"code": "INVALID_IMAGE"},
-        ) from exc
-    return np.asarray(image, dtype=np.uint8)
+    """Compatibility wrapper around the shared in-memory DSI upload decoder."""
+    return await read_and_decode_image(
+        upload,
+        max_bytes=MAX_IMAGE_BYTES,
+        max_pixels=MAX_IMAGE_PIXELS,
+        allowed_mime_types=ALLOWED_MIME_TYPES,
+        mime_to_format=MIME_TO_FORMAT,
+    )
 
 
 @app.post(
