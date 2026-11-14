@@ -10,7 +10,7 @@ import hmac
 import io
 import json
 import os
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import numpy as np
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -288,6 +288,7 @@ async def colorchecker_tone_preview(
     chart_edition_confirmed_after_2014: Annotated[bool, Form()],
     chart_age_months: Annotated[int | None, Form(ge=0)] = None,
     chart_condition: Annotated[str, Form(pattern="^(good|worn|unknown)$")] = "unknown",
+    requested_region: Annotated[Literal["face_skin", "body_skin", "both"], Form()] = "both",
 ) -> JSONResponse:
     """Return an experimental same-frame ColorChecker skin-colour preview.
 
@@ -341,6 +342,7 @@ async def colorchecker_tone_preview(
             patch_grid_corners=corners,
             chart_age_months_declared=chart_age_months,
             chart_condition_declared=chart_condition,
+            requested_region=requested_region,
         )
         segmenter_meta = dsi_models.skin_segmenter_status()
         preview["skin_segmentation_model"] = {

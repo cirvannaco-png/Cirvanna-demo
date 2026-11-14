@@ -298,6 +298,7 @@ def test_dsi_colorchecker_preview_requires_supported_reference_and_returns_unval
             "chart_edition_confirmed_after_2014": "true",
             "chart_age_months": "12",
             "chart_condition": "good",
+            "requested_region": "face_skin",
         },
         files={"image": ("capture.png", dsi_image_bytes(), "image/png")},
     )
@@ -321,6 +322,7 @@ def test_dsi_colorchecker_preview_rejects_unsupported_reference_before_model_use
             "chart_edition_confirmed_after_2014": "true",
             "chart_age_months": "12",
             "chart_condition": "good",
+            "requested_region": "face_skin",
         },
         files={"image": ("capture.png", dsi_image_bytes(), "image/png")},
     )

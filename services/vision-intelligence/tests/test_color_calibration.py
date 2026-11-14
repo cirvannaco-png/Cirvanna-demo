@@ -91,6 +91,8 @@ def test_colorchecker_fit_returns_unvalidated_face_and_body_colour_previews():
     assert result["profile"]["profile_id"] == PROFILE_ID
     assert result["profile"]["profile_sha256"] == PROFILE_SHA256
     assert result["chart_patch_count"] == 24
+    assert len(result["patch_leave_one_out_delta_e_2000"]) == 24
+    assert result["requested_region"] == "both"
     assert set(result["chart_fit_leave_one_out_delta_e_2000"]) == {
         "mean", "median", "p95", "maximum"
     }
@@ -191,3 +193,29 @@ def test_patch_grid_corner_order_is_strict():
             )
     finally:
         image.close()
+
+
+
+@pytest.mark.parametrize(
+    ("requested_region", "expected_face", "expected_body"),
+    [
+        ("face_skin", True, False),
+        ("body_skin", False, True),
+    ],
+)
+def test_colorchecker_preview_only_summarizes_the_user_selected_region(
+    requested_region, expected_face, expected_body
+):
+    image, categories = _synthetic_capture()
+    try:
+        result = build_skin_colour_preview(
+            image,
+            categories,
+            patch_grid_corners=[[100, 50], [700, 50], [700, 450], [100, 450]],
+            requested_region=requested_region,
+        )
+    finally:
+        image.close()
+    assert (result["skin_regions"]["face_skin"] is not None) is expected_face
+    assert (result["skin_regions"]["body_skin"] is not None) is expected_body
+    assert result["requested_region"] == requested_region

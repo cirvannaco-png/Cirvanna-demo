@@ -401,12 +401,15 @@ def build_skin_colour_preview(
     patch_grid_corners: Sequence[Sequence[float]],
     chart_age_months_declared: int | None = None,
     chart_condition_declared: str = "unknown",
+    requested_region: str = "both",
 ) -> dict[str, object]:
     """Fit a ColorChecker transform and emit provisional face/body skin Lab summaries."""
     if chart_age_months_declared is not None and chart_age_months_declared < 0:
         raise ColorCalibrationError("chart age cannot be negative")
     if chart_condition_declared not in {"good", "worn", "unknown"}:
         raise ColorCalibrationError("chart condition must be good, worn or unknown")
+    if requested_region not in {"face_skin", "body_skin", "both"}:
+        raise ColorCalibrationError("requested region must be face_skin, body_skin or both")
     if image.mode != "RGB":
         image = image.convert("RGB")
     corners = _validate_corners(patch_grid_corners, image.size)
@@ -428,8 +431,14 @@ def build_skin_colour_preview(
     if not np.issubdtype(categories.dtype, np.integer):
         raise ColorCalibrationError("skin segmentation mask must be an integer label map")
 
-    face = _summarize_skin_region(rgb_image, categories, 3, coefficients)
-    body = _summarize_skin_region(rgb_image, categories, 2, coefficients)
+    face = (
+        _summarize_skin_region(rgb_image, categories, 3, coefficients)
+        if requested_region in {"face_skin", "both"} else None
+    )
+    body = (
+        _summarize_skin_region(rgb_image, categories, 2, coefficients)
+        if requested_region in {"body_skin", "both"} else None
+    )
     return {
         "status": "colorchecker_fit_candidate_unvalidated",
         "calibration_state": "experimental_unvalidated",
@@ -456,7 +465,12 @@ def build_skin_colour_preview(
             "p95": round(float(np.percentile(loo, 95)), 4),
             "maximum": round(float(np.max(loo)), 4),
         },
+        "patch_leave_one_out_delta_e_2000": [
+            {"patch": PATCHES[index][0], "delta_e_2000": round(float(error), 4)}
+            for index, error in enumerate(loo)
+        ],
         "patch_diagnostics": patch_diagnostics,
+        "requested_region": requested_region,
         "skin_regions": {
             "face_skin": face,
             "body_skin": body,
