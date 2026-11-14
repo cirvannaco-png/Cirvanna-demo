@@ -588,8 +588,8 @@ def test_pnelly_conversation_creation_records_explicit_resource_bound_24_hour_co
             "expires_at": "2026-11-15T03:00:00+00:00", "context": {},
         }),
     ])
-    monkeypatch.setattr(main.uuid, "uuid4", lambda: __import__("uuid").UUID(conversation_id) if not hasattr(main, "_test_uuid_used") else __import__("uuid").UUID(receipt_id))
-    monkeypatch.setattr(main, "httpx", main.httpx)
+    identifiers = iter([__import__("uuid").UUID(conversation_id), __import__("uuid").UUID(receipt_id)])
+    monkeypatch.setattr(main.uuid, "uuid4", lambda: next(identifiers))
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.post(
         "/api/wardrobe/pnelly/conversations",
