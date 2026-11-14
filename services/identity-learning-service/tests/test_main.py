@@ -61,6 +61,23 @@ def test_internal_auth_is_required(client):
     ).status_code == 401
 
 
+def test_readiness_requires_pnelly_context_and_twin_cleanup_schema(client):
+    ready = client.get("/ready", headers=auth())
+    assert ready.status_code == 200
+    assert ready.json()["pnelly_conversation_context"] is True
+    assert ready.json()["twin_consent_cleanup_outbox"] is True
+
+    main.ConsentRevocationOutbox.__table__.drop(
+        bind=main._engine(os.environ["IDENTITY_DATABASE_URL"])
+    )
+    unavailable = client.get("/ready", headers=auth())
+    assert unavailable.status_code == 503
+    assert unavailable.json()["detail"]["code"] == "IDENTITY_SCHEMA_NOT_READY"
+    main.ConsentRevocationOutbox.__table__.create(
+        bind=main._engine(os.environ["IDENTITY_DATABASE_URL"])
+    )
+
+
 def test_usi_profile_requires_consent_and_uses_optimistic_version(client):
     assert consent(client, scope="profile_storage", receipt="receipt-profile-0001").status_code == 200
     body = {"expected_version": 0, "preferences": [{"preference_id": "p1", "attribute": "minimalist", "weight": 0.8}]}
