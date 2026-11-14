@@ -619,7 +619,7 @@ def put_color_profile(subject_id: str, payload: ColorProfilePut, db: Annotated[S
 
 
 @app.post("/v1/tal/consents", dependencies=[Depends(require_internal_token)])
-def put_consent(subject_id: str = Query(min_length=1, max_length=128), payload: ConsentPut = None, db: Session = Depends(get_db)):
+async def put_consent(subject_id: str = Query(min_length=1, max_length=128), payload: ConsentPut = None, db: Session = Depends(get_db)):
     subject = subject_or_404(subject_id)
     if payload is None:
         raise HTTPException(422, detail={"code": "CONSENT_RECEIPT_REQUIRED"})
@@ -659,6 +659,16 @@ def put_consent(subject_id: str = Query(min_length=1, max_length=128), payload: 
             statement = statement.where(ConsentReceipt.scope == payload.scope)
         db.execute(statement.values(revoked_at=now))
         _delete_inactive_pnelly_conversations(db, subject)
+    twin_cleanup = None
+    if not payload.granted:
+        twin_cleanup = _queue_twin_consent_cleanup(
+            db,
+            subject_id=subject,
+            consent_id=consent_id,
+            resource_id=payload.resource_id,
+            receipt_id=payload.receipt_id,
+            scope=payload.scope,
+        )
     row = ConsentReceipt(
         receipt_id=payload.receipt_id, subject_id=subject, consent_id=consent_id,
         resource_id=payload.resource_id, scope=payload.scope,
@@ -669,14 +679,19 @@ def put_consent(subject_id: str = Query(min_length=1, max_length=128), payload: 
     )
     db.add(row)
     db.commit()
+    if twin_cleanup is not None:
+        await _dispatch_twin_consent_revocations(db, limit=1)
+        db.refresh(twin_cleanup)
     return {
         "receipt_id": row.receipt_id, "consent_id": row.consent_id,
-        "resource_id": row.resource_id, "expires_at": row.expires_at.isoformat() if row.expires_at else None, "status": "recorded", "granted": row.granted,
+        "resource_id": row.resource_id, "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+        "status": "recorded", "granted": row.granted,
+        "twin_cleanup_status": twin_cleanup.status if twin_cleanup is not None else "not_applicable",
     }
 
 
 @app.post("/v1/tal/consents/{receipt_id}/revoke", dependencies=[Depends(require_internal_token)])
-def revoke_consent(
+async def revoke_consent(
     receipt_id: str,
     subject_id: str = Query(min_length=1, max_length=128),
     db: Session = Depends(get_db),
@@ -705,7 +720,18 @@ def revoke_consent(
             statement = statement.where(ConsentReceipt.scope == receipt.scope)
         db.execute(statement.values(revoked_at=revoked_at))
         _delete_inactive_pnelly_conversations(db, subject)
-        db.commit()
+    twin_cleanup = _queue_twin_consent_cleanup(
+        db,
+        subject_id=subject,
+        consent_id=receipt.consent_id,
+        resource_id=receipt.resource_id,
+        receipt_id=receipt.receipt_id,
+        scope=receipt.scope,
+    )
+    db.commit()
+    if twin_cleanup is not None:
+        await _dispatch_twin_consent_revocations(db, limit=1)
+        db.refresh(twin_cleanup)
         db.refresh(receipt)
     return {
         "receipt_id": receipt_id,
@@ -713,7 +739,16 @@ def revoke_consent(
         "resource_id": receipt.resource_id,
         "status": "revoked" if receipt.granted and receipt.revoked_at is not None else "already_denied",
         "revoked_at": receipt.revoked_at.isoformat() if receipt.revoked_at else None,
+        "twin_cleanup_status": twin_cleanup.status if twin_cleanup is not None else "not_applicable",
     }
+
+
+@app.post("/internal/v1/consent-revocations/dispatch", dependencies=[Depends(require_internal_token)])
+async def dispatch_twin_consent_revocations(
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    return await _dispatch_twin_consent_revocations(db, limit=limit)
 
 
 @app.post("/internal/v1/consents/verify", dependencies=[Depends(require_internal_token)])
