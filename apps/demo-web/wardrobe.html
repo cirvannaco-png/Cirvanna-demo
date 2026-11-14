@@ -159,6 +159,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
 <div class="field"><label for="location">Location (optional, declared)</label><input id="location" maxlength="120" placeholder="e.g. Subukia"></div>
 <div class="field"><label for="occasion">Occasion (optional)</label><input id="occasion" maxlength="120" placeholder="e.g. everyday, formal"></div>
 <div class="field"><label for="climate">Climate (optional, declared)</label><input id="climate" maxlength="120" placeholder="e.g. warm, cool, humid"></div>
+<div class="field"><label for="discoveryCues">Discovery cues (optional, comma-separated)</label><input id="discoveryCues" maxlength="160" placeholder="e.g. breathable fabric, long sleeves"></div>
 </div>
 <label class="small"><input id="excludeOwned" type="checkbox" checked style="width:auto;min-width:auto"> Exclude exact Catalog products already in my wardrobe</label>
 <div class="consent" style="margin-top:12px">
@@ -1081,6 +1082,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
         location:$("location").value.trim() || null,
         occasion:$("occasion").value.trim() || null,
         climate:$("climate").value.trim() || null,
+        constraints:$("discoveryCues").value.split(",").map(value => value.trim()).filter(Boolean),
         exclude_owned_products:$("excludeOwned").checked
       };
       if ($("pnellyConversationOptIn").checked) {
