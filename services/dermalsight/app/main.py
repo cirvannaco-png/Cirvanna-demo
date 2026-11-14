@@ -104,7 +104,7 @@ def require_api_token(
 @app.middleware("http")
 async def privacy_headers(request, call_next):
     response = await call_next(request)
-    response.headers["Cache-Control"] = "no-store"
+    response.headers["Cache-Control"] = "no-store, private"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
     return response
