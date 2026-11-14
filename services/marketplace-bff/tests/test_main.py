@@ -672,7 +672,7 @@ def test_wardrobe_recommendations_persist_context_before_cal_discovery(client, m
     assert update["context"]["location"] == "Subukia"
     assert update["context"]["occasion"] == "evening"
     gateway = fake.calls[3][2]["json"]
-    assert gateway["query"] == "make it more formal"
+    assert gateway["query"] == "make it more formal linen"
     assert gateway["category"] == "dress"
     assert gateway["currency"] == "KES"
     assert gateway["context"]["location"] == "Subukia"
