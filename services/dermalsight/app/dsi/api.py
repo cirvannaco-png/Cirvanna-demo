@@ -7,14 +7,11 @@ import numpy as np
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
-from .consent import (
-    ConsentNotAuthorized,
-    ConsentProviderUnavailable,
-    verify_dsi_consent,
-)
+from .consent import verify_dsi_consent
+from .errors import ConsentNotAuthorized, DSIProviderUnavailable
 from .contracts import ConsentPurpose
 from .features import summarize_face_geometry
-from .media import read_and_decode_image
+from .media import read_and_decode_payload
 from .security import require_dsi_api_token
 from .vision_client import fetch_face_landmarks, fetch_skin_segmentation
 
@@ -39,36 +36,13 @@ def _private_response(payload: dict, status_code: int = 200) -> JSONResponse:
 
 
 async def _read_payload(image: UploadFile) -> tuple[bytes, np.ndarray]:
-    content_type = image.content_type or ""
-    if content_type not in ALLOWED_MIME_TYPES:
-        await image.close()
-        raise HTTPException(415, detail={"code": "UNSUPPORTED_IMAGE_TYPE"})
-    try:
-        content = await image.read(MAX_DSI_IMAGE_BYTES + 1)
-    finally:
-        await image.close()
-    if len(content) > MAX_DSI_IMAGE_BYTES:
-        raise HTTPException(413, detail={"code": "IMAGE_SIZE_LIMIT_EXCEEDED", "maximum_bytes": MAX_DSI_IMAGE_BYTES})
-    if not content:
-        raise HTTPException(400, detail={"code": "EMPTY_IMAGE"})
-    # Re-use the existing service decoder/EXIF orientation and pixel bound.
-    from PIL import Image, ImageOps, UnidentifiedImageError
-    import io
-
-    try:
-        with Image.open(io.BytesIO(content)) as source:
-            if source.format != MIME_TO_FORMAT[content_type]:
-                raise HTTPException(415, detail={"code": "IMAGE_MIME_MISMATCH"})
-            if source.width <= 0 or source.height <= 0 or source.width * source.height > MAX_DSI_IMAGE_PIXELS:
-                raise HTTPException(413, detail={"code": "IMAGE_PIXEL_LIMIT_EXCEEDED"})
-            decoded = ImageOps.exif_transpose(source).convert("RGB")
-            decoded.load()
-            array = np.asarray(decoded, dtype=np.uint8)
-    except HTTPException:
-        raise
-    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError) as exc:
-        raise HTTPException(400, detail={"code": "INVALID_IMAGE"}) from exc
-    return content, array
+    return await read_and_decode_payload(
+        image,
+        max_bytes=MAX_DSI_IMAGE_BYTES,
+        max_pixels=MAX_DSI_IMAGE_PIXELS,
+        allowed_mime_types=ALLOWED_MIME_TYPES,
+        mime_to_format=MIME_TO_FORMAT,
+    )
 
 
 async def _verify_purpose(
@@ -89,7 +63,7 @@ async def _verify_purpose(
         )
     except ConsentNotAuthorized as exc:
         raise HTTPException(403, detail={"code": "DSI_PURPOSE_CONSENT_NOT_VERIFIED"}) from exc
-    except ConsentProviderUnavailable as exc:
+    except DSIProviderUnavailable as exc:
         raise HTTPException(503, detail={"code": "DSI_CONSENT_PROVIDER_UNAVAILABLE"}) from exc
 
 
@@ -121,7 +95,7 @@ async def face_geometry_preview(
         geometry = summarize_face_geometry(payload)
     except ValueError as exc:
         raise HTTPException(502, detail={"code": "DSI_GEOMETRY_CONTRACT_INVALID"}) from exc
-    except ConsentProviderUnavailable as exc:
+    except DSIProviderUnavailable as exc:
         raise HTTPException(503, detail={"code": "DSI_VISION_PROVIDER_UNAVAILABLE"}) from exc
     finally:
         del decoded
@@ -171,7 +145,7 @@ async def skin_region_preview(
             content_type=content_type,
             filename=filename,
         )
-    except ConsentProviderUnavailable as exc:
+    except DSIProviderUnavailable as exc:
         raise HTTPException(503, detail={"code": "DSI_VISION_PROVIDER_UNAVAILABLE"}) from exc
     return _private_response({
         "status": "completed",
