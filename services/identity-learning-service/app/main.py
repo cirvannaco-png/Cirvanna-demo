@@ -1164,12 +1164,25 @@ def export_events(subject_id: str, db: Annotated[Session, Depends(get_db)]):
 
 
 @app.delete("/v1/tal/users/{subject_id}", dependencies=[Depends(require_internal_token)])
-def delete_user_data(subject_id: str, db: Annotated[Session, Depends(get_db)]):
+async def delete_user_data(subject_id: str, db: Annotated[Session, Depends(get_db)]):
     subject = subject_or_404(subject_id)
     event_ids = list(db.scalars(select(TALEvent.event_id).where(TALEvent.subject_id == subject)).all())
     conversation_ids = list(db.scalars(select(PnellyConversation.conversation_id).where(
         PnellyConversation.subject_id == subject
     )).all())
+    consents = list(db.scalars(select(ConsentReceipt).where(ConsentReceipt.subject_id == subject)).all())
+    twin_cleanup_commands = 0
+    for consent in consents:
+        cleanup = _queue_twin_consent_cleanup(
+            db,
+            subject_id=subject,
+            consent_id=consent.consent_id,
+            resource_id=consent.resource_id,
+            receipt_id=consent.receipt_id,
+            scope=consent.scope,
+        )
+        if cleanup is not None:
+            twin_cleanup_commands += 1
     profile = db.get(USIProfileRow, subject)
     db.execute(delete(PnellyConversation).where(PnellyConversation.subject_id == subject))
     db.execute(delete(TALEvent).where(TALEvent.subject_id == subject))
@@ -1185,21 +1198,61 @@ def delete_user_data(subject_id: str, db: Annotated[Session, Depends(get_db)]):
     )
     db.add(receipt)
     db.commit()
-    return {"status": "deleted", "deleted_events": len(event_ids), "deleted_pnelly_conversations": len(conversation_ids), "deleted_profile": profile is not None, "deleted_color_profile": color_profile is not None, "deletion_receipt_id": receipt.receipt_id}
+    cleanup_result = await _dispatch_twin_consent_revocations(db, limit=min(100, max(1, twin_cleanup_commands))) if twin_cleanup_commands else {
+        "processed": 0, "completed": 0, "failed": 0, "pending": False
+    }
+    return {
+        "status": "deleted",
+        "deleted_events": len(event_ids),
+        "deleted_pnelly_conversations": len(conversation_ids),
+        "deleted_profile": profile is not None,
+        "deleted_color_profile": color_profile is not None,
+        "deletion_receipt_id": receipt.receipt_id,
+        "twin_cleanup_commands": twin_cleanup_commands,
+        "twin_cleanup_delivered": cleanup_result["completed"],
+        "twin_cleanup_pending": cleanup_result["pending"] or cleanup_result["failed"] > 0,
+    }
 
 
 @app.post("/internal/retention/purge", dependencies=[Depends(require_internal_token)])
-def purge_expired(db: Annotated[Session, Depends(get_db)], cron_token: Annotated[str | None, Header(alias="X-Identity-Cron-Token")] = None):
+async def purge_expired(db: Annotated[Session, Depends(get_db)], cron_token: Annotated[str | None, Header(alias="X-Identity-Cron-Token")] = None):
     expected = os.getenv("IDENTITY_CRON_TOKEN", "").strip()
     if len(expected.encode()) < 32 or not cron_token or not hmac.compare_digest(expected, cron_token):
         raise HTTPException(401, detail={"code": "RETENTION_CRON_AUTH_FAILED"})
-    result = db.execute(delete(TALEvent).where(TALEvent.expires_at.is_not(None), TALEvent.expires_at <= utcnow()))
+    now = utcnow()
+    expired_twin_consents = list(db.scalars(select(ConsentReceipt).where(
+        ConsentReceipt.scope.in_(TWIN_CONSENT_SCOPES),
+        ConsentReceipt.resource_id.is_not(None),
+        ConsentReceipt.granted.is_(True),
+        ConsentReceipt.revoked_at.is_(None),
+        ConsentReceipt.expires_at.is_not(None),
+        ConsentReceipt.expires_at <= now,
+    )).all())
+    twin_cleanup_commands = 0
+    for consent in expired_twin_consents:
+        cleanup = _queue_twin_consent_cleanup(
+            db,
+            subject_id=consent.subject_id,
+            consent_id=consent.consent_id,
+            resource_id=consent.resource_id,
+            receipt_id=consent.receipt_id,
+            scope=consent.scope,
+        )
+        if cleanup is not None:
+            twin_cleanup_commands += 1
+    result = db.execute(delete(TALEvent).where(TALEvent.expires_at.is_not(None), TALEvent.expires_at <= now))
     expired_conversations = _delete_inactive_pnelly_conversations(db)
     db.commit()
+    cleanup_result = await _dispatch_twin_consent_revocations(db, limit=100) if twin_cleanup_commands else {
+        "processed": 0, "completed": 0, "failed": 0, "pending": False
+    }
     return {
         "status": "complete",
         "purged_events": result.rowcount or 0,
         "purged_pnelly_conversations": expired_conversations,
+        "twin_cleanup_commands": twin_cleanup_commands,
+        "twin_cleanup_delivered": cleanup_result["completed"],
+        "twin_cleanup_pending": cleanup_result["pending"] or cleanup_result["failed"] > 0,
     }
 
 
