@@ -1096,7 +1096,13 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
         : "";
       status("recommendStatus", "Evaluated " + (data.ranked_candidate_count || 0) + " candidates. Only CAL SHOW products are displayed. EEPL context and Wardrobe signals are shown in the decision metadata." + continuity, "good");
     } catch (error) {
-      status("recommendStatus",error.message,"error");
+      if (error.message === "PNELLY_CONVERSATION_EXPIRED_OR_REVOKED") {
+        saveConversationId(null);
+        $("pnellyConversationOptIn").checked = false;
+        status("recommendStatus", "The prior conversation is expired, revoked or belongs to a different signed-in account. Its local reference was cleared. Enable continuity again to start a fresh 24-hour thread.", "error");
+      } else {
+        status("recommendStatus",error.message,"error");
+      }
     } finally {
       $("recommend").disabled = false;
     }
