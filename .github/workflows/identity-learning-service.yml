@@ -5,7 +5,11 @@ on:
       - "services/identity-learning-service/**"
       - ".github/workflows/identity-learning-service.yml"
   push:
-    branches: [main, "feature/**"]
+    branches:
+      - main
+      - "integration/**"
+      - "engineering/**"
+      - "feature/**"
     paths:
       - "services/identity-learning-service/**"
       - ".github/workflows/identity-learning-service.yml"
