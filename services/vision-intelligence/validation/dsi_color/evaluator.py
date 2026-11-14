@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import datetime, timezone
 from itertools import combinations
 from typing import Any, Iterable
 
@@ -277,10 +278,13 @@ def _check_policy(
         failures.append("maximum_failure_rate_exceeded")
 
     delta = metrics["delta_e_2000"] or {}
-    if delta.get("median", float("inf")) > policy.maximum_median_delta_e_2000:
-        failures.append("maximum_median_delta_e_2000_exceeded")
-    if delta.get("p95", float("inf")) > policy.maximum_p95_delta_e_2000:
-        failures.append("maximum_p95_delta_e_2000_exceeded")
+    if delta.get("median") is None or delta.get("p95") is None:
+        reasons.append("colour_error_metrics_unavailable")
+    else:
+        if delta["median"] > policy.maximum_median_delta_e_2000:
+            failures.append("maximum_median_delta_e_2000_exceeded")
+        if delta["p95"] > policy.maximum_p95_delta_e_2000:
+            failures.append("maximum_p95_delta_e_2000_exceeded")
 
     absolute_bias = metrics["absolute_mean_bias"]
     for axis, threshold in (
@@ -289,16 +293,22 @@ def _check_policy(
         ("b_star", policy.maximum_absolute_b_bias),
     ):
         value = absolute_bias[axis]
-        if value is None or value > threshold:
-            failures.append(f"maximum_absolute_{axis}_exceeded_or_unmeasured")
+        if value is None:
+            reasons.append(f"absolute_{axis}_bias_unavailable")
+        elif value > threshold:
+            failures.append(f"maximum_absolute_{axis}_exceeded")
 
     repeat_delta = repeatability["pairwise_delta_e_2000"] or {}
-    if repeat_delta.get("median", float("inf")) > policy.maximum_repeatability_median_delta_e_2000:
+    if repeat_delta.get("median") is None:
+        reasons.append("repeatability_evidence_missing")
+    elif repeat_delta["median"] > policy.maximum_repeatability_median_delta_e_2000:
         failures.append("maximum_repeatability_median_delta_e_2000_exceeded")
 
     chart_fit = metrics["chart_fit_p95_delta_e_2000"]
-    if chart_fit is None or chart_fit > policy.maximum_chart_fit_p95_delta_e_2000:
-        failures.append("maximum_chart_fit_p95_delta_e_2000_exceeded_or_unmeasured")
+    if chart_fit is None:
+        reasons.append("chart_fit_metrics_unavailable")
+    elif chart_fit > policy.maximum_chart_fit_p95_delta_e_2000:
+        failures.append("maximum_chart_fit_p95_delta_e_2000_exceeded")
 
     # Apply the same measurement limits to every sufficiently powered slice;
     # an acceptable aggregate must not conceal a failing camera or lighting group.
@@ -307,10 +317,13 @@ def _check_policy(
             if summary["n_total"] < policy.minimum_samples_per_slice:
                 continue
             group_delta = summary["delta_e_2000"] or {}
-            if group_delta.get("median", float("inf")) > policy.maximum_median_delta_e_2000:
-                failures.append(f"slice_median_delta_e_exceeded:{dimension}:{group_name}")
-            if group_delta.get("p95", float("inf")) > policy.maximum_p95_delta_e_2000:
-                failures.append(f"slice_p95_delta_e_exceeded:{dimension}:{group_name}")
+            if group_delta.get("median") is None or group_delta.get("p95") is None:
+                reasons.append(f"slice_colour_error_metrics_unavailable:{dimension}:{group_name}")
+            else:
+                if group_delta["median"] > policy.maximum_median_delta_e_2000:
+                    failures.append(f"slice_median_delta_e_exceeded:{dimension}:{group_name}")
+                if group_delta["p95"] > policy.maximum_p95_delta_e_2000:
+                    failures.append(f"slice_p95_delta_e_exceeded:{dimension}:{group_name}")
             group_bias = summary["absolute_mean_bias"]
             for axis, threshold in (
                 ("l_star", policy.maximum_absolute_l_bias),
@@ -318,8 +331,10 @@ def _check_policy(
                 ("b_star", policy.maximum_absolute_b_bias),
             ):
                 value = group_bias[axis]
-                if value is None or value > threshold:
-                    failures.append(f"slice_{axis}_bias_exceeded_or_unmeasured:{dimension}:{group_name}")
+                if value is None:
+                    reasons.append(f"slice_{axis}_bias_unavailable:{dimension}:{group_name}")
+                elif value > threshold:
+                    failures.append(f"slice_{axis}_bias_exceeded:{dimension}:{group_name}")
 
     if failures:
         return "FAIL", failures, reasons
@@ -346,7 +361,7 @@ def evaluate_dataset(
         raise EvaluationInputError("sample dataset_version does not match manifest")
     if samples_sha256 != manifest.samples_sha256:
         raise EvaluationInputError("sample file SHA-256 does not match signed manifest")
-    if manifest.created_at > __import__("datetime").datetime.now(__import__("datetime").timezone.utc):
+    if manifest.created_at > datetime.now(timezone.utc):
         raise EvaluationInputError("evaluation manifest timestamp cannot be in the future")
 
     model_versions = {
