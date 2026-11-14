@@ -312,3 +312,13 @@ def test_valid_profile_combines_body_tone_and_facial_geometry():
     assert profile.media_retained is False
     assert profile.identity_recognition_performed is False
     assert len(profile.body_tone.observations) == 2
+
+
+def test_appearance_correction_plan_rejects_inactive_or_unverified_consent():
+    base = {
+        "operation": CorrectionOperation.MAKEUP_PLACEMENT_PREVIEW,
+        "model_evidence": model_evidence(ModelTask.APPEARANCE_CORRECTION),
+    }
+    for receipt in (consent(verified=False), consent(active=False), consent(revoked=True)):
+        with pytest.raises(ValidationError):
+            AppearanceCorrectionPlan(**{**base, "consent": receipt})

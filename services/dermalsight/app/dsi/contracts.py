@@ -5,7 +5,7 @@ perform image inference, retain media, identify people or create consent.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from math import isfinite
 from typing import Literal
@@ -328,4 +328,11 @@ class AppearanceCorrectionPlan(DSIContract):
             raise ValueError("appearance correction requires appearance_correction model evidence")
         if self.consent.purpose != ConsentPurpose.APPEARANCE_CORRECTION:
             raise ValueError("appearance correction requires its own explicit consent purpose")
+        now = datetime.now(timezone.utc)
+        if not self.consent.verified_by_privacy_service:
+            raise ValueError("appearance correction consent must be verified by the privacy service")
+        if not self.consent.active or self.consent.revoked:
+            raise ValueError("appearance correction consent must be active and not revoked")
+        if now < self.consent.issued_at or now >= self.consent.expires_at:
+            raise ValueError("appearance correction consent must be currently valid")
         return self

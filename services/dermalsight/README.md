@@ -44,7 +44,7 @@ Only cosmetic previews are in scope: makeup placement, shade previews, concealer
 
 ## Consent and learning boundaries
 
-The privacy service must authenticate a receipt and verify its subject binding before a trusted internal caller constructs the DSI consent contract. The DSI helper checks active state, revocation, exact purpose and expiry; it is not itself a signature verifier.
+The privacy service must authenticate a receipt and verify its subject binding before a trusted internal caller constructs the DSI consent contract. The DSI helper checks active state, revocation, exact purpose and expiry; the appearance-correction plan also rejects receipts that are not currently verified, active and unrevoked. These checks are not a cryptographic signature verifier or a substitute for subject-binding verification.
 
 Consent purposes are distinct: cosmetic skin analysis, facial geometry analysis, body-tone analysis, appearance correction and global model training. Consent for enrollment or cosmetic analysis must never imply consent for model training. Global-learning records are aggregate-only, require independent review and a 30-contributor reporting floor, and forbid source images, face templates, subject identifiers and individual profiles. The cohort floor is a disclosure safeguard, not proof of statistical representativeness or permission to train.
 
