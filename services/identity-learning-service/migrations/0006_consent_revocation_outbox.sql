@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS identity_consent_revocation_outbox (
   created_at timestamptz NOT NULL DEFAULT now(),
   completed_at timestamptz,
   CONSTRAINT ck_identity_consent_revocation_status
-    CHECK (status IN ('pending', 'complete')),
+    CHECK (status IN ('pending', 'delivered')),
   CONSTRAINT ck_identity_consent_revocation_attempts
     CHECK (attempts >= 0)
 );
