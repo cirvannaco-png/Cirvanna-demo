@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from PIL import Image, ImageDraw
 
-from app import main, dsi_models
+from app import main, dsi_models, dsi_vision
 
 DSI_TOKEN = "dsi-vision-worker-token-at-least-thirty-two-bytes"
 
@@ -17,6 +17,9 @@ DSI_TOKEN = "dsi-vision-worker-token-at-least-thirty-two-bytes"
 @pytest.fixture
 def dsi_client(monkeypatch):
     monkeypatch.setenv("DSI_VISION_WORKER_TOKEN", DSI_TOKEN)
+    # These endpoint tests use fake model providers; keep native MediaPipe image
+    # construction in the separately provisioned-model smoke test.
+    monkeypatch.setattr(dsi_vision, "_mp_image", lambda image: image)
     with TestClient(main.app) as client:
         yield client
 
