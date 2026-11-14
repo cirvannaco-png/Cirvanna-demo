@@ -174,7 +174,11 @@ class ToneObservation(DSIContract):
         if self.capture.quality != CaptureQuality.ACCEPTED:
             if self.status != ToneMeasurementStatus.REVIEW_REQUIRED:
                 raise ValueError("non-accepted captures cannot produce a tone measurement")
-            if self.cielab is not None or self.relative_tone_index is not None:
+            if (
+                self.cielab is not None
+                or self.relative_tone_index is not None
+                or self.relative_uncertainty is not None
+            ):
                 raise ValueError("non-accepted captures cannot carry measured tone values")
             return self
 

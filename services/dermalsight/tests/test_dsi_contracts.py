@@ -406,3 +406,14 @@ def test_capabilities_declare_self_discovery_autonomy_invariants():
     assert autonomy["user_direction_can_override_prior_preferences"] is True
     assert autonomy["dsi_can_veto_aesthetic_choices"] is False
     assert autonomy["optional_analysis_failure_blocks_discovery"] is False
+
+
+
+def test_nonaccepted_capture_cannot_carry_relative_uncertainty():
+    with pytest.raises(ValidationError, match="cannot carry measured tone values"):
+        ToneObservation(
+            region=BodyRegion.FACE,
+            capture=capture(quality=CaptureQuality.REVIEW_REQUIRED),
+            status=ToneMeasurementStatus.REVIEW_REQUIRED,
+            relative_uncertainty=0.1,
+        )
