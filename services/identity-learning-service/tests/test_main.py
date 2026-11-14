@@ -1141,3 +1141,85 @@ def test_expired_profile_storage_consent_blocks_profile_and_color_operations(cli
     assert client.put("/v1/color-profiles/user-verified-1", headers=auth(), json={
         "expected_version": 0, "liked_colors": ["emerald"],
     }).status_code == 403
+
+
+
+@pytest.mark.parametrize(
+    "scope",
+    [
+        "facial_geometry_analysis",
+        "body_tone_analysis",
+        "appearance_correction",
+        "global_model_training",
+    ],
+)
+def test_dsi_purpose_scopes_are_explicitly_granted_and_resource_bound(client, scope):
+    resource = "dsi-resource-0001"
+    bundle = "dsi-purpose-bundle-0001"
+    expiry = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+    granted = client.post(
+        "/v1/tal/consents",
+        params={"subject_id": "user-verified-1"},
+        headers=auth(),
+        json={
+            "receipt_id": f"receipt-{scope}-0001",
+            "consent_id": bundle,
+            "resource_id": resource,
+            "scope": scope,
+            "consent_version": "dsi-v1",
+            "granted": True,
+            "expires_at": expiry,
+        },
+    )
+    assert granted.status_code == 200, granted.text
+
+    verified = _verify_resource_consent(
+        client,
+        subject="user-verified-1",
+        bundle=bundle,
+        resource=resource,
+        scopes=[scope],
+        version="dsi-v1",
+    )
+    assert verified.status_code == 200, verified.text
+    assert verified.json()["verified"] is True
+    assert verified.json()["granted_scopes"] == [scope]
+    assert verified.json()["resource_id"] == resource
+    assert verified.json()["consent_version"] == "dsi-v1"
+
+    wrong_resource = _verify_resource_consent(
+        client,
+        subject="user-verified-1",
+        bundle=bundle,
+        resource="different-dsi-resource",
+        scopes=[scope],
+        version="dsi-v1",
+    )
+    assert wrong_resource.status_code == 403
+
+
+def test_dsi_purpose_scopes_are_not_implicitly_granted_by_image_processing(client):
+    granted = client.post(
+        "/v1/tal/consents",
+        params={"subject_id": "user-verified-1"},
+        headers=auth(),
+        json={
+            "receipt_id": "receipt-image-only-0001",
+            "consent_id": "dsi-image-only-bundle",
+            "resource_id": "dsi-image-only-resource",
+            "scope": "image_processing",
+            "consent_version": "dsi-v1",
+            "granted": True,
+            "expires_at": (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
+        },
+    )
+    assert granted.status_code == 200, granted.text
+    denied = _verify_resource_consent(
+        client,
+        subject="user-verified-1",
+        bundle="dsi-image-only-bundle",
+        resource="dsi-image-only-resource",
+        scopes=["image_processing", "facial_geometry_analysis"],
+        version="dsi-v1",
+    )
+    assert denied.status_code == 403

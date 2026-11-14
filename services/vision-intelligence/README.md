@@ -91,3 +91,45 @@ The Docker build performs a real model-load and inference smoke test on a synthe
 - Keep public image URLs withheld until the attestation and Content Lifecycle providers are live and every publisher is wired to the gate.
 
 For non-Docker deployments, configure `CLICK_IT_FACE_DETECTOR_MODEL_PATH` and `CLICK_IT_FACE_DETECTOR_MODEL_SHA256` to the same verified bytes. Never point the service at a floating `latest` model URL or disable checksum verification.
+
+
+## DSI-specific visual inference
+
+The DSI visual worker is a separate private route set in the existing Vision Intelligence service. It does not depend on CLIP, Commerce or Catalog readiness.
+
+- GET /v1/dsi/ready loads and verifies both DSI model assets, including the segmenter's metadata label order. It returns 503 until both tasks load successfully.
+- POST /v1/dsi/face-landmarks accepts one still image and returns 478 normalized face landmarks only when exactly one face is found. It does not compute blendshapes, facial transformation matrices, embeddings, identity, age or recognition.
+- POST /v1/dsi/skin-segmentation accepts one still image and returns face-skin/body-skin masks, coverage fractions and model-specific non-calibrated segmentation diagnostics. The required label order is background, hair, body-skin, face-skin, clothes, others.
+
+Every DSI endpoint requires DSI_VISION_WORKER_TOKEN (at least 32 bytes), emits no-store/private responses, decodes uploads in memory, and retains no source media. Put these routes behind private service networking in addition to bearer authentication. The DSI token must be separate from VISION_WORKER_TOKEN.
+
+### Out-of-band model provisioning
+
+No DSI model weights are committed or downloaded at application startup. Supply these settings through the deployment environment and a managed asset mount:
+
+- DSI_FACE_LANDMARKER_MODEL_PATH
+- DSI_FACE_LANDMARKER_MODEL_SHA256
+- DSI_FACE_LANDMARKER_MODEL_VERSION
+- DSI_SKIN_SEGMENTER_MODEL_PATH
+- DSI_SKIN_SEGMENTER_MODEL_SHA256
+- DSI_SKIN_SEGMENTER_MODEL_VERSION
+
+A path, immutable version and 64-character SHA-256 must be present for each task; the running worker hashes the file before loading it. Missing or mismatched assets fail closed. Use `dsi-model-assets.example.env` only as a variable-name template; never put real credentials or model weights in Git.
+
+### Model capability and limitations
+
+The Face Landmarker task produces 478 normalized 3D landmarks. DSI currently derives only three provisional geometric ratios from selected landmark anchors; it does not classify face shape or hairline. These ratios are explicitly marked unvalidated until compared with an independently annotated, representative face-geometry dataset.
+
+The multiclass selfie segmenter provides six coarse semantic regions. It distinguishes face skin from body skin, but it does not identify individual neck, chest, arm, hand or leg regions. It is not a skin-tone or colour-calibration model. DSI currently returns region coverage only and computes no sRGB or CIELAB tone value.
+
+**Population coverage warning:** the official MediaPipe model card for the 256×256 multiclass selfie segmenter reports only 31 evaluation images for Monk skin tones 9–10 (about 1.6% of the evaluation set). This is not sufficient evidence of robust performance for every global population, lighting condition or camera. DSI must run its own held-out, subgroup-balanced evaluations before making accuracy claims or enabling tone recommendations.
+
+Official upstream references:
+- Face Landmarker task documentation: https://developers.google.com/edge/mediapipe/solutions/vision/face_landmarker
+- Face Landmarker model card: https://storage.googleapis.com/mediapipe-assets/Model%20Card%20Face%20Landmarker%20V2.pdf
+- Image Segmenter task documentation: https://developers.google.com/edge/mediapipe/solutions/vision/image_segmenter
+- Multiclass selfie segmenter model card: https://storage.googleapis.com/mediapipe-assets/Model%20Card%20Selfie%20Multiclass.pdf
+
+The referenced model cards specify Apache License 2.0 for their model artifacts. Verify the exact provisioned artifact, version, license notice and model-card provenance before deployment. Record the actual digest in the deployment manifest; do not assume that a model family name pins a particular asset.
+
+No DSI model asset, subgroup evaluation or calibration result is implied by the mocked worker tests. The DSI service remains unready when assets are not provisioned, and DermalSight must continue to label geometry and segmentation previews as unvalidated.
