@@ -167,6 +167,23 @@ def build_capture_plan(request: CapturePlanRequest) -> CapturePlan:
             )
         )
 
+    if request.video_guidance_requested:
+        steps.append(
+            CaptureStep(
+                step_id="optional_video_guidance",
+                title="Optional video guidance",
+                instructions=[
+                    "Video is optional; still photographs remain the primary capture path.",
+                    "If you choose to record a clip, keep it short, steady and silent, and avoid including other people.",
+                    "For facial geometry, slowly turn from front to left three-quarter and then right three-quarter without changing expression.",
+                    "For tone comparisons, keep the same lighting and avoid moving between differently lit areas.",
+                    "Do not upload the clip to this endpoint; video ingestion and frame extraction are not enabled.",
+                ],
+                required=False,
+                applies_to=list(request.assessments),
+            )
+        )
+
     notes = [
         "This is capture guidance only. The endpoint does not accept, inspect, store or transmit photographs or video.",
         "Each analysis purpose requires its own verified, current consent before any future media processing.",

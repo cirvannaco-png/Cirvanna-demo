@@ -73,6 +73,9 @@ def test_video_is_optional_guidance_not_processing():
     )
     assert plan.video_guidance_requested is True
     assert plan.video_processing_enabled is False
+    video_step = next(step for step in plan.steps if step.step_id == "optional_video_guidance")
+    assert video_step.required is False
+    assert any("Do not upload the clip" in instruction for instruction in video_step.instructions)
     assert any("Video ingestion" in note for note in plan.notes)
 
 
