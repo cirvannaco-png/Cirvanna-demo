@@ -285,3 +285,17 @@ def test_adapter_configured_does_not_claim_health(monkeypatch):
 
     assert adapters.adapter_configured("FX_ADAPTER") is True
     assert adapters.adapter_ready("FX_ADAPTER") is False
+
+
+
+def test_provider_gate_switch_is_independent_of_authentication_environment(monkeypatch):
+    monkeypatch.setenv("COMMERCE_ENVIRONMENT", "development")
+    monkeypatch.setenv("COMMERCE_MARKET_PROVIDER_VERIFICATION_REQUIRED", "true")
+
+    assert adapters.provider_verification_required() is True
+
+
+def test_provider_adapter_error_code_prefix_is_normalized():
+    assert adapters._adapter_error_prefix("MERCHANT_VERIFICATION_ADAPTER") == "MERCHANT_VERIFICATION"
+    assert adapters._adapter_error_prefix("FULFILLMENT_ADAPTER") == "FULFILLMENT"
+    assert adapters._adapter_error_prefix("FX_ADAPTER") == "FX"
