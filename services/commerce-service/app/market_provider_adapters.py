@@ -20,9 +20,16 @@ PROVIDER_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{1,39}$")
 
 
 def provider_verification_required() -> bool:
+    configured = os.getenv("COMMERCE_MARKET_PROVIDER_VERIFICATION_REQUIRED", "").strip().lower()
+    if configured in {"1", "true", "yes", "on"}:
+        return True
     return os.getenv("COMMERCE_ENVIRONMENT", "development").strip().lower() in {
         "staging", "stage", "production", "prod",
     }
+
+
+def _adapter_error_prefix(prefix: str) -> str:
+    return prefix.removesuffix("_ADAPTER")
 
 
 def _provider_config(prefix: str) -> tuple[str, str]:
@@ -53,7 +60,7 @@ def _adapter_post(prefix: str, path: str, payload: dict[str, Any]) -> dict[str, 
         ) as client:
             ready = client.get(base + "/ready", headers=headers)
             if ready.status_code != 200:
-                raise HTTPException(503, detail={"code": prefix + "_ADAPTER_NOT_READY"})
+                raise HTTPException(503, detail={"code": _adapter_error_prefix(prefix) + "_ADAPTER_NOT_READY"})
             readiness = ready.json()
             if not isinstance(readiness, dict) or readiness.get("ready") is not True:
                 raise HTTPException(503, detail={"code": prefix + "_ADAPTER_NOT_READY"})
@@ -63,11 +70,11 @@ def _adapter_post(prefix: str, path: str, payload: dict[str, Any]) -> dict[str, 
     except (httpx.HTTPError, ValueError) as exc:
         raise HTTPException(503, detail={"code": prefix + "_ADAPTER_UNAVAILABLE"}) from exc
     if response.status_code != 200:
-        raise HTTPException(503, detail={"code": prefix + "_ADAPTER_VERIFICATION_FAILED"})
+        raise HTTPException(503, detail={"code": _adapter_error_prefix(prefix) + "_ADAPTER_VERIFICATION_FAILED"})
     try:
         result = response.json()
     except ValueError as exc:
-        raise HTTPException(502, detail={"code": prefix + "_ADAPTER_RESPONSE_INVALID"}) from exc
+        raise HTTPException(502, detail={"code": _adapter_error_prefix(prefix) + "_ADAPTER_RESPONSE_INVALID"}) from exc
     if not isinstance(result, dict):
         raise HTTPException(502, detail={"code": prefix + "_ADAPTER_RESPONSE_INVALID"})
     return result
