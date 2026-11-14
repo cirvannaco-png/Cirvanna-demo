@@ -43,9 +43,9 @@ def _provider_config(prefix: str) -> tuple[str, str]:
         or parts.query or parts.fragment
         or (parts.scheme != "https" and not (parts.scheme == "http" and local and not provider_verification_required()))
     ):
-        raise HTTPException(503, detail={"code": prefix + "_ADAPTER_NOT_TRUSTED"})
+        raise HTTPException(503, detail={"code": _adapter_error_prefix(prefix) + "_ADAPTER_NOT_TRUSTED"})
     if len(token.encode("utf-8")) < 32:
-        raise HTTPException(503, detail={"code": prefix + "_ADAPTER_AUTH_NOT_CONFIGURED"})
+        raise HTTPException(503, detail={"code": _adapter_error_prefix(prefix) + "_ADAPTER_AUTH_NOT_CONFIGURED"})
     return url, token
 
 
@@ -63,12 +63,12 @@ def _adapter_post(prefix: str, path: str, payload: dict[str, Any]) -> dict[str, 
                 raise HTTPException(503, detail={"code": _adapter_error_prefix(prefix) + "_ADAPTER_NOT_READY"})
             readiness = ready.json()
             if not isinstance(readiness, dict) or readiness.get("ready") is not True:
-                raise HTTPException(503, detail={"code": prefix + "_ADAPTER_NOT_READY"})
+                raise HTTPException(503, detail={"code": _adapter_error_prefix(prefix) + "_ADAPTER_NOT_READY"})
             response = client.post(base + path, headers=headers, json=payload)
     except HTTPException:
         raise
     except (httpx.HTTPError, ValueError) as exc:
-        raise HTTPException(503, detail={"code": prefix + "_ADAPTER_UNAVAILABLE"}) from exc
+        raise HTTPException(503, detail={"code": _adapter_error_prefix(prefix) + "_ADAPTER_UNAVAILABLE"}) from exc
     if response.status_code != 200:
         raise HTTPException(503, detail={"code": _adapter_error_prefix(prefix) + "_ADAPTER_VERIFICATION_FAILED"})
     try:
@@ -76,7 +76,7 @@ def _adapter_post(prefix: str, path: str, payload: dict[str, Any]) -> dict[str, 
     except ValueError as exc:
         raise HTTPException(502, detail={"code": _adapter_error_prefix(prefix) + "_ADAPTER_RESPONSE_INVALID"}) from exc
     if not isinstance(result, dict):
-        raise HTTPException(502, detail={"code": prefix + "_ADAPTER_RESPONSE_INVALID"})
+        raise HTTPException(502, detail={"code": _adapter_error_prefix(prefix) + "_ADAPTER_RESPONSE_INVALID"})
     return result
 
 
