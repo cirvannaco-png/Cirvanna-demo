@@ -570,7 +570,7 @@ def test_resource_bound_twin_consent_revocation_dispatches_asset_cleanup(client,
     try:
         outbox = db.get(main.ConsentRevocationOutbox, observed["command_id"])
         assert outbox is not None
-        assert outbox.status == "complete"
+        assert outbox.status == "delivered"
         assert outbox.attempts == 0
         assert outbox.completed_at is not None
     finally:
@@ -623,7 +623,7 @@ def test_twin_consent_cleanup_failure_is_durable_and_retryable(client, monkeypat
     db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
     try:
         completed = db.get(main.ConsentRevocationOutbox, command_id)
-        assert completed.status == "complete"
+        assert completed.status == "delivered"
         assert completed.last_error_code is None
         assert completed.completed_at is not None
     finally:
