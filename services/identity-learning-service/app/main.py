@@ -737,7 +737,7 @@ def _delete_inactive_pnelly_conversations(db: Session, subject_id: str | None = 
     for row in rows:
         receipt = db.get(ConsentReceipt, row.consent_receipt_id)
         if (
-            row.expires_at <= utcnow()
+            normalize_utc(row.expires_at) <= utcnow()
             or receipt is None
             or receipt.scope != "pnelly_conversation"
             or not consent_is_active(receipt)
@@ -764,7 +764,7 @@ def _active_pnelly_conversation(db: Session, subject_id: str, conversation_id: s
         raise HTTPException(404, detail={"code": "PNELLY_CONVERSATION_NOT_FOUND"})
     receipt = db.get(ConsentReceipt, row.consent_receipt_id)
     if (
-        row.expires_at <= utcnow()
+        normalize_utc(row.expires_at) <= utcnow()
         or receipt is None
         or receipt.subject_id != subject_id
         or receipt.scope != "pnelly_conversation"
