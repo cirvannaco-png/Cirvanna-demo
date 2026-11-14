@@ -10,6 +10,7 @@ import hmac
 import json
 import logging
 import os
+import secrets
 import threading
 import time
 import uuid
@@ -112,7 +113,7 @@ def install_observability(app: FastAPI, service: str) -> RequestMetrics:
         if request.scope.get("path") == "/internal/metrics":
             return await call_next(request)
 
-        request_id = str(uuid.uuid4())
+        request_id = str(uuid.UUID(bytes=secrets.token_bytes(16), version=4))
         started = time.perf_counter()
         status_code = 500
         response = None
