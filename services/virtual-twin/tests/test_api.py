@@ -32,6 +32,14 @@ def mock_internal_config(monkeypatch, *, consent=True, twin_registry=True, visio
     monkeypatch.setattr(main, "_internal_config", config)
 
 
+def test_persistent_twin_routes_are_owned_only_by_canonical_registry():
+    paths = {route.path for route in app.routes}
+    assert "/internal/v1/twins/register" not in paths
+    assert "/internal/v1/twins/deactivate" not in paths
+    assert "/internal/v1/twins/deletions/dispatch" not in paths
+    assert "/internal/v1/twins/authorize" not in paths
+
+
 def test_health_is_liveness_only():
     response = client.get("/health")
     assert response.status_code == 200
