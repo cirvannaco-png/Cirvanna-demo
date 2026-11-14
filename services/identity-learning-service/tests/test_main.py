@@ -379,7 +379,7 @@ def test_pnelly_conversation_delete_revokes_its_receipt(client):
         headers=auth(),
     )
     assert deleted.status_code == 200
-    assert deleted.json()["consent_revoked"] is True
+    assert deleted.json()["consent_inactive"] is True
     receipts = client.get("/v1/tal/consents/user-verified-1", headers=auth()).json()
     receipt = next(item for item in receipts if item["receipt_id"] == receipt_id)
     assert receipt["revoked_at"] is not None
