@@ -1209,7 +1209,11 @@ async def delete_user_data(subject_id: str, db: Annotated[Session, Depends(get_d
     conversation_ids = list(db.scalars(select(PnellyConversation.conversation_id).where(
         PnellyConversation.subject_id == subject
     )).all())
-    consents = list(db.scalars(select(ConsentReceipt).where(ConsentReceipt.subject_id == subject)).all())
+    consents = list(db.scalars(
+        select(ConsentReceipt)
+        .where(ConsentReceipt.subject_id == subject)
+        .order_by(ConsentReceipt.created_at, ConsentReceipt.receipt_id)
+    ).all())
     twin_cleanup_command_ids: set[str] = set()
     for consent in consents:
         cleanup = _queue_twin_consent_cleanup(
