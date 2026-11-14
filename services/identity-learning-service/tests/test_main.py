@@ -608,10 +608,17 @@ def test_delete_user_data_removes_profile_consents_and_events(client):
         "expected_version": 0, "preferences": [{"preference_id": "p1", "attribute": "classic"}]
     })
     client.post("/v1/tal/events?subject_id=user-verified-1", headers=auth(), json=event_body())
+    conversation_id, _, created = _create_pnelly_conversation(client)
+    assert created.status_code == 200
+    before_delete = client.get("/v1/tal/export/user-verified-1", headers=auth()).json()
+    assert len(before_delete["pnelly_conversations"]) == 1
     deleted = client.delete("/v1/tal/users/user-verified-1", headers=auth())
     assert deleted.status_code == 200
     assert deleted.json()["deleted_events"] == 1
-    assert client.get("/v1/tal/export/user-verified-1", headers=auth()).json()["profile"] is None
+    assert deleted.json()["deleted_pnelly_conversations"] == 1
+    after_delete = client.get("/v1/tal/export/user-verified-1", headers=auth()).json()
+    assert after_delete["profile"] is None
+    assert after_delete["pnelly_conversations"] == []
     assert client.get("/v1/tal/consents/user-verified-1", headers=auth()).json() == []
 
 
