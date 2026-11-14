@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
+from math import isfinite
 from typing import Literal
 from uuid import UUID
 
@@ -109,6 +110,23 @@ class ModelEvidence(DSIContract):
     evaluated_population_slices: list[str] = Field(min_length=1, max_length=64)
     validation_decision: Literal["approved"]
 
+    @model_validator(mode="after")
+    def validate_task_coverage(self) -> "ModelEvidence":
+        slices = {item.strip().casefold() for item in self.evaluated_population_slices}
+        required_by_task = {
+            ModelTask.SKIN_TONE_ESTIMATION: {"skin_tone", "lighting", "device"},
+            ModelTask.BODY_REGION_SEGMENTATION: {"skin_tone", "body_region", "lighting", "device"},
+            ModelTask.FACIAL_GEOMETRY: {"skin_tone", "pose", "occlusion", "camera"},
+            ModelTask.COSMETIC_ATTRIBUTE_ANALYSIS: {"skin_tone", "lighting", "device"},
+            ModelTask.APPEARANCE_CORRECTION: {"skin_tone", "lighting", "device", "geometry_preservation"},
+        }
+        missing = required_by_task[self.task] - slices
+        if missing:
+            raise ValueError(
+                f"model validation evidence is missing task-specific evaluation slices: {sorted(missing)}"
+            )
+        return self
+
 
 class CaptureEvidence(DSIContract):
     capture_ref: str = Field(pattern=r"^cap_[A-Za-z0-9_-]{12,96}$")
@@ -123,16 +141,14 @@ class CaptureEvidence(DSIContract):
     quality_assessor_version: str | None = Field(default=None, min_length=1, max_length=64)
 
     @model_validator(mode="after")
-    def validate_accepted_capture(self) -> "CaptureEvidence":
+    def validate_capture_quality(self) -> "CaptureEvidence":
+        if not self.quality_report_ref or not self.quality_assessor_version:
+            raise ValueError("every capture decision requires a versioned quality report")
         if self.quality == CaptureQuality.ACCEPTED:
             if self.lighting != LightingProfile.CONTROLLED:
                 raise ValueError("accepted capture requires controlled lighting")
             if not self.white_balance_locked or not self.exposure_locked:
                 raise ValueError("accepted capture requires locked white balance and exposure")
-            if not self.quality_report_ref or not self.quality_assessor_version:
-                raise ValueError("accepted capture requires a versioned quality report")
-        if self.quality == CaptureQuality.REJECTED and self.quality_report_ref is None:
-            raise ValueError("rejected capture requires a quality report reference")
         return self
 
 
@@ -167,6 +183,8 @@ class ToneObservation(DSIContract):
                 raise ValueError("calibrated tone requires CIELAB and forbids a relative-only value")
             if self.capture.color_reference_id != self.cielab.color_reference_id:
                 raise ValueError("tone calibration reference must match the capture reference")
+            if self.relative_uncertainty is not None:
+                raise ValueError("calibrated CIELAB observations cannot carry relative uncertainty")
         elif self.status == ToneMeasurementStatus.RELATIVE_ONLY:
             if self.cielab is not None or self.relative_tone_index is None:
                 raise ValueError("relative-only tone requires a relative index and forbids CIELAB")
@@ -174,7 +192,11 @@ class ToneObservation(DSIContract):
                 raise ValueError("relative-only tone requires an uncertainty bound")
             if self.capture.lighting != LightingProfile.CONTROLLED:
                 raise ValueError("relative tone comparison requires controlled lighting")
-        elif self.cielab is not None or self.relative_tone_index is not None:
+        elif (
+            self.cielab is not None
+            or self.relative_tone_index is not None
+            or self.relative_uncertainty is not None
+        ):
             raise ValueError("review-required observations cannot carry measured tone values")
         return self
 
@@ -273,6 +295,8 @@ class GlobalLearningAggregate(DSIContract):
     task: ModelTask
     dataset_version: str = Field(min_length=1, max_length=100)
     consented_dataset_receipt_ref: str = Field(min_length=8, max_length=256)
+    purpose_consent_registry_ref: str = Field(min_length=8, max_length=256)
+    training_consent_scope: Literal["global_model_training"]
     independent_review_ref: str = Field(min_length=8, max_length=256)
     distinct_contributors: int = Field(ge=30)
     aggregate_metrics: dict[str, float] = Field(min_length=1, max_length=64)
@@ -284,8 +308,8 @@ class GlobalLearningAggregate(DSIContract):
     @model_validator(mode="after")
     def validate_aggregate_metrics(self) -> "GlobalLearningAggregate":
         for name, value in self.aggregate_metrics.items():
-            if not name.strip() or not 0 <= value <= 1:
-                raise ValueError("aggregate metrics must be named numeric values in [0, 1]")
+            if isinstance(value, bool) or not isfinite(value) or not name.strip() or not 0 <= value <= 1:
+                raise ValueError("aggregate metrics must be finite, named numeric values in [0, 1]")
         return self
 
 

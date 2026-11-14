@@ -42,7 +42,10 @@ def model_evidence(task: ModelTask) -> ModelEvidence:
         validation_report_sha256="b" * 64,
         validation_report_ref="validation-report:sample-001",
         evaluation_dataset_version="heldout-v1",
-        evaluated_population_slices=["skin_tone", "lighting", "device"],
+        evaluated_population_slices=[
+            "skin_tone", "lighting", "device", "body_region",
+            "pose", "occlusion", "camera", "geometry_preservation",
+        ],
         validation_decision="approved",
     )
 
@@ -57,8 +60,8 @@ def capture(*, quality: CaptureQuality = CaptureQuality.ACCEPTED) -> CaptureEvid
         white_balance_locked=quality == CaptureQuality.ACCEPTED,
         exposure_locked=quality == CaptureQuality.ACCEPTED,
         color_reference_id="color-chart-v1" if quality == CaptureQuality.ACCEPTED else None,
-        quality_report_ref="quality-report:sample-001" if quality != CaptureQuality.REVIEW_REQUIRED else None,
-        quality_assessor_version="quality-1.0" if quality == CaptureQuality.ACCEPTED else None,
+        quality_report_ref="quality-report:sample-001",
+        quality_assessor_version="quality-1.0",
     )
 
 
@@ -203,6 +206,8 @@ def test_global_learning_record_is_aggregate_only_and_has_cohort_floor():
         "task": ModelTask.SKIN_TONE_ESTIMATION,
         "dataset_version": "dataset-v1",
         "consented_dataset_receipt_ref": "dataset-consent:sample-001",
+        "purpose_consent_registry_ref": "training-consent-registry:sample-001",
+        "training_consent_scope": "global_model_training",
         "independent_review_ref": "independent-review:sample-001",
         "distinct_contributors": 30,
         "aggregate_metrics": {"repeatability": 0.91, "coverage": 0.88},
