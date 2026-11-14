@@ -1,17 +1,15 @@
 """Purpose-bound consent checks for DSI internal use cases.
 
 The privacy service must verify receipt authenticity and subject binding before
-a trusted internal caller constructs this contract. This module is not a token verifier.
+a trusted internal caller constructs the DSI consent contract. This module is
+not a cryptographic signature verifier.
 """
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
 from .contracts import ConsentPurpose, PurposeConsent
-
-
-class ConsentNotAuthorized(ValueError):
-    """Raised when a DSI action lacks valid, current, purpose-bound consent."""
+from .errors import ConsentNotAuthorized
 
 
 def require_purpose_consent(

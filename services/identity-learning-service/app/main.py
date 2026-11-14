@@ -38,6 +38,8 @@ SCOPES = {
     "image_processing", "body_measurements", "virtual_twin_storage",
     "virtual_try_on", "click_it", "look_it", "skin_analysis",
     "wardrobe_photo_storage", "pnelly_conversation",
+    "facial_geometry_analysis", "body_tone_analysis",
+    "appearance_correction", "global_model_training",
 }
 
 
@@ -295,6 +297,8 @@ class ConsentPut(StrictModel):
         "image_processing", "body_measurements", "virtual_twin_storage",
         "virtual_try_on", "click_it", "look_it", "skin_analysis",
         "wardrobe_photo_storage", "pnelly_conversation",
+        "facial_geometry_analysis", "body_tone_analysis",
+        "appearance_correction", "global_model_training",
     ]
     consent_version: str = Field(min_length=1, max_length=80)
     granted: bool
@@ -333,6 +337,7 @@ class ConsentVerify(StrictModel):
     required_scopes: list[str] = Field(min_length=1, max_length=10)
     consent_version: str | None = Field(default=None, min_length=1, max_length=80)
     resource_id: str | None = Field(default=None, min_length=3, max_length=160)
+    require_expiring: bool = False
 
     @field_validator("subject_id", "consent_id", "resource_id", mode="before")
     @classmethod
@@ -790,7 +795,10 @@ def verify_resource_bound_consent(payload: ConsentVerify, db: Annotated[Session,
             403,
             detail={"code": "CONSENT_BUNDLE_INCOMPLETE", "missing_scopes": missing},
         )
-    versions = {row.consent_version for row in rows if row.scope in payload.required_scopes}
+    required_rows = [row for row in rows if row.scope in payload.required_scopes]
+    if payload.require_expiring and any(row.expires_at is None for row in required_rows):
+        raise HTTPException(403, detail={"code": "CONSENT_EXPIRY_REQUIRED"})
+    versions = {row.consent_version for row in required_rows}
     if len(versions) != 1:
         raise HTTPException(403, detail={"code": "CONSENT_VERSION_MISMATCH"})
     return {
@@ -800,9 +808,9 @@ def verify_resource_bound_consent(payload: ConsentVerify, db: Annotated[Session,
         "consent_id": payload.consent_id,
         "resource_id": payload.resource_id,
         "consent_version": next(iter(versions)),
-        "expires_at": min((row.expires_at for row in rows if row.scope in payload.required_scopes and row.expires_at is not None), default=None).isoformat() if any(row.expires_at is not None for row in rows if row.scope in payload.required_scopes) else None,
+        "expires_at": min((row.expires_at for row in required_rows), default=None).isoformat() if required_rows and all(row.expires_at is not None for row in required_rows) else None,
         "granted_scopes": sorted(granted),
-        "receipt_ids": sorted(row.receipt_id for row in rows if row.scope in payload.required_scopes),
+        "receipt_ids": sorted(row.receipt_id for row in required_rows),
     }
 
 

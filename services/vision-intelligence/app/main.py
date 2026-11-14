@@ -25,6 +25,9 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field
 from app.click_it_privacy import anonymize_click_it_image, detector_configuration
+from app.image_io import decode_image as decode_image_bytes
+from app.image_io import evaluate_image_quality as shared_evaluate_image_quality
+from app.dsi_vision import router as dsi_vision_router
 from starlette import status
 from urllib.parse import urlsplit
 
@@ -41,6 +44,18 @@ SHA256 = re.compile(r"^[0-9a-fA-F]{64}$")
 SUPPORTED_MIME = {"image/jpeg", "image/png", "image/webp"}
 bearer = HTTPBearer(auto_error=False)
 app = FastAPI(title="Cirvanna Vision Intelligence", version="0.1.0")
+app.include_router(dsi_vision_router)
+
+
+@app.middleware("http")
+async def dsi_no_store_headers(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/v1/dsi/"):
+        response.headers["Cache-Control"] = "no-store, private"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+    return response
 
 _CLIP_MODEL = None
 _CLIP_PROCESSOR = None
@@ -198,69 +213,18 @@ def _pose():
 
 
 def _decode_image(data: bytes, content_type: str) -> Image.Image:
-    if content_type not in SUPPORTED_MIME:
-        raise HTTPException(415, detail={"code": "UNSUPPORTED_IMAGE_TYPE"})
-    if not data:
-        raise HTTPException(400, detail={"code": "EMPTY_IMAGE"})
-    if len(data) > MAX_IMAGE_BYTES:
-        raise HTTPException(413, detail={"code": "IMAGE_SIZE_LIMIT_EXCEEDED", "maximum_bytes": MAX_IMAGE_BYTES})
-    try:
-        with Image.open(io.BytesIO(data)) as source:
-            if source.format not in {"JPEG", "PNG", "WEBP"}:
-                raise HTTPException(415, detail={"code": "UNSUPPORTED_IMAGE_FORMAT"})
-            if source.width < 128 or source.height < 128:
-                raise HTTPException(422, detail={"code": "IMAGE_DIMENSIONS_TOO_SMALL"})
-            if source.width * source.height > MAX_IMAGE_PIXELS:
-                raise HTTPException(413, detail={"code": "IMAGE_PIXEL_LIMIT_EXCEEDED"})
-            source.load()
-            image = source.convert("RGB")
-            image.info.clear()
-            return image
-    except HTTPException:
-        raise
-    except Image.DecompressionBombError as exc:
-        raise HTTPException(413, detail={"code": "IMAGE_PIXEL_LIMIT_EXCEEDED", "maximum_pixels": MAX_IMAGE_PIXELS}) from exc
-    except (UnidentifiedImageError, OSError, ValueError) as exc:
-        raise HTTPException(422, detail={"code": "INVALID_IMAGE_DATA"}) from exc
+    """Compatibility wrapper around the shared bounded image decoder."""
+    return decode_image_bytes(
+        data,
+        content_type,
+        max_bytes=MAX_IMAGE_BYTES,
+        max_pixels=MAX_IMAGE_PIXELS,
+    )
 
 
 def evaluate_image_quality(image: Image.Image) -> dict[str, Any]:
-    """Deterministic capture-quality checks; not an inference-accuracy score."""
-    gray = np.asarray(image.convert("L"), dtype=np.float32)
-    brightness = float(gray.mean())
-    contrast = float(gray.std())
-    # Laplacian variance is a reproducible blur proxy; its threshold is a conservative
-    # capture gate, not a universal camera-independent focus score.
-    center = gray[1:-1, 1:-1]
-    laplacian = (
-        gray[:-2, 1:-1] + gray[2:, 1:-1]
-        + gray[1:-1, :-2] + gray[1:-1, 2:]
-        - 4.0 * center
-    )
-    sharpness = float(np.var(laplacian)) if laplacian.size else 0.0
-    clipped_fraction = float(np.mean((gray <= 3.0) | (gray >= 252.0)))
-    failures: list[str] = []
-    if brightness < 18.0:
-        failures.append("image_too_dark")
-    if brightness > 238.0:
-        failures.append("image_too_bright")
-    if contrast < 8.0:
-        failures.append("low_contrast")
-    if sharpness < 20.0:
-        failures.append("image_may_be_blurry")
-    if clipped_fraction > 0.55:
-        failures.append("excessive_clipping")
-    return {
-        "passed": not failures,
-        "width": image.width,
-        "height": image.height,
-        "brightness_mean": round(brightness, 3),
-        "contrast_std": round(contrast, 3),
-        "sharpness_proxy": round(sharpness, 3),
-        "clipped_pixel_fraction": round(clipped_fraction, 4),
-        "failure_codes": failures,
-        "interpretation": "capture_quality_only_not_model_or_fit_confidence",
-    }
+    """Compatibility wrapper around the shared capture-quality estimator."""
+    return shared_evaluate_image_quality(image)
 
 
 def _unit_vector(vector: Any) -> list[float]:

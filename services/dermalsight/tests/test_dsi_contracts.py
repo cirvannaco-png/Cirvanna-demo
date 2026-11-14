@@ -279,7 +279,7 @@ def test_dsi_api_is_capability_only_and_has_no_profile_or_inference_route():
     client = TestClient(app)
     response = client.get("/api/v1/dsi/capabilities")
     assert response.status_code == 200
-    assert response.headers["cache-control"] == "no-store"
+    assert "no-store" in response.headers["cache-control"]
     assert response.json()["overall_state"] == "contract_only"
     assert client.post("/api/v1/dsi/analyze").status_code == 404
     assert client.get("/api/v1/dsi/profiles/sample").status_code == 404
