@@ -1171,7 +1171,7 @@ async def delete_user_data(subject_id: str, db: Annotated[Session, Depends(get_d
         PnellyConversation.subject_id == subject
     )).all())
     consents = list(db.scalars(select(ConsentReceipt).where(ConsentReceipt.subject_id == subject)).all())
-    twin_cleanup_commands = 0
+    twin_cleanup_command_ids: set[str] = set()
     for consent in consents:
         cleanup = _queue_twin_consent_cleanup(
             db,
@@ -1182,7 +1182,8 @@ async def delete_user_data(subject_id: str, db: Annotated[Session, Depends(get_d
             scope=consent.scope,
         )
         if cleanup is not None:
-            twin_cleanup_commands += 1
+            twin_cleanup_command_ids.add(cleanup.command_id)
+    twin_cleanup_commands = len(twin_cleanup_command_ids)
     profile = db.get(USIProfileRow, subject)
     db.execute(delete(PnellyConversation).where(PnellyConversation.subject_id == subject))
     db.execute(delete(TALEvent).where(TALEvent.subject_id == subject))
@@ -1228,7 +1229,7 @@ async def purge_expired(db: Annotated[Session, Depends(get_db)], cron_token: Ann
         ConsentReceipt.expires_at.is_not(None),
         ConsentReceipt.expires_at <= now,
     )).all())
-    twin_cleanup_commands = 0
+    twin_cleanup_command_ids: set[str] = set()
     for consent in expired_twin_consents:
         cleanup = _queue_twin_consent_cleanup(
             db,
@@ -1239,7 +1240,8 @@ async def purge_expired(db: Annotated[Session, Depends(get_db)], cron_token: Ann
             scope=consent.scope,
         )
         if cleanup is not None:
-            twin_cleanup_commands += 1
+            twin_cleanup_command_ids.add(cleanup.command_id)
+    twin_cleanup_commands = len(twin_cleanup_command_ids)
     result = db.execute(delete(TALEvent).where(TALEvent.expires_at.is_not(None), TALEvent.expires_at <= now))
     expired_conversations = _delete_inactive_pnelly_conversations(db)
     db.commit()
