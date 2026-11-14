@@ -30,6 +30,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from urllib.parse import urlsplit
 from babel.numbers import get_currency_precision
 
+from app.observability import install_observability
+
 from sqlalchemy import (
     JSON, Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint,
     create_engine, func, inspect, select, text, update,
@@ -1930,6 +1932,7 @@ def verify_stripe_signature(payload: bytes, signature: str, secret: str, toleran
 
 
 app = FastAPI(title="Cirvanna Commerce Service", version="0.1.0")
+install_observability(app, SERVICE)
 cors = [x.strip().rstrip("/") for x in os.getenv("COMMERCE_CORS_ORIGINS", "").split(",") if x.strip()]
 if cors:
     app.add_middleware(CORSMiddleware, allow_origins=cors, allow_credentials=False,
