@@ -146,3 +146,24 @@ The output carries a profile SHA-256, all 24 leave-one-patch-out CIEDE2000 error
 The X-Rite reference values are generic averages. X-Rite notes that post-November-2014 charts require revised reference data and that custom measurement of an individual chart is preferable for highest accuracy. The chart's manufacture date is printed on its back. See the upstream source and reference-profile hash in app/colorchecker_profile.py.
 
 The camera transform, chart fit, colour calibration, local illumination behaviour and coarse segmentation remain unvalidated across phones, lighting setups and skin-tone groups. The emitted values must not be described as exact or used for shade ranking until independently validated. Synthetic numerical tests establish implementation consistency only; they are not a substitute for physical chart captures and spectrophotometer ground truth.
+
+
+## Offline DSI colour validation
+
+The `validation/dsi_color` package is an offline evaluation harness, not a live endpoint. It compares candidate DSI colour previews with independent CIE Lab D50 reference measurements and emits overall and subgroup performance reports.
+
+The CLI requires:
+- a manifest signed over its exact JSON bytes by a trusted dataset custodian;
+- a sample JSONL whose exact SHA-256 matches the signed manifest;
+- a release policy signed over its exact JSON bytes by an independently authorized policy approver;
+- detached Ed25519 signatures and public PEM files whose DER SHA-256 fingerprints match out-of-band environment pins.
+
+Required trust pins:
+- `DSI_EVALUATION_TRUSTED_MANIFEST_PUBLIC_KEY_SHA256`
+- `DSI_EVALUATION_TRUSTED_POLICY_PUBLIC_KEY_SHA256`
+
+The evaluator reports CIEDE2000 error, signed Lab bias, reference-instrument uncertainty, chart-fit error, failure rate, repeatability and subject-clustered confidence intervals. It slices results by skin region, camera, lighting, reference L* range, OS family, chart condition and measurement geometry. A failing camera or lighting subgroup cannot be hidden by an acceptable aggregate.
+
+Incomplete policies, absent signatures, missing repeatability or underpowered slices remain `REVIEW_REQUIRED`. Threshold violations return `FAIL`. A `PASS` is scoped only to the exact hashed model, segmenter, chart profile, signed dataset and policy. Synthetic fixtures are not production evidence. This harness does not train or deploy models and cannot change live DSI readiness.
+
+See [validation/dsi_color/README.md](validation/dsi_color/README.md) for dataset schema, signing workflow, CLI use and release decision semantics.

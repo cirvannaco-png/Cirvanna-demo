@@ -1,0 +1,23 @@
+{
+  "policy_id": "dsi-colour-release-pending-approval",
+  "policy_version": "1",
+  "approved_by": null,
+  "approval_ref": null,
+  "independent_review_ref": null,
+  "approved_at": null,
+  "minimum_unique_subjects": null,
+  "minimum_successful_samples": null,
+  "minimum_samples_per_slice": null,
+  "required_regions": null,
+  "required_lighting_profiles": null,
+  "maximum_failure_rate": null,
+  "maximum_median_delta_e_2000": null,
+  "maximum_p95_delta_e_2000": null,
+  "maximum_absolute_l_bias": null,
+  "maximum_absolute_a_bias": null,
+  "maximum_absolute_b_bias": null,
+  "maximum_repeatability_median_delta_e_2000": null,
+  "maximum_chart_fit_p95_delta_e_2000": null,
+  "bootstrap_repetitions": 500,
+  "bootstrap_seed": 20261114
+}

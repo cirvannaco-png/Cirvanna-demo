@@ -1,0 +1,17 @@
+{
+  "dataset_version": "replace-with-independent-held-out-dataset-version",
+  "samples_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "created_at": "2026-11-14T00:00:00Z",
+  "held_out_test_data": true,
+  "rights_provenance_ref": "rights-registry:replace-with-reference",
+  "consent_registry_ref": "consent-registry:replace-with-reference",
+  "training_overlap_audit_ref": "training-overlap-audit:replace-with-reference",
+  "independent_ground_truth_protocol_ref": "spectro-protocol:replace-with-reference",
+  "reference_instrument_model": "replace-with-instrument-model",
+  "reference_instrument_calibration_ref": "instrument-calibration:replace-with-certificate-reference",
+  "reference_measurement_standard": "CIE_LAB_D50_2DEG",
+  "source_images_included": false,
+  "source_videos_included": false,
+  "face_templates_included": false,
+  "direct_identifiers_included": false
+}
