@@ -156,7 +156,7 @@ class TwinCreate(StrictModel):
 class TwinDeactivate(StrictModel):
     twin_id: str = Field(min_length=8, max_length=128)
     subject_id: str = Field(min_length=3, max_length=128)
-    expected_version: int = Field(ge=1)
+    expected_version: int = Field(ge=0)
     command_id: str = Field(min_length=8, max_length=160)
 
     @field_validator("twin_id", "subject_id", "command_id")
