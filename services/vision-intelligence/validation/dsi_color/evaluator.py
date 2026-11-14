@@ -337,7 +337,7 @@ def _check_policy(
                     failures.append(f"slice_{axis}_bias_exceeded:{dimension}:{group_name}")
 
     if failures:
-        return "FAIL", failures, reasons
+        return "FAIL", reasons, failures
     if reasons:
         return "REVIEW_REQUIRED", reasons, []
     return "PASS", ["all_configured_gates_passed"], []
