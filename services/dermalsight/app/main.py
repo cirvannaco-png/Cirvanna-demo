@@ -14,6 +14,7 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel
 from starlette import status
 
+from .dsi.capture import CapturePlanRequest, build_capture_plan
 from .dsi.router import router as dsi_router
 from .model_adapter import ModelConfigurationError, SkinAnalysisEngine
 from .validation import verify_signed_validation_report
@@ -104,6 +105,16 @@ async def privacy_headers(request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
     return response
+
+
+@app.post(
+    "/api/v1/dsi/capture-plan",
+    tags=["dsi", "capture"],
+    dependencies=[Depends(require_api_token)],
+)
+def create_dsi_capture_plan(request: CapturePlanRequest) -> dict[str, object]:
+    """Return capture guidance only; this route never accepts or processes media."""
+    return build_capture_plan(request).model_dump(mode="json")
 
 
 @app.get("/health", tags=["operations"])

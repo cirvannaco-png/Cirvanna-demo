@@ -15,7 +15,7 @@ DermalSight owns non-diagnostic cosmetic skin analysis and clinically sensitive 
 | 5 | Global learning | Exact-purpose consent contract and aggregate-only evaluation record | Independent consent/rights registry, governed dataset workflow, held-out evaluation, subgroup reporting and rollback/deletion procedure |
 | 6 | Appearance corrector | Cosmetic-only correction plan contract; geometry changes and public media output are prohibited | Licensed renderer, separate user consent, identity-preservation evidence and private output lifecycle |
 
-The live capability endpoint is GET /api/v1/dsi/capabilities. It is informational only. It does not accept images, videos, profile reads, training examples or rendering jobs.
+The live capability endpoint is GET /api/v1/dsi/capabilities. It is informational only. The authenticated POST /api/v1/dsi/capture-plan returns user-selected capture guidance only; it accepts no media and does not start analysis. It does not expose profile reads, training ingestion or rendering jobs.
 
 ## Architectural ownership
 
@@ -25,6 +25,14 @@ The live capability endpoint is GET /api/v1/dsi/capabilities. It is informationa
 - USI/TAL own positive preference state and temporal learning. DSI does not silently write preferences.
 - CAL remains the final product-display authorization authority. DSI measurements are evidence, never permission to display or purchase.
 - The existing platform-wide Intelligence Service/CIL governs registered evidence and rights. DSI does not create another general-purpose collective-intelligence registry.
+
+## Controlled capture planning
+
+The authenticated POST /api/v1/dsi/capture-plan endpoint accepts only a user's selected assessment types, selected body regions, tone-capture mode and whether optional video guidance is wanted. It returns capture instructions; it accepts no image or video bytes, creates no consent receipt and performs no inference.
+
+Facial geometry can be requested without tone or body analysis. Body regions are explicitly selected; full-body exposure is not required. Left/right three-quarter face views are optional. Video is guidance-only and remains unprocessed. For calibrated CIELAB capture, the user must have a supported physical colour-reference card; without it, the user can select relative same-session comparison instead. The service never silently downgrades a calibrated request.
+
+Analysis consent is separate for each purpose and must be verified before any future media-processing route is called. Global training consent is never included in capture consent. Users can skip DSI or any optional view and continue using Cirvanna discovery.
 
 ## Measurement rules
 

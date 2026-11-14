@@ -21,7 +21,8 @@ The initial increment adds:
 - purpose-specific consent contracts and fail-closed consent checks;
 - aggregate-only global-learning evaluation records, not a live training ingestion path;
 - cosmetic-only appearance correction plans that require identity preservation and prohibit geometry alteration and public output;
-- a read-only capability endpoint that reports every unvalidated capability as blocked.
+- a read-only capability endpoint that reports every unvalidated capability as blocked;
+- an authenticated capture-plan endpoint that returns user-selected guidance without accepting or processing media, with explicit optional video and region choices.
 
 ## Invariants
 
@@ -35,6 +36,8 @@ The initial increment adds:
 8. Inference, profile exchange, training and rendering remain disabled until their separate gates pass.
 9. DSI cannot deny a user's aesthetic or self-discovery request. Previous preferences and inferred appearance attributes are advisory, never hard filters; optional analysis failure or declined consent must fall back to non-DSI discovery.
 10. DSI never updates persistent preferences without an explicit user save action through the canonical USI/TAL workflow.
+11. Capture planning is not consent or inference. Video, additional views and body regions remain optional/user-selected; no media upload route is enabled by the capture-plan endpoint.
+12. A calibrated CIELAB capture request requires a supported physical colour reference. The system must not silently relabel an uncalibrated capture as absolute tone.
 
 ## Consequences
 
