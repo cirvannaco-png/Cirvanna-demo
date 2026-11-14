@@ -65,3 +65,17 @@ A versioned X-Rite ColorChecker Classic post-November-2014 reference profile and
 The face and body preview routes are separate purpose-bound operations: cosmetic skin analysis is required for face skin; body-tone analysis is required for body skin. The Vision worker is private and does not verify end-user consent itself; DermalSight verifies exact consent with Identity Learning before forwarding the capture.
 
 The chart production edition is explicitly confirmed by the user because X-Rite changed chart colour formulations after November 2014 and identifies the production date on the back. Chart age is advisory; an arbitrary two-year hard cutoff is not applied. Patches with more than 5% clipped sample pixels are excluded, and the fit requires at least 18 usable patches and four neutral patches. A successful mathematical fit is not independent model validation. The output remains experimental, is not persisted, and cannot authorize shade recommendations, CAL display, purchase, clinical claims or persistent personalization.
+
+
+## DSI offline colour-model validation
+
+The Vision Intelligence repository now includes an offline, signed evidence evaluator. It compares DSI face/body colour estimates to independently measured spectrophotometer references, with ΔE2000, Lab bias, failure rate, repeatability, reference-instrument uncertainty, model/chart-fit error and subgroup slices.
+
+The evaluator requires:
+- a dataset manifest signed by a pinned Ed25519 dataset-custodian key;
+- a sample-file SHA-256 bound into the signed manifest;
+- a release policy signed by a separately pinned Ed25519 approval key;
+- complete approved thresholds and independent review references;
+- adequate samples for required skin regions, camera models, lighting and other declared slices.
+
+No thresholds are asserted by this ADR. Incomplete or unsigned evidence remains REVIEW_REQUIRED; measured threshold breaches yield FAIL. The tool exports no subject pseudonyms or raw media and does not alter live inference, CAL, profile persistence, global training or appearance correction. See `services/vision-intelligence/validation/dsi_color/README.md`.
