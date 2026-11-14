@@ -254,6 +254,10 @@ def _check_policy(
         reasons.append("insufficient_successful_samples")
     if underpowered:
         reasons.append("underpowered_evaluation_slices")
+    if not manifest_signature_verified:
+        reasons.append("dataset_manifest_signature_not_verified")
+    if not policy_signature_verified:
+        reasons.append("release_policy_signature_not_verified")
     if policy.approved_at is not None and policy.approved_at > manifest_created_at:
         reasons.append("release_policy_approval_after_evaluation_manifest")
 
@@ -329,6 +333,8 @@ def evaluate_dataset(
     *,
     manifest_sha256: str,
     samples_sha256: str,
+    manifest_signature_verified: bool = False,
+    policy_signature_verified: bool = False,
 ) -> dict[str, Any]:
     if not records:
         raise EvaluationInputError("evaluation dataset contains no sample records")
@@ -336,6 +342,10 @@ def evaluate_dataset(
         raise EvaluationInputError("record_id values must be unique")
     if any(record.dataset_version != manifest.dataset_version for record in records):
         raise EvaluationInputError("sample dataset_version does not match manifest")
+    if samples_sha256 != manifest.samples_sha256:
+        raise EvaluationInputError("sample file SHA-256 does not match signed manifest")
+    if manifest.created_at > __import__("datetime").datetime.now(__import__("datetime").timezone.utc):
+        raise EvaluationInputError("evaluation manifest timestamp cannot be in the future")
 
     model_versions = {
         (record.skin_model_name, record.skin_model_version, record.skin_model_sha256)
@@ -417,6 +427,8 @@ def evaluate_dataset(
             "consent_registry_ref": manifest.consent_registry_ref,
             "training_overlap_audit_ref": manifest.training_overlap_audit_ref,
             "independent_ground_truth_protocol_ref": manifest.independent_ground_truth_protocol_ref,
+            "manifest_signature_verified": manifest_signature_verified,
+            "policy_signature_verified": policy_signature_verified,
             "reference_measurement_geometry": next(iter(geometries)),
             "chart_profile_id": next(iter(chart_profiles))[0],
             "chart_profile_sha256": next(iter(chart_profiles))[1],

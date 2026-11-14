@@ -39,6 +39,7 @@ class LabD50(StrictRecord):
 
 class EvaluationManifest(StrictRecord):
     dataset_version: str = Field(min_length=1, max_length=100)
+    samples_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     created_at: datetime
     held_out_test_data: Literal[True]
     rights_provenance_ref: str = Field(min_length=8, max_length=256)
