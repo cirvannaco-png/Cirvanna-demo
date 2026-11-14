@@ -52,6 +52,7 @@ async def _verify_purpose(
     consent_version: str,
     resource_id: str,
     purpose: ConsentPurpose,
+    image: UploadFile | None = None,
 ) -> dict[str, object]:
     try:
         return await verify_dsi_consent(
@@ -62,8 +63,12 @@ async def _verify_purpose(
             purpose=purpose,
         )
     except ConsentNotAuthorized as exc:
+        if image is not None:
+            await image.close()
         raise HTTPException(403, detail={"code": "DSI_PURPOSE_CONSENT_NOT_VERIFIED"}) from exc
     except DSIProviderUnavailable as exc:
+        if image is not None:
+            await image.close()
         raise HTTPException(503, detail={"code": "DSI_CONSENT_PROVIDER_UNAVAILABLE"}) from exc
 
 
@@ -82,6 +87,7 @@ async def face_geometry_preview(
         consent_version=consent_version,
         resource_id=resource_id,
         purpose=ConsentPurpose.FACIAL_GEOMETRY_ANALYSIS,
+        image=image,
     )
     content_type = image.content_type or ""
     filename = image.filename or "dsi-capture"
@@ -135,6 +141,7 @@ async def skin_region_preview(
         consent_version=consent_version,
         resource_id=resource_id,
         purpose=purpose_enum,
+        image=image,
     )
     content_type = image.content_type or ""
     filename = image.filename or "dsi-capture"
