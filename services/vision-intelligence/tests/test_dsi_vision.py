@@ -295,7 +295,9 @@ def test_dsi_colorchecker_preview_requires_supported_reference_and_returns_unval
         data={
             "profile_id": PROFILE_ID,
             "patch_grid_corners": "[[20,40],[220,40],[220,173],[20,173]]",
+            "chart_edition_confirmed_after_2014": "true",
             "chart_age_months": "12",
+            "chart_condition": "good",
         },
         files={"image": ("capture.png", dsi_image_bytes(), "image/png")},
     )
@@ -316,9 +318,33 @@ def test_dsi_colorchecker_preview_rejects_unsupported_reference_before_model_use
         data={
             "profile_id": "unknown-chart-edition",
             "patch_grid_corners": "[[20,40],[220,40],[220,173],[20,173]]",
+            "chart_edition_confirmed_after_2014": "true",
             "chart_age_months": "12",
+            "chart_condition": "good",
         },
         files={"image": ("capture.png", dsi_image_bytes(), "image/png")},
     )
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "DSI_COLOR_REFERENCE_PROFILE_UNSUPPORTED"
+
+
+
+def test_dsi_colorchecker_route_requires_correct_chart_edition_confirmation(dsi_client, monkeypatch):
+    from app.color_calibration import PROFILE_ID
+
+    def forbidden():
+        pytest.fail("the worker must reject an unconfirmed chart edition before model loading")
+
+    monkeypatch.setattr(dsi_models, "get_skin_segmenter", forbidden)
+    response = dsi_client.post(
+        "/v1/dsi/colorchecker-tone-preview",
+        headers=dsi_auth(),
+        data={
+            "profile_id": PROFILE_ID,
+            "patch_grid_corners": "[[20,40],[220,40],[220,173],[20,173]]",
+            "chart_edition_confirmed_after_2014": "false",
+        },
+        files={"image": ("capture.png", dsi_image_bytes(), "image/png")},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "DSI_COLOR_REFERENCE_EDITION_NOT_CONFIRMED"

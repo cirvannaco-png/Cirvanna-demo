@@ -184,9 +184,10 @@ def _validate_corners(
         raise ColorCalibrationError("patch-grid corner lies outside the image")
 
     edges = np.roll(corners, -1, axis=0) - corners
-    crosses = np.cross(edges, np.roll(edges, -1, axis=0))
-    if not ((crosses > 1e-6).all() or (crosses < -1e-6).all()):
-        raise ColorCalibrationError("patch-grid corners must form a convex TL,TR,BR,BL quadrilateral")
+    next_edges = np.roll(edges, -1, axis=0)
+    crosses = edges[:, 0] * next_edges[:, 1] - edges[:, 1] * next_edges[:, 0]
+    if not (crosses > 1e-6).all():
+        raise ColorCalibrationError("patch-grid corners must be ordered TL,TR,BR,BL and form a convex quadrilateral")
     if _polygon_area(corners) < 8_000.0:
         raise ColorCalibrationError("patch grid is too small for reliable patch sampling")
 
@@ -212,7 +213,10 @@ def _homography(source: np.ndarray, destination: np.ndarray) -> np.ndarray:
         values.append(float(u))
         rows.append([0.0, 0.0, 0.0, x, y, 1.0, -v * x, -v * y])
         values.append(float(v))
-    solution = np.linalg.solve(np.asarray(rows), np.asarray(values))
+    try:
+        solution = np.linalg.solve(np.asarray(rows), np.asarray(values))
+    except np.linalg.LinAlgError as exc:
+        raise ColorCalibrationError("patch-grid perspective is geometrically degenerate") from exc
     return np.asarray([
         [solution[0], solution[1], solution[2]],
         [solution[3], solution[4], solution[5]],
@@ -261,14 +265,21 @@ def _sample_chart_patches(warped: Image.Image) -> tuple[np.ndarray, list[dict[st
             if region.shape[0] < 100:
                 raise ColorCalibrationError("insufficient pixels sampled from a chart patch")
             median = np.median(region.astype(np.float64), axis=0)
-            clipped = np.mean(np.any((region <= 2) | (region >= 253), axis=1))
+            clipped = float(np.mean(np.any((region <= 2) | (region >= 253), axis=1)))
             label = f"{letter}{row + 1}"
+            if clipped > 0.05:
+                raise ColorCalibrationError(
+                    f"patch {label} has excessive clipped pixels; reduce glare or exposure clipping"
+                )
             samples.append(median.tolist())
             diagnostics.append({
                 "patch": label,
                 "sample_pixels": int(region.shape[0]),
                 "median_srgb": [round(float(v), 3) for v in median],
-                "clipped_pixel_fraction": round(float(clipped), 5),
+                "clipped_pixel_fraction": round(clipped, 5),
+                "within_patch_rgb_std": [
+                    round(float(value), 3) for value in np.std(region.astype(np.float64), axis=0)
+                ],
             })
             patch_index += 1
 
@@ -388,11 +399,14 @@ def build_skin_colour_preview(
     category_mask: np.ndarray,
     *,
     patch_grid_corners: Sequence[Sequence[float]],
-    chart_age_months_declared: int,
+    chart_age_months_declared: int | None = None,
+    chart_condition_declared: str = "unknown",
 ) -> dict[str, object]:
     """Fit a ColorChecker transform and emit provisional face/body skin Lab summaries."""
-    if chart_age_months_declared < 0 or chart_age_months_declared > 24:
-        raise ColorCalibrationError("chart must be declared no more than 24 months old")
+    if chart_age_months_declared is not None and chart_age_months_declared < 0:
+        raise ColorCalibrationError("chart age cannot be negative")
+    if chart_condition_declared not in {"good", "worn", "unknown"}:
+        raise ColorCalibrationError("chart condition must be good, worn or unknown")
     if image.mode != "RGB":
         image = image.convert("RGB")
     corners = _validate_corners(patch_grid_corners, image.size)
@@ -429,6 +443,12 @@ def build_skin_colour_preview(
             "reference_source": REFERENCE_SOURCE_URL,
         },
         "chart_age_months_declared_by_user": chart_age_months_declared,
+        "chart_condition_declared_by_user": chart_condition_declared,
+        "chart_integrity_status": (
+            "user_declared_worn_review_recommended"
+            if chart_condition_declared == "worn"
+            else "not_independently_inspected"
+        ),
         "chart_patch_count": int(len(PATCHES)),
         "chart_fit_leave_one_out_delta_e_2000": {
             "mean": round(float(np.mean(loo)), 4),
@@ -450,7 +470,9 @@ def build_skin_colour_preview(
         "discovery_restricted": False,
         "limitations": [
             "generic average chart references are not a custom spectrophotometer measurement of the user's individual target",
+            "the generic reference describes an average chart; custom spectrophotometer measurements of the user's individual target are preferable for highest accuracy",
             "the camera RGB transform and chart fit have not been independently validated across devices, lighting, exposure, skin-tone groups or capture pipelines",
+            "chart age and condition are user-declared and cannot prove patch integrity; storage, fading, scratches and contamination can change patch reflectance",
             "JPEG/sRGB processing may include computational photography, local tone mapping or undocumented colour transformations",
             "face-skin/body-skin segmentation is coarse and does not identify individual neck, chest, arm, hand or leg regions",
             "reported within-region colour dispersion is not a calibrated measurement uncertainty interval",

@@ -118,6 +118,8 @@ A path, immutable version and 64-character SHA-256 must be present for each task
 
 ### Model capability and limitations
 
+The ColorChecker Classic post-November-2014 profile is used only when the user confirms the printed chart edition on the back of the physical target. X-Rite states that the production date is printed there and that post-November-2014 targets require revised reference data. The reference file contains generic averaged colour values; custom measurements of the user's individual target are preferable for highest accuracy. Chart age and visible condition are recorded as user declarations, not hard eligibility cutoffs or proof of reflectance stability. Worn condition produces an advisory warning; the preview remains optional.
+
 The Face Landmarker task produces 478 normalized 3D landmarks. DSI currently derives only three provisional geometric ratios from selected landmark anchors; it does not classify face shape or hairline. These ratios are explicitly marked unvalidated until compared with an independently annotated, representative face-geometry dataset.
 
 The multiclass selfie segmenter provides six coarse semantic regions. It distinguishes face skin from body skin, but it does not identify individual neck, chest, arm, hand or leg regions. It is not a skin-tone or colour-calibration model. DSI currently returns region coverage only and computes no sRGB or CIELAB tone value.

@@ -285,7 +285,9 @@ async def colorchecker_tone_preview(
     image: Annotated[UploadFile, File()],
     profile_id: Annotated[str, Form(min_length=1, max_length=128)],
     patch_grid_corners: Annotated[str, Form(min_length=20, max_length=1000)],
-    chart_age_months: Annotated[int, Form(ge=0, le=24)],
+    chart_edition_confirmed_after_2014: Annotated[bool, Form()],
+    chart_age_months: Annotated[int | None, Form(ge=0)] = None,
+    chart_condition: Annotated[str, Form(pattern="^(good|worn|unknown)$")] = "unknown",
 ) -> JSONResponse:
     """Return an experimental same-frame ColorChecker skin-colour preview.
 
@@ -295,6 +297,9 @@ async def colorchecker_tone_preview(
     if profile_id != COLORCHECKER_PROFILE_ID:
         await image.close()
         raise HTTPException(422, detail={"code": "DSI_COLOR_REFERENCE_PROFILE_UNSUPPORTED"})
+    if chart_edition_confirmed_after_2014 is not True:
+        await image.close()
+        raise HTTPException(422, detail={"code": "DSI_COLOR_REFERENCE_EDITION_NOT_CONFIRMED"})
     try:
         corners = json.loads(patch_grid_corners)
     except (TypeError, ValueError) as exc:
@@ -335,6 +340,7 @@ async def colorchecker_tone_preview(
             categories,
             patch_grid_corners=corners,
             chart_age_months_declared=chart_age_months,
+            chart_condition_declared=chart_condition,
         )
         segmenter_meta = dsi_models.skin_segmenter_status()
         preview["skin_segmentation_model"] = {

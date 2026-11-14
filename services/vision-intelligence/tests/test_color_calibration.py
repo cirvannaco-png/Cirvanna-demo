@@ -118,18 +118,38 @@ def test_colorchecker_fit_rejects_wrong_patch_grid_aspect_ratio():
         image.close()
 
 
-def test_colorchecker_fit_rejects_chart_declared_older_than_two_years():
+
+def test_colorchecker_fit_reports_old_chart_without_hard_rejection():
     image, categories = _synthetic_capture()
     try:
-        with pytest.raises(ColorCalibrationError, match="no more than 24 months"):
-            build_skin_colour_preview(
-                image,
-                categories,
-                patch_grid_corners=[[100, 50], [700, 50], [700, 450], [100, 450]],
-                chart_age_months_declared=25,
-            )
+        result = build_skin_colour_preview(
+            image,
+            categories,
+            patch_grid_corners=[[100, 50], [700, 50], [700, 450], [100, 450]],
+            chart_age_months_declared=60,
+        )
     finally:
         image.close()
+    assert result["chart_age_months_declared_by_user"] == 60
+    assert result["chart_integrity_status"] == "not_independently_inspected"
+
+
+def test_colorchecker_fit_keeps_worn_chart_preview_advisory_not_denied():
+    image, categories = _synthetic_capture()
+    try:
+        result = build_skin_colour_preview(
+            image,
+            categories,
+            patch_grid_corners=[[100, 50], [700, 50], [700, 450], [100, 450]],
+            chart_age_months_declared=None,
+            chart_condition_declared="worn",
+        )
+    finally:
+        image.close()
+    assert result["status"] == "colorchecker_fit_candidate_unvalidated"
+    assert result["chart_age_months_declared_by_user"] is None
+    assert result["chart_integrity_status"] == "user_declared_worn_review_recommended"
+    assert result["discovery_restricted"] is False
 
 
 def test_colorchecker_profile_has_exact_24_post_2014_patches():
@@ -140,3 +160,34 @@ def test_colorchecker_profile_has_exact_24_post_2014_patches():
         for letter in "ABCDEF"
         for row in range(1, 5)
     ]
+
+
+
+def test_colorchecker_fit_rejects_clipped_chart_patch():
+    image, categories = _synthetic_capture()
+    pixels = np.asarray(image).copy()
+    pixels[50:150, 100:200] = 255
+    clipped = Image.fromarray(pixels, mode="RGB")
+    try:
+        with pytest.raises(ColorCalibrationError, match="excessive clipped pixels"):
+            build_skin_colour_preview(
+                clipped,
+                categories,
+                patch_grid_corners=[[100, 50], [700, 50], [700, 450], [100, 450]],
+            )
+    finally:
+        clipped.close()
+        image.close()
+
+
+def test_patch_grid_corner_order_is_strict():
+    image, categories = _synthetic_capture()
+    try:
+        with pytest.raises(ColorCalibrationError, match="ordered TL,TR,BR,BL"):
+            build_skin_colour_preview(
+                image,
+                categories,
+                patch_grid_corners=[[100, 50], [100, 450], [700, 450], [700, 50]],
+            )
+    finally:
+        image.close()
