@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 from types import SimpleNamespace
 
@@ -217,3 +218,54 @@ def test_dsi_readiness_is_independent_of_marketplace_and_requires_two_pinned_mod
     assert payload["face_landmarker"]["loaded"] is True
     assert payload["skin_segmenter"]["configured"] is False
     assert payload["skin_segmenter"]["loaded"] is False
+
+
+
+def test_dsi_model_assets_require_a_matching_sha256_and_version(tmp_path, monkeypatch):
+    asset = tmp_path / "face_landmarker.task"
+    asset.write_bytes(b"model-asset-fixture")
+    digest = hashlib.sha256(asset.read_bytes()).hexdigest()
+    monkeypatch.setenv("DSI_FACE_LANDMARKER_MODEL_PATH", str(asset))
+    monkeypatch.setenv("DSI_FACE_LANDMARKER_MODEL_SHA256", digest)
+    monkeypatch.setenv("DSI_FACE_LANDMARKER_MODEL_VERSION", "face-test-v1")
+    valid = dsi_models.face_landmarker_status()
+    assert valid["configured"] is True
+    assert valid["sha256"] == digest
+    assert valid["version"] == "face-test-v1"
+
+    monkeypatch.setenv("DSI_FACE_LANDMARKER_MODEL_SHA256", "0" * 64)
+    invalid = dsi_models.face_landmarker_status()
+    assert invalid["configured"] is False
+    assert invalid["reason"] == "model_asset_sha256_mismatch"
+
+
+def test_dsi_model_assets_are_not_ready_without_all_pins(monkeypatch):
+    for name in (
+        "DSI_SKIN_SEGMENTER_MODEL_PATH",
+        "DSI_SKIN_SEGMENTER_MODEL_SHA256",
+        "DSI_SKIN_SEGMENTER_MODEL_VERSION",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    status = dsi_models.skin_segmenter_status()
+    assert status["configured"] is False
+    assert status["reason"] == "model_path_sha256_and_version_required"
+
+
+def test_dsi_ready_requires_successful_model_loads_and_label_map(dsi_client, monkeypatch):
+    monkeypatch.setattr(
+        dsi_models,
+        "face_landmarker_status",
+        lambda: {"configured": True, "version": "face-v1", "sha256": "a" * 64, "reason": None},
+    )
+    monkeypatch.setattr(
+        dsi_models,
+        "skin_segmenter_status",
+        lambda: {"configured": True, "version": "skin-v1", "sha256": "b" * 64, "reason": None},
+    )
+    monkeypatch.setattr(dsi_models, "get_face_landmarker", lambda: object())
+    monkeypatch.setattr(dsi_models, "get_skin_segmenter", lambda: object())
+    response = dsi_client.get("/v1/dsi/ready", headers=dsi_auth())
+    assert response.status_code == 200
+    assert response.json()["dsi_ready"] is True
+    assert response.json()["face_landmarker"]["loaded"] is True
+    assert response.json()["skin_segmenter"]["loaded"] is True
