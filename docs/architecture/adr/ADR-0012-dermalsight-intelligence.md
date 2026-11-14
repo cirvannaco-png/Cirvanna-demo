@@ -22,7 +22,9 @@ The initial increment adds:
 - aggregate-only global-learning evaluation records, not a live training ingestion path;
 - cosmetic-only appearance correction plans that require identity preservation and prohibit geometry alteration and public output;
 - a read-only capability endpoint that reports every unvalidated capability as blocked;
-- an authenticated capture-plan endpoint that returns user-selected guidance without accepting or processing media, with explicit optional video and region choices.
+- an authenticated capture-plan endpoint that returns user-selected guidance without accepting or processing media, with explicit optional video and region choices;
+- dedicated, separately authenticated Vision DSI endpoints that lazily load SHA-256-pinned Face Landmarker and skin-segmentation assets;
+- DermalSight preview endpoints that verify exact-purpose consent against Identity Learning before forwarding an image to Vision; these return unvalidated geometry ratios or coarse mask coverage, never a saved profile.
 
 ## Invariants
 
@@ -38,6 +40,9 @@ The initial increment adds:
 10. DSI never updates persistent preferences without an explicit user save action through the canonical USI/TAL workflow.
 11. Capture planning is not consent or inference. Video, additional views and body regions remain optional/user-selected; no media upload route is enabled by the capture-plan endpoint.
 12. A calibrated CIELAB capture request requires a supported physical colour reference. The system must not silently relabel an uncalibrated capture as absolute tone.
+13. Each DSI visual operation must verify the exact, active, unrevoked, resource-bound Identity Learning consent bundle and a future expiry at request time. DSI must not accept a boolean consent claim as proof.
+14. The Vision DSI worker uses dedicated authentication, exact model artifact SHA-256 pins, in-memory image handling and no-store responses. It is independent of marketplace/CLIP readiness.
+15. Current Face Landmarker ratios are unvalidated previews; current segmentation is coarse face/body skin coverage, not a calibrated colour model or regional body-tone analysis. DSI must not claim face-shape, hairline, exact tone or region-level alignment until independently validated.
 
 ## Consequences
 
@@ -48,3 +53,6 @@ The initial increment adds:
 - Global learning needs a distinct consent/rights registry and independent held-out evaluation. Aggregate reporting thresholds alone do not authorize training.
 - Appearance correction requires proof of identity preservation and private output lifecycle at the generated-asset level.
 - The discovery autonomy policy keeps users free to explore beyond prior preferences, while still refusing unauthorized processing of protected media.
+- The initial perception slice reuses Vision Intelligence and Identity Learning and does not introduce duplicate model-serving or consent stores.
+- No DSI model weights are committed. Runtime readiness requires out-of-band versioned assets and digest checks.
+- Model/provider integration is not equivalent to accuracy validation. Tone calibration, body-region alignment, persistent profiles, global learning and appearance correction remain blocked.
