@@ -14,6 +14,9 @@ import os
 import re
 import uuid
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit
+
+import httpx
 from functools import lru_cache
 from typing import Annotated, Iterator, Literal
 
@@ -140,6 +143,24 @@ class TALDeletionReceipt(Base):
     deleted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     deleted_event_count: Mapped[int] = mapped_column(Integer, nullable=False)
     deleted_profile: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+
+class ConsentRevocationOutbox(Base):
+    """Durable, retryable handoff from consent withdrawal to Twin asset cleanup."""
+    __tablename__ = "identity_consent_revocation_outbox"
+    __table_args__ = (
+        Index("ix_identity_consent_revocation_status_created", "status", "created_at"),
+    )
+    command_id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    subject_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    consent_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    resource_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    receipt_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error_code: Mapped[str | None] = mapped_column(String(80))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class PnellyConversation(Base):
