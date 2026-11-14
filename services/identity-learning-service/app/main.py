@@ -680,7 +680,9 @@ async def put_consent(subject_id: str = Query(min_length=1, max_length=128), pay
     db.add(row)
     db.commit()
     if twin_cleanup is not None:
-        await _dispatch_twin_consent_revocations(db, limit=1)
+        await _dispatch_twin_consent_revocations(
+            db, limit=1, command_ids=[twin_cleanup.command_id]
+        )
         db.refresh(twin_cleanup)
     return {
         "receipt_id": row.receipt_id, "consent_id": row.consent_id,
@@ -907,14 +909,24 @@ async def _notify_twin_registry_of_revocation(
     return payload
 
 
-async def _dispatch_twin_consent_revocations(db: Session, limit: int = 20) -> dict:
+async def _dispatch_twin_consent_revocations(
+    db: Session,
+    limit: int = 20,
+    command_ids: list[str] | None = None,
+) -> dict:
     if limit < 1 or limit > 100:
         raise HTTPException(422, detail={"code": "INVALID_TWIN_REVOCATION_BATCH_SIZE"})
+    if command_ids is not None and (
+        not command_ids or len(command_ids) > 100 or len(command_ids) != len(set(command_ids))
+    ):
+        raise HTTPException(422, detail={"code": "INVALID_TWIN_REVOCATION_COMMAND_SET"})
+    statement = select(ConsentRevocationOutbox).where(
+        ConsentRevocationOutbox.status == "pending"
+    )
+    if command_ids is not None:
+        statement = statement.where(ConsentRevocationOutbox.command_id.in_(command_ids))
     pending = db.scalars(
-        select(ConsentRevocationOutbox)
-        .where(ConsentRevocationOutbox.status == "pending")
-        .order_by(ConsentRevocationOutbox.created_at)
-        .limit(limit)
+        statement.order_by(ConsentRevocationOutbox.created_at).limit(limit)
     ).all()
     completed = failed = 0
     for item in pending:
@@ -933,9 +945,14 @@ async def _dispatch_twin_consent_revocations(db: Session, limit: int = 20) -> di
             item.last_error_code = "TWIN_REGISTRY_NOTIFICATION_FAILED"
             failed += 1
     db.commit()
-    remaining = db.scalar(select(ConsentRevocationOutbox.command_id).where(
+    remaining_statement = select(ConsentRevocationOutbox.command_id).where(
         ConsentRevocationOutbox.status == "pending"
-    ).limit(1))
+    )
+    if command_ids is not None:
+        remaining_statement = remaining_statement.where(
+            ConsentRevocationOutbox.command_id.in_(command_ids)
+        )
+    remaining = db.scalar(remaining_statement.limit(1))
     return {
         "processed": len(pending),
         "completed": completed,
@@ -1199,7 +1216,10 @@ async def delete_user_data(subject_id: str, db: Annotated[Session, Depends(get_d
     )
     db.add(receipt)
     db.commit()
-    cleanup_result = await _dispatch_twin_consent_revocations(db, limit=min(100, max(1, twin_cleanup_commands))) if twin_cleanup_commands else {
+    cleanup_result = await _dispatch_twin_consent_revocations(
+        db, limit=min(100, max(1, twin_cleanup_commands)),
+        command_ids=sorted(twin_cleanup_command_ids),
+    ) if twin_cleanup_commands else {
         "processed": 0, "completed": 0, "failed": 0, "pending": False
     }
     return {
@@ -1245,7 +1265,9 @@ async def purge_expired(db: Annotated[Session, Depends(get_db)], cron_token: Ann
     result = db.execute(delete(TALEvent).where(TALEvent.expires_at.is_not(None), TALEvent.expires_at <= now))
     expired_conversations = _delete_inactive_pnelly_conversations(db)
     db.commit()
-    cleanup_result = await _dispatch_twin_consent_revocations(db, limit=100) if twin_cleanup_commands else {
+    cleanup_result = await _dispatch_twin_consent_revocations(
+        db, limit=100, command_ids=sorted(twin_cleanup_command_ids)
+    ) if twin_cleanup_commands else {
         "processed": 0, "completed": 0, "failed": 0, "pending": False
     }
     return {
