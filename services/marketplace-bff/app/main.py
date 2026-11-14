@@ -554,6 +554,8 @@ class WardrobeRecommendationIn(BaseModel):
     def conversation_turn_requires_context(self):
         if (self.conversation_id is None) != (self.conversation_turn_id is None):
             raise ValueError("conversation_id and conversation_turn_id must be supplied together")
+        if len(self.query) + sum(len(item) for item in self.constraints) > 160:
+            raise ValueError("query plus discovery cues must fit the 160-character search limit")
         return self
 
 
@@ -3136,9 +3138,12 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
             context.update({"occasion": effective["occasion"], "occasion_source": "user_declared", "occasion_observed_at": now})
         if effective["climate"]:
             context.update({"climate": effective["climate"], "climate_source": "user_declared", "climate_observed_at": now})
+        search_query = " ".join(
+            [effective["query"], *effective["constraints"]]
+        ).strip()
         body = {
             "user_id": subject,
-            "query": effective["query"],
+            "query": search_query,
             "category": effective["category"],
             "currency": effective["currency"],
             "limit": payload.limit,
