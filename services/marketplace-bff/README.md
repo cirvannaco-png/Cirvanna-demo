@@ -2,7 +2,7 @@
 
 **Status: deployable integration boundary; production remains gated on verified upstream services and identity-provider integration.**
 
-This is the server-side browser boundary for marketplace browsing, visual discovery and the authenticated personal Wardrobe UI. It serves the marketplace UI, proxies public offers, forwards allowlisted account operations, routes natural-language search and consented Look It reference search to PNELLY, and stops Click It at the BFF boundary until verified masking and publication attestation are released. It does not issue identities, hold user tokens in storage, bypass Commerce authorization, or invent fit/try-on results.
+This is the server-side browser boundary for marketplace browsing, visual discovery and the authenticated personal Wardrobe UI. It serves the marketplace UI, proxies public offers, forwards allowlisted account operations, routes natural-language search and consented Look It reference search to PNELLY, and exposes a request-scoped Complementer advisory through the verified Decision Gateway, and stops Click It at the BFF boundary until verified masking and publication attestation are released. It does not issue identities, hold user tokens in storage, bypass Commerce authorization, or invent fit/try-on results.
 
 ## Why this boundary exists
 
@@ -15,6 +15,19 @@ This is the server-side browser boundary for marketplace browsing, visual discov
 - `/api/style/color-profile` reads and writes the user's structured liked/disliked/best-version colour preferences through USI/TAL. The BFF derives the subject from Commerce `/me`; profile-storage consent is enforced by Identity Learning. The route does not perform objective complexion or undertone analysis.\n- Account operations require the user's bearer token and are forwarded to Commerce. Commerce remains responsible for signature, issuer, audience, role, ownership, stock, checkout and payment validation.
 - Only customer cart, saved-product, checkout and order routes are proxied. Admin, merchant-management, webhooks, cron, and internal endpoints are not exposed through this gateway.
 - No CORS allowlist is added to this same-origin UI/API. Security headers include CSP, nosniff, no-referrer, frame denial, and disabled camera/microphone/geolocation.
+
+## PNELLY Complementer feedback
+
+- `POST /api/vision/complementer` derives the customer subject through Commerce `/me` and forwards the user token separately to the Decision Gateway. The result is advisory-only and contains no CAL display authorization or product offer.
+- `POST /api/vision/complementer/feedback` requires a currently active, subject-owned Identity Learning `personalization` receipt. The BFF forwards an opaque request ID and the explicit `approved`/`rejected` reaction to `/v1/me/tal/events` using the same verified user session.
+- The TAL value deliberately excludes the raw look description. It is retained as a private, idempotent learning observation with a 180-day event expiry.
+- A durable TAL event is not automatically a changed USI/NPL preference or a CIL suitability outcome. A downstream, reviewed learning consumer must be implemented and validated before feedback changes recommendation ranking. CIL suitability ingestion still requires its own purpose-bound consent and candidate-bound CAL SHOW receipt.
+
+## Partner portal boundary
+
+- /brand-portal currently serves the merchant/seller onboarding and Commerce workspace. It is not a separate brand-owner tenant system.
+- A dedicated distributor tenant, authorization graph and /distributor-portal are not implemented. Do not reuse a merchant role or grant distributor access from a brand-name field.
+- The required organization/membership model, brand/distributor authorization relationships, tenant-scoped analytics and cross-tenant acceptance tests are specified in docs/architecture/brand-and-distributor-portals.md. Release gate REL-19 remains blocked until these APIs, portals and staging tests are delivered.
 
 ## Runtime configuration
 

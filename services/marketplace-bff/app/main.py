@@ -6,6 +6,7 @@ fabricates decision, fit, Click It, Virtual Twin, or try-on outputs.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import uuid
@@ -153,6 +154,29 @@ class MarketplaceSearchIn(BaseModel):
         return " ".join(self.query.split()).strip()
 
 
+class ComplementerRequestIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: str = Field(min_length=8, max_length=128)
+    preferences: dict = Field(default_factory=dict, max_length=64)
+    look: dict = Field(default_factory=dict, max_length=32)
+
+
+class ComplementerFeedbackIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    feedback_id: str = Field(min_length=8, max_length=128)
+    request_id: str = Field(min_length=8, max_length=128)
+    outcome: Literal["approved", "rejected"]
+    consent_receipt_id: str = Field(min_length=8, max_length=128)
+
+    @field_validator("feedback_id", "request_id", "consent_receipt_id")
+    @classmethod
+    def valid_feedback_identifiers(cls, value: str) -> str:
+        normalized = value.strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{7,127}", normalized):
+            raise ValueError("feedback identifiers must use the controlled opaque ID format")
+        return normalized
+
+
 class OfferComparisonIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     variant_ids: list[str] = Field(min_length=2, max_length=2)
@@ -247,6 +271,140 @@ async def marketplace_description_search(payload: MarketplaceSearchIn) -> dict:
     }
 
 
+@app.post("/api/vision/complementer")
+async def marketplace_complementer(request: Request, payload: ComplementerRequestIn) -> Response:
+    """Send optional styling advice through the verified user and internal gateway identities."""
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(10.0, connect=2.0),
+        trust_env=False,
+        follow_redirects=False,
+    ) as client:
+        subject, user_token = await _verified_commerce_subject(client, request)
+        gateway_base, gateway_token = _decision_gateway()
+        try:
+            upstream = await client.post(
+                gateway_base + "/v1/complementer/recommend",
+                headers={
+                    "Authorization": "Bearer " + gateway_token,
+                    "X-End-User-Authorization": "Bearer " + user_token,
+                    "Accept": "application/json",
+                },
+                json={
+                    "request_id": payload.request_id,
+                    "user_id": subject,
+                    "preferences": payload.preferences,
+                    "look": payload.look,
+                },
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "COMPLEMENTER_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "COMPLEMENTER_UNAVAILABLE"}) from exc
+
+    try:
+        data = upstream.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "COMPLEMENTER_INVALID_RESPONSE"}) from exc
+
+    if upstream.status_code == 200:
+        if (
+            not isinstance(data, dict)
+            or data.get("mode") != "advisory_only"
+            or data.get("display_authorized") is not False
+            or data.get("durable_personal_memory") is not False
+            or not isinstance(data.get("recommendation"), dict)
+        ):
+            raise HTTPException(502, detail={"code": "COMPLEMENTER_SCOPE_INVALID"})
+        # Whitelist styling advice only. No product candidate, merchant, price or asset
+        # fields can be elevated into the marketplace by this advisory endpoint.
+        return _private_json_response({
+            "mode": "advisory_only",
+            "display_authorized": False,
+            "durable_personal_memory": False,
+            "recommendation": data["recommendation"],
+        })
+
+    detail = data.get("detail", {}) if isinstance(data, dict) else {}
+    code = detail.get("code") if isinstance(detail, dict) and isinstance(detail.get("code"), str) else "COMPLEMENTER_REQUEST_FAILED"
+    if upstream.status_code in {400, 401, 403, 422}:
+        raise HTTPException(upstream.status_code, detail={"code": code})
+    if upstream.status_code in {502, 503, 504}:
+        raise HTTPException(503 if upstream.status_code == 503 else upstream.status_code, detail={"code": code})
+    raise HTTPException(502, detail={"code": "COMPLEMENTER_FAILED"})
+
+
+@app.post("/api/vision/complementer/feedback")
+async def marketplace_complementer_feedback(
+    request: Request,
+    payload: ComplementerFeedbackIn,
+) -> Response:
+    """Persist an explicit, separately consented advisory reaction in the user's TAL ledger."""
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(10.0, connect=2.0),
+        trust_env=False,
+        follow_redirects=False,
+    ) as client:
+        _subject, user_token = await _verified_commerce_subject(client, request)
+        gateway_base, gateway_token = _decision_gateway()
+        observed_at = datetime.now(timezone.utc)
+        event = {
+            "event_id": payload.feedback_id,
+            "idempotency_key": payload.feedback_id,
+            "consent_receipt_id": payload.consent_receipt_id,
+            "feature_key": "complementer.recommendation_feedback",
+            # Store the reaction and opaque advisory reference, never the raw look text.
+            "value": json.dumps(
+                {"request_id": payload.request_id, "outcome": payload.outcome},
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+            "observed_at": observed_at.isoformat().replace("+00:00", "Z"),
+            "expires_at": (observed_at + timedelta(days=180)).isoformat().replace("+00:00", "Z"),
+            "event_kind": "observation",
+        }
+        try:
+            upstream = await client.post(
+                gateway_base + "/v1/me/tal/events",
+                headers={
+                    "Authorization": "Bearer " + gateway_token,
+                    "X-End-User-Authorization": "Bearer " + user_token,
+                    "Accept": "application/json",
+                },
+                json=event,
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "COMPLEMENTER_FEEDBACK_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "COMPLEMENTER_FEEDBACK_UNAVAILABLE"}) from exc
+
+    if upstream.status_code in {401, 403, 404, 409, 422}:
+        try:
+            detail = upstream.json().get("detail", {})
+            code = detail.get("code") if isinstance(detail, dict) else None
+        except ValueError:
+            code = None
+        raise HTTPException(upstream.status_code, detail={"code": code or "COMPLEMENTER_FEEDBACK_REJECTED"})
+    if upstream.status_code != 200:
+        raise HTTPException(503, detail={"code": "COMPLEMENTER_FEEDBACK_UNAVAILABLE"})
+    try:
+        result = upstream.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "COMPLEMENTER_FEEDBACK_RESPONSE_INVALID"}) from exc
+    if (
+        not isinstance(result, dict)
+        or result.get("event_id") != payload.feedback_id
+        or result.get("status") not in {"recorded", "replayed"}
+        or (result.get("status") == "recorded" and result.get("durable_persistence") is not True)
+    ):
+        raise HTTPException(502, detail={"code": "COMPLEMENTER_FEEDBACK_PERSISTENCE_UNCONFIRMED"})
+    return _private_json_response({
+        "status": result["status"],
+        "feedback_id": payload.feedback_id,
+        "durable_persistence": True,
+        "learning_owner": "TAL",
+    })
+
+
 
 class CreateWardrobeItemIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -286,6 +444,22 @@ class RecordPNELLYLookWearIn(BaseModel):
     observed_at: str = Field(min_length=20, max_length=64)
     name: str = Field(min_length=1, max_length=160)
     context: dict[str, str] = Field(default_factory=dict, max_length=8)
+
+
+class PNELLYLookFeedbackIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    event_id: str = Field(min_length=8, max_length=128)
+    look_role: Literal["everyday", "elevated", "explore"]
+    item_ids: list[str] = Field(min_length=1, max_length=20)
+    signal: Literal["approved", "rejected", "modified"]
+    consent_receipt_id: str = Field(min_length=8, max_length=128)
+
+
+class SavePNELLYLookIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    item_ids: list[str] = Field(min_length=1, max_length=20)
+    save_event_id: str = Field(min_length=8, max_length=128)
+    name: str = Field(min_length=1, max_length=160)
 
 
 class EditWardrobeOutfitPieceIn(BaseModel):
@@ -352,6 +526,37 @@ class WardrobeRecommendationIn(BaseModel):
     location: str | None = Field(default=None, max_length=120)
     climate: str | None = Field(default=None, max_length=120)
     exclude_owned_products: bool = True
+    constraints: list[str] = Field(default_factory=list, max_length=8)
+    conversation_id: str | None = Field(default=None, min_length=36, max_length=36)
+    conversation_turn_id: str | None = Field(default=None, min_length=8, max_length=128)
+
+    @field_validator("conversation_id")
+    @classmethod
+    def valid_conversation_uuid(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            return str(uuid.UUID(value))
+        except ValueError as exc:
+            raise ValueError("conversation_id must be a UUID") from exc
+
+    @field_validator("constraints")
+    @classmethod
+    def normalized_constraints(cls, values: list[str]) -> list[str]:
+        normalized = [" ".join(value.split()).strip() for value in values]
+        if any(not value or len(value) > 120 for value in normalized):
+            raise ValueError("constraints must be non-empty strings of at most 120 characters")
+        if len({value.casefold() for value in normalized}) != len(normalized):
+            raise ValueError("constraints must be unique")
+        return normalized
+
+    @model_validator(mode="after")
+    def conversation_turn_requires_context(self):
+        if (self.conversation_id is None) != (self.conversation_turn_id is None):
+            raise ValueError("conversation_id and conversation_turn_id must be supplied together")
+        if len(self.query) + sum(len(item) for item in self.constraints) > 160:
+            raise ValueError("query plus discovery cues must fit the 160-character search limit")
+        return self
 
 
 class WardrobeTryOnIn(BaseModel):
@@ -952,6 +1157,295 @@ async def create_wardrobe_outfit(request: Request, payload: CreateWardrobeOutfit
     if not isinstance(outfit, dict) or outfit.get("owner_user_id") != subject:
         raise HTTPException(502, detail={"code": "WARDROBE_OUTFIT_SCOPE_MISMATCH"})
     return _private_json_response(data, status_code=201)
+
+
+@app.post("/api/wardrobe/pnelly/save-look", status_code=201)
+async def save_pnelly_look(request: Request, payload: SavePNELLYLookIn) -> Response:
+    """Save a generated PNELLY look as an owner-scoped outfit without recording it as worn."""
+    item_ids = [value.strip() for value in payload.item_ids]
+    save_event_id = payload.save_event_id.strip()
+    name = payload.name.strip()
+    if any(not item_id for item_id in item_ids) or len(set(item_ids)) != len(item_ids):
+        raise HTTPException(422, detail={"code": "PNELLY_SAVE_ITEM_IDS_INVALID"})
+    if not save_event_id or not name:
+        raise HTTPException(422, detail={"code": "PNELLY_SAVE_LOOK_INPUT_INVALID"})
+
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(12.0, connect=2.0),
+        trust_env=False,
+        follow_redirects=False,
+    ) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        wardrobe_base, wardrobe_token = _wardrobe_service()
+        headers = {
+            "Authorization": "Bearer " + wardrobe_token,
+            "Accept": "application/json",
+        }
+        try:
+            items_response = await client.get(
+                wardrobe_base + "/v1/items",
+                params={"owner_user_id": subject, "include_archived": "false"},
+                headers=headers,
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "PNELLY_SAVE_WARDROBE_UNAVAILABLE"}) from exc
+        if items_response.status_code != 200:
+            raise HTTPException(503, detail={"code": "PNELLY_SAVE_WARDROBE_UNAVAILABLE"})
+        try:
+            items_data = items_response.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "PNELLY_SAVE_WARDROBE_RESPONSE_INVALID"}) from exc
+        if (
+            not isinstance(items_data, dict)
+            or items_data.get("owner_user_id") != subject
+            or not isinstance(items_data.get("items"), list)
+            or any(
+                not isinstance(item, dict) or item.get("owner_user_id") != subject
+                for item in items_data.get("items", [])
+            )
+        ):
+            raise HTTPException(502, detail={"code": "PNELLY_SAVE_WARDROBE_SCOPE_MISMATCH"})
+        active_item_ids = {
+            item.get("item_id")
+            for item in items_data["items"]
+            if item.get("status") == "active" and isinstance(item.get("item_id"), str)
+        }
+        if any(item_id not in active_item_ids for item_id in item_ids):
+            raise HTTPException(422, detail={"code": "PNELLY_SAVE_ITEM_NOT_ACTIVE_OR_NOT_OWNED"})
+
+        # Stable IDs make a retry after a lost response resolve to the same saved outfit.
+        outfit_id = str(uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"cirvanna:pnelly-save:{subject}:{save_event_id}",
+        ))
+        pieces = [{
+            "slot_id": str(uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"cirvanna:pnelly-save-slot:{subject}:{save_event_id}:{item_id}",
+            )),
+            "wardrobe_item_id": item_id,
+        } for item_id in item_ids]
+        create_body = {
+            "owner_user_id": subject,
+            "outfit_id": outfit_id,
+            "name": name,
+            "pieces": pieces,
+        }
+        try:
+            create_response = await client.post(
+                wardrobe_base + "/v1/outfits",
+                headers=headers,
+                json=create_body,
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "PNELLY_SAVE_OUTFIT_CREATE_UNAVAILABLE"}) from exc
+
+        status_value = "created"
+        if create_response.status_code == 201:
+            try:
+                outfit_data = create_response.json().get("outfit")
+            except (ValueError, AttributeError) as exc:
+                raise HTTPException(502, detail={"code": "PNELLY_SAVE_OUTFIT_RESPONSE_INVALID"}) from exc
+        elif create_response.status_code in {409, 503}:
+            # The create may have committed before the client lost the response.
+            try:
+                list_response = await client.get(
+                    wardrobe_base + "/v1/outfits",
+                    params={"owner_user_id": subject},
+                    headers=headers,
+                )
+                listed = list_response.json() if list_response.status_code == 200 else None
+            except (httpx.HTTPError, ValueError) as exc:
+                raise HTTPException(503, detail={"code": "PNELLY_SAVE_OUTFIT_RELOAD_UNAVAILABLE"}) from exc
+            if (
+                not isinstance(listed, dict)
+                or listed.get("owner_user_id") != subject
+                or not isinstance(listed.get("outfits"), list)
+            ):
+                raise HTTPException(503, detail={"code": "PNELLY_SAVE_OUTFIT_RELOAD_UNAVAILABLE"})
+            existing = next(
+                (
+                    outfit for outfit in listed["outfits"]
+                    if isinstance(outfit, dict) and outfit.get("outfit_id") == outfit_id
+                ),
+                None,
+            )
+            if not isinstance(existing, dict):
+                if create_response.status_code == 409:
+                    raise HTTPException(409, detail={"code": "PNELLY_SAVE_OUTFIT_IDEMPOTENCY_CONFLICT"})
+                raise HTTPException(503, detail={"code": "PNELLY_SAVE_OUTFIT_CREATE_UNAVAILABLE"})
+            existing_pieces = existing.get("pieces")
+            existing_ids = sorted(
+                piece.get("wardrobe_item_id")
+                for piece in existing_pieces
+                if isinstance(piece, dict) and isinstance(piece.get("wardrobe_item_id"), str)
+            ) if isinstance(existing_pieces, list) else []
+            if (
+                existing.get("owner_user_id") != subject
+                or existing.get("name") != name
+                or existing_ids != sorted(item_ids)
+                or len(existing_ids) != len(item_ids)
+            ):
+                raise HTTPException(409, detail={"code": "PNELLY_SAVE_OUTFIT_IDEMPOTENCY_CONFLICT"})
+            outfit_data = existing
+            status_value = "replayed"
+        elif create_response.status_code in {400, 403, 404, 422}:
+            try:
+                detail = create_response.json().get("detail", {})
+            except ValueError:
+                detail = {"code": "PNELLY_SAVE_OUTFIT_CREATE_REJECTED"}
+            raise HTTPException(create_response.status_code, detail=detail)
+        else:
+            raise HTTPException(503, detail={"code": "PNELLY_SAVE_OUTFIT_CREATE_UNAVAILABLE"})
+
+    persisted_pieces = outfit_data.get("pieces") if isinstance(outfit_data, dict) else None
+    persisted_item_ids = sorted(
+        piece.get("wardrobe_item_id")
+        for piece in persisted_pieces
+        if isinstance(piece, dict) and isinstance(piece.get("wardrobe_item_id"), str)
+    ) if isinstance(persisted_pieces, list) else []
+    if (
+        not isinstance(outfit_data, dict)
+        or outfit_data.get("owner_user_id") != subject
+        or outfit_data.get("outfit_id") != outfit_id
+        or outfit_data.get("name") != name
+        or isinstance(outfit_data.get("version"), bool)
+        or not isinstance(outfit_data.get("version"), int)
+        or outfit_data["version"] < 1
+        or persisted_item_ids != sorted(item_ids)
+        or len(persisted_item_ids) != len(item_ids)
+    ):
+        raise HTTPException(502, detail={"code": "PNELLY_SAVE_OUTFIT_SCOPE_OR_CONTENT_MISMATCH"})
+    return _private_json_response({
+        "status": status_value,
+        "outfit_id": outfit_id,
+        "outfit_version": outfit_data["version"],
+        "name": name,
+        "wardrobe_item_ids": item_ids,
+    }, status_code=201)
+
+
+@app.post("/api/wardrobe/pnelly/look-feedback", status_code=201)
+async def record_pnelly_look_feedback(request: Request, payload: PNELLYLookFeedbackIn) -> Response:
+    """Record one consented combination-level TAL event; do not create item-level NPL vetoes."""
+    item_ids = [value.strip() for value in payload.item_ids]
+    event_id = payload.event_id.strip()
+    if any(not item_id for item_id in item_ids) or len(set(item_ids)) != len(item_ids):
+        raise HTTPException(422, detail={"code": "PNELLY_LOOK_FEEDBACK_ITEM_IDS_INVALID"})
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        wardrobe_base, wardrobe_token = _wardrobe_service()
+        wardrobe_headers = {"Authorization": "Bearer " + wardrobe_token, "Accept": "application/json"}
+        try:
+            wardrobe_response = await client.get(
+                wardrobe_base + "/v1/items",
+                params={"owner_user_id": subject, "include_archived": "false"},
+                headers=wardrobe_headers,
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "PNELLY_LOOK_FEEDBACK_WARDROBE_UNAVAILABLE"}) from exc
+        if wardrobe_response.status_code != 200:
+            raise HTTPException(503, detail={"code": "PNELLY_LOOK_FEEDBACK_WARDROBE_UNAVAILABLE"})
+        try:
+            wardrobe_data = wardrobe_response.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "PNELLY_LOOK_FEEDBACK_WARDROBE_RESPONSE_INVALID"}) from exc
+        if (
+            not isinstance(wardrobe_data, dict)
+            or wardrobe_data.get("owner_user_id") != subject
+            or not isinstance(wardrobe_data.get("items"), list)
+            or any(not isinstance(item, dict) or item.get("owner_user_id") != subject
+                   for item in wardrobe_data.get("items", []))
+        ):
+            raise HTTPException(502, detail={"code": "PNELLY_LOOK_FEEDBACK_WARDROBE_SCOPE_MISMATCH"})
+        active_ids = {
+            item.get("item_id") for item in wardrobe_data["items"]
+            if item.get("status") == "active" and isinstance(item.get("item_id"), str)
+        }
+        if any(item_id not in active_ids for item_id in item_ids):
+            raise HTTPException(422, detail={"code": "PNELLY_LOOK_FEEDBACK_ITEM_NOT_ACTIVE_OR_NOT_OWNED"})
+
+        identity_base, identity_token = _identity_learning_service()
+        identity_headers = {"Authorization": "Bearer " + identity_token, "Accept": "application/json"}
+        try:
+            consent_response = await client.get(identity_base + f"/v1/tal/consents/{subject}", headers=identity_headers)
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "IDENTITY_CONSENT_UNAVAILABLE"}) from exc
+        if consent_response.status_code != 200:
+            raise HTTPException(503, detail={"code": "IDENTITY_CONSENT_UNAVAILABLE"})
+        try:
+            consents = consent_response.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "IDENTITY_CONSENT_RESPONSE_INVALID"}) from exc
+        if not isinstance(consents, list):
+            raise HTTPException(502, detail={"code": "IDENTITY_CONSENT_RESPONSE_INVALID"})
+        receipt = next((row for row in consents if isinstance(row, dict) and row.get("receipt_id") == payload.consent_receipt_id), None)
+        expires_at = None
+        if isinstance(receipt, dict) and receipt.get("expires_at") is not None:
+            try:
+                expires_at = datetime.fromisoformat(str(receipt["expires_at"]).replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise HTTPException(502, detail={"code": "IDENTITY_CONSENT_RESPONSE_INVALID"}) from exc
+            if expires_at.tzinfo is None or expires_at.utcoffset() is None:
+                raise HTTPException(502, detail={"code": "IDENTITY_CONSENT_RESPONSE_INVALID"})
+            expires_at = expires_at.astimezone(timezone.utc)
+        now = datetime.now(timezone.utc)
+        if (
+            not isinstance(receipt, dict)
+            or receipt.get("scope") not in {"style_learning", "personalization"}
+            or receipt.get("granted") is not True
+            or receipt.get("revoked_at") is not None
+            or (expires_at is not None and expires_at <= now)
+        ):
+            raise HTTPException(403, detail={"code": "ACTIVE_STYLE_LEARNING_CONSENT_REQUIRED"})
+
+        observed_at = now.isoformat().replace("+00:00", "Z")
+        value = json.dumps({
+            "signal": payload.signal,
+            "look_role": payload.look_role,
+            "wardrobe_item_ids": item_ids,
+        }, sort_keys=True, separators=(",", ":"))
+        try:
+            event_response = await client.post(
+                identity_base + "/v1/tal/events",
+                params={"subject_id": subject},
+                headers=identity_headers,
+                json={
+                    "event_id": event_id,
+                    "idempotency_key": "pnelly-look:" + event_id,
+                    "consent_receipt_id": payload.consent_receipt_id,
+                    "feature_key": "pnelly.look.feedback." + payload.signal,
+                    "value": value,
+                    "observed_at": observed_at,
+                    "expires_at": (now + timedelta(days=180)).isoformat().replace("+00:00", "Z"),
+                },
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "PNELLY_LOOK_FEEDBACK_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "PNELLY_LOOK_FEEDBACK_UNAVAILABLE"}) from exc
+
+    if event_response.status_code == 403:
+        raise HTTPException(403, detail={"code": "ACTIVE_STYLE_LEARNING_CONSENT_REQUIRED"})
+    if event_response.status_code == 409:
+        raise HTTPException(409, detail={"code": "PNELLY_LOOK_FEEDBACK_EVENT_CONFLICT"})
+    if event_response.status_code != 200:
+        raise HTTPException(503, detail={"code": "PNELLY_LOOK_FEEDBACK_UNAVAILABLE"})
+    try:
+        result = event_response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "PNELLY_LOOK_FEEDBACK_RESPONSE_INVALID"}) from exc
+    if not isinstance(result, dict) or result.get("event_id") != event_id or result.get("status") not in {"recorded", "replayed"}:
+        raise HTTPException(502, detail={"code": "PNELLY_LOOK_FEEDBACK_RESPONSE_INVALID"})
+    return _private_json_response({
+        "status": result["status"],
+        "event_id": event_id,
+        "signal": payload.signal,
+        "look_role": payload.look_role,
+        "learning_owner": "TAL",
+        "item_level_npl_rejection_created": False,
+    }, status_code=201)
 
 
 @app.post("/api/wardrobe/looks/wear", status_code=201)
@@ -2439,29 +2933,249 @@ async def wardrobe_feedback(request: Request, payload: WardrobeFeedbackIn = Body
     return _private_json_response(data)
 
 
+@app.post("/api/wardrobe/pnelly/conversations")
+async def create_pnelly_conversation(request: Request) -> Response:
+    """Explicitly enable a 24-hour conversation-context session for the verified subject."""
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        base, token = _identity_learning_service()
+        conversation_id = str(uuid.uuid4())
+        receipt_id = str(uuid.uuid4())
+        expires_at = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat().replace("+00:00", "Z")
+
+        async def revoke_receipt() -> bool:
+            try:
+                revoked = await client.post(
+                    base + f"/v1/tal/consents/{receipt_id}/revoke",
+                    params={"subject_id": subject},
+                    headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                )
+                if revoked.status_code != 200:
+                    return False
+                result = revoked.json()
+                return isinstance(result, dict) and result.get("status") in {"revoked", "already_denied"}
+            except (httpx.HTTPError, ValueError):
+                return False
+
+        try:
+            consent = await client.post(
+                base + "/v1/tal/consents",
+                params={"subject_id": subject},
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json={
+                    "receipt_id": receipt_id,
+                    "consent_id": conversation_id,
+                    "resource_id": conversation_id,
+                    "scope": "pnelly_conversation",
+                    "consent_version": "pnelly-structured-context-v1",
+                    "granted": True,
+                    "expires_at": expires_at,
+                },
+            )
+        except httpx.HTTPError as exc:
+            await revoke_receipt()
+            raise HTTPException(503, detail={"code": "PNELLY_CONVERSATION_CONSENT_UNAVAILABLE"}) from exc
+        if consent.status_code not in {200, 201}:
+            raise HTTPException(503, detail={"code": "PNELLY_CONVERSATION_CONSENT_FAILED"})
+        try:
+            consent_data = consent.json()
+        except ValueError as exc:
+            await revoke_receipt()
+            raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_CONSENT_RESPONSE_INVALID"}) from exc
+        if (
+            not isinstance(consent_data, dict)
+            or consent_data.get("receipt_id") != receipt_id
+            or consent_data.get("consent_id") != conversation_id
+            or consent_data.get("resource_id") != conversation_id
+            or consent_data.get("granted") is not True
+        ):
+            await revoke_receipt()
+            raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_CONSENT_BINDING_INVALID"})
+        try:
+            created = await client.post(
+                base + f"/v1/pnelly/conversations?subject_id={subject}",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json={"conversation_id": conversation_id, "consent_receipt_id": receipt_id},
+            )
+        except httpx.HTTPError as exc:
+            await revoke_receipt()
+            raise HTTPException(503, detail={"code": "PNELLY_CONVERSATION_CREATE_UNAVAILABLE"}) from exc
+        if created.status_code != 200:
+            await revoke_receipt()
+            raise HTTPException(503, detail={"code": "PNELLY_CONVERSATION_CREATE_FAILED"})
+        try:
+            data = created.json()
+        except ValueError as exc:
+            await revoke_receipt()
+            raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_RESPONSE_INVALID"}) from exc
+        if (
+            not isinstance(data, dict)
+            or data.get("conversation_id") != conversation_id
+            or isinstance(data.get("state_version"), bool)
+            or data.get("state_version") != 0
+            or not isinstance(data.get("expires_at"), str)
+            or data.get("status") not in {"created", "replayed"}
+        ):
+            await revoke_receipt()
+            raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_RESPONSE_INVALID"})
+        try:
+            persisted_expiry = datetime.fromisoformat(data["expires_at"].replace("Z", "+00:00"))
+        except ValueError as exc:
+            await revoke_receipt()
+            raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_EXPIRY_INVALID"}) from exc
+        if (
+            persisted_expiry.tzinfo is None
+            or persisted_expiry.utcoffset() is None
+            or persisted_expiry <= datetime.now(timezone.utc)
+            or persisted_expiry > datetime.now(timezone.utc) + timedelta(hours=24, minutes=1)
+        ):
+            await revoke_receipt()
+            raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_EXPIRY_INVALID"})
+    return _private_json_response({
+        "status": data["status"],
+        "conversation_id": conversation_id,
+        "state_version": 0,
+        "expires_at": data.get("expires_at"),
+        "retention_hours": 24,
+        "stored_data": "structured_discovery_context_only",
+        "raw_transcript_stored": False,
+    })
+
+
+@app.delete("/api/wardrobe/pnelly/conversations/{conversation_id}")
+async def delete_pnelly_conversation(conversation_id: str, request: Request) -> Response:
+    if not UUID_RE.fullmatch(conversation_id.strip().lower()):
+        raise HTTPException(422, detail={"code": "INVALID_PNELLY_CONVERSATION_ID"})
+    async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        base, token = _identity_learning_service()
+        try:
+            response = await client.delete(
+                base + f"/v1/pnelly/conversations/{conversation_id.strip().lower()}",
+                params={"subject_id": subject},
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "PNELLY_CONVERSATION_DELETE_UNAVAILABLE"}) from exc
+    if response.status_code == 404:
+        raise HTTPException(404, detail={"code": "PNELLY_CONVERSATION_NOT_FOUND"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "PNELLY_CONVERSATION_DELETE_FAILED"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_DELETE_RESPONSE_INVALID"}) from exc
+    if (
+        not isinstance(data, dict)
+        or data.get("status") != "deleted"
+        or data.get("consent_inactive") is not True
+    ):
+        raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_DELETE_RESPONSE_INVALID"})
+    return _private_json_response({"status": "deleted", "conversation_id": conversation_id.strip().lower()})
+
+
 @app.post("/api/wardrobe/recommendations")
 async def wardrobe_recommendations(request: Request, payload: WardrobeRecommendationIn = Body(...)) -> Response:
     subject, user_token = (None, None)
+    conversation_update = None
+    effective = {
+        "query": " ".join(payload.query.split()).strip(),
+        "category": payload.category,
+        "currency": payload.currency.upper() if payload.currency else None,
+        "location": payload.location,
+        "occasion": payload.occasion,
+        "climate": payload.climate,
+        "constraints": payload.constraints,
+        "exclude_owned_products": payload.exclude_owned_products,
+    }
     async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
         subject, user_token = await _verified_commerce_subject(client, request)
+        if payload.conversation_id:
+            if not payload.conversation_turn_id:
+                raise HTTPException(422, detail={"code": "PNELLY_CONVERSATION_TURN_ID_REQUIRED"})
+            identity_base, identity_token = _identity_learning_service()
+            identity_headers = {"Authorization": "Bearer " + identity_token, "Accept": "application/json"}
+            try:
+                stored = await client.get(
+                    identity_base + f"/v1/pnelly/conversations/{payload.conversation_id}",
+                    params={"subject_id": subject},
+                    headers=identity_headers,
+                )
+            except httpx.HTTPError as exc:
+                raise HTTPException(503, detail={"code": "PNELLY_CONVERSATION_UNAVAILABLE"}) from exc
+            if stored.status_code in {403, 404}:
+                raise HTTPException(409, detail={"code": "PNELLY_CONVERSATION_EXPIRED_OR_REVOKED"})
+            if stored.status_code != 200:
+                raise HTTPException(503, detail={"code": "PNELLY_CONVERSATION_UNAVAILABLE"})
+            try:
+                stored_data = stored.json()
+                previous_context = stored_data.get("context", {}) if isinstance(stored_data, dict) else {}
+                current_version = stored_data.get("state_version") if isinstance(stored_data, dict) else None
+            except ValueError as exc:
+                raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_RESPONSE_INVALID"}) from exc
+            if not isinstance(previous_context, dict) or isinstance(current_version, bool) or not isinstance(current_version, int):
+                raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_RESPONSE_INVALID"})
+            for key in ("category", "currency", "location", "occasion", "climate"):
+                if effective[key] is None:
+                    effective[key] = previous_context.get(key)
+            if not effective["constraints"]:
+                effective["constraints"] = previous_context.get("constraints", [])
+            context_state = {
+                **effective,
+                "query": effective["query"],
+            }
+            try:
+                conversation_update_response = await client.put(
+                    identity_base + f"/v1/pnelly/conversations/{payload.conversation_id}",
+                    params={"subject_id": subject},
+                    headers=identity_headers,
+                    json={
+                        "expected_version": current_version,
+                        "turn_id": payload.conversation_turn_id,
+                        "context": context_state,
+                    },
+                )
+            except httpx.HTTPError as exc:
+                raise HTTPException(503, detail={"code": "PNELLY_CONVERSATION_UPDATE_UNAVAILABLE"}) from exc
+            if conversation_update_response.status_code == 409:
+                raise HTTPException(409, detail={"code": "PNELLY_CONVERSATION_CONCURRENT_TURN"})
+            if conversation_update_response.status_code in {403, 404}:
+                raise HTTPException(409, detail={"code": "PNELLY_CONVERSATION_EXPIRED_OR_REVOKED"})
+            if conversation_update_response.status_code != 200:
+                raise HTTPException(503, detail={"code": "PNELLY_CONVERSATION_UPDATE_FAILED"})
+            try:
+                conversation_update = conversation_update_response.json()
+            except ValueError as exc:
+                raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_UPDATE_RESPONSE_INVALID"}) from exc
+            if (
+                not isinstance(conversation_update, dict)
+                or conversation_update.get("conversation_id") != payload.conversation_id
+                or isinstance(conversation_update.get("state_version"), bool)
+                or not isinstance(conversation_update.get("state_version"), int)
+                or conversation_update.get("status") not in {"updated", "replayed"}
+            ):
+                raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_UPDATE_RESPONSE_INVALID"})
         base, token = _decision_gateway()
         now = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         context: dict[str, str] = {}
-        if payload.location and payload.location.strip():
-            context.update({"location": payload.location.strip(), "location_source": "user_declared", "location_observed_at": now})
-        if payload.occasion and payload.occasion.strip():
-            context.update({"occasion": payload.occasion.strip(), "occasion_source": "user_declared", "occasion_observed_at": now})
-        if payload.climate and payload.climate.strip():
-            context.update({"climate": payload.climate.strip(), "climate_source": "user_declared", "climate_observed_at": now})
+        if effective["location"]:
+            context.update({"location": effective["location"], "location_source": "user_declared", "location_observed_at": now})
+        if effective["occasion"]:
+            context.update({"occasion": effective["occasion"], "occasion_source": "user_declared", "occasion_observed_at": now})
+        if effective["climate"]:
+            context.update({"climate": effective["climate"], "climate_source": "user_declared", "climate_observed_at": now})
+        search_query = " ".join(
+            [effective["query"], *effective["constraints"]]
+        ).strip()
         body = {
             "user_id": subject,
-            "query": " ".join(payload.query.split()).strip(),
-            "category": payload.category,
-            "currency": payload.currency.upper() if payload.currency else None,
+            "query": search_query,
+            "category": effective["category"],
+            "currency": effective["currency"],
             "limit": payload.limit,
             "context": context,
             "use_wardrobe_context": True,
-            "exclude_owned_products": payload.exclude_owned_products,
+            "exclude_owned_products": effective["exclude_owned_products"],
         }
         try:
             response = await client.post(
@@ -2504,14 +3218,28 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
         if not isinstance(candidate, dict):
             raise HTTPException(502, detail={"code": "WARDROBE_RECOMMENDATIONS_RESPONSE_INVALID"})
         decision = candidate.get("decision")
+        product = candidate.get("product")
+        offer = candidate.get("offer")
+        cil = candidate.get("cil_serving_assessment")
+        product_id = product.get("product_id") if isinstance(product, dict) else None
+        catalog_version = product.get("catalog_version") if isinstance(product, dict) else None
         if (
             not isinstance(decision, dict)
             or decision.get("verdict") != "show"
             or decision.get("may_display") is not True
-            or not isinstance(candidate.get("product"), dict)
-            or not isinstance(candidate.get("offer"), dict)
+            or decision.get("product_id") != product_id
+            or decision.get("catalog_version") != catalog_version
+            or not isinstance(product_id, str)
+            or isinstance(catalog_version, bool)
+            or not isinstance(catalog_version, int)
+            or not isinstance(offer, dict)
+            or offer.get("catalog_product_id") != product_id
+            or not isinstance(offer.get("variant_id"), str)
+            or not isinstance(cil, dict)
+            or cil.get("status") != "eligible"
+            or cil.get("assessed_catalog_version") != catalog_version
         ):
-            raise HTTPException(502, detail={"code": "WARDROBE_CANDIDATE_CAL_AUTHORIZATION_INVALID"})
+            raise HTTPException(502, detail={"code": "WARDROBE_CANDIDATE_CAL_CIL_AUTHORIZATION_INVALID"})
         authorized_products.append(_withhold_unverified_media(candidate))
 
     withheld = data.get("withheld_candidate_ids", [])
@@ -2523,6 +3251,12 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
         "display_authority": "CaTaCaCi/CAL",
         "display_rule": "Only candidate-bound CAL SHOW decisions with may_display=true are returned with product and offer details.",
         "wardrobe_context": data.get("wardrobe_context") if isinstance(data.get("wardrobe_context"), dict) else {"used": True},
+        "conversation": ({
+            "conversation_id": payload.conversation_id,
+            "state_version": conversation_update.get("state_version"),
+            "expires_at": conversation_update.get("expires_at"),
+            "raw_transcript_stored": False,
+        } if conversation_update else None),
     }
     return _private_json_response(safe_payload)
 

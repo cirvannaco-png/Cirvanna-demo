@@ -21,6 +21,10 @@ from sqlalchemy.pool import StaticPool
 from app import main
 
 
+MARKETPLACE_READ_TOKEN = "commerce-marketplace-read-test-token-with-32-bytes"
+MARKETPLACE_READ_HEADERS = {"X-Commerce-Marketplace-Read-Token": MARKETPLACE_READ_TOKEN}
+
+
 TEST_ENGINE = create_engine(
     "sqlite://",
     connect_args={"check_same_thread": False},
@@ -89,6 +93,7 @@ def auth(user_id: str, role: str = "customer", email: str | None = None) -> dict
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setenv("COMMERCE_JWT_SECRET", "test-only-secret-at-least-32-bytes-long")
+    monkeypatch.setenv("COMMERCE_MARKETPLACE_READ_TOKEN", MARKETPLACE_READ_TOKEN)
     monkeypatch.setenv("COMMERCE_JWT_ISSUER", "cirvanna-auth")
     monkeypatch.setenv("COMMERCE_JWT_AUDIENCE", "cirvanna-commerce")
     monkeypatch.delenv("COMMERCE_ENVIRONMENT", raising=False)
@@ -190,7 +195,39 @@ def test_health_capabilities_and_readiness_fail_closed(client):
     assert capabilities["persistent_carts"] is True
     assert capabilities["verified_payment_webhooks"] is False
     assert capabilities["virtual_twin_generation"] is False
+    assert capabilities["marketplace_offer_read_requires_service_auth"] is True
+    assert capabilities["marketplace_offer_read_service_auth_configured"] is True
     assert client.get("/ready").status_code == 503
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "kwargs"),
+    [
+        ("get", "/marketplace/offers", {}),
+        ("post", "/marketplace/compare", {"json": {
+            "variant_ids": [str(uuid.uuid4())],
+            "destination_country_code": "KE",
+            "destination_key": "Nakuru/Subukia",
+            "fulfillment_mode": "courier_delivery",
+            "display_currency": "KES",
+            "payment_method": "card",
+        }}),
+    ],
+)
+def test_raw_marketplace_read_routes_require_dedicated_gateway_token(client, monkeypatch, method, path, kwargs):
+    monkeypatch.delenv("COMMERCE_MARKETPLACE_READ_TOKEN")
+    missing = getattr(client, method)(path, **kwargs)
+    assert missing.status_code == 503
+    assert missing.json()["detail"]["code"] == "COMMERCE_MARKETPLACE_READ_AUTH_NOT_CONFIGURED"
+
+    monkeypatch.setenv("COMMERCE_MARKETPLACE_READ_TOKEN", MARKETPLACE_READ_TOKEN)
+    invalid = getattr(client, method)(
+        path,
+        headers={"X-Commerce-Marketplace-Read-Token": "incorrect-marketplace-read-token"},
+        **kwargs,
+    )
+    assert invalid.status_code == 401
+    assert invalid.json()["detail"]["code"] == "COMMERCE_MARKETPLACE_READ_AUTH_FAILED"
 
 
 def test_compare_offers_rejects_tax_quote_from_another_destination_zone(client, monkeypatch):
@@ -201,7 +238,7 @@ def test_compare_offers_rejects_tax_quote_from_another_destination_zone(client, 
     tax.destination_key = "Nakuru/Other"
     db.commit()
     db.close()
-    response = client.post("/marketplace/compare", json={
+    response = client.post("/marketplace/compare", headers=MARKETPLACE_READ_HEADERS, json={
         "variant_ids": [a["variant_id"], b["variant_id"]],
         "destination_country_code": "KE", "destination_key": "Nakuru/Subukia",
         "fulfillment_mode": "courier_delivery", "display_currency": "KES",
@@ -221,7 +258,7 @@ def test_compare_offers_requires_same_catalog_product_identity(client, monkeypat
     listing.catalog_product_id = str(uuid.uuid4())
     db.commit()
     db.close()
-    response = client.post("/marketplace/compare", json={
+    response = client.post("/marketplace/compare", headers=MARKETPLACE_READ_HEADERS, json={
         "variant_ids": [a["variant_id"], b["variant_id"]],
         "destination_country_code": "KE", "destination_key": "Nakuru/Subukia",
         "fulfillment_mode": "courier_delivery", "display_currency": "KES",
@@ -452,7 +489,7 @@ def test_merchant_listing_withholds_catalog_images_until_attestation(client, mon
         },
     )
     assert variant.status_code == 201
-    offers = client.get("/marketplace/offers")
+    offers = client.get("/marketplace/offers", headers=MARKETPLACE_READ_HEADERS)
     matching = next(item for item in offers.json()["items"] if item["listing_id"] == response.json()["listing_id"])
     assert matching["image_urls"] == []  # Public offers must not expose unverified source photographs.
 
@@ -1044,7 +1081,7 @@ def test_admin_merchant_queue_is_paginated_filtered_and_role_protected(client):
 
 def test_offer_response_exposes_observation_and_fails_comparison_without_catalog_identity(client):
     seed_offer()
-    response = client.get("/marketplace/offers")
+    response = client.get("/marketplace/offers", headers=MARKETPLACE_READ_HEADERS)
     assert response.status_code == 200
     item = response.json()["items"][0]
     assert item["canonical_variant_id"] is None
@@ -1096,7 +1133,7 @@ def test_stale_offer_is_not_comparison_eligible(client, monkeypatch):
     monkeypatch.setenv("COMMERCE_OFFER_MAX_AGE_SECONDS", "60")
     original_now = main.now
     monkeypatch.setattr(main, "now", lambda: original_now() + main.timedelta(hours=2))
-    item = client.get("/marketplace/offers").json()["items"][0]
+    item = client.get("/marketplace/offers", headers=MARKETPLACE_READ_HEADERS).json()["items"][0]
     assert item["is_fresh"] is False
     assert item["comparison_eligible"] is False
 
@@ -1461,7 +1498,7 @@ def _make_offer_currency_kes(merchant):
 def test_compare_offers_requires_complete_like_for_like_landed_cost(client, monkeypatch):
     a, b = _market_compare_seed(client, monkeypatch)
     _make_offer_currency_kes(b)
-    response = client.post("/marketplace/compare", json={
+    response = client.post("/marketplace/compare", headers=MARKETPLACE_READ_HEADERS, json={
         "variant_ids":[a["variant_id"],b["variant_id"]],
         "destination_country_code":"KE",
         "destination_key":"Nakuru/Subukia",
@@ -1487,7 +1524,7 @@ def test_compare_offers_rejects_canonical_variant_mismatch(client, monkeypatch):
     db.get(main.Variant, b["variant_id"]).canonical_variant_id = str(uuid.uuid4())
     db.commit()
     db.close()
-    response = client.post("/marketplace/compare", json={
+    response = client.post("/marketplace/compare", headers=MARKETPLACE_READ_HEADERS, json={
         "variant_ids":[a["variant_id"],b["variant_id"]],
         "destination_country_code":"KE","destination_key":"Nakuru/Subukia",
         "fulfillment_mode":"courier_delivery","display_currency":"KES",
@@ -1503,7 +1540,7 @@ def test_compare_offers_requires_authoritative_tax(client, monkeypatch):
     tax.authoritative = False
     db.commit()
     db.close()
-    response = client.post("/marketplace/compare", json={
+    response = client.post("/marketplace/compare", headers=MARKETPLACE_READ_HEADERS, json={
         "variant_ids":[a["variant_id"],b["variant_id"]],
         "destination_country_code":"KE","destination_key":"Nakuru/Subukia",
         "fulfillment_mode":"courier_delivery","display_currency":"KES",
@@ -1532,18 +1569,18 @@ def test_currency_precision_handles_zero_two_and_three_decimal_currencies():
 
 def test_offers_return_display_currency_only_with_market_and_fresh_fx(client, monkeypatch):
     a, b = _market_compare_seed(client, monkeypatch)
-    response = client.get("/marketplace/offers", params={"market_country_code":"KE","display_currency":"KES"})
+    response = client.get("/marketplace/offers", headers=MARKETPLACE_READ_HEADERS, params={"market_country_code":"KE","display_currency":"KES"})
     assert response.status_code == 200
     items = {item["variant_id"]: item for item in response.json()["items"]}
     assert items[b["variant_id"]]["display_price_status"] == "localized"
     assert items[b["variant_id"]]["display_currency"] == "KES"
-    assert client.get("/marketplace/offers", params={"display_currency":"KES"}).status_code == 422
+    assert client.get("/marketplace/offers", headers=MARKETPLACE_READ_HEADERS, params={"display_currency":"KES"}).status_code == 422
 
 
 def test_market_aware_checkout_revalidates_quotes_and_charges_localized_total(client, monkeypatch):
     merchant, peer = _market_compare_seed(client, monkeypatch)
     _make_offer_currency_kes(peer)
-    comparison = client.post("/marketplace/compare", json={
+    comparison = client.post("/marketplace/compare", headers=MARKETPLACE_READ_HEADERS, json={
         "variant_ids": [merchant["variant_id"], peer["variant_id"]],
         "destination_country_code": "KE", "destination_key": "Nakuru/Subukia",
         "fulfillment_mode": "courier_delivery", "display_currency": "KES", "payment_method": "card",
@@ -1739,7 +1776,7 @@ def test_active_market_cannot_bypass_checkout_context(client, monkeypatch):
 def test_marketplace_offers_default_to_30km_and_allow_user_radius_expansion(client, monkeypatch):
     a, b = _market_compare_seed(client, monkeypatch)
     base = "/marketplace/offers?market_country_code=KE&destination_key=Nakuru%2FSubukia&fulfillment_mode=courier_delivery"
-    default_response = client.get(base)
+    default_response = client.get(base, headers=MARKETPLACE_READ_HEADERS)
     assert default_response.status_code == 200, default_response.text
     default_data = default_response.json()
     assert default_data["total"] == 1
@@ -1748,7 +1785,7 @@ def test_marketplace_offers_default_to_30km_and_allow_user_radius_expansion(clie
     assert float(quote["distance_km"]) == 10.0
     assert quote["display_amount_minor"] == 250
 
-    expanded_response = client.get(base + "&radius_km=50")
+    expanded_response = client.get(base + "&radius_km=50", headers=MARKETPLACE_READ_HEADERS)
     assert expanded_response.status_code == 200, expanded_response.text
     expanded_data = expanded_response.json()
     assert expanded_data["total"] == 2
@@ -1839,7 +1876,7 @@ def test_merchant_and_admin_can_review_operating_market_declarations(client):
 
 def test_compare_offers_localizes_different_offer_currencies_with_fresh_fx(client, monkeypatch):
     a, b = _market_compare_seed(client, monkeypatch)
-    response = client.post("/marketplace/compare", json={
+    response = client.post("/marketplace/compare", headers=MARKETPLACE_READ_HEADERS, json={
         "variant_ids": [a["variant_id"], b["variant_id"]],
         "destination_country_code": "KE", "destination_key": "Nakuru/Subukia",
         "fulfillment_mode": "courier_delivery", "display_currency": "KES", "payment_method": "card", "radius_km": 50,
@@ -1863,7 +1900,7 @@ def test_offer_display_price_fails_closed_when_fx_quote_is_stale(client, monkeyp
     fx.expires_at = main.now() - main.timedelta(minutes=1)
     db.commit()
     db.close()
-    response = client.get("/marketplace/offers", params={"market_country_code": "KE", "display_currency": "KES"})
+    response = client.get("/marketplace/offers", headers=MARKETPLACE_READ_HEADERS, params={"market_country_code": "KE", "display_currency": "KES"})
     assert response.status_code == 200
     item = next(value for value in response.json()["items"] if value["variant_id"] == b["variant_id"])
     assert item["display_price_status"] == "conversion_unavailable"
@@ -1872,7 +1909,7 @@ def test_offer_display_price_fails_closed_when_fx_quote_is_stale(client, monkeyp
 
 def test_compare_offers_respects_user_selected_radius(client, monkeypatch):
     a, b = _market_compare_seed(client, monkeypatch)
-    response = client.post("/marketplace/compare", json={
+    response = client.post("/marketplace/compare", headers=MARKETPLACE_READ_HEADERS, json={
         "variant_ids": [a["variant_id"], b["variant_id"]],
         "destination_country_code": "KE", "destination_key": "Nakuru/Subukia",
         "fulfillment_mode": "courier_delivery", "display_currency": "KES",

@@ -1,6 +1,6 @@
 # Cirvanna Virtual Twin and Click It API
 
-**Status:** the API now has a real worker adapter contract. The worker can perform partial pose inference and CLIP-based marketplace-candidate retrieval when its pinned models and trusted services are configured. No production worker, consent provider or Twin registry is currently assumed to exist.
+**Status:** the API now has a real worker adapter contract. The worker can perform partial pose inference and CLIP-based marketplace-candidate retrieval when its pinned models and trusted services are configured. No production worker, consent provider or provisioned Twin Registry is assumed to exist.
 
 ## Implemented flow
 
@@ -26,9 +26,9 @@ The adapters intentionally **fail closed** until these configurations and matchi
 - VISION_INTELLIGENCE_API_URL: private trusted HTTPS base URL of services/vision-intelligence.
 - VISION_INTELLIGENCE_API_TOKEN: internal worker token, at least 32 bytes, identical to VISION_WORKER_TOKEN on that service.
 - CONSENT_API_URL and CONSENT_API_TOKEN: trusted identity/consent service and internal token. This service calls POST /internal/v1/consents/verify with subject_id, consent_id, required_scopes, and (for Click It) resource_id. It requires JSON containing verified=true, active=true, the same subject_id and consent_id, granted_scopes covering every requested scope, and the same resource_id when one was supplied. Consent must be revocable and checked at request time.
-- TWIN_REGISTRY_API_URL and TWIN_REGISTRY_API_TOKEN: trusted Twin registry. This service calls POST /internal/v1/twins/authorize with subject_id and twin_id, and requires authorized=true, active=true, and matching IDs.
+- TWIN_REGISTRY_API_URL and TWIN_REGISTRY_API_TOKEN: the dedicated services/twin-registry service. This API calls POST /internal/v1/twins/authorize with subject_id and twin_id, and requires authorized=true, active=true, matching IDs, representation_type=full_body_mesh, and the exact source-image asset set.
 
-No existing deployed consent or Twin-registry endpoint was found in the repository, so these adapter contracts do not imply that those services are live. Do not expose the service until those contracts are implemented and tested against the actual identity provider and persistent Twin store. A user-supplied subject_id is not authentication; only trusted server-side callers may call this service.
+The Twin Registry is a separate canonical service and the sole owner of persistent Twin metadata. It verifies current resource-bound consent, the independent mesh-validation attestation and every private Asset Service reference. It owns deletion requests and its retryable deletion outbox; Asset Service remains the sole owner of binary bytes. The Virtual Twin API does not create its own database table or retain a second Twin record. These repository contracts do not imply the services are provisioned or live. A user-supplied subject_id is not authentication; only trusted server-side callers may call this service.
 
 ## Failure behavior
 
@@ -59,13 +59,11 @@ A provider-neutral generation/validation schema now exists in `app/generation_co
 
 This is a contract and test layer only. No provider adapter or generation endpoint is activated, and `/capabilities` must continue to report persistent Twin generation and preview as unavailable. See [the provider qualification and validation trust-chain specification](../../docs/architecture/twin-generation-provider-contract-2026-11-08.md).
 
-## Persistent Twin registry foundation
+## Persistent Twin boundary
 
-The service includes an owner-scoped metadata registry for a validated `full_body_mesh` and opaque private asset references. The registry has a PostgreSQL migration and stores no image bytes. Registration is denied unless the trusted consent verifier, independent mesh validator and asset authorization provider all confirm the same subject, Twin, asset set and model version. The internal authorization route is used by Click It to confirm that a persistent Twin belongs to the authenticated subject.
+Persistent metadata has one owner: services/twin-registry. This API only calls its owner/consent/asset-checked authorization route when a capability requires an existing Twin. There is intentionally no local Twin registry model, migration, or deletion outbox in this service; creating a second store would split ownership and revocation state.
 
-This is a **guarded persistence foundation**, not a Twin generator or live Try-On service. The current pose endpoint still returns an ephemeral pose skeleton. No production persistent Twin can be registered until the real consent provider, full-body mesh generation/validation and private asset authorization/deletion providers are deployed and independently tested. Keep Virtual Try-On disabled until its renderer and output validation gates also pass.
-
-Migration: `services/virtual-twin/migrations/0001_virtual_twin_registry.sql`. Apply through the approved PostgreSQL migration process and verify backup/restore before any production promotion.
+The canonical Twin Registry has versioned PostgreSQL migrations and a retryable deletion outbox. It does not generate meshes. A persistent Twin still requires a commercially approved, pinned full-body model, a genuinely independent validator that inspects the private stored bytes, managed PostgreSQL, a verified private Asset Service provider, real consent integration and deletion/restore drills. Keep all full-Twin and Try-On capability flags false until those providers are live and the end-to-end evidence is reviewed.
 
 ## Validation
 
@@ -78,4 +76,4 @@ python -m compileall -q app tests
 python -m pytest -q
 ```
 
-The PR must have successful exact-head results for the Virtual Twin API tests, registry checks, and architecture validation. These tests validate the contract and fail-closed behavior; they do not prove a production generator, consent provider, private storage provider, or independent mesh validator is deployed.
+The PR must have successful exact-head results for the Virtual Twin API tests, canonical Twin Registry checks, and architecture validation. These tests validate the contract and fail-closed behavior; they do not prove a production generator, consent provider, private storage provider, or independent mesh validator is deployed.

@@ -61,6 +61,23 @@ def test_internal_auth_is_required(client):
     ).status_code == 401
 
 
+def test_readiness_requires_pnelly_context_and_twin_cleanup_schema(client):
+    ready = client.get("/ready", headers=auth())
+    assert ready.status_code == 200
+    assert ready.json()["pnelly_conversation_context"] is True
+    assert ready.json()["twin_consent_cleanup_outbox"] is True
+
+    main.ConsentRevocationOutbox.__table__.drop(
+        bind=main._engine(os.environ["IDENTITY_DATABASE_URL"])
+    )
+    unavailable = client.get("/ready", headers=auth())
+    assert unavailable.status_code == 503
+    assert unavailable.json()["detail"]["code"] == "IDENTITY_SCHEMA_NOT_READY"
+    main.ConsentRevocationOutbox.__table__.create(
+        bind=main._engine(os.environ["IDENTITY_DATABASE_URL"])
+    )
+
+
 def test_usi_profile_requires_consent_and_uses_optimistic_version(client):
     assert consent(client, scope="profile_storage", receipt="receipt-profile-0001").status_code == 200
     body = {"expected_version": 0, "preferences": [{"preference_id": "p1", "attribute": "minimalist", "weight": 0.8}]}
@@ -224,6 +241,207 @@ def _verify_resource_consent(client, *, subject, bundle, resource, scopes=None, 
     )
 
 
+def _create_pnelly_conversation(client, *, subject="user-verified-1", conversation_id=None, receipt_id=None, expires_at=None):
+    conversation_id = conversation_id or str(__import__("uuid").uuid4())
+    receipt_id = receipt_id or "pnelly-context-receipt-0001"
+    expires_at = expires_at or (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
+    granted = client.post(
+        "/v1/tal/consents",
+        params={"subject_id": subject},
+        headers=auth(),
+        json={
+            "receipt_id": receipt_id,
+            "consent_id": conversation_id,
+            "resource_id": conversation_id,
+            "scope": "pnelly_conversation",
+            "consent_version": "pnelly-context-v1",
+            "granted": True,
+            "expires_at": expires_at,
+        },
+    )
+    assert granted.status_code == 200, granted.text
+    created = client.post(
+        f"/v1/pnelly/conversations?subject_id={subject}",
+        headers=auth(),
+        json={"conversation_id": conversation_id, "consent_receipt_id": receipt_id},
+    )
+    return conversation_id, receipt_id, created
+
+
+def test_pnelly_conversation_context_requires_exact_resource_bound_24_hour_consent(client):
+    conversation_id = str(__import__("uuid").uuid4())
+    no_consent = client.post(
+        f"/v1/pnelly/conversations?subject_id=user-verified-1",
+        headers=auth(),
+        json={"conversation_id": conversation_id, "consent_receipt_id": "missing-receipt-0001"},
+    )
+    assert no_consent.status_code == 403
+    assert no_consent.json()["detail"]["code"] == "ACTIVE_PNELLY_CONVERSATION_CONSENT_REQUIRED"
+
+    too_long = datetime.now(timezone.utc) + timedelta(days=2)
+    _, _, created = _create_pnelly_conversation(
+        client,
+        conversation_id=conversation_id,
+        receipt_id="pnelly-context-too-long",
+        expires_at=too_long.isoformat(),
+    )
+    assert created.status_code == 422
+    assert created.json()["detail"]["code"] == "PNELLY_CONVERSATION_EXPIRY_MUST_BE_WITHIN_24_HOURS"
+
+
+def test_pnelly_conversation_turns_are_versioned_idempotent_and_transcript_free(client):
+    conversation_id, receipt_id, created = _create_pnelly_conversation(client)
+    assert created.status_code == 200, created.text
+    assert created.json()["status"] == "created"
+    assert created.json()["state_version"] == 0
+
+    turn = {
+        "expected_version": 0,
+        "turn_id": "pnelly-turn-0001",
+        "context": {
+            "query": "modest dark green linen dress",
+            "category": "dress",
+            "currency": "KES",
+            "occasion": "work",
+            "constraints": ["long sleeves", "breathable fabric"],
+            "exclude_owned_products": True,
+        },
+    }
+    updated = client.put(
+        f"/v1/pnelly/conversations/{conversation_id}?subject_id=user-verified-1",
+        headers=auth(),
+        json=turn,
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["state_version"] == 1
+    assert updated.json()["context"]["currency"] == "KES"
+    assert updated.json()["context"]["constraints"] == ["long sleeves", "breathable fabric"]
+    assert "messages" not in updated.json()
+    assert "transcript" not in updated.json()
+
+    replay = client.put(
+        f"/v1/pnelly/conversations/{conversation_id}?subject_id=user-verified-1",
+        headers=auth(),
+        json=turn,
+    )
+    assert replay.status_code == 200
+    assert replay.json()["status"] == "replayed"
+    assert replay.json()["state_version"] == 1
+
+    changed_replay = {**turn, "context": {**turn["context"], "occasion": "evening"}}
+    conflict = client.put(
+        f"/v1/pnelly/conversations/{conversation_id}?subject_id=user-verified-1",
+        headers=auth(),
+        json=changed_replay,
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["code"] == "PNELLY_CONVERSATION_TURN_CONFLICT"
+
+    second_turn = {
+        "expected_version": 1,
+        "turn_id": "pnelly-turn-0002",
+        "context": {**turn["context"], "occasion": "evening", "query": "same dress, more formal"},
+    }
+    stale = client.put(
+        f"/v1/pnelly/conversations/{conversation_id}?subject_id=user-verified-1",
+        headers=auth(),
+        json={**second_turn, "expected_version": 0},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["code"] == "PNELLY_CONVERSATION_VERSION_CONFLICT"
+
+    saved = client.put(
+        f"/v1/pnelly/conversations/{conversation_id}?subject_id=user-verified-1",
+        headers=auth(),
+        json=second_turn,
+    )
+    assert saved.status_code == 200
+    assert saved.json()["state_version"] == 2
+
+    replay_create = client.post(
+        "/v1/pnelly/conversations?subject_id=user-verified-1",
+        headers=auth(),
+        json={"conversation_id": conversation_id, "consent_receipt_id": receipt_id},
+    )
+    assert replay_create.status_code == 200
+    assert replay_create.json()["status"] == "replayed"
+
+
+def test_pnelly_conversation_is_owner_scoped_and_revocation_deletes_context(client):
+    conversation_id, receipt_id, created = _create_pnelly_conversation(client)
+    assert created.status_code == 200
+    foreign = client.get(
+        f"/v1/pnelly/conversations/{conversation_id}?subject_id=another-user",
+        headers=auth(),
+    )
+    assert foreign.status_code == 404
+
+    revoked = client.post(
+        f"/v1/tal/consents/{receipt_id}/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert revoked.status_code == 200
+    missing = client.get(
+        f"/v1/pnelly/conversations/{conversation_id}?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert missing.status_code == 404
+
+
+def test_pnelly_conversation_delete_revokes_its_receipt(client):
+    conversation_id, receipt_id, created = _create_pnelly_conversation(client)
+    assert created.status_code == 200
+    deleted = client.delete(
+        f"/v1/pnelly/conversations/{conversation_id}?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert deleted.status_code == 200
+    assert deleted.json()["consent_inactive"] is True
+    receipts = client.get("/v1/tal/consents/user-verified-1", headers=auth()).json()
+    receipt = next(item for item in receipts if item["receipt_id"] == receipt_id)
+    assert receipt["revoked_at"] is not None
+
+
+def test_pnelly_conversation_expiry_and_retention_purge_remove_context(client):
+    conversation_id, _, created = _create_pnelly_conversation(client)
+    assert created.status_code == 200
+    url = os.environ["IDENTITY_DATABASE_URL"]
+    db = main._session_factory(url)()
+    row = db.get(main.PnellyConversation, conversation_id)
+    row.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    db.commit()
+    db.close()
+
+    denied = client.get(
+        f"/v1/pnelly/conversations/{conversation_id}?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert denied.status_code == 403
+    assert denied.json()["detail"]["code"] == "ACTIVE_PNELLY_CONVERSATION_CONSENT_REQUIRED"
+
+    # Recreate a second active row and expire it through the retention job.
+    conversation_id_2, _, created_2 = _create_pnelly_conversation(
+        client, receipt_id="pnelly-context-retention-0002"
+    )
+    assert created_2.status_code == 200
+    db = main._session_factory(url)()
+    row = db.get(main.PnellyConversation, conversation_id_2)
+    row.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    db.commit()
+    db.close()
+    purged = client.post(
+        "/internal/retention/purge",
+        headers={**auth(), "X-Identity-Cron-Token": "identity-cron-token-that-is-at-least-32-bytes"},
+    )
+    assert purged.status_code == 200
+    assert purged.json()["purged_pnelly_conversations"] == 1
+    gone = client.get(
+        f"/v1/pnelly/conversations/{conversation_id_2}?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert gone.status_code == 404
+
+
 def test_resource_bound_verifier_requires_complete_subject_and_resource_bundle(client):
     scopes = ["image_processing", "body_measurements", "virtual_twin_storage"]
     for index, scope in enumerate(scopes):
@@ -326,6 +544,296 @@ def test_resource_specific_revocation_does_not_revoke_another_twin_bundle(client
     assert allowed.status_code == 200
 
 
+def test_resource_bound_twin_consent_revocation_dispatches_asset_cleanup(client, monkeypatch):
+    scopes = ["image_processing", "body_measurements", "virtual_twin_storage"]
+    receipts = []
+    for index, scope in enumerate(scopes):
+        receipt = f"twin-cleanup-receipt-{index:02d}"
+        receipts.append(receipt)
+        assert _grant_resource_consent(
+            client,
+            subject="user-verified-1",
+            bundle="bundle-twin-cleanup",
+            resource="twin-resource-cleanup",
+            scope=scope,
+            receipt=receipt,
+        ).status_code == 200
+
+    observed = {}
+    async def notify(item):
+        observed.update(
+            subject_id=item.subject_id,
+            consent_id=item.consent_id,
+            resource_id=item.resource_id,
+            receipt_id=item.receipt_id,
+            command_id=item.command_id,
+        )
+        return {"status": "pending", "twins_queued": 1}
+
+    monkeypatch.setattr(main, "_notify_twin_registry_of_revocation", notify)
+    revoked = client.post(
+        f"/v1/tal/consents/{receipts[0]}/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert revoked.status_code == 200, revoked.text
+    assert revoked.json()["twin_cleanup_status"] == "delivered"
+    assert observed["subject_id"] == "user-verified-1"
+    assert observed["consent_id"] == "bundle-twin-cleanup"
+    assert observed["resource_id"] == "twin-resource-cleanup"
+    assert observed["receipt_id"] == receipts[0]
+    assert observed["command_id"].startswith("twin-consent-revocation:")
+
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    try:
+        outbox = db.get(main.ConsentRevocationOutbox, observed["command_id"])
+        assert outbox is not None
+        assert outbox.status == "delivered"
+        assert outbox.attempts == 0
+        assert outbox.completed_at is not None
+    finally:
+        db.close()
+
+
+def test_twin_consent_cleanup_failure_is_durable_and_retryable(client, monkeypatch):
+    for index, scope in enumerate(["image_processing", "body_measurements", "virtual_twin_storage"]):
+        assert _grant_resource_consent(
+            client,
+            subject="user-verified-1",
+            bundle="bundle-twin-retry",
+            resource="twin-resource-retry",
+            scope=scope,
+            receipt=f"twin-retry-receipt-{index:02d}",
+        ).status_code == 200
+
+    async def unavailable(_item):
+        raise RuntimeError("TWIN_REGISTRY_UNAVAILABLE")
+
+    monkeypatch.setattr(main, "_notify_twin_registry_of_revocation", unavailable)
+    revoked = client.post(
+        "/v1/tal/consents/twin-retry-receipt-00/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert revoked.status_code == 200, revoked.text
+    assert revoked.json()["twin_cleanup_status"] == "pending"
+
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    try:
+        pending = db.query(main.ConsentRevocationOutbox).one()
+        command_id = pending.command_id
+        assert pending.status == "pending"
+        assert pending.attempts == 1
+        assert pending.last_error_code == "TWIN_REGISTRY_UNAVAILABLE"
+    finally:
+        db.close()
+
+    calls = []
+    async def recovered(item):
+        calls.append(item.command_id)
+        return {"status": "pending", "twins_queued": 1}
+
+    monkeypatch.setattr(main, "_notify_twin_registry_of_revocation", recovered)
+    retry = client.post("/internal/v1/consent-revocations/dispatch?limit=10", headers=auth())
+    assert retry.status_code == 200, retry.text
+    assert retry.json() == {"processed": 1, "completed": 1, "failed": 0, "pending": False}
+    assert calls == [command_id]
+
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    try:
+        completed = db.get(main.ConsentRevocationOutbox, command_id)
+        assert completed.status == "delivered"
+        assert completed.last_error_code is None
+        assert completed.completed_at is not None
+    finally:
+        db.close()
+
+
+def test_withdrawing_non_twin_scope_in_twin_bundle_still_queues_resource_cleanup(client, monkeypatch):
+    receipts = {}
+    for index, scope in enumerate(["image_processing", "body_measurements", "virtual_twin_storage", "profile_storage"]):
+        receipt = f"mixed-twin-bundle-receipt-{index:02d}"
+        receipts[scope] = receipt
+        assert _grant_resource_consent(
+            client,
+            subject="user-verified-1",
+            bundle="mixed-twin-consent-bundle",
+            resource="twin-mixed-bundle",
+            scope=scope,
+            receipt=receipt,
+        ).status_code == 200
+
+    observed = []
+    async def notify(item):
+        observed.append((item.consent_id, item.resource_id, item.receipt_id))
+        return {"status": "pending", "twins_queued": 1}
+
+    monkeypatch.setattr(main, "_notify_twin_registry_of_revocation", notify)
+    revoked = client.post(
+        f"/v1/tal/consents/{receipts['profile_storage']}/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert revoked.status_code == 200, revoked.text
+    assert revoked.json()["twin_cleanup_status"] == "delivered"
+    assert observed == [(
+        "mixed-twin-consent-bundle",
+        "twin-mixed-bundle",
+        receipts["profile_storage"],
+    )]
+
+
+def test_non_twin_consent_revocation_does_not_create_twin_cleanup_command(client):
+    assert consent(client).status_code == 200
+    revoked = client.post(
+        "/v1/tal/consents/receipt-style-0001/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert revoked.status_code == 200
+    assert revoked.json()["twin_cleanup_status"] == "not_applicable"
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    try:
+        assert db.query(main.ConsentRevocationOutbox).count() == 0
+    finally:
+        db.close()
+
+
+def test_full_user_deletion_preserves_twin_cleanup_outbox_after_consent_rows_are_removed(client, monkeypatch):
+    scopes = ["image_processing", "body_measurements", "virtual_twin_storage"]
+    for index, scope in enumerate(scopes):
+        assert _grant_resource_consent(
+            client,
+            subject="user-verified-1",
+            bundle="bundle-user-delete",
+            resource="twin-user-delete",
+            scope=scope,
+            receipt=f"user-delete-twin-receipt-{index:02d}",
+        ).status_code == 200
+
+    observed = []
+    async def notify(item):
+        observed.append((item.subject_id, item.consent_id, item.resource_id))
+        return {"status": "pending", "twins_queued": 1}
+
+    monkeypatch.setattr(main, "_notify_twin_registry_of_revocation", notify)
+    deleted = client.delete("/v1/tal/users/user-verified-1", headers=auth())
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["twin_cleanup_commands"] == 1
+    assert deleted.json()["twin_cleanup_delivered"] == 1
+    assert deleted.json()["twin_cleanup_pending"] is False
+    assert client.get("/v1/tal/consents/user-verified-1", headers=auth()).json() == []
+    assert observed == [("user-verified-1", "bundle-user-delete", "twin-user-delete")]
+
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    try:
+        rows = db.query(main.ConsentRevocationOutbox).all()
+        assert len(rows) == 1
+        assert rows[0].status == "delivered"
+        assert rows[0].receipt_id == "user-delete-twin-receipt-00"
+    finally:
+        db.close()
+
+
+def test_retention_worker_retries_preexisting_failed_twin_cleanup_without_new_expiry(client, monkeypatch):
+    for index, scope in enumerate(["image_processing", "body_measurements", "virtual_twin_storage"]):
+        assert _grant_resource_consent(
+            client,
+            subject="user-verified-1",
+            bundle="bundle-twin-retry-by-retention",
+            resource="twin-resource-retry-by-retention",
+            scope=scope,
+            receipt=f"twin-retention-retry-{index:02d}",
+        ).status_code == 200
+
+    async def unavailable(_item):
+        raise RuntimeError("TWIN_REGISTRY_UNAVAILABLE")
+
+    monkeypatch.setattr(main, "_notify_twin_registry_of_revocation", unavailable)
+    revoked = client.post(
+        "/v1/tal/consents/twin-retention-retry-00/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert revoked.status_code == 200
+    assert revoked.json()["twin_cleanup_status"] == "pending"
+
+    delivered = []
+    async def recovered(item):
+        delivered.append(item.command_id)
+        return {"status": "pending", "twins_queued": 1}
+
+    monkeypatch.setattr(main, "_notify_twin_registry_of_revocation", recovered)
+    purged = client.post(
+        "/internal/retention/purge",
+        headers={
+            **auth(),
+            "X-Identity-Cron-Token": "identity-cron-token-that-is-at-least-32-bytes",
+        },
+    )
+    assert purged.status_code == 200, purged.text
+    assert purged.json()["twin_cleanup_commands"] == 0
+    assert purged.json()["twin_cleanup_processed"] == 1
+    assert purged.json()["twin_cleanup_delivered"] == 1
+    assert purged.json()["twin_cleanup_failed"] == 0
+    assert purged.json()["twin_cleanup_pending"] is False
+    assert len(delivered) == 1
+
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    try:
+        row = db.get(main.ConsentRevocationOutbox, delivered[0])
+        assert row is not None
+        assert row.status == "delivered"
+        assert row.attempts == 1
+    finally:
+        db.close()
+
+
+def test_retention_expiry_queues_twin_cleanup_before_consent_becomes_inactive(client, monkeypatch):
+    expires = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    for index, scope in enumerate(["image_processing", "body_measurements", "virtual_twin_storage"]):
+        assert _grant_resource_consent(
+            client,
+            subject="user-verified-1",
+            bundle="bundle-expired-twin",
+            resource="twin-expired-retention",
+            scope=scope,
+            receipt=f"expired-twin-retention-{index:02d}",
+            expires_at=expires,
+        ).status_code == 200
+
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    try:
+        db.query(main.ConsentReceipt).filter(
+            main.ConsentReceipt.consent_id == "bundle-expired-twin",
+        ).update({
+            "expires_at": datetime.now(timezone.utc) - timedelta(minutes=1)
+        }, synchronize_session=False)
+        db.commit()
+    finally:
+        db.close()
+
+    observed = []
+    async def notify(item):
+        observed.append((item.subject_id, item.consent_id, item.resource_id))
+        return {"status": "pending", "twins_queued": 1}
+
+    monkeypatch.setattr(main, "_notify_twin_registry_of_revocation", notify)
+    purged = client.post(
+        "/internal/retention/purge",
+        headers={
+            **auth(),
+            "X-Identity-Cron-Token": "identity-cron-token-that-is-at-least-32-bytes",
+        },
+    )
+    assert purged.status_code == 200, purged.text
+    assert purged.json()["twin_cleanup_commands"] == 1
+    assert purged.json()["twin_cleanup_delivered"] == 1
+    assert purged.json()["twin_cleanup_pending"] is False
+    assert observed == [("user-verified-1", "bundle-expired-twin", "twin-expired-retention")]
+    assert _verify_resource_consent(
+        client,
+        subject="user-verified-1",
+        bundle="bundle-expired-twin",
+        resource="twin-expired-retention",
+    ).status_code == 403
+
+
 def test_denial_receipt_withdraws_prior_scope_grants(client):
     consent(client, receipt="receipt-style-granted")
     denied = client.post(
@@ -407,10 +915,17 @@ def test_delete_user_data_removes_profile_consents_and_events(client):
         "expected_version": 0, "preferences": [{"preference_id": "p1", "attribute": "classic"}]
     })
     client.post("/v1/tal/events?subject_id=user-verified-1", headers=auth(), json=event_body())
+    conversation_id, _, created = _create_pnelly_conversation(client)
+    assert created.status_code == 200
+    before_delete = client.get("/v1/tal/export/user-verified-1", headers=auth()).json()
+    assert len(before_delete["pnelly_conversations"]) == 1
     deleted = client.delete("/v1/tal/users/user-verified-1", headers=auth())
     assert deleted.status_code == 200
     assert deleted.json()["deleted_events"] == 1
-    assert client.get("/v1/tal/export/user-verified-1", headers=auth()).json()["profile"] is None
+    assert deleted.json()["deleted_pnelly_conversations"] == 1
+    after_delete = client.get("/v1/tal/export/user-verified-1", headers=auth()).json()
+    assert after_delete["profile"] is None
+    assert after_delete["pnelly_conversations"] == []
     assert client.get("/v1/tal/consents/user-verified-1", headers=auth()).json() == []
 
 

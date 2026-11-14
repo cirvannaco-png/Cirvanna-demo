@@ -17,7 +17,8 @@ This service implements persistent, authenticated commerce APIs. Canonical produ
 
 ## Main routes
 
-- GET /marketplace/offers
+- GET /marketplace/offers — **internal-only candidate feed**, protected by the dedicated Decision Gateway credential.
+- POST /marketplace/compare — **internal-only comparison API**, protected by the same dedicated Decision Gateway credential.
 - POST /merchants/applications; GET /merchants/me
 - POST /admin/merchants/{merchant_id}/decision
 - POST /merchant/listings; POST /merchant/listings/{listing_id}/variants
@@ -48,6 +49,7 @@ Set these in a secret manager; never commit real secrets.
 - COMMERCE_CHECKOUT_SUCCESS_URL and COMMERCE_CHECKOUT_CANCEL_URL: trusted HTTPS destinations.
 - COMMERCE_SHIPPING_COUNTRIES: comma-separated two-letter country codes.
 - COMMERCE_CRON_TOKEN: strong secret used by the stock-reservation expiry job.
+- COMMERCE_MARKETPLACE_READ_TOKEN: dedicated 32-byte minimum service credential, shared only with the Decision Gateway and sent as X-Commerce-Marketplace-Read-Token. Do not reuse sync, quote-ingestion, user JWT, or CAL signing secrets.
 
 Local run from this directory:
 

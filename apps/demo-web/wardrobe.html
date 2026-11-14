@@ -159,9 +159,17 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
 <div class="field"><label for="location">Location (optional, declared)</label><input id="location" maxlength="120" placeholder="e.g. Subukia"></div>
 <div class="field"><label for="occasion">Occasion (optional)</label><input id="occasion" maxlength="120" placeholder="e.g. everyday, formal"></div>
 <div class="field"><label for="climate">Climate (optional, declared)</label><input id="climate" maxlength="120" placeholder="e.g. warm, cool, humid"></div>
+<div class="field"><label for="discoveryCues">Discovery cues (optional, comma-separated)</label><input id="discoveryCues" maxlength="160" placeholder="e.g. breathable fabric, long sleeves"></div>
 </div>
 <label class="small"><input id="excludeOwned" type="checkbox" checked style="width:auto;min-width:auto"> Exclude exact Catalog products already in my wardrobe</label>
-<div class="row" style="margin-top:12px"><button class="btn primary" type="submit" id="recommend">Recommend with PNELLY</button></div>
+<div class="consent" style="margin-top:12px">
+  <div><strong>24-hour discovery continuity</strong><div class="small">Optional. Stores only structured discovery context (latest query, category, currency, declared location, occasion, climate and constraints) for up to 24 hours. Raw chat messages are not stored. Clear it at any time.</div></div>
+  <label class="small"><input id="pnellyConversationOptIn" type="checkbox" style="width:auto;min-width:auto"> Remember my discovery context for 24 hours</label>
+</div>
+<div class="row" style="margin-top:12px">
+  <button class="btn primary" type="submit" id="recommend">Recommend with PNELLY</button>
+  <button class="btn subtle" type="button" id="endPnellyConversation" disabled>Clear saved context</button>
+</div>
 </form>
 <div class="status" id="recommendStatus" role="status">Recommendations use the EEPL context gate, NPL exclusions and CaTaCaCi/CAL display authorization.</div>
 <div id="recommendations"></div>
@@ -173,6 +181,8 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
 (() => {
   const $ = id => document.getElementById(id);
   let token = "";
+  let pnellyConversationId = null;
+  try { pnellyConversationId = sessionStorage.getItem("cirvanna.pnelly.conversation_id"); } catch (_) {}
   let styleReceipt = null;
   let profileReceipt = null;
   let colorProfileVersion = 0;
@@ -199,6 +209,23 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
   const status = (id, message, kind = "") => {
     $(id).textContent = message;
     $(id).className = "status" + (kind ? " " + kind : "");
+  };
+  const saveConversationId = value => {
+    pnellyConversationId = value || null;
+    $("endPnellyConversation").disabled = !pnellyConversationId;
+    try {
+      if (pnellyConversationId) sessionStorage.setItem("cirvanna.pnelly.conversation_id", pnellyConversationId);
+      else sessionStorage.removeItem("cirvanna.pnelly.conversation_id");
+    } catch (_) {}
+  };
+  const ensurePnellyConversation = async () => {
+    if (pnellyConversationId) return pnellyConversationId;
+    const created = await api("/api/wardrobe/pnelly/conversations", {method:"POST"});
+    if (typeof created.conversation_id !== "string" || created.raw_transcript_stored !== false) {
+      throw new Error("PNELLY_CONVERSATION_CREATE_RESPONSE_INVALID");
+    }
+    saveConversationId(created.conversation_id);
+    return created.conversation_id;
   };
   const text = (tag, value, className) => {
     const node = document.createElement(tag);
@@ -829,15 +856,21 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
         status("pnellyStatus", "Recorded your confirmation that " + look.role + " was worn. This updates factual outfit history separately from recommendation exposure.", "good");
         return;
       }
-      for (const item of lookItems) {
-        await api("/api/wardrobe/feedback", {method:"POST", body:JSON.stringify({
-          item_id:item.item_id,
-          event_id:crypto.randomUUID(),
-          signal,
+      const eventId = look.lookFeedbackEventId || (look.lookFeedbackEventId = crypto.randomUUID());
+      const result = await api("/api/wardrobe/pnelly/look-feedback", {
+        method:"POST",
+        body:JSON.stringify({
+          event_id:eventId,
+          look_role:look.role,
+          item_ids:lookItems.map(item => item.item_id),
+          signal:signal === "dislike" ? "rejected" : signal,
           consent_receipt_id:styleReceipt
-        })});
+        })
+      });
+      if (result.learning_owner !== "TAL" || result.item_level_npl_rejection_created !== false) {
+        throw new Error("Look feedback returned an invalid learning boundary.");
       }
-      status("pnellyStatus", "Recorded that " + look.role + " was not your style. This is a soft observation, not an immediate permanent exclusion.", "good");
+      status("pnellyStatus", "Recorded feedback about the " + look.role + " combination. The garments were not individually disliked or added to your NPL exclusions.", "good");
     } catch (error) {
       status("pnellyStatus", error.message, "error");
     }
@@ -921,6 +954,91 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
           button.addEventListener("click", () => sendLookFeedback(look, signal));
           actions.append(button);
         }
+        const saveButton = document.createElement("button");
+        saveButton.type = "button";
+        saveButton.className = "btn";
+        saveButton.textContent = look.savedOutfitId ? "Saved to Wardrobe" : "Save to Wardrobe";
+        saveButton.disabled = Boolean(look.savedOutfitId);
+        saveButton.addEventListener("click", async () => {
+          const itemIds = (look.items || []).map(item => item && item.item_id);
+          if (!itemIds.length || itemIds.some(itemId => typeof itemId !== "string" || !itemId) ||
+              new Set(itemIds).size !== itemIds.length) {
+            status("pnellyStatus", "This look does not contain a valid, unique set of active Wardrobe items.", "error");
+            return;
+          }
+          const saveEventId = look.saveEventId || (look.saveEventId = crypto.randomUUID());
+          saveButton.disabled = true;
+          saveButton.textContent = "Saving…";
+          try {
+            const saved = await api("/api/wardrobe/pnelly/save-look", {
+              method: "POST",
+              body: JSON.stringify({
+                item_ids: itemIds,
+                save_event_id: saveEventId,
+                name: "PNELLY " + look.role + " " + new Date().toISOString().slice(0, 10)
+              })
+            });
+            if (!saved.outfit_id || !["created", "replayed"].includes(saved.status)) {
+              throw new Error("Wardrobe did not confirm that this look was saved.");
+            }
+            look.savedOutfitId = saved.outfit_id;
+            saveButton.textContent = "Saved to Wardrobe";
+            status("pnellyStatus", look.role + " has been saved to your Wardrobe. Saving did not record it as worn or change your learned preferences.", "good");
+            loadOutfits().catch(() => {});
+          } catch (error) {
+            saveButton.disabled = false;
+            saveButton.textContent = "Save to Wardrobe";
+            status("pnellyStatus", error.message, "error");
+          }
+        });
+        actions.append(saveButton);
+        const refineButton = document.createElement("button");
+        refineButton.type = "button";
+        refineButton.className = "btn primary";
+        refineButton.textContent = "Refine with Complementer";
+        refineButton.disabled = !token;
+        refineButton.title = token ? "Ask for request-scoped styling advice about this Wardrobe look" : "Connect your signed-in session first";
+        refineButton.addEventListener("click", async () => {
+          const description = (look.items || []).map(item =>
+            [item.display_name, item.category, ...(item.attributes || [])].filter(Boolean).join(" ")
+          ).join("; ");
+          if (description.length < 3) {
+            status("pnellyStatus", "This look does not contain enough wardrobe detail for styling advice.", "error");
+            return;
+          }
+          refineButton.disabled = true;
+          refineButton.textContent = "Asking…";
+          try {
+            const result = await api("/api/vision/complementer", {
+              method: "POST",
+              body: JSON.stringify({
+                request_id: crypto.randomUUID(),
+                preferences: {
+                  occasion: $("pnellyOccasion").value || "unspecified",
+                  climate: $("pnellyClimate").value || "unspecified"
+                },
+                look: {description}
+              })
+            });
+            if (
+              result.mode !== "advisory_only" ||
+              result.display_authorized !== false ||
+              result.durable_personal_memory !== false ||
+              !result.recommendation
+            ) throw new Error("Complementer returned an invalid advisory response.");
+            card.append(text(
+              "p",
+              "Complementer advisory (request-scoped): " + JSON.stringify(result.recommendation),
+              "pnelly-note"
+            ));
+          } catch (error) {
+            status("pnellyStatus", "Complementer is unavailable: " + error.message, "error");
+          } finally {
+            refineButton.disabled = !token;
+            refineButton.textContent = "Refine with Complementer";
+          }
+        });
+        actions.append(refineButton);
         card.append(actions);
       }
       root.append(card);
@@ -957,23 +1075,55 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     $("recommend").disabled = true;
     status("recommendStatus","Retrieving your wardrobe-aware recommendations…");
     try {
-      const data = await api("/api/wardrobe/recommendations", {method:"POST", body:JSON.stringify({
+      const requestBody = {
         query:$("query").value.trim(),
         category:$("category").value || null,
         currency:$("currency").value.trim().toUpperCase() || null,
         location:$("location").value.trim() || null,
         occasion:$("occasion").value.trim() || null,
         climate:$("climate").value.trim() || null,
+        constraints:$("discoveryCues").value.split(",").map(value => value.trim()).filter(Boolean),
         exclude_owned_products:$("excludeOwned").checked
-      })});
+      };
+      if ($("pnellyConversationOptIn").checked) {
+        requestBody.conversation_id = await ensurePnellyConversation();
+        requestBody.conversation_turn_id = crypto.randomUUID();
+      }
+      const data = await api("/api/wardrobe/recommendations", {method:"POST", body:JSON.stringify(requestBody)});
       renderRecommendations(data);
-      status("recommendStatus", "Evaluated " + (data.ranked_candidate_count || 0) + " candidates. Only CAL SHOW products are displayed. EEPL context and Wardrobe signals are shown in the decision metadata.", "good");
+      const continuity = data.conversation
+        ? " Your structured discovery context is retained until " + data.conversation.expires_at + "."
+        : "";
+      status("recommendStatus", "Evaluated " + (data.ranked_candidate_count || 0) + " candidates. Only CAL SHOW products are displayed. EEPL context and Wardrobe signals are shown in the decision metadata." + continuity, "good");
     } catch (error) {
-      status("recommendStatus",error.message,"error");
+      if (error.message === "PNELLY_CONVERSATION_EXPIRED_OR_REVOKED") {
+        saveConversationId(null);
+        $("pnellyConversationOptIn").checked = false;
+        status("recommendStatus", "The prior conversation is expired, revoked or belongs to a different signed-in account. Its local reference was cleared. Enable continuity again to start a fresh 24-hour thread.", "error");
+      } else {
+        status("recommendStatus",error.message,"error");
+      }
     } finally {
       $("recommend").disabled = false;
     }
   });
+  $("endPnellyConversation").addEventListener("click", async () => {
+    if (!pnellyConversationId) return;
+    $("endPnellyConversation").disabled = true;
+    try {
+      await api("/api/wardrobe/pnelly/conversations/" + encodeURIComponent(pnellyConversationId), {method:"DELETE"});
+      saveConversationId(null);
+      $("pnellyConversationOptIn").checked = false;
+      status("recommendStatus", "Saved PNELLY discovery context deleted and its conversation consent revoked.", "good");
+    } catch (error) {
+      $("endPnellyConversation").disabled = false;
+      status("recommendStatus", error.message, "error");
+    }
+  });
+  if (pnellyConversationId) {
+    $("pnellyConversationOptIn").checked = true;
+    $("endPnellyConversation").disabled = false;
+  }
   updateConsentState();
 })();
 </script>

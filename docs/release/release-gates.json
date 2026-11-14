@@ -60,7 +60,7 @@
       "required": true,
       "status": "blocked",
       "owner_role": "Marketplace operations owner",
-      "acceptance": "Approved merchant applications and human KYC decisions exist; real product/offer/variant/inventory data is reviewed; suspended merchants and unavailable stock cannot appear; concurrent checkout cannot oversell.",
+      "acceptance": "Approved merchant applications and human KYC decisions exist; real product/offer/variant/inventory data is reviewed; suspended merchants and unavailable stock cannot appear; concurrent checkout cannot oversell. Brand and distributor entities, legal verification, tenant membership and permissions are independently governed rather than inferred from a merchant display-name field.",
       "evidence_refs": [],
       "verified_commit": null
     },
@@ -70,7 +70,7 @@
       "required": true,
       "status": "blocked",
       "owner_role": "Decision-platform owner",
-      "acceptance": "Every surfaced candidate passes through the sole CAL authority; only SHOW is released; BLOCK and REVIEW details stay withheld; durable decision receipts are committed before response release and include policy, contract, candidate, and evidence source versions.",
+      "acceptance": "Every surfaced candidate passes through the sole CAL authority; only SHOW is released; BLOCK and REVIEW details stay withheld; durable decision receipts are committed before response release and include policy, contract, candidate, and evidence source versions. In production, the Gateway and Decision Service require the latest context-scoped CIL CAL feedback review; BLOCK is an additional veto, SHOW cannot override ordinary gates, and missing/malformed/unavailable review evidence fails closed.",
       "evidence_refs": [],
       "verified_commit": null
     },
@@ -181,6 +181,36 @@
       "status": "blocked",
       "owner_role": "Marketplace / Identity / Privacy / Decision owner",
       "acceptance": "The same-origin BFF derives the subject from a verified Commerce session, records a short-lived resource-bound image_processing + look_it bundle in the canonical Identity Consent authority, verifies exact subject/bundle/resource/scopes/version/expiry, invokes PNELLY which independently re-verifies, and revokes the bundle after processing. If revocation fails, no search result is returned. Image bytes are not persisted in BFF/Xari/Vision. Look It returns only aggregate candidate counts and validated outfit-component descriptions; no product, merchant, price, stock or image details leave the retrieval path until CAL SHOW. Optional external outfit decomposition requires separately reviewed provider privacy/retention approval, pinned model/revision/report, and real staging verification. Click It remains independently disabled.",
+      "evidence_refs": [],
+      "verified_commit": null
+    },
+    {
+      "id": "REL-19",
+      "name": "Brand and distributor tenant portals and dashboards",
+      "required": true,
+      "status": "blocked",
+      "owner_role": "Partner platform / marketplace operations owner",
+      "acceptance": "Each verified brand and distributor has an independently scoped business tenant, separate portal/dashboard, owner/member roles, audited invitations and access revocation, and strict row-level tenant isolation. Brand dashboards use canonical brand-owned catalog/product, approved merchant distribution, market eligibility, offer availability and attributable sales data. Distributor dashboards use approved service zones, capacity, fulfilment quotes, shipment/order events and service-level evidence. Metrics are sourced from durable commerce events, not demo counters; a brand name on a merchant record is not treated as a brand account, and a merchant account is not treated as a distributor.",
+      "evidence_refs": [],
+      "verified_commit": null
+    },
+    {
+      "id": "REL-20",
+      "name": "CIL recommendation-outcome event adapter",
+      "required": true,
+      "status": "blocked",
+      "owner_role": "Identity / CAL / CIL data-governance owner",
+      "acceptance": "A trusted server-side adapter issues purpose-bound recommendation_outcome_learning consent evidence, keyed contributor pseudonyms and exact product/candidate/context-bound CAL SHOW receipts; it records only explicit customer suitability reports and controlled reasons. The current Wardrobe feedback path to Identity Learning/NPL is not treated as a CIL outcome feed. Clicks, saves and purchases are not assumed to mean suitable/unsuitable. Consent revocation, replay/idempotency, expiry, 30-distinct-contributor suppression, aggregate quality checks and CIL-to-CAL review retrieval are tested end-to-end with real service identities.",
+      "evidence_refs": [],
+      "verified_commit": null
+    },
+    {
+      "id": "REL-21",
+      "name": "PNELLY conversational discovery and integrated wardrobe loop",
+      "required": true,
+      "status": "blocked",
+      "owner_role": "Product / recommendation / identity owner",
+      "acceptance": "Authenticated conversational discovery uses the active subject's wardrobe and only consented style-learning/profile signals, with current user-provided or trusted context, bounded conversation state, explicit reset/export/deletion and no cross-user memory. PNELLY's three daily looks are sourced from active wardrobe items and persistent rotation state; Complementer remains a separately authenticated advisory and cannot grant product authority. Catalog/Commerce candidates are surfaced only after CAL SHOW and CIL rights/evidence approval. Explicit look/item feedback reaches the appropriate consented Identity Learning/NPL path, and only explicit, receipt-bound suitability reports enter the CIL cohort pipeline.",
       "evidence_refs": [],
       "verified_commit": null
     }

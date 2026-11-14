@@ -50,13 +50,27 @@ class MarketplaceContractTests(unittest.TestCase):
         self.assertIn("No stock is reserved and no order is created.", HTML)
     def test_pnelly_is_the_marketplace_assistant_and_complementer_is_advisory(self):
         self.assertIn("PNELLY · Describe it", HTML)
-        self.assertIn("Search marketplace with PNELLY", HTML)
-        self.assertIn("Complementer is designed as optional styling advice", HTML)
-        self.assertIn("price comparisons must use current Commerce offers", HTML)
+        self.assertIn("Search my wardrobe-aware marketplace", HTML)
+        self.assertIn("candidate-bound CAL SHOW products", HTML)
+        self.assertIn("CIL rights and evidence review", HTML)
+        self.assertIn("Complementer is advisory only", HTML)
+        self.assertIn('fetch("/api/wardrobe/recommendations"', HTML)
+        self.assertIn('data.display_authority!=="CaTaCaCi/CAL"', HTML)
+        self.assertNotIn("Search marketplace with Xari", HTML)
         self.assertNotIn("Xari · Describe it", HTML)
         self.assertNotIn("Search marketplace with Xari", HTML)
         self.assertNotIn("with Tari", HTML)
         self.assertNotIn("search with Tari", HTML)
+
+    def test_complementer_feedback_is_opt_in_and_writes_to_tal(self):
+        self.assertIn('id="complementerLearningConsent"', HTML)
+        self.assertIn('id="complementerApproveBtn"', HTML)
+        self.assertIn('id="complementerRejectBtn"', HTML)
+        self.assertIn('scope:"personalization"', HTML)
+        self.assertIn('/api/vision/complementer/feedback', HTML)
+        self.assertIn('outcome', HTML)
+        self.assertIn("private TAL learning timeline", HTML)
+        self.assertNotIn('localStorage.setItem("complementer', HTML)
 
     def test_try_on_remains_visible_but_disabled_until_real_adapters_exist(self):
         self.assertIn("Try on — unavailable", HTML)

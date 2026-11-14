@@ -13,7 +13,10 @@ import json
 import os
 import re
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit
+
+import httpx
 from functools import lru_cache
 from typing import Annotated, Iterator, Literal
 
@@ -34,7 +37,7 @@ SCOPES = {
     "personalization", "style_learning", "profile_storage",
     "image_processing", "body_measurements", "virtual_twin_storage",
     "virtual_try_on", "click_it", "look_it", "skin_analysis",
-    "wardrobe_photo_storage",
+    "wardrobe_photo_storage", "pnelly_conversation",
 }
 
 
@@ -142,6 +145,45 @@ class TALDeletionReceipt(Base):
     deleted_profile: Mapped[bool] = mapped_column(Boolean, nullable=False)
 
 
+class ConsentRevocationOutbox(Base):
+    """Durable, retryable handoff from consent withdrawal to Twin asset cleanup."""
+    __tablename__ = "identity_consent_revocation_outbox"
+    __table_args__ = (
+        Index("ix_identity_consent_revocation_status_created", "status", "created_at"),
+    )
+    command_id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    subject_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    consent_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    resource_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    receipt_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error_code: Mapped[str | None] = mapped_column(String(80))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PnellyConversation(Base):
+    """Short-lived, structured discovery context; raw chat transcript is never stored."""
+    __tablename__ = "identity_pnelly_conversations"
+    __table_args__ = (
+        Index("ix_identity_pnelly_conversation_subject", "subject_id"),
+        Index("ix_identity_pnelly_conversation_expiry", "expires_at"),
+    )
+    conversation_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    subject_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    consent_receipt_id: Mapped[str] = mapped_column(
+        ForeignKey("identity_tal_consent_receipts.receipt_id"), nullable=False
+    )
+    state_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    context: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    last_turn_id: Mapped[str | None] = mapped_column(String(128))
+    last_turn_hash: Mapped[str | None] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -182,13 +224,77 @@ class ColorProfilePut(StrictModel):
         return normalized
 
 
+class PnellyDiscoveryContext(StrictModel):
+    """Only normalized search state is retained; never include transcript or arbitrary profile data."""
+    query: str | None = Field(default=None, min_length=2, max_length=160)
+    category: str | None = Field(default=None, min_length=1, max_length=80)
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    location: str | None = Field(default=None, min_length=1, max_length=120)
+    occasion: str | None = Field(default=None, min_length=1, max_length=120)
+    climate: str | None = Field(default=None, min_length=1, max_length=120)
+    constraints: list[str] = Field(default_factory=list, max_length=8)
+    exclude_owned_products: bool = True
+
+    @field_validator("query", "category", "currency", "location", "occasion", "climate", mode="before")
+    @classmethod
+    def trim_context_strings(cls, value):
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError("context fields must be strings")
+        value = " ".join(value.split()).strip()
+        return value or None
+
+    @field_validator("currency")
+    @classmethod
+    def uppercase_currency(cls, value):
+        return value.upper() if value else None
+
+    @field_validator("constraints")
+    @classmethod
+    def validate_constraints(cls, values):
+        normalized = [" ".join(value.split()).strip() for value in values if isinstance(value, str)]
+        if len(normalized) != len(values) or any(not value or len(value) > 120 for value in normalized):
+            raise ValueError("constraints must be non-empty strings of at most 120 characters")
+        if len(normalized) != len(set(item.casefold() for item in normalized)):
+            raise ValueError("constraints must be unique")
+        return normalized
+
+
+    @model_validator(mode="after")
+    def bounded_search_context(self):
+        total = len(self.query or "") + sum(len(item) for item in self.constraints)
+        if total > 160:
+            raise ValueError("query plus discovery cues must fit the 160-character search limit")
+        return self
+
+
+class PnellyConversationCreate(StrictModel):
+    conversation_id: str = Field(min_length=36, max_length=36)
+    consent_receipt_id: str = Field(min_length=8, max_length=128)
+
+    @field_validator("conversation_id")
+    @classmethod
+    def validate_conversation_uuid(cls, value: str) -> str:
+        try:
+            return str(uuid.UUID(value))
+        except ValueError as exc:
+            raise ValueError("conversation_id must be a UUID") from exc
+
+
+class PnellyConversationUpdate(StrictModel):
+    expected_version: int = Field(ge=0)
+    turn_id: str = Field(min_length=8, max_length=128)
+    context: PnellyDiscoveryContext
+
+
 class ConsentPut(StrictModel):
     receipt_id: str = Field(min_length=8, max_length=128)
     scope: Literal[
         "personalization", "style_learning", "profile_storage",
         "image_processing", "body_measurements", "virtual_twin_storage",
         "virtual_try_on", "click_it", "look_it", "skin_analysis",
-        "wardrobe_photo_storage",
+        "wardrobe_photo_storage", "pnelly_conversation",
     ]
     consent_version: str = Field(min_length=1, max_length=80)
     granted: bool
@@ -369,7 +475,18 @@ def readiness(db: Annotated[Session, Depends(get_db)]):
         db.execute(select(ColorProfileRow.subject_id).limit(1))
         db.execute(select(ConsentReceipt.consent_id, ConsentReceipt.expires_at).limit(1))
         db.execute(select(TALEvent.event_id).limit(1))
-        return {"status": "ready", "service": SERVICE, "database": "reachable", "durable_usi": True, "durable_tal": True, "ready": True}
+        db.execute(select(PnellyConversation.conversation_id).limit(1))
+        db.execute(select(ConsentRevocationOutbox.command_id).limit(1))
+        return {
+            "status": "ready",
+            "service": SERVICE,
+            "database": "reachable",
+            "durable_usi": True,
+            "durable_tal": True,
+            "pnelly_conversation_context": True,
+            "twin_consent_cleanup_outbox": True,
+            "ready": True,
+        }
     except SQLAlchemyError:
         raise HTTPException(503, detail={"code": "IDENTITY_SCHEMA_NOT_READY"})
 
@@ -512,7 +629,7 @@ def put_color_profile(subject_id: str, payload: ColorProfilePut, db: Annotated[S
 
 
 @app.post("/v1/tal/consents", dependencies=[Depends(require_internal_token)])
-def put_consent(subject_id: str = Query(min_length=1, max_length=128), payload: ConsentPut = None, db: Session = Depends(get_db)):
+async def put_consent(subject_id: str = Query(min_length=1, max_length=128), payload: ConsentPut = None, db: Session = Depends(get_db)):
     subject = subject_or_404(subject_id)
     if payload is None:
         raise HTTPException(422, detail={"code": "CONSENT_RECEIPT_REQUIRED"})
@@ -551,6 +668,17 @@ def put_consent(subject_id: str = Query(min_length=1, max_length=128), payload: 
         else:
             statement = statement.where(ConsentReceipt.scope == payload.scope)
         db.execute(statement.values(revoked_at=now))
+        _delete_inactive_pnelly_conversations(db, subject)
+    twin_cleanup = None
+    if not payload.granted:
+        twin_cleanup = _queue_twin_consent_cleanup(
+            db,
+            subject_id=subject,
+            consent_id=consent_id,
+            resource_id=payload.resource_id,
+            receipt_id=payload.receipt_id,
+            scope=payload.scope,
+        )
     row = ConsentReceipt(
         receipt_id=payload.receipt_id, subject_id=subject, consent_id=consent_id,
         resource_id=payload.resource_id, scope=payload.scope,
@@ -561,14 +689,21 @@ def put_consent(subject_id: str = Query(min_length=1, max_length=128), payload: 
     )
     db.add(row)
     db.commit()
+    if twin_cleanup is not None:
+        await _dispatch_twin_consent_revocations(
+            db, limit=1, command_ids=[twin_cleanup.command_id]
+        )
+        db.refresh(twin_cleanup)
     return {
         "receipt_id": row.receipt_id, "consent_id": row.consent_id,
-        "resource_id": row.resource_id, "expires_at": row.expires_at.isoformat() if row.expires_at else None, "status": "recorded", "granted": row.granted,
+        "resource_id": row.resource_id, "expires_at": row.expires_at.isoformat() if row.expires_at else None,
+        "status": "recorded", "granted": row.granted,
+        "twin_cleanup_status": twin_cleanup.status if twin_cleanup is not None else "not_applicable",
     }
 
 
 @app.post("/v1/tal/consents/{receipt_id}/revoke", dependencies=[Depends(require_internal_token)])
-def revoke_consent(
+async def revoke_consent(
     receipt_id: str,
     subject_id: str = Query(min_length=1, max_length=128),
     db: Session = Depends(get_db),
@@ -596,7 +731,21 @@ def revoke_consent(
             # for this scope; it cannot leave a parallel grant active.
             statement = statement.where(ConsentReceipt.scope == receipt.scope)
         db.execute(statement.values(revoked_at=revoked_at))
-        db.commit()
+        _delete_inactive_pnelly_conversations(db, subject)
+    twin_cleanup = _queue_twin_consent_cleanup(
+        db,
+        subject_id=subject,
+        consent_id=receipt.consent_id,
+        resource_id=receipt.resource_id,
+        receipt_id=receipt.receipt_id,
+        scope=receipt.scope,
+    )
+    db.commit()
+    if twin_cleanup is not None:
+        await _dispatch_twin_consent_revocations(
+            db, limit=1, command_ids=[twin_cleanup.command_id]
+        )
+        db.refresh(twin_cleanup)
         db.refresh(receipt)
     return {
         "receipt_id": receipt_id,
@@ -604,7 +753,16 @@ def revoke_consent(
         "resource_id": receipt.resource_id,
         "status": "revoked" if receipt.granted and receipt.revoked_at is not None else "already_denied",
         "revoked_at": receipt.revoked_at.isoformat() if receipt.revoked_at else None,
+        "twin_cleanup_status": twin_cleanup.status if twin_cleanup is not None else "not_applicable",
     }
+
+
+@app.post("/internal/v1/consent-revocations/dispatch", dependencies=[Depends(require_internal_token)])
+async def dispatch_twin_consent_revocations(
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    return await _dispatch_twin_consent_revocations(db, limit=limit)
 
 
 @app.post("/internal/v1/consents/verify", dependencies=[Depends(require_internal_token)])
@@ -645,6 +803,344 @@ def verify_resource_bound_consent(payload: ConsentVerify, db: Annotated[Session,
         "expires_at": min((row.expires_at for row in rows if row.scope in payload.required_scopes and row.expires_at is not None), default=None).isoformat() if any(row.expires_at is not None for row in rows if row.scope in payload.required_scopes) else None,
         "granted_scopes": sorted(granted),
         "receipt_ids": sorted(row.receipt_id for row in rows if row.scope in payload.required_scopes),
+    }
+
+
+def _delete_inactive_pnelly_conversations(db: Session, subject_id: str | None = None) -> int:
+    statement = select(PnellyConversation)
+    if subject_id is not None:
+        statement = statement.where(PnellyConversation.subject_id == subject_id)
+    rows = list(db.scalars(statement).all())
+    deleted = 0
+    for row in rows:
+        receipt = db.get(ConsentReceipt, row.consent_receipt_id)
+        if (
+            normalize_utc(row.expires_at) <= utcnow()
+            or receipt is None
+            or receipt.scope != "pnelly_conversation"
+            or not consent_is_active(receipt)
+        ):
+            db.delete(row)
+            deleted += 1
+    return deleted
+
+
+TWIN_CONSENT_SCOPES = {"image_processing", "body_measurements", "virtual_twin_storage"}
+
+
+def _queue_twin_consent_cleanup(
+    db: Session, *, subject_id: str, consent_id: str, resource_id: str | None,
+    receipt_id: str, scope: str,
+) -> ConsentRevocationOutbox | None:
+    """Persist a cleanup command in the same transaction as resource consent withdrawal."""
+    if resource_id is None:
+        return None
+    # Withdrawal of any receipt in a bundle revokes the entire exact-resource
+    # bundle. Queue Twin cleanup when that bundle contains any Twin scope,
+    # regardless of which receipt the user selected for revocation.
+    twin_scope_receipt = db.scalar(select(ConsentReceipt.receipt_id).where(
+        ConsentReceipt.subject_id == subject_id,
+        ConsentReceipt.consent_id == consent_id,
+        ConsentReceipt.resource_id == resource_id,
+        ConsentReceipt.scope.in_(TWIN_CONSENT_SCOPES),
+    ).limit(1))
+    if twin_scope_receipt is None:
+        return None
+    digest = hashlib.sha256(
+        f"{subject_id}:{consent_id}:{resource_id}".encode("utf-8")
+    ).hexdigest()
+    command_id = "twin-consent-revocation:" + digest
+    # autoflush is disabled for this service. A previous scope in the same
+    # consent bundle may already have queued this command but not committed it.
+    pending = next(
+        (item for item in db.new
+         if isinstance(item, ConsentRevocationOutbox) and item.command_id == command_id),
+        None,
+    )
+    if pending is not None:
+        return pending
+    existing = db.get(ConsentRevocationOutbox, command_id)
+    if existing is not None:
+        return existing
+    row = ConsentRevocationOutbox(
+        command_id=command_id,
+        subject_id=subject_id,
+        consent_id=consent_id,
+        resource_id=resource_id,
+        receipt_id=receipt_id,
+        status="pending",
+        attempts=0,
+    )
+    db.add(row)
+    return row
+
+
+def _twin_registry_config() -> tuple[str, str] | None:
+    base = os.getenv("TWIN_REGISTRY_API_URL", "").strip().rstrip("/")
+    token = os.getenv("TWIN_REGISTRY_API_TOKEN", "").strip()
+    if not base or len(token.encode("utf-8")) < 32:
+        return None
+    try:
+        parsed = urlsplit(base)
+        host = (parsed.hostname or "").lower()
+        local = host in {"localhost", "127.0.0.1", "::1"}
+        if (
+            not host or parsed.username is not None or parsed.password is not None
+            or parsed.query or parsed.fragment
+            or (parsed.scheme != "https" and not (parsed.scheme == "http" and local))
+        ):
+            return None
+    except ValueError:
+        return None
+    return base, token
+
+
+async def _notify_twin_registry_of_revocation(
+    item: ConsentRevocationOutbox,
+) -> dict:
+    config = _twin_registry_config()
+    if config is None:
+        raise RuntimeError("TWIN_REGISTRY_NOT_CONFIGURED")
+    base, token = config
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(6.0, connect=2.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            response = await client.post(
+                base + "/internal/v1/twins/revoke-consent",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json={
+                    "subject_id": item.subject_id,
+                    "consent_id": item.consent_id,
+                    "resource_id": item.resource_id,
+                    "command_id": item.command_id,
+                },
+            )
+    except httpx.TimeoutException as exc:
+        raise RuntimeError("TWIN_REGISTRY_TIMEOUT") from exc
+    except httpx.HTTPError as exc:
+        raise RuntimeError("TWIN_REGISTRY_UNAVAILABLE") from exc
+    if response.status_code not in {200, 202}:
+        raise RuntimeError("TWIN_REGISTRY_REJECTED_REVOCATION")
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError("TWIN_REGISTRY_INVALID_RESPONSE") from exc
+    queued = payload.get("twins_queued") if isinstance(payload, dict) else None
+    status = payload.get("status") if isinstance(payload, dict) else None
+    if (
+        not isinstance(payload, dict)
+        or status not in {"pending", "complete"}
+        or isinstance(queued, bool)
+        or not isinstance(queued, int)
+        or queued < 0
+    ):
+        raise RuntimeError("TWIN_REGISTRY_INVALID_RESPONSE")
+    return payload
+
+
+async def _dispatch_twin_consent_revocations(
+    db: Session,
+    limit: int = 20,
+    command_ids: list[str] | None = None,
+) -> dict:
+    if limit < 1 or limit > 100:
+        raise HTTPException(422, detail={"code": "INVALID_TWIN_REVOCATION_BATCH_SIZE"})
+    if command_ids is not None and (
+        not command_ids or len(command_ids) > 100 or len(command_ids) != len(set(command_ids))
+    ):
+        raise HTTPException(422, detail={"code": "INVALID_TWIN_REVOCATION_COMMAND_SET"})
+    statement = select(ConsentRevocationOutbox).where(
+        ConsentRevocationOutbox.status == "pending"
+    )
+    if command_ids is not None:
+        statement = statement.where(ConsentRevocationOutbox.command_id.in_(command_ids))
+    pending = db.scalars(
+        statement.order_by(ConsentRevocationOutbox.created_at).limit(limit)
+    ).all()
+    completed = failed = 0
+    for item in pending:
+        try:
+            await _notify_twin_registry_of_revocation(item)
+            item.status = "delivered"
+            item.last_error_code = None
+            item.completed_at = utcnow()
+            completed += 1
+        except RuntimeError as exc:
+            item.attempts += 1
+            item.last_error_code = str(exc)[:80]
+            failed += 1
+        except Exception:
+            item.attempts += 1
+            item.last_error_code = "TWIN_REGISTRY_NOTIFICATION_FAILED"
+            failed += 1
+    db.commit()
+    remaining_statement = select(ConsentRevocationOutbox.command_id).where(
+        ConsentRevocationOutbox.status == "pending"
+    )
+    if command_ids is not None:
+        remaining_statement = remaining_statement.where(
+            ConsentRevocationOutbox.command_id.in_(command_ids)
+        )
+    remaining = db.scalar(remaining_statement.limit(1))
+    return {
+        "processed": len(pending),
+        "completed": completed,
+        "failed": failed,
+        "pending": remaining is not None,
+    }
+
+
+def _pnelly_conversation_json(row: PnellyConversation) -> dict:
+    return {
+        "conversation_id": row.conversation_id,
+        "state_version": row.state_version,
+        "context": row.context,
+        "expires_at": normalize_utc(row.expires_at).isoformat(),
+        "created_at": normalize_utc(row.created_at).isoformat(),
+        "updated_at": normalize_utc(row.updated_at).isoformat(),
+    }
+
+
+def _active_pnelly_conversation(db: Session, subject_id: str, conversation_id: str) -> PnellyConversation:
+    row = db.get(PnellyConversation, conversation_id)
+    if row is None or row.subject_id != subject_id:
+        raise HTTPException(404, detail={"code": "PNELLY_CONVERSATION_NOT_FOUND"})
+    receipt = db.get(ConsentReceipt, row.consent_receipt_id)
+    if (
+        normalize_utc(row.expires_at) <= utcnow()
+        or receipt is None
+        or receipt.subject_id != subject_id
+        or receipt.scope != "pnelly_conversation"
+        or receipt.resource_id != conversation_id
+        or not consent_is_active(receipt)
+    ):
+        db.delete(row)
+        db.commit()
+        raise HTTPException(403, detail={"code": "ACTIVE_PNELLY_CONVERSATION_CONSENT_REQUIRED"})
+    return row
+
+
+@app.post("/v1/pnelly/conversations", dependencies=[Depends(require_internal_token)])
+def create_pnelly_conversation(
+    subject_id: str = Query(min_length=1, max_length=128),
+    payload: PnellyConversationCreate = None,
+    db: Session = Depends(get_db),
+):
+    subject = subject_or_404(subject_id)
+    if payload is None:
+        raise HTTPException(422, detail={"code": "PNELLY_CONVERSATION_REQUIRED"})
+    receipt = db.get(ConsentReceipt, payload.consent_receipt_id)
+    if (
+        receipt is None or receipt.subject_id != subject
+        or receipt.scope != "pnelly_conversation"
+        or receipt.resource_id != payload.conversation_id
+        or not consent_is_active(receipt)
+    ):
+        raise HTTPException(403, detail={"code": "ACTIVE_PNELLY_CONVERSATION_CONSENT_REQUIRED"})
+    expiry = normalize_utc(receipt.expires_at)
+    now = utcnow()
+    if expiry is None or expiry > now + timedelta(hours=24):
+        raise HTTPException(422, detail={"code": "PNELLY_CONVERSATION_EXPIRY_MUST_BE_WITHIN_24_HOURS"})
+    existing = db.get(PnellyConversation, payload.conversation_id)
+    if existing is not None:
+        if existing.subject_id == subject and existing.consent_receipt_id == receipt.receipt_id:
+            return {"status": "replayed", **_pnelly_conversation_json(existing)}
+        raise HTTPException(409, detail={"code": "PNELLY_CONVERSATION_ID_CONFLICT"})
+    row = PnellyConversation(
+        conversation_id=payload.conversation_id,
+        subject_id=subject,
+        consent_receipt_id=receipt.receipt_id,
+        state_version=0,
+        context={},
+        expires_at=expiry,
+    )
+    db.add(row)
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(409, detail={"code": "PNELLY_CONVERSATION_CREATE_CONFLICT"}) from exc
+    return {"status": "created", **_pnelly_conversation_json(row)}
+
+
+@app.get("/v1/pnelly/conversations/{conversation_id}", dependencies=[Depends(require_internal_token)])
+def get_pnelly_conversation(
+    conversation_id: str,
+    subject_id: str = Query(min_length=1, max_length=128),
+    db: Session = Depends(get_db),
+):
+    row = _active_pnelly_conversation(db, subject_or_404(subject_id), conversation_id)
+    return {"status": "active", **_pnelly_conversation_json(row)}
+
+
+@app.put("/v1/pnelly/conversations/{conversation_id}", dependencies=[Depends(require_internal_token)])
+def update_pnelly_conversation(
+    conversation_id: str,
+    payload: PnellyConversationUpdate,
+    subject_id: str = Query(min_length=1, max_length=128),
+    db: Session = Depends(get_db),
+):
+    subject = subject_or_404(subject_id)
+    row = _active_pnelly_conversation(db, subject, conversation_id)
+    normalized_context = payload.context.model_dump(mode="json")
+    canonical = json.dumps(
+        {"turn_id": payload.turn_id, "context": normalized_context},
+        sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    )
+    digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    if row.last_turn_id == payload.turn_id:
+        if row.last_turn_hash == digest:
+            return {"status": "replayed", **_pnelly_conversation_json(row)}
+        raise HTTPException(409, detail={"code": "PNELLY_CONVERSATION_TURN_CONFLICT"})
+    if row.state_version != payload.expected_version:
+        raise HTTPException(409, detail={
+            "code": "PNELLY_CONVERSATION_VERSION_CONFLICT",
+            "current_version": row.state_version,
+        })
+    row.context = normalized_context
+    row.state_version += 1
+    row.last_turn_id = payload.turn_id
+    row.last_turn_hash = digest
+    row.updated_at = utcnow()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(409, detail={"code": "PNELLY_CONVERSATION_CONCURRENT_UPDATE"}) from exc
+    return {"status": "updated", **_pnelly_conversation_json(row)}
+
+
+@app.delete("/v1/pnelly/conversations/{conversation_id}", dependencies=[Depends(require_internal_token)])
+def delete_pnelly_conversation(
+    conversation_id: str,
+    subject_id: str = Query(min_length=1, max_length=128),
+    db: Session = Depends(get_db),
+):
+    subject = subject_or_404(subject_id)
+    row = db.get(PnellyConversation, conversation_id)
+    if row is None or row.subject_id != subject:
+        raise HTTPException(404, detail={"code": "PNELLY_CONVERSATION_NOT_FOUND"})
+    receipt = db.get(ConsentReceipt, row.consent_receipt_id)
+    if receipt is not None and receipt.granted and receipt.revoked_at is None:
+        db.execute(update(ConsentReceipt).where(
+            ConsentReceipt.subject_id == subject,
+            ConsentReceipt.consent_id == receipt.consent_id,
+            ConsentReceipt.resource_id == conversation_id,
+            ConsentReceipt.granted.is_(True),
+            ConsentReceipt.revoked_at.is_(None),
+        ).values(revoked_at=utcnow()))
+    db.delete(row)
+    db.commit()
+    if receipt is not None:
+        db.refresh(receipt)
+    consent_inactive = receipt is None or not consent_is_active(receipt)
+    return {
+        "status": "deleted",
+        "conversation_id": conversation_id,
+        "consent_inactive": consent_inactive,
     }
 
 
@@ -695,6 +1191,10 @@ def export_events(subject_id: str, db: Annotated[Session, Depends(get_db)]):
     consents = list(db.scalars(select(ConsentReceipt).where(ConsentReceipt.subject_id == subject).order_by(ConsentReceipt.created_at)).all())
     profile = db.get(USIProfileRow, subject)
     color_profile = db.get(ColorProfileRow, subject)
+    _delete_inactive_pnelly_conversations(db, subject)
+    conversations = list(db.scalars(select(PnellyConversation).where(
+        PnellyConversation.subject_id == subject
+    ).order_by(PnellyConversation.created_at)).all())
     return {
         "subject_id": subject,
         "profile": {"profile_version": profile.profile_version, "preferences": profile.preferences} if profile else None,
@@ -708,14 +1208,37 @@ def export_events(subject_id: str, db: Annotated[Session, Depends(get_db)]):
             "revoked_at": x.revoked_at.isoformat() if x.revoked_at else None,
         } for x in consents],
         "events": [{"event_id": x.event_id, "feature_key": x.feature_key, "value": x.value, "event_kind": x.event_kind, "supersedes_event_id": x.supersedes_event_id, "observed_at": x.observed_at.isoformat(), "expires_at": x.expires_at.isoformat() if x.expires_at else None, "consent_receipt_id": x.consent_receipt_id} for x in events],
+        "pnelly_conversations": [_pnelly_conversation_json(x) for x in conversations],
     }
 
 
 @app.delete("/v1/tal/users/{subject_id}", dependencies=[Depends(require_internal_token)])
-def delete_user_data(subject_id: str, db: Annotated[Session, Depends(get_db)]):
+async def delete_user_data(subject_id: str, db: Annotated[Session, Depends(get_db)]):
     subject = subject_or_404(subject_id)
     event_ids = list(db.scalars(select(TALEvent.event_id).where(TALEvent.subject_id == subject)).all())
+    conversation_ids = list(db.scalars(select(PnellyConversation.conversation_id).where(
+        PnellyConversation.subject_id == subject
+    )).all())
+    consents = list(db.scalars(
+        select(ConsentReceipt)
+        .where(ConsentReceipt.subject_id == subject)
+        .order_by(ConsentReceipt.created_at, ConsentReceipt.receipt_id)
+    ).all())
+    twin_cleanup_command_ids: set[str] = set()
+    for consent in consents:
+        cleanup = _queue_twin_consent_cleanup(
+            db,
+            subject_id=subject,
+            consent_id=consent.consent_id,
+            resource_id=consent.resource_id,
+            receipt_id=consent.receipt_id,
+            scope=consent.scope,
+        )
+        if cleanup is not None:
+            twin_cleanup_command_ids.add(cleanup.command_id)
+    twin_cleanup_commands = len(twin_cleanup_command_ids)
     profile = db.get(USIProfileRow, subject)
+    db.execute(delete(PnellyConversation).where(PnellyConversation.subject_id == subject))
     db.execute(delete(TALEvent).where(TALEvent.subject_id == subject))
     db.execute(delete(ConsentReceipt).where(ConsentReceipt.subject_id == subject))
     if profile is not None:
@@ -729,17 +1252,70 @@ def delete_user_data(subject_id: str, db: Annotated[Session, Depends(get_db)]):
     )
     db.add(receipt)
     db.commit()
-    return {"status": "deleted", "deleted_events": len(event_ids), "deleted_profile": profile is not None, "deleted_color_profile": color_profile is not None, "deletion_receipt_id": receipt.receipt_id}
+    cleanup_result = await _dispatch_twin_consent_revocations(
+        db, limit=min(100, max(1, twin_cleanup_commands)),
+        command_ids=sorted(twin_cleanup_command_ids),
+    ) if twin_cleanup_commands else {
+        "processed": 0, "completed": 0, "failed": 0, "pending": False
+    }
+    return {
+        "status": "deleted",
+        "deleted_events": len(event_ids),
+        "deleted_pnelly_conversations": len(conversation_ids),
+        "deleted_profile": profile is not None,
+        "deleted_color_profile": color_profile is not None,
+        "deletion_receipt_id": receipt.receipt_id,
+        "twin_cleanup_commands": twin_cleanup_commands,
+        "twin_cleanup_processed": cleanup_result["processed"],
+        "twin_cleanup_delivered": cleanup_result["completed"],
+        "twin_cleanup_failed": cleanup_result["failed"],
+        "twin_cleanup_pending": cleanup_result["pending"] or cleanup_result["failed"] > 0,
+    }
 
 
 @app.post("/internal/retention/purge", dependencies=[Depends(require_internal_token)])
-def purge_expired(db: Annotated[Session, Depends(get_db)], cron_token: Annotated[str | None, Header(alias="X-Identity-Cron-Token")] = None):
+async def purge_expired(db: Annotated[Session, Depends(get_db)], cron_token: Annotated[str | None, Header(alias="X-Identity-Cron-Token")] = None):
     expected = os.getenv("IDENTITY_CRON_TOKEN", "").strip()
     if len(expected.encode()) < 32 or not cron_token or not hmac.compare_digest(expected, cron_token):
         raise HTTPException(401, detail={"code": "RETENTION_CRON_AUTH_FAILED"})
-    result = db.execute(delete(TALEvent).where(TALEvent.expires_at.is_not(None), TALEvent.expires_at <= utcnow()))
+    now = utcnow()
+    expired_twin_consents = list(db.scalars(select(ConsentReceipt).where(
+        ConsentReceipt.scope.in_(TWIN_CONSENT_SCOPES),
+        ConsentReceipt.resource_id.is_not(None),
+        ConsentReceipt.granted.is_(True),
+        ConsentReceipt.revoked_at.is_(None),
+        ConsentReceipt.expires_at.is_not(None),
+        ConsentReceipt.expires_at <= now,
+    )).all())
+    twin_cleanup_command_ids: set[str] = set()
+    for consent in expired_twin_consents:
+        cleanup = _queue_twin_consent_cleanup(
+            db,
+            subject_id=consent.subject_id,
+            consent_id=consent.consent_id,
+            resource_id=consent.resource_id,
+            receipt_id=consent.receipt_id,
+            scope=consent.scope,
+        )
+        if cleanup is not None:
+            twin_cleanup_command_ids.add(cleanup.command_id)
+    twin_cleanup_commands = len(twin_cleanup_command_ids)
+    result = db.execute(delete(TALEvent).where(TALEvent.expires_at.is_not(None), TALEvent.expires_at <= now))
+    expired_conversations = _delete_inactive_pnelly_conversations(db)
     db.commit()
-    return {"status": "complete", "purged_events": result.rowcount or 0}
+    # Every scheduled retention run also retries older durable cleanup commands
+    # whose first notification failed; retries must not depend on another consent event.
+    cleanup_result = await _dispatch_twin_consent_revocations(db, limit=100)
+    return {
+        "status": "complete",
+        "purged_events": result.rowcount or 0,
+        "purged_pnelly_conversations": expired_conversations,
+        "twin_cleanup_commands": twin_cleanup_commands,
+        "twin_cleanup_processed": cleanup_result["processed"],
+        "twin_cleanup_delivered": cleanup_result["completed"],
+        "twin_cleanup_failed": cleanup_result["failed"],
+        "twin_cleanup_pending": cleanup_result["pending"] or cleanup_result["failed"] > 0,
+    }
 
 
 @app.get("/v1/tal/consents/{subject_id}", dependencies=[Depends(require_internal_token)])

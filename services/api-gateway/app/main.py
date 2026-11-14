@@ -1538,9 +1538,10 @@ def _discover_catalog_and_offers(payload: DiscoveryRequest) -> tuple[list[dict[s
     catalog_base = os.getenv("CATALOG_SERVICE_URL", "").strip().rstrip("/")
     catalog_token = os.getenv("CATALOG_API_TOKEN", "").strip()
     commerce_base = os.getenv("COMMERCE_API_URL", "").strip().rstrip("/")
+    commerce_read_token = os.getenv("COMMERCE_MARKETPLACE_READ_TOKEN", "").strip()
     if not catalog_base or not _trusted_internal_base_url(catalog_base) or len(catalog_token.encode("utf-8")) < 32:
         raise HTTPException(503, detail={"code": "CATALOG_DISCOVERY_NOT_CONFIGURED"})
-    if not commerce_base or not _trusted_internal_base_url(commerce_base):
+    if not commerce_base or not _trusted_internal_base_url(commerce_base) or len(commerce_read_token.encode("utf-8")) < 32:
         raise HTTPException(503, detail={"code": "COMMERCE_OFFERS_NOT_CONFIGURED"})
     params: dict[str, Any] = {"limit": payload.limit, "offset": payload.offset}
     if payload.query:
@@ -1578,7 +1579,14 @@ def _discover_catalog_and_offers(payload: DiscoveryRequest) -> tuple[list[dict[s
                 offer_params["radius_km"] = payload.radius_km
             if payload.fulfillment_mode:
                 offer_params["fulfillment_mode"] = payload.fulfillment_mode
-            offer_response = client.get(commerce_base + "/marketplace/offers", params=offer_params, headers={"Accept": "application/json"})
+            offer_response = client.get(
+                commerce_base + "/marketplace/offers",
+                params=offer_params,
+                headers={
+                    "X-Commerce-Marketplace-Read-Token": commerce_read_token,
+                    "Accept": "application/json",
+                },
+            )
             if offer_response.status_code != 200:
                 raise HTTPException(503, detail={"code": "COMMERCE_OFFERS_UNAVAILABLE"})
             offer_payload = offer_response.json()
@@ -1976,8 +1984,15 @@ def capabilities() -> dict[str, Any]:
         "complementer_product_retrieval": False,
         "complementer_display_authority": False,
         "durable_complementer_memory": False,
+        "cil_cal_review_enforcement_required": _cil_cal_review_enforcement_required(),
+        "cil_cal_review_enforcement_configured": bool(
+            os.getenv("CIL_SERVICE_URL", "").strip()
+            and len(os.getenv("CIL_CAL_SERVICE_TOKEN", "").encode("utf-8")) >= 32
+            and _trusted_internal_base_url(os.getenv("CIL_SERVICE_URL", ""))
+        ),
 
         "catalog_service_integration": True,
+        "commerce_marketplace_read_auth_configured": len(os.getenv("COMMERCE_MARKETPLACE_READ_TOKEN", "").encode("utf-8")) >= 32,
         "deterministic_cal_arbitration": True,
         "explicit_negative_preferences": True,
         "persistent_npl_service_integrated": bool(
@@ -2026,10 +2041,12 @@ def capabilities() -> dict[str, Any]:
 @app.get("/ready", tags=["operations"])
 def readiness() -> dict[str, Any]:
     base_url = os.getenv("CATALOG_SERVICE_URL", "").strip().rstrip("/")
+    commerce_marketplace_read_auth_configured = len(os.getenv("COMMERCE_MARKETPLACE_READ_TOKEN", "").encode("utf-8")) >= 32
     configured = bool(
         os.getenv("CIRVANNA_API_TOKEN")
         and os.getenv("CATALOG_API_TOKEN")
         and base_url
+        and commerce_marketplace_read_auth_configured
     )
     catalog_ready = False
     if base_url:
@@ -2067,17 +2084,30 @@ def readiness() -> dict[str, Any]:
     identity_binding_configured = bool(
         identity_required and identity_ready and commerce_url and _trusted_internal_base_url(commerce_url)
     )
-    ready = configured and catalog_ready and audit_ready and policy_configured and (not identity_required or identity_binding_configured)
+    feedback_review_required = _cil_cal_review_enforcement_required()
+    feedback_review_configured = bool(
+        os.getenv("CIL_SERVICE_URL", "").strip()
+        and len(os.getenv("CIL_CAL_SERVICE_TOKEN", "").encode("utf-8")) >= 32
+        and _trusted_internal_base_url(os.getenv("CIL_SERVICE_URL", ""))
+    )
+    ready = (
+        configured and catalog_ready and audit_ready and policy_configured
+        and (not identity_required or identity_binding_configured)
+        and (not feedback_review_required or feedback_review_configured)
+    )
     return {
         "status": "ready" if ready else "not_ready",
         "service": SERVICE_NAME,
         "gateway_auth_configured": bool(os.getenv("CIRVANNA_API_TOKEN")),
         "catalog_auth_configured": bool(os.getenv("CATALOG_API_TOKEN")),
+        "commerce_marketplace_read_auth_configured": commerce_marketplace_read_auth_configured,
         "catalog_ready": catalog_ready,
         "audit_store_ready": audit_ready,
         "policy_configuration_valid": policy_configured,
         "identity_provider_binding": identity_binding_configured,
         "identity_learning_service_ready": identity_ready,
+        "cil_cal_feedback_review_required": feedback_review_required,
+        "cil_cal_feedback_review_configured": feedback_review_configured,
         "fci_available": all(os.getenv(key, "").strip() for key in ("FCI_SERVICE_URL", "FCI_SERVICE_TOKEN", "FCI_EVIDENCE_HMAC_SECRET", "FCI_VALIDATION_HMAC_SECRET", "FCI_VALIDATION_REPORT_SHA256")),
         "safety_policy_available": all(os.getenv(key, "").strip() for key in ("SAFETY_SERVICE_URL", "SAFETY_SERVICE_TOKEN", "SAFETY_EVIDENCE_HMAC_SECRET", "SAFETY_VALIDATION_HMAC_SECRET", "SAFETY_VALIDATION_REPORT_SHA256")),
         "decision_evidence_ready": all(os.getenv(key, "").strip() for key in ("FCI_SERVICE_URL", "FCI_SERVICE_TOKEN", "FCI_EVIDENCE_HMAC_SECRET", "FCI_VALIDATION_HMAC_SECRET", "FCI_VALIDATION_REPORT_SHA256", "SAFETY_SERVICE_URL", "SAFETY_SERVICE_TOKEN", "SAFETY_EVIDENCE_HMAC_SECRET", "SAFETY_VALIDATION_HMAC_SECRET", "SAFETY_VALIDATION_REPORT_SHA256")),
@@ -2090,8 +2120,14 @@ def readiness() -> dict[str, Any]:
     dependencies=[Depends(require_api_token)],
     tags=["personal aesthetic intelligence"],
 )
-def recommend_complementary_look(payload: ComplementerAdvisoryRequest) -> dict[str, Any]:
-    """Return styling guidance only; product candidates require the separate CAL decision path."""
+def recommend_complementary_look(
+    payload: ComplementerAdvisoryRequest,
+    end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
+) -> dict[str, Any]:
+    """Return styling guidance only, bound to a Commerce-verified customer subject."""
+    subject = _resolve_verified_subject(end_user_authorization)
+    if not hmac.compare_digest(subject, payload.user_id):
+        raise HTTPException(403, detail={"code": "REQUEST_SUBJECT_MISMATCH"})
     return _complementer_advisory(payload)
 
 
@@ -2353,6 +2389,15 @@ def _assess_cil_product_serving(product: dict[str, Any], purpose: str = "commerc
     return result
 
 
+def _cil_cal_review_enforcement_required() -> bool:
+    """Production cannot opt out of the final CIL feedback veto integration."""
+    environment = os.getenv(
+        "CIRVANNA_ENVIRONMENT", os.getenv("COMMERCE_ENVIRONMENT", "development")
+    ).strip().lower()
+    configured = os.getenv("CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED", "false").strip().lower()
+    return environment == "production" or configured == "true"
+
+
 def _cil_feedback_context_key(context: Any) -> str:
     parts = []
     for value in (getattr(context, "climate", None), getattr(context, "occasion", None)):
@@ -2361,6 +2406,72 @@ def _cil_feedback_context_key(context: Any) -> str:
             if normalized:
                 parts.append(normalized[:40])
     return "-".join(parts) or "general"
+
+
+def _load_cil_feedback_decisions(product_ids: list[str], context_key: str) -> dict[str, dict]:
+    """Load final, human-reviewed CAL decisions before candidate details can leave the gateway."""
+    if not _cil_cal_review_enforcement_required():
+        return {}
+
+    base = os.getenv("CIL_SERVICE_URL", "").strip()
+    token = os.getenv("CIL_CAL_SERVICE_TOKEN", "").strip()
+    parts = urlsplit(base)
+    host = (parts.hostname or "").lower()
+    local = host in {"localhost", "127.0.0.1", "::1"}
+    if (
+        not host or parts.username is not None or parts.password is not None
+        or parts.query or parts.fragment
+        or (parts.scheme != "https" and not (parts.scheme == "http" and local))
+        or len(token.encode("utf-8")) < 32
+    ):
+        raise HTTPException(503, detail={"code": "CIL_CAL_REVIEW_ENFORCEMENT_MISCONFIGURED"})
+
+    try:
+        with httpx.Client(
+            timeout=httpx.Timeout(3.0, connect=1.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            response = client.post(
+                f"{base.rstrip('/')}/cal/feedback-decisions",
+                json={"product_ids": product_ids, "context_key": context_key},
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            )
+        if response.status_code != 200:
+            raise HTTPException(503, detail={"code": "CIL_CAL_FEEDBACK_DECISIONS_UNAVAILABLE"})
+        payload = response.json()
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        raise HTTPException(503, detail={"code": "CIL_CAL_FEEDBACK_DECISIONS_UNAVAILABLE"}) from exc
+
+    if not isinstance(payload, dict) or payload.get("context_key") != context_key or not isinstance(payload.get("decisions"), list):
+        raise HTTPException(502, detail={"code": "CIL_CAL_FEEDBACK_DECISIONS_INVALID"})
+
+    decisions: dict[str, dict] = {}
+    for item in payload["decisions"]:
+        if not isinstance(item, dict):
+            raise HTTPException(502, detail={"code": "CIL_CAL_FEEDBACK_DECISION_INVALID"})
+        product_id = item.get("product_id")
+        if product_id not in product_ids or item.get("context_key") != context_key:
+            raise HTTPException(502, detail={"code": "CIL_CAL_FEEDBACK_DECISION_SCOPE_MISMATCH"})
+        if (
+            item.get("verdict") not in {"SHOW", "BLOCK"}
+            or not isinstance(item.get("review_id"), str) or not item["review_id"].strip()
+            or not isinstance(item.get("decision_reference"), str) or not item["decision_reference"].strip()
+            or not isinstance(item.get("decided_at"), str)
+        ):
+            raise HTTPException(502, detail={"code": "CIL_CAL_FEEDBACK_DECISION_INVALID"})
+        try:
+            decided_at = datetime.fromisoformat(item["decided_at"].replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "CIL_CAL_FEEDBACK_DECISION_INVALID"}) from exc
+        if decided_at.tzinfo is None or decided_at.utcoffset() is None:
+            raise HTTPException(502, detail={"code": "CIL_CAL_FEEDBACK_DECISION_INVALID"})
+        if product_id in decisions:
+            raise HTTPException(502, detail={"code": "CIL_CAL_FEEDBACK_DECISION_AMBIGUOUS"})
+        decisions[product_id] = item
+    return decisions
 
 
 def _load_cil_feedback_signals(product_ids: list[str], context_key: str) -> tuple[dict[str, dict], str]:
@@ -2702,6 +2813,9 @@ def evaluate_decisions(
     with ThreadPoolExecutor(max_workers=min(5, len(payload.product_ids))) as executor:
         products = list(executor.map(fetch_product, payload.product_ids))
 
+    feedback_review_decisions = _load_cil_feedback_decisions(
+        payload.product_ids, _cil_feedback_context_key(payload.context)
+    )
     for product_id, product in zip(payload.product_ids, products):
         attributes = _catalog_attributes(product)
         complete = _catalog_attributes_complete(product)
@@ -2758,6 +2872,17 @@ def evaluate_decisions(
             for reason in arbitration.reasons
         ]
         verdict = arbitration.verdict.value
+        feedback_review = feedback_review_decisions.get(product_id)
+        if feedback_review and feedback_review["verdict"] == "BLOCK":
+            verdict = "block"
+            reasons.append(ReasonOutput(
+                code="CIL_FEEDBACK_REVIEW_BLOCK",
+                signal_id=f"cil-feedback-review:{feedback_review['review_id']}",
+                explanation=(
+                    "CAL's human-reviewed customer-feedback decision blocks this product "
+                    "for the matching recommendation context."
+                ),
+            ))
         try:
             _record_audit(
                 request_id=request_id,

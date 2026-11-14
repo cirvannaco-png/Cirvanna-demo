@@ -497,6 +497,17 @@ def require_sync_token(token: Annotated[str | None, Header(alias="X-Commerce-Syn
         raise HTTPException(401, detail={"code": "COMMERCE_SYNC_AUTH_FAILED"})
 
 
+def require_marketplace_read_token(
+    token: Annotated[str | None, Header(alias="X-Commerce-Marketplace-Read-Token")] = None,
+) -> None:
+    """Allow only the Decision Gateway to retrieve raw marketplace offer candidates."""
+    expected = os.getenv("COMMERCE_MARKETPLACE_READ_TOKEN", "")
+    if len(expected.encode("utf-8")) < 32:
+        raise HTTPException(503, detail={"code": "COMMERCE_MARKETPLACE_READ_AUTH_NOT_CONFIGURED"})
+    if not token or not hmac.compare_digest(token, expected):
+        raise HTTPException(401, detail={"code": "COMMERCE_MARKETPLACE_READ_AUTH_FAILED"})
+
+
 class PaymentWebhookEvent(Base):
     __tablename__ = "commerce_payment_webhook_events"
     event_id: Mapped[str] = mapped_column(String(180), primary_key=True)
@@ -1182,6 +1193,7 @@ class Readiness(BaseModel):
     authentication_configured: bool
     authentication_mode: str
     catalog_configured: bool
+    marketplace_read_auth_configured: bool
     payment_configured: bool
     cal_purchase_gateway_configured: bool
     cal_purchase_receipt_signer_configured: bool
@@ -1966,6 +1978,7 @@ def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
 
     auth_ok = _authentication_configured()
     catalog_ok = bool(os.getenv("CATALOG_API_URL") and os.getenv("CATALOG_API_TOKEN"))
+    marketplace_read_auth_configured = len(os.getenv("COMMERCE_MARKETPLACE_READ_TOKEN", "").encode("utf-8")) >= 32
     payment_ok = StripeGateway().ready
     try:
         cal_base, cal_token, cal_signing_key = _cal_gateway_settings()
@@ -1982,6 +1995,7 @@ def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
         and schema_present
         and auth_ok
         and catalog_ok
+        and marketplace_read_auth_configured
         and payment_ok
         and cal_gateway_configured
         and cal_signer_configured
@@ -1991,7 +2005,8 @@ def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
     result = Readiness(status="ready" if ready else "not_ready", service=SERVICE,
         database_connected=connected, schema_present=schema_present,
         authentication_configured=auth_ok, authentication_mode=_commerce_auth_mode(),
-        catalog_configured=catalog_ok, payment_configured=payment_ok,
+        catalog_configured=catalog_ok, marketplace_read_auth_configured=marketplace_read_auth_configured,
+        payment_configured=payment_ok,
         cal_purchase_gateway_configured=cal_gateway_configured,
         cal_purchase_receipt_signer_configured=cal_signer_configured,
         cal_gateway_ready=cal_gateway_ready, migrations_required=migrations_required,
@@ -2010,6 +2025,8 @@ def capabilities() -> dict[str, Any]:
         "physical_return_reconciliation": False,
         "automated_seller_payouts": False, "shipping_tax_calculation": False,
         "multimarket_onboarding": True, "localized_offer_pricing": True,
+        "marketplace_offer_read_requires_service_auth": True,
+        "marketplace_offer_read_service_auth_configured": len(os.getenv("COMMERCE_MARKETPLACE_READ_TOKEN", "").encode("utf-8")) >= 32,
         "provider_quote_ingestion": bool(os.getenv("COMMERCE_MARKET_CONTEXT_TOKEN")),
         "landed_cost_comparison": True, "checkout_landed_cost_revalidation": False,
         "catacaci_eligibility": False, "candidate_bound_purchase_authorization_configured": bool(os.getenv("DECISION_GATEWAY_URL") and os.getenv("DECISION_GATEWAY_TOKEN") and os.getenv("CAL_PURCHASE_RECEIPT_HMAC_SECRET")), "click_it_reconstruction": False,
@@ -2548,7 +2565,7 @@ def _comparison_unavailable(code: str, **context: Any) -> dict[str, Any]:
     return {"status": "unavailable", "reason_code": code, "context": context, "comparison": None}
 
 
-@app.post("/marketplace/compare")
+@app.post("/marketplace/compare", dependencies=[Depends(require_marketplace_read_token)])
 def compare_offers(
     payload: OfferComparisonIn,
     db: Annotated[Session, Depends(get_db)],
@@ -2735,7 +2752,7 @@ def compare_offers(
     }
 
 
-@app.get("/marketplace/offers")
+@app.get("/marketplace/offers", dependencies=[Depends(require_marketplace_read_token)])
 def list_offers(
     db: Annotated[Session, Depends(get_db)],
     q: str | None = Query(None, max_length=160),
