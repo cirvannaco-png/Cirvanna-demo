@@ -6,11 +6,9 @@ Local development fixtures may bypass the adapter but are never production evide
 """
 from __future__ import annotations
 
-import hashlib
-import hmac
 import os
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 from typing import Any
 
@@ -93,7 +91,11 @@ def _validate_evidence_digest(value: Any, code: str) -> str:
     return value
 
 
-def verify_merchant_approval(merchant: Any, verification_reference: str) -> dict[str, str]:
+def verify_merchant_approval(
+    merchant: Any,
+    verification_reference: str,
+    operating_markets: list[str],
+) -> dict[str, str]:
     """Verify merchant approval against the configured legal/KYB adapter."""
     if not provider_verification_required():
         return {
@@ -108,9 +110,7 @@ def verify_merchant_approval(merchant: Any, verification_reference: str) -> dict
         "merchant_id": merchant.id,
         "legal_name": merchant.legal_name,
         "legal_country_code": legal_country,
-        "operating_markets": sorted(
-            row.market_country_code for row in getattr(merchant, "operating_markets", [])
-        ),
+        "operating_markets": sorted({value.upper() for value in operating_markets}),
         "provider_reference": reference,
     })
     provider_id = result.get("provider_id")
@@ -119,6 +119,7 @@ def verify_merchant_approval(merchant: Any, verification_reference: str) -> dict
         result.get("verification_status") == "verified"
         and result.get("merchant_id") == merchant.id
         and result.get("legal_country_code") == legal_country
+        and result.get("operating_markets") == sorted({value.upper() for value in operating_markets})
         and provider_reference == reference
         and result.get("all_required_checks_complete") is True
         and isinstance(result.get("policy_version"), str)
@@ -130,7 +131,7 @@ def verify_merchant_approval(merchant: Any, verification_reference: str) -> dict
     observed = _parse_aware(result.get("observed_at"), "MERCHANT_PROVIDER_TIMESTAMP_INVALID")
     expires = _parse_aware(result.get("expires_at"), "MERCHANT_PROVIDER_TIMESTAMP_INVALID")
     current = datetime.now(timezone.utc)
-    if observed > current.replace(microsecond=0) + __import__("datetime").timedelta(minutes=5) or expires <= current or expires <= observed:
+    if observed > current + timedelta(minutes=5) or expires <= current or expires <= observed:
         raise HTTPException(403, detail={"code": "MERCHANT_PROVIDER_EVIDENCE_STALE"})
     digest = _validate_evidence_digest(result.get("evidence_sha256"), "MERCHANT_PROVIDER_DIGEST_INVALID")
     stored_reference = provider_id + ":" + reference
@@ -190,14 +191,40 @@ def verify_fulfillment_quote(variant_id: str, quote: dict[str, Any]) -> None:
         "quote": quote,
     })
     _validate_evidence_digest(result.get("evidence_sha256"), "FULFILLMENT_QUOTE_DIGEST_INVALID")
+    verified_quote = result.get("quote")
     exact_fields = (
         "provider", "provider_quote_id", "destination_country_code", "destination_key",
         "fulfillment_mode", "charge_basis", "amount_minor", "currency", "status",
+        "distance_km", "observed_at", "expires_at",
     )
-    exact = all(result.get(field) == quote.get(field) for field in exact_fields)
+    exact = (
+        isinstance(verified_quote, dict)
+        and all(verified_quote.get(field) == quote.get(field) for field in exact_fields)
+    )
     if (
-        result.get("status") != "verified"
+        result.get("verification_status") != "verified"
         or result.get("variant_id") != variant_id
         or not exact
     ):
         raise HTTPException(409, detail={"code": "FULFILLMENT_QUOTE_PROVIDER_EVIDENCE_MISMATCH"})
+
+
+def adapter_ready(prefix: str) -> bool:
+    """Probe a trusted provider adapter; configured credentials alone are not readiness."""
+    try:
+        base, token = _provider_config(prefix)
+        with httpx.Client(
+            timeout=httpx.Timeout(3.0, connect=1.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            response = client.get(
+                base + "/ready",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+            )
+        if response.status_code != 200:
+            return False
+        payload = response.json()
+        return isinstance(payload, dict) and payload.get("ready") is True
+    except (HTTPException, httpx.HTTPError, ValueError):
+        return False
