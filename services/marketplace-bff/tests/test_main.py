@@ -571,6 +571,138 @@ def test_wardrobe_consent_receipt_is_created_server_side_and_subject_scoped(clie
     assert fake.calls[1][2]["json"]["scope"] == "style_learning"
 
 
+def test_pnelly_conversation_creation_records_explicit_resource_bound_24_hour_consent(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-internal-token-more-than-thirty-two-bytes")
+    conversation_id = "4a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+    receipt_id = "5b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e"
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({
+            "receipt_id": receipt_id, "consent_id": conversation_id,
+            "resource_id": conversation_id, "granted": True, "status": "recorded",
+        }),
+        FakeResponse({
+            "status": "created", "conversation_id": conversation_id, "state_version": 0,
+            "expires_at": "2026-11-15T03:00:00+00:00", "context": {},
+        }),
+    ])
+    monkeypatch.setattr(main.uuid, "uuid4", lambda: __import__("uuid").UUID(conversation_id) if not hasattr(main, "_test_uuid_used") else __import__("uuid").UUID(receipt_id))
+    monkeypatch.setattr(main, "httpx", main.httpx)
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/pnelly/conversations",
+        headers={"Authorization": "Bearer signed-session"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.json()["conversation_id"] == conversation_id
+    assert response.json()["retention_hours"] == 24
+    assert response.json()["raw_transcript_stored"] is False
+    consent = fake.calls[1][2]["json"]
+    assert consent["scope"] == "pnelly_conversation"
+    assert consent["consent_id"] == conversation_id
+    assert consent["resource_id"] == conversation_id
+    assert consent["granted"] is True
+    assert consent["expires_at"]
+    assert fake.calls[2][1].endswith("/v1/pnelly/conversations?subject_id=signed-user-42")
+
+
+def test_wardrobe_recommendations_persist_context_before_cal_discovery(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-internal-token-more-than-thirty-two-bytes")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+    conversation_id = "4a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({
+            "status": "active", "conversation_id": conversation_id, "state_version": 1,
+            "expires_at": "2026-11-15T03:00:00+00:00",
+            "context": {
+                "query": "green dress",
+                "category": "dress",
+                "currency": "KES",
+                "location": "Subukia",
+                "occasion": "work",
+                "climate": "warm",
+                "constraints": ["linen"],
+                "exclude_owned_products": True,
+            },
+        }),
+        FakeResponse({
+            "status": "updated", "conversation_id": conversation_id, "state_version": 2,
+            "expires_at": "2026-11-15T03:00:00+00:00",
+            "context": {
+                "query": "make it more formal",
+                "category": "dress",
+                "currency": "KES",
+                "location": "Subukia",
+                "occasion": "evening",
+                "climate": "warm",
+                "constraints": ["linen"],
+                "exclude_owned_products": True,
+            },
+        }),
+        FakeResponse({
+            "request_id": "req-conversation-1", "ranked_candidate_count": 0,
+            "displayable_products": [], "withheld_candidate_ids": [],
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/recommendations",
+        headers={"Authorization": "Bearer signed-session"},
+        json={
+            "query": "make it more formal",
+            "occasion": "evening",
+            "conversation_id": conversation_id,
+            "conversation_turn_id": "pnelly-turn-0002",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert fake.calls[1][0].endswith("/v1/pnelly/conversations/" + conversation_id)
+    update = fake.calls[2][2]["json"]
+    assert update["expected_version"] == 1
+    assert update["turn_id"] == "pnelly-turn-0002"
+    assert update["context"]["category"] == "dress"
+    assert update["context"]["currency"] == "KES"
+    assert update["context"]["location"] == "Subukia"
+    assert update["context"]["occasion"] == "evening"
+    gateway = fake.calls[3][2]["json"]
+    assert gateway["query"] == "make it more formal"
+    assert gateway["category"] == "dress"
+    assert gateway["currency"] == "KES"
+    assert gateway["context"]["location"] == "Subukia"
+    assert response.json()["conversation"]["state_version"] == 2
+    assert response.json()["conversation"]["raw_transcript_stored"] is False
+
+
+def test_wardrobe_recommendations_block_revoked_conversation_before_gateway(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"detail": {"code": "ACTIVE_PNELLY_CONVERSATION_CONSENT_REQUIRED"}}, status_code=403),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/recommendations",
+        headers={"Authorization": "Bearer signed-session"},
+        json={
+            "query": "green dress",
+            "conversation_id": "4a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+            "conversation_turn_id": "pnelly-turn-0003",
+        },
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "PNELLY_CONVERSATION_EXPIRED_OR_REVOKED"
+    assert len(fake.calls) == 2
+
+
 def test_wardrobe_recommendations_forward_verified_token_to_cal_decision_gateway(client, monkeypatch):
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
     monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
