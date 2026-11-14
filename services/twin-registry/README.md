@@ -17,8 +17,12 @@ All routes except `/health` require the internal `TWIN_REGISTRY_API_TOKEN` beare
 
 - `POST /internal/v1/twins`: registers a Twin only after a trusted model-validation HMAC, active resource-bound consent and Asset Service authorization of the mesh plus all source images.
 - `POST /internal/v1/twins/authorize`: re-checks owner, active consent/version, mesh and every source asset on every call. Its response includes `representation_type=full_body_mesh` and `source_image_asset_ids` required by the current Virtual Try-On contract.
-- `POST /internal/v1/twins/revoke`: revokes the Twin metadata and blocks future authorization.
-- `GET /ready`: validates schema reachability and required identity, asset-service and model-validation credentials are configured. It does not claim a GPU renderer or production deployment is live.
+- `POST /internal/v1/twins/deactivate`: immediately blocks authorization and creates a versioned deletion-outbox command.
+- `POST /internal/v1/twins/revoke-consent`: queues deletion for every active Twin belonging to the exact owner and withdrawn consent receipt.
+- `POST /internal/v1/twins/deletions/dispatch`: a separately authenticated worker dispatches idempotent deletion to Asset Service and marks records deleted only after the provider confirms the full asset set.
+- `GET /internal/v1/twins/{twin_id}/status`: returns owner-scoped lifecycle state and version.
+- `POST /internal/v1/twins/revoke`: compatibility route; it now queues deletion rather than merely flipping a metadata flag.
+- `GET /ready`: validates schema reachability, consent, asset, validation and deletion credentials. It does not claim a GPU renderer or production deployment is live.
 
 No endpoint accepts or returns public URLs, file-system paths, object-store keys, signed download links or image/mesh bytes.
 
@@ -27,10 +31,11 @@ No endpoint accepts or returns public URLs, file-system paths, object-store keys
 - `TWIN_REGISTRY_DATABASE_URL`: managed PostgreSQL; SQLite is test-only.
 - `TWIN_REGISTRY_API_TOKEN`: unique high-entropy service token, at least 32 bytes.
 - `TWIN_REGISTRY_VALIDATION_HMAC_SECRET`: independent secret shared only by the trusted model-validation pipeline and this registry.
+- `TWIN_REGISTRY_DELETION_TOKEN`: separate high-entropy token for the asset-deletion worker; never reuse the registry API token.
 - `CONSENT_API_URL` / `CONSENT_API_TOKEN`: current Identity Consent service.
 - `ASSET_SERVICE_URL` / `ASSET_SERVICE_TOKEN`: current private Asset Service.
 
-Apply `migrations/0001_twin_registry.sql` through the approved migration process. Do not enable production auto-create schema.
+Apply `migrations/0001_twin_registry.sql` followed by `migrations/0002_twin_registry_deletion_outbox.sql` through the approved migration process. The `0002` downgrade must only be used after no record remains in `deletion_pending`/`deleted` state and the outbox is empty. Do not enable production auto-create schema. CI applies both migrations, exercises the downgrade/re-upgrade path, and verifies a PostgreSQL dump/restore.
 
 ## Remaining release gates
 
