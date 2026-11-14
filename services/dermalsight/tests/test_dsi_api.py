@@ -310,3 +310,156 @@ def test_body_tone_consent_does_not_reuse_virtual_twin_body_measurement_scope():
         "body_tone_analysis",
     )
     assert "body_measurements" not in PURPOSE_SCOPES[ConsentPurpose.BODY_TONE_ANALYSIS]
+
+
+
+def color_calibration_form(**overrides):
+    return {
+        **consent_form(),
+        "purpose": "cosmetic_skin_analysis",
+        "profile_id": "xrite-colorchecker24-after-2014",
+        "patch_grid_corners": "[[40,40],[200,40],[200,180],[40,180]]",
+        "chart_edition_confirmed_after_2014": "true",
+        "chart_age_months": "36",
+        "chart_condition": "unknown",
+        **overrides,
+    }
+
+
+def fake_color_preview(requested_region="face_skin"):
+    return {
+        "status": "colorchecker_fit_candidate_unvalidated",
+        "calibration_state": "experimental_unvalidated",
+        "requested_region": requested_region,
+        "profile": {
+            "profile_id": "xrite-colorchecker24-after-2014",
+            "profile_sha256": "c" * 64,
+        },
+        "chart_fit_leave_one_out_delta_e_2000": {
+            "mean": 1.0, "median": 0.9, "p95": 2.0, "maximum": 3.0,
+        },
+        "patch_leave_one_out_delta_e_2000": [
+            {"patch": f"p-{index}", "delta_e_2000": 1.0} for index in range(24)
+        ],
+        "skin_segmentation_model": {"version": "test-v1", "sha256": "d" * 64},
+        "skin_regions": {
+            requested_region: {
+                "status": "experimental_region_estimate",
+                "lab_estimate_d50": {"L_star": 50.0, "a_star": 10.0, "b_star": 15.0},
+            }
+        },
+        "absolute_colour_measurement_approved": False,
+        "independent_model_validation_passed": False,
+        "image_persisted": False,
+        "profile_persisted": False,
+        "global_training_performed": False,
+        "discovery_restricted": False,
+    }
+
+
+def test_color_calibration_preview_uses_face_consent_and_face_only_scope(client, monkeypatch):
+    verified = {}
+    called = {}
+
+    async def allow_consent(**kwargs):
+        verified.update(kwargs)
+        return {"verified": True}
+
+    async def fake_preview(**kwargs):
+        called.update(kwargs)
+        return fake_color_preview("face_skin")
+
+    monkeypatch.setattr(dsi_api, "verify_dsi_consent", allow_consent)
+    monkeypatch.setattr(dsi_api, "fetch_colorchecker_tone_preview", fake_preview)
+    response = client.post(
+        "/api/v1/dsi/color-calibration-preview",
+        headers=auth(),
+        data=color_calibration_form(),
+        files={"image": ("chart-face.png", capture_bytes(), "image/png")},
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert verified["purpose"] == ConsentPurpose.COSMETIC_SKIN_ANALYSIS
+    assert called["requested_region"] == "face_skin"
+    assert called["chart_age_months"] == 36
+    assert payload["requested_region"] == "face_skin"
+    assert payload["absolute_color_measurement_approved"] is False
+    assert payload["discovery_restricted"] is False
+
+
+def test_color_calibration_preview_uses_body_consent_and_body_only_scope(client, monkeypatch):
+    verified = {}
+    called = {}
+
+    async def allow_consent(**kwargs):
+        verified.update(kwargs)
+        return {"verified": True}
+
+    async def fake_preview(**kwargs):
+        called.update(kwargs)
+        return fake_color_preview("body_skin")
+
+    monkeypatch.setattr(dsi_api, "verify_dsi_consent", allow_consent)
+    monkeypatch.setattr(dsi_api, "fetch_colorchecker_tone_preview", fake_preview)
+    response = client.post(
+        "/api/v1/dsi/color-calibration-preview",
+        headers=auth(),
+        data=color_calibration_form(purpose="body_tone_analysis", chart_age_months="unknown"),
+        files={"image": ("chart-body.png", capture_bytes(), "image/png")},
+    )
+    assert response.status_code == 422
+
+
+def test_color_calibration_preview_rejects_wrong_chart_edition_before_consent_or_inference(client, monkeypatch):
+    async def forbidden(**_kwargs):
+        pytest.fail("unconfirmed chart edition must not reach consent/inference providers")
+
+    monkeypatch.setattr(dsi_api, "verify_dsi_consent", forbidden)
+    monkeypatch.setattr(dsi_api, "fetch_colorchecker_tone_preview", forbidden)
+    response = client.post(
+        "/api/v1/dsi/color-calibration-preview",
+        headers=auth(),
+        data=color_calibration_form(chart_edition_confirmed_after_2014="false"),
+        files={"image": ("chart.png", capture_bytes(), "image/png")},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "DSI_COLOR_REFERENCE_EDITION_NOT_CONFIRMED"
+
+
+def test_color_calibration_preview_never_calls_vision_without_exact_purpose_consent(client, monkeypatch):
+    async def deny(**_kwargs):
+        raise ConsentNotAuthorized("revoked")
+
+    async def forbidden(**_kwargs):
+        pytest.fail("color calibration must not run without purpose consent")
+
+    monkeypatch.setattr(dsi_api, "verify_dsi_consent", deny)
+    monkeypatch.setattr(dsi_api, "fetch_colorchecker_tone_preview", forbidden)
+    response = client.post(
+        "/api/v1/dsi/color-calibration-preview",
+        headers=auth(),
+        data=color_calibration_form(),
+        files={"image": ("chart.png", capture_bytes(), "image/png")},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "DSI_PURPOSE_CONSENT_NOT_VERIFIED"
+
+
+def test_color_calibration_preview_sanitizes_unavailable_vision_worker(client, monkeypatch):
+    async def allow(**_kwargs):
+        return {"verified": True}
+
+    async def unavailable(**_kwargs):
+        raise DSIProviderUnavailable("private model path and internal exception")
+
+    monkeypatch.setattr(dsi_api, "verify_dsi_consent", allow)
+    monkeypatch.setattr(dsi_api, "fetch_colorchecker_tone_preview", unavailable)
+    response = client.post(
+        "/api/v1/dsi/color-calibration-preview",
+        headers=auth(),
+        data=color_calibration_form(),
+        files={"image": ("chart.png", capture_bytes(), "image/png")},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "DSI_COLOR_CALIBRATION_UNAVAILABLE"
+    assert "private model path" not in response.text

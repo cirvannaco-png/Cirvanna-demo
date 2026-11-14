@@ -29,7 +29,14 @@ def _config() -> tuple[str, str]:
     return base, token
 
 
-async def _post_image(path: str, *, content: bytes, content_type: str, filename: str) -> dict:
+async def _post_image(
+    path: str,
+    *,
+    content: bytes,
+    content_type: str,
+    filename: str,
+    form_data: dict[str, str] | None = None,
+) -> dict:
     base, token = _config()
     try:
         async with httpx.AsyncClient(
@@ -41,6 +48,7 @@ async def _post_image(path: str, *, content: bytes, content_type: str, filename:
                 base + path,
                 headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
                 files={"image": (filename, content, content_type)},
+                data=form_data,
             )
     except httpx.TimeoutException as exc:
         raise DSIProviderUnavailable("dsi_vision_timeout") from exc
@@ -109,4 +117,70 @@ async def fetch_skin_segmentation(*, content: bytes, content_type: str, filename
         and payload.get("absolute_color_calibration_performed") is False
     ):
         raise DSIProviderUnavailable("dsi_vision_segmentation_contract_invalid")
+    return payload
+
+
+
+async def fetch_colorchecker_tone_preview(
+    *,
+    content: bytes,
+    content_type: str,
+    filename: str,
+    profile_id: str,
+    patch_grid_corners: str,
+    chart_edition_confirmed_after_2014: bool,
+    chart_age_months: int | None,
+    chart_condition: str,
+    requested_region: str,
+) -> dict:
+    if requested_region not in {"face_skin", "body_skin"}:
+        raise DSIProviderUnavailable("dsi_vision_color_region_invalid")
+    if chart_edition_confirmed_after_2014 is not True:
+        raise DSIProviderUnavailable("dsi_vision_color_chart_edition_not_confirmed")
+    fields = {
+        "profile_id": profile_id,
+        "patch_grid_corners": patch_grid_corners,
+        "chart_edition_confirmed_after_2014": "true",
+        "chart_condition": chart_condition,
+        "requested_region": requested_region,
+    }
+    if chart_age_months is not None:
+        fields["chart_age_months"] = str(chart_age_months)
+    payload = await _post_image(
+        "/v1/dsi/colorchecker-tone-preview",
+        content=content,
+        content_type=content_type,
+        filename=filename,
+        form_data=fields,
+    )
+    model = payload.get("skin_segmentation_model")
+    profile = payload.get("profile")
+    stats = payload.get("chart_fit_leave_one_out_delta_e_2000")
+    regions = payload.get("skin_regions")
+    expected_region = regions.get(requested_region) if isinstance(regions, dict) else None
+    if not (
+        payload.get("status") == "colorchecker_fit_candidate_unvalidated"
+        and payload.get("calibration_state") == "experimental_unvalidated"
+        and payload.get("requested_region") == requested_region
+        and isinstance(profile, dict)
+        and profile.get("profile_id") == profile_id
+        and isinstance(profile.get("profile_sha256"), str)
+        and len(profile["profile_sha256"]) == 64
+        and isinstance(stats, dict)
+        and all(key in stats for key in ("mean", "median", "p95", "maximum"))
+        and isinstance(payload.get("patch_leave_one_out_delta_e_2000"), list)
+        and len(payload["patch_leave_one_out_delta_e_2000"]) == 24
+        and isinstance(expected_region, dict)
+        and isinstance(model, dict)
+        and isinstance(model.get("version"), str)
+        and isinstance(model.get("sha256"), str)
+        and len(model["sha256"]) == 64
+        and payload.get("absolute_colour_measurement_approved") is False
+        and payload.get("independent_model_validation_passed") is False
+        and payload.get("image_persisted") is False
+        and payload.get("profile_persisted") is False
+        and payload.get("global_training_performed") is False
+        and payload.get("discovery_restricted") is False
+    ):
+        raise DSIProviderUnavailable("dsi_vision_color_calibration_contract_invalid")
     return payload
