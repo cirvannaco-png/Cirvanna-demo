@@ -6,7 +6,11 @@ on:
       - "services/twin-registry/**"
       - ".github/workflows/twin-registry.yml"
   push:
-    branches: [main]
+    branches:
+      - main
+      - "integration/**"
+      - "engineering/**"
+      - "feature/**"
     paths:
       - "services/twin-registry/**"
       - ".github/workflows/twin-registry.yml"
@@ -34,6 +38,38 @@ jobs:
         run: python -m compileall -q app
       - name: Run registry tests
         run: python -m pytest -q
+      - name: Start PostgreSQL 17 migration test database
+        working-directory: .
+        run: |
+          docker run -d --name twin-registry-pg \
+            -e POSTGRES_USER=cirvanna \
+            -e POSTGRES_PASSWORD=twin-registry-ci-password \
+            -e POSTGRES_DB=twin_registry \
+            -p 5432:5432 \
+            --health-cmd="pg_isready -U cirvanna -d twin_registry" \
+            --health-interval=2s --health-timeout=3s --health-retries=30 \
+            postgres:17
+          for attempt in $(seq 1 60); do
+            if docker exec twin-registry-pg pg_isready -U cirvanna -d twin_registry; then exit 0; fi
+            sleep 2
+          done
+          echo "PostgreSQL did not become ready" >&2
+          exit 1
+      - name: Apply, downgrade and re-apply registry migrations
+        working-directory: .
+        run: |
+          docker exec -i twin-registry-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d twin_registry < services/twin-registry/migrations/0001_twin_registry.sql
+          docker exec twin-registry-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d twin_registry -c "INSERT INTO twin_registry_twins(twin_id, subject_id, mesh_asset_id, source_image_asset_ids, representation_type, consent_id, consent_version, model_id, model_revision, model_release_sha256, validation_report_sha256, state) VALUES ('twin-ci-0001', 'subject-ci-0001', '00000000-0000-4000-8000-000000000001', '[\"00000000-0000-4000-8000-000000000002\"]'::jsonb, 'full_body_mesh', 'consent-ci-0001', 'v1', 'ci-model', repeat('a',40), repeat('b',64), repeat('c',64), 'active')"
+          docker exec -i twin-registry-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d twin_registry < services/twin-registry/migrations/0002_twin_registry_deletion_outbox.sql
+          docker exec twin-registry-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d twin_registry -c "UPDATE twin_registry_twins SET state='deletion_pending', version=2 WHERE twin_id='twin-ci-0001'; INSERT INTO twin_registry_deletion_outbox(outbox_id, subject_id, twin_id, asset_ids, command_id, status) VALUES ('00000000-0000-4000-8000-000000000010', 'subject-ci-0001', 'twin-ci-0001', '[\"00000000-0000-4000-8000-000000000001\",\"00000000-0000-4000-8000-000000000002\"]'::jsonb, 'delete-ci-command-0001', 'pending')"
+          docker exec twin-registry-pg pg_dump -Fc -U cirvanna -d twin_registry > /tmp/twin-registry.dump
+          docker exec twin-registry-pg createdb -U cirvanna twin_registry_restore
+          docker exec -i twin-registry-pg pg_restore -U cirvanna -d twin_registry_restore --exit-on-error < /tmp/twin-registry.dump
+          docker exec twin-registry-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d twin_registry_restore -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM twin_registry_twins WHERE twin_id='twin-ci-0001' AND state='deletion_pending' AND version=2) THEN RAISE EXCEPTION 'restored Twin metadata missing'; END IF; IF NOT EXISTS (SELECT 1 FROM twin_registry_deletion_outbox WHERE command_id='delete-ci-command-0001' AND status='pending') THEN RAISE EXCEPTION 'restored Twin deletion outbox missing'; END IF; END \$\$;"
+          docker exec twin-registry-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d twin_registry -c "UPDATE twin_registry_twins SET state='active' WHERE twin_id='twin-ci-0001'; DELETE FROM twin_registry_deletion_outbox WHERE command_id='delete-ci-command-0001'"
+          docker exec -i twin-registry-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d twin_registry < services/twin-registry/migrations/0002_twin_registry_deletion_outbox.down.sql
+          docker exec -i twin-registry-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d twin_registry < services/twin-registry/migrations/0002_twin_registry_deletion_outbox.sql
+          docker exec twin-registry-pg psql -v ON_ERROR_STOP=1 -U cirvanna -d twin_registry -c "SELECT version FROM twin_registry_twins WHERE twin_id='twin-ci-0001'"
       - name: Build registry container
         working-directory: .
         run: docker build -f services/twin-registry/Dockerfile -t cirvanna-twin-registry:ci .
