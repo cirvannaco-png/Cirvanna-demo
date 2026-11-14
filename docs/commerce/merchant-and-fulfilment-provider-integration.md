@@ -8,7 +8,7 @@ Commerce owns merchant applications, owner-scoped listings, merchant-specific SK
 
 The multi-market schema stores versioned FX, tax, fulfilment and payment capability/quote records. The internal fulfilment-quote ingestion route validates timestamps, currency, destination, mode, quote amount and charging basis. Marketplace comparison requires fresh destination-zone evidence. These records are storage and validation contracts; a seller or operator writing a quote into Commerce is not proof that a carrier or logistics provider generated it.
 
-The existing checkout path is Stripe/card only. Seller payouts/Connect onboarding, provider-booked shipments, tracking, cancellation, delivery confirmation, carrier claims and physical returns are not implemented as completed provider integrations.
+The existing checkout path is Stripe/card only. The code now verifies provider capability evidence but does not yet implement seller payouts/Connect onboarding, provider-booked shipments, tracking, cancellation, delivery confirmation, carrier claims or physical returns as completed provider operations.
 
 ## 2. Merchant verification integration
 
