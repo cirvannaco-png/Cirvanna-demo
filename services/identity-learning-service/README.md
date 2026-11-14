@@ -8,6 +8,15 @@ This service is the canonical API owner for explicit positive style preferences 
 
 The API is internal-only. The API Gateway must first resolve the end-user bearer token through Commerce `GET /me`, then pass the verified subject ID using its machine credential. A caller-supplied subject ID is not proof of identity.
 
+
+## PNELLY conversation continuity
+
+The service owns a short-lived, subject-scoped store for normalized PNELLY discovery context. It accepts only an explicit `pnelly_conversation` consent receipt bound to the exact conversation UUID and an expiry no later than 24 hours. Each turn uses optimistic state-version checks and an idempotent turn ID. Revocation, explicit conversation deletion, user data deletion, expiry and the retention job remove the stored context.
+
+Only structured discovery fields are retained (latest query, category, currency, declared location/occasion/climate, bounded constraints and owned-item exclusion choice). **Raw conversation messages and transcripts are not stored.** This table is not a language model, intent parser or conversation generator; the conversational orchestration/provider still has to interpret follow-up language and map it into this typed state before using CAL-protected discovery.
+
+Apply `migrations/0005_pnelly_conversation_context.sql` after `0004_consent_expiry.sql`. The identity workflow tests the migration and isolated PostgreSQL restore.
+
 ## Local setup
 
     python -m pip install -r requirements.txt
