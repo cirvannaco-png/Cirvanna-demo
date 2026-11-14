@@ -732,7 +732,9 @@ async def revoke_consent(
     )
     db.commit()
     if twin_cleanup is not None:
-        await _dispatch_twin_consent_revocations(db, limit=1)
+        await _dispatch_twin_consent_revocations(
+            db, limit=1, command_ids=[twin_cleanup.command_id]
+        )
         db.refresh(twin_cleanup)
         db.refresh(receipt)
     return {
