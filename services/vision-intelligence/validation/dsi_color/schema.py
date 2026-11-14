@@ -166,4 +166,9 @@ class ReleasePolicy(StrictRecord):
             "maximum_repeatability_median_delta_e_2000",
             "maximum_chart_fit_p95_delta_e_2000",
         )
-        return [name for name in required if getattr(self, name) is None]
+        missing = []
+        for name in required:
+            value = getattr(self, name)
+            if value is None or (name in {"required_regions", "required_lighting_profiles"} and not value):
+                missing.append(name)
+        return missing

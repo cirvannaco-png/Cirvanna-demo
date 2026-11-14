@@ -54,8 +54,10 @@ def _summarize(records: list[ColorValidationSample]) -> dict[str, Any]:
     a_bias: list[float] = []
     b_bias: list[float] = []
     fit_p95: list[float] = []
+    reference_uncertainty: list[float] = []
 
     for record in records:
+        reference_uncertainty.append(record.reference_uncertainty_delta_e_2000)
         error = _record_error(record)
         if error is None:
             continue
@@ -89,6 +91,7 @@ def _summarize(records: list[ColorValidationSample]) -> dict[str, Any]:
         "chart_fit_p95_delta_e_2000": (
             round(float(np.percentile(fit_p95, 95)), 6) if fit_p95 else None
         ),
+        "reference_instrument_uncertainty_delta_e_2000": _percentile_summary(reference_uncertainty),
     }
 
 
@@ -108,6 +111,9 @@ def _slice_summaries(
         "camera": defaultdict(list),
         "lighting": defaultdict(list),
         "reference_l_star_bin": defaultdict(list),
+        "operating_system": defaultdict(list),
+        "chart_condition": defaultdict(list),
+        "reference_instrument_geometry": defaultdict(list),
     }
 
     for record in records:
@@ -117,6 +123,9 @@ def _slice_summaries(
         dimensions["reference_l_star_bin"][
             _reference_lightness_bin(record.reference_lab_d50.l_star)
         ].append(record)
+        dimensions["operating_system"][record.operating_system_family].append(record)
+        dimensions["chart_condition"][record.chart_condition_declared].append(record)
+        dimensions["reference_instrument_geometry"][record.reference_measurement_geometry].append(record)
 
     output: dict[str, dict[str, Any]] = {}
     underpowered: list[dict[str, Any]] = []
@@ -230,6 +239,7 @@ def _check_policy(
     repeatability: dict[str, Any],
     slices: dict[str, dict[str, Any]],
     underpowered: list[dict[str, Any]],
+    manifest_created_at,
 ) -> tuple[str, list[str], list[str]]:
     missing = policy.missing_release_fields()
     if missing:
@@ -244,6 +254,8 @@ def _check_policy(
         reasons.append("insufficient_successful_samples")
     if underpowered:
         reasons.append("underpowered_evaluation_slices")
+    if policy.approved_at is not None and policy.approved_at > manifest_created_at:
+        reasons.append("release_policy_approval_after_evaluation_manifest")
 
     present_regions = set(slices["region"])
     for region in policy.required_regions or []:
@@ -282,6 +294,27 @@ def _check_policy(
     if chart_fit is None or chart_fit > policy.maximum_chart_fit_p95_delta_e_2000:
         failures.append("maximum_chart_fit_p95_delta_e_2000_exceeded_or_unmeasured")
 
+    # Apply the same measurement limits to every sufficiently powered slice;
+    # an acceptable aggregate must not conceal a failing camera or lighting group.
+    for dimension, groups in slices.items():
+        for group_name, summary in groups.items():
+            if summary["n_total"] < policy.minimum_samples_per_slice:
+                continue
+            group_delta = summary["delta_e_2000"] or {}
+            if group_delta.get("median", float("inf")) > policy.maximum_median_delta_e_2000:
+                failures.append(f"slice_median_delta_e_exceeded:{dimension}:{group_name}")
+            if group_delta.get("p95", float("inf")) > policy.maximum_p95_delta_e_2000:
+                failures.append(f"slice_p95_delta_e_exceeded:{dimension}:{group_name}")
+            group_bias = summary["absolute_mean_bias"]
+            for axis, threshold in (
+                ("l_star", policy.maximum_absolute_l_bias),
+                ("a_star", policy.maximum_absolute_a_bias),
+                ("b_star", policy.maximum_absolute_b_bias),
+            ):
+                value = group_bias[axis]
+                if value is None or value > threshold:
+                    failures.append(f"slice_{axis}_bias_exceeded_or_unmeasured:{dimension}:{group_name}")
+
     if failures:
         return "FAIL", failures, reasons
     if reasons:
@@ -315,6 +348,29 @@ def evaluate_dataset(
     if len(model_versions) != 1 or len(segmentation_versions) != 1:
         raise EvaluationInputError("an evaluation run must contain exactly one skin model and one segmenter version")
 
+    chart_profiles = {(record.chart_profile_id, record.chart_profile_sha256) for record in records}
+    instruments = {(record.reference_instrument_model, record.reference_instrument_calibration_ref) for record in records}
+    geometries = {record.reference_measurement_geometry for record in records}
+    if len(chart_profiles) != 1:
+        raise EvaluationInputError("an evaluation run must use exactly one chart reference profile")
+    if len(instruments) != 1:
+        raise EvaluationInputError("an evaluation run must use exactly one reference instrument and calibration")
+    instrument_model, instrument_calibration_ref = next(iter(instruments))
+    if instrument_model != manifest.reference_instrument_model:
+        raise EvaluationInputError("sample reference instrument does not match the evaluation manifest")
+    if instrument_calibration_ref != manifest.reference_instrument_calibration_ref:
+        raise EvaluationInputError("sample instrument calibration does not match the evaluation manifest")
+    if len(geometries) != 1:
+        raise EvaluationInputError("an evaluation run must use one documented reference measurement geometry")
+
+    capture_regions = [(record.capture_ref, record.region.value) for record in records]
+    if len(capture_regions) != len(set(capture_regions)):
+        raise EvaluationInputError("capture_ref and region combinations must be unique")
+
+    for digest_name, digest in (("manifest_sha256", manifest_sha256), ("samples_sha256", samples_sha256)):
+        if len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
+            raise EvaluationInputError(f"{digest_name} must be a lowercase SHA-256 digest")
+
     metrics = _summarize(records)
     slices, underpowered = _slice_summaries(
         records,
@@ -333,6 +389,7 @@ def evaluate_dataset(
         repeatability=repeatability,
         slices=slices,
         underpowered=underpowered,
+        manifest_created_at=manifest.created_at,
     )
     skin_name, skin_version, skin_sha = next(iter(model_versions))
     segmenter_version, segmenter_sha = next(iter(segmentation_versions))
@@ -360,6 +417,9 @@ def evaluate_dataset(
             "consent_registry_ref": manifest.consent_registry_ref,
             "training_overlap_audit_ref": manifest.training_overlap_audit_ref,
             "independent_ground_truth_protocol_ref": manifest.independent_ground_truth_protocol_ref,
+            "reference_measurement_geometry": next(iter(geometries)),
+            "chart_profile_id": next(iter(chart_profiles))[0],
+            "chart_profile_sha256": next(iter(chart_profiles))[1],
         },
         "models": {
             "skin_model_name": skin_name,
