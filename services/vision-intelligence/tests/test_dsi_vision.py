@@ -272,3 +272,35 @@ def test_dsi_ready_requires_successful_model_loads_and_label_map(dsi_client, mon
     assert response.json()["dsi_ready"] is True
     assert response.json()["face_landmarker"]["loaded"] is True
     assert response.json()["skin_segmenter"]["loaded"] is True
+
+
+
+def test_dsi_colorchecker_preview_requires_supported_reference_and_returns_unvalidated_lab_stats(dsi_client, monkeypatch):
+    from app.color_calibration import PROFILE_ID, PROFILE_SHA256, build_skin_colour_preview
+
+    categories = np.zeros((320, 240), dtype=np.uint8)
+    categories[50:150, 70:150] = 3
+    categories[160:290, 40:210] = 2
+    category_image = SimpleNamespace(numpy_view=lambda: categories)
+
+    class FakeSegmenter:
+        labels = ["background", "hair", "body-skin", "face-skin", "clothes", "others"]
+
+        def segment(self, _image):
+            return SimpleNamespace(category_mask=category_image)
+
+    monkeypatch.setattr(dsi_models, "get_skin_segmenter", lambda: FakeSegmenter())
+    response = dsi_client.post(
+        "/v1/dsi/colorchecker-tone-preview",
+        headers=dsi_auth(),
+        data={
+            "profile_id": PROFILE_ID,
+            "patch_grid_corners": "[[10,10],[200,10],[200,180],[10,180]]",
+            "chart_age_months": "12",
+        },
+        files={"image": ("capture.png", dsi_image_bytes(), "image/png")},
+    )
+    # This small synthetic capture cannot fit the required 6x4 chart in its
+    # corner box, so the route must reject rather than invent a tone value.
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "DSI_COLOR_CALIBRATION_INPUT_INVALID"
