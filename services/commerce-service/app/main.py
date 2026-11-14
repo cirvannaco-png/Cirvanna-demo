@@ -32,11 +32,15 @@ from babel.numbers import get_currency_precision
 
 from app.observability import install_observability
 from app.market_provider_adapters import (
+    adapter_configured,
     adapter_ready,
     provider_verification_required,
     verify_fulfillment_market,
     verify_fulfillment_quote,
+    verify_fx_quote,
     verify_merchant_approval,
+    verify_payment_capability,
+    verify_tax_quote,
 )
 
 from sqlalchemy import (
@@ -1210,6 +1214,9 @@ class Readiness(BaseModel):
     provider_verification_required: bool
     merchant_verification_provider_ready: bool
     fulfillment_provider_ready: bool
+    fx_provider_ready: bool
+    tax_provider_ready: bool
+    payment_capability_provider_ready: bool
     migrations_required: bool
     migrations_applied: bool
     schema_revision: str | None
@@ -2010,8 +2017,20 @@ def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
     fulfillment_provider_ready = (
         adapter_ready("FULFILLMENT_ADAPTER") if provider_required else False
     )
+    fx_provider_ready = adapter_ready("FX_ADAPTER") if provider_required else False
+    tax_provider_ready = adapter_ready("TAX_ADAPTER") if provider_required else False
+    payment_capability_provider_ready = (
+        adapter_ready("PAYMENT_CAPABILITY_ADAPTER") if provider_required else False
+    )
     provider_dependencies_ready = (
-        not provider_required or (merchant_provider_ready and fulfillment_provider_ready)
+        not provider_required
+        or all([
+            merchant_provider_ready,
+            fulfillment_provider_ready,
+            fx_provider_ready,
+            tax_provider_ready,
+            payment_capability_provider_ready,
+        ])
     )
     ready = (
         connected
@@ -2037,6 +2056,9 @@ def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
         provider_verification_required=provider_required,
         merchant_verification_provider_ready=merchant_provider_ready,
         fulfillment_provider_ready=fulfillment_provider_ready,
+        fx_provider_ready=fx_provider_ready,
+        tax_provider_ready=tax_provider_ready,
+        payment_capability_provider_ready=payment_capability_provider_ready,
         migrations_required=migrations_required,
         migrations_applied=migrations_applied, schema_revision=schema_revision, ready=ready)
     if not ready:
@@ -2057,12 +2079,11 @@ def capabilities() -> dict[str, Any]:
         "marketplace_offer_read_service_auth_configured": len(os.getenv("COMMERCE_MARKETPLACE_READ_TOKEN", "").encode("utf-8")) >= 32,
         "provider_quote_ingestion": bool(os.getenv("COMMERCE_MARKET_CONTEXT_TOKEN")),
         "provider_verification_required": provider_verification_required(),
-        "merchant_verification_adapter_ready": (
-            adapter_ready("MERCHANT_VERIFICATION_ADAPTER") if provider_verification_required() else False
-        ),
-        "fulfillment_adapter_ready": (
-            adapter_ready("FULFILLMENT_ADAPTER") if provider_verification_required() else False
-        ),
+        "merchant_verification_adapter_configured": adapter_configured("MERCHANT_VERIFICATION_ADAPTER"),
+        "fulfillment_adapter_configured": adapter_configured("FULFILLMENT_ADAPTER"),
+        "fx_adapter_configured": adapter_configured("FX_ADAPTER"),
+        "tax_adapter_configured": adapter_configured("TAX_ADAPTER"),
+        "payment_capability_adapter_configured": adapter_configured("PAYMENT_CAPABILITY_ADAPTER"),
         "fulfillment_booking_and_tracking": False,
         "seller_payouts": False,
         "landed_cost_comparison": True, "checkout_landed_cost_revalidation": False,
@@ -2396,6 +2417,7 @@ def ingest_fx_quote(
     variant = _validate_quote_variant(db, str(variant_id))
     if not quote_is_current(payload.observed_at, payload.expires_at):
         raise HTTPException(422, detail={"code": "FX_QUOTE_NOT_CURRENT"})
+    verify_fx_quote(str(variant_id), payload.model_dump(mode="json"))
     existing = db.scalar(select(OfferFXQuote).where(
         OfferFXQuote.variant_id == variant.id,
         OfferFXQuote.provider == payload.provider,
@@ -2468,6 +2490,7 @@ def ingest_tax_quote(
     variant = _validate_quote_variant(db, str(variant_id))
     if not quote_is_current(payload.observed_at, payload.expires_at):
         raise HTTPException(422, detail={"code": "TAX_QUOTE_NOT_CURRENT"})
+    verify_tax_quote(str(variant_id), payload.model_dump(mode="json"))
     existing = db.scalar(select(OfferTaxQuote).where(
         OfferTaxQuote.variant_id == variant.id,
         OfferTaxQuote.provider == payload.provider,
@@ -2513,6 +2536,11 @@ def upsert_market_payment_capability(
         raise HTTPException(404, detail={"code": "MERCHANT_MARKET_NOT_DECLARED"})
     if not quote_is_current(payload.observed_at, payload.expires_at):
         raise HTTPException(422, detail={"code": "PAYMENT_CAPABILITY_NOT_CURRENT"})
+    verify_payment_capability(
+        str(merchant_id),
+        payload.market_country_code,
+        payload.model_dump(mode="json"),
+    )
     row = db.scalar(select(MarketPaymentCapability).where(
         MarketPaymentCapability.merchant_id == merchant.id,
         MarketPaymentCapability.market_country_code == payload.market_country_code,
