@@ -33,6 +33,8 @@ The initial increment adds:
 6. Raw media, face templates, subject identifiers and individual profiles are not included in global-learning aggregates.
 7. DSI outputs are evidence only. USI/TAL, Virtual Twin, Catalog and CAL retain their existing domain ownership.
 8. Inference, profile exchange, training and rendering remain disabled until their separate gates pass.
+9. DSI cannot deny a user's aesthetic or self-discovery request. Previous preferences and inferred appearance attributes are advisory, never hard filters; optional analysis failure or declined consent must fall back to non-DSI discovery.
+10. DSI never updates persistent preferences without an explicit user save action through the canonical USI/TAL workflow.
 
 ## Consequences
 
@@ -42,3 +44,4 @@ The initial increment adds:
 - A later shared profile API requires authenticated service identities, subject-scoped authorization, purpose enforcement and lifecycle propagation. It cannot be activated by exposing an unauthenticated read endpoint.
 - Global learning needs a distinct consent/rights registry and independent held-out evaluation. Aggregate reporting thresholds alone do not authorize training.
 - Appearance correction requires proof of identity preservation and private output lifecycle at the generated-asset level.
+- The discovery autonomy policy keeps users free to explore beyond prior preferences, while still refusing unauthorized processing of protected media.

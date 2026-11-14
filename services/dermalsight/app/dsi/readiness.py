@@ -84,4 +84,13 @@ def dsi_capabilities() -> dict[str, object]:
         "profile_read_api_enabled": False,
         "global_training_enabled": False,
         "appearance_correction_enabled": False,
+        "user_autonomy": {
+            "discovery_available_without_dsi": True,
+            "prior_preferences_are_advisory": True,
+            "user_direction_can_override_prior_preferences": True,
+            "dsi_can_veto_aesthetic_choices": False,
+            "automatic_preference_updates": False,
+            "explicit_save_required_for_preference_updates": True,
+            "optional_analysis_failure_blocks_discovery": False,
+        },
     }

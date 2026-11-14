@@ -42,6 +42,16 @@ The contract contains cosmetic proportions, face-shape and hairline categories p
 
 Only cosmetic previews are in scope: makeup placement, shade previews, concealer placement, hairstyle previews and cosmetic colour previews. The plan requires identity preservation, forbids facial-geometry modification, prohibits diagnostic claims and does not authorize public media output. Any future renderer must prove these invariants against the output asset, not merely set a request flag.
 
+## User autonomy and self-discovery
+
+DSI is advisory and must never become a beauty-standard gatekeeper. A user's requested look or aesthetic direction is authoritative for that exploration, even when it conflicts with previously saved preferences or DSI measurements. Prior preferences are suggestions, not hard constraints; users may experiment, reject advice, change direction, or request a style outside any inferred face-shape, tone or colour profile.
+
+Failure, low confidence, missing model assets or declined consent for optional DSI analysis must not block ordinary self-discovery. The analysis may be skipped, marked unavailable, or offered after the user grants the separate purpose consent. The experience must continue through user-selected, manually guided or otherwise non-DSI routes. Privacy consent remains mandatory for processing the protected image or derived biometric-like measurements; autonomy does not mean processing without permission.
+
+DSI must not silently rewrite USI/TAL preferences. A user's approval or correction is recorded only through the existing authorized preference workflow and an explicit save action. A one-time exploration is not a permanent preference.
+
+DSI output cannot veto a user's chosen aesthetic, hairstyle, makeup, colour or accessory. It may explain trade-offs, confidence and alternatives, but the user makes the final decision. Any non-DSI safety or legal restriction must come from its own documented authority and must not be invented by DSI.
+
 ## Consent and learning boundaries
 
 The privacy service must authenticate a receipt and verify its subject binding before a trusted internal caller constructs the DSI consent contract. The DSI helper checks active state, revocation, exact purpose and expiry; the appearance-correction plan also rejects receipts that are not currently verified, active and unrevoked. These checks are not a cryptographic signature verifier or a substitute for subject-binding verification.

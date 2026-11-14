@@ -31,6 +31,7 @@ from app.dsi.contracts import (
 )
 from app.dsi.governance import ConsentNotAuthorized, require_purpose_consent
 from app.dsi.readiness import dsi_capabilities
+from app.dsi.autonomy import AnalysisReadiness, DiscoveryRequest, plan_discovery
 
 
 def model_evidence(task: ModelTask) -> ModelEvidence:
@@ -322,3 +323,86 @@ def test_appearance_correction_plan_rejects_inactive_or_unverified_consent():
     for receipt in (consent(verified=False), consent(active=False), consent(revoked=True)):
         with pytest.raises(ValidationError):
             AppearanceCorrectionPlan(**{**base, "consent": receipt})
+
+
+
+def test_discovery_is_not_blocked_when_dsi_is_unavailable():
+    plan = plan_discovery(
+        DiscoveryRequest(
+            requested_direction="Try a bold editorial look",
+            experiments=["graphic eyeliner", "bright colour", "short hairstyle"],
+            analysis_requested=True,
+            current_purpose_consent_verified=True,
+            task_specific_model_ready=False,
+        )
+    )
+    assert plan.discovery_continues is True
+    assert plan.analysis_readiness == AnalysisReadiness.UNAVAILABLE
+    assert plan.fallback == "non_dsi_discovery"
+    assert plan.experiments == ["graphic eyeliner", "bright colour", "short hairstyle"]
+
+
+def test_prior_preferences_never_veto_the_users_requested_direction():
+    plan = plan_discovery(
+        DiscoveryRequest(
+            requested_direction="Explore a completely different aesthetic",
+            experiments=["avant-garde", "minimalist", "romantic"],
+            prior_preferences=["classic", "neutral colours"],
+        )
+    )
+    assert plan.requested_direction == "Explore a completely different aesthetic"
+    assert plan.experiments == ["avant-garde", "minimalist", "romantic"]
+    assert plan.prior_preferences_are_advisory is True
+    assert plan.dsi_may_veto_user_choices is False
+    assert plan.automatic_profile_update is False
+
+
+def test_missing_analysis_consent_requests_permission_without_denial():
+    plan = plan_discovery(
+        DiscoveryRequest(
+            requested_direction="Find a new foundation shade and try a dramatic look",
+            experiments=["bold makeup"],
+            analysis_requested=True,
+            current_purpose_consent_verified=False,
+            task_specific_model_ready=True,
+        )
+    )
+    assert plan.analysis_readiness == AnalysisReadiness.CONSENT_REQUIRED
+    assert plan.discovery_continues is True
+    assert plan.fallback == "non_dsi_discovery"
+
+
+def test_analysis_runs_only_when_consent_and_task_model_are_ready():
+    plan = plan_discovery(
+        DiscoveryRequest(
+            requested_direction="Explore a warm-toned evening look",
+            analysis_requested=True,
+            current_purpose_consent_verified=True,
+            task_specific_model_ready=True,
+        )
+    )
+    assert plan.analysis_readiness == AnalysisReadiness.AVAILABLE
+    assert plan.fallback == "optional_dsi_analysis"
+
+
+def test_preferences_are_not_persisted_without_explicit_user_save():
+    implicit = plan_discovery(DiscoveryRequest(requested_direction="Try something new"))
+    explicit = plan_discovery(
+        DiscoveryRequest(
+            requested_direction="Try something new",
+            explicitly_save_preference=True,
+        )
+    )
+    assert implicit.automatic_profile_update is False
+    assert implicit.explicit_save_requested is False
+    assert explicit.automatic_profile_update is False
+    assert explicit.explicit_save_requested is True
+
+
+def test_capabilities_declare_self_discovery_autonomy_invariants():
+    autonomy = dsi_capabilities()["user_autonomy"]
+    assert autonomy["discovery_available_without_dsi"] is True
+    assert autonomy["prior_preferences_are_advisory"] is True
+    assert autonomy["user_direction_can_override_prior_preferences"] is True
+    assert autonomy["dsi_can_veto_aesthetic_choices"] is False
+    assert autonomy["optional_analysis_failure_blocks_discovery"] is False
