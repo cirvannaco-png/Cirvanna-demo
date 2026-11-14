@@ -126,6 +126,8 @@ def install_observability(app: FastAPI, service: str) -> RequestMetrics:
             route_object = request.scope.get("route")
             route = getattr(route_object, "path", None) or "unmatched"
             method = request.method.upper()
+            if method not in {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}:
+                method = "OTHER"
             metrics.record(method, route, status_code, elapsed)
             # Do not log request.url, headers, payloads, exception text or principal data.
             _LOG.info(json.dumps({
