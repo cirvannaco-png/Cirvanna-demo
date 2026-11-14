@@ -12,14 +12,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from .contracts import ConsentPurpose
-
-
-class ConsentNotAuthorized(ValueError):
-    """The canonical identity service did not verify the requested DSI purpose."""
-
-
-class ConsentProviderUnavailable(RuntimeError):
-    """The canonical consent service cannot safely verify the requested purpose."""
+from .errors import ConsentNotAuthorized, DSIProviderUnavailable
 
 
 PURPOSE_SCOPES: dict[ConsentPurpose, tuple[str, ...]] = {
@@ -37,7 +30,7 @@ def _provider_config() -> tuple[str, str]:
     raw = os.getenv("IDENTITY_LEARNING_API_URL", "").strip().rstrip("/")
     token = os.getenv("IDENTITY_LEARNING_API_TOKEN", "").strip()
     if not raw or len(token.encode("utf-8")) < 32:
-        raise ConsentProviderUnavailable("identity_learning_provider_not_configured")
+        raise DSIProviderUnavailable("identity_learning_provider_not_configured")
     parsed = urlsplit(raw)
     host = (parsed.hostname or "").lower()
     local = host in {"localhost", "127.0.0.1", "::1"}
@@ -49,7 +42,7 @@ def _provider_config() -> tuple[str, str]:
         or parsed.fragment
         or (parsed.scheme != "https" and not (parsed.scheme == "http" and local))
     ):
-        raise ConsentProviderUnavailable("identity_learning_provider_url_invalid")
+        raise DSIProviderUnavailable("identity_learning_provider_url_invalid")
     return raw, token
 
 
@@ -109,18 +102,18 @@ async def verify_dsi_consent(
                 json=payload,
             )
     except httpx.TimeoutException as exc:
-        raise ConsentProviderUnavailable("identity_learning_verification_timeout") from exc
+        raise DSIProviderUnavailable("identity_learning_verification_timeout") from exc
     except httpx.HTTPError as exc:
-        raise ConsentProviderUnavailable("identity_learning_verifier_unavailable") from exc
+        raise DSIProviderUnavailable("identity_learning_verifier_unavailable") from exc
 
     if response.status_code in {401, 403, 404}:
         raise ConsentNotAuthorized("dsi_purpose_consent_not_verified")
     if response.status_code != 200:
-        raise ConsentProviderUnavailable("identity_learning_verifier_unavailable")
+        raise DSIProviderUnavailable("identity_learning_verifier_unavailable")
     try:
         receipt = response.json()
     except ValueError as exc:
-        raise ConsentProviderUnavailable("identity_learning_verifier_invalid_response") from exc
+        raise DSIProviderUnavailable("identity_learning_verifier_invalid_response") from exc
 
     required = set(PURPOSE_SCOPES[purpose])
     granted = receipt.get("granted_scopes") if isinstance(receipt, dict) else None
