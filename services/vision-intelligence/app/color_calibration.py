@@ -267,16 +267,15 @@ def _sample_chart_patches(warped: Image.Image) -> tuple[np.ndarray, list[dict[st
             median = np.median(region.astype(np.float64), axis=0)
             clipped = float(np.mean(np.any((region <= 2) | (region >= 253), axis=1)))
             label = f"{letter}{row + 1}"
-            if clipped > 0.05:
-                raise ColorCalibrationError(
-                    f"patch {label} has excessive clipped pixels; reduce glare or exposure clipping"
-                )
+            excluded = clipped > 0.05
             samples.append(median.tolist())
             diagnostics.append({
                 "patch": label,
                 "sample_pixels": int(region.shape[0]),
                 "median_srgb": [round(float(v), 3) for v in median],
                 "clipped_pixel_fraction": round(clipped, 5),
+                "excluded_from_fit": excluded,
+                "exclusion_reason": "clipped_pixels" if excluded else None,
                 "within_patch_rgb_std": [
                     round(float(value), 3) for value in np.std(region.astype(np.float64), axis=0)
                 ],
@@ -419,10 +418,23 @@ def build_skin_colour_preview(
     finally:
         warped.close()
 
-    reference_lab = np.asarray([[patch[1], patch[2], patch[3]] for patch in PATCHES], dtype=np.float64)
+    reference_lab_all = np.asarray([[patch[1], patch[2], patch[3]] for patch in PATCHES], dtype=np.float64)
+    usable_indices = [
+        index for index, diagnostic in enumerate(patch_diagnostics)
+        if diagnostic["excluded_from_fit"] is False
+    ]
+    neutral_usable = [
+        index for index in usable_indices if PATCHES[index][0].endswith("4")
+    ]
+    if len(usable_indices) < 18 or len(neutral_usable) < 4:
+        raise ColorCalibrationError(
+            "fewer than 18 usable patches or fewer than four neutral patches remain after clipping checks"
+        )
+    reference_lab = reference_lab_all[usable_indices]
     reference_xyz = lab_d50_to_xyz(reference_lab)
-    coefficients = _fit_affine_rgb_to_xyz(observed_rgb, reference_xyz)
-    loo = _leave_one_out_errors(observed_rgb, reference_lab, reference_xyz)
+    observed_rgb_usable = observed_rgb[usable_indices]
+    coefficients = _fit_affine_rgb_to_xyz(observed_rgb_usable, reference_xyz)
+    loo = _leave_one_out_errors(observed_rgb_usable, reference_lab, reference_xyz)
 
     rgb_image = np.asarray(image, dtype=np.uint8)
     categories = np.asarray(category_mask)
@@ -459,6 +471,12 @@ def build_skin_colour_preview(
             else "not_independently_inspected"
         ),
         "chart_patch_count": int(len(PATCHES)),
+        "chart_patch_count_used": int(len(usable_indices)),
+        "patches_excluded_from_fit": [
+            PATCHES[index][0] for index, diagnostic in enumerate(patch_diagnostics)
+            if diagnostic["excluded_from_fit"]
+        ],
+        "neutral_patches_used": len(neutral_usable),
         "chart_fit_leave_one_out_delta_e_2000": {
             "mean": round(float(np.mean(loo)), 4),
             "median": round(float(np.median(loo)), 4),
@@ -466,7 +484,7 @@ def build_skin_colour_preview(
             "maximum": round(float(np.max(loo)), 4),
         },
         "patch_leave_one_out_delta_e_2000": [
-            {"patch": PATCHES[index][0], "delta_e_2000": round(float(error), 4)}
+            {"patch": PATCHES[usable_indices[index]][0], "delta_e_2000": round(float(error), 4)}
             for index, error in enumerate(loo)
         ],
         "patch_diagnostics": patch_diagnostics,

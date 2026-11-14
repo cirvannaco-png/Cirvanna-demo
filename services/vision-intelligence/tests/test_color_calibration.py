@@ -91,7 +91,9 @@ def test_colorchecker_fit_returns_unvalidated_face_and_body_colour_previews():
     assert result["profile"]["profile_id"] == PROFILE_ID
     assert result["profile"]["profile_sha256"] == PROFILE_SHA256
     assert result["chart_patch_count"] == 24
-    assert len(result["patch_leave_one_out_delta_e_2000"]) == 24
+    assert result["chart_patch_count_used"] == 23
+    assert result["patches_excluded_from_fit"] == ["F3"]
+    assert len(result["patch_leave_one_out_delta_e_2000"]) == result["chart_patch_count_used"]
     assert result["requested_region"] == "both"
     assert set(result["chart_fit_leave_one_out_delta_e_2000"]) == {
         "mean", "median", "p95", "maximum"
@@ -165,13 +167,37 @@ def test_colorchecker_profile_has_exact_24_post_2014_patches():
 
 
 
-def test_colorchecker_fit_rejects_clipped_chart_patch():
+def test_colorchecker_fit_excludes_clipped_patch_and_reports_it():
     image, categories = _synthetic_capture()
     pixels = np.asarray(image).copy()
-    pixels[50:150, 100:200] = 255
+    pixels[70:130, 120:180] = 255
     clipped = Image.fromarray(pixels, mode="RGB")
     try:
-        with pytest.raises(ColorCalibrationError, match="excessive clipped pixels"):
+        result = build_skin_colour_preview(
+            clipped,
+            categories,
+            patch_grid_corners=[[100, 50], [700, 50], [700, 450], [100, 450]],
+        )
+    finally:
+        clipped.close()
+        image.close()
+    assert result["patches_excluded_from_fit"] == ["A1", "F3"]
+    assert result["chart_patch_count_used"] == 22
+    diagnostic = next(item for item in result["patch_diagnostics"] if item["patch"] == "A1")
+    assert diagnostic["excluded_from_fit"] is True
+    assert diagnostic["exclusion_reason"] == "clipped_pixels"
+
+
+def test_colorchecker_fit_fails_when_too_many_patches_are_clipped():
+    image, categories = _synthetic_capture()
+    pixels = np.asarray(image).copy()
+    for column in range(6):
+        x0 = 100 + column * 100 + 20
+        pixels[70:130, x0:x0 + 60] = 255
+        pixels[170:230, x0:x0 + 60] = 255
+    clipped = Image.fromarray(pixels, mode="RGB")
+    try:
+        with pytest.raises(ColorCalibrationError, match="fewer than 18 usable patches"):
             build_skin_colour_preview(
                 clipped,
                 categories,
