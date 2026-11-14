@@ -765,6 +765,10 @@ def test_wardrobe_page_exposes_feedback_and_consent_controls(client):
     assert "/api/wardrobe/recommendations" in response.text
     assert "/api/vision/complementer" in response.text
     assert "Refine with Complementer" in response.text
+    assert "24-hour discovery continuity" in response.text
+    assert "Remember my discovery context for 24 hours" in response.text
+    assert "/api/wardrobe/pnelly/conversations" in response.text
+    assert "Clear saved context" in response.text
     assert "Save to Wardrobe" in response.text
     assert "/api/wardrobe/pnelly/save-look" in response.text
     assert "/api/wardrobe/pnelly/look-feedback" in response.text
