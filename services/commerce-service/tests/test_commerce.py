@@ -97,6 +97,7 @@ def client(monkeypatch):
     monkeypatch.setenv("COMMERCE_JWT_ISSUER", "cirvanna-auth")
     monkeypatch.setenv("COMMERCE_JWT_AUDIENCE", "cirvanna-commerce")
     monkeypatch.delenv("COMMERCE_ENVIRONMENT", raising=False)
+    monkeypatch.delenv("COMMERCE_MARKET_PROVIDER_VERIFICATION_REQUIRED", raising=False)
     monkeypatch.delenv("COMMERCE_AUTH_MODE", raising=False)
     monkeypatch.delenv("COMMERCE_JWT_JWKS_URL", raising=False)
     monkeypatch.delenv("COMMERCE_JWT_ROLE_CLAIM", raising=False)
@@ -2058,7 +2059,7 @@ def test_checkout_learning_consent_rejects_version_mismatch(monkeypatch):
 
 
 def test_production_merchant_approval_fails_closed_without_provider_verification(client, monkeypatch):
-    monkeypatch.setenv("COMMERCE_ENVIRONMENT", "production")
+    monkeypatch.setenv("COMMERCE_MARKET_PROVIDER_VERIFICATION_REQUIRED", "true")
     monkeypatch.delenv("MERCHANT_VERIFICATION_ADAPTER_URL", raising=False)
     monkeypatch.delenv("MERCHANT_VERIFICATION_ADAPTER_TOKEN", raising=False)
     seller = auth("provider-gated-seller", "merchant")
@@ -2087,7 +2088,7 @@ def test_production_merchant_approval_fails_closed_without_provider_verification
 
 
 def test_production_fulfilment_quote_ingestion_fails_without_provider_attestation(client, monkeypatch):
-    monkeypatch.setenv("COMMERCE_ENVIRONMENT", "production")
+    monkeypatch.setenv("COMMERCE_MARKET_PROVIDER_VERIFICATION_REQUIRED", "true")
     monkeypatch.setenv("COMMERCE_MARKET_CONTEXT_TOKEN", "market-context-token-long-enough-for-tests")
     monkeypatch.delenv("FULFILLMENT_ADAPTER_URL", raising=False)
     monkeypatch.delenv("FULFILLMENT_ADAPTER_TOKEN", raising=False)
@@ -2116,7 +2117,7 @@ def test_production_fulfilment_quote_ingestion_fails_without_provider_attestatio
 
 
 def test_production_readiness_exposes_provider_adapter_blockers(client, monkeypatch):
-    monkeypatch.setenv("COMMERCE_ENVIRONMENT", "production")
+    monkeypatch.setenv("COMMERCE_MARKET_PROVIDER_VERIFICATION_REQUIRED", "true")
     monkeypatch.delenv("MERCHANT_VERIFICATION_ADAPTER_URL", raising=False)
     monkeypatch.delenv("MERCHANT_VERIFICATION_ADAPTER_TOKEN", raising=False)
     for key in (
@@ -2142,7 +2143,7 @@ def test_production_readiness_exposes_provider_adapter_blockers(client, monkeypa
 
 
 def test_production_fx_tax_and_payment_ingestion_fail_closed_without_provider_adapters(client, monkeypatch):
-    monkeypatch.setenv("COMMERCE_ENVIRONMENT", "production")
+    monkeypatch.setenv("COMMERCE_MARKET_PROVIDER_VERIFICATION_REQUIRED", "true")
     monkeypatch.setenv("COMMERCE_MARKET_CONTEXT_TOKEN", "market-context-token-long-enough-for-tests")
     for key in (
         "FX_ADAPTER_URL", "FX_ADAPTER_TOKEN",
