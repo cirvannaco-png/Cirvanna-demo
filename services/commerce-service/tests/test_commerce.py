@@ -2054,3 +2054,78 @@ def test_checkout_learning_consent_rejects_version_mismatch(monkeypatch):
             "buyer-1", "consent-bundle-001", "personalization-v1"
         )
     assert exc.value.status_code == 403
+
+
+
+def test_production_merchant_approval_fails_closed_without_provider_verification(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_ENVIRONMENT", "production")
+    monkeypatch.delenv("MERCHANT_VERIFICATION_ADAPTER_URL", raising=False)
+    monkeypatch.delenv("MERCHANT_VERIFICATION_ADAPTER_TOKEN", raising=False)
+    seller = auth("provider-gated-seller", "merchant")
+    created = client.post("/merchants/applications", headers=seller, json={
+        "display_name": "Provider Gated Studio",
+        "legal_name": "Provider Gated Studio Limited",
+        "legal_country_code": "KE",
+        "operating_markets": ["KE"],
+        "contact_email": "seller@example.test",
+    })
+    assert created.status_code == 201
+    merchant_id = created.json()["merchant_id"]
+
+    approval = client.post(
+        f"/admin/merchants/{merchant_id}/decision",
+        headers=auth("provider-gated-admin", "admin"),
+        json={"decision": "approve", "verification_reference": "unverified-ref-001"},
+    )
+
+    assert approval.status_code == 503
+    assert approval.json()["detail"]["code"] == "MERCHANT_VERIFICATION_ADAPTER_NOT_TRUSTED"
+    stored = client.get("/merchants/me", headers=seller)
+    assert stored.status_code == 200
+    assert stored.json()["status"] == "pending"
+    assert stored.json()["verification_reference"] is None
+
+
+def test_production_fulfilment_quote_ingestion_fails_without_provider_attestation(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_ENVIRONMENT", "production")
+    monkeypatch.setenv("COMMERCE_MARKET_CONTEXT_TOKEN", "market-context-token-long-enough-for-tests")
+    monkeypatch.delenv("FULFILLMENT_ADAPTER_URL", raising=False)
+    monkeypatch.delenv("FULFILLMENT_ADAPTER_TOKEN", raising=False)
+    seeded = seed_offer()
+    observed = main.now()
+    response = client.post(
+        f"/internal/market-context/variants/{seeded['variant_id']}/fulfillment-quotes",
+        headers={"X-Commerce-Market-Context-Token": "market-context-token-long-enough-for-tests"},
+        json={
+            "provider": "carrier-001",
+            "provider_quote_id": "quote-001",
+            "destination_country_code": "KE",
+            "destination_key": "Nakuru/Subukia",
+            "fulfillment_mode": "courier_delivery",
+            "charge_basis": "per_quote",
+            "amount_minor": 250,
+            "currency": "KES",
+            "status": "confirmed",
+            "distance_km": 14.5,
+            "observed_at": observed.isoformat(),
+            "expires_at": (observed + main.timedelta(hours=1)).isoformat(),
+        },
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "FULFILLMENT_ADAPTER_NOT_TRUSTED"
+
+
+def test_production_readiness_exposes_provider_adapter_blockers(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_ENVIRONMENT", "production")
+    monkeypatch.delenv("MERCHANT_VERIFICATION_ADAPTER_URL", raising=False)
+    monkeypatch.delenv("MERCHANT_VERIFICATION_ADAPTER_TOKEN", raising=False)
+    monkeypatch.delenv("FULFILLMENT_ADAPTER_URL", raising=False)
+    monkeypatch.delenv("FULFILLMENT_ADAPTER_TOKEN", raising=False)
+
+    response = client.get("/ready")
+
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["provider_verification_required"] is True
+    assert detail["merchant_verification_provider_ready"] is False
+    assert detail["fulfillment_provider_ready"] is False
