@@ -1,6 +1,6 @@
 # Click It end-to-end privacy and rights verification plan
 
-<badge>Release blocked — Click It must remain disabled</badge>
+**Release blocked — Click It must remain disabled.**
 
 ## Purpose and threat model
 
