@@ -571,6 +571,63 @@ def test_wardrobe_consent_receipt_is_created_server_side_and_subject_scoped(clie
     assert fake.calls[1][2]["json"]["scope"] == "style_learning"
 
 
+def test_pnelly_conversation_delete_requires_confirmed_inactive_consent(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-internal-token-more-than-thirty-two-bytes")
+    conversation_id = "4a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"status": "deleted", "conversation_id": conversation_id, "consent_inactive": True}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.delete(
+        "/api/wardrobe/pnelly/conversations/" + conversation_id,
+        headers={"Authorization": "Bearer signed-session"},
+    )
+    assert response.status_code == 200
+    assert fake.calls[1][1].endswith("/v1/pnelly/conversations/" + conversation_id)
+    assert fake.calls[1][2]["params"]["subject_id"] == "signed-user-42"
+
+    unsafe_fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"status": "deleted", "conversation_id": conversation_id, "consent_inactive": False}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: unsafe_fake)
+    unsafe = client.delete(
+        "/api/wardrobe/pnelly/conversations/" + conversation_id,
+        headers={"Authorization": "Bearer signed-session"},
+    )
+    assert unsafe.status_code == 502
+    assert unsafe.json()["detail"]["code"] == "PNELLY_CONVERSATION_DELETE_RESPONSE_INVALID"
+
+
+def test_pnelly_conversation_creation_revokes_malformed_partial_consent(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-internal-token-more-than-thirty-two-bytes")
+    conversation_id = "4a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+    receipt_id = "5b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e"
+    identifiers = iter([__import__("uuid").UUID(conversation_id), __import__("uuid").UUID(receipt_id)])
+    monkeypatch.setattr(main.uuid, "uuid4", lambda: next(identifiers))
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({
+            "receipt_id": receipt_id, "consent_id": "wrong-conversation",
+            "resource_id": conversation_id, "granted": True,
+        }),
+        FakeResponse({"status": "revoked"}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/pnelly/conversations",
+        headers={"Authorization": "Bearer signed-session"},
+    )
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "PNELLY_CONVERSATION_CONSENT_BINDING_INVALID"
+    assert fake.calls[2][1].endswith("/v1/tal/consents/" + receipt_id + "/revoke")
+
+
 def test_pnelly_conversation_creation_records_explicit_resource_bound_24_hour_consent(client, monkeypatch):
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
     monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
