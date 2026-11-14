@@ -2194,6 +2194,13 @@ def test_production_fx_tax_and_payment_ingestion_fail_closed_without_provider_ad
     assert tax.status_code == 503
     assert tax.json()["detail"]["code"] == "TAX_ADAPTER_NOT_TRUSTED"
 
+    market = client.post(
+        "/merchant/markets",
+        headers=auth("merchant-1", "merchant"),
+        json={"market_country_code": "KE", "display_currency": "KES", "locale": "en-KE"},
+    )
+    assert market.status_code == 201, market.text
+
     capability = client.put(
         f"/internal/market-context/merchants/{seeded['merchant_id']}/payment-capabilities",
         headers=market_token,
