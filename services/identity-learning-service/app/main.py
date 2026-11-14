@@ -920,7 +920,7 @@ async def _dispatch_twin_consent_revocations(db: Session, limit: int = 20) -> di
     for item in pending:
         try:
             await _notify_twin_registry_of_revocation(item)
-            item.status = "complete"
+            item.status = "delivered"
             item.last_error_code = None
             item.completed_at = utcnow()
             completed += 1
