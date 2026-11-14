@@ -476,7 +476,17 @@ def readiness(db: Annotated[Session, Depends(get_db)]):
         db.execute(select(ConsentReceipt.consent_id, ConsentReceipt.expires_at).limit(1))
         db.execute(select(TALEvent.event_id).limit(1))
         db.execute(select(PnellyConversation.conversation_id).limit(1))
-        return {"status": "ready", "service": SERVICE, "database": "reachable", "durable_usi": True, "durable_tal": True, "pnelly_conversation_context": True, "ready": True}
+        db.execute(select(ConsentRevocationOutbox.command_id).limit(1))
+        return {
+            "status": "ready",
+            "service": SERVICE,
+            "database": "reachable",
+            "durable_usi": True,
+            "durable_tal": True,
+            "pnelly_conversation_context": True,
+            "twin_consent_cleanup_outbox": True,
+            "ready": True,
+        }
     except SQLAlchemyError:
         raise HTTPException(503, detail={"code": "IDENTITY_SCHEMA_NOT_READY"})
 
