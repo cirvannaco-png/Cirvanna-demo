@@ -44,8 +44,11 @@ def client(tmp_path, monkeypatch):
     async def fake_request(method, base, path, token, *, json_body=None):
         if base == "https://identity.example.test":
             return FakeResponse(payload={
-                "verified": True, "active": True, "subject_id": "customer-123",
-                "consent_id": "consent-twin-0001", "resource_id": "twin-123",
+                "verified": True,
+                "active": True,
+                "subject_id": json_body["subject_id"],
+                "consent_id": json_body["consent_id"],
+                "resource_id": json_body["resource_id"],
                 "consent_version": "media-v1",
                 "granted_scopes": ["image_processing", "body_measurements", "virtual_twin_storage"],
             })
