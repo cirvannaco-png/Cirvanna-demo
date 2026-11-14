@@ -880,6 +880,7 @@ async def _notify_twin_registry_of_revocation(
                 json={
                     "subject_id": item.subject_id,
                     "consent_id": item.consent_id,
+                    "resource_id": item.resource_id,
                     "command_id": item.command_id,
                 },
             )
