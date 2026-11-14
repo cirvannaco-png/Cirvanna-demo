@@ -821,7 +821,18 @@ def _queue_twin_consent_cleanup(
     receipt_id: str, scope: str,
 ) -> ConsentRevocationOutbox | None:
     """Persist a cleanup command in the same transaction as resource consent withdrawal."""
-    if resource_id is None or scope not in TWIN_CONSENT_SCOPES:
+    if resource_id is None:
+        return None
+    # Withdrawal of any receipt in a bundle revokes the entire exact-resource
+    # bundle. Queue Twin cleanup when that bundle contains any Twin scope,
+    # regardless of which receipt the user selected for revocation.
+    twin_scope_receipt = db.scalar(select(ConsentReceipt.receipt_id).where(
+        ConsentReceipt.subject_id == subject_id,
+        ConsentReceipt.consent_id == consent_id,
+        ConsentReceipt.resource_id == resource_id,
+        ConsentReceipt.scope.in_(TWIN_CONSENT_SCOPES),
+    ).limit(1))
+    if twin_scope_receipt is None:
         return None
     digest = hashlib.sha256(
         f"{subject_id}:{consent_id}:{resource_id}".encode("utf-8")
