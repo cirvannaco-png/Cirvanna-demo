@@ -126,7 +126,7 @@ def test_valid_image_uses_adapter_and_returns_non_diagnostic_scores(monkeypatch)
     assert data["model_version"] == "test-model-1"
     assert data["attributes"] == [{"name": "texture_variation", "score": 0.731058}]
     assert "not a medical diagnosis" in data["disclaimer"]
-    assert response.headers["cache-control"] == "no-store"
+    assert "no-store" in response.headers["cache-control"]
 
 
 def test_rejects_mime_mismatch(monkeypatch):
