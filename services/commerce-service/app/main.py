@@ -31,6 +31,13 @@ from urllib.parse import urlsplit
 from babel.numbers import get_currency_precision
 
 from app.observability import install_observability
+from app.market_provider_adapters import (
+    adapter_ready,
+    provider_verification_required,
+    verify_fulfillment_market,
+    verify_fulfillment_quote,
+    verify_merchant_approval,
+)
 
 from sqlalchemy import (
     JSON, Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint,
@@ -1200,6 +1207,9 @@ class Readiness(BaseModel):
     cal_purchase_gateway_configured: bool
     cal_purchase_receipt_signer_configured: bool
     cal_gateway_ready: bool
+    provider_verification_required: bool
+    merchant_verification_provider_ready: bool
+    fulfillment_provider_ready: bool
     migrations_required: bool
     migrations_applied: bool
     schema_revision: str | None
@@ -1993,6 +2003,16 @@ def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
         cal_signer_configured = False
         cal_gateway_ready = False
     migrations_applied = schema_revision == EXPECTED_SCHEMA_REVISION
+    provider_required = provider_verification_required()
+    merchant_provider_ready = (
+        adapter_ready("MERCHANT_VERIFICATION_ADAPTER") if provider_required else False
+    )
+    fulfillment_provider_ready = (
+        adapter_ready("FULFILLMENT_ADAPTER") if provider_required else False
+    )
+    provider_dependencies_ready = (
+        not provider_required or (merchant_provider_ready and fulfillment_provider_ready)
+    )
     ready = (
         connected
         and schema_present
@@ -2003,6 +2023,7 @@ def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
         and cal_gateway_configured
         and cal_signer_configured
         and cal_gateway_ready
+        and provider_dependencies_ready
         and (not migrations_required or migrations_applied)
     )
     result = Readiness(status="ready" if ready else "not_ready", service=SERVICE,
@@ -2012,7 +2033,11 @@ def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
         payment_configured=payment_ok,
         cal_purchase_gateway_configured=cal_gateway_configured,
         cal_purchase_receipt_signer_configured=cal_signer_configured,
-        cal_gateway_ready=cal_gateway_ready, migrations_required=migrations_required,
+        cal_gateway_ready=cal_gateway_ready,
+        provider_verification_required=provider_required,
+        merchant_verification_provider_ready=merchant_provider_ready,
+        fulfillment_provider_ready=fulfillment_provider_ready,
+        migrations_required=migrations_required,
         migrations_applied=migrations_applied, schema_revision=schema_revision, ready=ready)
     if not ready:
         raise HTTPException(503, detail=result.model_dump())
@@ -2031,6 +2056,15 @@ def capabilities() -> dict[str, Any]:
         "marketplace_offer_read_requires_service_auth": True,
         "marketplace_offer_read_service_auth_configured": len(os.getenv("COMMERCE_MARKETPLACE_READ_TOKEN", "").encode("utf-8")) >= 32,
         "provider_quote_ingestion": bool(os.getenv("COMMERCE_MARKET_CONTEXT_TOKEN")),
+        "provider_verification_required": provider_verification_required(),
+        "merchant_verification_adapter_ready": (
+            adapter_ready("MERCHANT_VERIFICATION_ADAPTER") if provider_verification_required() else False
+        ),
+        "fulfillment_adapter_ready": (
+            adapter_ready("FULFILLMENT_ADAPTER") if provider_verification_required() else False
+        ),
+        "fulfillment_booking_and_tracking": False,
+        "seller_payouts": False,
         "landed_cost_comparison": True, "checkout_landed_cost_revalidation": False,
         "catacaci_eligibility": False, "candidate_bound_purchase_authorization_configured": bool(os.getenv("DECISION_GATEWAY_URL") and os.getenv("DECISION_GATEWAY_TOKEN") and os.getenv("CAL_PURCHASE_RECEIPT_HMAC_SECRET")), "click_it_reconstruction": False,
         "virtual_twin_generation": False, "virtual_try_on": False}
@@ -2122,17 +2156,34 @@ def decide_merchant(merchant_id: uuid.UUID, payload: MerchantDecision,
     merchant = db.get(Merchant, str(merchant_id))
     if not merchant:
         raise HTTPException(404, detail={"code": "MERCHANT_NOT_FOUND"})
+    verified_reference = payload.verification_reference.strip() if payload.verification_reference else None
+    verification_audit_note = None
     if payload.decision == "approve":
-        if not payload.verification_reference or not payload.verification_reference.strip():
+        if not verified_reference:
             raise HTTPException(409, detail={"code": "MERCHANT_VERIFICATION_REQUIRED",
-                "detail": "An admin-supplied reference from the external business/KYC verification procedure is required."})
-        merchant.verification_reference = payload.verification_reference.strip()
+                "detail": "A provider verification reference is required before merchant approval."})
+        if provider_verification_required():
+            operating_markets = list(db.scalars(select(MerchantOperatingMarket.market_country_code).where(
+                MerchantOperatingMarket.merchant_id == merchant.id
+            )).all())
+            provider_evidence = verify_merchant_approval(
+                merchant,
+                verified_reference,
+                operating_markets=operating_markets,
+            )
+            verified_reference = provider_evidence["verification_reference"]
+            verification_audit_note = provider_evidence["audit_note"]
+        merchant.verification_reference = verified_reference
     previous_state = merchant.state
     previous_commission_bps = merchant.commission_bps
     merchant.state = {"approve": "approved", "reject": "rejected", "suspend": "suspended"}[payload.decision]
     merchant.commission_bps = payload.commission_bps
     merchant.decision_note = payload.note.strip() if payload.note else None
     merchant.updated_at = now()
+    audit_note = merchant.decision_note
+    if verification_audit_note:
+        audit_note = (audit_note + " | " if audit_note else "") + verification_audit_note
+        audit_note = audit_note[:500]
     db.add(MerchantDecisionAudit(
         id=str(uuid.uuid4()),
         merchant_id=merchant.id,
@@ -2142,8 +2193,8 @@ def decide_merchant(merchant_id: uuid.UUID, payload: MerchantDecision,
         new_state=merchant.state,
         previous_commission_bps=previous_commission_bps,
         commission_bps=merchant.commission_bps,
-        verification_reference=payload.verification_reference.strip() if payload.verification_reference else None,
-        note=merchant.decision_note,
+        verification_reference=verified_reference,
+        note=audit_note,
         occurred_at=merchant.updated_at,
     ))
     db.commit()
@@ -2291,6 +2342,14 @@ def set_merchant_market_state(
             raise HTTPException(409, detail={"code": "MARKET_TAX_CAPABILITY_NOT_READY"})
         if not quote_is_current(payload.fulfillment_capability_observed_at, payload.fulfillment_capability_expires_at):
             raise HTTPException(409, detail={"code": "MARKET_FULFILLMENT_CAPABILITY_NOT_READY"})
+        verify_fulfillment_market(
+            merchant_id=merchant.id,
+            market_country_code=market_code,
+            provider=payload.fulfillment_provider or "",
+            provider_reference=payload.fulfillment_provider_reference or "",
+            observed_at=payload.fulfillment_capability_observed_at,
+            expires_at=payload.fulfillment_capability_expires_at,
+        )
         market.display_currency = display_currency
         market.locale = payload.locale or market.locale
         market.tax_provider = payload.tax_provider
@@ -2373,6 +2432,7 @@ def ingest_fulfillment_quote(
     variant = _validate_quote_variant(db, str(variant_id))
     if not quote_is_current(payload.observed_at, payload.expires_at):
         raise HTTPException(422, detail={"code": "FULFILLMENT_QUOTE_NOT_CURRENT"})
+    verify_fulfillment_quote(str(variant_id), payload.model_dump(mode="json"))
     existing = db.scalar(select(OfferFulfillmentQuote).where(
         OfferFulfillmentQuote.variant_id == variant.id,
         OfferFulfillmentQuote.provider == payload.provider,
