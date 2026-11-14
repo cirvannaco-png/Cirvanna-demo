@@ -7,7 +7,7 @@
 The three critical services now share a small, dependency-free telemetry module.
 
 - `GET /internal/metrics` exposes Prometheus text format only when `METRICS_ENABLED=true` and a dedicated `OBSERVABILITY_METRICS_TOKEN` of at least 32 bytes is configured.
-- Scrapers must send `X-Observability-Token`; the endpoint is not part of the public customer navigation or API contract. Missing configuration returns 404; an invalid token returns 401.
+- Scrapers must send `X-Observability-Token`; the endpoint is not part of the public customer navigation or API contract. Missing configuration returns 404; an invalid token returns 401. **The bearer token is application authentication, not a network firewall:** production ingress/network policy must separately allow only the monitoring network or private service mesh to reach this route, and the proxy must preserve a trustworthy client address. Do not expose `/internal/metrics` through public routing.
 - `http_server_requests_total` and `http_server_request_duration_seconds` use only service name, HTTP method, route template and status code. Dynamic identifiers, query strings and request content are not metric labels.
 - Each request gets a generated `X-Request-ID` response header. Structured stdout logs contain only request ID, method, route template, status and elapsed milliseconds.
 - Request bodies, query strings, Authorization headers, user IDs, asset IDs, image bytes, face crops, embeddings and exception messages are not recorded by this middleware.
@@ -25,7 +25,7 @@ Set per service in the approved secret manager:
 - `OTEL_EXPORTER_OTLP_ENDPOINT` and approved protocol/headers only for the selected private telemetry collector;
 - `LOG_LEVEL=INFO` for normal operations; do not switch production logging to verbose body/debug capture.
 
-Scrape `/internal/metrics` over a private service network with a dedicated monitoring identity. Do not make the scrape route public, proxy it through the browser, add it to CORS, or store the scrape token in frontend configuration. Confirm that the collector strips or rejects sensitive labels and that log retention and access meet the approved privacy schedule.
+Scrape `/internal/metrics` over a private service network with a dedicated monitoring identity. Enforce this at the platform ingress/service-mesh layer; the path name and bearer token do not make a public listener private. Do not make the scrape route public, proxy it through the browser, add it to CORS, or store the scrape token in frontend configuration. Confirm that the collector strips or rejects sensitive labels and that log retention and access meet the approved privacy schedule.
 
 No monitoring vendor, collector, alert route, dashboard or pager is selected/configured by this repository. The platform owner must approve the service, data region, retention, encryption, access roles, budget, retention/deletion and alert recipient before activation.
 
