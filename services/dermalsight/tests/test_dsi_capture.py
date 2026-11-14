@@ -43,7 +43,7 @@ def test_body_alignment_requires_two_regions():
 
 
 def test_calibrated_tone_requires_a_supported_colour_reference():
-    with pytest.raises(ValidationError, match="physical colour-reference"):
+    with pytest.raises(ValidationError, match="physical colour reference"):
         CapturePlanRequest(
             assessments=[AssessmentSelection.SKIN_TONE],
             tone_capture_mode=ToneCaptureMode.CALIBRATED_CIELAB,
