@@ -14,11 +14,13 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 from pydantic import BaseModel
 from starlette import status
 
+from .dsi.capture import CapturePlanRequest, build_capture_plan
+from .dsi.router import router as dsi_router
 from .model_adapter import ModelConfigurationError, SkinAnalysisEngine
 from .validation import verify_signed_validation_report
 
 SERVICE_NAME = "cirvanna-dermalsight"
-SERVICE_VERSION = "0.1.0"
+SERVICE_VERSION = "0.2.0"
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_IMAGE_PIXELS = 16_000_000
 ALLOWED_MIME_TYPES = {"image/jpeg", "image/png", "image/webp"}
@@ -28,10 +30,12 @@ app = FastAPI(
     title="Cirvanna DermalSight API",
     version=SERVICE_VERSION,
     description=(
-        "Non-diagnostic cosmetic skin-attribute inference. Requires explicit consent "
-        "and a hash-verified ONNX model. Does not diagnose skin disease."
+        "Non-diagnostic cosmetic skin-attribute inference and the governed DSI "
+        "contract surface. DSI inference remains disabled until task-specific "
+        "models, validation evidence and authorization controls pass."
     ),
 )
+app.include_router(dsi_router)
 bearer = HTTPBearer(auto_error=False)
 
 
@@ -101,6 +105,16 @@ async def privacy_headers(request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
     return response
+
+
+@app.post(
+    "/api/v1/dsi/capture-plan",
+    tags=["dsi", "capture"],
+    dependencies=[Depends(require_api_token)],
+)
+def create_dsi_capture_plan(request: CapturePlanRequest) -> dict[str, object]:
+    """Return capture guidance only; this route never accepts or processes media."""
+    return build_capture_plan(request).model_dump(mode="json")
 
 
 @app.get("/health", tags=["operations"])
