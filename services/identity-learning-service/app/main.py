@@ -1243,7 +1243,9 @@ async def delete_user_data(subject_id: str, db: Annotated[Session, Depends(get_d
         "deleted_color_profile": color_profile is not None,
         "deletion_receipt_id": receipt.receipt_id,
         "twin_cleanup_commands": twin_cleanup_commands,
+        "twin_cleanup_processed": cleanup_result["processed"],
         "twin_cleanup_delivered": cleanup_result["completed"],
+        "twin_cleanup_failed": cleanup_result["failed"],
         "twin_cleanup_pending": cleanup_result["pending"] or cleanup_result["failed"] > 0,
     }
 
@@ -1278,11 +1280,9 @@ async def purge_expired(db: Annotated[Session, Depends(get_db)], cron_token: Ann
     result = db.execute(delete(TALEvent).where(TALEvent.expires_at.is_not(None), TALEvent.expires_at <= now))
     expired_conversations = _delete_inactive_pnelly_conversations(db)
     db.commit()
-    cleanup_result = await _dispatch_twin_consent_revocations(
-        db, limit=100, command_ids=sorted(twin_cleanup_command_ids)
-    ) if twin_cleanup_commands else {
-        "processed": 0, "completed": 0, "failed": 0, "pending": False
-    }
+    # Every scheduled retention run also retries older durable cleanup commands
+    # whose first notification failed; retries must not depend on another consent event.
+    cleanup_result = await _dispatch_twin_consent_revocations(db, limit=100)
     return {
         "status": "complete",
         "purged_events": result.rowcount or 0,
