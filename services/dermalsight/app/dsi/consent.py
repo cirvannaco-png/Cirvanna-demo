@@ -18,7 +18,7 @@ from .errors import ConsentNotAuthorized, DSIProviderUnavailable
 PURPOSE_SCOPES: dict[ConsentPurpose, tuple[str, ...]] = {
     ConsentPurpose.COSMETIC_SKIN_ANALYSIS: ("image_processing", "skin_analysis"),
     ConsentPurpose.FACIAL_GEOMETRY_ANALYSIS: ("image_processing", "facial_geometry_analysis"),
-    ConsentPurpose.BODY_TONE_ANALYSIS: ("image_processing", "body_tone_analysis", "body_measurements"),
+    ConsentPurpose.BODY_TONE_ANALYSIS: ("image_processing", "body_tone_analysis"),
     ConsentPurpose.APPEARANCE_CORRECTION: ("image_processing", "appearance_correction"),
     ConsentPurpose.GLOBAL_MODEL_TRAINING: ("global_model_training",),
 }
@@ -86,6 +86,7 @@ async def verify_dsi_consent(
         "consent_version": consent_version,
         "resource_id": resource_id,
         "required_scopes": list(PURPOSE_SCOPES[purpose]),
+        "require_expiring": True,
     }
     try:
         async with httpx.AsyncClient(

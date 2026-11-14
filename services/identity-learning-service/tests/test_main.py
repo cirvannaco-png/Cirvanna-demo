@@ -1223,3 +1223,77 @@ def test_dsi_purpose_scopes_are_not_implicitly_granted_by_image_processing(clien
         version="dsi-v1",
     )
     assert denied.status_code == 403
+
+
+
+def test_dsi_strict_expiry_rejects_legacy_null_expiry_without_breaking_legacy_verification(client):
+    created = _grant_resource_consent(
+        client,
+        subject="user-verified-1",
+        bundle="dsi-legacy-expiry-bundle",
+        resource="dsi-legacy-expiry-resource",
+        scope="facial_geometry_analysis",
+        receipt="dsi-legacy-expiry-receipt",
+        expires_at=None,
+    )
+    assert created.status_code == 200, created.text
+
+    strict = client.post(
+        "/internal/v1/consents/verify",
+        headers=auth(),
+        json={
+            "subject_id": "user-verified-1",
+            "consent_id": "dsi-legacy-expiry-bundle",
+            "consent_version": "media-2026-11-v1",
+            "resource_id": "dsi-legacy-expiry-resource",
+            "required_scopes": ["facial_geometry_analysis"],
+            "require_expiring": True,
+        },
+    )
+    assert strict.status_code == 403
+    assert strict.json()["detail"]["code"] == "CONSENT_EXPIRY_REQUIRED"
+
+    legacy_compatible = _verify_resource_consent(
+        client,
+        subject="user-verified-1",
+        bundle="dsi-legacy-expiry-bundle",
+        resource="dsi-legacy-expiry-resource",
+        scopes=["facial_geometry_analysis"],
+    )
+    assert legacy_compatible.status_code == 200, legacy_compatible.text
+    assert legacy_compatible.json()["expires_at"] is None
+
+
+def test_dsi_strict_expiry_requires_every_scope_in_bundle_to_expire(client):
+    _grant_resource_consent(
+        client,
+        subject="user-verified-1",
+        bundle="dsi-mixed-expiry-bundle",
+        resource="dsi-mixed-expiry-resource",
+        scope="image_processing",
+        receipt="dsi-mixed-expiry-image",
+        expires_at=None,
+    )
+    _grant_resource_consent(
+        client,
+        subject="user-verified-1",
+        bundle="dsi-mixed-expiry-bundle",
+        resource="dsi-mixed-expiry-resource",
+        scope="facial_geometry_analysis",
+        receipt="dsi-mixed-expiry-face",
+        expires_at=(datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
+    )
+    response = client.post(
+        "/internal/v1/consents/verify",
+        headers=auth(),
+        json={
+            "subject_id": "user-verified-1",
+            "consent_id": "dsi-mixed-expiry-bundle",
+            "consent_version": "media-2026-11-v1",
+            "resource_id": "dsi-mixed-expiry-resource",
+            "required_scopes": ["image_processing", "facial_geometry_analysis"],
+            "require_expiring": True,
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "CONSENT_EXPIRY_REQUIRED"
