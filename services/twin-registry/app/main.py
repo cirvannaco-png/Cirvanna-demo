@@ -171,9 +171,10 @@ class TwinDeactivate(StrictModel):
 class TwinConsentRevocation(StrictModel):
     subject_id: str = Field(min_length=3, max_length=128)
     consent_id: str = Field(min_length=8, max_length=128)
+    resource_id: str = Field(min_length=3, max_length=128)
     command_id: str = Field(min_length=8, max_length=100)
 
-    @field_validator("subject_id", "consent_id", "command_id")
+    @field_validator("subject_id", "consent_id", "resource_id", "command_id")
     @classmethod
     def validate_revocation_identifiers(cls, value: str) -> str:
         value = value.strip()
@@ -640,6 +641,7 @@ def revoke_twin_consent(payload: TwinConsentRevocation, db: Session = Depends(ge
     records = db.scalars(select(TwinRecord).where(
         TwinRecord.subject_id == subject,
         TwinRecord.consent_id == payload.consent_id,
+        TwinRecord.twin_id == payload.resource_id,
         TwinRecord.state == "active",
     )).all()
     for row in records:
