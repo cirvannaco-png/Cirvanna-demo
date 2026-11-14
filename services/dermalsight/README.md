@@ -60,6 +60,14 @@ Raw enrollment media is not persisted by DSI. Video may be considered only as an
 
 Images are decoded in memory, bounded by byte and pixel limits, and not persisted by this service. Missing/invalid model artifacts fail closed; heuristic fallback is prohibited.
 
+## Run the service
+
+Use Python 3.12. Install runtime dependencies with python -m pip install -r requirements.txt. Configure DERMALSIGHT_API_TOKEN with a high-entropy secret from the deployment secret manager. For the existing skin-attribute API, configure DERMALSIGHT_MODEL_PATH, DERMALSIGHT_MODEL_MANIFEST_PATH, DERMALSIGHT_VALIDATION_REPORT_PATH and DERMALSIGHT_VALIDATION_SIGNING_KEY. Start the service with uvicorn app.main:app --host 0.0.0.0 --port 8000.
+
+The model manifest binds the model version, preprocessing contract and output tensor names to the exact ONNX artifact SHA-256 digest. The detached HMAC-SHA256 validation report must match that digest and model version and pass the existing licensing, overall-quality, skin-tone-subgroup, lighting/device, privacy/security and claims gates. Keep model weights, validation reports and signing keys outside Git; store secrets in a managed secret store. The existing adapter accepts only the cosmetic_skin_attributes task and must not be reused as evidence for DSI tone calibration, facial geometry, body segmentation or correction rendering.
+
+The provided container uses Python 3.12 and runs as a non-root user. Expose the service only behind trusted TLS ingress, request-size limits, rate limiting, monitoring and a reviewed service-authentication boundary.
+
 ## Run tests
 
 From this directory:

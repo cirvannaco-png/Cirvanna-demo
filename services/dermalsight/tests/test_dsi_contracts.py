@@ -282,3 +282,33 @@ def test_dsi_api_is_capability_only_and_has_no_profile_or_inference_route():
     assert response.json()["overall_state"] == "contract_only"
     assert client.post("/api/v1/dsi/analyze").status_code == 404
     assert client.get("/api/v1/dsi/profiles/sample").status_code == 404
+
+def test_valid_profile_combines_body_tone_and_facial_geometry():
+    alignment = BodyToneAlignment(
+        observations=[
+            tone_observation(BodyRegion.FACE),
+            tone_observation(BodyRegion.NECK),
+        ],
+        model_evidence=[
+            model_evidence(ModelTask.SKIN_TONE_ESTIMATION),
+            model_evidence(ModelTask.BODY_REGION_SEGMENTATION),
+        ],
+    )
+    geometry = FacialGeometry(
+        face_shape=FaceShape.OVAL,
+        hairline_shape=HairlineShape.ROUNDED,
+        face_width_to_height=IntervalEstimate(point=0.82, lower=0.78, upper=0.86),
+        jaw_to_cheek_width=IntervalEstimate(point=0.84, lower=0.80, upper=0.88),
+        forehead_to_cheek_width=IntervalEstimate(point=0.91, lower=0.87, upper=0.95),
+        landmark_coverage=0.96,
+        model_evidence=model_evidence(ModelTask.FACIAL_GEOMETRY),
+    )
+    profile = DermalSightProfile(
+        profile_id=uuid4(),
+        created_at=datetime.now(timezone.utc),
+        body_tone=alignment,
+        facial_geometry=geometry,
+    )
+    assert profile.media_retained is False
+    assert profile.identity_recognition_performed is False
+    assert len(profile.body_tone.observations) == 2
