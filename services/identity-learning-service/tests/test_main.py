@@ -527,6 +527,124 @@ def test_resource_specific_revocation_does_not_revoke_another_twin_bundle(client
     assert allowed.status_code == 200
 
 
+def test_resource_bound_twin_consent_revocation_dispatches_asset_cleanup(client, monkeypatch):
+    scopes = ["image_processing", "body_measurements", "virtual_twin_storage"]
+    receipts = []
+    for index, scope in enumerate(scopes):
+        receipt = f"twin-cleanup-receipt-{index:02d}"
+        receipts.append(receipt)
+        assert _grant_resource_consent(
+            client,
+            subject="user-verified-1",
+            bundle="bundle-twin-cleanup",
+            resource="twin-resource-cleanup",
+            scope=scope,
+            receipt=receipt,
+        ).status_code == 200
+
+    observed = {}
+    async def notify(item):
+        observed.update(
+            subject_id=item.subject_id,
+            consent_id=item.consent_id,
+            resource_id=item.resource_id,
+            receipt_id=item.receipt_id,
+            command_id=item.command_id,
+        )
+        return {"status": "pending", "twins_queued": 1}
+
+    monkeypatch.setattr(main, "_notify_twin_registry_of_revocation", notify)
+    revoked = client.post(
+        f"/v1/tal/consents/{receipts[0]}/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert revoked.status_code == 200, revoked.text
+    assert revoked.json()["twin_cleanup_status"] == "complete"
+    assert observed["subject_id"] == "user-verified-1"
+    assert observed["consent_id"] == "bundle-twin-cleanup"
+    assert observed["resource_id"] == "twin-resource-cleanup"
+    assert observed["receipt_id"] == receipts[0]
+    assert observed["command_id"].startswith("twin-consent-revocation:")
+
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    try:
+        outbox = db.get(main.ConsentRevocationOutbox, observed["command_id"])
+        assert outbox is not None
+        assert outbox.status == "complete"
+        assert outbox.attempts == 0
+        assert outbox.completed_at is not None
+    finally:
+        db.close()
+
+
+def test_twin_consent_cleanup_failure_is_durable_and_retryable(client, monkeypatch):
+    for index, scope in enumerate(["image_processing", "body_measurements", "virtual_twin_storage"]):
+        assert _grant_resource_consent(
+            client,
+            subject="user-verified-1",
+            bundle="bundle-twin-retry",
+            resource="twin-resource-retry",
+            scope=scope,
+            receipt=f"twin-retry-receipt-{index:02d}",
+        ).status_code == 200
+
+    async def unavailable(_item):
+        raise RuntimeError("TWIN_REGISTRY_UNAVAILABLE")
+
+    monkeypatch.setattr(main, "_notify_twin_registry_of_revocation", unavailable)
+    revoked = client.post(
+        "/v1/tal/consents/twin-retry-receipt-00/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert revoked.status_code == 200, revoked.text
+    assert revoked.json()["twin_cleanup_status"] == "pending"
+
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    try:
+        pending = db.query(main.ConsentRevocationOutbox).one()
+        command_id = pending.command_id
+        assert pending.status == "pending"
+        assert pending.attempts == 1
+        assert pending.last_error_code == "TWIN_REGISTRY_UNAVAILABLE"
+    finally:
+        db.close()
+
+    calls = []
+    async def recovered(item):
+        calls.append(item.command_id)
+        return {"status": "pending", "twins_queued": 1}
+
+    monkeypatch.setattr(main, "_notify_twin_registry_of_revocation", recovered)
+    retry = client.post("/internal/v1/consent-revocations/dispatch?limit=10", headers=auth())
+    assert retry.status_code == 200, retry.text
+    assert retry.json() == {"processed": 1, "completed": 1, "failed": 0, "pending": False}
+    assert calls == [command_id]
+
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    try:
+        completed = db.get(main.ConsentRevocationOutbox, command_id)
+        assert completed.status == "complete"
+        assert completed.last_error_code is None
+        assert completed.completed_at is not None
+    finally:
+        db.close()
+
+
+def test_non_twin_consent_revocation_does_not_create_twin_cleanup_command(client):
+    assert consent(client).status_code == 200
+    revoked = client.post(
+        "/v1/tal/consents/receipt-style-0001/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert revoked.status_code == 200
+    assert revoked.json()["twin_cleanup_status"] == "not_applicable"
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    try:
+        assert db.query(main.ConsentRevocationOutbox).count() == 0
+    finally:
+        db.close()
+
+
 def test_denial_receipt_withdraws_prior_scope_grants(client):
     consent(client, receipt="receipt-style-granted")
     denied = client.post(
