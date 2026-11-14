@@ -54,8 +54,10 @@ def client(tmp_path, monkeypatch):
             })
         ids = sorted(json_body["asset_ids"])
         return FakeResponse(payload={
-            "authorized": True, "subject_id": "customer-123",
-            "purpose": "virtual_twin_storage", "parent_id": "twin-123",
+            "authorized": True,
+            "subject_id": json_body["subject_id"],
+            "purpose": json_body["purpose"],
+            "parent_id": json_body["parent_id"],
             "authorized_asset_ids": ids,
         })
     monkeypatch.setattr(main, "_json_request", fake_request)
