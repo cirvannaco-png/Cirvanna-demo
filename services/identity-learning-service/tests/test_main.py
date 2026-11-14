@@ -645,6 +645,92 @@ def test_non_twin_consent_revocation_does_not_create_twin_cleanup_command(client
         db.close()
 
 
+def test_full_user_deletion_preserves_twin_cleanup_outbox_after_consent_rows_are_removed(client, monkeypatch):
+    scopes = ["image_processing", "body_measurements", "virtual_twin_storage"]
+    for index, scope in enumerate(scopes):
+        assert _grant_resource_consent(
+            client,
+            subject="user-verified-1",
+            bundle="bundle-user-delete",
+            resource="twin-user-delete",
+            scope=scope,
+            receipt=f"user-delete-twin-receipt-{index:02d}",
+        ).status_code == 200
+
+    observed = []
+    async def notify(item):
+        observed.append((item.subject_id, item.consent_id, item.resource_id))
+        return {"status": "pending", "twins_queued": 1}
+
+    monkeypatch.setattr(main, "_notify_twin_registry_of_revocation", notify)
+    deleted = client.delete("/v1/tal/users/user-verified-1", headers=auth())
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["twin_cleanup_commands"] == 1
+    assert deleted.json()["twin_cleanup_delivered"] == 1
+    assert deleted.json()["twin_cleanup_pending"] is False
+    assert client.get("/v1/tal/consents/user-verified-1", headers=auth()).json() == []
+    assert observed == [("user-verified-1", "bundle-user-delete", "twin-user-delete")]
+
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    try:
+        rows = db.query(main.ConsentRevocationOutbox).all()
+        assert len(rows) == 1
+        assert rows[0].status == "delivered"
+        assert rows[0].receipt_id == "user-delete-twin-receipt-00"
+    finally:
+        db.close()
+
+
+def test_retention_expiry_queues_twin_cleanup_before_consent_becomes_inactive(client, monkeypatch):
+    expires = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    for index, scope in enumerate(["image_processing", "body_measurements", "virtual_twin_storage"]):
+        assert _grant_resource_consent(
+            client,
+            subject="user-verified-1",
+            bundle="bundle-expired-twin",
+            resource="twin-expired-retention",
+            scope=scope,
+            receipt=f"expired-twin-retention-{index:02d}",
+            expires_at=expires,
+        ).status_code == 200
+
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    try:
+        db.query(main.ConsentReceipt).filter(
+            main.ConsentReceipt.consent_id == "bundle-expired-twin",
+        ).update({
+            "expires_at": datetime.now(timezone.utc) - timedelta(minutes=1)
+        }, synchronize_session=False)
+        db.commit()
+    finally:
+        db.close()
+
+    observed = []
+    async def notify(item):
+        observed.append((item.subject_id, item.consent_id, item.resource_id))
+        return {"status": "pending", "twins_queued": 1}
+
+    monkeypatch.setattr(main, "_notify_twin_registry_of_revocation", notify)
+    purged = client.post(
+        "/internal/retention/purge",
+        headers={
+            **auth(),
+            "X-Identity-Cron-Token": "identity-cron-token-that-is-at-least-32-bytes",
+        },
+    )
+    assert purged.status_code == 200, purged.text
+    assert purged.json()["twin_cleanup_commands"] == 1
+    assert purged.json()["twin_cleanup_delivered"] == 1
+    assert purged.json()["twin_cleanup_pending"] is False
+    assert observed == [("user-verified-1", "bundle-expired-twin", "twin-expired-retention")]
+    assert _verify_resource_consent(
+        client,
+        subject="user-verified-1",
+        bundle="bundle-expired-twin",
+        resource="twin-expired-retention",
+    ).status_code == 403
+
+
 def test_denial_receipt_withdraws_prior_scope_grants(client):
     consent(client, receipt="receipt-style-granted")
     denied = client.post(
