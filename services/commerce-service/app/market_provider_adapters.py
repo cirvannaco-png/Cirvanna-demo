@@ -214,6 +214,15 @@ def verify_fulfillment_quote(variant_id: str, quote: dict[str, Any]) -> None:
         raise HTTPException(409, detail={"code": "FULFILLMENT_QUOTE_PROVIDER_EVIDENCE_MISMATCH"})
 
 
+def adapter_configured(prefix: str) -> bool:
+    """Check local adapter settings without creating network traffic."""
+    try:
+        _provider_config(prefix)
+        return True
+    except HTTPException:
+        return False
+
+
 def adapter_ready(prefix: str) -> bool:
     """Probe a trusted provider adapter; configured credentials alone are not readiness."""
     try:
@@ -233,3 +242,86 @@ def adapter_ready(prefix: str) -> bool:
         return isinstance(payload, dict) and payload.get("ready") is True
     except (HTTPException, httpx.HTTPError, ValueError):
         return False
+
+
+def verify_fx_quote(variant_id: str, quote: dict[str, Any]) -> None:
+    """Bind an ingested FX rate and validity window to the configured FX adapter."""
+    if not provider_verification_required():
+        return
+    result = _adapter_post("FX_ADAPTER", "/v1/fx-quotes/verify", {
+        "variant_id": variant_id,
+        "quote": quote,
+    })
+    _validate_evidence_digest(result.get("evidence_sha256"), "FX_QUOTE_DIGEST_INVALID")
+    verified_quote = result.get("quote")
+    exact_fields = (
+        "provider", "provider_quote_id", "base_currency", "quote_currency", "rate",
+        "rounding_rule", "spread_bps", "observed_at", "expires_at",
+    )
+    exact = (
+        isinstance(verified_quote, dict)
+        and all(verified_quote.get(field) == quote.get(field) for field in exact_fields)
+    )
+    if (
+        result.get("verification_status") != "verified"
+        or result.get("variant_id") != variant_id
+        or not exact
+    ):
+        raise HTTPException(409, detail={"code": "FX_QUOTE_PROVIDER_EVIDENCE_MISMATCH"})
+
+
+def verify_tax_quote(variant_id: str, quote: dict[str, Any]) -> None:
+    """Bind an ingested tax rule and destination quote to the configured tax adapter."""
+    if not provider_verification_required():
+        return
+    result = _adapter_post("TAX_ADAPTER", "/v1/tax-quotes/verify", {
+        "variant_id": variant_id,
+        "quote": quote,
+    })
+    _validate_evidence_digest(result.get("evidence_sha256"), "TAX_QUOTE_DIGEST_INVALID")
+    verified_quote = result.get("quote")
+    exact_fields = (
+        "provider", "provider_quote_id", "destination_country_code", "destination_key",
+        "jurisdiction", "tax_category", "basis", "amount_minor", "currency", "status",
+        "authoritative", "rule_version", "observed_at", "expires_at",
+    )
+    exact = (
+        isinstance(verified_quote, dict)
+        and all(verified_quote.get(field) == quote.get(field) for field in exact_fields)
+    )
+    if (
+        result.get("verification_status") != "verified"
+        or result.get("variant_id") != variant_id
+        or not exact
+    ):
+        raise HTTPException(409, detail={"code": "TAX_QUOTE_PROVIDER_EVIDENCE_MISMATCH"})
+
+
+def verify_payment_capability(
+    merchant_id: str, market_country_code: str, capability: dict[str, Any],
+) -> None:
+    """Bind supported transaction/settlement currencies to a payment provider record."""
+    if not provider_verification_required():
+        return
+    result = _adapter_post("PAYMENT_CAPABILITY_ADAPTER", "/v1/payment-capabilities/verify", {
+        "merchant_id": merchant_id,
+        "market_country_code": market_country_code,
+        "capability": capability,
+    })
+    _validate_evidence_digest(result.get("evidence_sha256"), "PAYMENT_CAPABILITY_DIGEST_INVALID")
+    verified_capability = result.get("capability")
+    exact_fields = (
+        "provider", "state", "transaction_currencies", "settlement_currencies",
+        "payment_methods", "provider_reference", "observed_at", "expires_at",
+    )
+    exact = (
+        isinstance(verified_capability, dict)
+        and all(verified_capability.get(field) == capability.get(field) for field in exact_fields)
+    )
+    if (
+        result.get("verification_status") != "verified"
+        or result.get("merchant_id") != merchant_id
+        or result.get("market_country_code") != market_country_code
+        or not exact
+    ):
+        raise HTTPException(409, detail={"code": "PAYMENT_CAPABILITY_PROVIDER_EVIDENCE_MISMATCH"})
