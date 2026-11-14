@@ -18,8 +18,8 @@ All routes except `/health` require the internal `TWIN_REGISTRY_API_TOKEN` beare
 - `POST /internal/v1/twins`: registers a Twin only after a trusted model-validation HMAC, active resource-bound consent and Asset Service authorization of the mesh plus all source images.
 - `POST /internal/v1/twins/authorize`: re-checks owner, active consent/version, mesh and every source asset on every call. Its response includes `representation_type=full_body_mesh` and `source_image_asset_ids` required by the current Virtual Try-On contract.
 - `POST /internal/v1/twins/deactivate`: immediately blocks authorization and creates a versioned deletion-outbox command.
-- `POST /internal/v1/twins/revoke-consent`: queues deletion for every active Twin belonging to the exact owner and withdrawn consent receipt.
-- `POST /internal/v1/twins/deletions/dispatch`: a separately authenticated worker dispatches idempotent deletion to Asset Service and marks records deleted only after the provider confirms the full asset set.
+- `POST /internal/v1/twins/revoke-consent`: queues deletion only for the exact owner, consent ID and `resource_id` (Twin ID) from the withdrawn consent receipt. A shared bundle ID cannot delete another resource.
+- `POST /internal/v1/twins/deletions/dispatch`: a separately authenticated worker dispatches idempotent deletion to Asset Service and marks records deleted only after the provider confirms the full asset set. A consent-notification retry reports `pending` until this separate asset deletion completes.
 - `GET /internal/v1/twins/{twin_id}/status`: returns owner-scoped lifecycle state and version.
 - `POST /internal/v1/twins/revoke`: compatibility route; it now queues deletion rather than merely flipping a metadata flag.
 - `GET /ready`: validates schema reachability, consent, asset, validation and deletion credentials. It does not claim a GPU renderer or production deployment is live.
