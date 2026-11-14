@@ -240,6 +240,8 @@ def _check_policy(
     slices: dict[str, dict[str, Any]],
     underpowered: list[dict[str, Any]],
     manifest_created_at,
+    manifest_signature_verified: bool,
+    policy_signature_verified: bool,
 ) -> tuple[str, list[str], list[str]]:
     missing = policy.missing_release_fields()
     if missing:
@@ -400,6 +402,8 @@ def evaluate_dataset(
         slices=slices,
         underpowered=underpowered,
         manifest_created_at=manifest.created_at,
+        manifest_signature_verified=manifest_signature_verified,
+        policy_signature_verified=policy_signature_verified,
     )
     skin_name, skin_version, skin_sha = next(iter(model_versions))
     segmenter_version, segmenter_sha = next(iter(segmentation_versions))
