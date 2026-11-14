@@ -240,6 +240,14 @@ class PnellyDiscoveryContext(StrictModel):
         return normalized
 
 
+    @model_validator(mode="after")
+    def bounded_search_context(self):
+        total = len(self.query or "") + sum(len(item) for item in self.constraints)
+        if total > 160:
+            raise ValueError("query plus discovery cues must fit the 160-character search limit")
+        return self
+
+
 class PnellyConversationCreate(StrictModel):
     conversation_id: str = Field(min_length=36, max_length=36)
     consent_receipt_id: str = Field(min_length=8, max_length=128)
