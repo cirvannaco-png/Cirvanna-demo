@@ -294,7 +294,7 @@ def test_dsi_colorchecker_preview_requires_supported_reference_and_returns_unval
         headers=dsi_auth(),
         data={
             "profile_id": PROFILE_ID,
-            "patch_grid_corners": "[[20,40],[220,40],[220,173],[20,173]]",
+            "patch_grid_corners": "[[20,40],[100,40],[100,120],[20,120]]",
             "chart_edition_confirmed_after_2014": "true",
             "chart_age_months": "12",
             "chart_condition": "good",
@@ -318,7 +318,7 @@ def test_dsi_colorchecker_preview_rejects_unsupported_reference_before_model_use
         headers=dsi_auth(),
         data={
             "profile_id": "unknown-chart-edition",
-            "patch_grid_corners": "[[20,40],[220,40],[220,173],[20,173]]",
+            "patch_grid_corners": "[[20,40],[100,40],[100,120],[20,120]]",
             "chart_edition_confirmed_after_2014": "true",
             "chart_age_months": "12",
             "chart_condition": "good",
@@ -343,7 +343,7 @@ def test_dsi_colorchecker_route_requires_correct_chart_edition_confirmation(dsi_
         headers=dsi_auth(),
         data={
             "profile_id": PROFILE_ID,
-            "patch_grid_corners": "[[20,40],[220,40],[220,173],[20,173]]",
+            "patch_grid_corners": "[[20,40],[100,40],[100,120],[20,120]]",
             "chart_edition_confirmed_after_2014": "false",
         },
         files={"image": ("capture.png", dsi_image_bytes(), "image/png")},

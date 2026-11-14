@@ -130,3 +130,20 @@ Synthetic model fixtures and contract tests verify wiring and rejection rules on
 ## Release blockers
 
 Do not enable DSI image ingestion, profile sharing, global training or appearance rendering until the required evidence for that individual capability is signed, independently reviewed, deployed and exercised end-to-end. A capability must remain blocked when its model, calibration, consent, licensing, authorization or deletion evidence is missing.
+
+
+## Calibrated colour preview (experimental)
+
+DermalSight exposes an authenticated, purpose-bound route:
+
+- POST /api/v1/dsi/color-calibration-preview
+
+The user chooses the region. The face path requires the canonical cosmetic-skin-analysis consent; the body path requires the separate body-tone-analysis consent. The route verifies the exact subject, bundle, version, resource, scope set, active/revoked state and expiry through Identity Learning before reading or forwarding the capture. The Vision worker receives only the chosen region for colour summarization. No profile or image is persisted.
+
+Required form fields include the selected purpose, the post-November-2014 ColorChecker Classic profile, confirmation that the production date printed on the back is post-November-2014, and four patch-grid corners in TL, TR, BR, BL order. Chart age is optional and advisory, not a hard eligibility cutoff. Worn condition produces an advisory integrity flag. The preview requires the supported physical chart in the same capture as the selected skin region; an ordinary selfie is not enough for this experimental calibration route.
+
+The output includes D50 CIELAB candidate values, per-region p10/p90 spread and MAD (descriptive dispersion, not calibrated uncertainty), 24 leave-one-patch-out CIEDE2000 errors, and patch clipping diagnostics. It always reports experimental_unvalidated; absolute measurement approval and independent validation are false. These values must not be consumed by CAL, product shade ranking, persistent user profiles, RadianceScore or clinical/skin advice until an independent validation release approves them.
+
+The post-2014 patch reference is a generic manufacturer average. X-Rite states that the ColorChecker formulations changed for charts made after November 2014 and requires corresponding reference data; the production date appears on the back. It also notes that generic reference data are averaged values and that custom chart-specific measurements are preferable for highest accuracy. The published X-Rite data file is mirrored here with its original archive checksum: https://babelcolor.com/index_htm_files/ColorChecker24_After_Nov2014.txt (archive MD5: bc09e5e6a0a5812a26fe693a710522f1).
+
+This preview is still limited by the coarse face/body skin segmenter, JPEG/computational-photography processing, local illumination differences, chart wear and the lack of a camera/skin-population evaluation dataset. It is not an exact skin tone, a medically meaningful measurement or a guarantee that two body regions are colour-matched.

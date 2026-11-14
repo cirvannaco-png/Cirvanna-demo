@@ -56,3 +56,12 @@ The initial increment adds:
 - The initial perception slice reuses Vision Intelligence and Identity Learning and does not introduce duplicate model-serving or consent stores.
 - No DSI model weights are committed. Runtime readiness requires out-of-band versioned assets and digest checks.
 - Model/provider integration is not equivalent to accuracy validation. Tone calibration, body-region alignment, persistent profiles, global learning and appearance correction remain blocked.
+
+
+## Color calibration increment (experimental)
+
+A versioned X-Rite ColorChecker Classic post-November-2014 reference profile and stateless calibration preview were added. The worker samples the 24-patch grid using user-supplied perspective corners, fits an affine linear-sRGB-to-XYZ-D50 transform, performs leave-one-patch-out CIEDE2000 diagnostics, and returns a provisional Lab summary for only the user-selected face or body skin region.
+
+The face and body preview routes are separate purpose-bound operations: cosmetic skin analysis is required for face skin; body-tone analysis is required for body skin. The Vision worker is private and does not verify end-user consent itself; DermalSight verifies exact consent with Identity Learning before forwarding the capture.
+
+The chart production edition is explicitly confirmed by the user because X-Rite changed chart colour formulations after November 2014 and identifies the production date on the back. Chart age is advisory; an arbitrary two-year hard cutoff is not applied. Excessive patch clipping (>5%) is rejected. A successful mathematical fit is not independent model validation. The output remains experimental, is not persisted, and cannot authorize shade recommendations, CAL display, purchase, clinical claims or persistent personalization.

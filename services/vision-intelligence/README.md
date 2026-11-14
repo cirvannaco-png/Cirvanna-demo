@@ -135,3 +135,14 @@ Official upstream references:
 The referenced model cards specify Apache License 2.0 for their model artifacts. Verify the exact provisioned artifact, version, license notice and model-card provenance before deployment. Record the actual digest in the deployment manifest; do not assume that a model family name pins a particular asset.
 
 No DSI model asset, subgroup evaluation or calibration result is implied by the mocked worker tests. The DSI service remains unready when assets are not provisioned, and DermalSight must continue to label geometry and segmentation previews as unvalidated.
+
+
+## Experimental ColorChecker calibration worker
+
+The private POST /v1/dsi/colorchecker-tone-preview worker fits a 3×4 affine transform from linearized sRGB input to D50 XYZ using the 24 post-November-2014 X-Rite ColorChecker Classic reference patches. The user confirms the chart edition and selects its 6-column × 4-row patch-grid corners in TL/TR/BR/BL order. The request also selects face_skin, body_skin or both; the worker summarizes only the requested region(s).
+
+The output carries a profile SHA-256, all 24 leave-one-patch-out CIEDE2000 errors, patch clipping/dispersion diagnostics, and candidate D50 CIELAB summaries. It is explicitly experimental and unvalidated. The chart age and condition are declared by the user and are not hard eligibility gates; patch clipping above 5% is rejected. The DSI worker does not persist the original image, profile or training data and cannot authorize CAL or persistent personalization.
+
+The X-Rite reference values are generic averages. X-Rite notes that post-November-2014 charts require revised reference data and that custom measurement of an individual chart is preferable for highest accuracy. The chart's manufacture date is printed on its back. See the upstream source and reference-profile hash in app/colorchecker_profile.py.
+
+The camera transform, chart fit, colour calibration, local illumination behaviour and coarse segmentation remain unvalidated across phones, lighting setups and skin-tone groups. The emitted values must not be described as exact or used for shade ranking until independently validated. Synthetic numerical tests establish implementation consistency only; they are not a substitute for physical chart captures and spectrophotometer ground truth.

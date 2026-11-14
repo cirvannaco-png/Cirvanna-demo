@@ -404,10 +404,14 @@ def test_color_calibration_preview_uses_body_consent_and_body_only_scope(client,
     response = client.post(
         "/api/v1/dsi/color-calibration-preview",
         headers=auth(),
-        data=color_calibration_form(purpose="body_tone_analysis", chart_age_months="unknown"),
+        data=color_calibration_form(purpose="body_tone_analysis"),
         files={"image": ("chart-body.png", capture_bytes(), "image/png")},
     )
-    assert response.status_code == 422
+    assert response.status_code == 200, response.text
+    assert verified["purpose"] == ConsentPurpose.BODY_TONE_ANALYSIS
+    assert called["requested_region"] == "body_skin"
+    assert response.json()["requested_region"] == "body_skin"
+    assert response.json()["discovery_restricted"] is False
 
 
 def test_color_calibration_preview_rejects_wrong_chart_edition_before_consent_or_inference(client, monkeypatch):
