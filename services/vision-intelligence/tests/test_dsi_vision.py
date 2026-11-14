@@ -207,10 +207,13 @@ def test_dsi_skin_segmentation_rejects_invalid_mask_shape(dsi_client, monkeypatc
 
 def test_dsi_readiness_is_independent_of_marketplace_and_requires_two_pinned_models(dsi_client, monkeypatch):
     monkeypatch.setattr(dsi_models, "face_landmarker_status", lambda: {"configured": True, "version": "f-v1", "sha256": "a" * 64, "reason": None})
+    monkeypatch.setattr(dsi_models, "get_face_landmarker", lambda: object())
     monkeypatch.setattr(dsi_models, "skin_segmenter_status", lambda: {"configured": False, "reason": "model_asset_missing"})
     response = dsi_client.get("/v1/dsi/ready", headers=dsi_auth())
     assert response.status_code == 503
     payload = response.json()
     assert payload["dsi_ready"] is False
     assert payload["face_landmarker"]["configured"] is True
+    assert payload["face_landmarker"]["loaded"] is True
     assert payload["skin_segmenter"]["configured"] is False
+    assert payload["skin_segmenter"]["loaded"] is False

@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from PIL import Image, UnidentifiedImageError
 
 SUPPORTED_MIME = {"image/jpeg", "image/png", "image/webp"}
+MIME_TO_FORMAT = {"image/jpeg": "JPEG", "image/png": "PNG", "image/webp": "WEBP"}
 
 
 def decode_image(
@@ -28,8 +29,8 @@ def decode_image(
         raise HTTPException(413, detail={"code": "IMAGE_SIZE_LIMIT_EXCEEDED", "maximum_bytes": max_bytes})
     try:
         with Image.open(io.BytesIO(data)) as source:
-            if source.format not in {"JPEG", "PNG", "WEBP"}:
-                raise HTTPException(415, detail={"code": "UNSUPPORTED_IMAGE_FORMAT"})
+            if source.format != MIME_TO_FORMAT[content_type]:
+                raise HTTPException(415, detail={"code": "IMAGE_MIME_MISMATCH"})
             if source.width < min_dimension or source.height < min_dimension:
                 raise HTTPException(422, detail={"code": "IMAGE_DIMENSIONS_TOO_SMALL"})
             if source.width * source.height > max_pixels:

@@ -106,7 +106,17 @@ def get_skin_segmenter():
             output_category_mask=True,
             output_confidence_masks=True,
         )
-        _SKIN_SEGMENTER = mp.tasks.vision.ImageSegmenter.create_from_options(options)
+        segmenter = mp.tasks.vision.ImageSegmenter.create_from_options(options)
+        labels = getattr(segmenter, "labels", None)
+        if callable(labels):
+            labels = labels()
+        normalized = tuple(str(item).strip().casefold() for item in labels) if isinstance(labels, (list, tuple)) else ()
+        if normalized != EXPECTED_SEGMENTATION_LABELS:
+            close = getattr(segmenter, "close", None)
+            if callable(close):
+                close()
+            raise RuntimeError("skin_segmenter_label_map_mismatch")
+        _SKIN_SEGMENTER = segmenter
     return _SKIN_SEGMENTER
 
 

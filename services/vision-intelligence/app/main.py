@@ -46,6 +46,17 @@ bearer = HTTPBearer(auto_error=False)
 app = FastAPI(title="Cirvanna Vision Intelligence", version="0.1.0")
 app.include_router(dsi_vision_router)
 
+
+@app.middleware("http")
+async def dsi_no_store_headers(request, call_next):
+    response = await call_next(request)
+    if request.url.path.startswith("/v1/dsi/"):
+        response.headers["Cache-Control"] = "no-store, private"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
 _CLIP_MODEL = None
 _CLIP_PROCESSOR = None
 _POSE_LANDMARKER = None

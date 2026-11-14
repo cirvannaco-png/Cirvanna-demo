@@ -88,19 +88,37 @@ def _mp_image(image: Image.Image):
 def dsi_ready() -> JSONResponse:
     face = dsi_models.face_landmarker_status()
     segmenter = dsi_models.skin_segmenter_status()
-    ready = face["configured"] is True and segmenter["configured"] is True
+    face_loaded = False
+    segmenter_loaded = False
+    face_load_error = None
+    segmenter_load_error = None
+    if face["configured"] is True:
+        try:
+            dsi_models.get_face_landmarker()
+            face_loaded = True
+        except Exception:
+            face_load_error = "face_landmarker_load_failed"
+    if segmenter["configured"] is True:
+        try:
+            dsi_models.get_skin_segmenter()
+            segmenter_loaded = True
+        except Exception:
+            segmenter_load_error = "skin_segmenter_load_or_label_map_failed"
+    ready = face_loaded and segmenter_loaded
     return _no_store({
         "service": "cirvanna-vision-intelligence",
         "dsi_ready": ready,
         "face_landmarker": {
             "configured": face["configured"],
-            "reason": face["reason"],
+            "loaded": face_loaded,
+            "reason": face_load_error or face["reason"],
             "model_version": face.get("version"),
             "model_sha256": face.get("sha256"),
         },
         "skin_segmenter": {
             "configured": segmenter["configured"],
-            "reason": segmenter["reason"],
+            "loaded": segmenter_loaded,
+            "reason": segmenter_load_error or segmenter["reason"],
             "model_version": segmenter.get("version"),
             "model_sha256": segmenter.get("sha256"),
         },
