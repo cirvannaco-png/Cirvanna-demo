@@ -17,10 +17,10 @@ from functools import lru_cache
 from typing import Annotated, Iterator
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy import DateTime, Index, JSON, String, select
+from sqlalchemy import DateTime, Index, Integer, JSON, String, UniqueConstraint, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -79,6 +79,27 @@ class TwinRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class TwinDeletionOutbox(Base):
+    __tablename__ = "twin_registry_deletion_outbox"
+    __table_args__ = (
+        UniqueConstraint("command_id", name="uq_twin_registry_deletion_command"),
+        Index("ix_twin_registry_deletion_status_created", "status", "created_at"),
+    )
+
+    outbox_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    subject_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    twin_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    asset_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    command_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error_code: Mapped[str | None] = mapped_column(String(80))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class StrictModel(BaseModel):
@@ -130,6 +151,35 @@ class TwinCreate(StrictModel):
         return self
 
 
+class TwinDeactivate(StrictModel):
+    twin_id: str = Field(min_length=8, max_length=128)
+    subject_id: str = Field(min_length=3, max_length=128)
+    expected_version: int = Field(ge=1)
+    command_id: str = Field(min_length=8, max_length=160)
+
+    @field_validator("twin_id", "subject_id", "command_id")
+    @classmethod
+    def validate_deactivation_identifiers(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("identifier must not be empty")
+        return value
+
+
+class TwinConsentRevocation(StrictModel):
+    subject_id: str = Field(min_length=3, max_length=128)
+    consent_id: str = Field(min_length=8, max_length=128)
+    command_id: str = Field(min_length=8, max_length=100)
+
+    @field_validator("subject_id", "consent_id", "command_id")
+    @classmethod
+    def validate_revocation_identifiers(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("identifier must not be empty")
+        return value
+
+
 class TwinOwner(StrictModel):
     twin_id: str = Field(min_length=8, max_length=128)
     subject_id: str = Field(min_length=3, max_length=128)
@@ -152,6 +202,16 @@ def get_db() -> Iterator[Session]:
         yield db
     finally:
         db.close()
+
+
+def require_deletion_token(
+    token: Annotated[str | None, Header(alias="X-Twin-Deletion-Token")] = None,
+) -> None:
+    expected = os.getenv("TWIN_REGISTRY_DELETION_TOKEN", "").strip()
+    if len(expected.encode("utf-8")) < 32:
+        raise HTTPException(503, detail={"code": "TWIN_DELETION_AUTH_NOT_CONFIGURED"})
+    if token is None or not hmac.compare_digest(token, expected):
+        raise HTTPException(401, detail={"code": "TWIN_DELETION_AUTH_REQUIRED"})
 
 
 def require_internal_token(
@@ -311,14 +371,80 @@ async def _authorize_assets(
         raise HTTPException(403, detail={"code": "TWIN_ASSET_OWNERSHIP_REQUIRED"})
 
 
-def _response(row: TwinRecord, *, status: str = "active") -> dict:
+async def _delete_assets(subject_id: str, twin_id: str, asset_ids: list[str], idempotency_key: str) -> None:
+    """Delete a Twin and all derivatives through the canonical private Asset Service."""
+    config = _trusted_config("ASSET_SERVICE_URL", "ASSET_SERVICE_TOKEN")
+    if config is None:
+        raise HTTPException(503, detail={"code": "TWIN_ASSET_DELETION_NOT_CONFIGURED"})
+    base, token = config
+    requested = sorted(set(asset_ids))
+    response = await _json_request(
+        "POST",
+        base,
+        "/internal/v1/assets/delete",
+        token,
+        json_body={
+            "subject_id": subject_id,
+            "asset_ids": requested,
+            "parent_id": twin_id,
+            "purpose": "virtual_twin_deletion",
+            "cascade_derived_assets": True,
+            "idempotency_key": idempotency_key,
+        },
+    )
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "TWIN_ASSET_DELETION_UNAVAILABLE"})
+    try:
+        receipt = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "TWIN_ASSET_DELETION_INVALID_RESPONSE"}) from exc
+    deleted_ids = receipt.get("deleted_asset_ids") if isinstance(receipt, dict) else None
+    if (
+        not isinstance(receipt, dict)
+        or receipt.get("deleted") is not True
+        or receipt.get("subject_id") != subject_id
+        or receipt.get("idempotency_key") != idempotency_key
+        or not isinstance(deleted_ids, list)
+        or not set(requested).issubset(set(deleted_ids))
+    ):
+        raise HTTPException(503, detail={"code": "TWIN_ASSET_DELETION_INCOMPLETE"})
+
+
+def _queue_deletion(db: Session, record: TwinRecord, command_id: str) -> TwinDeletionOutbox:
+    existing = db.scalar(select(TwinDeletionOutbox).where(
+        TwinDeletionOutbox.command_id == command_id
+    ))
+    if existing is not None:
+        if existing.subject_id != record.subject_id or existing.twin_id != record.twin_id:
+            raise HTTPException(409, detail={"code": "TWIN_DELETION_COMMAND_CONFLICT"})
+        return existing
+    if record.state == "deleted":
+        raise HTTPException(409, detail={"code": "TWIN_ALREADY_DELETED"})
+    record.state = "deletion_pending"
+    record.version += 1
+    record.updated_at = utcnow()
+    row = TwinDeletionOutbox(
+        outbox_id=str(uuid.uuid4()),
+        subject_id=record.subject_id,
+        twin_id=record.twin_id,
+        asset_ids=sorted({record.mesh_asset_id, *record.source_image_asset_ids}),
+        command_id=command_id,
+        status="pending",
+        attempts=0,
+    )
+    db.add(row)
+    return row
+
+
+def _response(row: TwinRecord, *, status: str | None = None) -> dict:
     return {
         "twin_id": row.twin_id,
         "subject_id": row.subject_id,
-        "status": status,
+        "status": status or row.state,
         "state": row.state,
         "active": row.state == "active",
         "authorized": row.state == "active",
+        "version": row.version,
         "representation_type": row.representation_type,
         "mesh_asset_id": row.mesh_asset_id,
         "source_image_asset_ids": list(row.source_image_asset_ids),
@@ -329,6 +455,7 @@ def _response(row: TwinRecord, *, status: str = "active") -> dict:
         "consent_version": row.consent_version,
         "created_at": row.created_at.isoformat(),
         "revoked_at": row.revoked_at.isoformat() if row.revoked_at else None,
+        "deleted_at": row.deleted_at.isoformat() if row.deleted_at else None,
     }
 
 
@@ -373,6 +500,8 @@ async def ready(db: Session = Depends(get_db)):
         raise HTTPException(503, detail={"code": "ASSET_SERVICE_NOT_CONFIGURED"})
     if len(os.getenv("TWIN_REGISTRY_VALIDATION_HMAC_SECRET", "").encode("utf-8")) < 32:
         raise HTTPException(503, detail={"code": "TWIN_VALIDATION_ATTESTATION_NOT_CONFIGURED"})
+    if len(os.getenv("TWIN_REGISTRY_DELETION_TOKEN", "").encode("utf-8")) < 32:
+        raise HTTPException(503, detail={"code": "TWIN_DELETION_AUTH_NOT_CONFIGURED"})
     try:
         db.execute(select(TwinRecord.twin_id).limit(1))
     except SQLAlchemyError as exc:
@@ -440,6 +569,7 @@ async def create_twin(payload: TwinCreate, db: Session = Depends(get_db)):
         model_release_sha256=payload.model_release_sha256,
         validation_report_sha256=payload.validation_report_sha256,
         state="active",
+        version=1,
     )
     db.add(row)
     try:
@@ -474,6 +604,103 @@ async def authorize_twin(payload: TwinOwner, db: Session = Depends(get_db)):
     return _response(row)
 
 
+@app.post("/internal/v1/twins/deactivate", status_code=202, dependencies=[Depends(require_internal_token)])
+def deactivate_twin(payload: TwinDeactivate, db: Session = Depends(get_db)):
+    subject = payload.subject_id.strip()
+    if not SUBJECT_RE.fullmatch(subject):
+        raise HTTPException(422, detail={"code": "INVALID_SUBJECT_ID"})
+    row = db.get(TwinRecord, payload.twin_id)
+    if row is None or row.subject_id != subject:
+        raise HTTPException(404, detail={"code": "TWIN_NOT_FOUND"})
+    existing = db.scalar(select(TwinDeletionOutbox).where(
+        TwinDeletionOutbox.command_id == payload.command_id
+    ))
+    if existing is not None:
+        if existing.subject_id != subject or existing.twin_id != row.twin_id:
+            raise HTTPException(409, detail={"code": "TWIN_DELETION_COMMAND_CONFLICT"})
+        return {"status": existing.status, "twin_id": row.twin_id, "deletion_queued": True, "version": row.version}
+    if row.state == "deleted":
+        return {"status": "complete", "twin_id": row.twin_id, "deletion_queued": False, "version": row.version}
+    if row.state == "active" and payload.expected_version != row.version:
+        raise HTTPException(409, detail={"code": "TWIN_VERSION_CONFLICT", "current_version": row.version})
+    if row.state == "active":
+        _queue_deletion(db, row, payload.command_id)
+        db.commit()
+    return {"status": "pending", "twin_id": row.twin_id, "deletion_queued": True, "version": row.version}
+
+
+@app.post("/internal/v1/twins/revoke-consent", status_code=202, dependencies=[Depends(require_internal_token)])
+def revoke_twin_consent(payload: TwinConsentRevocation, db: Session = Depends(get_db)):
+    subject = payload.subject_id.strip()
+    if not SUBJECT_RE.fullmatch(subject):
+        raise HTTPException(422, detail={"code": "INVALID_SUBJECT_ID"})
+    records = db.scalars(select(TwinRecord).where(
+        TwinRecord.subject_id == subject,
+        TwinRecord.consent_id == payload.consent_id,
+        TwinRecord.state == "active",
+    )).all()
+    for row in records:
+        digest = hashlib.sha256(f"{payload.command_id}:{row.twin_id}".encode("utf-8")).hexdigest()
+        _queue_deletion(db, row, "consent-revocation:" + digest)
+    db.commit()
+    return {"status": "pending" if records else "complete", "twins_queued": len(records)}
+
+
+@app.post("/internal/v1/twins/deletions/dispatch", dependencies=[Depends(require_deletion_token)])
+async def dispatch_twin_deletions(db: Session = Depends(get_db), limit: int = 20):
+    if limit < 1 or limit > 100:
+        raise HTTPException(422, detail={"code": "INVALID_DELETION_BATCH_SIZE"})
+    pending = db.scalars(select(TwinDeletionOutbox).where(
+        TwinDeletionOutbox.status == "pending"
+    ).order_by(TwinDeletionOutbox.created_at).limit(limit)).all()
+    completed = failed = 0
+    for item in pending:
+        try:
+            await _delete_assets(
+                item.subject_id, item.twin_id, list(item.asset_ids),
+                "twin-delete:" + item.outbox_id,
+            )
+            item.status = "complete"
+            item.last_error_code = None
+            item.completed_at = utcnow()
+            row = db.get(TwinRecord, item.twin_id)
+            if row is not None and row.state == "deletion_pending":
+                row.state = "deleted"
+                row.version += 1
+                row.updated_at = utcnow()
+                row.deleted_at = utcnow()
+            completed += 1
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {}
+            item.attempts += 1
+            item.last_error_code = str(detail.get("code", "TWIN_ASSET_DELETION_FAILED"))[:80]
+            failed += 1
+        except Exception:
+            item.attempts += 1
+            item.last_error_code = "TWIN_ASSET_DELETION_FAILED"
+            failed += 1
+    db.commit()
+    return {"processed": len(pending), "completed": completed, "failed": failed}
+
+
+@app.get("/internal/v1/twins/{twin_id}/status", dependencies=[Depends(require_internal_token)])
+def twin_status(twin_id: str, subject_id: str, db: Session = Depends(get_db)):
+    row = db.get(TwinRecord, twin_id)
+    if row is None or row.subject_id != subject_id:
+        raise HTTPException(404, detail={"code": "TWIN_NOT_FOUND"})
+    return {
+        "twin_id": row.twin_id,
+        "subject_id": row.subject_id,
+        "status": row.state,
+        "version": row.version,
+        "representation_type": row.representation_type,
+        "model_version": row.model_id + "@" + row.model_revision,
+        "created_at": row.created_at.isoformat(),
+        "updated_at": row.updated_at.isoformat(),
+        "deleted_at": row.deleted_at.isoformat() if row.deleted_at else None,
+    }
+
+
 @app.post("/internal/v1/twins/revoke", dependencies=[Depends(require_internal_token)])
 def revoke_twin(payload: TwinOwner, db: Session = Depends(get_db)):
     subject = payload.subject_id.strip()
@@ -482,13 +709,12 @@ def revoke_twin(payload: TwinOwner, db: Session = Depends(get_db)):
     row = db.get(TwinRecord, payload.twin_id)
     if row is None or row.subject_id != subject:
         raise HTTPException(404, detail={"code": "TWIN_NOT_FOUND"})
-    if row.state != "revoked":
-        row.state = "revoked"
-        row.revoked_at = utcnow()
-        row.updated_at = utcnow()
+    if row.state == "deleted":
+        return _response(row)
+    if row.state == "active":
+        _queue_deletion(db, row, "revoke:" + row.twin_id + ":" + str(row.version))
         db.commit()
-        db.refresh(row)
-    return _response(row, status="revoked")
+    return _response(row, status="deletion_pending")
 
 
 if __name__ == "__main__":
