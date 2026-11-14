@@ -2119,8 +2119,14 @@ def test_production_readiness_exposes_provider_adapter_blockers(client, monkeypa
     monkeypatch.setenv("COMMERCE_ENVIRONMENT", "production")
     monkeypatch.delenv("MERCHANT_VERIFICATION_ADAPTER_URL", raising=False)
     monkeypatch.delenv("MERCHANT_VERIFICATION_ADAPTER_TOKEN", raising=False)
-    monkeypatch.delenv("FULFILLMENT_ADAPTER_URL", raising=False)
-    monkeypatch.delenv("FULFILLMENT_ADAPTER_TOKEN", raising=False)
+    for key in (
+        "MERCHANT_VERIFICATION_ADAPTER_URL", "MERCHANT_VERIFICATION_ADAPTER_TOKEN",
+        "FULFILLMENT_ADAPTER_URL", "FULFILLMENT_ADAPTER_TOKEN",
+        "FX_ADAPTER_URL", "FX_ADAPTER_TOKEN",
+        "TAX_ADAPTER_URL", "TAX_ADAPTER_TOKEN",
+        "PAYMENT_CAPABILITY_ADAPTER_URL", "PAYMENT_CAPABILITY_ADAPTER_TOKEN",
+    ):
+        monkeypatch.delenv(key, raising=False)
 
     response = client.get("/ready")
 
