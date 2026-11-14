@@ -627,7 +627,7 @@ def deactivate_twin(payload: TwinDeactivate, db: Session = Depends(get_db)):
         return {"status": "complete", "twin_id": row.twin_id, "deletion_queued": False, "version": row.version}
     if row.state == "active" and payload.expected_version != row.version:
         raise HTTPException(409, detail={"code": "TWIN_VERSION_CONFLICT", "current_version": row.version})
-    if row.state == "active":
+    if row.state in {"active", "revoked"}:
         _queue_deletion(db, row, payload.command_id)
         db.commit()
     return {"status": "pending", "twin_id": row.twin_id, "deletion_queued": True, "version": row.version}
@@ -642,13 +642,22 @@ def revoke_twin_consent(payload: TwinConsentRevocation, db: Session = Depends(ge
         TwinRecord.subject_id == subject,
         TwinRecord.consent_id == payload.consent_id,
         TwinRecord.twin_id == payload.resource_id,
-        TwinRecord.state == "active",
+        TwinRecord.state.in_(["active", "revoked", "deletion_pending"]),
     )).all()
+    newly_queued = 0
     for row in records:
-        digest = hashlib.sha256(f"{payload.command_id}:{row.twin_id}".encode("utf-8")).hexdigest()
-        _queue_deletion(db, row, "consent-revocation:" + digest)
+        if row.state in {"active", "revoked"}:
+            digest = hashlib.sha256(f"{payload.command_id}:{row.twin_id}".encode("utf-8")).hexdigest()
+            _queue_deletion(db, row, "consent-revocation:" + digest)
+            newly_queued += 1
     db.commit()
-    return {"status": "pending" if records else "complete", "twins_queued": len(records)}
+    # A retry after notification timeout must not report "complete" while the
+    # separate Asset Service deletion outbox still has work pending.
+    return {
+        "status": "pending" if records else "complete",
+        "twins_queued": len(records),
+        "newly_queued": newly_queued,
+    }
 
 
 @app.post("/internal/v1/twins/deletions/dispatch", dependencies=[Depends(require_deletion_token)])
@@ -716,7 +725,7 @@ def revoke_twin(payload: TwinOwner, db: Session = Depends(get_db)):
         raise HTTPException(404, detail={"code": "TWIN_NOT_FOUND"})
     if row.state == "deleted":
         return _response(row)
-    if row.state == "active":
+    if row.state in {"active", "revoked"}:
         _queue_deletion(db, row, "revoke:" + row.twin_id + ":" + str(row.version))
         db.commit()
     return _response(row, status="deletion_pending")
