@@ -840,6 +840,15 @@ def _queue_twin_consent_cleanup(
         f"{subject_id}:{consent_id}:{resource_id}".encode("utf-8")
     ).hexdigest()
     command_id = "twin-consent-revocation:" + digest
+    # autoflush is disabled for this service. A previous scope in the same
+    # consent bundle may already have queued this command but not committed it.
+    pending = next(
+        (item for item in db.new
+         if isinstance(item, ConsentRevocationOutbox) and item.command_id == command_id),
+        None,
+    )
+    if pending is not None:
+        return pending
     existing = db.get(ConsentRevocationOutbox, command_id)
     if existing is not None:
         return existing
@@ -1288,7 +1297,9 @@ async def purge_expired(db: Annotated[Session, Depends(get_db)], cron_token: Ann
         "purged_events": result.rowcount or 0,
         "purged_pnelly_conversations": expired_conversations,
         "twin_cleanup_commands": twin_cleanup_commands,
+        "twin_cleanup_processed": cleanup_result["processed"],
         "twin_cleanup_delivered": cleanup_result["completed"],
+        "twin_cleanup_failed": cleanup_result["failed"],
         "twin_cleanup_pending": cleanup_result["pending"] or cleanup_result["failed"] > 0,
     }
 
