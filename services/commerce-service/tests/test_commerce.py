@@ -2129,3 +2129,78 @@ def test_production_readiness_exposes_provider_adapter_blockers(client, monkeypa
     assert detail["provider_verification_required"] is True
     assert detail["merchant_verification_provider_ready"] is False
     assert detail["fulfillment_provider_ready"] is False
+    assert detail["fx_provider_ready"] is False
+    assert detail["tax_provider_ready"] is False
+    assert detail["payment_capability_provider_ready"] is False
+
+
+
+def test_production_fx_tax_and_payment_ingestion_fail_closed_without_provider_adapters(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_ENVIRONMENT", "production")
+    monkeypatch.setenv("COMMERCE_MARKET_CONTEXT_TOKEN", "market-context-token-long-enough-for-tests")
+    for key in (
+        "FX_ADAPTER_URL", "FX_ADAPTER_TOKEN",
+        "TAX_ADAPTER_URL", "TAX_ADAPTER_TOKEN",
+        "PAYMENT_CAPABILITY_ADAPTER_URL", "PAYMENT_CAPABILITY_ADAPTER_TOKEN",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    seeded = seed_offer()
+    observed = main.now()
+    market_token = {"X-Commerce-Market-Context-Token": "market-context-token-long-enough-for-tests"}
+
+    fx = client.post(
+        f"/internal/market-context/variants/{seeded['variant_id']}/fx-quotes",
+        headers=market_token,
+        json={
+            "provider": "fx-provider",
+            "provider_quote_id": "fx-001",
+            "base_currency": "USD",
+            "quote_currency": "KES",
+            "rate": "129.25",
+            "observed_at": observed.isoformat(),
+            "expires_at": (observed + main.timedelta(minutes=5)).isoformat(),
+        },
+    )
+    assert fx.status_code == 503
+    assert fx.json()["detail"]["code"] == "FX_ADAPTER_NOT_TRUSTED"
+
+    tax = client.post(
+        f"/internal/market-context/variants/{seeded['variant_id']}/tax-quotes",
+        headers=market_token,
+        json={
+            "provider": "tax-provider",
+            "provider_quote_id": "tax-001",
+            "destination_country_code": "KE",
+            "destination_key": "Nakuru/Subukia",
+            "jurisdiction": "KE-32",
+            "tax_category": "apparel",
+            "basis": "exclusive",
+            "amount_minor": 180,
+            "currency": "KES",
+            "status": "confirmed",
+            "authoritative": True,
+            "rule_version": "tax-2026-01",
+            "observed_at": observed.isoformat(),
+            "expires_at": (observed + main.timedelta(hours=1)).isoformat(),
+        },
+    )
+    assert tax.status_code == 503
+    assert tax.json()["detail"]["code"] == "TAX_ADAPTER_NOT_TRUSTED"
+
+    capability = client.put(
+        f"/internal/market-context/merchants/{seeded['merchant_id']}/payment-capabilities",
+        headers=market_token,
+        json={
+            "market_country_code": "KE",
+            "provider": "stripe",
+            "state": "active",
+            "transaction_currencies": ["KES"],
+            "settlement_currencies": ["KES"],
+            "payment_methods": ["card"],
+            "provider_reference": "acct-market-ke-01",
+            "observed_at": observed.isoformat(),
+            "expires_at": (observed + main.timedelta(hours=1)).isoformat(),
+        },
+    )
+    assert capability.status_code == 503
+    assert capability.json()["detail"]["code"] == "PAYMENT_CAPABILITY_ADAPTER_NOT_TRUSTED"
