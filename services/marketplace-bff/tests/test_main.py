@@ -663,7 +663,7 @@ def test_wardrobe_recommendations_persist_context_before_cal_discovery(client, m
         },
     )
     assert response.status_code == 200, response.text
-    assert fake.calls[1][0].endswith("/v1/pnelly/conversations/" + conversation_id)
+    assert fake.calls[1][1].endswith("/v1/pnelly/conversations/" + conversation_id)
     update = fake.calls[2][2]["json"]
     assert update["expected_version"] == 1
     assert update["turn_id"] == "pnelly-turn-0002"
@@ -1603,7 +1603,7 @@ def test_pnelly_daily_looks_reloads_and_recomposes_after_rotation_compare_and_sw
             ],
             "wardrobe_rotation": {
                 "policy_version": "wardrobe-revival-v1",
-                "cycle_complete": complete, "cycle_overdue": False,
+                "cycle_complete": complete, "cycle_overdue": not complete,
                 "revival_queue_item_ids": queue,
                 "next_state": {
                     "cycle_number": cycle, "cycle_started_at": start,
