@@ -170,6 +170,8 @@ def verify_fulfillment_market(
         "expires_at": expires_at.isoformat(),
     })
     digest = _validate_evidence_digest(result.get("evidence_sha256"), "FULFILLMENT_CAPABILITY_DIGEST_INVALID")
+    result_observed = _parse_aware(result.get("observed_at"), "FULFILLMENT_CAPABILITY_TIMESTAMP_INVALID")
+    result_expires = _parse_aware(result.get("expires_at"), "FULFILLMENT_CAPABILITY_TIMESTAMP_INVALID")
     if not (
         result.get("status") == "verified"
         and result.get("merchant_id") == merchant_id
@@ -177,6 +179,9 @@ def verify_fulfillment_market(
         and result.get("provider") == provider
         and result.get("provider_reference") == provider_reference
         and result.get("serviceability_confirmed") is True
+        and result_observed == observed_at.astimezone(timezone.utc)
+        and result_expires == expires_at.astimezone(timezone.utc)
+        and result_expires > datetime.now(timezone.utc)
         and digest
     ):
         raise HTTPException(409, detail={"code": "FULFILLMENT_MARKET_PROVIDER_EVIDENCE_MISMATCH"})
