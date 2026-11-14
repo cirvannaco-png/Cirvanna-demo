@@ -224,6 +224,207 @@ def _verify_resource_consent(client, *, subject, bundle, resource, scopes=None, 
     )
 
 
+def _create_pnelly_conversation(client, *, subject="user-verified-1", conversation_id=None, receipt_id=None, expires_at=None):
+    conversation_id = conversation_id or str(__import__("uuid").uuid4())
+    receipt_id = receipt_id or "pnelly-context-receipt-0001"
+    expires_at = expires_at or (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat()
+    granted = client.post(
+        "/v1/tal/consents",
+        params={"subject_id": subject},
+        headers=auth(),
+        json={
+            "receipt_id": receipt_id,
+            "consent_id": conversation_id,
+            "resource_id": conversation_id,
+            "scope": "pnelly_conversation",
+            "consent_version": "pnelly-context-v1",
+            "granted": True,
+            "expires_at": expires_at,
+        },
+    )
+    assert granted.status_code == 200, granted.text
+    created = client.post(
+        f"/v1/pnelly/conversations?subject_id={subject}",
+        headers=auth(),
+        json={"conversation_id": conversation_id, "consent_receipt_id": receipt_id},
+    )
+    return conversation_id, receipt_id, created
+
+
+def test_pnelly_conversation_context_requires_exact_resource_bound_24_hour_consent(client):
+    conversation_id = str(__import__("uuid").uuid4())
+    no_consent = client.post(
+        f"/v1/pnelly/conversations?subject_id=user-verified-1",
+        headers=auth(),
+        json={"conversation_id": conversation_id, "consent_receipt_id": "missing-receipt-0001"},
+    )
+    assert no_consent.status_code == 403
+    assert no_consent.json()["detail"]["code"] == "ACTIVE_PNELLY_CONVERSATION_CONSENT_REQUIRED"
+
+    too_long = datetime.now(timezone.utc) + timedelta(days=2)
+    _, _, created = _create_pnelly_conversation(
+        client,
+        conversation_id=conversation_id,
+        receipt_id="pnelly-context-too-long",
+        expires_at=too_long.isoformat(),
+    )
+    assert created.status_code == 422
+    assert created.json()["detail"]["code"] == "PNELLY_CONVERSATION_EXPIRY_MUST_BE_WITHIN_24_HOURS"
+
+
+def test_pnelly_conversation_turns_are_versioned_idempotent_and_transcript_free(client):
+    conversation_id, receipt_id, created = _create_pnelly_conversation(client)
+    assert created.status_code == 200, created.text
+    assert created.json()["status"] == "created"
+    assert created.json()["state_version"] == 0
+
+    turn = {
+        "expected_version": 0,
+        "turn_id": "pnelly-turn-0001",
+        "context": {
+            "query": "modest dark green linen dress",
+            "category": "dress",
+            "currency": "KES",
+            "occasion": "work",
+            "constraints": ["long sleeves", "breathable fabric"],
+            "exclude_owned_products": True,
+        },
+    }
+    updated = client.put(
+        f"/v1/pnelly/conversations/{conversation_id}?subject_id=user-verified-1",
+        headers=auth(),
+        json=turn,
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["state_version"] == 1
+    assert updated.json()["context"]["currency"] == "KES"
+    assert updated.json()["context"]["constraints"] == ["long sleeves", "breathable fabric"]
+    assert "messages" not in updated.json()
+    assert "transcript" not in updated.json()
+
+    replay = client.put(
+        f"/v1/pnelly/conversations/{conversation_id}?subject_id=user-verified-1",
+        headers=auth(),
+        json=turn,
+    )
+    assert replay.status_code == 200
+    assert replay.json()["status"] == "replayed"
+    assert replay.json()["state_version"] == 1
+
+    changed_replay = {**turn, "context": {**turn["context"], "occasion": "evening"}}
+    conflict = client.put(
+        f"/v1/pnelly/conversations/{conversation_id}?subject_id=user-verified-1",
+        headers=auth(),
+        json=changed_replay,
+    )
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["code"] == "PNELLY_CONVERSATION_TURN_CONFLICT"
+
+    second_turn = {
+        "expected_version": 1,
+        "turn_id": "pnelly-turn-0002",
+        "context": {**turn["context"], "occasion": "evening", "query": "same dress, more formal"},
+    }
+    stale = client.put(
+        f"/v1/pnelly/conversations/{conversation_id}?subject_id=user-verified-1",
+        headers=auth(),
+        json={**second_turn, "expected_version": 0},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["detail"]["code"] == "PNELLY_CONVERSATION_VERSION_CONFLICT"
+
+    saved = client.put(
+        f"/v1/pnelly/conversations/{conversation_id}?subject_id=user-verified-1",
+        headers=auth(),
+        json=second_turn,
+    )
+    assert saved.status_code == 200
+    assert saved.json()["state_version"] == 2
+
+    replay_create = client.post(
+        "/v1/pnelly/conversations?subject_id=user-verified-1",
+        headers=auth(),
+        json={"conversation_id": conversation_id, "consent_receipt_id": receipt_id},
+    )
+    assert replay_create.status_code == 200
+    assert replay_create.json()["status"] == "replayed"
+
+
+def test_pnelly_conversation_is_owner_scoped_and_revocation_deletes_context(client):
+    conversation_id, receipt_id, created = _create_pnelly_conversation(client)
+    assert created.status_code == 200
+    foreign = client.get(
+        f"/v1/pnelly/conversations/{conversation_id}?subject_id=another-user",
+        headers=auth(),
+    )
+    assert foreign.status_code == 404
+
+    revoked = client.post(
+        f"/v1/tal/consents/{receipt_id}/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert revoked.status_code == 200
+    missing = client.get(
+        f"/v1/pnelly/conversations/{conversation_id}?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert missing.status_code == 404
+
+
+def test_pnelly_conversation_delete_revokes_its_receipt(client):
+    conversation_id, receipt_id, created = _create_pnelly_conversation(client)
+    assert created.status_code == 200
+    deleted = client.delete(
+        f"/v1/pnelly/conversations/{conversation_id}?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert deleted.status_code == 200
+    assert deleted.json()["consent_revoked"] is True
+    receipts = client.get("/v1/tal/consents/user-verified-1", headers=auth()).json()
+    receipt = next(item for item in receipts if item["receipt_id"] == receipt_id)
+    assert receipt["revoked_at"] is not None
+
+
+def test_pnelly_conversation_expiry_and_retention_purge_remove_context(client):
+    conversation_id, _, created = _create_pnelly_conversation(client)
+    assert created.status_code == 200
+    url = os.environ["IDENTITY_DATABASE_URL"]
+    db = main._session_factory(url)()
+    row = db.get(main.PnellyConversation, conversation_id)
+    row.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    db.commit()
+    db.close()
+
+    denied = client.get(
+        f"/v1/pnelly/conversations/{conversation_id}?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert denied.status_code == 403
+    assert denied.json()["detail"]["code"] == "ACTIVE_PNELLY_CONVERSATION_CONSENT_REQUIRED"
+
+    # Recreate a second active row and expire it through the retention job.
+    conversation_id_2, _, created_2 = _create_pnelly_conversation(
+        client, receipt_id="pnelly-context-retention-0002"
+    )
+    assert created_2.status_code == 200
+    db = main._session_factory(url)()
+    row = db.get(main.PnellyConversation, conversation_id_2)
+    row.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    db.commit()
+    db.close()
+    purged = client.post(
+        "/internal/retention/purge",
+        headers={**auth(), "X-Identity-Cron-Token": "identity-cron-token-that-is-at-least-32-bytes"},
+    )
+    assert purged.status_code == 200
+    assert purged.json()["purged_pnelly_conversations"] == 1
+    gone = client.get(
+        f"/v1/pnelly/conversations/{conversation_id_2}?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert gone.status_code == 404
+
+
 def test_resource_bound_verifier_requires_complete_subject_and_resource_bundle(client):
     scopes = ["image_processing", "body_measurements", "virtual_twin_storage"]
     for index, scope in enumerate(scopes):
