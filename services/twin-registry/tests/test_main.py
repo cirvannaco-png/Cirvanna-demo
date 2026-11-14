@@ -314,7 +314,7 @@ def test_failed_asset_deletion_remains_pending_and_retries(client, monkeypatch):
     assert status.json()["status"] == "deletion_pending"
 
 
-def test_consent_withdrawal_queues_every_owner_scoped_twin_for_that_receipt(client):
+def test_consent_withdrawal_queues_only_the_exact_resource_twin(client):
     first = body()
     second = body(
         twin_id="twin-456",
@@ -329,15 +329,16 @@ def test_consent_withdrawal_queues_every_owner_scoped_twin_for_that_receipt(clie
         json={
             "subject_id": "customer-123",
             "consent_id": "consent-twin-0001",
+            "resource_id": "twin-123",
             "command_id": "withdraw-consent-command-001",
         },
     )
     first_status = client.get("/internal/v1/twins/twin-123/status?subject_id=customer-123", headers=auth())
     second_status = client.get("/internal/v1/twins/twin-456/status?subject_id=customer-123", headers=auth())
     assert withdrawal.status_code == 202
-    assert withdrawal.json()["twins_queued"] == 2
+    assert withdrawal.json()["twins_queued"] == 1
     assert first_status.json()["status"] == "deletion_pending"
-    assert second_status.json()["status"] == "deletion_pending"
+    assert second_status.json()["status"] == "active"
 
 
 def test_readiness_does_not_claim_ready_without_providers(client, monkeypatch):
