@@ -168,8 +168,13 @@ async def fetch_colorchecker_tone_preview(
         and len(profile["profile_sha256"]) == 64
         and isinstance(stats, dict)
         and all(key in stats for key in ("mean", "median", "p95", "maximum"))
+        and isinstance(payload.get("chart_patch_count_used"), int)
+        and 18 <= payload["chart_patch_count_used"] <= 24
+        and isinstance(payload.get("neutral_patches_used"), int)
+        and payload["neutral_patches_used"] >= 4
+        and isinstance(payload.get("patches_excluded_from_fit"), list)
         and isinstance(payload.get("patch_leave_one_out_delta_e_2000"), list)
-        and len(payload["patch_leave_one_out_delta_e_2000"]) == 24
+        and len(payload["patch_leave_one_out_delta_e_2000"]) == payload["chart_patch_count_used"]
         and isinstance(expected_region, dict)
         and isinstance(model, dict)
         and isinstance(model.get("version"), str)

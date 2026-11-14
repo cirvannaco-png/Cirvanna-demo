@@ -338,6 +338,9 @@ def fake_color_preview(requested_region="face_skin"):
         "chart_fit_leave_one_out_delta_e_2000": {
             "mean": 1.0, "median": 0.9, "p95": 2.0, "maximum": 3.0,
         },
+        "chart_patch_count_used": 24,
+        "neutral_patches_used": 6,
+        "patches_excluded_from_fit": [],
         "patch_leave_one_out_delta_e_2000": [
             {"patch": f"p-{index}", "delta_e_2000": 1.0} for index in range(24)
         ],
