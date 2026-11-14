@@ -896,7 +896,14 @@ def delete_pnelly_conversation(
         ).values(revoked_at=utcnow()))
     db.delete(row)
     db.commit()
-    return {"status": "deleted", "conversation_id": conversation_id, "consent_revoked": receipt is not None}
+    if receipt is not None:
+        db.refresh(receipt)
+    consent_inactive = receipt is None or not consent_is_active(receipt)
+    return {
+        "status": "deleted",
+        "conversation_id": conversation_id,
+        "consent_inactive": consent_inactive,
+    }
 
 
 @app.post("/v1/tal/events", dependencies=[Depends(require_internal_token)])
