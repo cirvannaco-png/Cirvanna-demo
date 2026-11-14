@@ -559,7 +559,7 @@ def test_resource_bound_twin_consent_revocation_dispatches_asset_cleanup(client,
         headers=auth(),
     )
     assert revoked.status_code == 200, revoked.text
-    assert revoked.json()["twin_cleanup_status"] == "complete"
+    assert revoked.json()["twin_cleanup_status"] == "delivered"
     assert observed["subject_id"] == "user-verified-1"
     assert observed["consent_id"] == "bundle-twin-cleanup"
     assert observed["resource_id"] == "twin-resource-cleanup"
