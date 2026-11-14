@@ -2942,6 +2942,21 @@ async def create_pnelly_conversation(request: Request) -> Response:
         conversation_id = str(uuid.uuid4())
         receipt_id = str(uuid.uuid4())
         expires_at = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat().replace("+00:00", "Z")
+
+        async def revoke_receipt() -> bool:
+            try:
+                revoked = await client.post(
+                    base + f"/v1/tal/consents/{receipt_id}/revoke",
+                    params={"subject_id": subject},
+                    headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                )
+                if revoked.status_code != 200:
+                    return False
+                result = revoked.json()
+                return isinstance(result, dict) and result.get("status") in {"revoked", "already_denied"}
+            except (httpx.HTTPError, ValueError):
+                return False
+
         try:
             consent = await client.post(
                 base + "/v1/tal/consents",
@@ -2958,12 +2973,14 @@ async def create_pnelly_conversation(request: Request) -> Response:
                 },
             )
         except httpx.HTTPError as exc:
+            await revoke_receipt()
             raise HTTPException(503, detail={"code": "PNELLY_CONVERSATION_CONSENT_UNAVAILABLE"}) from exc
         if consent.status_code not in {200, 201}:
             raise HTTPException(503, detail={"code": "PNELLY_CONVERSATION_CONSENT_FAILED"})
         try:
             consent_data = consent.json()
         except ValueError as exc:
+            await revoke_receipt()
             raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_CONSENT_RESPONSE_INVALID"}) from exc
         if (
             not isinstance(consent_data, dict)
@@ -2972,6 +2989,7 @@ async def create_pnelly_conversation(request: Request) -> Response:
             or consent_data.get("resource_id") != conversation_id
             or consent_data.get("granted") is not True
         ):
+            await revoke_receipt()
             raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_CONSENT_BINDING_INVALID"})
         try:
             created = await client.post(
@@ -2980,36 +2998,39 @@ async def create_pnelly_conversation(request: Request) -> Response:
                 json={"conversation_id": conversation_id, "consent_receipt_id": receipt_id},
             )
         except httpx.HTTPError as exc:
-            try:
-                await client.post(
-                    base + f"/v1/tal/consents/{receipt_id}/revoke",
-                    params={"subject_id": subject},
-                    headers={"Authorization": "Bearer " + token},
-                )
-            except httpx.HTTPError:
-                pass
+            await revoke_receipt()
             raise HTTPException(503, detail={"code": "PNELLY_CONVERSATION_CREATE_UNAVAILABLE"}) from exc
         if created.status_code != 200:
-            try:
-                await client.post(
-                    base + f"/v1/tal/consents/{receipt_id}/revoke",
-                    params={"subject_id": subject},
-                    headers={"Authorization": "Bearer " + token},
-                )
-            except httpx.HTTPError:
-                pass
+            await revoke_receipt()
             raise HTTPException(503, detail={"code": "PNELLY_CONVERSATION_CREATE_FAILED"})
         try:
             data = created.json()
         except ValueError as exc:
+            await revoke_receipt()
             raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_RESPONSE_INVALID"}) from exc
         if (
             not isinstance(data, dict)
             or data.get("conversation_id") != conversation_id
+            or isinstance(data.get("state_version"), bool)
             or data.get("state_version") != 0
+            or not isinstance(data.get("expires_at"), str)
             or data.get("status") not in {"created", "replayed"}
         ):
+            await revoke_receipt()
             raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_RESPONSE_INVALID"})
+        try:
+            persisted_expiry = datetime.fromisoformat(data["expires_at"].replace("Z", "+00:00"))
+        except ValueError as exc:
+            await revoke_receipt()
+            raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_EXPIRY_INVALID"}) from exc
+        if (
+            persisted_expiry.tzinfo is None
+            or persisted_expiry.utcoffset() is None
+            or persisted_expiry <= datetime.now(timezone.utc)
+            or persisted_expiry > datetime.now(timezone.utc) + timedelta(hours=24, minutes=1)
+        ):
+            await revoke_receipt()
+            raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_EXPIRY_INVALID"})
     return _private_json_response({
         "status": data["status"],
         "conversation_id": conversation_id,
@@ -3044,7 +3065,11 @@ async def delete_pnelly_conversation(conversation_id: str, request: Request) -> 
         data = response.json()
     except ValueError as exc:
         raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_DELETE_RESPONSE_INVALID"}) from exc
-    if not isinstance(data, dict) or data.get("status") != "deleted":
+    if (
+        not isinstance(data, dict)
+        or data.get("status") != "deleted"
+        or data.get("consent_inactive") is not True
+    ):
         raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_DELETE_RESPONSE_INVALID"})
     return _private_json_response({"status": "deleted", "conversation_id": conversation_id.strip().lower()})
 
@@ -3125,6 +3150,7 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
             if (
                 not isinstance(conversation_update, dict)
                 or conversation_update.get("conversation_id") != payload.conversation_id
+                or isinstance(conversation_update.get("state_version"), bool)
                 or not isinstance(conversation_update.get("state_version"), int)
                 or conversation_update.get("status") not in {"updated", "replayed"}
             ):
