@@ -161,7 +161,14 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
 <div class="field"><label for="climate">Climate (optional, declared)</label><input id="climate" maxlength="120" placeholder="e.g. warm, cool, humid"></div>
 </div>
 <label class="small"><input id="excludeOwned" type="checkbox" checked style="width:auto;min-width:auto"> Exclude exact Catalog products already in my wardrobe</label>
-<div class="row" style="margin-top:12px"><button class="btn primary" type="submit" id="recommend">Recommend with PNELLY</button></div>
+<div class="consent" style="margin-top:12px">
+  <div><strong>24-hour discovery continuity</strong><div class="small">Optional. Stores only structured discovery context (latest query, category, currency, declared location, occasion, climate and constraints) for up to 24 hours. Raw chat messages are not stored. Clear it at any time.</div></div>
+  <label class="small"><input id="pnellyConversationOptIn" type="checkbox" style="width:auto;min-width:auto"> Remember my discovery context for 24 hours</label>
+</div>
+<div class="row" style="margin-top:12px">
+  <button class="btn primary" type="submit" id="recommend">Recommend with PNELLY</button>
+  <button class="btn subtle" type="button" id="endPnellyConversation" disabled>Clear saved context</button>
+</div>
 </form>
 <div class="status" id="recommendStatus" role="status">Recommendations use the EEPL context gate, NPL exclusions and CaTaCaCi/CAL display authorization.</div>
 <div id="recommendations"></div>
@@ -173,6 +180,8 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
 (() => {
   const $ = id => document.getElementById(id);
   let token = "";
+  let pnellyConversationId = null;
+  try { pnellyConversationId = sessionStorage.getItem("cirvanna.pnelly.conversation_id"); } catch (_) {}
   let styleReceipt = null;
   let profileReceipt = null;
   let colorProfileVersion = 0;
@@ -199,6 +208,23 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
   const status = (id, message, kind = "") => {
     $(id).textContent = message;
     $(id).className = "status" + (kind ? " " + kind : "");
+  };
+  const saveConversationId = value => {
+    pnellyConversationId = value || null;
+    $("endPnellyConversation").disabled = !pnellyConversationId;
+    try {
+      if (pnellyConversationId) sessionStorage.setItem("cirvanna.pnelly.conversation_id", pnellyConversationId);
+      else sessionStorage.removeItem("cirvanna.pnelly.conversation_id");
+    } catch (_) {}
+  };
+  const ensurePnellyConversation = async () => {
+    if (pnellyConversationId) return pnellyConversationId;
+    const created = await api("/api/wardrobe/pnelly/conversations", {method:"POST"});
+    if (typeof created.conversation_id !== "string" || created.raw_transcript_stored !== false) {
+      throw new Error("PNELLY_CONVERSATION_CREATE_RESPONSE_INVALID");
+    }
+    saveConversationId(created.conversation_id);
+    return created.conversation_id;
   };
   const text = (tag, value, className) => {
     const node = document.createElement(tag);
@@ -1048,7 +1074,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     $("recommend").disabled = true;
     status("recommendStatus","Retrieving your wardrobe-aware recommendations…");
     try {
-      const data = await api("/api/wardrobe/recommendations", {method:"POST", body:JSON.stringify({
+      const requestBody = {
         query:$("query").value.trim(),
         category:$("category").value || null,
         currency:$("currency").value.trim().toUpperCase() || null,
@@ -1056,15 +1082,40 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
         occasion:$("occasion").value.trim() || null,
         climate:$("climate").value.trim() || null,
         exclude_owned_products:$("excludeOwned").checked
-      })});
+      };
+      if ($("pnellyConversationOptIn").checked) {
+        requestBody.conversation_id = await ensurePnellyConversation();
+        requestBody.conversation_turn_id = crypto.randomUUID();
+      }
+      const data = await api("/api/wardrobe/recommendations", {method:"POST", body:JSON.stringify(requestBody)});
       renderRecommendations(data);
-      status("recommendStatus", "Evaluated " + (data.ranked_candidate_count || 0) + " candidates. Only CAL SHOW products are displayed. EEPL context and Wardrobe signals are shown in the decision metadata.", "good");
+      const continuity = data.conversation
+        ? " Your structured discovery context is retained until " + data.conversation.expires_at + "."
+        : "";
+      status("recommendStatus", "Evaluated " + (data.ranked_candidate_count || 0) + " candidates. Only CAL SHOW products are displayed. EEPL context and Wardrobe signals are shown in the decision metadata." + continuity, "good");
     } catch (error) {
       status("recommendStatus",error.message,"error");
     } finally {
       $("recommend").disabled = false;
     }
   });
+  $("endPnellyConversation").addEventListener("click", async () => {
+    if (!pnellyConversationId) return;
+    $("endPnellyConversation").disabled = true;
+    try {
+      await api("/api/wardrobe/pnelly/conversations/" + encodeURIComponent(pnellyConversationId), {method:"DELETE"});
+      saveConversationId(null);
+      $("pnellyConversationOptIn").checked = false;
+      status("recommendStatus", "Saved PNELLY discovery context deleted and its conversation consent revoked.", "good");
+    } catch (error) {
+      $("endPnellyConversation").disabled = false;
+      status("recommendStatus", error.message, "error");
+    }
+  });
+  if (pnellyConversationId) {
+    $("pnellyConversationOptIn").checked = true;
+    $("endPnellyConversation").disabled = false;
+  }
   updateConsentState();
 })();
 </script>
