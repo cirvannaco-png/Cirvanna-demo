@@ -6,14 +6,14 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from .consent import ConsentProviderUnavailable
+from .errors import DSIProviderUnavailable
 
 
 def _config() -> tuple[str, str]:
     base = os.getenv("DSI_VISION_API_URL", "").strip().rstrip("/")
     token = os.getenv("DSI_VISION_API_TOKEN", "").strip()
     if not base or len(token.encode("utf-8")) < 32:
-        raise ConsentProviderUnavailable("dsi_vision_provider_not_configured")
+        raise DSIProviderUnavailable("dsi_vision_provider_not_configured")
     parsed = urlsplit(base)
     host = (parsed.hostname or "").lower()
     local = host in {"localhost", "127.0.0.1", "::1"}
@@ -25,7 +25,7 @@ def _config() -> tuple[str, str]:
         or parsed.fragment
         or (parsed.scheme != "https" and not (parsed.scheme == "http" and local))
     ):
-        raise ConsentProviderUnavailable("dsi_vision_provider_url_invalid")
+        raise DSIProviderUnavailable("dsi_vision_provider_url_invalid")
     return base, token
 
 
@@ -43,19 +43,19 @@ async def _post_image(path: str, *, content: bytes, content_type: str, filename:
                 files={"image": (filename, content, content_type)},
             )
     except httpx.TimeoutException as exc:
-        raise ConsentProviderUnavailable("dsi_vision_timeout") from exc
+        raise DSIProviderUnavailable("dsi_vision_timeout") from exc
     except httpx.HTTPError as exc:
-        raise ConsentProviderUnavailable("dsi_vision_unavailable") from exc
+        raise DSIProviderUnavailable("dsi_vision_unavailable") from exc
     if response.status_code != 200:
-        raise ConsentProviderUnavailable("dsi_vision_inference_unavailable")
+        raise DSIProviderUnavailable("dsi_vision_inference_unavailable")
     if "no-store" not in response.headers.get("cache-control", "").casefold():
-        raise ConsentProviderUnavailable("dsi_vision_cache_policy_invalid")
+        raise DSIProviderUnavailable("dsi_vision_cache_policy_invalid")
     try:
         payload = response.json()
     except ValueError as exc:
-        raise ConsentProviderUnavailable("dsi_vision_invalid_response") from exc
+        raise DSIProviderUnavailable("dsi_vision_invalid_response") from exc
     if not isinstance(payload, dict):
-        raise ConsentProviderUnavailable("dsi_vision_invalid_response")
+        raise DSIProviderUnavailable("dsi_vision_invalid_response")
     return payload
 
 
@@ -82,7 +82,7 @@ async def fetch_face_landmarks(*, content: bytes, content_type: str, filename: s
         and payload.get("identity_matching_performed") is False
         and payload.get("age_estimation_performed") is False
     ):
-        raise ConsentProviderUnavailable("dsi_vision_face_contract_invalid")
+        raise DSIProviderUnavailable("dsi_vision_face_contract_invalid")
     return payload
 
 
@@ -108,5 +108,5 @@ async def fetch_skin_segmentation(*, content: bytes, content_type: str, filename
         and payload.get("skin_tone_value_computed") is False
         and payload.get("absolute_color_calibration_performed") is False
     ):
-        raise ConsentProviderUnavailable("dsi_vision_segmentation_contract_invalid")
+        raise DSIProviderUnavailable("dsi_vision_segmentation_contract_invalid")
     return payload
