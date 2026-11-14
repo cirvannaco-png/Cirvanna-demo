@@ -20,7 +20,7 @@ import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy import DateTime, Index, Integer, JSON, String, UniqueConstraint, select
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, JSON, String, UniqueConstraint, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -92,7 +92,9 @@ class TwinDeletionOutbox(Base):
 
     outbox_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     subject_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    twin_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    twin_id: Mapped[str] = mapped_column(
+        String(128), ForeignKey("twin_registry_twins.twin_id"), nullable=False
+    )
     asset_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False)
     command_id: Mapped[str] = mapped_column(String(160), nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
@@ -504,6 +506,7 @@ async def ready(db: Session = Depends(get_db)):
         raise HTTPException(503, detail={"code": "TWIN_DELETION_AUTH_NOT_CONFIGURED"})
     try:
         db.execute(select(TwinRecord.twin_id).limit(1))
+        db.execute(select(TwinDeletionOutbox.outbox_id).limit(1))
     except SQLAlchemyError as exc:
         raise HTTPException(503, detail={"code": "TWIN_REGISTRY_SCHEMA_NOT_READY"}) from exc
     consent_ready = await _dependency_ready(*consent_config)
