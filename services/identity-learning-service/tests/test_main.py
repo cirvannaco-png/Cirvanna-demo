@@ -714,6 +714,59 @@ def test_full_user_deletion_preserves_twin_cleanup_outbox_after_consent_rows_are
         db.close()
 
 
+def test_retention_worker_retries_preexisting_failed_twin_cleanup_without_new_expiry(client, monkeypatch):
+    for index, scope in enumerate(["image_processing", "body_measurements", "virtual_twin_storage"]):
+        assert _grant_resource_consent(
+            client,
+            subject="user-verified-1",
+            bundle="bundle-twin-retry-by-retention",
+            resource="twin-resource-retry-by-retention",
+            scope=scope,
+            receipt=f"twin-retention-retry-{index:02d}",
+        ).status_code == 200
+
+    async def unavailable(_item):
+        raise RuntimeError("TWIN_REGISTRY_UNAVAILABLE")
+
+    monkeypatch.setattr(main, "_notify_twin_registry_of_revocation", unavailable)
+    revoked = client.post(
+        "/v1/tal/consents/twin-retention-retry-00/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert revoked.status_code == 200
+    assert revoked.json()["twin_cleanup_status"] == "pending"
+
+    delivered = []
+    async def recovered(item):
+        delivered.append(item.command_id)
+        return {"status": "pending", "twins_queued": 1}
+
+    monkeypatch.setattr(main, "_notify_twin_registry_of_revocation", recovered)
+    purged = client.post(
+        "/internal/retention/purge",
+        headers={
+            **auth(),
+            "X-Identity-Cron-Token": "identity-cron-token-that-is-at-least-32-bytes",
+        },
+    )
+    assert purged.status_code == 200, purged.text
+    assert purged.json()["twin_cleanup_commands"] == 0
+    assert purged.json()["twin_cleanup_processed"] == 1
+    assert purged.json()["twin_cleanup_delivered"] == 1
+    assert purged.json()["twin_cleanup_failed"] == 0
+    assert purged.json()["twin_cleanup_pending"] is False
+    assert len(delivered) == 1
+
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    try:
+        row = db.get(main.ConsentRevocationOutbox, delivered[0])
+        assert row is not None
+        assert row.status == "delivered"
+        assert row.attempts == 1
+    finally:
+        db.close()
+
+
 def test_retention_expiry_queues_twin_cleanup_before_consent_becomes_inactive(client, monkeypatch):
     expires = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
     for index, scope in enumerate(["image_processing", "body_measurements", "virtual_twin_storage"]):
