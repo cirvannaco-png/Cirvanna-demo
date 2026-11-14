@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 from fastapi import HTTPException
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageCms, ImageOps, UnidentifiedImageError
 
 SUPPORTED_MIME = {"image/jpeg", "image/png", "image/webp"}
 MIME_TO_FORMAT = {"image/jpeg": "JPEG", "image/png": "PNG", "image/webp": "WEBP"}
@@ -36,7 +36,22 @@ def decode_image(
             if source.width * source.height > max_pixels:
                 raise HTTPException(413, detail={"code": "IMAGE_PIXEL_LIMIT_EXCEEDED"})
             source.load()
-            image = source.convert("RGB")
+            oriented = ImageOps.exif_transpose(source)
+            icc_profile = source.info.get("icc_profile")
+            if icc_profile:
+                try:
+                    input_profile = ImageCms.ImageCmsProfile(io.BytesIO(icc_profile))
+                    output_profile = ImageCms.createProfile("sRGB")
+                    image = ImageCms.profileToProfile(
+                        oriented,
+                        input_profile,
+                        output_profile,
+                        outputMode="RGB",
+                    )
+                except Exception as exc:
+                    raise HTTPException(415, detail={"code": "UNSUPPORTED_COLOR_PROFILE"}) from exc
+            else:
+                image = oriented.convert("RGB")
             image.info.clear()
             return image
     except HTTPException:

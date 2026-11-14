@@ -8,16 +8,23 @@ from __future__ import annotations
 import base64
 import hmac
 import io
+import json
 import os
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 import numpy as np
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from PIL import Image
 
 from app.image_io import decode_image, evaluate_image_quality
+from app.color_calibration import (
+    ColorCalibrationError,
+    PROFILE_ID as COLORCHECKER_PROFILE_ID,
+    PROFILE_VERSION as COLORCHECKER_PROFILE_VERSION,
+    build_skin_colour_preview,
+)
 from app import dsi_models
 
 router = APIRouter(prefix="/v1/dsi", tags=["dsi"])
@@ -269,5 +276,87 @@ async def skin_segmentation(image: Annotated[UploadFile, File()]) -> JSONRespons
                 "regional body tone. Model confidence is not a calibrated probability."
             ),
         })
+    finally:
+        decoded.close()
+
+
+@router.post("/colorchecker-tone-preview", dependencies=[Depends(require_dsi_worker)])
+async def colorchecker_tone_preview(
+    image: Annotated[UploadFile, File()],
+    profile_id: Annotated[str, Form(min_length=1, max_length=128)],
+    patch_grid_corners: Annotated[str, Form(min_length=20, max_length=1000)],
+    chart_edition_confirmed_after_2014: Annotated[bool, Form()],
+    chart_age_months: Annotated[int | None, Form(ge=0)] = None,
+    chart_condition: Annotated[str, Form(pattern="^(good|worn|unknown)$")] = "unknown",
+    requested_region: Annotated[Literal["face_skin", "body_skin", "both"], Form()] = "both",
+) -> JSONResponse:
+    """Return an experimental same-frame ColorChecker skin-colour preview.
+
+    The four corner points identify the outer bounds of the 6-by-4 patch grid,
+    ordered top-left, top-right, bottom-right, bottom-left, in source-image pixels.
+    """
+    if profile_id != COLORCHECKER_PROFILE_ID:
+        await image.close()
+        raise HTTPException(422, detail={"code": "DSI_COLOR_REFERENCE_PROFILE_UNSUPPORTED"})
+    if chart_edition_confirmed_after_2014 is not True:
+        await image.close()
+        raise HTTPException(422, detail={"code": "DSI_COLOR_REFERENCE_EDITION_NOT_CONFIRMED"})
+    try:
+        corners = json.loads(patch_grid_corners)
+    except (TypeError, ValueError) as exc:
+        await image.close()
+        raise HTTPException(422, detail={"code": "DSI_PATCH_GRID_CORNERS_INVALID"}) from exc
+
+    _data, decoded = await _read_image(image)
+    try:
+        try:
+            segmenter = dsi_models.get_skin_segmenter()
+            result = segmenter.segment(_mp_image(decoded))
+        except Exception as exc:
+            raise HTTPException(503, detail={"code": "DSI_SKIN_SEGMENTER_UNAVAILABLE"}) from exc
+
+        labels = getattr(segmenter, "labels", None)
+        if callable(labels):
+            labels = labels()
+        normalized_labels = (
+            tuple(str(item).strip().casefold() for item in labels)
+            if isinstance(labels, (list, tuple)) else ()
+        )
+        if normalized_labels != dsi_models.EXPECTED_SEGMENTATION_LABELS:
+            raise HTTPException(503, detail={"code": "DSI_SEGMENTATION_LABEL_MAP_MISMATCH"})
+
+        category_mask = getattr(result, "category_mask", None)
+        if category_mask is None:
+            raise HTTPException(502, detail={"code": "DSI_CATEGORY_MASK_MISSING"})
+        categories = np.asarray(category_mask.numpy_view())
+        if categories.ndim != 2 or categories.shape != (decoded.height, decoded.width):
+            raise HTTPException(502, detail={"code": "DSI_CATEGORY_MASK_SHAPE_INVALID"})
+        if not np.issubdtype(categories.dtype, np.integer):
+            raise HTTPException(502, detail={"code": "DSI_CATEGORY_MASK_TYPE_INVALID"})
+        if categories.size == 0 or int(categories.max()) >= len(normalized_labels) or int(categories.min()) < 0:
+            raise HTTPException(502, detail={"code": "DSI_CATEGORY_MASK_LABEL_INVALID"})
+
+        preview = build_skin_colour_preview(
+            decoded,
+            categories,
+            patch_grid_corners=corners,
+            chart_age_months_declared=chart_age_months,
+            chart_condition_declared=chart_condition,
+            requested_region=requested_region,
+        )
+        segmenter_meta = dsi_models.skin_segmenter_status()
+        preview["skin_segmentation_model"] = {
+            "family": "MediaPipe Image Segmenter",
+            "version": segmenter_meta["version"],
+            "sha256": segmenter_meta["sha256"],
+        }
+        preview["input_quality"] = evaluate_image_quality(decoded)
+        preview["input_rgb_interpretation"] = "embedded ICC profiles normalized to sRGB; absent profile assumed sRGB"
+        return _no_store(preview)
+    except ColorCalibrationError as exc:
+        raise HTTPException(
+            422,
+            detail={"code": "DSI_COLOR_CALIBRATION_INPUT_INVALID", "reason": str(exc)},
+        ) from exc
     finally:
         decoded.close()

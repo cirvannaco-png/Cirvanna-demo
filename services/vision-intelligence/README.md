@@ -118,6 +118,8 @@ A path, immutable version and 64-character SHA-256 must be present for each task
 
 ### Model capability and limitations
 
+The ColorChecker Classic post-November-2014 profile is used only when the user confirms the printed chart edition on the back of the physical target. X-Rite states that the production date is printed there and that post-November-2014 targets require revised reference data. The reference file contains generic averaged colour values; custom measurements of the user's individual target are preferable for highest accuracy. Chart age and visible condition are recorded as user declarations, not hard eligibility cutoffs or proof of reflectance stability. Worn condition produces an advisory warning; the preview remains optional.
+
 The Face Landmarker task produces 478 normalized 3D landmarks. DSI currently derives only three provisional geometric ratios from selected landmark anchors; it does not classify face shape or hairline. These ratios are explicitly marked unvalidated until compared with an independently annotated, representative face-geometry dataset.
 
 The multiclass selfie segmenter provides six coarse semantic regions. It distinguishes face skin from body skin, but it does not identify individual neck, chest, arm, hand or leg regions. It is not a skin-tone or colour-calibration model. DSI currently returns region coverage only and computes no sRGB or CIELAB tone value.
@@ -133,3 +135,14 @@ Official upstream references:
 The referenced model cards specify Apache License 2.0 for their model artifacts. Verify the exact provisioned artifact, version, license notice and model-card provenance before deployment. Record the actual digest in the deployment manifest; do not assume that a model family name pins a particular asset.
 
 No DSI model asset, subgroup evaluation or calibration result is implied by the mocked worker tests. The DSI service remains unready when assets are not provisioned, and DermalSight must continue to label geometry and segmentation previews as unvalidated.
+
+
+## Experimental ColorChecker calibration worker
+
+The private POST /v1/dsi/colorchecker-tone-preview worker fits a 3×4 affine transform from linearized sRGB input to D50 XYZ using the 24 post-November-2014 X-Rite ColorChecker Classic reference patches. The user confirms the chart edition and selects its 6-column × 4-row patch-grid corners in TL/TR/BR/BL order. The request also selects face_skin, body_skin or both; the worker summarizes only the requested region(s).
+
+The output carries a profile SHA-256, all 24 leave-one-patch-out CIEDE2000 errors, patch clipping/dispersion diagnostics, and candidate D50 CIELAB summaries. It is explicitly experimental and unvalidated. The chart age and condition are declared by the user and are not hard eligibility gates; patches with more than 5% clipped sample pixels are excluded from the fit, and at least 18 usable patches plus four neutral patches are required. The DSI worker does not persist the original image, profile or training data and cannot authorize CAL or persistent personalization.
+
+The X-Rite reference values are generic averages. X-Rite notes that post-November-2014 charts require revised reference data and that custom measurement of an individual chart is preferable for highest accuracy. The chart's manufacture date is printed on its back. See the upstream source and reference-profile hash in app/colorchecker_profile.py.
+
+The camera transform, chart fit, colour calibration, local illumination behaviour and coarse segmentation remain unvalidated across phones, lighting setups and skin-tone groups. The emitted values must not be described as exact or used for shade ranking until independently validated. Synthetic numerical tests establish implementation consistency only; they are not a substitute for physical chart captures and spectrophotometer ground truth.

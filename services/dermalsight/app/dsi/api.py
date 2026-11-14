@@ -13,7 +13,11 @@ from .contracts import ConsentPurpose
 from .features import summarize_face_geometry
 from .media import read_and_decode_payload
 from .security import require_dsi_api_token
-from .vision_client import fetch_face_landmarks, fetch_skin_segmentation
+from .vision_client import (
+    fetch_colorchecker_tone_preview,
+    fetch_face_landmarks,
+    fetch_skin_segmentation,
+)
 
 router = APIRouter(prefix="/api/v1/dsi", tags=["dsi-analysis"])
 MAX_DSI_IMAGE_BYTES = 5 * 1024 * 1024
@@ -171,5 +175,89 @@ async def skin_region_preview(
             "This preview estimates visible face/body skin regions only. It does not "
             "measure exact skin tone, compare all body regions, diagnose skin conditions, "
             "or limit the user's appearance choices."
+        ),
+    })
+
+
+
+@router.post("/color-calibration-preview", dependencies=[Depends(require_dsi_api_token)])
+async def color_calibration_preview(
+    subject_id: Annotated[str, Form(min_length=1, max_length=128)],
+    consent_id: Annotated[str, Form(min_length=8, max_length=128)],
+    consent_version: Annotated[str, Form(min_length=1, max_length=80)],
+    resource_id: Annotated[str, Form(min_length=3, max_length=160)],
+    purpose: Annotated[Literal["cosmetic_skin_analysis", "body_tone_analysis"], Form()],
+    profile_id: Annotated[str, Form(min_length=1, max_length=128)],
+    patch_grid_corners: Annotated[str, Form(min_length=20, max_length=1000)],
+    chart_edition_confirmed_after_2014: Annotated[bool, Form()],
+    chart_age_months: Annotated[int | None, Form(ge=0)] = None,
+    chart_condition: Annotated[Literal["good", "worn", "unknown"], Form()] = "unknown",
+    image: Annotated[UploadFile, File()] = ...,
+) -> JSONResponse:
+    """Return an experimental chart-calibrated preview after exact regional consent."""
+    purpose_enum = (
+        ConsentPurpose.COSMETIC_SKIN_ANALYSIS
+        if purpose == ConsentPurpose.COSMETIC_SKIN_ANALYSIS.value
+        else ConsentPurpose.BODY_TONE_ANALYSIS
+    )
+    if chart_edition_confirmed_after_2014 is not True:
+        await image.close()
+        raise HTTPException(
+            422,
+            detail={"code": "DSI_COLOR_REFERENCE_EDITION_NOT_CONFIRMED"},
+        )
+    await _verify_purpose(
+        subject_id=subject_id,
+        consent_id=consent_id,
+        consent_version=consent_version,
+        resource_id=resource_id,
+        purpose=purpose_enum,
+        image=image,
+    )
+    content_type = image.content_type or ""
+    filename = image.filename or "dsi-color-capture"
+    content, decoded = await _read_payload(image)
+    requested_region = (
+        "face_skin"
+        if purpose_enum == ConsentPurpose.COSMETIC_SKIN_ANALYSIS
+        else "body_skin"
+    )
+    try:
+        preview = await fetch_colorchecker_tone_preview(
+            content=content,
+            content_type=content_type,
+            filename=filename,
+            profile_id=profile_id,
+            patch_grid_corners=patch_grid_corners,
+            chart_edition_confirmed_after_2014=chart_edition_confirmed_after_2014,
+            chart_age_months=chart_age_months,
+            chart_condition=chart_condition,
+            requested_region=requested_region,
+        )
+    except DSIProviderUnavailable as exc:
+        raise HTTPException(
+            503,
+            detail={"code": "DSI_COLOR_CALIBRATION_UNAVAILABLE"},
+        ) from exc
+    finally:
+        del decoded
+
+    return _private_response({
+        "status": "completed_experimental_preview",
+        "purpose": purpose_enum.value,
+        "requested_region": requested_region,
+        "color_preview": preview,
+        "absolute_color_measurement_approved": False,
+        "independent_model_validation_passed": False,
+        "image_persisted": False,
+        "profile_persisted": False,
+        "global_training_performed": False,
+        "discovery_restricted": False,
+        "user_autonomy": "recommendations_are_optional_and_user_choices_remain_authoritative",
+        "disclaimer": (
+            "This is an experimental ColorChecker-assisted colour preview, not an exact or "
+            "validated skin-tone measurement. Do not use it for product shade decisions or "
+            "persistent personalization until independent camera, lighting, chart and "
+            "population validation is complete."
         ),
     })
