@@ -1,6 +1,6 @@
 {
   "dataset_version": "replace-with-independent-held-out-dataset-version",
-  "samples_sha256": "replace-with-64-character-sample-file-sha256",
+  "samples_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
   "created_at": "2026-11-14T00:00:00Z",
   "held_out_test_data": true,
   "rights_provenance_ref": "rights-registry:replace-with-reference",

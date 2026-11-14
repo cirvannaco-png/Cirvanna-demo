@@ -299,3 +299,27 @@ def test_underpowered_camera_and_lighting_slices_require_review():
     assert report["decision"] == "REVIEW_REQUIRED"
     assert "underpowered_evaluation_slices" in report["decision_reasons"]
     assert report["underpowered_slices"]
+
+
+
+def test_missing_repeatability_is_review_not_a_false_model_failure():
+    records = [
+        make_sample(index).model_copy(
+            update={"subject_ref": "hmac-sha256:" + f"{index + 100:064x}"}
+        )
+        for index in range(16)
+    ]
+    report = evaluate(records, approved_policy())
+    assert report["decision"] == "REVIEW_REQUIRED"
+    assert "repeatability_evidence_missing" in report["decision_reasons"]
+    assert not report["threshold_failures"]
+
+
+def test_missing_successful_measurements_are_review_not_metric_failure():
+    records = [make_sample(index, failed=True) for index in range(16)]
+    report = evaluate(records, approved_policy(maximum_failure_rate=1.0))
+    assert report["decision"] == "REVIEW_REQUIRED"
+    assert "colour_error_metrics_unavailable" in report["decision_reasons"]
+    assert "chart_fit_metrics_unavailable" in report["decision_reasons"]
+    assert "repeatability_evidence_missing" in report["decision_reasons"]
+    assert not report["threshold_failures"]
