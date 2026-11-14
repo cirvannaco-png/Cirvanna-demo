@@ -728,14 +728,20 @@ def verify_resource_bound_consent(payload: ConsentVerify, db: Annotated[Session,
     }
 
 
-def _delete_inactive_pnelly_conversations(db: Session, subject_id: str) -> int:
-    rows = list(db.scalars(select(PnellyConversation).where(
-        PnellyConversation.subject_id == subject_id
-    )).all())
+def _delete_inactive_pnelly_conversations(db: Session, subject_id: str | None = None) -> int:
+    statement = select(PnellyConversation)
+    if subject_id is not None:
+        statement = statement.where(PnellyConversation.subject_id == subject_id)
+    rows = list(db.scalars(statement).all())
     deleted = 0
     for row in rows:
         receipt = db.get(ConsentReceipt, row.consent_receipt_id)
-        if receipt is None or receipt.scope != "pnelly_conversation" or not consent_is_active(receipt):
+        if (
+            row.expires_at <= utcnow()
+            or receipt is None
+            or receipt.scope != "pnelly_conversation"
+            or not consent_is_active(receipt)
+        ):
             db.delete(row)
             deleted += 1
     return deleted
@@ -871,9 +877,18 @@ def delete_pnelly_conversation(
     row = db.get(PnellyConversation, conversation_id)
     if row is None or row.subject_id != subject:
         raise HTTPException(404, detail={"code": "PNELLY_CONVERSATION_NOT_FOUND"})
+    receipt = db.get(ConsentReceipt, row.consent_receipt_id)
+    if receipt is not None and receipt.granted and receipt.revoked_at is None:
+        db.execute(update(ConsentReceipt).where(
+            ConsentReceipt.subject_id == subject,
+            ConsentReceipt.consent_id == receipt.consent_id,
+            ConsentReceipt.resource_id == conversation_id,
+            ConsentReceipt.granted.is_(True),
+            ConsentReceipt.revoked_at.is_(None),
+        ).values(revoked_at=utcnow()))
     db.delete(row)
     db.commit()
-    return {"status": "deleted", "conversation_id": conversation_id}
+    return {"status": "deleted", "conversation_id": conversation_id, "consent_revoked": receipt is not None}
 
 
 @app.post("/v1/tal/events", dependencies=[Depends(require_internal_token)])
@@ -923,6 +938,7 @@ def export_events(subject_id: str, db: Annotated[Session, Depends(get_db)]):
     consents = list(db.scalars(select(ConsentReceipt).where(ConsentReceipt.subject_id == subject).order_by(ConsentReceipt.created_at)).all())
     profile = db.get(USIProfileRow, subject)
     color_profile = db.get(ColorProfileRow, subject)
+    _delete_inactive_pnelly_conversations(db, subject)
     conversations = list(db.scalars(select(PnellyConversation).where(
         PnellyConversation.subject_id == subject
     ).order_by(PnellyConversation.created_at)).all())
@@ -974,16 +990,12 @@ def purge_expired(db: Annotated[Session, Depends(get_db)], cron_token: Annotated
     if len(expected.encode()) < 32 or not cron_token or not hmac.compare_digest(expected, cron_token):
         raise HTTPException(401, detail={"code": "RETENTION_CRON_AUTH_FAILED"})
     result = db.execute(delete(TALEvent).where(TALEvent.expires_at.is_not(None), TALEvent.expires_at <= utcnow()))
-    expired_conversations = db.execute(delete(PnellyConversation).where(PnellyConversation.expires_at <= utcnow()))
-    inactive_conversations = _delete_inactive_pnelly_conversations(db, subject_id="")
-    # The inactive helper is subject-scoped; the retention worker scans every remaining owner.
-    if inactive_conversations:
-        pass
+    expired_conversations = _delete_inactive_pnelly_conversations(db)
     db.commit()
     return {
         "status": "complete",
         "purged_events": result.rowcount or 0,
-        "purged_expired_pnelly_conversations": expired_conversations.rowcount or 0,
+        "purged_pnelly_conversations": expired_conversations,
     }
 
 
