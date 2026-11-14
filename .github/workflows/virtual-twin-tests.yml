@@ -38,3 +38,6 @@ jobs:
         run: python -m compileall -q app tests
       - name: Run API contract tests
         run: python -m pytest -q
+      - name: Build Virtual Twin service container
+        working-directory: .
+        run: docker build -f services/virtual-twin/Dockerfile -t cirvanna-virtual-twin:ci services/virtual-twin
