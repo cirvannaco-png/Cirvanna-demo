@@ -776,6 +776,138 @@ def _delete_inactive_pnelly_conversations(db: Session, subject_id: str | None = 
     return deleted
 
 
+TWIN_CONSENT_SCOPES = {"image_processing", "body_measurements", "virtual_twin_storage"}
+
+
+def _queue_twin_consent_cleanup(
+    db: Session, *, subject_id: str, consent_id: str, resource_id: str | None,
+    receipt_id: str, scope: str,
+) -> ConsentRevocationOutbox | None:
+    """Persist a cleanup command in the same transaction as resource consent withdrawal."""
+    if resource_id is None or scope not in TWIN_CONSENT_SCOPES:
+        return None
+    digest = hashlib.sha256(
+        f"{subject_id}:{consent_id}:{resource_id}".encode("utf-8")
+    ).hexdigest()
+    command_id = "twin-consent-revocation:" + digest
+    existing = db.get(ConsentRevocationOutbox, command_id)
+    if existing is not None:
+        return existing
+    row = ConsentRevocationOutbox(
+        command_id=command_id,
+        subject_id=subject_id,
+        consent_id=consent_id,
+        resource_id=resource_id,
+        receipt_id=receipt_id,
+        status="pending",
+        attempts=0,
+    )
+    db.add(row)
+    return row
+
+
+def _twin_registry_config() -> tuple[str, str] | None:
+    base = os.getenv("TWIN_REGISTRY_API_URL", "").strip().rstrip("/")
+    token = os.getenv("TWIN_REGISTRY_API_TOKEN", "").strip()
+    if not base or len(token.encode("utf-8")) < 32:
+        return None
+    try:
+        parsed = urlsplit(base)
+        host = (parsed.hostname or "").lower()
+        local = host in {"localhost", "127.0.0.1", "::1"}
+        if (
+            not host or parsed.username is not None or parsed.password is not None
+            or parsed.query or parsed.fragment
+            or (parsed.scheme != "https" and not (parsed.scheme == "http" and local))
+        ):
+            return None
+    except ValueError:
+        return None
+    return base, token
+
+
+async def _notify_twin_registry_of_revocation(
+    item: ConsentRevocationOutbox,
+) -> dict:
+    config = _twin_registry_config()
+    if config is None:
+        raise RuntimeError("TWIN_REGISTRY_NOT_CONFIGURED")
+    base, token = config
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(6.0, connect=2.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            response = await client.post(
+                base + "/internal/v1/twins/revoke-consent",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json={
+                    "subject_id": item.subject_id,
+                    "consent_id": item.consent_id,
+                    "command_id": item.command_id,
+                },
+            )
+    except httpx.TimeoutException as exc:
+        raise RuntimeError("TWIN_REGISTRY_TIMEOUT") from exc
+    except httpx.HTTPError as exc:
+        raise RuntimeError("TWIN_REGISTRY_UNAVAILABLE") from exc
+    if response.status_code not in {200, 202}:
+        raise RuntimeError("TWIN_REGISTRY_REJECTED_REVOCATION")
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError("TWIN_REGISTRY_INVALID_RESPONSE") from exc
+    queued = payload.get("twins_queued") if isinstance(payload, dict) else None
+    status = payload.get("status") if isinstance(payload, dict) else None
+    if (
+        not isinstance(payload, dict)
+        or status not in {"pending", "complete"}
+        or isinstance(queued, bool)
+        or not isinstance(queued, int)
+        or queued < 0
+    ):
+        raise RuntimeError("TWIN_REGISTRY_INVALID_RESPONSE")
+    return payload
+
+
+async def _dispatch_twin_consent_revocations(db: Session, limit: int = 20) -> dict:
+    if limit < 1 or limit > 100:
+        raise HTTPException(422, detail={"code": "INVALID_TWIN_REVOCATION_BATCH_SIZE"})
+    pending = db.scalars(
+        select(ConsentRevocationOutbox)
+        .where(ConsentRevocationOutbox.status == "pending")
+        .order_by(ConsentRevocationOutbox.created_at)
+        .limit(limit)
+    ).all()
+    completed = failed = 0
+    for item in pending:
+        try:
+            await _notify_twin_registry_of_revocation(item)
+            item.status = "complete"
+            item.last_error_code = None
+            item.completed_at = utcnow()
+            completed += 1
+        except RuntimeError as exc:
+            item.attempts += 1
+            item.last_error_code = str(exc)[:80]
+            failed += 1
+        except Exception:
+            item.attempts += 1
+            item.last_error_code = "TWIN_REGISTRY_NOTIFICATION_FAILED"
+            failed += 1
+    db.commit()
+    remaining = db.scalar(select(ConsentRevocationOutbox.command_id).where(
+        ConsentRevocationOutbox.status == "pending"
+    ).limit(1))
+    return {
+        "processed": len(pending),
+        "completed": completed,
+        "failed": failed,
+        "pending": remaining is not None,
+    }
+
+
 def _pnelly_conversation_json(row: PnellyConversation) -> dict:
     return {
         "conversation_id": row.conversation_id,
