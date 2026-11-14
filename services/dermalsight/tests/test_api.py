@@ -167,3 +167,34 @@ def test_rejects_oversized_upload(monkeypatch):
     )
     assert response.status_code == 413
     assert response.json()["detail"]["code"] == "IMAGE_SIZE_LIMIT_EXCEEDED"
+
+
+
+def test_dsi_capture_plan_requires_service_authentication(monkeypatch):
+    monkeypatch.delenv("DERMALSIGHT_API_TOKEN", raising=False)
+    response = client.post(
+        "/api/v1/dsi/capture-plan",
+        json={"assessments": ["facial_geometry"]},
+    )
+    assert response.status_code == 401
+
+
+def test_dsi_capture_plan_returns_guidance_without_accepting_media(monkeypatch):
+    monkeypatch.setenv("DERMALSIGHT_API_TOKEN", "test-only-token")
+    response = client.post(
+        "/api/v1/dsi/capture-plan",
+        headers={"Authorization": "Bearer test-only-token"},
+        json={
+            "assessments": ["body_tone_alignment"],
+            "body_regions": ["face", "neck"],
+            "video_guidance_requested": True,
+        },
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["selected_body_regions"] == ["face", "neck"]
+    assert payload["image_processing_enabled"] is False
+    assert payload["video_processing_enabled"] is False
+    assert payload["raw_media_retention_enabled"] is False
+    assert payload["global_training_consent_included"] is False
+    assert payload["discovery_must_continue_without_dsi"] is True
