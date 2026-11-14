@@ -257,6 +257,7 @@ def test_consent_client_calls_identity_learning_with_exact_purpose_scope_and_res
     assert fake.last_request["url"].endswith("/internal/v1/consents/verify")
     assert fake.last_request["json"]["required_scopes"] == ["image_processing", "facial_geometry_analysis"]
     assert fake.last_request["json"]["resource_id"] == "dsi-session-001"
+    assert fake.last_request["json"]["require_expiring"] is True
     assert result["verified"] is True
 
 
@@ -300,3 +301,12 @@ def test_consent_client_refuses_missing_or_weak_identity_provider_configuration(
             resource_id="dsi-session-001",
             purpose=ConsentPurpose.FACIAL_GEOMETRY_ANALYSIS,
         ))
+
+
+
+def test_body_tone_consent_does_not_reuse_virtual_twin_body_measurement_scope():
+    assert PURPOSE_SCOPES[ConsentPurpose.BODY_TONE_ANALYSIS] == (
+        "image_processing",
+        "body_tone_analysis",
+    )
+    assert "body_measurements" not in PURPOSE_SCOPES[ConsentPurpose.BODY_TONE_ANALYSIS]
