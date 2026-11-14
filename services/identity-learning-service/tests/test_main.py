@@ -630,6 +630,39 @@ def test_twin_consent_cleanup_failure_is_durable_and_retryable(client, monkeypat
         db.close()
 
 
+def test_withdrawing_non_twin_scope_in_twin_bundle_still_queues_resource_cleanup(client, monkeypatch):
+    receipts = {}
+    for index, scope in enumerate(["image_processing", "body_measurements", "virtual_twin_storage", "profile_storage"]):
+        receipt = f"mixed-twin-bundle-receipt-{index:02d}"
+        receipts[scope] = receipt
+        assert _grant_resource_consent(
+            client,
+            subject="user-verified-1",
+            bundle="mixed-twin-consent-bundle",
+            resource="twin-mixed-bundle",
+            scope=scope,
+            receipt=receipt,
+        ).status_code == 200
+
+    observed = []
+    async def notify(item):
+        observed.append((item.consent_id, item.resource_id, item.receipt_id))
+        return {"status": "pending", "twins_queued": 1}
+
+    monkeypatch.setattr(main, "_notify_twin_registry_of_revocation", notify)
+    revoked = client.post(
+        f"/v1/tal/consents/{receipts['profile_storage']}/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert revoked.status_code == 200, revoked.text
+    assert revoked.json()["twin_cleanup_status"] == "delivered"
+    assert observed == [(
+        "mixed-twin-consent-bundle",
+        "twin-mixed-bundle",
+        receipts["profile_storage"],
+    )]
+
+
 def test_non_twin_consent_revocation_does_not_create_twin_cleanup_command(client):
     assert consent(client).status_code == 200
     revoked = client.post(
