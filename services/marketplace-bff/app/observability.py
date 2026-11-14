@@ -109,7 +109,7 @@ def install_observability(app: FastAPI, service: str) -> RequestMetrics:
     @app.middleware("http")
     async def request_telemetry(request: Request, call_next):
         # Metrics scraping is deliberately excluded to avoid a self-referential series.
-        if request.url.path == "/internal/metrics":
+        if request.scope.get("path") == "/internal/metrics":
             return await call_next(request)
 
         request_id = str(uuid.uuid4())
@@ -141,13 +141,13 @@ def install_observability(app: FastAPI, service: str) -> RequestMetrics:
     @app.get("/internal/metrics", include_in_schema=False)
     def internal_metrics(request: Request) -> PlainTextResponse:
         if os.getenv("METRICS_ENABLED", "false").strip().lower() != "true":
-            raise HTTPException(status_code=404, detail={"code": "METRICS_NOT_ENABLED"})
+            raise HTTPException(status_code=404, detail={"code": "METRICS_NOT_ENABLED"}, headers={"Cache-Control": "no-store"})
         expected = os.getenv("OBSERVABILITY_METRICS_TOKEN", "").strip()
         if len(expected.encode("utf-8")) < 32:
-            raise HTTPException(status_code=404, detail={"code": "METRICS_NOT_CONFIGURED"})
+            raise HTTPException(status_code=404, detail={"code": "METRICS_NOT_CONFIGURED"}, headers={"Cache-Control": "no-store"})
         supplied = request.headers.get("x-observability-token", "")
         if not hmac.compare_digest(supplied, expected):
-            raise HTTPException(status_code=401, detail={"code": "METRICS_AUTH_REQUIRED"})
+            raise HTTPException(status_code=401, detail={"code": "METRICS_AUTH_REQUIRED"}, headers={"Cache-Control": "no-store"})
         return PlainTextResponse(
             metrics.render(),
             media_type="text/plain; version=0.0.4; charset=utf-8",
