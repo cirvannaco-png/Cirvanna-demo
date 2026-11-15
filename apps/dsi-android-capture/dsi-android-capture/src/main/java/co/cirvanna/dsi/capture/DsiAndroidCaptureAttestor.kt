@@ -28,6 +28,7 @@ data class DsiAndroidAttestationEnvelope(
     val challengeId: String,
     val manifestSha256: String,
     val imageSha256: String,
+    val devicePipelineFingerprintSha256: String,
     val manifestCanonicalJson: String,
     val signatureAlgorithm: String,
     val signatureBase64Url: String,
@@ -73,6 +74,14 @@ class DsiAndroidCaptureAttestor(
         require(manifest.challengeId == challenge.challengeId) {
             "Capture manifest and server challenge do not match"
         }
+        require(manifest.challengeNonceSha256 == sha256Hex(nonce)) {
+            "Capture manifest nonce digest does not match the server challenge"
+        }
+
+        val canonicalBytes = manifest.canonicalJson.toByteArray(StandardCharsets.UTF_8)
+        require(sha256Hex(canonicalBytes) == manifest.manifestSha256) {
+            "Capture manifest digest does not match its canonical JSON"
+        }
 
         preparePlayIntegrity()
 
@@ -81,8 +90,6 @@ class DsiAndroidCaptureAttestor(
         try {
             val securityLevel = requireHardwareBackedKey(keyPair.private)
             val certificateChain = loadAttestationChain(alias)
-            val canonicalBytes = manifest.canonicalJson.toByteArray(StandardCharsets.UTF_8)
-
             val signature = Signature.getInstance("SHA256withECDSA").run {
                 initSign(keyPair.private)
                 update(canonicalBytes)
@@ -108,6 +115,7 @@ class DsiAndroidCaptureAttestor(
                 challengeId = manifest.challengeId,
                 manifestSha256 = manifest.manifestSha256,
                 imageSha256 = manifest.imageSha256,
+                devicePipelineFingerprintSha256 = manifest.devicePipelineFingerprintSha256,
                 manifestCanonicalJson = manifest.canonicalJson,
                 signatureAlgorithm = "SHA256withECDSA",
                 signatureBase64Url = Base64.encodeToString(
