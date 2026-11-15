@@ -1887,6 +1887,14 @@ def test_wardrobe_category_bff_uses_verified_session_and_validates_taxonomy(clie
             "categories": [
                 {"id": "shoes", "label": "Shoes and footwear", "group": "footwear"},
                 {"id": "makeup", "label": "Makeup", "group": "beauty"},
+                {"id": "brow_products", "label": "Eyebrow products", "group": "beauty"},
+                {"id": "lash_products", "label": "Eyelash products", "group": "beauty"},
+                {"id": "lip_products", "label": "Lip products and lipstick", "group": "beauty"},
+                {"id": "wigs_extensions", "label": "Wigs, extensions and hairpieces", "group": "hair"},
+                {"id": "hair_colour", "label": "Hair colour products", "group": "beauty"},
+                {"id": "hair_styling", "label": "Hair styling products and tools", "group": "beauty"},
+                {"id": "earrings", "label": "Earrings", "group": "accessories"},
+                {"id": "necklaces", "label": "Necklaces and pendants", "group": "accessories"},
             ],
         }),
     ])
