@@ -10,9 +10,9 @@ It does not replace the host application's camera UI, permission flow, user auth
 
 ## Components
 
-- `DsiCamera2PipelineInspector` reads Camera2 characteristics, available request/result keys, stream sizes, lens/sensor metadata, RAW/manual capabilities and available sensor calibration matrices. It produces a deterministic camera-pipeline fingerprint. It does not use serial numbers, IMEI, advertising IDs or geolocation.
-- `DsiCamera2CaptureControls` applies AE and AWB lock requests only when the exact camera advertises the required keys and modes. The host must wait for a returned `TotalCaptureResult` confirming both states are locked before treating a capture as lock-observed.
-- `DsiCaptureManifest` records the exact image SHA-256, byte count, pipeline fingerprint, server challenge ID/nonce digest, actual capture result values and chart/illumination/polarization declarations. Canonical JSON is used for signatures and Play Integrity request binding.
+- `DsiCamera2PipelineInspector` reads Camera2 characteristics, available request/result keys, stream sizes, logical/physical camera IDs, lens/sensor metadata, RAW/manual capabilities and per-device calibration, colour-transform and forward matrices. It produces the same canonical fingerprint shape expected by the backend device-baseline registry. It does not use serial numbers, IMEI, advertising IDs or geolocation.
+- `DsiCamera2CaptureControls` begins with unlocked AE/AWB metering, requires both to converge, then requests locks and verifies the lock booleans and LOCKED states in the capture result. The host must retain the result associated with the still image.
+- `DsiCaptureManifest` hashes the exact in-memory image bytes and requires `Image.timestamp` to equal `CaptureResult.SENSOR_TIMESTAMP`. It embeds the exact device-baseline report, image dimensions, capture result values, server challenge ID/nonce digest, and chart/illumination/polarization declarations. Canonical JSON is used for signatures and Play Integrity request binding.
 - `DsiAndroidCaptureAttestor` creates a per-capture EC signing key in Android Keystore using the server nonce as its Android Key Attestation challenge, requires hardware-backed key storage, signs the canonical manifest and requests a Play Integrity Standard API token whose `requestHash` binds the same manifest.
 
 ## Capture sequence
@@ -20,8 +20,8 @@ It does not replace the host application's camera UI, permission flow, user auth
 1. Host obtains camera permission and the relevant DSI consent receipt for the exact user, resource and intended analysis purpose.
 2. Host requests a short-lived, single-use challenge from the authenticated DSI backend. The response contains an opaque challenge ID, a cryptographically random base64url nonce (at least 256 bits) and expiry.
 3. Host calls `inspectAllCameras()` and selects a camera/lens the user can physically use. The SDK does not silently switch to a different lens.
-4. Host creates the Camera2 preview/still session. It calls `applyExposureAndWhiteBalanceLocks()` only when supported, waits for AE/AWB state confirmation, then performs the still capture.
-5. Host retains the returned still bytes in memory and passes those exact bytes and the corresponding `TotalCaptureResult` into `DsiCaptureManifest.create()`.
+4. Host creates the Camera2 preview/still session. It calls `applyUnlockedMetering()`, waits for a preview result where AE and AWB are converged, calls `applyLocksAfterConvergence()`, then waits for both AE/AWB lock states to be reported as LOCKED before submitting the still request.
+5. Host obtains the exact still `Image` and its corresponding `TotalCaptureResult`. It passes the still buffer's `Image.timestamp`, encoded width/height, exact output bytes and the matching capture result into `DsiCaptureManifest.create()`. The SDK rejects the request unless the image and result timestamps match exactly.
 6. Host obtains a Play Integrity Standard API token provider early in the app session, then calls `createAttestation()`. The SDK signs the manifest and binds its SHA-256 to the Play Integrity `requestHash`.
 7. Host sends the manifest, signature, Android attestation certificate chain, Play Integrity token and image bytes through the authenticated DSI API. The image must be bound to the same capture reference and image digest. Do not persist the original media unless a separately justified, consented purpose requires it.
 
@@ -48,7 +48,9 @@ The backend must independently:
 - record an immutable, short-lived verification receipt bound to the exact manifest digest, image digest, pipeline fingerprint, challenge, app package/version, validation policy and capture runtime;
 - return a server-generated verification state. The client must never set `attestation_verified=true` or change the device operational tier.
 
-The current backend does not yet perform these checks for Android captures. Until that verifier and the authenticated challenge endpoints are deployed and independently tested, every SDK envelope is `pending_server_verification` and **must remain relative-only**.
+The backend does not yet perform these checks for Android captures. The server-side implementation is tracked in [issue #214](https://github.com/cirvannaco-png/Cirvanna-demo/issues/214). Until that verifier and the authenticated challenge endpoints are deployed and independently tested, every SDK envelope is `pending_server_verification` and **must remain relative-only**.
+
+**Threat-model limit:** Android Keystore attestation and Play Integrity can strengthen app/device integrity and bind a request manifest to a trusted key/token. They do not prove that the signed image bytes originated directly from the physical camera sensor, that no privileged OEM processing occurred, or that the device is free of every compromise. Treat the result as supporting evidence, not sensor-origin attestation. The capture app and all upload paths still require review and server-side validation.
 
 ## Build and test
 
@@ -68,6 +70,7 @@ Before promoting this SDK:
 - confirm locked AE/AWB state in actual Camera2 capture results and check that the host uses the result paired with the exact bytes;
 - test devices with RAW, devices without RAW, unavailable sensor calibration transforms, legacy/limited hardware levels and unsupported lock modes;
 - verify StrongBox/TEE attestation chains on real devices, revoked certificate handling, Play Integrity verdicts and replay rejection against the staging backend;
+- verify image/result timestamp matching and frame association on physical Camera2 devices;
 - compare supported image paths with same-session spectrophotometer references under controlled lighting;
 - review user consent, permission denial, cancellation, revocation, deletion and memory lifecycle;
 - independently sign the exact Android SDK, capture pipeline, device profile and dataset scopes before any baseline promotion.
