@@ -167,3 +167,10 @@ The evaluator reports CIEDE2000 error, signed Lab bias, reference-instrument unc
 Incomplete policies, absent signatures, missing repeatability or underpowered slices remain `REVIEW_REQUIRED`. Threshold violations return `FAIL`. A `PASS` is scoped only to the exact hashed model, segmenter, chart profile, signed dataset and policy. Synthetic fixtures are not production evidence. This harness does not train or deploy models and cannot change live DSI readiness.
 
 See [validation/dsi_color/README.md](validation/dsi_color/README.md) for dataset schema, signing workflow, CLI use and release decision semantics.
+
+
+## DSI P0 capture provenance
+
+The first P0 increment adds a strict, non-identifying capture-provenance contract in app.dsi_capture and unit tests for controlled-diffuse, ambient-relative and cross-polarized declarations. It records declared exposure/white-balance states, illumination and meter provenance, image colour-profile digest, chart integrity, HDR/beauty-filter state and optional polarizer/analyzer references.
+
+This is contract groundwork only: no image route consumes it yet, client/device declarations are not trusted evidence, and a complete declaration cannot approve absolute colour measurement or enable inference. A signed trusted capture-runtime attestation, measured lab protocol, independent spectrophotometer cohort and signed held-out evaluation are still required. See validation/dsi_color/capture-protocol.md.
