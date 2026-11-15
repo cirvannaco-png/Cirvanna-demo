@@ -175,9 +175,7 @@ data class DsiCaptureManifest internal constructor(
             val nonceDigest = sha256Hex(nonce)
             val captureTimestamp = result.get(CaptureResult.SENSOR_TIMESTAMP)
                 ?: error("Camera2 capture result is missing SENSOR_TIMESTAMP")
-            require(input.imageSensorTimestampNs > 0L && input.imageSensorTimestampNs == captureTimestamp) {
-                "Image.timestamp must equal SENSOR_TIMESTAMP from the corresponding TotalCaptureResult"
-            }
+            requireMatchingCameraImageTimestamp(input.imageSensorTimestampNs, captureTimestamp)
             require(input.outputWidth > 0 && input.outputHeight > 0) {
                 "Encoded image dimensions must be supplied from the exact output image"
             }
@@ -394,4 +392,11 @@ private fun quoteCanonicalString(value: String): String = buildString {
         }
     }
     append('"')
+}
+
+
+internal fun requireMatchingCameraImageTimestamp(imageTimestampNs: Long, resultTimestampNs: Long) {
+    require(imageTimestampNs > 0L && resultTimestampNs > 0L && imageTimestampNs == resultTimestampNs) {
+        "Image.timestamp must equal SENSOR_TIMESTAMP from the corresponding TotalCaptureResult"
+    }
 }
