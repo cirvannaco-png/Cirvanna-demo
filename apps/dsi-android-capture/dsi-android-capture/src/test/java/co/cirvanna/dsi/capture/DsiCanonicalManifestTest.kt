@@ -49,3 +49,26 @@ class DsiCanonicalManifestTest {
         canonicalJson(mapOf("lux" to Double.NaN))
     }
 }
+
+
+class DsiCameraFrameAssociationTest {
+    @Test
+    fun acceptsMatchingImageAndCaptureResultTimestamps() {
+        requireMatchingCameraImageTimestamp(1_234_567_890L, 1_234_567_890L)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsMismatchedImageAndCaptureResultTimestamps() {
+        requireMatchingCameraImageTimestamp(1_234_567_890L, 1_234_567_891L)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsMissingImageTimestamp() {
+        requireMatchingCameraImageTimestamp(0L, 1_234_567_890L)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsMissingCaptureResultTimestamp() {
+        requireMatchingCameraImageTimestamp(1_234_567_890L, 0L)
+    }
+}
