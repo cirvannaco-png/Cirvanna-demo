@@ -12,6 +12,15 @@ import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.UUID
 
+enum class DsiLensRole(val wireValue: String) {
+    FRONT("front"),
+    REAR_WIDE("rear_wide"),
+    REAR_ULTRAWIDE("rear_ultrawide"),
+    REAR_TELEPHOTO("rear_telephoto"),
+    REAR_MACRO("rear_macro"),
+    UNKNOWN("unknown"),
+}
+
 enum class DsiCaptureMode(val wireValue: String) {
     CONTROLLED_DIFFUSE("controlled_diffuse"),
     CROSS_POLARIZED("cross_polarized"),
@@ -105,9 +114,17 @@ data class DsiCaptureManifestInput(
     val challenge: DsiServerCaptureChallenge,
     val cameraPipeline: DsiCamera2PipelineSnapshot,
     val captureResult: TotalCaptureResult,
+    /** Image.timestamp from the exact camera Image that produced imageBytes. */
+    val imageSensorTimestampNs: Long,
+    /** Actual encoded image dimensions, not the sensor active-array dimensions. */
+    val outputWidth: Int,
+    val outputHeight: Int,
     /** Kept in memory only. This library hashes the bytes and never writes them. */
     val imageBytes: ByteArray,
     val outputFormat: DsiImageOutputFormat,
+    val lensRole: DsiLensRole,
+    /** Digest of the exact embedded/pinned output colour profile; null for RAW. */
+    val outputColourProfileSha256: String? = null,
     val captureMode: DsiCaptureMode,
     val illumination: DsiIlluminationDeclaration,
     val chart: DsiChartDeclaration,
@@ -130,6 +147,8 @@ data class DsiCaptureManifest(
     val imageByteCount: Int,
     val captureRef: String,
     val challengeId: String,
+    val challengeNonceSha256: String,
+    val devicePipelineFingerprintSha256: String,
     val observedExposureLock: Boolean,
     val observedWhiteBalanceLock: Boolean,
 ) {
@@ -154,6 +173,65 @@ data class DsiCaptureManifest(
             val imageDigest = sha256Hex(input.imageBytes)
             val nonceDigest = sha256Hex(nonce)
             val captureTimestamp = result.get(CaptureResult.SENSOR_TIMESTAMP)
+                ?: error("Camera2 capture result is missing SENSOR_TIMESTAMP")
+            require(input.imageSensorTimestampNs > 0L && input.imageSensorTimestampNs == captureTimestamp) {
+                "Image.timestamp must equal SENSOR_TIMESTAMP from the corresponding TotalCaptureResult"
+            }
+            require(input.outputWidth > 0 && input.outputHeight > 0) {
+                "Encoded image dimensions must be supplied from the exact output image"
+            }
+            val rawOutput = input.outputFormat in setOf(
+                DsiImageOutputFormat.RAW_SENSOR,
+                DsiImageOutputFormat.DNG,
+                DsiImageOutputFormat.RAW10,
+            )
+            require(!rawOutput || input.outputColourProfileSha256 == null) {
+                "RAW capture cannot declare a processed output colour profile"
+            }
+            require(
+                rawOutput || input.outputFormat !in setOf(DsiImageOutputFormat.JPEG, DsiImageOutputFormat.HEIF) ||
+                    input.outputColourProfileSha256?.matches(Regex("^[a-f0-9]{64}$")) == true,
+            ) { "JPEG and HEIF captures require a pinned output colour-profile digest" }
+
+            val baselineFingerprint = input.cameraPipeline.baselineFingerprint(
+                input.outputFormat,
+                input.lensRole,
+                input.outputColourProfileSha256,
+            )
+            val baselineFingerprintSha256 = sha256Hex(
+                canonicalJson(baselineFingerprint).toByteArray(StandardCharsets.UTF_8),
+            )
+            val sensorColourCalibrationAvailable =
+                input.cameraPipeline.sensorCalibrationTransform1Sha256 != null &&
+                    input.cameraPipeline.sensorColorTransform1Sha256 != null &&
+                    input.cameraPipeline.sensorForwardMatrix1Sha256 != null &&
+                    input.cameraPipeline.referenceIlluminant1 != null
+
+            val baselineReport = mapOf(
+                "schema_version" to "dsi-device-capture-v1",
+                "fingerprint" to baselineFingerprint,
+                "capabilities" to mapOf(
+                    "output_width" to input.outputWidth,
+                    "output_height" to input.outputHeight,
+                    "exposure_lock_supported" to input.cameraPipeline.supportsAeLock,
+                    "exposure_lock_applied" to lockObservation.exposureLockObserved,
+                    "white_balance_lock_supported" to input.cameraPipeline.supportsAwbLock,
+                    "white_balance_lock_applied" to lockObservation.whiteBalanceLockObserved,
+                    "raw_capture_supported" to (
+                        input.cameraPipeline.supportsRaw && input.cameraPipeline.rawOutputSizes.isNotEmpty()
+                    ),
+                    "raw_capture_used" to rawOutput,
+                    "sensor_colour_calibration_available" to sensorColourCalibrationAvailable,
+                    "output_colour_profile_sha256" to input.outputColourProfileSha256,
+                    // Camera2 cannot attest hidden OEM post-processing switches.
+                    "hdr_disabled" to null,
+                    "beauty_processing_disabled" to null,
+                    "capture_mode" to input.captureMode.wireValue,
+                    "chart_condition" to input.chart.condition.wireValue,
+                    "chart_profile_id" to input.chart.profileId,
+                    "chart_profile_sha256" to input.chart.profileSha256,
+                ),
+            )
 
             val fields = linkedMapOf<String, Any?>(
                 "schema_version" to "dsi-capture-manifest-v1",
@@ -168,8 +246,12 @@ data class DsiCaptureManifest(
                 "output_format" to input.outputFormat.wireValue,
                 "capture_mode" to input.captureMode.wireValue,
                 "app_runtime_version" to input.appRuntimeVersion,
-                "device_pipeline_fingerprint_sha256" to input.cameraPipeline.pipelineFingerprintSha256,
+                "device_pipeline_fingerprint_sha256" to baselineFingerprintSha256,
                 "camera_pipeline" to input.cameraPipeline.toPublicEvidence(),
+                "device_baseline_report" to baselineReport,
+                "image_sensor_timestamp_ns" to input.imageSensorTimestampNs,
+                "output_width" to input.outputWidth,
+                "output_height" to input.outputHeight,
                 "illumination_declaration" to mapOf(
                     "profile" to input.illumination.profile,
                     "reported_illuminant" to input.illumination.reportedIlluminant,
@@ -230,6 +312,8 @@ data class DsiCaptureManifest(
                 imageByteCount = input.imageBytes.size,
                 captureRef = input.captureRef,
                 challengeId = input.challenge.challengeId,
+                challengeNonceSha256 = nonceDigest,
+                devicePipelineFingerprintSha256 = baselineFingerprintSha256,
                 observedExposureLock = lockObservation.exposureLockObserved,
                 observedWhiteBalanceLock = lockObservation.whiteBalanceLockObserved,
             )
