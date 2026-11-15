@@ -1239,11 +1239,6 @@ async def upload_appearance_source(request: Request, look_id: str) -> Response:
     uploaded = form.get("file")
     if not isinstance(consent_id, str) or len(consent_id.strip()) < 8 or not isinstance(uploaded, StarletteUploadFile):
         raise HTTPException(422, detail={"code": "APPEARANCE_SOURCE_UPLOAD_FIELDS_REQUIRED"})
-    raw = await uploaded.read(MAX_VISION_IMAGE_BYTES + 1)
-    await uploaded.close()
-    if not raw or len(raw) > MAX_VISION_IMAGE_BYTES:
-        raise HTTPException(413, detail={"code": "APPEARANCE_SOURCE_IMAGE_SIZE_INVALID"})
-
     async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
         subject, _ = await _verified_commerce_subject(client, request)
         identity_base, identity_token = _identity_learning_service()
@@ -1283,6 +1278,12 @@ async def upload_appearance_source(request: Request, look_id: str) -> Response:
             and isinstance(receipt.get("expires_at"), str)
         ):
             raise HTTPException(403, detail={"code": "APPEARANCE_SOURCE_CONSENT_BINDING_INVALID"})
+        # Do not read the uploaded photo into application memory until the
+        # exact subject/resource storage and processing consent is verified.
+        raw = await uploaded.read(MAX_VISION_IMAGE_BYTES + 1)
+        await uploaded.close()
+        if not raw or len(raw) > MAX_VISION_IMAGE_BYTES:
+            raise HTTPException(413, detail={"code": "APPEARANCE_SOURCE_IMAGE_SIZE_INVALID"})
         asset_base, asset_token = _internal_service("ASSET_SERVICE_URL", "ASSET_SERVICE_TOKEN")
         try:
             response = await client.post(
