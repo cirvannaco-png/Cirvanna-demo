@@ -98,7 +98,9 @@ class DevicePipelineFingerprint(BaselineContract):
     camera_facing: CameraFacing
     lens_role: LensRole
     os_release: str = Field(min_length=1, max_length=80)
+    platform_api_level: int = Field(ge=21, le=100)
     security_patch: str = Field(min_length=1, max_length=80)
+    build_fingerprint: str = Field(min_length=1, max_length=256)
     camera_api: CameraAPI
     capture_runtime: str = Field(min_length=1, max_length=100)
     capture_runtime_version: str = Field(min_length=1, max_length=80)
