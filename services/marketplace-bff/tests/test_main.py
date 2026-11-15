@@ -1,10 +1,16 @@
 import json
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from app import main
+
+
+def future_expiry(hours: int = 12) -> str:
+    """Return a moving expiry so consent tests remain valid at any run time."""
+    return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat().replace("+00:00", "Z")
 
 
 class FakeResponse:
@@ -642,7 +648,7 @@ def test_pnelly_conversation_creation_records_explicit_resource_bound_24_hour_co
         }),
         FakeResponse({
             "status": "created", "conversation_id": conversation_id, "state_version": 0,
-            "expires_at": "2026-11-15T03:00:00+00:00", "context": {},
+            "expires_at": future_expiry(), "context": {},
         }),
     ])
     identifiers = iter([__import__("uuid").UUID(conversation_id), __import__("uuid").UUID(receipt_id)])
@@ -677,7 +683,7 @@ def test_wardrobe_recommendations_persist_context_before_cal_discovery(client, m
         FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
         FakeResponse({
             "status": "active", "conversation_id": conversation_id, "state_version": 1,
-            "expires_at": "2026-11-15T03:00:00+00:00",
+            "expires_at": future_expiry(),
             "context": {
                 "query": "green dress",
                 "category": "dress",
@@ -691,7 +697,7 @@ def test_wardrobe_recommendations_persist_context_before_cal_discovery(client, m
         }),
         FakeResponse({
             "status": "updated", "conversation_id": conversation_id, "state_version": 2,
-            "expires_at": "2026-11-15T03:00:00+00:00",
+            "expires_at": future_expiry(),
             "context": {
                 "query": "make it more formal",
                 "category": "dress",
@@ -1883,10 +1889,18 @@ def test_wardrobe_category_bff_uses_verified_session_and_validates_taxonomy(clie
     fake = FakeAsyncClient([
         FakeResponse({"user_id": "signed-user-42"}),
         FakeResponse({
-            "taxonomy_version": "1.0.0",
+            "taxonomy_version": "1.1.0",
             "categories": [
                 {"id": "shoes", "label": "Shoes and footwear", "group": "footwear"},
                 {"id": "makeup", "label": "Makeup", "group": "beauty"},
+                {"id": "brow_products", "label": "Eyebrow products", "group": "beauty"},
+                {"id": "lash_products", "label": "Eyelash products", "group": "beauty"},
+                {"id": "lip_products", "label": "Lip products and lipstick", "group": "beauty"},
+                {"id": "wigs_extensions", "label": "Wigs, extensions and hairpieces", "group": "hair"},
+                {"id": "hair_colour", "label": "Hair colour products", "group": "beauty"},
+                {"id": "hair_styling", "label": "Hair styling products and tools", "group": "beauty"},
+                {"id": "earrings", "label": "Earrings", "group": "accessories"},
+                {"id": "necklaces", "label": "Necklaces and pendants", "group": "accessories"},
             ],
         }),
     ])
@@ -1894,8 +1908,8 @@ def test_wardrobe_category_bff_uses_verified_session_and_validates_taxonomy(clie
     response = client.get("/api/wardrobe/categories", headers={"Authorization": "Bearer signed-session"})
     assert response.status_code == 200, response.text
     assert response.headers["cache-control"] == "no-store, private"
-    assert response.json()["taxonomy_version"] == "1.0.0"
-    assert {item["id"] for item in response.json()["categories"]} == {"shoes", "makeup"}
+    assert response.json()["taxonomy_version"] == "1.1.0"
+    assert {item["id"] for item in response.json()["categories"]} == {"shoes", "makeup", "brow_products", "lash_products", "lip_products", "wigs_extensions", "hair_colour", "hair_styling", "earrings", "necklaces"}
     assert fake.calls[1][1] == "https://wardrobe.example.test/v1/categories"
 
 
