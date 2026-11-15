@@ -100,14 +100,16 @@ object DsiCamera2CaptureControls {
         val requestedAwbLock = request.get(CaptureRequest.CONTROL_AWB_LOCK) == true
         val aeState = result.get(CaptureResult.CONTROL_AE_STATE)
         val awbState = result.get(CaptureResult.CONTROL_AWB_STATE)
+        val observedAeLock = result.get(CaptureResult.CONTROL_AE_LOCK) == true
+        val observedAwbLock = result.get(CaptureResult.CONTROL_AWB_LOCK) == true
 
         return DsiCaptureLockObservation(
             exposureLockRequested = requestedAeLock,
-            exposureLockObserved = requestedAeLock &&
+            exposureLockObserved = requestedAeLock && observedAeLock &&
                 aeState == CameraMetadata.CONTROL_AE_STATE_LOCKED,
             exposureStateCode = aeState,
             whiteBalanceLockRequested = requestedAwbLock,
-            whiteBalanceLockObserved = requestedAwbLock &&
+            whiteBalanceLockObserved = requestedAwbLock && observedAwbLock &&
                 awbState == CameraMetadata.CONTROL_AWB_STATE_LOCKED,
             whiteBalanceStateCode = awbState,
             appliedExposureTimeNs = result.get(CaptureResult.SENSOR_EXPOSURE_TIME),
