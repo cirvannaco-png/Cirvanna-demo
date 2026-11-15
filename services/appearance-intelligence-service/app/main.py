@@ -582,7 +582,7 @@ async def create_look(payload: CreateLookIn):
         consent_id=payload.consent_id,
         resource_id=payload.look_id,
         required_scopes=["appearance_session_storage"] if payload.base.kind == "virtual_twin"
-        else ["appearance_session_storage", "image_processing"],
+        else ["appearance_session_storage", "appearance_source_storage", "image_processing"],
     )
     if payload.base.kind == "source_photo":
         for asset_id in payload.base.source_asset_ids:
@@ -840,7 +840,7 @@ async def set_favorite(look_id: str, payload: FavoriteIn):
 @app.post("/v1/looks/{look_id}/branch", status_code=201, dependencies=[Depends(require_internal_token)])
 async def branch_from_render(look_id: str, payload: BranchLookIn):
     _identifier(look_id, "look_id")
-    await _verify_consent(
+    branch_consent = await _verify_consent(
         subject_id=payload.subject_id,
         consent_id=payload.consent_id,
         resource_id=payload.new_look_id,
@@ -890,7 +890,7 @@ async def branch_from_render(look_id: str, payload: BranchLookIn):
         now = utcnow()
         row = AppearanceLookRow(
             look_id=payload.new_look_id, subject_id=payload.subject_id,
-            consent_id=payload.consent_id, consent_version="verified-at-create",
+            consent_id=payload.consent_id, consent_version=branch_consent["consent_version"],
             base=branch_doc, operations=[], current_version=1,
             is_favorite=False, status="active", created_at=now, updated_at=now,
         )
