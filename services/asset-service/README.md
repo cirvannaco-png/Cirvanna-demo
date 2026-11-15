@@ -2,11 +2,11 @@
 
 **Status:** provider-neutral application boundary implemented; an S3-compatible object store and PostgreSQL still must be provisioned and live-tested.
 
-This service is the sole private binary boundary for Twin source images, Twin representations, catalog/wardrobe garment images and try-on outputs. It stores only opaque asset metadata in Postgres and image bytes in private S3-compatible object storage. Use AWS S3 or a compatible object-storage provider by configuring the endpoint; product services do not receive public URLs or direct bucket credentials.
+This service is the sole private binary boundary for Twin source images, Twin representations, catalog/wardrobe garment images, try-on outputs, appearance source photos and appearance render outputs. It stores only opaque asset metadata in Postgres and image bytes in private S3-compatible object storage. Use AWS S3 or a compatible object-storage provider by configuring the endpoint; product services do not receive public URLs or direct bucket credentials.
 
 ## Contracts
 
-- `POST /internal/v1/assets`: trusted service upload with owner, purpose and parent binding; image bytes are validated and EXIF is stripped before storing as PNG.
+- `POST /internal/v1/assets`: trusted service upload with owner, purpose and parent binding; image bytes are validated and EXIF is stripped before storing as PNG. Appearance source photos use `appearance_source_image` with the new look ID as parent; rendered outputs use `appearance_render_output` with their look ID as parent.
 - `POST /internal/v1/assets/authorize`: verifies exact owner, asset purpose, parent record, active status and retention window. It also supports the Twin registry's bulk contract (`asset_ids`, `purpose=virtual_twin_storage`, and exact `parent_id`) and returns the complete authorized ID set.
 - `GET /internal/v1/assets/{asset_id}/content`: returns bytes only when owner, purpose and parent all match.
 - `DELETE /v1/assets/{asset_id}`: idempotent owner-checked deletion. Compatible with Wardrobe's existing deletion outbox worker.
