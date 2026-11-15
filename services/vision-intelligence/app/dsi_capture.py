@@ -70,7 +70,7 @@ class PolarizationSetup(CaptureContract):
 
     light_source_polarizer_ref: str = Field(min_length=3, max_length=128)
     camera_analyzer_ref: str = Field(min_length=3, max_length=128)
-    relative_orientation_degrees: float | None = Field(default=None, ge=0, le=180)
+    relative_orientation_degrees: float = Field(ge=0, le=180)
     optical_setup_reference: str = Field(min_length=8, max_length=256)
 
 
@@ -161,6 +161,8 @@ def assess_capture_declaration(evidence: DSICaptureProvenance) -> dict[str, obje
 
     if evidence.capture_mode not in {CaptureMode.CONTROLLED_DIFFUSE, CaptureMode.CROSS_POLARIZED}:
         reasons.append("capture_mode_not_controlled")
+    if not evidence.reported_illuminant_name:
+        reasons.append("illuminant_source_not_identified")
     if evidence.illumination_setup != IlluminationSetup.STANDARDIZED_DIFFUSE:
         reasons.append("standardized_diffuse_illumination_not_declared")
     if evidence.white_balance_state != ControlState.LOCKED:
