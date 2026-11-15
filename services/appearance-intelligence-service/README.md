@@ -16,7 +16,7 @@
 
 All routes except /health require an internal bearer token. They are private service APIs, not browser endpoints.
 
-- POST /v1/looks: create a persistent photo- or Twin-based look. Source-photo assets must already exist in Asset Service with purpose appearance_source_image and exact parent look_id. The request is authorized by appearance_session_storage and image_processing consent; Twin-backed looks additionally require a currently authorized Twin.
+- POST /v1/looks: create a persistent photo- or Twin-based look. Source-photo assets must already exist in Asset Service with purpose appearance_source_image and exact parent look_id. The request is authorized by appearance_session_storage, appearance_source_storage and image_processing consent; Twin-backed looks additionally require a currently authorized Twin.
 - GET /v1/looks/{look_id}: retrieve the current composition for its verified subject.
 - GET /v1/looks/{look_id}/versions: retrieve immutable version metadata.
 - GET /v1/looks/{look_id}/compare?from_version=N&to_version=M: compare component operations across two versions.
@@ -31,7 +31,7 @@ A render result is attached to a specific immutable look version. An edit create
 
 ## Consent model
 
-The new appearance_session_storage scope is distinct from DSI analysis, Twin storage, image processing, style learning and global model training. A source-photo look requires appearance_session_storage plus image_processing in one resource-bound bundle whose resource is the exact look ID. A Twin-based look requires the session-storage grant for the new look; the Twin Registry separately checks the Twin's existing consent and owner authorization. Consent is rechecked at each mutating operation and before a render result is attached.
+The new appearance_session_storage scope is distinct from DSI analysis, Twin storage, image processing, style learning and global model training. A source-photo look requires appearance_session_storage, appearance_source_storage and image_processing in one resource-bound bundle whose resource is the exact look ID. A Twin-based look requires the session-storage grant for the new look; the Twin Registry separately checks the Twin's existing consent and owner authorization. Consent is rechecked at each mutating operation and before a render result is attached.
 
 ## Data and privacy
 
