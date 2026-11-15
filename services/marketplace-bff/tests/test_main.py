@@ -1883,7 +1883,7 @@ def test_wardrobe_category_bff_uses_verified_session_and_validates_taxonomy(clie
     fake = FakeAsyncClient([
         FakeResponse({"user_id": "signed-user-42"}),
         FakeResponse({
-            "taxonomy_version": "1.0.0",
+            "taxonomy_version": "1.1.0",
             "categories": [
                 {"id": "shoes", "label": "Shoes and footwear", "group": "footwear"},
                 {"id": "makeup", "label": "Makeup", "group": "beauty"},
@@ -1894,8 +1894,8 @@ def test_wardrobe_category_bff_uses_verified_session_and_validates_taxonomy(clie
     response = client.get("/api/wardrobe/categories", headers={"Authorization": "Bearer signed-session"})
     assert response.status_code == 200, response.text
     assert response.headers["cache-control"] == "no-store, private"
-    assert response.json()["taxonomy_version"] == "1.0.0"
-    assert {item["id"] for item in response.json()["categories"]} == {"shoes", "makeup"}
+    assert response.json()["taxonomy_version"] == "1.1.0"
+    assert {item["id"] for item in response.json()["categories"]} == {"shoes", "makeup", "brow_products", "lash_products", "lip_products", "wigs_extensions", "hair_colour", "hair_styling", "earrings", "necklaces"}
     assert fake.calls[1][1] == "https://wardrobe.example.test/v1/categories"
 
 
