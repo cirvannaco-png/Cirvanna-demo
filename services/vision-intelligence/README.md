@@ -202,3 +202,20 @@ The endpoint accepts no image, performs no skin inference and does not create us
 
 
 **Authority boundary:** `colour_validated` and `cross_polarized_validated` identify a validated camera-pipeline scope only. The resolver reports the approved regions/lightness ranges/lighting slices as scope metadata; it does not authorize an individual measurement. `absolute_colour_measurement_allowed` remains false. The downstream task must independently check the requested region, the measured L* range, current chart/capture evidence, image quality, task-specific model release and uncertainty before producing any absolute colour result.
+
+
+## Native Android Camera2 capture evidence SDK (scaffold)
+
+The monorepo now contains a standalone Android library at `apps/dsi-android-capture`. It is not a complete Android app and is not yet an integrated capture provider.
+
+The SDK:
+- inspects Camera2 logical/physical camera IDs, lens/sensor characteristics, RAW/JPEG stream sizes, available request/result keys, per-device calibration transforms, colour transforms, forward matrices and reference illuminants;
+- fingerprints the exact camera path using a backend-compatible canonical device-baseline schema that includes platform API/build, camera ID, physical camera IDs, lens role, OS/security patch, runtime/app versions, output format/profile, sensor metadata and available keys;
+- begins with unlocked AE/AWB metering, requests locks after convergence and checks lock booleans plus LOCKED states in the actual `TotalCaptureResult`;
+- binds the exact image byte digest and output dimensions to the same frame by requiring `Image.timestamp == CaptureResult.SENSOR_TIMESTAMP`;
+- embeds a `dsi-device-capture-v1` baseline report inside the canonical signed capture manifest;
+- creates a client-side Android Keystore hardware-key-attestation candidate and a Play Integrity Standard API request bound to the manifest hash.
+
+The SDK deliberately reports HDR and beauty-processing state as unknown because Camera2 does not expose a universal attestation of hidden OEM processing. Key attestation and Play Integrity support app/device integrity and request binding; they do not prove physical sensor origin of the signed pixels. The backend challenge, nonce replay protection, Android certificate-chain/root/CRL verification, Play Integrity decode, consent/resource binding and server-issued verification receipt are not implemented yet; track that work in issue #214.
+
+Every SDK envelope remains `pending_server_verification`. No Android device is certified and no absolute colour measurement, inference readiness or CAL authorization is enabled by the native library. See [Android SDK protocol and physical acceptance gates](../../apps/dsi-android-capture/README.md).
