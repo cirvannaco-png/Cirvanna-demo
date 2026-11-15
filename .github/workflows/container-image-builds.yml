@@ -8,6 +8,8 @@ on:
       - "services/decision-service/**"
       - "services/marketplace-bff/**"
       - "services/asset-service/**"
+      - "services/appearance-intelligence-service/**"
+      - "packages/appearance_intelligence/**"
       - "services/privacy-governance-service/**"
       - "services/intelligence-service/**"
       - "services/api-gateway/**"
@@ -20,6 +22,8 @@ on:
       - "services/decision-service/**"
       - "services/marketplace-bff/**"
       - "services/asset-service/**"
+      - "services/appearance-intelligence-service/**"
+      - "packages/appearance_intelligence/**"
       - "services/vision-intelligence/**"
       - "services/privacy-governance-service/**"
       - "services/intelligence-service/**"
@@ -45,6 +49,8 @@ jobs:
         run: docker build -f services/marketplace-bff/Dockerfile -t cirvanna-marketplace-bff:ci .
       - name: Build private Asset service image
         run: docker build -f services/asset-service/Dockerfile -t cirvanna-asset-service:ci .
+      - name: Build private Appearance Intelligence service image
+        run: docker build -f services/appearance-intelligence-service/Dockerfile -t cirvanna-appearance-intelligence:ci .
       - name: Build Vision Intelligence image
         run: docker build -f services/vision-intelligence/Dockerfile -t cirvanna-vision-intelligence:ci services/vision-intelligence
       - name: Build Privacy Governance service image
