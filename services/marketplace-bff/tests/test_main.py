@@ -1,10 +1,16 @@
 import json
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from app import main
+
+
+def future_expiry(hours: int = 12) -> str:
+    """Return a moving expiry so consent tests remain valid at any run time."""
+    return (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat().replace("+00:00", "Z")
 
 
 class FakeResponse:
@@ -642,7 +648,7 @@ def test_pnelly_conversation_creation_records_explicit_resource_bound_24_hour_co
         }),
         FakeResponse({
             "status": "created", "conversation_id": conversation_id, "state_version": 0,
-            "expires_at": "2026-11-15T03:00:00+00:00", "context": {},
+            "expires_at": future_expiry(), "context": {},
         }),
     ])
     identifiers = iter([__import__("uuid").UUID(conversation_id), __import__("uuid").UUID(receipt_id)])
@@ -677,7 +683,7 @@ def test_wardrobe_recommendations_persist_context_before_cal_discovery(client, m
         FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
         FakeResponse({
             "status": "active", "conversation_id": conversation_id, "state_version": 1,
-            "expires_at": "2026-11-15T03:00:00+00:00",
+            "expires_at": future_expiry(),
             "context": {
                 "query": "green dress",
                 "category": "dress",
@@ -691,7 +697,7 @@ def test_wardrobe_recommendations_persist_context_before_cal_discovery(client, m
         }),
         FakeResponse({
             "status": "updated", "conversation_id": conversation_id, "state_version": 2,
-            "expires_at": "2026-11-15T03:00:00+00:00",
+            "expires_at": future_expiry(),
             "context": {
                 "query": "make it more formal",
                 "category": "dress",
