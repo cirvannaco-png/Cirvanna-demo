@@ -79,3 +79,10 @@ The evaluator requires:
 - adequate samples for required skin regions, camera models, lighting and other declared slices.
 
 No thresholds are asserted by this ADR. Incomplete or unsigned evidence remains REVIEW_REQUIRED; measured threshold breaches yield FAIL. The tool exports no subject pseudonyms or raw media and does not alter live inference, CAL, profile persistence, global training or appearance correction. See `services/vision-intelligence/validation/dsi_color/README.md`.
+
+
+## P0 capture provenance contract (15 November 2026)
+
+The Vision Intelligence service now has a strict, non-identifying DSI capture-provenance schema and declaration-assessment helper under app.dsi_capture. It records device/runtime declarations, capture mode, illumination/meter provenance, exposure/white-balance state, colour-profile digest, chart integrity, HDR/beauty-filter state and cross-polarizer/analyzer references.
+
+This is not a trusted capture attestation and does not authorize a measurement, inference, profile write or CAL evidence. No existing image route consumes the schema. A complete declaration remains a candidate for independent review only. Promotion requires a trusted capture runtime, calibrated light-meter records, optical verification for cross-polarization, reference measurements and an independently signed held-out evaluation. See services/vision-intelligence/validation/dsi_color/capture-protocol.md.
