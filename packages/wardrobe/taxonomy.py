@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 
-TAXONOMY_VERSION = "1.0.0"
+TAXONOMY_VERSION = "1.1.0"
 
 # Keep IDs stable: integrations should store these keys, never localized labels.
 WARDROBE_CATEGORIES: tuple[dict[str, str], ...] = (
@@ -30,11 +30,21 @@ WARDROBE_CATEGORIES: tuple[dict[str, str], ...] = (
     {"id": "scarves", "label": "Scarves", "group": "accessories"},
     {"id": "hats", "label": "Hats and headwear", "group": "accessories"},
     {"id": "hair_accessories", "label": "Hair accessories", "group": "accessories"},
+    {"id": "earrings", "label": "Earrings", "group": "accessories"},
+    {"id": "necklaces", "label": "Necklaces and pendants", "group": "accessories"},
     {"id": "socks", "label": "Socks and hosiery", "group": "accessories"},
     {"id": "accessories", "label": "Other accessories", "group": "accessories"},
     {"id": "makeup", "label": "Makeup", "group": "beauty"},
     {"id": "skincare", "label": "Skincare", "group": "beauty"},
     {"id": "haircare", "label": "Haircare and styling", "group": "beauty"},
+    {"id": "wigs_extensions", "label": "Wigs, extensions and hairpieces", "group": "hair"},
+    {"id": "hair_colour", "label": "Hair colour products", "group": "beauty"},
+    {"id": "hair_styling", "label": "Hair styling products and tools", "group": "beauty"},
+    {"id": "brow_products", "label": "Eyebrow products", "group": "beauty"},
+    {"id": "lash_products", "label": "Eyelash products", "group": "beauty"},
+    {"id": "lip_products", "label": "Lip products and lipstick", "group": "beauty"},
+    {"id": "nail_products", "label": "Nail products and nail art", "group": "beauty"},
+    {"id": "makeup_tools", "label": "Makeup tools and applicators", "group": "beauty"},
     {"id": "fragrance", "label": "Fragrance", "group": "beauty"},
     {"id": "other", "label": "Other", "group": "other"},
 )
@@ -56,6 +66,15 @@ _ALIASES = {
     "dresses": "dress",
     "lingerie": "underwear",
     "haircare_products": "haircare",
+    "wigs": "wigs_extensions",
+    "extensions": "wigs_extensions",
+    "eyebrow_products": "brow_products",
+    "eyelash_products": "lash_products",
+    "lipstick": "lip_products",
+    "lipsticks": "lip_products",
+    "headwear": "hats",
+    "earring": "earrings",
+    "necklace": "necklaces",
 }
 
 
