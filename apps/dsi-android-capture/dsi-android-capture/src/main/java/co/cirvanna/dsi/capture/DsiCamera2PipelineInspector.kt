@@ -265,95 +265,6 @@ class DsiCamera2PipelineInspector(private val context: Context) {
         )
     }
 
-    /**
-     * Produces the exact JSON shape used by the Vision Intelligence device
-     * baseline registry. This is an exact pipeline claim from Android APIs,
-     * not a server-trusted identity or camera-module attestation.
-     */
-    fun baselineFingerprint(
-        outputFormat: DsiImageOutputFormat,
-        lensRole: DsiLensRole,
-        colourProfileSha256: String?,
-        captureAppVersion: String,
-    ): Map<String, Any?> {
-        require(captureAppVersion.isNotBlank())
-        require(
-            outputFormat !in setOf(DsiImageOutputFormat.JPEG, DsiImageOutputFormat.HEIF) ||
-                colourProfileSha256?.matches(Regex("^[a-f0-9]{64}$")) == true,
-        ) { "JPEG and HEIF profiles require a pinned colour-profile SHA-256" }
-        if (outputFormat in setOf(DsiImageOutputFormat.RAW_SENSOR, DsiImageOutputFormat.DNG, DsiImageOutputFormat.RAW10)) {
-            require(colourProfileSha256 == null) { "RAW paths cannot claim a processed output colour profile" }
-        }
-
-        val facing = when (lensFacing) {
-            "front" -> "front"
-            "rear" -> "rear"
-            else -> "external"
-        }
-        require(lensRole != DsiLensRole.FRONT || facing == "front")
-        require(
-            lensRole !in setOf(
-                DsiLensRole.REAR_WIDE,
-                DsiLensRole.REAR_ULTRAWIDE,
-                DsiLensRole.REAR_TELEPHOTO,
-                DsiLensRole.REAR_MACRO,
-            ) || facing == "rear",
-        )
-        require(facing != "external" || lensRole == DsiLensRole.UNKNOWN)
-
-        return linkedMapOf(
-            "platform" to "android",
-            "manufacturer" to manufacturer,
-            "model" to model,
-            "camera_id" to cameraId,
-            "physical_camera_ids" to physicalCameraIds,
-            "camera_facing" to facing,
-            "lens_role" to lensRole.wireValue,
-            "os_release" to androidRelease,
-            "platform_api_level" to androidApiLevel,
-            "security_patch" to securityPatch.ifBlank { "unknown" },
-            "build_fingerprint" to android.os.Build.FINGERPRINT,
-            "camera_api" to "android_camera2",
-            "capture_runtime" to "dsi-android-capture",
-            "capture_runtime_version" to "0.1.0",
-            "capture_app_version" to captureAppVersion,
-            "capture_pipeline_revision" to "dsi-camera2-0.1.0",
-            "output_format" to outputFormat.wireValue,
-            "colour_profile_sha256" to colourProfileSha256,
-            "hardware_level" to hardwareLevel,
-            "pixel_array_width" to pixelArrayWidth,
-            "pixel_array_height" to pixelArrayHeight,
-            "physical_sensor_width_mm" to physicalSensorWidthMm?.toString(),
-            "physical_sensor_height_mm" to physicalSensorHeightMm?.toString(),
-            "focal_lengths_mm" to focalLengthsMm.map { it.toString() },
-            "colour_filter_arrangement" to colourFilterArrangement,
-            "sensor_calibration_transform1_sha256" to sensorCalibrationTransform1Sha256,
-            "sensor_calibration_transform2_sha256" to sensorCalibrationTransform2Sha256,
-            "sensor_color_transform1_sha256" to sensorColorTransform1Sha256,
-            "sensor_color_transform2_sha256" to sensorColorTransform2Sha256,
-            "sensor_forward_matrix1_sha256" to sensorForwardMatrix1Sha256,
-            "sensor_forward_matrix2_sha256" to sensorForwardMatrix2Sha256,
-            "reference_illuminant1" to referenceIlluminant1,
-            "reference_illuminant2" to referenceIlluminant2,
-            "available_request_keys" to availableRequestKeys,
-            "available_result_keys" to availableResultKeys,
-            "raw_output_sizes" to rawOutputSizes,
-            "jpeg_output_sizes" to jpegOutputSizes,
-        )
-    }
-
-    fun baselineFingerprintSha256(
-        outputFormat: DsiImageOutputFormat,
-        lensRole: DsiLensRole,
-        colourProfileSha256: String?,
-        captureAppVersion: String,
-    ): String = sha256Hex(canonicalJson(baselineFingerprint(
-        outputFormat,
-        lensRole,
-        colourProfileSha256,
-        captureAppVersion,
-    )).toByteArray(StandardCharsets.UTF_8))
-
     private fun hashTransform(transform: android.hardware.camera2.params.ColorSpaceTransform): String {
         val values = Array(9) { Rational.ZERO }
         transform.copyElements(values, 0)
@@ -361,6 +272,96 @@ class DsiCamera2PipelineInspector(private val context: Context) {
         return sha256Hex(canonical)
     }
 }
+
+
+/**
+ * Produces the exact JSON shape used by the Vision Intelligence device
+ * baseline registry. This is an exact pipeline claim from Android APIs,
+ * not a server-trusted identity or camera-module attestation.
+ */
+fun DsiCamera2PipelineSnapshot.baselineFingerprint(
+    outputFormat: DsiImageOutputFormat,
+    lensRole: DsiLensRole,
+    colourProfileSha256: String?,
+    captureAppVersion: String,
+): Map<String, Any?> {
+    require(captureAppVersion.isNotBlank())
+    require(
+        outputFormat !in setOf(DsiImageOutputFormat.JPEG, DsiImageOutputFormat.HEIF) ||
+            colourProfileSha256?.matches(Regex("^[a-f0-9]{64}$")) == true,
+    ) { "JPEG and HEIF profiles require a pinned colour-profile SHA-256" }
+    if (outputFormat in setOf(DsiImageOutputFormat.RAW_SENSOR, DsiImageOutputFormat.DNG, DsiImageOutputFormat.RAW10)) {
+        require(colourProfileSha256 == null) { "RAW paths cannot claim a processed output colour profile" }
+    }
+
+    val facing = when (lensFacing) {
+        "front" -> "front"
+        "rear" -> "rear"
+        else -> "external"
+    }
+    require(lensRole != DsiLensRole.FRONT || facing == "front")
+    require(
+        lensRole !in setOf(
+            DsiLensRole.REAR_WIDE,
+            DsiLensRole.REAR_ULTRAWIDE,
+            DsiLensRole.REAR_TELEPHOTO,
+            DsiLensRole.REAR_MACRO,
+        ) || facing == "rear",
+    )
+    require(facing != "external" || lensRole == DsiLensRole.UNKNOWN)
+
+    return linkedMapOf(
+        "platform" to "android",
+        "manufacturer" to manufacturer,
+        "model" to model,
+        "camera_id" to cameraId,
+        "physical_camera_ids" to physicalCameraIds,
+        "camera_facing" to facing,
+        "lens_role" to lensRole.wireValue,
+        "os_release" to androidRelease,
+        "platform_api_level" to androidApiLevel,
+        "security_patch" to securityPatch.ifBlank { "unknown" },
+        "build_fingerprint" to android.os.Build.FINGERPRINT,
+        "camera_api" to "android_camera2",
+        "capture_runtime" to "dsi-android-capture",
+        "capture_runtime_version" to "0.1.0",
+        "capture_app_version" to captureAppVersion,
+        "capture_pipeline_revision" to "dsi-camera2-0.1.0",
+        "output_format" to outputFormat.wireValue,
+        "colour_profile_sha256" to colourProfileSha256,
+        "hardware_level" to hardwareLevel,
+        "pixel_array_width" to pixelArrayWidth,
+        "pixel_array_height" to pixelArrayHeight,
+        "physical_sensor_width_mm" to physicalSensorWidthMm?.toString(),
+        "physical_sensor_height_mm" to physicalSensorHeightMm?.toString(),
+        "focal_lengths_mm" to focalLengthsMm.map { it.toString() },
+        "colour_filter_arrangement" to colourFilterArrangement,
+        "sensor_calibration_transform1_sha256" to sensorCalibrationTransform1Sha256,
+        "sensor_calibration_transform2_sha256" to sensorCalibrationTransform2Sha256,
+        "sensor_color_transform1_sha256" to sensorColorTransform1Sha256,
+        "sensor_color_transform2_sha256" to sensorColorTransform2Sha256,
+        "sensor_forward_matrix1_sha256" to sensorForwardMatrix1Sha256,
+        "sensor_forward_matrix2_sha256" to sensorForwardMatrix2Sha256,
+        "reference_illuminant1" to referenceIlluminant1,
+        "reference_illuminant2" to referenceIlluminant2,
+        "available_request_keys" to availableRequestKeys,
+        "available_result_keys" to availableResultKeys,
+        "raw_output_sizes" to rawOutputSizes,
+        "jpeg_output_sizes" to jpegOutputSizes,
+    )
+}
+
+fun DsiCamera2PipelineSnapshot.baselineFingerprintSha256(
+    outputFormat: DsiImageOutputFormat,
+    lensRole: DsiLensRole,
+    colourProfileSha256: String?,
+    captureAppVersion: String,
+): String = sha256Hex(canonicalJson(baselineFingerprint(
+    outputFormat,
+    lensRole,
+    colourProfileSha256,
+    captureAppVersion,
+)).toByteArray(StandardCharsets.UTF_8))
 
 private object CaptureKeyNames {
     const val AE_LOCK = "android.control.aeLock"
