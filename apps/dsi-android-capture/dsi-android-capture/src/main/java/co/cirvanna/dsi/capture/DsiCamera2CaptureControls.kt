@@ -7,11 +7,21 @@ import android.hardware.camera2.CaptureResult
 import android.hardware.camera2.TotalCaptureResult
 
 /**
- * Requests AE/AWB lock only when Camera2 advertises the required keys and modes.
- * Call this on the still-capture request created by the host camera application.
+ * Two-stage Camera2 capture control:
+ *
+ * 1. Enable AE/AWB and allow them to converge.
+ * 2. Lock their converged settings and wait for a result that reports LOCKED.
+ *
+ * A request to lock is not itself evidence that the corresponding still frame
+ * was captured with the locks applied. The host must attach the exact
+ * TotalCaptureResult returned for the still capture to the image bytes.
  */
 object DsiCamera2CaptureControls {
-    fun applyExposureAndWhiteBalanceLocks(
+    /**
+     * Start automatic exposure and white-balance metering with both locks off.
+     * Continue repeating preview requests until [isMeteringConverged] is true.
+     */
+    fun applyUnlockedMetering(
         builder: CaptureRequest.Builder,
         characteristics: CameraCharacteristics,
     ) {
@@ -43,10 +53,47 @@ object DsiCamera2CaptureControls {
         builder.set(CaptureRequest.CONTROL_SCENE_MODE, CameraMetadata.CONTROL_SCENE_MODE_DISABLED)
         builder.set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON)
         builder.set(CaptureRequest.CONTROL_AWB_MODE, CameraMetadata.CONTROL_AWB_MODE_AUTO)
+        builder.set(CaptureRequest.CONTROL_AE_LOCK, false)
+        builder.set(CaptureRequest.CONTROL_AWB_LOCK, false)
+    }
+
+    /** True only when one capture result reports both algorithms converged. */
+    fun isMeteringConverged(result: TotalCaptureResult): Boolean {
+        return result.get(CaptureResult.CONTROL_AE_STATE) ==
+            CameraMetadata.CONTROL_AE_STATE_CONVERGED &&
+            result.get(CaptureResult.CONTROL_AWB_STATE) ==
+            CameraMetadata.CONTROL_AWB_STATE_CONVERGED
+    }
+
+    /**
+     * Lock the converged metering values after [isMeteringConverged] has passed.
+     * If the camera does not support these controls, this throws rather than
+     * downgrading silently to an uncalibrated capture.
+     */
+    fun applyLocksAfterConvergence(
+        builder: CaptureRequest.Builder,
+        characteristics: CameraCharacteristics,
+        convergedResult: TotalCaptureResult,
+    ) {
+        require(isMeteringConverged(convergedResult)) {
+            "AE and AWB must both be converged before their values are locked"
+        }
+        val requestKeys = characteristics
+            .get(CameraCharacteristics.REQUEST_AVAILABLE_REQUEST_KEYS)
+            .orEmpty()
+            .toSet()
+        require(CaptureRequest.CONTROL_AE_LOCK in requestKeys) {
+            "This camera pipeline does not expose CONTROL_AE_LOCK"
+        }
+        require(CaptureRequest.CONTROL_AWB_LOCK in requestKeys) {
+            "This camera pipeline does not expose CONTROL_AWB_LOCK"
+        }
+
         builder.set(CaptureRequest.CONTROL_AE_LOCK, true)
         builder.set(CaptureRequest.CONTROL_AWB_LOCK, true)
     }
 
+    /** Inspect the actual result for the capture frame to be bound to image bytes. */
     fun observeLockResult(result: TotalCaptureResult): DsiCaptureLockObservation {
         val request = result.request
         val requestedAeLock = request.get(CaptureRequest.CONTROL_AE_LOCK) == true
