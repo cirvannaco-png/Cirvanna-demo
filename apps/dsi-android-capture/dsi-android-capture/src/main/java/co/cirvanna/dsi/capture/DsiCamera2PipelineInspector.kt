@@ -134,13 +134,11 @@ class DsiCamera2PipelineInspector(private val context: Context) {
         val characteristics = manager.getCameraCharacteristics(cameraId)
         val capabilities = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
             ?.toSet().orEmpty()
-        val requestKeys = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_REQUEST_KEYS)
-            .orEmpty()
+        val requestKeys = characteristics.getAvailableCaptureRequestKeys()
             .map { it.name }
             .distinct()
             .sorted()
-        val resultKeys = characteristics.get(CameraCharacteristics.REQUEST_AVAILABLE_RESULT_KEYS)
-            .orEmpty()
+        val resultKeys = characteristics.getAvailableCaptureResultKeys()
             .map { it.name }
             .distinct()
             .sorted()
@@ -187,7 +185,10 @@ class DsiCamera2PipelineInspector(private val context: Context) {
         }
         val cfa = characteristics.get(CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT)
         val refIlluminant1 = characteristics.get(CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT1)
-        val refIlluminant2 = characteristics.get(CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT2)
+        val refIlluminant2 = characteristics
+            .get(CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT2)
+            ?.toInt()
+            ?.let { it and 0xFF }
 
         val snapshotFields = listOf(
             "android",
