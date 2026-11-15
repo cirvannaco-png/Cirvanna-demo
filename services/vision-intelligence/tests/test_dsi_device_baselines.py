@@ -33,18 +33,39 @@ from app.dsi_device_baselines import (
 def fingerprint(**overrides):
     values = {
         "platform": Platform.ANDROID,
-        "manufacturer": "Example OEM",
+        "manufacturer": "example oem",
         "model": "Model Z",
-        "camera_module_id": "rear-main-module-v1",
+        "camera_id": "0",
         "camera_facing": CameraFacing.REAR,
         "lens_role": LensRole.REAR_WIDE,
+        "physical_camera_ids": [],
         "os_release": "Android 15",
+        "security_patch": "2026-01-01",
         "camera_api": CameraAPI.ANDROID_CAMERA2,
         "capture_runtime": "CirvannaCapture",
         "capture_runtime_version": "1.2.0",
         "capture_pipeline_revision": "camera-pipeline-3",
         "output_format": OutputFormat.JPEG,
         "colour_profile_sha256": "a" * 64,
+        "hardware_level": "full",
+        "pixel_array_width": 4032,
+        "pixel_array_height": 3024,
+        "physical_sensor_width_mm": "5.6",
+        "physical_sensor_height_mm": "4.2",
+        "focal_lengths_mm": ["4.5"],
+        "colour_filter_arrangement": 0,
+        "sensor_calibration_transform1_sha256": "1" * 64,
+        "sensor_calibration_transform2_sha256": "2" * 64,
+        "sensor_color_transform1_sha256": "3" * 64,
+        "sensor_color_transform2_sha256": "4" * 64,
+        "sensor_forward_matrix1_sha256": "5" * 64,
+        "sensor_forward_matrix2_sha256": "6" * 64,
+        "reference_illuminant1": 21,
+        "reference_illuminant2": 17,
+        "available_request_keys": ["android.control.aeLock", "android.control.awbLock"],
+        "available_result_keys": ["android.control.aeState", "android.sensor.timestamp"],
+        "raw_output_sizes": ["4032x3024"],
+        "jpeg_output_sizes": ["4032x3024"],
     }
     values.update(overrides)
     return DevicePipelineFingerprint.model_validate(values)
@@ -54,7 +75,7 @@ def report(**capability_overrides):
     capabilities = {
         "output_width": 3024,
         "output_height": 4032,
-        "manual_exposure_supported": True,
+        "exposure_lock_supported": True,
         "exposure_lock_applied": True,
         "white_balance_lock_supported": True,
         "white_balance_lock_applied": True,
@@ -82,7 +103,7 @@ def standard(**overrides):
         "minimum_height": 1600,
         "required_capture_modes": [CaptureMode.CONTROLLED_DIFFUSE],
         "accepted_output_formats": [OutputFormat.JPEG],
-        "require_manual_exposure_lock": True,
+        "require_exposure_lock": True,
         "require_white_balance_lock": True,
         "require_hdr_disabled": True,
         "require_beauty_processing_disabled": True,
@@ -144,7 +165,7 @@ def test_fingerprint_is_deterministic_and_camera_pipeline_specific():
     original = fingerprint()
     same = fingerprint()
     another_os = fingerprint(os_release="Android 16")
-    another_lens = fingerprint(lens_role=LensRole.REAR_ULTRAWIDE, camera_module_id="rear-ultra-v1")
+    another_lens = fingerprint(lens_role=LensRole.REAR_ULTRAWIDE, camera_id="1")
 
     assert original.fingerprint_sha256 == same.fingerprint_sha256
     assert original.fingerprint_sha256 != another_os.fingerprint_sha256
