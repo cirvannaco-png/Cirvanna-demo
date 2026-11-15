@@ -24,6 +24,7 @@ import java.util.Locale
  */
 data class DsiCamera2PipelineSnapshot(
     val cameraId: String,
+    val physicalCameraIds: List<String>,
     val manufacturer: String,
     val model: String,
     val androidRelease: String,
@@ -50,6 +51,10 @@ data class DsiCamera2PipelineSnapshot(
     val jpegOutputSizes: List<String>,
     val sensorCalibrationTransform1Sha256: String?,
     val sensorCalibrationTransform2Sha256: String?,
+    val sensorColorTransform1Sha256: String?,
+    val sensorColorTransform2Sha256: String?,
+    val sensorForwardMatrix1Sha256: String?,
+    val sensorForwardMatrix2Sha256: String?,
     val referenceIlluminant1: Int?,
     val referenceIlluminant2: Int?,
     val availableRequestKeys: List<String>,
@@ -59,6 +64,7 @@ data class DsiCamera2PipelineSnapshot(
     fun toPublicEvidence(): Map<String, Any?> = mapOf(
         "schema_version" to "dsi-android-camera2-pipeline-v1",
         "camera_id" to cameraId,
+        "physical_camera_ids" to physicalCameraIds,
         "manufacturer" to manufacturer,
         "model" to model,
         "android_release" to androidRelease,
@@ -85,6 +91,10 @@ data class DsiCamera2PipelineSnapshot(
         "jpeg_output_sizes" to jpegOutputSizes,
         "sensor_calibration_transform1_sha256" to sensorCalibrationTransform1Sha256,
         "sensor_calibration_transform2_sha256" to sensorCalibrationTransform2Sha256,
+        "sensor_color_transform1_sha256" to sensorColorTransform1Sha256,
+        "sensor_color_transform2_sha256" to sensorColorTransform2Sha256,
+        "sensor_forward_matrix1_sha256" to sensorForwardMatrix1Sha256,
+        "sensor_forward_matrix2_sha256" to sensorForwardMatrix2Sha256,
         "reference_illuminant1" to referenceIlluminant1,
         "reference_illuminant2" to referenceIlluminant2,
         "available_request_keys" to availableRequestKeys,
@@ -160,8 +170,21 @@ class DsiCamera2PipelineInspector(private val context: Context) {
 
         val transform1 = characteristics.get(CameraCharacteristics.SENSOR_CALIBRATION_TRANSFORM1)
         val transform2 = characteristics.get(CameraCharacteristics.SENSOR_CALIBRATION_TRANSFORM2)
+        val colorTransform1 = characteristics.get(CameraCharacteristics.SENSOR_COLOR_TRANSFORM1)
+        val colorTransform2 = characteristics.get(CameraCharacteristics.SENSOR_COLOR_TRANSFORM2)
+        val forwardMatrix1 = characteristics.get(CameraCharacteristics.SENSOR_FORWARD_MATRIX1)
+        val forwardMatrix2 = characteristics.get(CameraCharacteristics.SENSOR_FORWARD_MATRIX2)
         val transform1Hash = transform1?.let(::hashTransform)
         val transform2Hash = transform2?.let(::hashTransform)
+        val colorTransform1Hash = colorTransform1?.let(::hashTransform)
+        val colorTransform2Hash = colorTransform2?.let(::hashTransform)
+        val forwardMatrix1Hash = forwardMatrix1?.let(::hashTransform)
+        val forwardMatrix2Hash = forwardMatrix2?.let(::hashTransform)
+        val physicalCameraIds = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            characteristics.physicalCameraIds.toList().sorted()
+        } else {
+            emptyList()
+        }
         val cfa = characteristics.get(CameraCharacteristics.SENSOR_INFO_COLOR_FILTER_ARRANGEMENT)
         val refIlluminant1 = characteristics.get(CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT1)
         val refIlluminant2 = characteristics.get(CameraCharacteristics.SENSOR_REFERENCE_ILLUMINANT2)
@@ -171,6 +194,7 @@ class DsiCamera2PipelineInspector(private val context: Context) {
             BuildValues.manufacturer(),
             BuildValues.model(),
             cameraId,
+            physicalCameraIds.joinToString(","),
             facing,
             hardware,
             BuildValues.release(),
@@ -189,6 +213,10 @@ class DsiCamera2PipelineInspector(private val context: Context) {
             jpegSizes.joinToString(","),
             transform1Hash.orEmpty(),
             transform2Hash.orEmpty(),
+            colorTransform1Hash.orEmpty(),
+            colorTransform2Hash.orEmpty(),
+            forwardMatrix1Hash.orEmpty(),
+            forwardMatrix2Hash.orEmpty(),
             refIlluminant1?.toString().orEmpty(),
             refIlluminant2?.toString().orEmpty(),
             "camera2",
@@ -198,6 +226,7 @@ class DsiCamera2PipelineInspector(private val context: Context) {
 
         return DsiCamera2PipelineSnapshot(
             cameraId = cameraId,
+            physicalCameraIds = physicalCameraIds,
             manufacturer = BuildValues.manufacturer(),
             model = BuildValues.model(),
             androidRelease = BuildValues.release(),
@@ -224,6 +253,10 @@ class DsiCamera2PipelineInspector(private val context: Context) {
             jpegOutputSizes = jpegSizes,
             sensorCalibrationTransform1Sha256 = transform1Hash,
             sensorCalibrationTransform2Sha256 = transform2Hash,
+            sensorColorTransform1Sha256 = colorTransform1Hash,
+            sensorColorTransform2Sha256 = colorTransform2Hash,
+            sensorForwardMatrix1Sha256 = forwardMatrix1Hash,
+            sensorForwardMatrix2Sha256 = forwardMatrix2Hash,
             referenceIlluminant1 = refIlluminant1,
             referenceIlluminant2 = refIlluminant2,
             availableRequestKeys = requestKeys,
@@ -231,6 +264,88 @@ class DsiCamera2PipelineInspector(private val context: Context) {
             pipelineFingerprintSha256 = fingerprint,
         )
     }
+
+    /**
+     * Produces the exact JSON shape used by the Vision Intelligence device
+     * baseline registry. This is an exact pipeline claim from Android APIs,
+     * not a server-trusted identity or camera-module attestation.
+     */
+    fun baselineFingerprint(
+        outputFormat: DsiImageOutputFormat,
+        lensRole: DsiLensRole,
+        colourProfileSha256: String?,
+    ): Map<String, Any?> {
+        require(
+            outputFormat !in setOf(DsiImageOutputFormat.JPEG, DsiImageOutputFormat.HEIF) ||
+                colourProfileSha256?.matches(Regex("^[a-f0-9]{64}$")) == true,
+        ) { "JPEG and HEIF profiles require a pinned colour-profile SHA-256" }
+        if (outputFormat in setOf(DsiImageOutputFormat.RAW_SENSOR, DsiImageOutputFormat.DNG, DsiImageOutputFormat.RAW10)) {
+            require(colourProfileSha256 == null) { "RAW paths cannot claim a processed output colour profile" }
+        }
+
+        val facing = when (lensFacing) {
+            "front" -> "front"
+            "rear" -> "rear"
+            else -> "external"
+        }
+        require(lensRole != DsiLensRole.FRONT || facing == "front")
+        require(
+            lensRole !in setOf(
+                DsiLensRole.REAR_WIDE,
+                DsiLensRole.REAR_ULTRAWIDE,
+                DsiLensRole.REAR_TELEPHOTO,
+                DsiLensRole.REAR_MACRO,
+            ) || facing == "rear",
+        )
+        require(facing != "external" || lensRole == DsiLensRole.UNKNOWN)
+
+        return linkedMapOf(
+            "platform" to "android",
+            "manufacturer" to manufacturer,
+            "model" to model,
+            "camera_id" to cameraId,
+            "physical_camera_ids" to physicalCameraIds,
+            "camera_facing" to facing,
+            "lens_role" to lensRole.wireValue,
+            "os_release" to androidRelease,
+            "security_patch" to securityPatch.ifBlank { "unknown" },
+            "camera_api" to "android_camera2",
+            "capture_runtime" to "dsi-android-capture",
+            "capture_runtime_version" to "0.1.0",
+            "capture_pipeline_revision" to "dsi-camera2-0.1.0",
+            "output_format" to outputFormat.wireValue,
+            "colour_profile_sha256" to colourProfileSha256,
+            "hardware_level" to hardwareLevel,
+            "pixel_array_width" to pixelArrayWidth,
+            "pixel_array_height" to pixelArrayHeight,
+            "physical_sensor_width_mm" to physicalSensorWidthMm?.toString(),
+            "physical_sensor_height_mm" to physicalSensorHeightMm?.toString(),
+            "focal_lengths_mm" to focalLengthsMm.map(Float::toString),
+            "colour_filter_arrangement" to colourFilterArrangement,
+            "sensor_calibration_transform1_sha256" to sensorCalibrationTransform1Sha256,
+            "sensor_calibration_transform2_sha256" to sensorCalibrationTransform2Sha256,
+            "sensor_color_transform1_sha256" to sensorColorTransform1Sha256,
+            "sensor_color_transform2_sha256" to sensorColorTransform2Sha256,
+            "sensor_forward_matrix1_sha256" to sensorForwardMatrix1Sha256,
+            "sensor_forward_matrix2_sha256" to sensorForwardMatrix2Sha256,
+            "reference_illuminant1" to referenceIlluminant1,
+            "reference_illuminant2" to referenceIlluminant2,
+            "available_request_keys" to availableRequestKeys,
+            "available_result_keys" to availableResultKeys,
+            "raw_output_sizes" to rawOutputSizes,
+            "jpeg_output_sizes" to jpegOutputSizes,
+        )
+    }
+
+    fun baselineFingerprintSha256(
+        outputFormat: DsiImageOutputFormat,
+        lensRole: DsiLensRole,
+        colourProfileSha256: String?,
+    ): String = sha256Hex(canonicalJson(baselineFingerprint(
+        outputFormat,
+        lensRole,
+        colourProfileSha256,
+    )).toByteArray(StandardCharsets.UTF_8))
 
     private fun hashTransform(transform: android.hardware.camera2.params.ColorSpaceTransform): String {
         val values = Array(9) { Rational.ZERO }
