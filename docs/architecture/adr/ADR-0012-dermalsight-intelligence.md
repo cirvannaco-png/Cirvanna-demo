@@ -79,3 +79,8 @@ The evaluator requires:
 - adequate samples for required skin regions, camera models, lighting and other declared slices.
 
 No thresholds are asserted by this ADR. Incomplete or unsigned evidence remains REVIEW_REQUIRED; measured threshold breaches yield FAIL. The tool exports no subject pseudonyms or raw media and does not alter live inference, CAL, profile persistence, global training or appearance correction. See `services/vision-intelligence/validation/dsi_color/README.md`.
+
+
+## Research roadmap supplement (15 November 2026)
+
+The evidence-led implementation sequence, source bibliography, data/evaluation design, capture protocol, body-region and personal-colour recommendations are documented in [the DSI evidence-led improvement roadmap](../dsi-evidence-led-improvement-roadmap-2026-11-15.md). This supplement does not change any accepted invariant, enable any model, relax any consent gate, or alter the blocked/experimental capability states. Runtime readiness continues to be established only by the exact model, dataset, calibration, privacy and independent validation evidence required by this ADR.
