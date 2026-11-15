@@ -174,3 +174,28 @@ See [validation/dsi_color/README.md](validation/dsi_color/README.md) for dataset
 The first P0 increment adds a strict, non-identifying capture-provenance contract in app.dsi_capture and unit tests for controlled-diffuse, ambient-relative and cross-polarized declarations. It records declared exposure/white-balance states, illumination and meter provenance, image colour-profile digest, chart integrity, HDR/beauty-filter state and optional polarizer/analyzer references.
 
 This is contract groundwork only: no image route consumes it yet, client/device declarations are not trusted evidence, and a complete declaration cannot approve absolute colour measurement or enable inference. A signed trusted capture-runtime attestation, measured lab protocol, independent spectrophotometer cohort and signed held-out evaluation are still required. See validation/dsi_color/capture-protocol.md.
+
+
+## DSI device baseline registry
+
+DSI now has a private, no-image `POST /v1/dsi/device-baseline` lookup and a versioned registry contract under `app.dsi_device_baselines`. A device baseline is **not** keyed by manufacturer/model alone. Its exact fingerprint includes platform, manufacturer/model, camera module identifier, front/rear and lens role, OS release, camera API, capture runtime/version, pipeline revision, output format and colour-profile digest.
+
+The registry supports three qualification levels:
+
+1. `capture_candidate`: the exact pipeline has passed a capability/interoperability review and meets its profile's minimum capture standard. It is research/capture guidance only; it cannot authorize an absolute colour result.
+2. `colour_validated`: the exact pipeline has independent colour validation against a held-out spectrophotometer reference cohort, with dataset/report/calibration digests, validated regions/skin-lightness ranges/lighting slices, instrument traceability, independent review and an expiry.
+3. `cross_polarized_validated`: the colour-validation requirements plus a separate optical validation report for the source polarizer/camera analyzer setup. Diffuse and cross-polarized captures remain separate protocols.
+
+The request's device/camera facts and capture controls are client declarations. The lookup endpoint deliberately passes `capture_attestation_verified=false` and therefore returns `relative_only`, even when an exact profile is found and all declarations meet its minimum. The future trusted capture runtime/attestation verifier must be integrated before a profile can be operationally used. A client cannot submit a boolean to override this boundary.
+
+The registry is mounted out-of-band using `DSI_DEVICE_BASELINE_REGISTRY_PATH` and pinned using `DSI_DEVICE_BASELINE_REGISTRY_SHA256`. Both must be configured together. A missing registry means no devices are qualified; an invalid file or digest returns a sanitized 503. The example file `dsi-device-baseline-registry.example.json` is intentionally empty and does not certify any phone model. Do not add a device profile until physical camera samples, independent reference measurements, exact-pipeline scope and reviewer approval exist.
+
+### Per-device minimum standard
+
+Each profile defines its own accepted output formats/resolutions, control requirements, chart profile and supported capture mode. The service checks, at minimum, the profile-specific conditions for locked exposure, locked white balance, HDR/beauty processing disabled, chart presence/condition, output format/resolution and either RAW with available sensor colour-calibration metadata or a pinned colour-managed output profile. There are no invented universal resolution or accuracy thresholds: each profile's thresholds must come from its predeclared evaluation protocol.
+
+The fingerprint is intentionally more granular than a marketing phone name. Android Camera2 exposes device capability flags and optional per-device sensor calibration transforms; RAW capability, manual post-processing and AWB lock support vary by camera. CameraX exposure-compensation support alone is not proof of locked exposure or calibrated colour. iOS uses AVFoundation device-specific configuration locks and exposes explicit support for white-balance locking. A pipeline update, camera-module/lens change, OS release, capture-runtime change, output format or colour-profile change creates a new exact profile lookup and defaults to unqualified until reviewed.
+
+Model-level qualification is a baseline, not proof that every physical unit is identical. The same-frame colour reference remains required by the profile; the release study must measure between-unit variation. Where the study finds material unit variation, add a per-unit calibration step or narrow the profile scope rather than assuming the model label covers it. Never persist hardware serials or IMEIs to achieve this.
+
+The endpoint accepts no image, performs no skin inference and does not create user profiles. It is protected by the dedicated DSI worker credential and emits no-store/private headers. Unknown devices, expired/suspended profiles, unsupported camera settings, missing chart evidence, and unverified runtime attestations all remain relative-only.
