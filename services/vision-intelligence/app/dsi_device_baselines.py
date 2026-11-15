@@ -102,6 +102,7 @@ class DevicePipelineFingerprint(BaselineContract):
     camera_api: CameraAPI
     capture_runtime: str = Field(min_length=1, max_length=100)
     capture_runtime_version: str = Field(min_length=1, max_length=80)
+    capture_app_version: str = Field(min_length=1, max_length=80)
     capture_pipeline_revision: str = Field(min_length=1, max_length=100)
     output_format: OutputFormat
     colour_profile_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
