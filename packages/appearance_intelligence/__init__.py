@@ -2,6 +2,7 @@
 
 from .look import (
     AppearanceComponent,
+    ComponentOperation,
     EditAction,
     FidelityAssessment,
     FidelityGate,
@@ -16,6 +17,7 @@ from .look import (
 
 __all__ = [
     "AppearanceComponent",
+    "ComponentOperation",
     "EditAction",
     "FidelityAssessment",
     "FidelityGate",
