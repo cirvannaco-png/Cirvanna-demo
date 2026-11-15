@@ -25,10 +25,7 @@ object DsiCamera2CaptureControls {
         builder: CaptureRequest.Builder,
         characteristics: CameraCharacteristics,
     ) {
-        val requestKeys = characteristics
-            .get(CameraCharacteristics.REQUEST_AVAILABLE_REQUEST_KEYS)
-            .orEmpty()
-            .toSet()
+        val requestKeys = characteristics.getAvailableCaptureRequestKeys().toSet()
         val aeModes = characteristics
             .get(CameraCharacteristics.CONTROL_AE_AVAILABLE_MODES)
             .orEmpty()
