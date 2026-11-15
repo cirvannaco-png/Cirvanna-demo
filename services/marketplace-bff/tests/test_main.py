@@ -2755,3 +2755,331 @@ def test_pnelly_look_feedback_rejects_expired_consent_before_tal_write(client, m
     assert len(fake.calls) == 3
 
 
+
+
+
+def test_appearance_source_photo_consent_is_explicit_scoped_and_expires(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "verified-user-appearance"}),
+        FakeResponse({
+            "receipt_id": "consent-receipt-session",
+            "consent_id": "appearance-consent-bundle",
+            "resource_id": "appearance-look-0001",
+            "granted": True,
+            "status": "recorded",
+        }),
+        FakeResponse({
+            "receipt_id": "consent-receipt-source",
+            "consent_id": "appearance-consent-bundle",
+            "resource_id": "appearance-look-0001",
+            "granted": True,
+            "status": "recorded",
+        }),
+        FakeResponse({
+            "receipt_id": "consent-receipt-image",
+            "consent_id": "appearance-consent-bundle",
+            "resource_id": "appearance-look-0001",
+            "granted": True,
+            "status": "recorded",
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/appearance/consents",
+        headers={"Authorization": "Bearer verified-browser-token"},
+        json={
+            "look_id": "appearance-look-0001",
+            "base_kind": "source_photo",
+            "accept_session_storage": True,
+            "accept_source_storage": True,
+            "accept_image_processing": True,
+        },
+    )
+    assert response.status_code == 201, response.text
+    data = response.json()
+    assert data["granted_scopes"] == [
+        "appearance_session_storage", "appearance_source_storage", "image_processing",
+    ]
+    assert data["look_id"] == "appearance-look-0001"
+    assert data["consent_id"] == "appearance-consent-bundle"
+    assert data["expires_at"]
+    assert len(data["receipt_ids"]) == 3
+    assert fake.calls[0][0] == "GET"
+    assert fake.calls[0][1] == "https://commerce.example.test/me"
+    assert [call[2]["json"]["scope"] for call in fake.calls[1:]] == data["granted_scopes"]
+    assert all(call[2]["json"]["resource_id"] == "appearance-look-0001" for call in fake.calls[1:])
+    assert all(call[2]["json"]["consent_id"] == data["consent_id"] for call in fake.calls[1:])
+    assert all(call[2]["json"]["expires_at"] == data["expires_at"] for call in fake.calls[1:])
+    assert response.headers["cache-control"] == "no-store, private"
+
+
+def test_appearance_twin_consent_does_not_imply_source_photo_storage(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "verified-user-appearance"}),
+        FakeResponse({
+            "receipt_id": "consent-receipt-session-only",
+            "consent_id": "appearance-twin-consent",
+            "resource_id": "appearance-twin-look-0001",
+            "granted": True,
+            "status": "recorded",
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/appearance/consents",
+        headers={"Authorization": "Bearer verified-browser-token"},
+        json={
+            "look_id": "appearance-twin-look-0001",
+            "base_kind": "virtual_twin",
+            "accept_session_storage": True,
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["granted_scopes"] == ["appearance_session_storage"]
+    assert len(fake.calls) == 2
+    assert fake.calls[1][2]["json"]["scope"] == "appearance_session_storage"
+
+
+def test_appearance_source_consent_rejects_missing_explicit_source_storage_acceptance(client):
+    response = client.post(
+        "/api/appearance/consents",
+        headers={"Authorization": "Bearer verified-browser-token"},
+        json={
+            "look_id": "appearance-look-invalid",
+            "base_kind": "source_photo",
+            "accept_session_storage": True,
+            "accept_source_storage": False,
+            "accept_image_processing": True,
+        },
+    )
+    assert response.status_code == 422
+
+
+def test_appearance_partial_consent_failure_revokes_every_attempted_receipt(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "verified-user-appearance"}),
+        FakeResponse({
+            "receipt_id": "grant-session",
+            "consent_id": "appearance-consent-failed",
+            "resource_id": "appearance-look-failed",
+            "granted": True,
+            "status": "recorded",
+        }),
+        FakeResponse({"detail": {"code": "CONSENT_WRITE_FAILED"}}, status_code=503),
+        FakeResponse({"status": "revoked"}),
+        FakeResponse({"status": "revoked"}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/appearance/consents",
+        headers={"Authorization": "Bearer verified-browser-token"},
+        json={
+            "look_id": "appearance-look-failed",
+            "base_kind": "source_photo",
+            "accept_session_storage": True,
+            "accept_source_storage": True,
+            "accept_image_processing": True,
+        },
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "APPEARANCE_CONSENT_WRITE_FAILED"
+    revoke_calls = [call for call in fake.calls if call[1].endswith("/revoke")]
+    assert len(revoke_calls) == 2
+    assert all(call[2]["params"]["subject_id"] == "verified-user-appearance" for call in revoke_calls)
+
+
+def test_appearance_source_upload_verifies_consent_and_uses_private_asset_service(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-internal-token-more-than-thirty-two-bytes")
+    monkeypatch.setenv("ASSET_SERVICE_URL", "https://asset.example.test")
+    monkeypatch.setenv("ASSET_SERVICE_TOKEN", "asset-internal-token-more-than-thirty-two-bytes")
+    asset_id = "8c3d78e2-9f42-4b5f-a0b5-1c8831c42f1b"
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "verified-user-appearance"}),
+        FakeResponse({
+            "verified": True,
+            "active": True,
+            "subject_id": "verified-user-appearance",
+            "consent_id": "appearance-source-consent",
+            "resource_id": "appearance-look-upload-01",
+            "consent_version": "appearance-look-session-v1",
+            "expires_at": future_expiry(),
+            "granted_scopes": [
+                "appearance_session_storage", "appearance_source_storage", "image_processing",
+            ],
+        }),
+        FakeResponse({
+            "asset_id": asset_id,
+            "owner_user_id": "verified-user-appearance",
+            "purpose": "appearance_source_image",
+            "parent_id": "appearance-look-upload-01",
+            "content_type": "image/png",
+            "byte_size": 128,
+            "sha256": "a" * 64,
+            "status": "active",
+        }, status_code=201),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/appearance/looks/appearance-look-upload-01/source",
+        headers={"Authorization": "Bearer verified-browser-token"},
+        data={"consent_id": "appearance-source-consent"},
+        files={"file": ("portrait.png", b"source-photo-bytes", "image/png")},
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["asset_id"] == asset_id
+    assert response.json()["look_id"] == "appearance-look-upload-01"
+    assert response.headers["cache-control"] == "no-store, private"
+    assert fake.calls[1][0] == "POST"
+    assert fake.calls[1][1] == "https://identity.example.test/internal/v1/consents/verify"
+    assert fake.calls[1][2]["json"]["subject_id"] == "verified-user-appearance"
+    assert fake.calls[1][2]["json"]["resource_id"] == "appearance-look-upload-01"
+    upload_call = fake.calls[2]
+    assert upload_call[1] == "https://asset.example.test/internal/v1/assets"
+    assert upload_call[2]["data"]["owner_user_id"] == "verified-user-appearance"
+    assert upload_call[2]["data"]["purpose"] == "appearance_source_image"
+    assert upload_call[2]["data"]["parent_id"] == "appearance-look-upload-01"
+    assert "asset-internal-token" not in response.text
+
+
+def test_appearance_source_upload_rejects_wrong_resource_consent_before_asset_write(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-internal-token-more-than-thirty-two-bytes")
+    monkeypatch.setenv("ASSET_SERVICE_URL", "https://asset.example.test")
+    monkeypatch.setenv("ASSET_SERVICE_TOKEN", "asset-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "verified-user-appearance"}),
+        FakeResponse({
+            "verified": True,
+            "active": True,
+            "subject_id": "another-user",
+            "consent_id": "appearance-source-consent",
+            "resource_id": "another-look",
+            "consent_version": "appearance-look-session-v1",
+            "expires_at": future_expiry(),
+            "granted_scopes": [
+                "appearance_session_storage", "appearance_source_storage", "image_processing",
+            ],
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/appearance/looks/appearance-look-upload-02/source",
+        headers={"Authorization": "Bearer verified-browser-token"},
+        data={"consent_id": "appearance-source-consent"},
+        files={"file": ("portrait.png", b"source-photo-bytes", "image/png")},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "APPEARANCE_SOURCE_CONSENT_BINDING_INVALID"
+    assert len(fake.calls) == 2
+
+
+def test_appearance_look_proxy_binds_verified_subject_and_rejects_subject_spoofing(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("APPEARANCE_SERVICE_URL", "https://appearance.example.test")
+    monkeypatch.setenv("APPEARANCE_SERVICE_TOKEN", "appearance-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "verified-user-appearance"}),
+        FakeResponse({
+            "status": "created",
+            "look": {
+                "look_id": "appearance-look-proxy-001",
+                "subject_id": "verified-user-appearance",
+                "version": 1,
+                "current_version": 1,
+                "base": {"kind": "source_photo", "source_asset_ids": ["private-asset-001"]},
+                "operations": [],
+            },
+        }, status_code=201),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/appearance/looks",
+        headers={"Authorization": "Bearer verified-browser-token"},
+        json={
+            "look_id": "appearance-look-proxy-001",
+            "subject_id": "attacker-controlled-subject",
+            "consent_id": "appearance-consent-proxy",
+            "idempotency_key": "appearance-create-proxy-001",
+            "base": {"kind": "source_photo", "source_asset_ids": ["private-asset-001"]},
+            "operations": [],
+        },
+    )
+    assert response.status_code == 201, response.text
+    assert "subject_id" not in response.json()["look"]
+    assert fake.calls[1][0] == "POST"
+    assert fake.calls[1][1] == "https://appearance.example.test/v1/looks"
+    assert fake.calls[1][2]["json"]["subject_id"] == "verified-user-appearance"
+    assert fake.calls[1][2]["json"]["subject_id"] != "attacker-controlled-subject"
+
+
+def test_appearance_look_proxy_rejects_cross_subject_upstream_payload(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("APPEARANCE_SERVICE_URL", "https://appearance.example.test")
+    monkeypatch.setenv("APPEARANCE_SERVICE_TOKEN", "appearance-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "verified-user-appearance"}),
+        FakeResponse({
+            "look": {
+                "look_id": "appearance-look-proxy-002",
+                "subject_id": "another-user",
+            },
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get(
+        "/api/appearance/looks/appearance-look-proxy-002",
+        headers={"Authorization": "Bearer verified-browser-token"},
+    )
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "APPEARANCE_SESSION_SCOPE_MISMATCH"
+
+
+def test_appearance_look_edit_uses_verified_subject_and_does_not_expose_service_token(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("APPEARANCE_SERVICE_URL", "https://appearance.example.test")
+    monkeypatch.setenv("APPEARANCE_SERVICE_TOKEN", "appearance-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "verified-user-appearance"}),
+        FakeResponse({
+            "status": "updated",
+            "look": {
+                "look_id": "appearance-look-edit-001",
+                "subject_id": "verified-user-appearance",
+                "version": 2,
+                "current_version": 2,
+                "operations": [{"component": "hair_colour"}],
+            },
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/appearance/looks/appearance-look-edit-001/operations",
+        headers={"Authorization": "Bearer verified-browser-token"},
+        json={
+            "subject_id": "untrusted-user",
+            "expected_version": 1,
+            "command_id": "appearance-edit-command-001",
+            "operation": {
+                "operation_id": "appearance-edit-operation-001",
+                "component": "hair_colour",
+                "action": "replace",
+                "description": "Copper red",
+            },
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert fake.calls[1][2]["json"]["subject_id"] == "verified-user-appearance"
+    assert response.json()["look"]["version"] == 2
+    assert "appearance-internal-token" not in response.text
