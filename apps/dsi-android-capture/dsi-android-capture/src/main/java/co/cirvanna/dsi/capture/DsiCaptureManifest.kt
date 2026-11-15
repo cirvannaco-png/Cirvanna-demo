@@ -7,7 +7,6 @@ import android.hardware.camera2.params.ColorSpaceTransform
 import android.hardware.camera2.params.RggbChannelVector
 import android.util.Base64
 import android.util.Rational
-import org.json.JSONObject
 import java.math.BigDecimal
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
@@ -258,7 +257,7 @@ data class DsiCaptureManifest(
 /** Stable JSON encoding: object keys are sorted recursively and numbers are normalized. */
 internal fun canonicalJson(value: Any?): String = when (value) {
     null -> "null"
-    is String -> JSONObject.quote(value)
+    is String -> quoteCanonicalString(value)
     is Boolean -> value.toString()
     is Int, is Long, is Short, is Byte -> value.toString()
     is Float, is Double -> {
@@ -275,7 +274,7 @@ internal fun canonicalJson(value: Any?): String = when (value) {
         .toSortedMap()
         .entries
         .joinToString(prefix = "{", postfix = "}", separator = ",") {
-            "${JSONObject.quote(it.key)}:${canonicalJson(it.value)}"
+            "${quoteCanonicalString(it.key)}:${canonicalJson(it.value)}"
         }
     is Iterable<*> -> value.joinToString(prefix = "[", postfix = "]", separator = ",") {
         canonicalJson(it)
@@ -287,3 +286,25 @@ internal fun sha256Hex(bytes: ByteArray): String =
     MessageDigest.getInstance("SHA-256")
         .digest(bytes)
         .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+
+private fun quoteCanonicalString(value: String): String = buildString {
+    append('"')
+    value.forEach { character ->
+        when (character) {
+            '"' -> append("\\\"")
+            '\\' -> append("\\\\")
+            '\b' -> append("\\b")
+            '\u000C' -> append("\\f")
+            '\n' -> append("\\n")
+            '\r' -> append("\\r")
+            '\t' -> append("\\t")
+            else -> if (character.code < 0x20) {
+                append("\\u")
+                append(character.code.toString(16).padStart(4, '0'))
+            } else {
+                append(character)
+            }
+        }
+    }
+    append('"')
+}
