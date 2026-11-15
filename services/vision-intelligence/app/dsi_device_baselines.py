@@ -40,6 +40,7 @@ class CameraAPI(str, Enum):
 class CameraFacing(str, Enum):
     FRONT = "front"
     REAR = "rear"
+    EXTERNAL = "external"
 
 
 class LensRole(str, Enum):
@@ -92,16 +93,37 @@ class DevicePipelineFingerprint(BaselineContract):
     platform: Platform
     manufacturer: str = Field(min_length=1, max_length=100)
     model: str = Field(min_length=1, max_length=160)
-    camera_module_id: str = Field(min_length=1, max_length=160)
+    camera_id: str = Field(min_length=1, max_length=160)
+    physical_camera_ids: list[str] = Field(default_factory=list, max_length=16)
     camera_facing: CameraFacing
     lens_role: LensRole
     os_release: str = Field(min_length=1, max_length=80)
+    security_patch: str = Field(min_length=1, max_length=80)
     camera_api: CameraAPI
     capture_runtime: str = Field(min_length=1, max_length=100)
     capture_runtime_version: str = Field(min_length=1, max_length=80)
     capture_pipeline_revision: str = Field(min_length=1, max_length=100)
     output_format: OutputFormat
     colour_profile_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    hardware_level: str = Field(min_length=1, max_length=40)
+    pixel_array_width: int | None = Field(default=None, ge=1, le=20000)
+    pixel_array_height: int | None = Field(default=None, ge=1, le=20000)
+    physical_sensor_width_mm: str | None = Field(default=None, min_length=1, max_length=32)
+    physical_sensor_height_mm: str | None = Field(default=None, min_length=1, max_length=32)
+    focal_lengths_mm: list[str] = Field(default_factory=list, max_length=16)
+    colour_filter_arrangement: int | None = None
+    sensor_calibration_transform1_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    sensor_calibration_transform2_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    sensor_color_transform1_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    sensor_color_transform2_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    sensor_forward_matrix1_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    sensor_forward_matrix2_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+    reference_illuminant1: int | None = None
+    reference_illuminant2: int | None = None
+    available_request_keys: list[str] = Field(default_factory=list, max_length=1000)
+    available_result_keys: list[str] = Field(default_factory=list, max_length=1000)
+    raw_output_sizes: list[str] = Field(default_factory=list, max_length=100)
+    jpeg_output_sizes: list[str] = Field(default_factory=list, max_length=100)
 
     @model_validator(mode="after")
     def validate_platform_api(self) -> "DevicePipelineFingerprint":
@@ -118,6 +140,8 @@ class DevicePipelineFingerprint(BaselineContract):
             LensRole.REAR_MACRO,
         } and self.camera_facing != CameraFacing.REAR:
             raise ValueError("rear lens roles require rear-facing camera")
+        if self.camera_facing == CameraFacing.EXTERNAL and self.lens_role != LensRole.UNKNOWN:
+            raise ValueError("external cameras must use unknown lens role until independently classified")
         if self.output_format in {OutputFormat.JPEG, OutputFormat.HEIF} and not self.colour_profile_sha256:
             raise ValueError("processed image formats require a pinned colour-profile digest")
         return self
@@ -138,7 +162,7 @@ class DeviceCaptureCapabilities(BaselineContract):
 
     output_width: int = Field(ge=1, le=20_000)
     output_height: int = Field(ge=1, le=20_000)
-    manual_exposure_supported: bool
+    exposure_lock_supported: bool
     exposure_lock_applied: bool
     white_balance_lock_supported: bool
     white_balance_lock_applied: bool
@@ -146,8 +170,8 @@ class DeviceCaptureCapabilities(BaselineContract):
     raw_capture_used: bool
     sensor_colour_calibration_available: bool
     output_colour_profile_sha256: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
-    hdr_disabled: bool
-    beauty_processing_disabled: bool
+    hdr_disabled: bool | None = None
+    beauty_processing_disabled: bool | None = None
     capture_mode: CaptureMode
     chart_condition: ChartCondition
     chart_profile_id: str | None = Field(default=None, min_length=1, max_length=128)
@@ -180,7 +204,7 @@ class MinimumCaptureStandard(BaselineContract):
     minimum_height: int = Field(ge=1, le=20_000)
     required_capture_modes: list[CaptureMode] = Field(min_length=1)
     accepted_output_formats: list[OutputFormat] = Field(min_length=1)
-    require_manual_exposure_lock: bool = True
+    require_exposure_lock: bool = True
     require_white_balance_lock: bool = True
     require_hdr_disabled: bool = True
     require_beauty_processing_disabled: bool = True
@@ -288,8 +312,8 @@ def evaluate_minimum_standard(report: DeviceCaptureReport, standard: MinimumCapt
         reasons.append("output_format_not_accepted")
     if capabilities.output_width < standard.minimum_width or capabilities.output_height < standard.minimum_height:
         reasons.append("output_resolution_below_device_baseline")
-    if standard.require_manual_exposure_lock and (
-        not capabilities.manual_exposure_supported or not capabilities.exposure_lock_applied
+    if standard.require_exposure_lock and (
+        not capabilities.exposure_lock_supported or not capabilities.exposure_lock_applied
     ):
         reasons.append("manual_or_locked_exposure_unavailable")
     if standard.require_white_balance_lock and (
