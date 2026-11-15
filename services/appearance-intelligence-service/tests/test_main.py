@@ -36,6 +36,7 @@ class FakeAsyncClient:
         self.calls = []
         self.asset_authorized = True
         self.twin_authorized = True
+        self.consent_allowed = True
 
     async def __aenter__(self):
         return self
@@ -47,6 +48,8 @@ class FakeAsyncClient:
         self.calls.append((url, json))
         if url.endswith("/internal/v1/consents/verify"):
             scopes = json["required_scopes"]
+            if not self.consent_allowed:
+                return FakeResponse({"detail": {"code": "CONSENT_NOT_ACTIVE"}}, 403)
             return FakeResponse({
                 "verified": True,
                 "active": True,
@@ -300,6 +303,22 @@ def test_reset_and_undo_create_new_versions_without_mutating_history(client):
     assert versions.status_code == 200
     assert [item["version"] for item in versions.json()["versions"]] == [1, 2, 3, 4]
     assert versions.json()["versions"][2]["operations_snapshot"] == []
+
+
+def test_expired_or_revoked_appearance_consent_blocks_look_reads(client):
+    create_source_look(client)
+    client.app.state.provider.consent_allowed = False
+    current = client.get(f"/v1/looks/{LOOK_ID}", headers=auth(), params={"subject_id": SUBJECT})
+    versions = client.get(
+        f"/v1/looks/{LOOK_ID}/versions", headers=auth(), params={"subject_id": SUBJECT},
+    )
+    compared = client.get(
+        f"/v1/looks/{LOOK_ID}/compare", headers=auth(),
+        params={"subject_id": SUBJECT, "from_version": 1, "to_version": 1},
+    )
+    assert current.status_code == 403
+    assert versions.status_code == 403
+    assert compared.status_code == 403
 
 
 def test_compare_versions_and_favorite_are_owner_scoped(client):
