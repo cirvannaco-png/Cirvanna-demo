@@ -297,7 +297,9 @@ class OperationIn(StrictModel):
         )
 
     def document(self) -> dict:
-        return self.model_dump(mode="json", exclude_none=True)
+        # Persist normalized default regions and canonical component parameters,
+        # not the caller's shorthand representation.
+        return _operation_documents((self.domain(),))[0]
 
 
 class BaseIn(StrictModel):
@@ -657,8 +659,13 @@ async def create_look(payload: CreateLookIn):
 
 
 @app.get("/v1/looks/{look_id}", dependencies=[Depends(require_internal_token)])
-def get_look_endpoint(look_id: str, subject_id: str = Query(min_length=3, max_length=128)):
+async def get_look_endpoint(look_id: str, subject_id: str = Query(min_length=3, max_length=128)):
     _identifier(look_id, "look_id")
+    consent_id = _consent_id_for_look(look_id, subject_id)
+    await _verify_consent(
+        subject_id=subject_id, consent_id=consent_id,
+        resource_id=look_id, required_scopes=["appearance_session_storage"],
+    )
     with _database() as db:
         row = get_look(db, subject_id, look_id)
         if row is None:
@@ -667,11 +674,16 @@ def get_look_endpoint(look_id: str, subject_id: str = Query(min_length=3, max_le
 
 
 @app.get("/v1/looks/{look_id}/versions", dependencies=[Depends(require_internal_token)])
-def list_versions(
+async def list_versions(
     look_id: str,
     subject_id: str = Query(min_length=3, max_length=128),
 ):
     _identifier(look_id, "look_id")
+    consent_id = _consent_id_for_look(look_id, subject_id)
+    await _verify_consent(
+        subject_id=subject_id, consent_id=consent_id,
+        resource_id=look_id, required_scopes=["appearance_session_storage"],
+    )
     with _database() as db:
         row = get_look(db, subject_id, look_id)
         if row is None:
@@ -684,13 +696,18 @@ def list_versions(
 
 
 @app.get("/v1/looks/{look_id}/compare", dependencies=[Depends(require_internal_token)])
-def compare_versions(
+async def compare_versions(
     look_id: str,
     subject_id: str = Query(min_length=3, max_length=128),
     from_version: int = Query(ge=1),
     to_version: int = Query(ge=1),
 ):
     _identifier(look_id, "look_id")
+    consent_id = _consent_id_for_look(look_id, subject_id)
+    await _verify_consent(
+        subject_id=subject_id, consent_id=consent_id,
+        resource_id=look_id, required_scopes=["appearance_session_storage"],
+    )
     with _database() as db:
         row = get_look(db, subject_id, look_id)
         if row is None:
