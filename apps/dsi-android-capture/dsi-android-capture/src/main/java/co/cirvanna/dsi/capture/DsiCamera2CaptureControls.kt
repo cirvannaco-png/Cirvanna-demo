@@ -26,12 +26,8 @@ object DsiCamera2CaptureControls {
         characteristics: CameraCharacteristics,
     ) {
         val requestKeys = characteristics.getAvailableCaptureRequestKeys().toSet()
-        val aeModes = characteristics
-            .get(CameraCharacteristics.CONTROL_AE_AVAILABLE_MODES)
-            .orEmpty()
-        val awbModes = characteristics
-            .get(CameraCharacteristics.CONTROL_AWB_AVAILABLE_MODES)
-            .orEmpty()
+        val aeModes = characteristics.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_MODES) ?: intArrayOf()
+        val awbModes = characteristics.get(CameraCharacteristics.CONTROL_AWB_AVAILABLE_MODES) ?: intArrayOf()
 
         require(CaptureRequest.CONTROL_AE_LOCK in requestKeys) {
             "This camera pipeline does not expose CONTROL_AE_LOCK"
