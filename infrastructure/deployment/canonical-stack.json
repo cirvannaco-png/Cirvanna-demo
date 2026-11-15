@@ -522,6 +522,33 @@
         "REL-10",
         "REL-17"
       ]
+    },
+    {
+      "id": "appearance-intelligence-service",
+      "source_path": "services/appearance-intelligence-service",
+      "containerized": true,
+      "dockerfile": "services/appearance-intelligence-service/Dockerfile",
+      "build_context": ".",
+      "build_context_verified_by_ci": false,
+      "exposure": "private_api",
+      "required_for_marketplace": false,
+      "production_enabled": false,
+      "readiness_path": "/ready",
+      "depends_on_services": [
+        "identity-learning-service",
+        "asset-service",
+        "twin-registry"
+      ],
+      "depends_on_providers": [],
+      "data_store_refs": [
+        "appearance-intelligence-postgres"
+      ],
+      "release_gates": [
+        "REL-03",
+        "REL-09",
+        "REL-10",
+        "REL-17"
+      ]
     }
   ],
   "data_stores": [
@@ -570,6 +597,13 @@
     {
       "id": "twin-registry-postgres",
       "owner_service": "twin-registry",
+      "kind": "approved_shared_postgresql_namespace",
+      "provisioned_for_production": false,
+      "backup_restore_verified": false
+    },
+    {
+      "id": "appearance-intelligence-postgres",
+      "owner_service": "appearance-intelligence-service",
       "kind": "approved_shared_postgresql_namespace",
       "provisioned_for_production": false,
       "backup_restore_verified": false
