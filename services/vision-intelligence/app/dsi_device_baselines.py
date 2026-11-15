@@ -350,8 +350,11 @@ def baseline_result(
         "profile_id": None,
         "profile_version": None,
         "qualification_level": None,
+        "device_pipeline_colour_qualified": False,
+        "cross_polarized_pipeline_qualified": False,
         "absolute_colour_measurement_allowed": False,
-        "cross_polarized_measurement_allowed": False,
+        "individual_measurement_release_required": True,
+        "validated_scope": None,
         "review_required_reasons": [],
         "minimum_capture_standard": {
             "chart_in_frame": True,
@@ -410,14 +413,24 @@ def baseline_result(
         result["operational_tier"] = "controlled_capture_candidate"
     elif profile.qualification_level == QualificationLevel.COLOUR_VALIDATED:
         result["operational_tier"] = "colour_validated"
-        result["absolute_colour_measurement_allowed"] = True
+        result["device_pipeline_colour_qualified"] = True
+        result["validated_scope"] = {
+            "regions": profile.validation.validated_regions,
+            "measured_lightness_ranges": profile.validation.validated_measured_lightness_ranges,
+            "lighting_profiles": profile.validation.evaluated_lighting_profiles,
+        }
     elif profile.qualification_level == QualificationLevel.CROSS_POLARIZED_VALIDATED:
         if report.capabilities.capture_mode != CaptureMode.CROSS_POLARIZED:
             result["review_required_reasons"] = ["cross_polarized_capture_required"]
             return result
         result["operational_tier"] = "cross_polarized_validated"
-        result["absolute_colour_measurement_allowed"] = True
-        result["cross_polarized_measurement_allowed"] = True
+        result["device_pipeline_colour_qualified"] = True
+        result["cross_polarized_pipeline_qualified"] = True
+        result["validated_scope"] = {
+            "regions": profile.validation.validated_regions,
+            "measured_lightness_ranges": profile.validation.validated_measured_lightness_ranges,
+            "lighting_profiles": profile.validation.evaluated_lighting_profiles,
+        }
     result["review_required_reasons"] = []
     return result
 
