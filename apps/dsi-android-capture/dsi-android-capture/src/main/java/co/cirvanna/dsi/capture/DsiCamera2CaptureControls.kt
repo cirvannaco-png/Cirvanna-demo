@@ -75,10 +75,7 @@ object DsiCamera2CaptureControls {
         require(isMeteringConverged(convergedResult)) {
             "AE and AWB must both be converged before their values are locked"
         }
-        val requestKeys = characteristics
-            .get(CameraCharacteristics.REQUEST_AVAILABLE_REQUEST_KEYS)
-            .orEmpty()
-            .toSet()
+        val requestKeys = characteristics.getAvailableCaptureRequestKeys().toSet()
         require(CaptureRequest.CONTROL_AE_LOCK in requestKeys) {
             "This camera pipeline does not expose CONTROL_AE_LOCK"
         }
