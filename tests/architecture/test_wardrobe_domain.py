@@ -31,8 +31,8 @@ class WardrobeDomainTests(unittest.TestCase):
 
     def test_category_taxonomy_covers_beauty_and_accessory_items(self):
         category_ids = {entry["id"] for entry in WARDROBE_CATEGORIES}
-        self.assertEqual(TAXONOMY_VERSION, "1.0.0")
-        self.assertTrue({"makeup", "skincare", "haircare", "fragrance", "shoes", "bags", "ties", "eyewear", "watches"} <= category_ids)
+        self.assertEqual(TAXONOMY_VERSION, "1.1.0")
+        self.assertTrue({"makeup", "skincare", "haircare", "fragrance", "shoes", "bags", "ties", "eyewear", "watches", "wigs_extensions", "hair_colour", "hair_styling", "brow_products", "lash_products", "lip_products", "nail_products", "makeup_tools", "earrings", "necklaces"} <= category_ids)
 
     def test_valid_custom_category_keys_are_preserved_for_extensibility(self):
         self.assertEqual(self.item(category="custom_nail_art").category, "custom_nail_art")
