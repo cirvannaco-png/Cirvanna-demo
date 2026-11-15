@@ -857,6 +857,13 @@ async def set_favorite(look_id: str, payload: FavoriteIn):
 @app.post("/v1/looks/{look_id}/branch", status_code=201, dependencies=[Depends(require_internal_token)])
 async def branch_from_render(look_id: str, payload: BranchLookIn):
     _identifier(look_id, "look_id")
+    parent_consent_id = _consent_id_for_look(look_id, payload.subject_id)
+    await _verify_consent(
+        subject_id=payload.subject_id,
+        consent_id=parent_consent_id,
+        resource_id=look_id,
+        required_scopes=["appearance_session_storage"],
+    )
     branch_consent = await _verify_consent(
         subject_id=payload.subject_id,
         consent_id=payload.consent_id,
