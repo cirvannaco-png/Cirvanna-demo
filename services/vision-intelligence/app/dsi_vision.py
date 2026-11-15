@@ -26,6 +26,12 @@ from app.color_calibration import (
     build_skin_colour_preview,
 )
 from app import dsi_models
+from app.dsi_device_baselines import (
+    DeviceBaselineError,
+    DeviceCaptureReport,
+    baseline_result,
+    load_device_baseline_registry,
+)
 
 router = APIRouter(prefix="/v1/dsi", tags=["dsi"])
 bearer = HTTPBearer(auto_error=False)
@@ -360,3 +366,28 @@ async def colorchecker_tone_preview(
         ) from exc
     finally:
         decoded.close()
+
+
+
+@router.post("/device-baseline", dependencies=[Depends(require_dsi_worker)])
+async def device_baseline(report: DeviceCaptureReport) -> JSONResponse:
+    """Resolve an exact device pipeline profile without trusting client declarations.
+
+    No image is accepted. Until a trusted capture-attestation verifier is wired
+    in, this public internal route always returns a relative-only effective tier.
+    """
+    try:
+        registry, configured = load_device_baseline_registry()
+    except DeviceBaselineError as exc:
+        raise HTTPException(
+            503,
+            detail={"code": "DSI_DEVICE_BASELINE_REGISTRY_UNAVAILABLE"},
+        ) from exc
+
+    result = baseline_result(
+        report,
+        registry,
+        registry_configured=configured,
+        capture_attestation_verified=False,
+    )
+    return _no_store(result)
