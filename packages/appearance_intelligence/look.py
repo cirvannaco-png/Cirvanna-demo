@@ -238,6 +238,8 @@ class ComponentOperation:
             raise ValueError("target_regions must not contain duplicates.")
         object.__setattr__(self, "target_regions", tuple(normalized_regions))
 
+        if self.recommendation_track is not None and not isinstance(self.recommendation_track, RecommendationTrack):
+            raise ValueError("recommendation_track must be a RecommendationTrack.")
         if self.origin is OperationOrigin.ACCEPTED_RECOMMENDATION:
             if not self.recommendation_id:
                 raise ValueError("accepted recommendations require a recommendation_id.")
@@ -331,8 +333,8 @@ class FidelityAssessment:
         if set(statuses) != set(FidelityGate):
             raise ValueError("every fidelity gate must be reported exactly once.")
         for gate in _CORE_FIDELITY_GATES:
-            if statuses[gate] is not GateStatus.PASS:
-                raise ValueError(f"core fidelity gate {gate.value} must pass before an output can be released.")
+            if statuses[gate] is GateStatus.NOT_APPLICABLE:
+                raise ValueError(f"core fidelity gate {gate.value} must be evaluated, not marked not_applicable.")
 
     @property
     def releasable(self) -> bool:
