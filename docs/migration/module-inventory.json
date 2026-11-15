@@ -123,6 +123,13 @@
       "promotionGate": "Apply and validate PostgreSQL migration, verify user identity binding at ingress, deploy/test the asset deletion worker and retry/DLQ behavior, then run concurrent version checks, restore and catalog integration tests."
     },
     {
+      "id": "appearance-intelligence",
+      "target": "packages/appearance_intelligence",
+      "status": "shared-look-contract-implemented-renderers-not-integrated",
+      "purpose": "Provider-neutral, versioned look composition for grooming, cosmetics, apparel, jewellery, accessories, source lineage and private render-fidelity assessment across Cirvanna surfaces.",
+      "promotionGate": "Integrate trusted look-session persistence and BFF flows; connect each surface through its canonical owner; implement separately licensed component renderers; validate identity/geometry/skin-tone preservation, category-specific realism, consent and private asset lifecycle. Do not claim unsupported components render."
+    },
+    {
       "id": "cultural-declaration-service",
       "target": "services/cultural-identity-service",
       "status": "api-schema-and-signed-evidence-implemented",
