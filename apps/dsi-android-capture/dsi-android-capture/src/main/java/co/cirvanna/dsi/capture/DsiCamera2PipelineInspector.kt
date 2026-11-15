@@ -274,7 +274,9 @@ class DsiCamera2PipelineInspector(private val context: Context) {
         outputFormat: DsiImageOutputFormat,
         lensRole: DsiLensRole,
         colourProfileSha256: String?,
+        captureAppVersion: String,
     ): Map<String, Any?> {
+        require(captureAppVersion.isNotBlank())
         require(
             outputFormat !in setOf(DsiImageOutputFormat.JPEG, DsiImageOutputFormat.HEIF) ||
                 colourProfileSha256?.matches(Regex("^[a-f0-9]{64}$")) == true,
@@ -312,6 +314,7 @@ class DsiCamera2PipelineInspector(private val context: Context) {
             "camera_api" to "android_camera2",
             "capture_runtime" to "dsi-android-capture",
             "capture_runtime_version" to "0.1.0",
+            "capture_app_version" to captureAppVersion,
             "capture_pipeline_revision" to "dsi-camera2-0.1.0",
             "output_format" to outputFormat.wireValue,
             "colour_profile_sha256" to colourProfileSha256,
@@ -341,10 +344,12 @@ class DsiCamera2PipelineInspector(private val context: Context) {
         outputFormat: DsiImageOutputFormat,
         lensRole: DsiLensRole,
         colourProfileSha256: String?,
+        captureAppVersion: String,
     ): String = sha256Hex(canonicalJson(baselineFingerprint(
         outputFormat,
         lensRole,
         colourProfileSha256,
+        captureAppVersion,
     )).toByteArray(StandardCharsets.UTF_8))
 
     private fun hashTransform(transform: android.hardware.camera2.params.ColorSpaceTransform): String {
