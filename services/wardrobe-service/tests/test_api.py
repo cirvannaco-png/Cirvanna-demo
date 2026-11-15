@@ -719,11 +719,15 @@ def test_category_taxonomy_requires_internal_auth_and_includes_full_item_groups(
     response = client.get("/v1/categories", headers=auth())
     assert response.status_code == 200
     data = response.json()
-    assert data["taxonomy_version"] == "1.0.0"
+    assert data["taxonomy_version"] == "1.1.0"
     categories = {entry["id"]: entry for entry in data["categories"]}
     assert categories["shoes"]["group"] == "footwear"
     assert categories["makeup"]["group"] == "beauty"
     assert categories["eyewear"]["label"] == "Glasses and sunglasses"
+    assert categories["brow_products"]["group"] == "beauty"
+    assert categories["lash_products"]["group"] == "beauty"
+    assert categories["lip_products"]["label"] == "Lip products and lipstick"
+    assert categories["wigs_extensions"]["group"] == "hair"
 
 
 def test_item_create_normalizes_known_category_alias_and_rejects_malformed_key(client):
