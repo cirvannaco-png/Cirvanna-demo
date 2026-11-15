@@ -188,8 +188,10 @@ def test_validated_profile_only_becomes_colour_validated_after_internal_attestat
     )
 
     assert result["operational_tier"] == "colour_validated"
-    assert result["absolute_colour_measurement_allowed"] is True
-    assert result["cross_polarized_measurement_allowed"] is False
+    assert result["device_pipeline_colour_qualified"] is True
+    assert result["absolute_colour_measurement_allowed"] is False
+    assert result["individual_measurement_release_required"] is True
+    assert result["cross_polarized_pipeline_qualified"] is False
 
 
 def test_capture_candidate_profile_never_authorizes_absolute_colour():
@@ -284,7 +286,9 @@ def test_cross_polarized_profile_requires_separate_optical_validation_and_captur
         now=now,
     )
     assert cross_result["operational_tier"] == "cross_polarized_validated"
-    assert cross_result["cross_polarized_measurement_allowed"] is True
+    assert cross_result["cross_polarized_pipeline_qualified"] is True
+    assert cross_result["absolute_colour_measurement_allowed"] is False
+    assert cross_result["individual_measurement_release_required"] is True
 
 
 def test_registry_rejects_duplicate_camera_pipeline_profiles():
