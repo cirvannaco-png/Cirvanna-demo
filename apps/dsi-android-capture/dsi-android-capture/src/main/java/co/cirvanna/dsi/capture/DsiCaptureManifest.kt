@@ -29,6 +29,7 @@ enum class DsiCaptureMode(val wireValue: String) {
 
 enum class DsiImageOutputFormat(val wireValue: String) {
     RAW_SENSOR("raw_sensor"),
+    RAW10("raw10"),
     JPEG("jpeg"),
     YUV_420_888("yuv_420_888"),
     HEIF("heif"),
@@ -140,7 +141,7 @@ data class DsiCaptureManifestInput(
  * nonce, hardware key-attestation chain, signature and Play Integrity token
  * before trusting it. It must never promote an absolute colour measurement.
  */
-data class DsiCaptureManifest(
+data class DsiCaptureManifest internal constructor(
     val canonicalJson: String,
     val manifestSha256: String,
     val imageSha256: String,
@@ -197,6 +198,7 @@ data class DsiCaptureManifest(
                 input.outputFormat,
                 input.lensRole,
                 input.outputColourProfileSha256,
+                input.appRuntimeVersion,
             )
             val baselineFingerprintSha256 = sha256Hex(
                 canonicalJson(baselineFingerprint).toByteArray(StandardCharsets.UTF_8),
@@ -247,6 +249,7 @@ data class DsiCaptureManifest(
                 "capture_mode" to input.captureMode.wireValue,
                 "app_runtime_version" to input.appRuntimeVersion,
                 "device_pipeline_fingerprint_sha256" to baselineFingerprintSha256,
+                "capture_app_version" to input.appRuntimeVersion,
                 "camera_pipeline" to input.cameraPipeline.toPublicEvidence(),
                 "device_baseline_report" to baselineReport,
                 "image_sensor_timestamp_ns" to input.imageSensorTimestampNs,
