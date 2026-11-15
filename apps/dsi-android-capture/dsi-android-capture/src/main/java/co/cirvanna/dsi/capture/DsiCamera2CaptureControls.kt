@@ -1,0 +1,86 @@
+package co.cirvanna.dsi.capture
+
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraMetadata
+import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.CaptureResult
+import android.hardware.camera2.TotalCaptureResult
+
+/**
+ * Requests AE/AWB lock only when Camera2 advertises the required keys and modes.
+ * Call this on the still-capture request created by the host camera application.
+ */
+object DsiCamera2CaptureControls {
+    fun applyExposureAndWhiteBalanceLocks(
+        builder: CaptureRequest.Builder,
+        characteristics: CameraCharacteristics,
+    ) {
+        val requestKeys = characteristics
+            .get(CameraCharacteristics.REQUEST_AVAILABLE_REQUEST_KEYS)
+            .orEmpty()
+            .toSet()
+        val aeModes = characteristics
+            .get(CameraCharacteristics.CONTROL_AE_AVAILABLE_MODES)
+            .orEmpty()
+        val awbModes = characteristics
+            .get(CameraCharacteristics.CONTROL_AWB_AVAILABLE_MODES)
+            .orEmpty()
+
+        require(CaptureRequest.CONTROL_AE_LOCK in requestKeys) {
+            "This camera pipeline does not expose CONTROL_AE_LOCK"
+        }
+        require(CaptureRequest.CONTROL_AWB_LOCK in requestKeys) {
+            "This camera pipeline does not expose CONTROL_AWB_LOCK"
+        }
+        require(CameraMetadata.CONTROL_AE_MODE_ON in aeModes) {
+            "This camera pipeline does not support automatic exposure metering"
+        }
+        require(CameraMetadata.CONTROL_AWB_MODE_AUTO in awbModes) {
+            "This camera pipeline does not support automatic white-balance metering"
+        }
+
+        builder.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
+        builder.set(CaptureRequest.CONTROL_SCENE_MODE, CameraMetadata.CONTROL_SCENE_MODE_DISABLED)
+        builder.set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON)
+        builder.set(CaptureRequest.CONTROL_AWB_MODE, CameraMetadata.CONTROL_AWB_MODE_AUTO)
+        builder.set(CaptureRequest.CONTROL_AE_LOCK, true)
+        builder.set(CaptureRequest.CONTROL_AWB_LOCK, true)
+    }
+
+    fun observeLockResult(result: TotalCaptureResult): DsiCaptureLockObservation {
+        val request = result.request
+        val requestedAeLock = request.get(CaptureRequest.CONTROL_AE_LOCK) == true
+        val requestedAwbLock = request.get(CaptureRequest.CONTROL_AWB_LOCK) == true
+        val aeState = result.get(CaptureResult.CONTROL_AE_STATE)
+        val awbState = result.get(CaptureResult.CONTROL_AWB_STATE)
+
+        return DsiCaptureLockObservation(
+            exposureLockRequested = requestedAeLock,
+            exposureLockObserved = requestedAeLock &&
+                aeState == CameraMetadata.CONTROL_AE_STATE_LOCKED,
+            exposureStateCode = aeState,
+            whiteBalanceLockRequested = requestedAwbLock,
+            whiteBalanceLockObserved = requestedAwbLock &&
+                awbState == CameraMetadata.CONTROL_AWB_STATE_LOCKED,
+            whiteBalanceStateCode = awbState,
+            appliedExposureTimeNs = result.get(CaptureResult.SENSOR_EXPOSURE_TIME),
+            appliedSensitivityIso = result.get(CaptureResult.SENSOR_SENSITIVITY),
+            sensorTimestampNs = result.get(CaptureResult.SENSOR_TIMESTAMP),
+        )
+    }
+}
+
+data class DsiCaptureLockObservation(
+    val exposureLockRequested: Boolean,
+    val exposureLockObserved: Boolean,
+    val exposureStateCode: Int?,
+    val whiteBalanceLockRequested: Boolean,
+    val whiteBalanceLockObserved: Boolean,
+    val whiteBalanceStateCode: Int?,
+    val appliedExposureTimeNs: Long?,
+    val appliedSensitivityIso: Int?,
+    val sensorTimestampNs: Long?,
+) {
+    val bothLocksObserved: Boolean
+        get() = exposureLockObserved && whiteBalanceLockObserved
+}
