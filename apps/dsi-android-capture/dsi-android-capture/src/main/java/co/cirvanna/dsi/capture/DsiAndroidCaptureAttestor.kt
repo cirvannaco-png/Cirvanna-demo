@@ -103,11 +103,17 @@ class DsiAndroidCaptureAttestor(
             )
             val provider = tokenProvider
                 ?: error("Play Integrity provider is not prepared")
-            val integrityResponse = provider.request(
-                StandardIntegrityManager.StandardIntegrityTokenRequest.builder()
-                    .setRequestHash(requestHash)
-                    .build(),
-            ).awaitTask()
+            val integrityResponse = try {
+                provider.request(
+                    StandardIntegrityManager.StandardIntegrityTokenRequest.builder()
+                        .setRequestHash(requestHash)
+                        .build(),
+                ).awaitTask()
+            } catch (error: Exception) {
+                // Standard token providers can expire; the host may retry after re-preparation.
+                tokenProvider = null
+                throw error
+            }
 
             return DsiAndroidAttestationEnvelope(
                 schemaVersion = "dsi-android-attestation-v1",
