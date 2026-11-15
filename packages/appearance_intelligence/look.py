@@ -151,6 +151,7 @@ class LookBase:
     twin_id: str | None = None
     parent_look_id: str | None = None
     parent_render_asset_id: str | None = None
+    source_asset_parent_id: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.kind, LookBaseKind):
@@ -178,6 +179,10 @@ class LookBase:
 
         if self.twin_id is not None:
             object.__setattr__(self, "twin_id", _opaque_identifier(self.twin_id, "twin_id"))
+        if self.source_asset_parent_id is not None:
+            object.__setattr__(self, "source_asset_parent_id", _opaque_identifier(self.source_asset_parent_id, "source_asset_parent_id"))
+        if self.kind is LookBaseKind.VIRTUAL_TWIN and self.source_asset_parent_id not in {None, self.twin_id}:
+            raise ValueError("virtual_twin source assets must belong to the same Twin parent.")
 
 
 @dataclass(frozen=True)
@@ -285,8 +290,8 @@ class LookComposition:
             raise ValueError("version must be a positive integer.")
         if not isinstance(self.base, LookBase):
             raise ValueError("base must be a LookBase.")
-        if not isinstance(self.operations, tuple) or not self.operations:
-            raise ValueError("operations must be a non-empty immutable tuple.")
+        if not isinstance(self.operations, tuple):
+            raise ValueError("operations must be an immutable tuple; an empty tuple represents the base appearance.")
         if any(not isinstance(op, ComponentOperation) for op in self.operations):
             raise ValueError("operations must contain ComponentOperation instances.")
         operation_ids = [op.operation_id for op in self.operations]
