@@ -83,6 +83,15 @@ def test_cross_polarized_capture_requires_both_optical_components_and_orientatio
         valid_capture(capture_mode=CaptureMode.CROSS_POLARIZED)
 
 
+def test_cross_polarized_capture_requires_declared_relative_orientation():
+    with pytest.raises(ValidationError, match="relative_orientation_degrees"):
+        PolarizationSetup(
+            light_source_polarizer_ref="light-polarizer-A",
+            camera_analyzer_ref="lens-analyzer-B",
+            optical_setup_reference="lab-setup:polarization-001",
+        )
+
+
 def test_cross_polarized_capture_records_declared_pair_without_claiming_verification():
     evidence = valid_capture(
         capture_mode=CaptureMode.CROSS_POLARIZED,
