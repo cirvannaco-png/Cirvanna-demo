@@ -86,3 +86,14 @@ No thresholds are asserted by this ADR. Incomplete or unsigned evidence remains 
 The Vision Intelligence service now has a strict, non-identifying DSI capture-provenance schema and declaration-assessment helper under app.dsi_capture. It records device/runtime declarations, capture mode, illumination/meter provenance, exposure/white-balance state, colour-profile digest, chart integrity, HDR/beauty-filter state and cross-polarizer/analyzer references.
 
 This is not a trusted capture attestation and does not authorize a measurement, inference, profile write or CAL evidence. No existing image route consumes the schema. A complete declaration remains a candidate for independent review only. Promotion requires a trusted capture runtime, calibrated light-meter records, optical verification for cross-polarization, reference measurements and an independently signed held-out evaluation. See services/vision-intelligence/validation/dsi_color/capture-protocol.md.
+
+
+## Exact-pipeline device baselines (15 November 2026)
+
+Vision Intelligence adds a private `POST /v1/dsi/device-baseline` lookup and a SHA-256-pinned deployment registry. Profiles are keyed to an exact camera pipeline: platform, manufacturer/model, camera module, lens role, OS release, camera API, capture runtime/version, processing-pipeline revision, output format and colour-profile digest. Each entry defines its own minimum capture standard and can be qualified as a capture candidate, colour validated, or separately cross-polarized validated.
+
+The registry is intentionally empty by default. No phone model is pre-certified. Missing registry, unknown pipeline, stale/revoked profile, unmet capture standard, or unsigned/unverified client claims returns the relative-only tier. The endpoint receives no image and always supplies `capture_attestation_verified=false`; a client-supplied attestation reference is only a locator and is never treated as proof.
+
+The registry template is `services/vision-intelligence/dsi-device-baseline-registry.example.json`. A deployment-managed registry must be pinned through `DSI_DEVICE_BASELINE_REGISTRY_PATH` and `DSI_DEVICE_BASELINE_REGISTRY_SHA256`. Any device profile must be supported by the exact pipeline scope, independent reference measurements, held-out device/region/lighting validation, reviewer evidence and a finite validity period. A model-level profile is not assumed to represent every physical unit; same-frame chart checks and between-unit variation remain part of the validation protocol.
+
+A device baseline is a prerequisite for downstream processing, not a stand-alone proof of any individual skin measurement. Downstream measurement release must still enforce its task-specific model report, requested body region, measured-colour range, chart, lighting, capture-quality and uncertainty scope. No current device profile is populated, and no measurement capability is enabled by this increment.
