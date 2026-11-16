@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import hashlib
+import pytest
 
 import numpy as np
 from fastapi.testclient import TestClient
