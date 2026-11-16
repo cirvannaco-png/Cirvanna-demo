@@ -85,7 +85,7 @@ class FakeAsyncClient:
                 "subject_id": json["subject_id"],
                 "consent_id": json["consent_id"],
                 "resource_id": json["resource_id"],
-                "consent_version": "appearance-consent-v1",
+                "consent_version": "appearance-look-session-v1",
                 "expires_at": (datetime.now(timezone.utc) + timedelta(hours=12)).isoformat(),
                 "granted_scopes": scopes,
             })
@@ -535,7 +535,7 @@ def test_renew_consent_rebinds_active_bundle_and_preserves_history(client):
     )
     assert current.status_code == 200
     assert current.json()["look"]["consent_id"] == "consent-appearance-renewed-001"
-    assert current.json()["look"]["consent_version"] == "appearance-consent-v1"
+    assert current.json()["look"]["consent_version"] == "appearance-look-session-v1"
 
     with store.open_session(__import__("os").environ["APPEARANCE_DATABASE_URL"]) as db:
         events = db.query(store.AppearanceLookConsentEventRow).filter_by(
@@ -721,3 +721,43 @@ def test_deleting_last_child_releases_parent_render_asset(client):
 
 def test_deletion_worker_recovers_interrupted_processing_jobs(client):
     create_source_look(client)
+    now = datetime.now(timezone.utc)
+    job_id = "00000000-0000-4000-8000-000000000909"
+    with store.open_session(__import__("os").environ["APPEARANCE_DATABASE_URL"]) as db:
+        row = store.get_look(db, SUBJECT, LOOK_ID)
+        row.status = "deleted"
+        db.add(store.AppearanceLookDeletionRow(
+            job_id=job_id,
+            look_id=LOOK_ID,
+            subject_id=SUBJECT,
+            consent_id=CONSENT_ID,
+            command_id="interrupted-delete-command-001",
+            payload_sha256="f" * 64,
+            consent_revoked=False,
+            asset_references=[{
+                "asset_id": SOURCE_ASSET,
+                "purpose": "appearance_source_image",
+                "parent_id": LOOK_ID,
+            }],
+            pending_asset_references=[{
+                "asset_id": SOURCE_ASSET,
+                "purpose": "appearance_source_image",
+                "parent_id": LOOK_ID,
+            }],
+            status="processing",
+            attempt_count=1,
+            last_error="worker interrupted",
+            created_at=now - timedelta(minutes=20),
+            updated_at=now - timedelta(minutes=10),
+        ))
+        db.commit()
+
+    response = client.post("/internal/v1/deletions/process", headers=auth(), params={"limit": 10})
+    assert response.status_code == 200, response.text
+    assert response.json()["processed"] == 1
+    assert response.json()["completed"] == 1
+    with store.open_session(__import__("os").environ["APPEARANCE_DATABASE_URL"]) as db:
+        job = db.get(store.AppearanceLookDeletionRow, job_id)
+        assert job.status == "completed"
+        assert job.consent_revoked is True
+        assert job.pending_asset_references == []
