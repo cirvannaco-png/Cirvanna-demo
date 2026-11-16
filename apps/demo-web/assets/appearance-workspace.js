@@ -179,6 +179,7 @@
   const detail=el("section",{id:"awDetail",className:"aw-hidden"});
   detail.append(el("hr",{className:"aw-divider"}),text("h3","Selected appearance"));
   const detailMeta=text("p","Choose one saved look to inspect its edit history.","aw-muted");
+  const renewalPane=el("div",{id:"awRenewalPane",className:"aw-hidden"});
   const operationRoot=el("div",{id:"awOperations"});
   const editForm=el("div",{id:"awEditForm"});
   const compareRoot=el("div",{id:"awCompare"});
@@ -190,7 +191,7 @@
   const deleteButton=button("Delete look and private media",deleteLook,"aw-btn danger");
   actions.append(resetButton,undoButton,favoriteButton,revokeButton,deleteButton);
   const preview=el("div",{className:"aw-status",text:"Photorealistic preview unavailable: no validated appearance renderer is connected. This workspace stores your requested transformation plan; it will not claim that your image has changed."});
-  detail.append(detailMeta,actions,operationRoot,editForm,compareRoot,preview);
+  detail.append(detailMeta,renewalPane,actions,operationRoot,editForm,compareRoot,preview);
   workspace.append(detail);
   panel.append(workspace);
   root.replaceChildren(panel);
@@ -329,7 +330,8 @@
             accept_source_storage:source,
             accept_image_processing:source
           }});
-          consentPanel.remove();
+          renewalPane.classList.add("aw-hidden");
+          renewalPane.replaceChildren();
           await loadLooks();
           status("Consent renewed for this look. Reopening…","good");
           resolve(true);
@@ -338,8 +340,14 @@
           proceed.disabled=false;
         }
       },"aw-btn primary");
-      consentPanel.append(checks,proceed);
-      detail.replaceChildren(text("h3","Renew permissions for "+summary.look_id),consentPanel);
+      const cancel=button("Cancel",()=>{
+        renewalPane.classList.add("aw-hidden");
+        renewalPane.replaceChildren();
+        resolve(false);
+      },"aw-btn");
+      consentPanel.append(checks,el("div",{className:"aw-row"},[proceed,cancel]));
+      renewalPane.replaceChildren(consentPanel);
+      renewalPane.classList.remove("aw-hidden");
       detail.classList.remove("aw-hidden");
       detail.scrollIntoView({behavior:"smooth",block:"start"});
     });
@@ -349,6 +357,8 @@
     operationRoot.replaceChildren();
     editForm.classList.remove("aw-hidden");
     compareRoot.classList.remove("aw-hidden");
+    renewalPane.classList.add("aw-hidden");
+    renewalPane.replaceChildren();
     detailMeta.textContent="Base: "+activeLook.base.kind+" · Version "+activeLook.version+
       (activeLook.base.twin_id?" · Twin "+activeLook.base.twin_id:"")+
       (activeLook.base.parent_look_id?" · Parent look "+activeLook.base.parent_look_id:"");
@@ -403,7 +413,7 @@
     if(kind==="virtual_twin"&&!twinId.value.trim()) return status("Enter an existing Virtual Twin ID.","error");
     createButton.disabled=true;
     const lookId=uuid();
-    let consentId=null,assetId=null;
+    let consentId=null,assetId=null,lookCreated=false;
     try {
       const consent=await api(API.consents,{method:"POST",body:{
         look_id:lookId,base_kind:kind,accept_session_storage:true,
@@ -426,6 +436,7 @@
         look_id:lookId,subject_id:"browser-subject-is-replaced-by-bff",
         consent_id:consentId,idempotency_key:"create-"+uuid(),base,operations:[]
       }});
+      lookCreated=true;
       activeLook=created.look;
       await refreshDetail();
       file.value="";
@@ -435,6 +446,10 @@
       processingConsent.input.checked=false;
       status("Saved a new "+kind.replaceAll("_"," ")+" appearance look. No image was transformed.","good");
     } catch(error) {
+      if(lookCreated) {
+        status("The look was created, but refreshing its details failed: "+(error.message||"unknown error")+". Use Refresh to reopen it.","error");
+        return;
+      }
       const cleanup=[];
       if(assetId) {
         try {
