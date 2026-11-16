@@ -180,7 +180,7 @@ class ComplementerFeedbackIn(BaseModel):
 class AppearanceConsentIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     look_id: str = Field(min_length=8, max_length=128)
-    base_kind: Literal["source_photo", "virtual_twin"]
+    base_kind: Literal["source_photo", "virtual_twin", "previous_render"]
     accept_session_storage: bool
     accept_source_storage: bool = False
     accept_image_processing: bool = False
