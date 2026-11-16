@@ -617,3 +617,101 @@ def test_native_capture_verification_fails_closed_when_vision_is_unavailable(cli
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "DSI_CAPTURE_VERIFIER_UNAVAILABLE"
     assert "private provider failure" not in response.text
+
+
+def test_verified_capture_skin_analysis_forwards_receipt_and_exact_scope(client, monkeypatch):
+    forwarded = {}
+    content = capture_bytes()
+
+    async def fake_analysis(**kwargs):
+        forwarded.update(kwargs)
+        assert kwargs["content"] == content
+        return {
+            "status": "segmentation_detected_unvalidated_skin_masks",
+            "region_coverage": {"face_skin_fraction": 0.2, "body_skin_fraction": 0.3},
+            "model": {"version": "segmenter-v1", "sha256": "a" * 64},
+            "skin_tone_value_computed": False,
+            "absolute_color_calibration_performed": False,
+            "image_persisted": False,
+        }
+
+    monkeypatch.setattr(dsi_api, "fetch_verified_capture_skin_segmentation", fake_analysis)
+    response = client.post(
+        "/api/v1/dsi/capture/skin-region-analysis",
+        headers=auth(),
+        data={
+            "receipt_id": "dsi_receipt_1234567890",
+            "subject_id": "user-dsi-001",
+            "resource_id": "dsi-enrollment-session-001",
+            "purpose": "body_tone_analysis",
+            "manifest_sha256": "b" * 64,
+            "image_sha256": "c" * 64,
+            "device_pipeline_fingerprint_sha256": "d" * 64,
+        },
+        files={"image": ("capture.png", content, "image/png")},
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.json()["status"] == "verified_capture_inference_completed"
+    assert response.json()["skin_tone_value_computed"] is False
+    assert response.json()["profile_persisted"] is False
+    assert forwarded["receipt_id"] == "dsi_receipt_1234567890"
+    assert forwarded["purpose"] == "body_tone_analysis"
+    assert forwarded["image_sha256"] == "c" * 64
+
+
+def test_verified_capture_analysis_rejects_expired_or_revoked_receipt(client, monkeypatch):
+    from app.dsi.errors import DSICaptureRejected
+
+    async def reject(**_kwargs):
+        raise DSICaptureRejected("expired")
+
+    monkeypatch.setattr(dsi_api, "fetch_verified_capture_skin_segmentation", reject)
+    response = client.post(
+        "/api/v1/dsi/capture/skin-region-analysis",
+        headers=auth(),
+        data={
+            "receipt_id": "dsi_receipt_1234567890",
+            "subject_id": "user-dsi-001",
+            "resource_id": "dsi-enrollment-session-001",
+            "purpose": "cosmetic_skin_analysis",
+            "manifest_sha256": "b" * 64,
+            "image_sha256": "c" * 64,
+            "device_pipeline_fingerprint_sha256": "d" * 64,
+        },
+        files={"image": ("capture.png", capture_bytes(), "image/png")},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "DSI_CAPTURE_RECEIPT_REJECTED"
+
+
+def test_verified_face_geometry_requires_facial_geometry_receipt_scope(client, monkeypatch):
+    forwarded = {}
+
+    async def fake_geometry(**kwargs):
+        forwarded.update(kwargs)
+        return face_landmark_payload()
+
+    monkeypatch.setattr(dsi_api, "fetch_verified_capture_face_landmarks", fake_geometry)
+    monkeypatch.setattr(dsi_api, "summarize_face_geometry", lambda payload: {
+        "status": "unvalidated_geometry_preview",
+        "landmark_count": payload["landmark_count"],
+    })
+    response = client.post(
+        "/api/v1/dsi/capture/face-geometry-analysis",
+        headers=auth(),
+        data={
+            "receipt_id": "dsi_receipt_1234567890",
+            "subject_id": "user-dsi-001",
+            "resource_id": "dsi-enrollment-session-001",
+            "purpose": "facial_geometry_analysis",
+            "manifest_sha256": "b" * 64,
+            "image_sha256": "c" * 64,
+            "device_pipeline_fingerprint_sha256": "d" * 64,
+        },
+        files={"image": ("capture.png", capture_bytes(), "image/png")},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["purpose"] == "facial_geometry_analysis"
+    assert response.json()["geometry"]["status"] == "unvalidated_geometry_preview"
+    assert forwarded["purpose"] == "facial_geometry_analysis"
