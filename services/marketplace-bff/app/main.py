@@ -204,6 +204,27 @@ class AppearanceConsentIn(BaseModel):
         return self
 
 
+class AppearanceConsentRenewalIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    look_id: str = Field(min_length=8, max_length=128)
+    accept_session_storage: bool
+    accept_source_storage: bool = False
+
+    @field_validator("look_id")
+    @classmethod
+    def valid_renewal_look_id(cls, value: str) -> str:
+        value = value.strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{7,127}", value):
+            raise ValueError("look_id must use the controlled opaque identifier format")
+        return value
+
+    @model_validator(mode="after")
+    def require_explicit_session_acceptance(self):
+        if self.accept_session_storage is not True:
+            raise ValueError("appearance session storage must be explicitly accepted")
+        return self
+
+
 class OfferComparisonIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     variant_ids: list[str] = Field(min_length=2, max_length=2)
@@ -1224,6 +1245,164 @@ async def create_appearance_consent(request: Request, payload: AppearanceConsent
         "receipt_ids": receipt_ids,
         "expires_at": expires_at,
     }, status_code=201)
+
+
+@app.post("/api/appearance/consents/renew")
+async def renew_appearance_consent(request: Request, payload: AppearanceConsentRenewalIn) -> Response:
+    """Renew an expired look's storage authority only after new explicit consent."""
+    async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        appearance_base, appearance_token = _appearance_service()
+        headers = {"Authorization": "Bearer " + appearance_token, "Accept": "application/json"}
+        try:
+            context_response = await client.get(
+                appearance_base + f"/internal/v1/looks/{payload.look_id}/consent-context",
+                params={"subject_id": subject},
+                headers=headers,
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "APPEARANCE_CONSENT_CONTEXT_UNAVAILABLE"}) from exc
+        if context_response.status_code == 404:
+            raise HTTPException(404, detail={"code": "APPEARANCE_LOOK_NOT_FOUND"})
+        if context_response.status_code != 200:
+            raise HTTPException(503, detail={"code": "APPEARANCE_CONSENT_CONTEXT_UNAVAILABLE"})
+        try:
+            context = context_response.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "APPEARANCE_CONSENT_CONTEXT_INVALID"}) from exc
+        if not (
+            isinstance(context, dict)
+            and context.get("look_id") == payload.look_id
+            and context.get("subject_id") == subject
+            and context.get("base_kind") in {"source_photo", "virtual_twin", "previous_render"}
+            and isinstance(context.get("required_scopes"), list)
+        ):
+            raise HTTPException(502, detail={"code": "APPEARANCE_CONSENT_CONTEXT_SCOPE_MISMATCH"})
+        scopes = context["required_scopes"]
+        expected_scopes = (
+            ["appearance_session_storage", "appearance_source_storage"]
+            if context["base_kind"] == "source_photo"
+            else ["appearance_session_storage"]
+        )
+        if scopes != expected_scopes:
+            raise HTTPException(502, detail={"code": "APPEARANCE_CONSENT_CONTEXT_INVALID"})
+        if context["base_kind"] == "source_photo" and payload.accept_source_storage is not True:
+            raise HTTPException(422, detail={"code": "APPEARANCE_SOURCE_STORAGE_CONSENT_REQUIRED"})
+
+        identity_base, identity_token = _identity_learning_service()
+        consent_id = str(uuid.uuid4())
+        consent_version = "appearance-look-session-v1"
+        expires_at = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat().replace("+00:00", "Z")
+        receipt_ids: list[str] = []
+        for scope in scopes:
+            receipt_id = str(uuid.uuid4())
+            receipt_ids.append(receipt_id)
+            try:
+                grant = await client.post(
+                    identity_base + "/v1/tal/consents",
+                    params={"subject_id": subject},
+                    headers={"Authorization": "Bearer " + identity_token, "Accept": "application/json"},
+                    json={
+                        "receipt_id": receipt_id,
+                        "consent_id": consent_id,
+                        "resource_id": payload.look_id,
+                        "scope": scope,
+                        "consent_version": consent_version,
+                        "granted": True,
+                        "expires_at": expires_at,
+                    },
+                )
+            except httpx.HTTPError as exc:
+                for attempted in receipt_ids:
+                    try:
+                        await client.post(
+                            identity_base + f"/v1/tal/consents/{attempted}/revoke",
+                            params={"subject_id": subject},
+                            headers={"Authorization": "Bearer " + identity_token, "Accept": "application/json"},
+                        )
+                    except httpx.HTTPError:
+                        pass
+                raise HTTPException(503, detail={"code": "APPEARANCE_CONSENT_WRITE_UNAVAILABLE"}) from exc
+            try:
+                grant_data = grant.json()
+            except ValueError:
+                grant_data = {}
+            if (
+                grant.status_code not in {200, 201}
+                or not isinstance(grant_data, dict)
+                or grant_data.get("receipt_id") != receipt_id
+                or grant_data.get("consent_id") != consent_id
+                or grant_data.get("resource_id") != payload.look_id
+                or grant_data.get("granted") is not True
+            ):
+                for attempted in receipt_ids:
+                    try:
+                        await client.post(
+                            identity_base + f"/v1/tal/consents/{attempted}/revoke",
+                            params={"subject_id": subject},
+                            headers={"Authorization": "Bearer " + identity_token, "Accept": "application/json"},
+                        )
+                    except httpx.HTTPError:
+                        pass
+                raise HTTPException(503, detail={"code": "APPEARANCE_CONSENT_WRITE_FAILED"})
+
+        try:
+            renewed = await client.post(
+                appearance_base + f"/internal/v1/looks/{payload.look_id}/renew-consent",
+                headers=headers,
+                json={
+                    "subject_id": subject,
+                    "consent_id": consent_id,
+                    "consent_version": consent_version,
+                },
+            )
+        except httpx.HTTPError as exc:
+            for attempted in receipt_ids:
+                try:
+                    await client.post(
+                        identity_base + f"/v1/tal/consents/{attempted}/revoke",
+                        params={"subject_id": subject},
+                        headers={"Authorization": "Bearer " + identity_token, "Accept": "application/json"},
+                    )
+                except httpx.HTTPError:
+                    pass
+            raise HTTPException(503, detail={"code": "APPEARANCE_CONSENT_RENEWAL_UNAVAILABLE"}) from exc
+        if renewed.status_code != 200:
+            for attempted in receipt_ids:
+                try:
+                    await client.post(
+                        identity_base + f"/v1/tal/consents/{attempted}/revoke",
+                        params={"subject_id": subject},
+                        headers={"Authorization": "Bearer " + identity_token, "Accept": "application/json"},
+                    )
+                except httpx.HTTPError:
+                    pass
+            if renewed.status_code in {403, 404, 409, 422}:
+                try:
+                    detail = renewed.json().get("detail", {})
+                except ValueError:
+                    detail = {"code": "APPEARANCE_CONSENT_RENEWAL_REJECTED"}
+                raise HTTPException(renewed.status_code, detail=detail if isinstance(detail, dict) else {"code": "APPEARANCE_CONSENT_RENEWAL_REJECTED"})
+            raise HTTPException(503, detail={"code": "APPEARANCE_CONSENT_RENEWAL_UNAVAILABLE"})
+        try:
+            renewal_data = renewed.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "APPEARANCE_CONSENT_RENEWAL_RESPONSE_INVALID"}) from exc
+        if not (
+            isinstance(renewal_data, dict)
+            and renewal_data.get("status") in {"renewed", "already_current"}
+            and renewal_data.get("look_id") == payload.look_id
+        ):
+            raise HTTPException(502, detail={"code": "APPEARANCE_CONSENT_RENEWAL_RESPONSE_INVALID"})
+    return _private_json_response({
+        "status": renewal_data["status"],
+        "look_id": payload.look_id,
+        "consent_id": consent_id,
+        "consent_version": consent_version,
+        "granted_scopes": scopes,
+        "receipt_ids": receipt_ids,
+        "expires_at": expires_at,
+    }, status_code=200)
 
 
 @app.post("/api/appearance/looks/{look_id}/source")
