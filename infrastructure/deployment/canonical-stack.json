@@ -529,7 +529,7 @@
       "containerized": true,
       "dockerfile": "services/appearance-intelligence-service/Dockerfile",
       "build_context": ".",
-      "build_context_verified_by_ci": false,
+      "build_context_verified_by_ci": true,
       "exposure": "private_api",
       "required_for_marketplace": false,
       "production_enabled": false,
