@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import io
+import hashlib
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -20,6 +21,20 @@ DSI_API_TOKEN = "dsi-internal-api-token-with-at-least-thirty-two-bytes"
 @pytest.fixture
 def client(monkeypatch):
     monkeypatch.setenv("DSI_INTERNAL_API_TOKEN", DSI_API_TOKEN)
+
+    async def allow_capture_receipt(**kwargs):
+        return {
+            "receipt_id": kwargs["receipt_id"],
+            "subject_id": kwargs["subject_id"],
+            "resource_id": kwargs["resource_id"],
+            "purpose": kwargs["purpose"],
+            "manifest_sha256": kwargs["manifest_sha256"],
+            "image_sha256": kwargs["image_sha256"],
+            "device_pipeline_fingerprint_sha256": kwargs["device_pipeline_fingerprint_sha256"],
+            "verification_status": "verified_by_trusted_vision_service",
+        }
+
+    monkeypatch.setattr(dsi_api, "verify_dsi_capture_receipt", allow_capture_receipt)
     with TestClient(app) as test_client:
         yield test_client
 
@@ -65,11 +80,16 @@ def face_landmark_payload():
 
 
 def consent_form():
+    image = capture_bytes()
     return {
         "subject_id": "user-dsi-001",
         "consent_id": "consent-bundle-dsi-001",
         "consent_version": "dsi-v1",
         "resource_id": "dsi-enrollment-session-001",
+        "capture_receipt_id": "dsi-receipt-test-0001",
+        "capture_manifest_sha256": "1" * 64,
+        "capture_image_sha256": hashlib.sha256(image).hexdigest(),
+        "device_pipeline_fingerprint_sha256": "2" * 64,
     }
 
 
@@ -470,3 +490,130 @@ def test_color_calibration_preview_sanitizes_unavailable_vision_worker(client, m
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "DSI_COLOR_CALIBRATION_UNAVAILABLE"
     assert "private model path" not in response.text
+
+
+def test_capture_challenge_is_created_only_after_current_purpose_consent(client, monkeypatch):
+    verified = {}
+    issued = {}
+
+    async def allow_consent(**kwargs):
+        verified.update(kwargs)
+        return {"verified": True}
+
+    async def fake_issue(**kwargs):
+        issued.update(kwargs)
+        return {
+            "status": "challenge_issued",
+            "challenge_id": "dsi-challenge-test-0001",
+            "nonce_b64url": "A" * 43,
+            "nonce_bytes": 32,
+            "expires_at": "2026-11-16T12:05:00+00:00",
+            "subject_id": kwargs["subject_id"],
+            "consent_id": kwargs["consent_id"],
+            "consent_version": kwargs["consent_version"],
+            "resource_id": kwargs["resource_id"],
+            "purpose": kwargs["purpose"],
+            "verification_state": "pending_server_verification",
+        }
+
+    monkeypatch.setattr(dsi_api, "verify_dsi_consent", allow_consent)
+    monkeypatch.setattr(dsi_api, "create_dsi_capture_challenge", fake_issue)
+    response = client.post(
+        "/api/v1/dsi/capture-challenge",
+        headers=auth(),
+        data={
+            "subject_id": "user-dsi-001",
+            "consent_id": "consent-bundle-dsi-001",
+            "consent_version": "dsi-v1",
+            "resource_id": "dsi-enrollment-session-001",
+            "purpose": "facial_geometry_analysis",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert verified["purpose"] == ConsentPurpose.FACIAL_GEOMETRY_ANALYSIS
+    assert issued["subject_id"] == "user-dsi-001"
+    assert response.json()["challenge"]["verification_state"] == "pending_server_verification"
+
+
+def test_capture_challenge_is_not_issued_when_consent_is_revoked(client, monkeypatch):
+    async def deny_consent(**_kwargs):
+        raise ConsentNotAuthorized("revoked")
+
+    async def forbidden(**_kwargs):
+        pytest.fail("Vision challenge must not be issued without current purpose consent")
+
+    monkeypatch.setattr(dsi_api, "verify_dsi_consent", deny_consent)
+    monkeypatch.setattr(dsi_api, "create_dsi_capture_challenge", forbidden)
+    response = client.post(
+        "/api/v1/dsi/capture-challenge",
+        headers=auth(),
+        data={
+            "subject_id": "user-dsi-001",
+            "consent_id": "consent-bundle-dsi-001",
+            "consent_version": "dsi-v1",
+            "resource_id": "dsi-enrollment-session-001",
+            "purpose": "facial_geometry_analysis",
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "DSI_PURPOSE_CONSENT_NOT_VERIFIED"
+
+
+def test_capture_verification_returns_no_receipt_when_vision_verifier_fails(client, monkeypatch):
+    async def allow_consent(**_kwargs):
+        return {"verified": True}
+
+    async def reject_capture(**_kwargs):
+        raise DSIProviderUnavailable("cryptographic verifier rejected capture")
+
+    monkeypatch.setattr(dsi_api, "verify_dsi_consent", allow_consent)
+    monkeypatch.setattr(dsi_api, "verify_dsi_capture_envelope", reject_capture)
+    response = client.post(
+        "/api/v1/dsi/capture-verification",
+        headers=auth(),
+        data={
+            "subject_id": "user-dsi-001",
+            "consent_id": "consent-bundle-dsi-001",
+            "consent_version": "dsi-v1",
+            "resource_id": "dsi-enrollment-session-001",
+            "purpose": "facial_geometry_analysis",
+            "challenge_id": "dsi-challenge-test-0001",
+            "nonce_b64url": "A" * 43,
+            "manifest_canonical_json": "{}",
+            "manifest_signature_base64url": "A" * 86,
+            "attestation_certificate_chain_base64url": '["' + ("A" * 64) + '","' + ("B" * 64) + '"]',
+            "play_integrity_token": "x" * 128,
+        },
+        files={"image": ("capture.png", capture_bytes(), "image/png")},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "DSI_CAPTURE_VERIFICATION_FAILED"
+
+
+def test_skin_preview_rejects_image_that_does_not_match_verified_receipt(client, monkeypatch):
+    called = {"vision": False}
+
+    async def allow_consent(**_kwargs):
+        return {"verified": True}
+
+    async def forbidden(**_kwargs):
+        called["vision"] = True
+        pytest.fail("image substitution must be rejected before Vision inference")
+
+    monkeypatch.setattr(dsi_api, "verify_dsi_consent", allow_consent)
+    monkeypatch.setattr(dsi_api, "fetch_skin_segmentation", forbidden)
+    form = consent_form()
+    # The uploaded image remains a valid PNG, but it is not the image bound to
+    # the supplied capture receipt digest.
+    altered = Image.new("RGB", (240, 320), (10, 220, 35))
+    output = io.BytesIO()
+    altered.save(output, format="PNG")
+    response = client.post(
+        "/api/v1/dsi/skin-region-preview",
+        headers=auth(),
+        data={**form, "purpose": "cosmetic_skin_analysis"},
+        files={"image": ("different.png", output.getvalue(), "image/png")},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "DSI_CAPTURE_IMAGE_RECEIPT_MISMATCH"
+    assert called["vision"] is False
