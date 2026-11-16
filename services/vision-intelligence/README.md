@@ -219,3 +219,63 @@ The SDK:
 The SDK deliberately reports HDR and beauty-processing state as unknown because Camera2 does not expose a universal attestation of hidden OEM processing. Key attestation and Play Integrity support app/device integrity and request binding; they do not prove physical sensor origin of the signed pixels. The backend challenge, nonce replay protection, Android certificate-chain/root/CRL verification, Play Integrity decode, consent/resource binding and server-issued verification receipt are not implemented yet; track that work in issue #214.
 
 Every SDK envelope remains `pending_server_verification`. No Android device is certified and no absolute colour measurement, inference readiness or CAL authorization is enabled by the native library. See [Android SDK protocol and physical acceptance gates](../../apps/dsi-android-capture/README.md).
+
+
+## DSI Android trusted-capture path (P0)
+
+The Android evidence path now has a server-side verification implementation on the DSI feature branch. The Android app is not the trust authority. It sends a signed, challenge-bound manifest, Keystore certificate chain, Play Integrity token and the exact image bytes to the DermalSight API gateway. The gateway re-checks live purpose consent and forwards the request over the private Vision worker credential. Vision independently verifies the proof and only then asks Identity Learning to atomically consume the challenge and persist a short-lived receipt.
+
+### Trust sequence
+
+1. DermalSight checks the subject, consent ID/version, resource and exact purpose using Identity Learning.
+2. Vision requests the single-use challenge from Identity Learning using the separate IDENTITY_DSI_CAPTURE_SERVICE_TOKEN. Identity verifies active, expiring consent receipts before issuing the nonce.
+3. The Android SDK binds the exact capture bytes and Camera2 evidence to canonical JSON, signs it with a per-capture Android Keystore key, and requests a Play Integrity Standard token bound to the manifest SHA-256 request hash.
+4. Vision invokes the Kotlin verifier built from Google's android/keyattestation library at pinned commit f1e8e0f46d0c8272a47ae0f30f82a3a378fdecca. The server checks the certificate chain/trust anchor, attestation challenge, strict package/signing certificate identity, ECDSA manifest signature, TEE/StrongBox security level, verified boot and locked-device state. Google attestation status entries marked REVOKED or SUSPENDED are rejected.
+5. Vision sends the Play Integrity token to Google's decode endpoint using server-side Application Default Credentials. It checks request package, manifest requestHash, token time window, Play app recognition, app signing certificate, minimum version, LICENSED verdict and device-integrity labels.
+6. Only after both proofs pass does Vision ask Identity Learning to consume the one-time challenge and create the persisted verification receipt.
+7. Receipt-bound DSI inference endpoints re-check the live Identity receipt against subject, resource, purpose, manifest digest, exact image digest and pipeline fingerprint before inference. Existing preview endpoints remain explicitly provisional and are not promoted by an Android receipt.
+
+A verifier/provider failure returns a rejected or unavailable response and must not create a receipt or continue to inference. The Android-supplied security-level hint is never used to make a decision.
+
+### Gateway endpoints
+
+All application traffic must pass through the authenticated API gateway / DermalSight BFF. Do not put DSI_INTERNAL_API_TOKEN or DSI_VISION_API_TOKEN in an Android app.
+
+- POST /api/v1/dsi/capture-challenges: multipart fields subject_id, consent_id, consent_version, resource_id, purpose. Returns a no-store challenge with challengeId, nonceBase64Url and expiresAtEpochMs suitable for DsiServerCaptureChallenge.
+- POST /api/v1/dsi/capture-verifications: multipart fields subject_id, consent_id, consent_version, resource_id, purpose, envelope_json, challenge_nonce_base64url and image. Returns the server-created Identity receipt only after both Google verification stages pass.
+- POST /api/v1/dsi/capture/skin-region-analysis: receipt-bound skin-region inference. Requires receipt_id, subject_id, resource_id, purpose, manifest_sha256, image_sha256, device_pipeline_fingerprint_sha256 and image.
+- POST /api/v1/dsi/capture/face-geometry-analysis: receipt-bound facial geometry inference with the same receipt binding fields and facial_geometry_analysis purpose.
+
+The trusted inference routes still return unvalidated model outputs. Receipt verification establishes provenance and the app/device policy assertions; it does not turn segmentation into calibrated colour measurement, validate model accuracy, prove pixel origin at the physical sensor, or authorize profile writes.
+
+### Required service configuration
+
+Vision:
+- DSI_ANDROID_CAPTURE_PACKAGE_NAME: exact Android application package.
+- DSI_ANDROID_CAPTURE_MIN_VERSION_CODE: minimum accepted numeric app version code.
+- DSI_ANDROID_CAPTURE_SIGNING_CERT_SHA256: lowercase SHA-256 digest of the Play app-signing certificate.
+- DSI_ANDROID_CAPTURE_SDK_VERSION: deployed capture SDK release identifier.
+- DSI_ANDROID_ATTESTATION_VERIFIER_BIN: optional override; container default is /opt/dsi-attestation-verifier/bin/dsi-android-attestation-verifier.
+- IDENTITY_LEARNING_SERVICE_URL: trusted HTTPS Identity Learning URL (HTTP only for local loopback).
+- IDENTITY_DSI_CAPTURE_SERVICE_TOKEN: dedicated, high-entropy service credential; separate from general Identity tokens.
+- Google Application Default Credentials: service identity authorized to call the Play Integrity decode API for the configured package. Use workload identity where supported; do not embed service-account JSON in the app or image.
+
+DermalSight BFF:
+- DSI_VISION_API_URL and DSI_VISION_API_TOKEN: private Vision worker endpoint and credential.
+- DSI_INTERNAL_API_TOKEN: credential used by the trusted API gateway to call the private DermalSight API.
+- IDENTITY_LEARNING_API_URL and IDENTITY_LEARNING_API_TOKEN: BFF consent verification against Identity Learning.
+
+All service tokens must be distinct, rotated and provided by the deployment secret manager. Never commit real values or print them in CI logs.
+
+### Security and measurement boundary
+
+- Manifest SHA-256, image SHA-256, image byte count, challenge ID/nonce hash and device pipeline fingerprint are recomputed or compared server-side.
+- Play Integrity requestHash is recomputed from the exact canonical manifest bytes, not copied from the client envelope.
+- Raw images are processed in memory by these endpoints and are not intentionally persisted by this verification path.
+- A verification receipt is not a guarantee that camera pixels were untouched by OEM processing. Camera2 does not expose a universal proof that beauty, HDR or tone-mapping operations are disabled.
+- A verified Android key/device does not make the camera a colorimeter. Absolute colour, undertone and skin measurements remain disabled pending per-device optical validation, spectrophotometer comparison, uncertainty budgets and performance evidence across the target skin-colour range.
+- No profile-write API is authorized by this receipt implementation. Any future measurement/profile writer must verify the active receipt and consent on the write path, bind the exact resource/digests, and enforce its own measurement validation policy.
+
+### Current release evidence
+
+The branch includes verifier source, Python contract tests and an explicit physical-device test matrix at apps/dsi-android-capture/docs/PHYSICAL_DEVICE_TEST_MATRIX.md. Automated tests and the container build must pass before merge. Physical P0.6 remains BLOCKED until actual Play-installed Android devices have been tested and reviewed. No physical test has been represented as passed by this branch.
