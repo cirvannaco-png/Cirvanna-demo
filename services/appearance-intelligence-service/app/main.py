@@ -1213,50 +1213,64 @@ def get_look_consent_context(
 
 @app.post("/internal/v1/looks/{look_id}/renew-consent", dependencies=[Depends(require_internal_token)])
 async def renew_look_consent(look_id: str, payload: ConsentRenewalIn):
-    """Atomically bind a new, verified consent bundle while preserving its history."""
+    """Bind a fresh consent bundle, revoke the prior bundle and append renewal history."""
     _identifier(look_id, "look_id")
-    if consent["consent_version"] != payload.consent_version:
-        raise HTTPException(403, detail={"code": "APPEARANCE_CONSENT_VERSION_MISMATCH"})
-    if payload.consent_id != previous_consent_id:
-        await _revoke_identity_consent_bundle(
-            subject_id=payload.subject_id,
-            consent_id=previous_consent_id,
-            resource_id=look_id,
-        )
+
+    # Snapshot current state and close the DB session before calling providers.
     with _database() as db:
-        row = get_look(db, payload.subject_id, look_id, lock=True)
+        row = get_look(db, payload.subject_id, look_id)
         if row is None:
             raise HTTPException(404, detail={"code": "APPEARANCE_LOOK_NOT_FOUND"})
         base_kind = row.base.get("kind")
         if base_kind == LookBaseKind.SOURCE_PHOTO.value:
-            required_scopes = ["appearance_session_storage", "appearance_source_storage", "image_processing"]
-        elif base_kind in {LookBaseKind.VIRTUAL_TWIN.value, LookBaseKind.PREVIOUS_RENDER.value}:
+            required_scopes = [
+                "appearance_session_storage", "appearance_source_storage", "image_processing",
+            ]
+        elif base_kind in {
+            LookBaseKind.VIRTUAL_TWIN.value, LookBaseKind.PREVIOUS_RENDER.value,
+        }:
             required_scopes = ["appearance_session_storage"]
         else:
             raise HTTPException(409, detail={"code": "APPEARANCE_BASE_KIND_INVALID"})
         previous_consent_id = row.consent_id
+        current_consent_version = row.consent_version
 
+    # Verify the new grant before withdrawing the old one. This means a failed or
+    # incomplete re-consent never destroys the still-valid prior permission.
     consent = await _verify_consent(
         subject_id=payload.subject_id,
         consent_id=payload.consent_id,
         resource_id=look_id,
         required_scopes=required_scopes,
     )
+    if consent["consent_version"] != payload.consent_version:
+        raise HTTPException(403, detail={"code": "APPEARANCE_CONSENT_VERSION_MISMATCH"})
+
+    if payload.consent_id == previous_consent_id:
+        return {
+            "status": "already_current",
+            "look_id": look_id,
+            "consent_version": current_consent_version,
+            "granted_scopes": required_scopes,
+        }
+
+    # Identity Learning revocation is resource-bound: it withdraws all scopes in
+    # only the old bundle for this look, never another look or Twin.
+    await _revoke_identity_consent_bundle(
+        subject_id=payload.subject_id,
+        consent_id=previous_consent_id,
+        resource_id=look_id,
+    )
+
     with _database() as db:
         row = get_look(db, payload.subject_id, look_id, lock=True)
         if row is None:
             raise HTTPException(404, detail={"code": "APPEARANCE_LOOK_NOT_FOUND"})
-        if row.consent_id == payload.consent_id:
-            return {
-                "status": "already_current",
-                "look_id": look_id,
-                "consent_version": row.consent_version,
-                "granted_scopes": required_scopes,
-            }
-        if row.consent_id != previous_consent_id:
+        if row.consent_id != previous_consent_id or row.consent_version != current_consent_version:
             raise HTTPException(409, detail={"code": "APPEARANCE_CONSENT_RENEWAL_CONFLICT"})
+
         event = AppearanceLookConsentEventRow(
-            event_id=__import__("uuid").uuid4().__str__(),
+            event_id=str(uuid.uuid4()),
             look_id=look_id,
             subject_id=payload.subject_id,
             previous_consent_id=previous_consent_id,
