@@ -1,3 +1,11 @@
+# Build Google's pinned Android Key Attestation verifier as a self-contained JVM CLI.
+# The source is an immutable Git submodule commit recorded by the repository tree.
+FROM gradle:8.14.3-jdk21 AS dsi-attestation-build
+WORKDIR /build
+COPY attestation-verifier/ ./
+RUN gradle --no-daemon clean fatJar && \
+    test -s build/libs/dsi-android-attestation-verifier.jar
+
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -6,7 +14,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     HF_HUB_DISABLE_TELEMETRY=1 \
     HF_HOME=/home/app/.cache/huggingface \
     CLICK_IT_FACE_DETECTOR_MODEL_PATH=/opt/cirvanna-models/blaze_face_full_range.tflite \
-    CLICK_IT_FACE_DETECTOR_MODEL_SHA256=3698b18f063835bc609069ef052228fbe86d9c9a6dc8dcb7c7c2d69aed2b181b
+    CLICK_IT_FACE_DETECTOR_MODEL_SHA256=3698b18f063835bc609069ef052228fbe86d9c9a6dc8dcb7c7c2d69aed2b181b \
+    DSI_ANDROID_ATTESTATION_VERIFIER_JAR_PATH=/opt/cirvanna/dsi-android-attestation-verifier.jar
 
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -16,6 +25,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     useradd --system --gid app --create-home --home-dir /home/app app && \
     mkdir -p /home/app/.cache/huggingface && \
     chown -R app:app /home/app
+
+COPY --from=eclipse-temurin:21-jre /opt/java/openjdk /opt/java/openjdk
+ENV JAVA_HOME=/opt/java/openjdk PATH=/opt/java/openjdk/bin:$PATH
+
+COPY --from=dsi-attestation-build /build/build/libs/dsi-android-attestation-verifier.jar /opt/cirvanna/dsi-android-attestation-verifier.jar
+RUN mkdir -p /opt/cirvanna && chown -R root:root /opt/cirvanna && chmod 0555 /opt/cirvanna && chmod 0444 /opt/cirvanna/dsi-android-attestation-verifier.jar
 
 COPY requirements.txt ./requirements.txt
 RUN python -m pip install --upgrade pip && \
