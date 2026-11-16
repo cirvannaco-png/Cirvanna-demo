@@ -306,7 +306,7 @@ def test_reset_and_undo_create_new_versions_without_mutating_history(client):
     versions = client.get(f"/v1/looks/{LOOK_ID}/versions", headers=auth(), params={"subject_id": SUBJECT})
     assert versions.status_code == 200
     assert [item["version"] for item in versions.json()["versions"]] == [1, 2, 3, 4]
-    assert versions.json()["versions"][2]["operations_snapshot"] == []
+    assert versions.json()["versions"][2]["operations"] == []
 
 
 def test_expired_or_revoked_appearance_consent_blocks_look_reads(client):
