@@ -496,7 +496,7 @@ def test_renew_consent_rebinds_active_bundle_and_preserves_history(client):
     assert renewed.status_code == 200, renewed.text
     assert renewed.json()["status"] == "renewed"
     assert renewed.json()["granted_scopes"] == [
-        "appearance_session_storage", "appearance_source_storage",
+        "appearance_session_storage", "appearance_source_storage", "image_processing",
     ]
 
     current = client.get(
@@ -516,7 +516,7 @@ def test_renew_consent_rebinds_active_bundle_and_preserves_history(client):
         assert events[0].previous_consent_id == CONSENT_ID
         assert events[0].consent_id == "consent-appearance-renewed-001"
         assert events[0].granted_scopes == [
-            "appearance_session_storage", "appearance_source_storage",
+            "appearance_session_storage", "appearance_source_storage", "image_processing",
         ]
 
 
