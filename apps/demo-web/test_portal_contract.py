@@ -66,9 +66,13 @@ class PortalContractTests(unittest.TestCase):
             self.assertIn('cirvanna:session-ready', page)
         self.assertIn('cirvanna:appearance-add-product', APPEARANCE_WORKSPACE)
         self.assertIn('cirvanna:appearance-add-wardrobe-look', APPEARANCE_WORKSPACE)
-        self.assertIn('appearance_session_storage', APPEARANCE_WORKSPACE)
-        self.assertIn('appearance_source_storage', WARDROBE + MARKETPLACE + APPEARANCE_WORKSPACE)
-        self.assertIn('image_processing', APPEARANCE_WORKSPACE)
+        # Consent scope names are enforced server-side; the browser shows distinct
+        # plain-language choices and calls the BFF's consent endpoints.
+        self.assertIn('I agree to store this appearance look and its edit history.', APPEARANCE_WORKSPACE)
+        self.assertIn('I agree to retain this uploaded source photo in private storage for this look.', APPEARANCE_WORKSPACE)
+        self.assertIn('I agree to process this source photo for the look instructions I submit.', APPEARANCE_WORKSPACE)
+        self.assertIn('consents: "/api/appearance/consents"', APPEARANCE_WORKSPACE)
+        self.assertIn('renew: "/api/appearance/consents/renew"', APPEARANCE_WORKSPACE)
         self.assertIn('Reset to original', APPEARANCE_WORKSPACE)
         self.assertIn('Delete look and private media', APPEARANCE_WORKSPACE)
         self.assertIn('Photorealistic preview unavailable', APPEARANCE_WORKSPACE)
