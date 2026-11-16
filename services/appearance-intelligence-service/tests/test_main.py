@@ -626,6 +626,47 @@ def test_denied_renewal_does_not_replace_previous_consent(client):
     assert current.json()["look"]["consent_id"] == CONSENT_ID
 
 
+def test_compensation_deletes_only_unreferenced_owner_bound_source_asset(client):
+    response = client.post(
+        "/internal/v1/assets/compensate",
+        headers=auth(),
+        json={
+            "subject_id": SUBJECT,
+            "parent_look_id": "look-orphaned-upload-001",
+            "asset_id": SOURCE_ASSET,
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json() == {"status": "deleted", "asset_id": SOURCE_ASSET}
+    deletes = [
+        call for call in client.app.state.provider.calls
+        if isinstance(call, tuple) and call[0] == "DELETE"
+    ]
+    assert len(deletes) == 1
+    assert deletes[0][1].endswith("/v1/assets/" + SOURCE_ASSET)
+    assert deletes[0][2]["X-Asset-Owner-ID"] == SUBJECT
+
+
+def test_compensation_refuses_source_asset_adopted_by_saved_look(client):
+    create_source_look(client)
+    response = client.post(
+        "/internal/v1/assets/compensate",
+        headers=auth(),
+        json={
+            "subject_id": SUBJECT,
+            "parent_look_id": LOOK_ID,
+            "asset_id": SOURCE_ASSET,
+        },
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "APPEARANCE_SOURCE_ASSET_PARENT_ALREADY_EXISTS"
+    deletes = [
+        call for call in client.app.state.provider.calls
+        if isinstance(call, tuple) and call[0] == "DELETE"
+    ]
+    assert deletes == []
+
+
 def test_list_saved_looks_is_owner_scoped_and_exposes_only_minimal_metadata(client):
     create_source_look(client)
     response = client.get("/v1/looks", headers=auth(), params={"subject_id": SUBJECT})
