@@ -3266,7 +3266,7 @@ def test_appearance_source_renewal_requires_explicit_source_storage_acceptance(c
             "look_id": "appearance-renew-source-002",
             "subject_id": "verified-user-appearance",
             "base_kind": "source_photo",
-            "required_scopes": ["appearance_session_storage", "appearance_source_storage"],
+            "required_scopes": ["appearance_session_storage", "appearance_source_storage", "image_processing"],
         }),
     ])
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
