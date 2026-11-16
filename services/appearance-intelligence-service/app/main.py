@@ -12,6 +12,7 @@ import json
 import os
 import re
 import sys
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Literal
@@ -46,6 +47,7 @@ from appearance_intelligence import (  # noqa: E402
 )
 from app.store import (  # noqa: E402
     AppearanceLookConsentEventRow,
+    AppearanceLookDeletionRow,
     AppearanceLookRow,
     AppearanceLookVersionRow,
     Base,
@@ -349,6 +351,18 @@ class MutateLookIn(StrictModel):
     subject_id: str = Field(min_length=3, max_length=128)
     expected_version: int = Field(ge=1)
     command_id: str = Field(min_length=8, max_length=128)
+
+
+class DeleteLookIn(StrictModel):
+    subject_id: str = Field(min_length=3, max_length=128)
+    expected_version: int = Field(ge=1)
+    command_id: str = Field(min_length=8, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_subject(self):
+        _identifier(self.subject_id, "subject_id")
+        _identifier(self.command_id, "command_id")
+        return self
 
 
 class ApplyOperationIn(MutateLookIn):
@@ -834,6 +848,281 @@ def _consent_id_for_look(look_id: str, subject_id: str) -> str:
         if row is None:
             raise HTTPException(404, detail={"code": "APPEARANCE_LOOK_NOT_FOUND"})
         return row.consent_id
+
+
+def _deletion_payload(job: AppearanceLookDeletionRow) -> dict:
+    return {
+        "job_id": job.job_id,
+        "look_id": job.look_id,
+        "status": job.status,
+        "consent_revoked": job.consent_revoked,
+        "pending_asset_count": len(job.pending_asset_references),
+        "attempt_count": job.attempt_count,
+        "last_error": job.last_error,
+    }
+
+
+def _deletion_asset_references(db: Session, row: AppearanceLookRow) -> list[dict[str, str]]:
+    """Collect only appearance-owned assets and preserve assets referenced by live child looks."""
+    candidates: dict[str, dict[str, str]] = {}
+    base = row.base
+    base_kind = base.get("kind")
+
+    if base_kind == LookBaseKind.SOURCE_PHOTO.value:
+        for asset_id in base.get("source_asset_ids", []):
+            candidates[asset_id] = {
+                "asset_id": asset_id,
+                "purpose": "appearance_source_image",
+                "parent_id": row.look_id,
+            }
+    elif base_kind == LookBaseKind.PREVIOUS_RENDER.value:
+        asset_id = base.get("parent_render_asset_id")
+        parent_id = base.get("parent_look_id")
+        if isinstance(asset_id, str) and isinstance(parent_id, str):
+            candidates[asset_id] = {
+                "asset_id": asset_id,
+                "purpose": "appearance_render_output",
+                "parent_id": parent_id,
+            }
+    # Virtual Twin source images belong to Twin Registry and are never deleted here.
+
+    versions = list(db.scalars(select(AppearanceLookVersionRow).where(
+        AppearanceLookVersionRow.subject_id == row.subject_id,
+        AppearanceLookVersionRow.look_id == row.look_id,
+    )).all())
+    for version in versions:
+        if version.output_asset_id:
+            candidates[version.output_asset_id] = {
+                "asset_id": version.output_asset_id,
+                "purpose": "appearance_render_output",
+                "parent_id": row.look_id,
+            }
+
+    referenced_by_live_looks: set[str] = set()
+    other_looks = list(db.scalars(select(AppearanceLookRow).where(
+        AppearanceLookRow.subject_id == row.subject_id,
+        AppearanceLookRow.status == "active",
+        AppearanceLookRow.look_id != row.look_id,
+    )).all())
+    for other in other_looks:
+        other_base = other.base
+        referenced_by_live_looks.update(
+            item for item in other_base.get("source_asset_ids", [])
+            if isinstance(item, str)
+        )
+        parent_render = other_base.get("parent_render_asset_id")
+        if isinstance(parent_render, str):
+            referenced_by_live_looks.add(parent_render)
+
+    return [
+        reference for asset_id, reference in sorted(candidates.items())
+        if asset_id not in referenced_by_live_looks
+    ]
+
+
+async def _process_deletion_job(job_id: str) -> dict:
+    """Retryable consent-revocation and private-asset deletion outbox processor."""
+    with _database() as db:
+        job = db.scalar(select(AppearanceLookDeletionRow).where(
+            AppearanceLookDeletionRow.job_id == job_id
+        ).with_for_update())
+        if job is None:
+            raise HTTPException(404, detail={"code": "APPEARANCE_DELETION_JOB_NOT_FOUND"})
+        if job.status == "completed":
+            return _deletion_payload(job)
+        if job.status == "processing":
+            return _deletion_payload(job)
+        job.status = "processing"
+        job.updated_at = utcnow()
+        subject_id = job.subject_id
+        consent_id = job.consent_id
+        consent_revoked = job.consent_revoked
+        pending = [dict(item) for item in job.pending_asset_references]
+        db.commit()
+
+    failures: list[str] = []
+    if not consent_revoked:
+        try:
+            identity_base, identity_token = _provider_base(
+                "IDENTITY_SERVICE_URL", "IDENTITY_SERVICE_TOKEN"
+            )
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(10.0, connect=2.0),
+                trust_env=False,
+                follow_redirects=False,
+            ) as client:
+                listing = await client.get(
+                    identity_base + f"/v1/tal/consents/{subject_id}",
+                    headers={"Authorization": "Bearer " + identity_token, "Accept": "application/json"},
+                )
+                if listing.status_code != 200:
+                    raise RuntimeError("IDENTITY_CONSENT_LIST_UNAVAILABLE")
+                receipts = listing.json()
+                if not isinstance(receipts, list):
+                    raise RuntimeError("IDENTITY_CONSENT_LIST_INVALID")
+                matching = [
+                    item for item in receipts
+                    if isinstance(item, dict)
+                    and item.get("consent_id") == consent_id
+                    and item.get("resource_id") == job.look_id
+                    and item.get("granted") is True
+                ]
+                active = [item for item in matching if item.get("revoked_at") is None]
+                if active:
+                    receipt_id = active[0].get("receipt_id")
+                    if not isinstance(receipt_id, str):
+                        raise RuntimeError("IDENTITY_CONSENT_RECEIPT_INVALID")
+                    revoked = await client.post(
+                        identity_base + f"/v1/tal/consents/{receipt_id}/revoke",
+                        params={"subject_id": subject_id},
+                        headers={"Authorization": "Bearer " + identity_token, "Accept": "application/json"},
+                    )
+                    if revoked.status_code != 200:
+                        raise RuntimeError("IDENTITY_CONSENT_REVOCATION_FAILED")
+                    revocation_result = revoked.json()
+                    if not isinstance(revocation_result, dict) or revocation_result.get("status") not in {"revoked", "already_denied"}:
+                        raise RuntimeError("IDENTITY_CONSENT_REVOCATION_RESPONSE_INVALID")
+            consent_revoked = True
+        except (HTTPException, httpx.HTTPError, RuntimeError, ValueError, TypeError) as exc:
+            failures.append(getattr(exc, "detail", None) or str(exc) or "IDENTITY_CONSENT_REVOCATION_FAILED")
+
+    remaining: list[dict[str, str]] = []
+    if pending:
+        try:
+            asset_base, asset_token = _provider_base(
+                "ASSET_SERVICE_URL", "ASSET_SERVICE_TOKEN"
+            )
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(15.0, connect=2.0),
+                trust_env=False,
+                follow_redirects=False,
+            ) as client:
+                for reference in pending:
+                    asset_id = reference["asset_id"]
+                    try:
+                        response = await client.delete(
+                            asset_base + f"/v1/assets/{asset_id}",
+                            headers={
+                                "Authorization": "Bearer " + asset_token,
+                                "X-Asset-Owner-ID": subject_id,
+                                "Idempotency-Key": f"appearance-delete-{job_id}-{asset_id}",
+                            },
+                        )
+                        if response.status_code != 204:
+                            remaining.append(reference)
+                            failures.append(f"ASSET_DELETE_{response.status_code}")
+                    except httpx.HTTPError:
+                        remaining.append(reference)
+                        failures.append("ASSET_DELETE_PROVIDER_UNAVAILABLE")
+        except HTTPException as exc:
+            remaining = pending
+            failures.append(exc.detail.get("code", "ASSET_SERVICE_NOT_CONFIGURED") if isinstance(exc.detail, dict) else "ASSET_SERVICE_NOT_CONFIGURED")
+        except (httpx.HTTPError, ValueError):
+            remaining = pending
+            failures.append("ASSET_SERVICE_UNAVAILABLE")
+
+    with _database() as db:
+        job = db.scalar(select(AppearanceLookDeletionRow).where(
+            AppearanceLookDeletionRow.job_id == job_id
+        ).with_for_update())
+        if job is None:
+            raise HTTPException(404, detail={"code": "APPEARANCE_DELETION_JOB_NOT_FOUND"})
+        job.consent_revoked = consent_revoked
+        job.pending_asset_references = remaining
+        job.attempt_count += 1
+        job.last_error = ";".join(failures)[:160] if failures else None
+        job.status = "completed" if consent_revoked and not remaining else "retry"
+        job.updated_at = utcnow()
+        db.commit()
+        db.refresh(job)
+        return _deletion_payload(job)
+
+
+@app.delete("/v1/looks/{look_id}", dependencies=[Depends(require_internal_token)])
+async def delete_look(look_id: str, payload: DeleteLookIn):
+    """Soft-delete the look immediately; revoke its bundle and delete unshared assets via a durable outbox."""
+    _identifier(look_id, "look_id")
+    request_document = {
+        "look_id": look_id,
+        "subject_id": payload.subject_id,
+        "expected_version": payload.expected_version,
+        "command_id": payload.command_id,
+    }
+    payload_hash = _sha(request_document)
+    with _database() as db:
+        replay = db.scalar(select(AppearanceLookDeletionRow).where(
+            AppearanceLookDeletionRow.subject_id == payload.subject_id,
+            AppearanceLookDeletionRow.command_id == payload.command_id,
+        ))
+        if replay is not None:
+            if not hmac.compare_digest(replay.payload_sha256, payload_hash):
+                raise HTTPException(409, detail={"code": "APPEARANCE_IDEMPOTENCY_CONFLICT"})
+            job_id = replay.job_id
+        else:
+            row = db.scalar(select(AppearanceLookRow).where(
+                AppearanceLookRow.subject_id == payload.subject_id,
+                AppearanceLookRow.look_id == look_id,
+            ).with_for_update())
+            if row is None:
+                raise HTTPException(404, detail={"code": "APPEARANCE_LOOK_NOT_FOUND"})
+            existing_job = db.scalar(select(AppearanceLookDeletionRow).where(
+                AppearanceLookDeletionRow.subject_id == payload.subject_id,
+                AppearanceLookDeletionRow.look_id == look_id,
+            ))
+            if existing_job is not None:
+                job_id = existing_job.job_id
+            else:
+                if row.status != "active":
+                    raise HTTPException(404, detail={"code": "APPEARANCE_LOOK_NOT_FOUND"})
+                if row.current_version != payload.expected_version:
+                    raise HTTPException(409, detail={
+                        "code": "APPEARANCE_VERSION_CONFLICT",
+                        "current_version": row.current_version,
+                    })
+                asset_references = _deletion_asset_references(db, row)
+                job_id = str(uuid.uuid4())
+                now = utcnow()
+                job = AppearanceLookDeletionRow(
+                    job_id=job_id,
+                    look_id=look_id,
+                    subject_id=payload.subject_id,
+                    consent_id=row.consent_id,
+                    command_id=payload.command_id,
+                    payload_sha256=payload_hash,
+                    consent_revoked=False,
+                    asset_references=asset_references,
+                    pending_asset_references=asset_references,
+                    status="queued",
+                    attempt_count=0,
+                    last_error=None,
+                    created_at=now,
+                    updated_at=now,
+                )
+                row.status = "deleted"
+                row.updated_at = now
+                db.add(job)
+                db.commit()
+
+    result = await _process_deletion_job(job_id)
+    return {"status": "deleted" if result["status"] == "completed" else "deletion_pending", "deletion": result}
+
+
+@app.post("/internal/v1/deletions/process", dependencies=[Depends(require_internal_token)])
+async def process_deletions(limit: int = Query(default=20, ge=1, le=100)):
+    with _database() as db:
+        jobs = list(db.scalars(select(AppearanceLookDeletionRow).where(
+            AppearanceLookDeletionRow.status.in_(["queued", "retry"])
+        ).order_by(AppearanceLookDeletionRow.created_at.asc()).limit(limit)).all())
+        job_ids = [job.job_id for job in jobs]
+    results = []
+    for job_id in job_ids:
+        results.append(await _process_deletion_job(job_id))
+    return {
+        "processed": len(results),
+        "completed": sum(item["status"] == "completed" for item in results),
+        "pending": sum(item["status"] != "completed" for item in results),
+        "jobs": results,
+    }
 
 
 @app.get("/internal/v1/looks/{look_id}/consent-context", dependencies=[Depends(require_internal_token)])
