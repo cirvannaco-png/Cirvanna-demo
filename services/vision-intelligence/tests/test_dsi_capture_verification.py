@@ -293,3 +293,13 @@ def test_invalid_play_integrity_claim_never_consumes_identity_challenge(monkeypa
             )
         )
     assert persisted == []
+
+
+
+def test_canonical_decimal_preserves_precision_without_context_rounding():
+    from decimal import Decimal
+
+    precise = Decimal("123456789012345678901234567890123456789012345678901234567890.000")
+    assert _canonical_json(precise) == "123456789012345678901234567890123456789012345678901234567890"
+    assert _canonical_json(Decimal("1.230000")) == "1.23"
+    assert _canonical_json(Decimal("-0.000")) == "0"
