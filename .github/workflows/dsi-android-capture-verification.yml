@@ -1,0 +1,89 @@
+name: DSI Android capture verification
+
+on:
+  push:
+    branches: ["main", "feat/**"]
+    paths:
+      - "services/vision-intelligence/**"
+      - "services/dermalsight/**"
+      - "services/identity-learning-service/**"
+      - "apps/dsi-android-capture/**"
+      - ".github/workflows/dsi-android-capture-verification.yml"
+  pull_request:
+    branches: ["main", "feat/**"]
+    paths:
+      - "services/vision-intelligence/**"
+      - "services/dermalsight/**"
+      - "services/identity-learning-service/**"
+      - "apps/dsi-android-capture/**"
+      - ".github/workflows/dsi-android-capture-verification.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  python-contracts:
+    name: Python contract tests (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [vision-intelligence, dermalsight]
+    defaults:
+      run:
+        working-directory: services/${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            services/vision-intelligence/requirements-test.txt
+            services/dermalsight/requirements.txt
+      - name: Install Vision test dependencies
+        if: matrix.service == 'vision-intelligence'
+        run: python -m pip install -r requirements-test.txt
+      - name: Install DermalSight service and test dependencies
+        if: matrix.service == 'dermalsight'
+        run: python -m pip install -r requirements.txt pytest
+      - name: Verify dependency consistency
+        run: python -m pip check
+      - name: Compile application and tests
+        run: python -m compileall -q app tests
+      - name: Run contract and adversarial tests
+        run: python -m pytest -q
+
+  android-key-attestation-verifier:
+    name: Build pinned Google Key Attestation verifier
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10"
+      - name: Fetch pinned upstream verifier
+        run: |
+          git clone --filter=blob:none https://github.com/android/keyattestation.git /tmp/keyattestation
+          git -C /tmp/keyattestation checkout --detach f1e8e0f46d0c8272a47ae0f30f82a3a378fdecca
+          test "$(git -C /tmp/keyattestation rev-parse HEAD)" = "f1e8e0f46d0c8272a47ae0f30f82a3a378fdecca"
+      - name: Test and publish upstream verifier to local Maven repository
+        working-directory: /tmp/keyattestation
+        run: ./gradlew --no-daemon test publish -PKeyAttestationMavenRepo=/tmp/keyattestation-m2repo
+      - name: Test Cirvanna verification executable
+        run: gradle --no-daemon -p services/vision-intelligence/android-attestation-verifier clean test installDist
+
+  vision-container-build:
+    name: Build Vision image with native verifier
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build pinned Vision runtime image
+        run: docker build --pull -f services/vision-intelligence/Dockerfile -t cirvanna-vision-dsi-verifier:ci services/vision-intelligence
