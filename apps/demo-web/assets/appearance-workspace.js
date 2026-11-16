@@ -253,11 +253,25 @@
     }
     componentSelect.value=product.component||"garment";
     actionSelect.value="apply";
-    refKind.value="catalog_product";
+    refKind.value=product.referenceKind||"catalog_product";
     refId.value=product.productId;
     description.value=String(product.productName||"Marketplace product").slice(0,500);
     root.scrollIntoView({behavior:"smooth",block:"start"});
     status("CAL-approved product loaded into the edit form. Choose a saved appearance and explicitly save the component edit.");
+  });
+  window.addEventListener("cirvanna:appearance-add-wardrobe-look",event=>{
+    const look=event.detail||{};
+    if(!accessToken) return status("Connect your Cirvanna account before sending a PNELLY look to Appearance.","error");
+    const items=Array.isArray(look.items)?look.items.filter(item=>item&&typeof item.display_name==="string"):[];
+    if(!items.length) return status("The PNELLY look contains no active wardrobe pieces to reference.","error");
+    componentSelect.value="garment";
+    actionSelect.value="apply";
+    const firstId=items.find(item=>typeof item.item_id==="string"&&/^[A-Za-z0-9][A-Za-z0-9._:@-]{1,159}$/.test(item.item_id));
+    refKind.value=firstId?"wardrobe_item":"";
+    refId.value=firstId?firstId.item_id:"";
+    description.value=("PNELLY "+String(look.role||"wardrobe look")+": "+items.map(item=>item.display_name).join(", ")).slice(0,500);
+    root.scrollIntoView({behavior:"smooth",block:"start"});
+    status("PNELLY's wardrobe look is ready as an editable garment plan. Review and save it to a selected appearance.");
   });
 
   async function loadLooks() {
@@ -294,10 +308,21 @@
         const renewed=await renewConsent(summary);
         if(!renewed) return;
       }
-      const [detailData,versionData]=await Promise.all([
-        api(API.looks+"/"+encodeURIComponent(lookId)),
-        api(API.looks+"/"+encodeURIComponent(lookId)+"/versions")
-      ]);
+      let detailData,versionData;
+      try {
+        [detailData,versionData]=await Promise.all([
+          api(API.looks+"/"+encodeURIComponent(lookId)),
+          api(API.looks+"/"+encodeURIComponent(lookId)+"/versions")
+        ]);
+      } catch(error) {
+        if(error.status!==403||!summary) throw error;
+        const renewed=await renewConsent({...summary,consent_required:true});
+        if(!renewed) return;
+        [detailData,versionData]=await Promise.all([
+          api(API.looks+"/"+encodeURIComponent(lookId)),
+          api(API.looks+"/"+encodeURIComponent(lookId)+"/versions")
+        ]);
+      }
       activeLook=detailData.look;
       versions=Array.isArray(versionData.versions)?versionData.versions:[];
       renderDetail();
