@@ -567,7 +567,12 @@ def test_renewal_revokes_old_bundle_only_after_new_bundle_is_verified(client):
     ]
     assert len(revocations) == 1
     assert revocations[0][0].endswith("/appearance-delete-receipt-001/revoke")
-    assert revocations[0][1]["subject_id"] == SUBJECT
+    subject_listing_calls = [
+        call for call in client.app.state.provider.calls
+        if isinstance(call, tuple) and len(call) == 3
+        and call[0] == "GET" and call[1].endswith("/v1/tal/consents/" + SUBJECT)
+    ]
+    assert len(subject_listing_calls) == 1
 
     consent_verify_calls = [
         call for call in client.app.state.provider.calls
