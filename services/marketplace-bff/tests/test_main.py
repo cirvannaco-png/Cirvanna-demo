@@ -3081,6 +3081,77 @@ def test_appearance_consent_revoke_targets_exact_user_bundle_and_resource(client
 
 
 
+def test_appearance_consent_revoke_withdraws_every_scope_in_the_exact_bundle(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "verified-user-appearance"}),
+        FakeResponse([
+            {
+                "receipt_id": "bundle-session-receipt",
+                "consent_id": "multi-scope-bundle",
+                "resource_id": "appearance-look-multi-001",
+                "scope": "appearance_session_storage",
+                "granted": True,
+                "revoked_at": None,
+            },
+            {
+                "receipt_id": "bundle-source-receipt",
+                "consent_id": "multi-scope-bundle",
+                "resource_id": "appearance-look-multi-001",
+                "scope": "appearance_source_storage",
+                "granted": True,
+                "revoked_at": None,
+            },
+            {
+                "receipt_id": "bundle-processing-receipt",
+                "consent_id": "multi-scope-bundle",
+                "resource_id": "appearance-look-multi-001",
+                "scope": "image_processing",
+                "granted": True,
+                "revoked_at": None,
+            },
+            {
+                "receipt_id": "other-look-receipt",
+                "consent_id": "multi-scope-bundle",
+                "resource_id": "appearance-look-other-001",
+                "scope": "appearance_source_storage",
+                "granted": True,
+                "revoked_at": None,
+            },
+            {
+                "receipt_id": "other-bundle-receipt",
+                "consent_id": "different-bundle",
+                "resource_id": "appearance-look-multi-001",
+                "scope": "image_processing",
+                "granted": True,
+                "revoked_at": None,
+            },
+        ]),
+        FakeResponse({"status": "revoked"}),
+        FakeResponse({"status": "revoked"}),
+        FakeResponse({"status": "revoked"}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/appearance/consents/revoke",
+        headers={"Authorization": "Bearer browser-token"},
+        json={"look_id": "appearance-look-multi-001", "consent_id": "multi-scope-bundle"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json() == {"status": "revoked", "look_id": "appearance-look-multi-001"}
+    revoke_calls = [
+        call for call in fake.calls
+        if call[1].startswith("https://identity.example.test/v1/tal/consents/")
+        and call[1].endswith("/revoke")
+    ]
+    assert [call[1].rsplit("/", 2)[-2] for call in revoke_calls] == [
+        "bundle-session-receipt", "bundle-source-receipt", "bundle-processing-receipt",
+    ]
+    assert all(call[2]["params"]["subject_id"] == "verified-user-appearance" for call in revoke_calls)
+
+
 def test_appearance_source_upload_verifies_consent_and_uses_private_asset_service(client, monkeypatch):
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
     monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
