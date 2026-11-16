@@ -365,6 +365,24 @@ class DeleteLookIn(StrictModel):
         return self
 
 
+class CompensateSourceAssetIn(StrictModel):
+    subject_id: str = Field(min_length=3, max_length=128)
+    parent_look_id: str = Field(min_length=8, max_length=128)
+    asset_id: str = Field(min_length=36, max_length=36)
+
+    @model_validator(mode="after")
+    def validate_asset_ids(self):
+        _identifier(self.subject_id, "subject_id")
+        _identifier(self.parent_look_id, "parent_look_id")
+        try:
+            parsed = uuid.UUID(self.asset_id)
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise ValueError("asset_id must be a UUID") from exc
+        if str(parsed) != self.asset_id.lower():
+            raise ValueError("asset_id must be a canonical UUID")
+        return self
+
+
 class ApplyOperationIn(MutateLookIn):
     operation: OperationIn
 
@@ -1096,6 +1114,76 @@ async def _process_deletion_job(job_id: str) -> dict:
         db.commit()
         db.refresh(job)
         return _deletion_payload(job)
+
+
+@app.post("/internal/v1/assets/compensate", dependencies=[Depends(require_internal_token)])
+async def compensate_unreferenced_source_asset(payload: CompensateSourceAssetIn):
+    """Delete an orphaned upload only after proving no saved look or outbox references it."""
+    asset_id = payload.asset_id
+    with _database() as db:
+        # A look row with this parent ID means creation may have succeeded or been
+        # partially committed; the browser must not compensate-delete its media.
+        parent = db.get(AppearanceLookRow, payload.parent_look_id)
+        if parent is not None:
+            raise HTTPException(409, detail={"code": "APPEARANCE_SOURCE_ASSET_PARENT_ALREADY_EXISTS"})
+
+        rows = list(db.scalars(select(AppearanceLookRow).where(
+            AppearanceLookRow.subject_id == payload.subject_id,
+        )).all())
+        for row in rows:
+            base = row.base
+            if asset_id in base.get("source_asset_ids", []):
+                raise HTTPException(409, detail={"code": "APPEARANCE_SOURCE_ASSET_ALREADY_REFERENCED"})
+            if base.get("parent_render_asset_id") == asset_id:
+                raise HTTPException(409, detail={"code": "APPEARANCE_SOURCE_ASSET_ALREADY_REFERENCED"})
+
+        versions = list(db.scalars(select(AppearanceLookVersionRow).where(
+            AppearanceLookVersionRow.subject_id == payload.subject_id,
+            AppearanceLookVersionRow.output_asset_id == asset_id,
+        )).all())
+        if versions:
+            raise HTTPException(409, detail={"code": "APPEARANCE_SOURCE_ASSET_ALREADY_REFERENCED"})
+
+        jobs = list(db.scalars(select(AppearanceLookDeletionRow).where(
+            AppearanceLookDeletionRow.subject_id == payload.subject_id,
+        )).all())
+        for job in jobs:
+            referenced = list(job.pending_asset_references or []) + list(job.asset_references or [])
+            if any(item.get("asset_id") == asset_id for item in referenced if isinstance(item, dict)):
+                raise HTTPException(409, detail={"code": "APPEARANCE_SOURCE_ASSET_DELETION_ALREADY_QUEUED"})
+
+    # Asset Service remains the authority for owner, purpose, active state and
+    # exact parent. The Appearance service adds the missing reference-integrity check.
+    await _authorize_asset(
+        subject_id=payload.subject_id,
+        asset_id=asset_id,
+        purpose="appearance_source_image",
+        parent_id=payload.parent_look_id,
+    )
+    base, token = _provider_base("ASSET_SERVICE_URL", "ASSET_SERVICE_TOKEN")
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(15.0, connect=2.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            removed = await client.delete(
+                base + f"/v1/assets/{asset_id}",
+                headers={
+                    "Authorization": "Bearer " + token,
+                    "X-Asset-Owner-ID": payload.subject_id,
+                    "Idempotency-Key": "appearance-create-compensation-" + asset_id,
+                },
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "APPEARANCE_SOURCE_COMPENSATION_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "APPEARANCE_SOURCE_COMPENSATION_UNAVAILABLE"}) from exc
+    if removed.status_code == 404:
+        raise HTTPException(404, detail={"code": "APPEARANCE_SOURCE_ASSET_NOT_FOUND"})
+    if removed.status_code != 204:
+        raise HTTPException(503, detail={"code": "APPEARANCE_SOURCE_COMPENSATION_FAILED"})
+    return {"status": "deleted", "asset_id": asset_id}
 
 
 @app.delete("/v1/looks/{look_id}", dependencies=[Depends(require_internal_token)])
