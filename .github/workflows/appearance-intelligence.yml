@@ -31,7 +31,7 @@ jobs:
         image: postgres:17
         env:
           POSTGRES_USER: cirvanna
-          POSTGRES_PASSWORD: appearance-ci-password
+          POSTGRES_HOST_AUTH_METHOD: trust
           POSTGRES_DB: appearance_look_sessions
         ports:
           - 5432:5432
@@ -66,14 +66,14 @@ jobs:
       - name: Apply migration and verify isolated restore
         working-directory: .
         env:
-          APPEARANCE_TEST_POSTGRES_DSN: postgresql://cirvanna:appearance-ci-password@localhost:5432/appearance_look_sessions
+          APPEARANCE_TEST_POSTGRES_DSN: postgresql://cirvanna@localhost:5432/appearance_look_sessions
         run: |
           psql "$APPEARANCE_TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f services/appearance-intelligence-service/migrations/0001_appearance_look_sessions.sql
           psql "$APPEARANCE_TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f services/appearance-intelligence-service/migrations/0002_appearance_consent_events.sql
           pg_dump --format=custom "$APPEARANCE_TEST_POSTGRES_DSN" > /tmp/appearance-look-sessions.dump
           psql "$APPEARANCE_TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -c "CREATE DATABASE appearance_restore"
-          pg_restore --dbname="postgresql://cirvanna:appearance-ci-password@localhost:5432/appearance_restore" --exit-on-error /tmp/appearance-look-sessions.dump
-          psql "postgresql://cirvanna:appearance-ci-password@localhost:5432/appearance_restore" -v ON_ERROR_STOP=1 -c "SELECT look_id FROM appearance_look_sessions LIMIT 1"
+          pg_restore --dbname="postgresql://cirvanna@localhost:5432/appearance_restore" --exit-on-error /tmp/appearance-look-sessions.dump
+          psql "postgresql://cirvanna@localhost:5432/appearance_restore" -v ON_ERROR_STOP=1 -c "SELECT look_id FROM appearance_look_sessions LIMIT 1"
       - name: Build private appearance service image
         working-directory: .
         run: docker build -f services/appearance-intelligence-service/Dockerfile -t cirvanna-appearance-intelligence:ci .
