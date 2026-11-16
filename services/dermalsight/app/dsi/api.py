@@ -285,7 +285,7 @@ async def face_geometry_preview(
     filename = image.filename or "dsi-capture"
     content, decoded = await _read_payload(image)
     try:
-        await _verify_capture_receipt(
+        capture_receipt = await _verify_capture_receipt(
             receipt_id=capture_receipt_id,
             subject_id=subject_id,
             resource_id=resource_id,
@@ -299,6 +299,12 @@ async def face_geometry_preview(
             content=content,
             content_type=content_type,
             filename=filename,
+            subject_id=subject_id,
+            resource_id=resource_id,
+            receipt_id=capture_receipt["receipt_id"],
+            manifest_sha256=capture_receipt["manifest_sha256"],
+            image_sha256=capture_receipt["image_sha256"],
+            device_pipeline_fingerprint_sha256=capture_receipt["device_pipeline_fingerprint_sha256"],
         )
         geometry = summarize_face_geometry(payload)
     except ValueError as exc:
@@ -353,7 +359,7 @@ async def skin_region_preview(
     filename = image.filename or "dsi-capture"
     content, decoded = await _read_payload(image)
     try:
-        await _verify_capture_receipt(
+        capture_receipt = await _verify_capture_receipt(
             receipt_id=capture_receipt_id,
             subject_id=subject_id,
             resource_id=resource_id,
@@ -367,6 +373,13 @@ async def skin_region_preview(
             content=content,
             content_type=content_type,
             filename=filename,
+            subject_id=subject_id,
+            resource_id=resource_id,
+            purpose=purpose_enum.value,
+            receipt_id=capture_receipt["receipt_id"],
+            manifest_sha256=capture_receipt["manifest_sha256"],
+            image_sha256=capture_receipt["image_sha256"],
+            device_pipeline_fingerprint_sha256=capture_receipt["device_pipeline_fingerprint_sha256"],
         )
     except DSIProviderUnavailable as exc:
         raise HTTPException(503, detail={"code": "DSI_VISION_PROVIDER_UNAVAILABLE"}) from exc
@@ -441,7 +454,7 @@ async def color_calibration_preview(
         else "body_skin"
     )
     try:
-        await _verify_capture_receipt(
+        capture_receipt = await _verify_capture_receipt(
             receipt_id=capture_receipt_id,
             subject_id=subject_id,
             resource_id=resource_id,
@@ -461,6 +474,13 @@ async def color_calibration_preview(
             chart_age_months=chart_age_months,
             chart_condition=chart_condition,
             requested_region=requested_region,
+            subject_id=subject_id,
+            resource_id=resource_id,
+            purpose=purpose_enum.value,
+            receipt_id=capture_receipt["receipt_id"],
+            manifest_sha256=capture_receipt["manifest_sha256"],
+            image_sha256=capture_receipt["image_sha256"],
+            device_pipeline_fingerprint_sha256=capture_receipt["device_pipeline_fingerprint_sha256"],
         )
     except DSIProviderUnavailable as exc:
         raise HTTPException(
