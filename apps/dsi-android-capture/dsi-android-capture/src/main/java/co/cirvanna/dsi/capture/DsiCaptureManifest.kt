@@ -154,7 +154,7 @@ data class DsiCaptureManifest internal constructor(
     val observedWhiteBalanceLock: Boolean,
 ) {
     companion object {
-        private const val MAX_IMAGE_BYTES = 32 * 1024 * 1024
+        private const val MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
         fun create(input: DsiCaptureManifestInput): DsiCaptureManifest {
             require(input.imageBytes.isNotEmpty()) { "Capture image is empty" }
