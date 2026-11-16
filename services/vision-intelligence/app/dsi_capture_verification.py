@@ -11,6 +11,7 @@ import asyncio
 import base64
 import binascii
 import hashlib
+import io
 import json
 import os
 import re
@@ -21,6 +22,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import httpx
+from PIL import Image, UnidentifiedImageError
 
 MAX_MANIFEST_BYTES = 128 * 1024
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
@@ -179,6 +181,28 @@ def validate_capture_binding(
     canonical, manifest = canonical_manifest(manifest_text)
     manifest_sha = _sha256_hex(canonical)
     image_sha = _sha256_hex(image_bytes)
+
+    # The current native Camera2 upload contract is encoded JPEG only. DNG/RAW
+    # and YUV are not silently interpreted as JPEG or given colour authority.
+    try:
+        with Image.open(io.BytesIO(image_bytes)) as image:
+            encoded_format = image.format
+            actual_width, actual_height = image.size
+            image.verify()
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise CaptureVerificationError("DSI_CAPTURE_IMAGE_DECODE_INVALID", 422) from exc
+    if encoded_format != "JPEG":
+        raise CaptureVerificationError("DSI_CAPTURE_IMAGE_FORMAT_UNSUPPORTED", 422)
+    if (
+        not isinstance(manifest.get("output_width"), int)
+        or not isinstance(manifest.get("output_height"), int)
+        or manifest["output_width"] != actual_width
+        or manifest["output_height"] != actual_height
+    ):
+        raise CaptureVerificationError("DSI_CAPTURE_IMAGE_DIMENSIONS_MISMATCH")
+    if manifest.get("output_format") != "jpeg":
+        raise CaptureVerificationError("DSI_CAPTURE_IMAGE_FORMAT_MISMATCH")
+
     required = {
         "schema_version": "dsi-capture-manifest-v1",
         "challenge_id": challenge_id,
@@ -389,9 +413,13 @@ def _decode_play_integrity_token(token: str) -> dict[str, Any]:
         from google.auth.transport.requests import Request
         import requests
 
+        session = requests.Session()
+        # Ignore ambient HTTP(S)_PROXY / .netrc settings for this security-critical
+        # provider call. Use the same bounded, explicit session for ADC refresh.
+        session.trust_env = False
         credentials, _project = google.auth.default(scopes=[PLAY_INTEGRITY_SCOPE])
-        credentials.refresh(Request())
-        response = requests.post(
+        credentials.refresh(Request(session=session))
+        response = session.post(
             f"{PLAY_INTEGRITY_DECODE_BASE}/{package_name}:decodeIntegrityToken",
             headers={
                 "Authorization": f"Bearer {credentials.token}",
