@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import hashlib
 import json
 import os
@@ -71,7 +72,7 @@ def _decode_b64url(value: str, *, field: str, maximum: int) -> bytes:
         raise CaptureVerificationError("DSI_CAPTURE_ENVELOPE_INVALID")
     try:
         decoded = base64.urlsafe_b64decode(value + ("=" * ((4 - len(value) % 4) % 4)))
-    except (ValueError, base64.binascii.Error) as exc:
+    except (ValueError, binascii.Error) as exc:
         raise CaptureVerificationError("DSI_CAPTURE_ENVELOPE_INVALID") from exc
     if not decoded or len(decoded) > maximum:
         raise CaptureVerificationError("DSI_CAPTURE_ENVELOPE_INVALID")
@@ -94,6 +95,8 @@ def _json_quote(value: str) -> str:
 def _decimal_canonical(value: Decimal) -> str:
     if not value.is_finite():
         raise CaptureVerificationError("DSI_CAPTURE_MANIFEST_NUMBER_INVALID")
+    if value == 0:
+        return "0"
     normalized = value.normalize()
     if normalized == normalized.to_integral_value():
         return str(normalized.quantize(Decimal(1)))
