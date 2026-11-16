@@ -107,6 +107,39 @@ def _mp_image(image: Image.Image):
     return mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
 
+
+def _dsi_capture_verifier_configuration() -> dict[str, Any]:
+    jar = os.getenv("DSI_ANDROID_ATTESTATION_VERIFIER_JAR_PATH", "").strip()
+    package = os.getenv("DSI_ANDROID_PACKAGE_NAME", "").strip()
+    cert = os.getenv("DSI_ANDROID_SIGNING_CERT_SHA256", "").strip().lower()
+    version = os.getenv("DSI_ANDROID_MIN_PACKAGE_VERSION_CODE", "").strip()
+    sdk_version = os.getenv("DSI_ANDROID_CAPTURE_SDK_VERSION", "").strip()
+    policy_version = os.getenv("DSI_CAPTURE_VERIFIER_POLICY_VERSION", "").strip()
+    reasons: list[str] = []
+    if not jar or not os.path.isabs(jar) or not os.path.isfile(jar):
+        reasons.append("android_attestation_verifier_jar_unavailable")
+    if not package or "." not in package:
+        reasons.append("android_package_identity_not_configured")
+    if len(cert) != 64 or any(ch not in "0123456789abcdef" for ch in cert):
+        reasons.append("android_signing_certificate_pin_not_configured")
+    if not version.isdigit() or int(version or "0") < 1:
+        reasons.append("minimum_android_package_version_not_configured")
+    if not sdk_version:
+        reasons.append("android_capture_sdk_version_not_configured")
+    if not policy_version:
+        reasons.append("capture_verifier_policy_version_not_configured")
+    try:
+        _identity_dsi_capture_config()
+    except HTTPException:
+        reasons.append("identity_capture_receipt_provider_not_configured")
+    return {
+        "configured": not reasons,
+        "review_required_reasons": reasons,
+        "play_integrity_credentials": "google_application_default_credentials_checked_at_request_time",
+        "absolute_colour_measurement_approved": False,
+    }
+
+
 @router.get("/ready", dependencies=[Depends(require_dsi_worker)])
 def dsi_ready() -> JSONResponse:
     face = dsi_models.face_landmarker_status()
@@ -127,10 +160,12 @@ def dsi_ready() -> JSONResponse:
             segmenter_loaded = True
         except Exception:
             segmenter_load_error = "skin_segmenter_load_or_label_map_failed"
-    ready = face_loaded and segmenter_loaded
+    capture_verifier = _dsi_capture_verifier_configuration()
+    ready = face_loaded and segmenter_loaded and capture_verifier["configured"] is True
     return _no_store({
         "service": "cirvanna-vision-intelligence",
         "dsi_ready": ready,
+        "capture_verification": capture_verifier,
         "face_landmarker": {
             "configured": face["configured"],
             "loaded": face_loaded,
