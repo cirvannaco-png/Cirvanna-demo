@@ -350,3 +350,210 @@ def test_dsi_colorchecker_route_requires_correct_chart_edition_confirmation(dsi_
     )
     assert response.status_code == 422
     assert response.json()["detail"]["code"] == "DSI_COLOR_REFERENCE_EDITION_NOT_CONFIRMED"
+
+
+def _signed_capture_envelope_for_route(image_bytes: bytes) -> tuple[dict, str]:
+    import base64
+    import json
+
+    nonce = base64.urlsafe_b64encode(b"z" * 32).rstrip(b"=").decode("ascii")
+    manifest = {
+        "schema_version": "dsi-capture-manifest-v1",
+        "capture_ref": "cap_abcdefghijkl",
+        "challenge_id": "dsi_challenge_0123456789abcdef",
+        "challenge_nonce_sha256": hashlib.sha256(b"z" * 32).hexdigest(),
+        "image_sha256": hashlib.sha256(image_bytes).hexdigest(),
+        "image_byte_count": len(image_bytes),
+        "device_pipeline_fingerprint_sha256": "a" * 64,
+        "absolute_colour_measurement_approved": False,
+        "server_verification_required": True,
+    }
+    # This fixture only exercises the HTTP contract; the cryptographic verifier is
+    # separately exercised through its CLI build and unit tests.
+    from app.dsi_capture_verification import _canonical_json
+    canonical = _canonical_json(manifest)
+    manifest_digest = hashlib.sha256(canonical.encode()).hexdigest()
+    request_hash = base64.urlsafe_b64encode(
+        hashlib.sha256(canonical.encode()).digest()
+    ).rstrip(b"=").decode("ascii")
+    envelope = {
+        "schemaVersion": "dsi-android-attestation-v1",
+        "captureRef": manifest["capture_ref"],
+        "challengeId": manifest["challenge_id"],
+        "manifestSha256": manifest_digest,
+        "imageSha256": manifest["image_sha256"],
+        "devicePipelineFingerprintSha256": manifest["device_pipeline_fingerprint_sha256"],
+        "manifestCanonicalJson": canonical,
+        "signatureAlgorithm": "SHA256withECDSA",
+        "signatureBase64Url": "A" * 86,
+        "attestationCertificateChainBase64Url": ["QUJD", "REVG", "R0hJ"],
+        "playIntegrityToken": "p" * 80,
+        "playIntegrityRequestHash": request_hash,
+        "androidKeySecurityLevel": "software",
+        "verificationState": "pending_server_verification",
+        "absoluteColourMeasurementApproved": False,
+    }
+    return envelope, nonce
+
+
+def test_capture_challenge_is_issued_through_identity(dsi_client, monkeypatch):
+    import asyncio
+
+    calls = []
+
+    async def issue(payload):
+        calls.append(payload)
+        return {
+            "status": "issued",
+            "challenge_id": "dsi_challenge_0123456789abcdef",
+            "nonce_b64url": "A" * 43,
+        }
+
+    monkeypatch.setattr(dsi_vision, "issue_identity_capture_challenge", issue)
+    response = dsi_client.post(
+        "/v1/dsi/capture-challenges",
+        headers=dsi_auth(),
+        json={
+            "subject_id": "subject-1",
+            "consent_id": "consent-12345678",
+            "consent_version": "v1",
+            "resource_id": "resource-1",
+            "purpose": "cosmetic_skin_analysis",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "issued"
+    assert calls[0].subject_id == "subject-1"
+    assert calls[0].purpose == "cosmetic_skin_analysis"
+
+
+def test_capture_verification_parses_pending_client_envelope_and_returns_server_result(dsi_client, monkeypatch):
+    import asyncio
+
+    image_bytes = dsi_image_bytes()
+    envelope, nonce = _signed_capture_envelope_for_route(image_bytes)
+    calls = []
+
+    async def verify(candidate, *, challenge_nonce_base64url, image_bytes):
+        calls.append((candidate, challenge_nonce_base64url, image_bytes))
+        return {
+            "status": "verified",
+            "receipt": {"receipt_id": "dsi_receipt_1234567890"},
+            "absolute_colour_measurement_approved": False,
+        }
+
+    monkeypatch.setattr(dsi_vision, "verify_and_persist_capture", verify)
+    response = dsi_client.post(
+        "/v1/dsi/capture-verifications",
+        headers=dsi_auth(),
+        data={"envelope_json": __import__("json").dumps(envelope), "challenge_nonce_base64url": nonce},
+        files={"image": ("capture.png", image_bytes, "image/png")},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["receipt"]["receipt_id"] == "dsi_receipt_1234567890"
+    assert calls[0][0].android_key_security_level_hint == "software"
+    assert calls[0][1] == nonce
+    assert calls[0][2] == image_bytes
+
+
+def test_capture_verification_rejects_client_claimed_verified_state_before_provider_call(dsi_client, monkeypatch):
+    import json
+
+    image_bytes = dsi_image_bytes()
+    envelope, nonce = _signed_capture_envelope_for_route(image_bytes)
+    envelope["verificationState"] = "verified"
+    monkeypatch.setattr(
+        dsi_vision,
+        "verify_and_persist_capture",
+        lambda *_args, **_kwargs: pytest.fail("untrusted client state must be rejected before verification"),
+    )
+    response = dsi_client.post(
+        "/v1/dsi/capture-verifications",
+        headers=dsi_auth(),
+        data={"envelope_json": json.dumps(envelope), "challenge_nonce_base64url": nonce},
+        files={"image": ("capture.png", image_bytes, "image/png")},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "DSI_CAPTURE_ENVELOPE_INVALID"
+
+
+def test_trusted_capture_gate_rejects_modified_image_before_identity_check(dsi_client, monkeypatch):
+    image_bytes = dsi_image_bytes()
+
+    class Decoded:
+        def close(self):
+            pass
+
+    async def fake_read(image):
+        data = await image.read()
+        await image.close()
+        return data, Decoded()
+
+    monkeypatch.setattr(dsi_vision, "_read_image", fake_read)
+    monkeypatch.setattr(
+        dsi_vision,
+        "verify_identity_capture_receipt",
+        lambda **_kwargs: pytest.fail("Identity must not be called with a mismatched image"),
+    )
+    response = dsi_client.post(
+        "/v1/dsi/capture/skin-segmentation",
+        headers=dsi_auth(),
+        data={
+            "receipt_id": "dsi_receipt_1234567890",
+            "subject_id": "subject-1",
+            "resource_id": "resource-1",
+            "purpose": "cosmetic_skin_analysis",
+            "manifest_sha256": "b" * 64,
+            "image_sha256": "c" * 64,
+            "device_pipeline_fingerprint_sha256": "a" * 64,
+        },
+        files={"image": ("capture.png", image_bytes, "image/png")},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "DSI_CAPTURE_IMAGE_DIGEST_MISMATCH"
+
+
+def test_trusted_capture_gate_revalidates_live_identity_receipt_before_inference(dsi_client, monkeypatch):
+    image_bytes = dsi_image_bytes()
+
+    class Decoded:
+        def close(self):
+            pass
+
+    async def fake_read(image):
+        data = await image.read()
+        await image.close()
+        return data, Decoded()
+
+    identity_calls = []
+    async def verify_identity(**kwargs):
+        identity_calls.append(kwargs)
+        return {"verified": True, "receipt": {"receipt_id": "dsi_receipt_1234567890"}}
+
+    async def fake_segmentation(upload):
+        payload = await upload.read()
+        await upload.close()
+        assert payload == image_bytes
+        return dsi_vision._no_store({"status": "segmentation_detected_unvalidated_skin_masks"})
+
+    monkeypatch.setattr(dsi_vision, "_read_image", fake_read)
+    monkeypatch.setattr(dsi_vision, "verify_identity_capture_receipt", verify_identity)
+    monkeypatch.setattr(dsi_vision, "skin_segmentation", fake_segmentation)
+    response = dsi_client.post(
+        "/v1/dsi/capture/skin-segmentation",
+        headers=dsi_auth(),
+        data={
+            "receipt_id": "dsi_receipt_1234567890",
+            "subject_id": "subject-1",
+            "resource_id": "resource-1",
+            "purpose": "cosmetic_skin_analysis",
+            "manifest_sha256": "b" * 64,
+            "image_sha256": hashlib.sha256(image_bytes).hexdigest(),
+            "device_pipeline_fingerprint_sha256": "a" * 64,
+        },
+        files={"image": ("capture.png", image_bytes, "image/png")},
+    )
+    assert response.status_code == 200, response.text
+    assert identity_calls[0]["subject_id"] == "subject-1"
+    assert identity_calls[0]["image_sha256"] == hashlib.sha256(image_bytes).hexdigest()
+    assert response.json()["status"] == "segmentation_detected_unvalidated_skin_masks"
