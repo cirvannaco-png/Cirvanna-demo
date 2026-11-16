@@ -455,3 +455,85 @@ def test_look_creation_rejects_url_as_source_asset(client):
     })
     response = client.post("/v1/looks", headers=auth(), json=payload)
     assert response.status_code == 422
+
+
+def test_expired_look_consent_context_is_private_and_returns_minimum_scopes(client):
+    create_source_look(client)
+    context = client.get(
+        f"/internal/v1/looks/{LOOK_ID}/consent-context",
+        headers=auth(),
+        params={"subject_id": SUBJECT},
+    )
+    assert context.status_code == 200
+    assert context.json()["look_id"] == LOOK_ID
+    assert context.json()["subject_id"] == SUBJECT
+    assert context.json()["base_kind"] == "source_photo"
+    assert context.json()["required_scopes"] == [
+        "appearance_session_storage", "appearance_source_storage",
+    ]
+    assert "source_asset_ids" not in context.text
+    assert client.get(
+        f"/internal/v1/looks/{LOOK_ID}/consent-context",
+        params={"subject_id": SUBJECT},
+    ).status_code == 401
+
+
+def test_renew_consent_rebinds_active_bundle_and_preserves_history(client):
+    create_source_look(client)
+    renewed = client.post(
+        f"/internal/v1/looks/{LOOK_ID}/renew-consent",
+        headers=auth(),
+        json={
+            "subject_id": SUBJECT,
+            "consent_id": "consent-appearance-renewed-001",
+            "consent_version": "appearance-look-session-v1",
+        },
+    )
+    assert renewed.status_code == 200, renewed.text
+    assert renewed.json()["status"] == "renewed"
+    assert renewed.json()["granted_scopes"] == [
+        "appearance_session_storage", "appearance_source_storage",
+    ]
+
+    current = client.get(
+        f"/v1/looks/{LOOK_ID}",
+        headers=auth(),
+        params={"subject_id": SUBJECT},
+    )
+    assert current.status_code == 200
+    assert current.json()["look"]["consent_id"] == "consent-appearance-renewed-001"
+    assert current.json()["look"]["consent_version"] == "appearance-consent-v1"
+
+    with store.open_session(__import__("os").environ["APPEARANCE_DATABASE_URL"]) as db:
+        events = db.query(store.AppearanceLookConsentEventRow).filter_by(
+            subject_id=SUBJECT, look_id=LOOK_ID,
+        ).all()
+        assert len(events) == 1
+        assert events[0].previous_consent_id == CONSENT_ID
+        assert events[0].consent_id == "consent-appearance-renewed-001"
+        assert events[0].granted_scopes == [
+            "appearance_session_storage", "appearance_source_storage",
+        ]
+
+
+def test_denied_renewal_does_not_replace_previous_consent(client):
+    create_source_look(client)
+    client.app.state.provider.consent_allowed = False
+    denied = client.post(
+        f"/internal/v1/looks/{LOOK_ID}/renew-consent",
+        headers=auth(),
+        json={
+            "subject_id": SUBJECT,
+            "consent_id": "consent-appearance-renew-denied",
+            "consent_version": "appearance-look-session-v1",
+        },
+    )
+    assert denied.status_code == 403
+    client.app.state.provider.consent_allowed = True
+    current = client.get(
+        f"/v1/looks/{LOOK_ID}",
+        headers=auth(),
+        params={"subject_id": SUBJECT},
+    )
+    assert current.status_code == 200
+    assert current.json()["look"]["consent_id"] == CONSENT_ID
