@@ -671,6 +671,48 @@ async def create_look(payload: CreateLookIn):
         return JSONResponse(status_code=201, content={"status": "created", "look": _look_payload(row, version_row=version_row)})
 
 
+@app.get("/v1/looks", dependencies=[Depends(require_internal_token)])
+async def list_looks(
+    subject_id: str = Query(min_length=3, max_length=128),
+    limit: int = Query(default=24, ge=1, le=50),
+):
+    """List minimal owner-scoped look metadata; expired sessions remain re-consentable."""
+    _identifier(subject_id, "subject_id")
+    with _database() as db:
+        rows = list(db.scalars(
+            select(AppearanceLookRow)
+            .where(
+                AppearanceLookRow.subject_id == subject_id,
+                AppearanceLookRow.status == "active",
+            )
+            .order_by(AppearanceLookRow.updated_at.desc())
+            .limit(limit)
+        ).all())
+        summaries = []
+        for row in rows:
+            try:
+                await _verify_consent(
+                    subject_id=subject_id,
+                    consent_id=row.consent_id,
+                    resource_id=row.look_id,
+                    required_scopes=["appearance_session_storage"],
+                )
+                consent_required = False
+            except HTTPException as exc:
+                if exc.status_code != 403:
+                    raise
+                consent_required = True
+            summaries.append({
+                "look_id": row.look_id,
+                "base_kind": row.base.get("kind"),
+                "version": row.current_version,
+                "is_favorite": row.is_favorite,
+                "updated_at": row.updated_at.isoformat(),
+                "consent_required": consent_required,
+            })
+        return {"looks": summaries, "count": len(summaries)}
+
+
 @app.get("/v1/looks/{look_id}", dependencies=[Depends(require_internal_token)])
 async def get_look_endpoint(look_id: str, subject_id: str = Query(min_length=3, max_length=128)):
     _identifier(look_id, "look_id")
