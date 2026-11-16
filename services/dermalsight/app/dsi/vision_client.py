@@ -67,12 +67,32 @@ async def _post_image(
     return payload
 
 
-async def fetch_face_landmarks(*, content: bytes, content_type: str, filename: str) -> dict:
+async def fetch_face_landmarks(
+    *,
+    content: bytes,
+    content_type: str,
+    filename: str,
+    subject_id: str,
+    resource_id: str,
+    receipt_id: str,
+    manifest_sha256: str,
+    image_sha256: str,
+    device_pipeline_fingerprint_sha256: str,
+) -> dict:
     payload = await _post_image(
         "/v1/dsi/face-landmarks",
         content=content,
         content_type=content_type,
         filename=filename,
+        form_data={
+            "subject_id": subject_id,
+            "resource_id": resource_id,
+            "purpose": "facial_geometry_analysis",
+            "receipt_id": receipt_id,
+            "manifest_sha256": manifest_sha256,
+            "image_sha256": image_sha256,
+            "device_pipeline_fingerprint_sha256": device_pipeline_fingerprint_sha256,
+        },
     )
     model = payload.get("model")
     landmarks = payload.get("landmarks")
@@ -94,12 +114,35 @@ async def fetch_face_landmarks(*, content: bytes, content_type: str, filename: s
     return payload
 
 
-async def fetch_skin_segmentation(*, content: bytes, content_type: str, filename: str) -> dict:
+async def fetch_skin_segmentation(
+    *,
+    content: bytes,
+    content_type: str,
+    filename: str,
+    subject_id: str,
+    resource_id: str,
+    purpose: str,
+    receipt_id: str,
+    manifest_sha256: str,
+    image_sha256: str,
+    device_pipeline_fingerprint_sha256: str,
+) -> dict:
+    if purpose not in {"cosmetic_skin_analysis", "body_tone_analysis"}:
+        raise DSIProviderUnavailable("dsi_vision_segmentation_purpose_invalid")
     payload = await _post_image(
         "/v1/dsi/skin-segmentation",
         content=content,
         content_type=content_type,
         filename=filename,
+        form_data={
+            "subject_id": subject_id,
+            "resource_id": resource_id,
+            "purpose": purpose,
+            "receipt_id": receipt_id,
+            "manifest_sha256": manifest_sha256,
+            "image_sha256": image_sha256,
+            "device_pipeline_fingerprint_sha256": device_pipeline_fingerprint_sha256,
+        },
     )
     model = payload.get("model")
     coverage = payload.get("region_coverage")
@@ -132,12 +175,28 @@ async def fetch_colorchecker_tone_preview(
     chart_age_months: int | None,
     chart_condition: str,
     requested_region: str,
+    subject_id: str,
+    resource_id: str,
+    purpose: str,
+    receipt_id: str,
+    manifest_sha256: str,
+    image_sha256: str,
+    device_pipeline_fingerprint_sha256: str,
 ) -> dict:
     if requested_region not in {"face_skin", "body_skin"}:
         raise DSIProviderUnavailable("dsi_vision_color_region_invalid")
     if chart_edition_confirmed_after_2014 is not True:
         raise DSIProviderUnavailable("dsi_vision_color_chart_edition_not_confirmed")
+    if purpose not in {"cosmetic_skin_analysis", "body_tone_analysis"}:
+        raise DSIProviderUnavailable("dsi_vision_color_purpose_invalid")
     fields = {
+        "subject_id": subject_id,
+        "resource_id": resource_id,
+        "purpose": purpose,
+        "receipt_id": receipt_id,
+        "manifest_sha256": manifest_sha256,
+        "image_sha256": image_sha256,
+        "device_pipeline_fingerprint_sha256": device_pipeline_fingerprint_sha256,
         "profile_id": profile_id,
         "patch_grid_corners": patch_grid_corners,
         "chart_edition_confirmed_after_2014": "true",
