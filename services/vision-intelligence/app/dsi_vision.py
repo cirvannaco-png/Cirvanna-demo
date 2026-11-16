@@ -6,8 +6,10 @@ from generic CLIP/Commerce readiness. Endpoints are stateless and no-store.
 from __future__ import annotations
 
 import base64
+import hashlib
 import hmac
 import io
+import re
 import json
 import os
 from typing import Annotated, Any, Literal
@@ -17,6 +19,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from PIL import Image
+from pydantic import ValidationError
 
 from app.image_io import decode_image, evaluate_image_quality
 from app.color_calibration import (
