@@ -579,8 +579,11 @@ def test_renewal_revokes_old_bundle_only_after_new_bundle_is_verified(client):
         if isinstance(call, tuple) and len(call) == 2
         and call[0].endswith("/internal/v1/consents/verify")
     ]
-    assert len(consent_verify_calls) == 1
-    assert consent_verify_calls[0][1]["consent_id"] == "consent-appearance-renewed-002"
+    assert len(consent_verify_calls) == 2
+    verified_bundles = {
+        call[1]["consent_id"] for call in consent_verify_calls
+    }
+    assert verified_bundles == {CONSENT_ID, "consent-appearance-renewed-002"}
 
 
 def test_consent_version_mismatch_does_not_revoke_previous_bundle(client):
