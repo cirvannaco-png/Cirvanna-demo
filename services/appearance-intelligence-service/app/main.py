@@ -45,6 +45,7 @@ from appearance_intelligence import (  # noqa: E402
     ReferenceKind,
 )
 from app.store import (  # noqa: E402
+    AppearanceLookConsentEventRow,
     AppearanceLookRow,
     AppearanceLookVersionRow,
     Base,
@@ -369,6 +370,18 @@ class BranchLookIn(StrictModel):
     def validate_ids(self):
         _identifier(self.subject_id, "subject_id")
         _identifier(self.new_look_id, "new_look_id")
+        _identifier(self.consent_id, "consent_id")
+        return self
+
+
+class ConsentRenewalIn(StrictModel):
+    subject_id: str = Field(min_length=3, max_length=128)
+    consent_id: str = Field(min_length=8, max_length=128)
+    consent_version: str = Field(min_length=1, max_length=80)
+
+    @model_validator(mode="after")
+    def validate_ids(self):
+        _identifier(self.subject_id, "subject_id")
         _identifier(self.consent_id, "consent_id")
         return self
 
@@ -779,6 +792,96 @@ def _consent_id_for_look(look_id: str, subject_id: str) -> str:
         if row is None:
             raise HTTPException(404, detail={"code": "APPEARANCE_LOOK_NOT_FOUND"})
         return row.consent_id
+
+
+@app.get("/internal/v1/looks/{look_id}/consent-context", dependencies=[Depends(require_internal_token)])
+def get_look_consent_context(
+    look_id: str,
+    subject_id: str = Query(min_length=3, max_length=128),
+):
+    """Return only the metadata needed to request a fresh consent after expiry."""
+    _identifier(look_id, "look_id")
+    with _database() as db:
+        row = get_look(db, subject_id, look_id)
+        if row is None:
+            raise HTTPException(404, detail={"code": "APPEARANCE_LOOK_NOT_FOUND"})
+        base_kind = row.base.get("kind")
+        if base_kind == LookBaseKind.SOURCE_PHOTO.value:
+            scopes = ["appearance_session_storage", "appearance_source_storage"]
+        elif base_kind in {LookBaseKind.VIRTUAL_TWIN.value, LookBaseKind.PREVIOUS_RENDER.value}:
+            scopes = ["appearance_session_storage"]
+        else:
+            raise HTTPException(409, detail={"code": "APPEARANCE_BASE_KIND_INVALID"})
+        return {
+            "look_id": row.look_id,
+            "subject_id": row.subject_id,
+            "base_kind": base_kind,
+            "required_scopes": scopes,
+            "consent_version": row.consent_version,
+        }
+
+
+@app.post("/internal/v1/looks/{look_id}/renew-consent", dependencies=[Depends(require_internal_token)])
+async def renew_look_consent(look_id: str, payload: ConsentRenewalIn):
+    """Atomically bind a new, verified consent bundle while preserving its history."""
+    _identifier(look_id, "look_id")
+    with _database() as db:
+        row = get_look(db, payload.subject_id, look_id, lock=True)
+        if row is None:
+            raise HTTPException(404, detail={"code": "APPEARANCE_LOOK_NOT_FOUND"})
+        base_kind = row.base.get("kind")
+        if base_kind == LookBaseKind.SOURCE_PHOTO.value:
+            required_scopes = ["appearance_session_storage", "appearance_source_storage"]
+        elif base_kind in {LookBaseKind.VIRTUAL_TWIN.value, LookBaseKind.PREVIOUS_RENDER.value}:
+            required_scopes = ["appearance_session_storage"]
+        else:
+            raise HTTPException(409, detail={"code": "APPEARANCE_BASE_KIND_INVALID"})
+        previous_consent_id = row.consent_id
+
+    consent = await _verify_consent(
+        subject_id=payload.subject_id,
+        consent_id=payload.consent_id,
+        resource_id=look_id,
+        required_scopes=required_scopes,
+    )
+    with _database() as db:
+        row = get_look(db, payload.subject_id, look_id, lock=True)
+        if row is None:
+            raise HTTPException(404, detail={"code": "APPEARANCE_LOOK_NOT_FOUND"})
+        if row.consent_id == payload.consent_id:
+            return {
+                "status": "already_current",
+                "look_id": look_id,
+                "consent_version": row.consent_version,
+                "granted_scopes": required_scopes,
+            }
+        if row.consent_id != previous_consent_id:
+            raise HTTPException(409, detail={"code": "APPEARANCE_CONSENT_RENEWAL_CONFLICT"})
+        event = AppearanceLookConsentEventRow(
+            event_id=__import__("uuid").uuid4().__str__(),
+            look_id=look_id,
+            subject_id=payload.subject_id,
+            previous_consent_id=previous_consent_id,
+            consent_id=payload.consent_id,
+            consent_version=consent["consent_version"],
+            granted_scopes=required_scopes,
+            created_at=utcnow(),
+        )
+        row.consent_id = payload.consent_id
+        row.consent_version = consent["consent_version"]
+        row.updated_at = utcnow()
+        db.add(event)
+        try:
+            db.commit()
+        except IntegrityError as exc:
+            db.rollback()
+            raise HTTPException(409, detail={"code": "APPEARANCE_CONSENT_RENEWAL_CONFLICT"}) from exc
+        return {
+            "status": "renewed",
+            "look_id": look_id,
+            "consent_version": row.consent_version,
+            "granted_scopes": required_scopes,
+        }
 
 
 @app.post("/v1/looks/{look_id}/operations", dependencies=[Depends(require_internal_token)])
