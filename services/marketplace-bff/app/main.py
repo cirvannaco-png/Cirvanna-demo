@@ -177,6 +177,69 @@ class ComplementerFeedbackIn(BaseModel):
         return normalized
 
 
+class AppearanceConsentIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    look_id: str = Field(min_length=8, max_length=128)
+    base_kind: Literal["source_photo", "virtual_twin", "previous_render"]
+    accept_session_storage: bool
+    accept_source_storage: bool = False
+    accept_image_processing: bool = False
+
+    @field_validator("look_id")
+    @classmethod
+    def valid_appearance_look_id(cls, value: str) -> str:
+        value = value.strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{7,127}", value):
+            raise ValueError("look_id must use the controlled opaque identifier format")
+        return value
+
+    @model_validator(mode="after")
+    def explicit_appearance_consent(self):
+        if self.accept_session_storage is not True:
+            raise ValueError("appearance session storage must be explicitly accepted")
+        if self.base_kind == "source_photo" and (
+            self.accept_source_storage is not True or self.accept_image_processing is not True
+        ):
+            raise ValueError("source photo storage and image processing must be explicitly accepted")
+        return self
+
+
+class AppearanceConsentRevokeIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    look_id: str = Field(min_length=8, max_length=128)
+    consent_id: str = Field(min_length=8, max_length=128)
+
+    @field_validator("look_id", "consent_id")
+    @classmethod
+    def valid_revoke_identifiers(cls, value: str) -> str:
+        value = value.strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{7,127}", value):
+            raise ValueError("consent identifiers must use the controlled opaque ID format")
+        return value
+
+
+class AppearanceConsentRenewalIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    look_id: str = Field(min_length=8, max_length=128)
+    accept_session_storage: bool
+    accept_source_storage: bool = False
+    accept_image_processing: bool = False
+
+    @field_validator("look_id")
+    @classmethod
+    def valid_renewal_look_id(cls, value: str) -> str:
+        value = value.strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{7,127}", value):
+            raise ValueError("look_id must use the controlled opaque identifier format")
+        return value
+
+    @model_validator(mode="after")
+    def require_explicit_session_acceptance(self):
+        if self.accept_session_storage is not True:
+            raise ValueError("appearance session storage must be explicitly accepted")
+        return self
+
+
 class OfferComparisonIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     variant_ids: list[str] = Field(min_length=2, max_length=2)
@@ -627,6 +690,10 @@ def _identity_learning_service() -> tuple[str, str]:
     return _internal_service("IDENTITY_SERVICE_URL", "IDENTITY_SERVICE_TOKEN")
 
 
+def _appearance_service() -> tuple[str, str]:
+    return _internal_service("APPEARANCE_SERVICE_URL", "APPEARANCE_SERVICE_TOKEN")
+
+
 def _decision_gateway() -> tuple[str, str]:
     return _internal_service("DECISION_GATEWAY_URL", "DECISION_GATEWAY_TOKEN")
 
@@ -1067,6 +1134,621 @@ async def edit_wardrobe_item(request: Request, item_id: str, payload: EditWardro
     if not isinstance(item, dict) or item.get("owner_user_id") != subject or item.get("item_id") != item_id:
         raise HTTPException(502, detail={"code": "WARDROBE_ITEM_EDIT_SCOPE_MISMATCH"})
     return _private_json_response({"item": item, "status": data.get("status", "updated")})
+
+
+async def _appearance_forward(
+    request: Request, method: Literal["GET", "POST", "DELETE"], path: str,
+    *, payload: dict | None = None, query: dict | None = None,
+) -> Response:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        base, token = _appearance_service()
+        params = dict(query or {})
+        params["subject_id"] = subject
+        headers = {"Authorization": "Bearer " + token, "Accept": "application/json"}
+        try:
+            if method == "GET":
+                upstream = await client.get(base + path, params=params, headers=headers)
+            else:
+                body = dict(payload or {})
+                # Never forward a browser-supplied subject; bind the verified Commerce identity.
+                body.pop("subject_id", None)
+                body["subject_id"] = subject
+                if method == "DELETE":
+                    upstream = await client.request("DELETE", base + path, headers=headers, json=body)
+                else:
+                    upstream = await client.post(base + path, params=None, headers=headers, json=body)
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "APPEARANCE_SESSION_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "APPEARANCE_SESSION_UNAVAILABLE"}) from exc
+
+    if upstream.status_code in {400, 403, 404, 409, 413, 415, 422}:
+        try:
+            detail = upstream.json().get("detail", {})
+            if not isinstance(detail, dict):
+                detail = {"code": "APPEARANCE_SESSION_REQUEST_REJECTED"}
+        except ValueError:
+            detail = {"code": "APPEARANCE_SESSION_REQUEST_REJECTED"}
+        raise HTTPException(upstream.status_code, detail=detail)
+    if upstream.status_code not in {200, 201}:
+        raise HTTPException(503, detail={"code": "APPEARANCE_SESSION_UPSTREAM_UNAVAILABLE"})
+    try:
+        result = upstream.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "APPEARANCE_SESSION_RESPONSE_INVALID"}) from exc
+    look = result.get("look") if isinstance(result, dict) else None
+    if isinstance(look, dict):
+        if look.get("subject_id") != subject:
+            raise HTTPException(502, detail={"code": "APPEARANCE_SESSION_SCOPE_MISMATCH"})
+        # The browser does not need the internal subject key; the BFF owns its binding.
+        look.pop("subject_id", None)
+    looks = result.get("looks") if isinstance(result, dict) else None
+    if isinstance(looks, list):
+        for summary in looks:
+            if not isinstance(summary, dict) or summary.get("subject_id") != subject:
+                raise HTTPException(502, detail={"code": "APPEARANCE_SESSION_SCOPE_MISMATCH"})
+            summary.pop("subject_id", None)
+    elif isinstance(result, dict) and result.get("subject_id") not in {None, subject}:
+        raise HTTPException(502, detail={"code": "APPEARANCE_SESSION_SCOPE_MISMATCH"})
+    return _private_json_response(result, status_code=upstream.status_code)
+
+
+@app.post("/api/appearance/consents")
+async def create_appearance_consent(request: Request, payload: AppearanceConsentIn) -> Response:
+    """Record explicit look-session and, for source photos, image-storage consent."""
+    scopes = ["appearance_session_storage"]
+    if payload.base_kind == "source_photo":
+        scopes.extend(["appearance_source_storage", "image_processing"])
+    consent_id = str(uuid.uuid4())
+    consent_version = "appearance-look-session-v1"
+    expires_at = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat().replace("+00:00", "Z")
+    async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        identity_base, identity_token = _identity_learning_service()
+        receipt_ids: list[str] = []
+        for scope in scopes:
+            receipt_id = str(uuid.uuid4())
+            # Track the attempted receipt before the request: a timeout can leave an
+            # ambiguous write, so best-effort revocation must include this receipt.
+            receipt_ids.append(receipt_id)
+            try:
+                grant = await client.post(
+                    identity_base + "/v1/tal/consents",
+                    params={"subject_id": subject},
+                    headers={"Authorization": "Bearer " + identity_token, "Accept": "application/json"},
+                    json={
+                        "receipt_id": receipt_id,
+                        "consent_id": consent_id,
+                        "resource_id": payload.look_id,
+                        "scope": scope,
+                        "consent_version": consent_version,
+                        "granted": True,
+                        "expires_at": expires_at,
+                    },
+                )
+            except httpx.HTTPError as exc:
+                for attempted in receipt_ids:
+                    try:
+                        await client.post(
+                            identity_base + f"/v1/tal/consents/{attempted}/revoke",
+                            params={"subject_id": subject},
+                            headers={"Authorization": "Bearer " + identity_token, "Accept": "application/json"},
+                        )
+                    except httpx.HTTPError:
+                        pass
+                raise HTTPException(503, detail={"code": "APPEARANCE_CONSENT_WRITE_UNAVAILABLE"}) from exc
+            try:
+                data = grant.json()
+            except ValueError:
+                data = {}
+            if (
+                grant.status_code not in {200, 201}
+                or not isinstance(data, dict)
+                or data.get("receipt_id") != receipt_id
+                or data.get("consent_id") != consent_id
+                or data.get("resource_id") != payload.look_id
+                or data.get("granted") is not True
+            ):
+                for attempted in receipt_ids:
+                    try:
+                        await client.post(
+                            identity_base + f"/v1/tal/consents/{attempted}/revoke",
+                            params={"subject_id": subject},
+                            headers={"Authorization": "Bearer " + identity_token, "Accept": "application/json"},
+                        )
+                    except httpx.HTTPError:
+                        pass
+                raise HTTPException(503, detail={"code": "APPEARANCE_CONSENT_WRITE_FAILED"})
+    return _private_json_response({
+        "status": "recorded",
+        "look_id": payload.look_id,
+        "consent_id": consent_id,
+        "consent_version": consent_version,
+        "granted_scopes": scopes,
+        "receipt_ids": receipt_ids,
+        "expires_at": expires_at,
+    }, status_code=201)
+
+
+@app.post("/api/appearance/consents/revoke")
+async def revoke_appearance_consent(request: Request, payload: AppearanceConsentRevokeIn) -> Response:
+    """Withdraw every active scope in the exact look-bound consent bundle."""
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(10.0, connect=2.0),
+        trust_env=False,
+        follow_redirects=False,
+    ) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        identity_base, identity_token = _identity_learning_service()
+        headers = {"Authorization": "Bearer " + identity_token, "Accept": "application/json"}
+        try:
+            listing = await client.get(
+                identity_base + f"/v1/tal/consents/{subject}",
+                headers=headers,
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "APPEARANCE_CONSENT_LIST_UNAVAILABLE"}) from exc
+        if listing.status_code != 200:
+            raise HTTPException(503, detail={"code": "APPEARANCE_CONSENT_LIST_UNAVAILABLE"})
+        try:
+            receipts = listing.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "APPEARANCE_CONSENT_LIST_INVALID"}) from exc
+        if not isinstance(receipts, list):
+            raise HTTPException(502, detail={"code": "APPEARANCE_CONSENT_LIST_INVALID"})
+        active = [
+            item for item in receipts
+            if isinstance(item, dict)
+            and item.get("consent_id") == payload.consent_id
+            and item.get("resource_id") == payload.look_id
+            and item.get("granted") is True
+            and item.get("revoked_at") is None
+        ]
+        if not active:
+            return _private_json_response({"status": "already_revoked", "look_id": payload.look_id})
+        receipt_id = active[0].get("receipt_id")
+        if not isinstance(receipt_id, str):
+            raise HTTPException(502, detail={"code": "APPEARANCE_CONSENT_RECEIPT_INVALID"})
+        try:
+            revoked = await client.post(
+                identity_base + f"/v1/tal/consents/{receipt_id}/revoke",
+                params={"subject_id": subject},
+                headers=headers,
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "APPEARANCE_CONSENT_REVOCATION_UNAVAILABLE"}) from exc
+        if revoked.status_code != 200:
+            raise HTTPException(503, detail={"code": "APPEARANCE_CONSENT_REVOCATION_FAILED"})
+        try:
+            result = revoked.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "APPEARANCE_CONSENT_REVOCATION_RESPONSE_INVALID"}) from exc
+        if not isinstance(result, dict) or result.get("status") not in {"revoked", "already_denied"}:
+            raise HTTPException(502, detail={"code": "APPEARANCE_CONSENT_REVOCATION_RESPONSE_INVALID"})
+    return _private_json_response({"status": result["status"], "look_id": payload.look_id})
+
+
+@app.delete("/api/appearance/looks/{look_id}/source/{asset_id}")
+async def cleanup_appearance_source(request: Request, look_id: str, asset_id: str) -> Response:
+    """Ask Appearance to compensate-delete an upload only if no look references it."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{7,127}", look_id) or not UUID_RE.fullmatch(asset_id):
+        raise HTTPException(422, detail={"code": "APPEARANCE_SOURCE_CLEANUP_ID_INVALID"})
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(15.0, connect=2.0),
+        trust_env=False,
+        follow_redirects=False,
+    ) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        appearance_base, appearance_token = _appearance_service()
+        try:
+            response = await client.post(
+                appearance_base + "/internal/v1/assets/compensate",
+                headers={"Authorization": "Bearer " + appearance_token, "Accept": "application/json"},
+                json={
+                    "subject_id": subject,
+                    "parent_look_id": look_id,
+                    "asset_id": asset_id,
+                },
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "APPEARANCE_SOURCE_CLEANUP_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "APPEARANCE_SOURCE_CLEANUP_UNAVAILABLE"}) from exc
+    if response.status_code in {403, 404, 409, 422}:
+        try:
+            detail = response.json().get("detail", {})
+        except ValueError:
+            detail = {"code": "APPEARANCE_SOURCE_CLEANUP_REJECTED"}
+        raise HTTPException(response.status_code, detail=detail if isinstance(detail, dict) else {"code": "APPEARANCE_SOURCE_CLEANUP_REJECTED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "APPEARANCE_SOURCE_CLEANUP_FAILED"})
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "APPEARANCE_SOURCE_CLEANUP_RESPONSE_INVALID"}) from exc
+    if (
+        not isinstance(result, dict)
+        or result.get("status") != "deleted"
+        or result.get("asset_id") != asset_id
+    ):
+        raise HTTPException(502, detail={"code": "APPEARANCE_SOURCE_CLEANUP_RESPONSE_INVALID"})
+    return Response(status_code=204)
+
+@app.post("/api/appearance/consents/renew")
+async def renew_appearance_consent(request: Request, payload: AppearanceConsentRenewalIn) -> Response:
+    """Renew an expired look's storage authority only after new explicit consent."""
+    async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        appearance_base, appearance_token = _appearance_service()
+        headers = {"Authorization": "Bearer " + appearance_token, "Accept": "application/json"}
+        try:
+            context_response = await client.get(
+                appearance_base + f"/internal/v1/looks/{payload.look_id}/consent-context",
+                params={"subject_id": subject},
+                headers=headers,
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "APPEARANCE_CONSENT_CONTEXT_UNAVAILABLE"}) from exc
+        if context_response.status_code == 404:
+            raise HTTPException(404, detail={"code": "APPEARANCE_LOOK_NOT_FOUND"})
+        if context_response.status_code != 200:
+            raise HTTPException(503, detail={"code": "APPEARANCE_CONSENT_CONTEXT_UNAVAILABLE"})
+        try:
+            context = context_response.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "APPEARANCE_CONSENT_CONTEXT_INVALID"}) from exc
+        if not (
+            isinstance(context, dict)
+            and context.get("look_id") == payload.look_id
+            and context.get("subject_id") == subject
+            and context.get("base_kind") in {"source_photo", "virtual_twin", "previous_render"}
+            and isinstance(context.get("required_scopes"), list)
+        ):
+            raise HTTPException(502, detail={"code": "APPEARANCE_CONSENT_CONTEXT_SCOPE_MISMATCH"})
+        scopes = context["required_scopes"]
+        expected_scopes = (
+            ["appearance_session_storage", "appearance_source_storage", "image_processing"]
+            if context["base_kind"] == "source_photo"
+            else ["appearance_session_storage"]
+        )
+        if scopes != expected_scopes:
+            raise HTTPException(502, detail={"code": "APPEARANCE_CONSENT_CONTEXT_INVALID"})
+        if context["base_kind"] == "source_photo":
+            if payload.accept_source_storage is not True:
+                raise HTTPException(422, detail={"code": "APPEARANCE_SOURCE_STORAGE_CONSENT_REQUIRED"})
+            if payload.accept_image_processing is not True:
+                raise HTTPException(422, detail={"code": "APPEARANCE_IMAGE_PROCESSING_CONSENT_REQUIRED"})
+
+        identity_base, identity_token = _identity_learning_service()
+        consent_id = str(uuid.uuid4())
+        consent_version = "appearance-look-session-v1"
+        expires_at = (datetime.now(timezone.utc) + timedelta(hours=24)).isoformat().replace("+00:00", "Z")
+        receipt_ids: list[str] = []
+        for scope in scopes:
+            receipt_id = str(uuid.uuid4())
+            receipt_ids.append(receipt_id)
+            try:
+                grant = await client.post(
+                    identity_base + "/v1/tal/consents",
+                    params={"subject_id": subject},
+                    headers={"Authorization": "Bearer " + identity_token, "Accept": "application/json"},
+                    json={
+                        "receipt_id": receipt_id,
+                        "consent_id": consent_id,
+                        "resource_id": payload.look_id,
+                        "scope": scope,
+                        "consent_version": consent_version,
+                        "granted": True,
+                        "expires_at": expires_at,
+                    },
+                )
+            except httpx.HTTPError as exc:
+                for attempted in receipt_ids:
+                    try:
+                        await client.post(
+                            identity_base + f"/v1/tal/consents/{attempted}/revoke",
+                            params={"subject_id": subject},
+                            headers={"Authorization": "Bearer " + identity_token, "Accept": "application/json"},
+                        )
+                    except httpx.HTTPError:
+                        pass
+                raise HTTPException(503, detail={"code": "APPEARANCE_CONSENT_WRITE_UNAVAILABLE"}) from exc
+            try:
+                grant_data = grant.json()
+            except ValueError:
+                grant_data = {}
+            if (
+                grant.status_code not in {200, 201}
+                or not isinstance(grant_data, dict)
+                or grant_data.get("receipt_id") != receipt_id
+                or grant_data.get("consent_id") != consent_id
+                or grant_data.get("resource_id") != payload.look_id
+                or grant_data.get("granted") is not True
+            ):
+                for attempted in receipt_ids:
+                    try:
+                        await client.post(
+                            identity_base + f"/v1/tal/consents/{attempted}/revoke",
+                            params={"subject_id": subject},
+                            headers={"Authorization": "Bearer " + identity_token, "Accept": "application/json"},
+                        )
+                    except httpx.HTTPError:
+                        pass
+                raise HTTPException(503, detail={"code": "APPEARANCE_CONSENT_WRITE_FAILED"})
+
+        try:
+            renewed = await client.post(
+                appearance_base + f"/internal/v1/looks/{payload.look_id}/renew-consent",
+                headers=headers,
+                json={
+                    "subject_id": subject,
+                    "consent_id": consent_id,
+                    "consent_version": consent_version,
+                },
+            )
+        except httpx.HTTPError as exc:
+            for attempted in receipt_ids:
+                try:
+                    await client.post(
+                        identity_base + f"/v1/tal/consents/{attempted}/revoke",
+                        params={"subject_id": subject},
+                        headers={"Authorization": "Bearer " + identity_token, "Accept": "application/json"},
+                    )
+                except httpx.HTTPError:
+                    pass
+            raise HTTPException(503, detail={"code": "APPEARANCE_CONSENT_RENEWAL_UNAVAILABLE"}) from exc
+        if renewed.status_code != 200:
+            for attempted in receipt_ids:
+                try:
+                    await client.post(
+                        identity_base + f"/v1/tal/consents/{attempted}/revoke",
+                        params={"subject_id": subject},
+                        headers={"Authorization": "Bearer " + identity_token, "Accept": "application/json"},
+                    )
+                except httpx.HTTPError:
+                    pass
+            if renewed.status_code in {403, 404, 409, 422}:
+                try:
+                    detail = renewed.json().get("detail", {})
+                except ValueError:
+                    detail = {"code": "APPEARANCE_CONSENT_RENEWAL_REJECTED"}
+                raise HTTPException(renewed.status_code, detail=detail if isinstance(detail, dict) else {"code": "APPEARANCE_CONSENT_RENEWAL_REJECTED"})
+            raise HTTPException(503, detail={"code": "APPEARANCE_CONSENT_RENEWAL_UNAVAILABLE"})
+        try:
+            renewal_data = renewed.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "APPEARANCE_CONSENT_RENEWAL_RESPONSE_INVALID"}) from exc
+        if not (
+            isinstance(renewal_data, dict)
+            and renewal_data.get("status") in {"renewed", "already_current"}
+            and renewal_data.get("look_id") == payload.look_id
+        ):
+            raise HTTPException(502, detail={"code": "APPEARANCE_CONSENT_RENEWAL_RESPONSE_INVALID"})
+    return _private_json_response({
+        "status": renewal_data["status"],
+        "look_id": payload.look_id,
+        "consent_id": consent_id,
+        "consent_version": consent_version,
+        "granted_scopes": scopes,
+        "receipt_ids": receipt_ids,
+        "expires_at": expires_at,
+    }, status_code=200)
+
+
+@app.post("/api/appearance/looks/{look_id}/source")
+async def upload_appearance_source(request: Request, look_id: str) -> Response:
+    """Upload a source photo only after account and look-bound consent checks."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{7,127}", look_id):
+        raise HTTPException(422, detail={"code": "APPEARANCE_LOOK_ID_INVALID"})
+    consent_id = request.headers.get("x-appearance-consent-id", "").strip()
+    if len(consent_id) < 8:
+        raise HTTPException(422, detail={"code": "APPEARANCE_CONSENT_HEADER_REQUIRED"})
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            declared_length = int(content_length)
+        except ValueError as exc:
+            raise HTTPException(400, detail={"code": "APPEARANCE_UPLOAD_LENGTH_INVALID"}) from exc
+        if declared_length <= 0 or declared_length > MAX_VISION_IMAGE_BYTES + 512_000:
+            raise HTTPException(413, detail={"code": "APPEARANCE_SOURCE_IMAGE_SIZE_INVALID"})
+
+    async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        identity_base, identity_token = _identity_learning_service()
+        try:
+            verified = await client.post(
+                identity_base + "/internal/v1/consents/verify",
+                headers={"Authorization": "Bearer " + identity_token, "Accept": "application/json"},
+                json={
+                    "subject_id": subject,
+                    "consent_id": consent_id,
+                    "resource_id": look_id,
+                    "required_scopes": [
+                        "appearance_session_storage", "appearance_source_storage", "image_processing",
+                    ],
+                    "require_expiring": True,
+                },
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "APPEARANCE_SOURCE_CONSENT_UNAVAILABLE"}) from exc
+        if verified.status_code in {401, 403, 404}:
+            raise HTTPException(403, detail={"code": "APPEARANCE_SOURCE_CONSENT_NOT_VERIFIED"})
+        if verified.status_code != 200:
+            raise HTTPException(503, detail={"code": "APPEARANCE_SOURCE_CONSENT_UNAVAILABLE"})
+        try:
+            receipt = verified.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "APPEARANCE_SOURCE_CONSENT_RESPONSE_INVALID"}) from exc
+        required = {"appearance_session_storage", "appearance_source_storage", "image_processing"}
+        expires_at = receipt.get("expires_at") if isinstance(receipt, dict) else None
+        try:
+            parsed_expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00")) if isinstance(expires_at, str) else None
+        except ValueError:
+            parsed_expiry = None
+        if not (
+            isinstance(receipt, dict)
+            and receipt.get("verified") is True
+            and receipt.get("active") is True
+            and receipt.get("subject_id") == subject
+            and receipt.get("consent_id") == consent_id
+            and receipt.get("resource_id") == look_id
+            and required.issubset(set(receipt.get("granted_scopes", [])))
+            and parsed_expiry is not None
+            and parsed_expiry.tzinfo is not None
+            and parsed_expiry > datetime.now(timezone.utc)
+        ):
+            raise HTTPException(403, detail={"code": "APPEARANCE_SOURCE_CONSENT_BINDING_INVALID"})
+
+        # Only parse the multipart body after the exact account/resource grant passes.
+        try:
+            form = await request.form(max_files=1, max_fields=0)
+        except Exception as exc:
+            raise HTTPException(400, detail={"code": "APPEARANCE_UPLOAD_FORM_INVALID"}) from exc
+        try:
+            uploaded = form.get("file")
+            if not isinstance(uploaded, StarletteUploadFile):
+                raise HTTPException(422, detail={"code": "APPEARANCE_SOURCE_FILE_REQUIRED"})
+            raw = await uploaded.read(MAX_VISION_IMAGE_BYTES + 1)
+            if not raw or len(raw) > MAX_VISION_IMAGE_BYTES:
+                raise HTTPException(413, detail={"code": "APPEARANCE_SOURCE_IMAGE_SIZE_INVALID"})
+            asset_base, asset_token = _internal_service("ASSET_SERVICE_URL", "ASSET_SERVICE_TOKEN")
+            try:
+                response = await client.post(
+                    asset_base + "/internal/v1/assets",
+                    headers={"Authorization": "Bearer " + asset_token, "Accept": "application/json"},
+                    data={
+                        "owner_user_id": subject,
+                        "purpose": "appearance_source_image",
+                        "parent_id": look_id,
+                    },
+                    files={"file": (
+                        uploaded.filename or "appearance-source",
+                        raw,
+                        uploaded.content_type or "application/octet-stream",
+                    )},
+                )
+            except httpx.HTTPError as exc:
+                raise HTTPException(503, detail={"code": "APPEARANCE_SOURCE_ASSET_UPLOAD_UNAVAILABLE"}) from exc
+        finally:
+            await form.close()
+
+    if response.status_code in {400, 403, 404, 413, 415, 422}:
+        try:
+            detail = response.json().get("detail", {})
+        except ValueError:
+            detail = {"code": "APPEARANCE_SOURCE_ASSET_UPLOAD_REJECTED"}
+        raise HTTPException(response.status_code, detail=detail if isinstance(detail, dict) else {"code": "APPEARANCE_SOURCE_ASSET_UPLOAD_REJECTED"})
+    if response.status_code != 201:
+        raise HTTPException(503, detail={"code": "APPEARANCE_SOURCE_ASSET_UPLOAD_UNAVAILABLE"})
+    try:
+        asset = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "APPEARANCE_SOURCE_ASSET_RESPONSE_INVALID"}) from exc
+    if not (
+        isinstance(asset, dict)
+        and asset.get("owner_user_id") == subject
+        and asset.get("purpose") == "appearance_source_image"
+        and asset.get("parent_id") == look_id
+        and asset.get("status") == "active"
+        and isinstance(asset.get("asset_id"), str)
+        and UUID_RE.fullmatch(asset["asset_id"])
+    ):
+        raise HTTPException(502, detail={"code": "APPEARANCE_SOURCE_ASSET_BINDING_INVALID"})
+    return _private_json_response({
+        "status": "uploaded",
+        "look_id": look_id,
+        "asset_id": asset["asset_id"],
+        "content_type": asset.get("content_type"),
+        "byte_size": asset.get("byte_size"),
+        "sha256": asset.get("sha256"),
+    }, status_code=201)
+
+
+@app.post("/api/appearance/looks", status_code=201)
+async def create_appearance_look(request: Request, payload: dict = Body(...)) -> Response:
+    return await _appearance_forward(request, "POST", "/v1/looks", payload=payload)
+
+
+@app.delete("/api/appearance/looks/{look_id}")
+async def delete_appearance_look(
+    request: Request, look_id: str, payload: dict = Body(...),
+) -> Response:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{7,127}", look_id):
+        raise HTTPException(422, detail={"code": "APPEARANCE_LOOK_ID_INVALID"})
+    return await _appearance_forward(
+        request, "DELETE", f"/v1/looks/{look_id}", payload=payload,
+    )
+
+
+@app.get("/api/appearance/looks")
+async def list_appearance_looks(
+    request: Request,
+    limit: int = Query(default=24, ge=1, le=50),
+) -> Response:
+    return await _appearance_forward(request, "GET", "/v1/looks", query={"limit": limit})
+
+
+@app.get("/api/appearance/looks/{look_id}")
+async def get_appearance_look(request: Request, look_id: str) -> Response:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{7,127}", look_id):
+        raise HTTPException(422, detail={"code": "APPEARANCE_LOOK_ID_INVALID"})
+    return await _appearance_forward(request, "GET", f"/v1/looks/{look_id}")
+
+
+@app.get("/api/appearance/looks/{look_id}/versions")
+async def list_appearance_versions(request: Request, look_id: str) -> Response:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{7,127}", look_id):
+        raise HTTPException(422, detail={"code": "APPEARANCE_LOOK_ID_INVALID"})
+    return await _appearance_forward(request, "GET", f"/v1/looks/{look_id}/versions")
+
+
+@app.get("/api/appearance/looks/{look_id}/compare")
+async def compare_appearance_versions(
+    request: Request, look_id: str,
+    from_version: int = Query(ge=1), to_version: int = Query(ge=1),
+) -> Response:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{7,127}", look_id):
+        raise HTTPException(422, detail={"code": "APPEARANCE_LOOK_ID_INVALID"})
+    return await _appearance_forward(
+        request, "GET", f"/v1/looks/{look_id}/compare",
+        query={"from_version": from_version, "to_version": to_version},
+    )
+
+
+@app.post("/api/appearance/looks/{look_id}/operations")
+async def edit_appearance_operation(request: Request, look_id: str, payload: dict = Body(...)) -> Response:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{7,127}", look_id):
+        raise HTTPException(422, detail={"code": "APPEARANCE_LOOK_ID_INVALID"})
+    return await _appearance_forward(request, "POST", f"/v1/looks/{look_id}/operations", payload=payload)
+
+
+@app.post("/api/appearance/looks/{look_id}/reset")
+async def reset_appearance_look(request: Request, look_id: str, payload: dict = Body(...)) -> Response:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{7,127}", look_id):
+        raise HTTPException(422, detail={"code": "APPEARANCE_LOOK_ID_INVALID"})
+    return await _appearance_forward(request, "POST", f"/v1/looks/{look_id}/reset", payload=payload)
+
+
+@app.post("/api/appearance/looks/{look_id}/undo")
+async def undo_appearance_look(request: Request, look_id: str, payload: dict = Body(...)) -> Response:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{7,127}", look_id):
+        raise HTTPException(422, detail={"code": "APPEARANCE_LOOK_ID_INVALID"})
+    return await _appearance_forward(request, "POST", f"/v1/looks/{look_id}/undo", payload=payload)
+
+
+@app.post("/api/appearance/looks/{look_id}/favorite")
+async def favorite_appearance_look(request: Request, look_id: str, payload: dict = Body(...)) -> Response:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{7,127}", look_id):
+        raise HTTPException(422, detail={"code": "APPEARANCE_LOOK_ID_INVALID"})
+    return await _appearance_forward(request, "POST", f"/v1/looks/{look_id}/favorite", payload=payload)
+
+
+@app.post("/api/appearance/looks/{look_id}/branch", status_code=201)
+async def branch_appearance_look(request: Request, look_id: str, payload: dict = Body(...)) -> Response:
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{7,127}", look_id):
+        raise HTTPException(422, detail={"code": "APPEARANCE_LOOK_ID_INVALID"})
+    return await _appearance_forward(request, "POST", f"/v1/looks/{look_id}/branch", payload=payload)
 
 
 @app.get("/api/wardrobe/categories")

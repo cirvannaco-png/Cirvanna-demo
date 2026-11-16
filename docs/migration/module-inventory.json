@@ -130,6 +130,13 @@
       "promotionGate": "Integrate trusted look-session persistence and BFF flows; connect each surface through its canonical owner; implement separately licensed component renderers; validate identity/geometry/skin-tone preservation, category-specific realism, consent and private asset lifecycle. Do not claim unsupported components render."
     },
     {
+      "id": "appearance-intelligence-service",
+      "target": "services/appearance-intelligence-service",
+      "status": "persistent-look-session-api-implemented-ui-and-renderers-not-integrated",
+      "purpose": "Private owner-bound appearance look sessions, explicit consent verification, private asset/Twin authorization, immutable versions, component edits, reset/undo/compare/favorites, and fidelity-bound render metadata.",
+      "promotionGate": "Pass service, BFF, Identity Learning and Asset Service CI; verify PostgreSQL migrations and restore; configure trusted providers; implement consent revocation/session deletion and asset cleanup; add UI integration and category-specific licensed renderers with independent fidelity evaluation. Production remains disabled."
+    },
+    {
       "id": "cultural-declaration-service",
       "target": "services/cultural-identity-service",
       "status": "api-schema-and-signed-evidence-implemented",

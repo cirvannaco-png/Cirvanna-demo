@@ -26,6 +26,7 @@ ASSET_ID_PATTERN = r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}
 AssetPurpose = Literal[
     "twin_source_image", "twin_person_image", "twin_representation",
     "catalog_garment_image", "wardrobe_garment_image", "try_on_output",
+    "appearance_source_image", "appearance_render_output",
 ]
 bearer = HTTPBearer(auto_error=False)
 app = FastAPI(title="Cirvanna Private Asset Service", version="1.0.0")

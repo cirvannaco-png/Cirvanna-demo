@@ -36,7 +36,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
 </style>
 </head>
 <body>
-<header><div class="shell nav"><div><div class="brand">CIRVANNA<span>.</span></div><div class="eyebrow">Your personal wardrobe</div></div><div class="row"><span class="tag">PNELLY · Wardrobe companion</span><a class="btn subtle" href="/">Marketplace</a></div></div></header>
+<header><div class="shell nav"><div><div class="brand">CIRVANNA<span>.</span></div><div class="eyebrow">Your personal wardrobe</div></div><div class="row"><span class="tag">PNELLY · Wardrobe companion</span><a class="btn subtle" href="/">Marketplace</a><a class="btn subtle" href="#appearanceWorkspaceRoot">Appearance</a></div></div></header>
 <main class="shell">
 <section class="hero">
 <div class="eyebrow">Closet intelligence · your choices remain yours</div>
@@ -174,6 +174,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
 <div class="status" id="recommendStatus" role="status">Recommendations use the EEPL context gate, NPL exclusions and CaTaCaCi/CAL display authorization.</div>
 <div id="recommendations"></div>
 </section>
+<section id="appearanceWorkspaceRoot" aria-label="Shared appearance workspace"></section>
 </main>
 <footer><div class="shell">Working prototype. The PNELLY product name remains subject to the existing clearance gate. Outfit relevance is not fit confidence. A visual preview is not a fit guarantee. Learning can be revoked; retention and deletion remain governed by the Identity Learning service.</div></footer>
 
@@ -591,6 +592,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     $("recommendPanel").classList.remove("hidden");
     $("connectPanel").classList.add("hidden");
     status("connectionStatus", "Authenticated.", "good");
+    window.dispatchEvent(new CustomEvent("cirvanna:session-ready", {detail:{accessToken:token, source:"wardrobe"}}));
   };
   const createConsent = async scope => {
     const data = await api("/api/wardrobe/consents", {method:"POST", body:JSON.stringify({scope,granted:true})});
@@ -992,6 +994,21 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
           }
         });
         actions.append(saveButton);
+        const appearanceButton = document.createElement("button");
+        appearanceButton.type = "button";
+        appearanceButton.className = "btn primary";
+        appearanceButton.textContent = "Edit this look in Appearance";
+        appearanceButton.addEventListener("click", () => window.dispatchEvent(new CustomEvent("cirvanna:appearance-add-wardrobe-look", {
+          detail: {
+            role: look.role,
+            items: (look.items || []).map(item => ({
+              item_id: item.item_id,
+              display_name: item.display_name,
+              category: item.category
+            }))
+          }
+        })));
+        actions.append(appearanceButton);
         const refineButton = document.createElement("button");
         refineButton.type = "button";
         refineButton.className = "btn primary";
@@ -1127,4 +1144,5 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
   updateConsentState();
 })();
 </script>
+<script src="/assets/appearance-workspace.js" defer></script>
 </body></html>

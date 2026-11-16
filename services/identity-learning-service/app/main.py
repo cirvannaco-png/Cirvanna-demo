@@ -39,7 +39,7 @@ SCOPES = {
     "virtual_try_on", "click_it", "look_it", "skin_analysis",
     "wardrobe_photo_storage", "pnelly_conversation",
     "facial_geometry_analysis", "body_tone_analysis",
-    "appearance_correction", "global_model_training",
+    "appearance_correction", "global_model_training", "appearance_session_storage", "appearance_source_storage",
 }
 
 
@@ -298,7 +298,8 @@ class ConsentPut(StrictModel):
         "virtual_try_on", "click_it", "look_it", "skin_analysis",
         "wardrobe_photo_storage", "pnelly_conversation",
         "facial_geometry_analysis", "body_tone_analysis",
-        "appearance_correction", "global_model_training",
+        "appearance_correction", "global_model_training", "appearance_session_storage",
+        "appearance_source_storage",
     ]
     consent_version: str = Field(min_length=1, max_length=80)
     granted: bool

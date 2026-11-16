@@ -241,6 +241,42 @@ def _verify_resource_consent(client, *, subject, bundle, resource, scopes=None, 
     )
 
 
+def test_appearance_session_storage_is_explicit_expiring_and_resource_bound(client):
+    look_id = str(__import__("uuid").uuid4())
+    expiry = (datetime.now(timezone.utc) + timedelta(hours=12)).isoformat()
+    assert _grant_resource_consent(
+        client, subject="user-verified-1", bundle=look_id, resource=look_id,
+        scope="appearance_session_storage", receipt="appearance-session-storage-001", expires_at=expiry,
+    ).status_code == 200
+    assert _grant_resource_consent(
+        client, subject="user-verified-1", bundle=look_id, resource=look_id,
+        scope="appearance_source_storage", receipt="appearance-source-storage-001", expires_at=expiry,
+    ).status_code == 200
+    assert _grant_resource_consent(
+        client, subject="user-verified-1", bundle=look_id, resource=look_id,
+        scope="image_processing", receipt="appearance-session-image-001", expires_at=expiry,
+    ).status_code == 200
+    verified = client.post(
+        "/internal/v1/consents/verify", headers=auth(), json={
+            "subject_id": "user-verified-1", "consent_id": look_id,
+            "resource_id": look_id,
+            "required_scopes": ["appearance_session_storage", "appearance_source_storage", "image_processing"],
+            "require_expiring": True,
+        },
+    )
+    wrong_resource = client.post(
+        "/internal/v1/consents/verify", headers=auth(), json={
+            "subject_id": "user-verified-1", "consent_id": look_id,
+            "resource_id": "another-look-0001",
+            "required_scopes": ["appearance_session_storage"],
+            "require_expiring": True,
+        },
+    )
+    assert verified.status_code == 200, verified.text
+    assert set(verified.json()["granted_scopes"]) >= {"appearance_session_storage", "appearance_source_storage", "image_processing"}
+    assert wrong_resource.status_code == 403
+
+
 def _create_pnelly_conversation(client, *, subject="user-verified-1", conversation_id=None, receipt_id=None, expires_at=None):
     conversation_id = conversation_id or str(__import__("uuid").uuid4())
     receipt_id = receipt_id or "pnelly-context-receipt-0001"

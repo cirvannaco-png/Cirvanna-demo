@@ -99,6 +99,19 @@ class AppearanceIntelligenceContractTests(unittest.TestCase):
         look = self.composition(operations=operations)
         self.assertEqual(len(look.operations), 30)
 
+    def test_empty_operations_represent_reset_to_original_appearance(self):
+        look = self.composition(operations=())
+        self.assertEqual(look.operations, ())
+
+    def test_virtual_twin_source_parent_must_match_twin(self):
+        with self.assertRaisesRegex(ValueError, "same Twin parent"):
+            LookBase(
+                kind=LookBaseKind.VIRTUAL_TWIN,
+                source_asset_ids=("twin-source-001",),
+                twin_id="twin-001",
+                source_asset_parent_id="different-twin",
+            )
+
     def test_original_source_lineage_is_required(self):
         with self.assertRaisesRegex(ValueError, "at least one original source asset"):
             LookBase(kind=LookBaseKind.SOURCE_PHOTO, source_asset_ids=())

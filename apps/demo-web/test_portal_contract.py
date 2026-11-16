@@ -6,6 +6,8 @@ ROOT = Path(__file__).resolve().parents[2]
 MERCHANT = (ROOT / "apps/demo-web/merchant-portal.html").read_text(encoding="utf-8")
 FOUNDER = (ROOT / "apps/demo-web/founder-console.html").read_text(encoding="utf-8")
 MARKETPLACE = (ROOT / "apps/demo-web/marketplace.html").read_text(encoding="utf-8")
+WARDROBE = (ROOT / "apps/demo-web/wardrobe.html").read_text(encoding="utf-8")
+APPEARANCE_WORKSPACE = (ROOT / "apps/demo-web/assets/appearance-workspace.js").read_text(encoding="utf-8")
 
 
 class PortalContractTests(unittest.TestCase):
@@ -56,6 +58,31 @@ class PortalContractTests(unittest.TestCase):
         self.assertIn("item.fulfillment_charge_minor", MARKETPLACE)
         self.assertIn("item.tax&&item.tax.added_to_total_minor", MARKETPLACE)
         self.assertIn('body:JSON.stringify(checkoutPayload)', MARKETPLACE)
+
+    def test_wardrobe_and_marketplace_mount_the_same_appearance_workspace(self):
+        for page in (WARDROBE, MARKETPLACE):
+            self.assertIn('id="appearanceWorkspaceRoot"', page)
+            self.assertIn('/assets/appearance-workspace.js', page)
+            self.assertIn('cirvanna:session-ready', page)
+        self.assertIn('cirvanna:appearance-add-product', APPEARANCE_WORKSPACE)
+        self.assertIn('cirvanna:appearance-add-wardrobe-look', APPEARANCE_WORKSPACE)
+        # Consent scope names are enforced server-side; the browser shows distinct
+        # plain-language choices and calls the BFF's consent endpoints.
+        self.assertIn('I agree to store this appearance look and its edit history.', APPEARANCE_WORKSPACE)
+        self.assertIn('I agree to retain this uploaded source photo in private storage for this look.', APPEARANCE_WORKSPACE)
+        self.assertIn('I agree to process this source photo for the look instructions I submit.', APPEARANCE_WORKSPACE)
+        self.assertIn('consents: "/api/appearance/consents"', APPEARANCE_WORKSPACE)
+        self.assertIn('renew: "/api/appearance/consents/renew"', APPEARANCE_WORKSPACE)
+        self.assertIn('Reset to original', APPEARANCE_WORKSPACE)
+        self.assertIn('Delete look and private media', APPEARANCE_WORKSPACE)
+        self.assertIn('Photorealistic preview unavailable', APPEARANCE_WORKSPACE)
+
+    def test_marketplace_appearance_entry_is_restricted_to_live_catalog_items(self):
+        self.assertIn('mode==="commerce"&&p.catalog_product_id', MARKETPLACE)
+        self.assertIn('data-action="appearance"', MARKETPLACE)
+        self.assertIn('decision.verdict!=="show"', MARKETPLACE)
+        self.assertIn('decision.may_display!==true', MARKETPLACE)
+        self.assertIn('offer.catalog_product_id!==product.product_id', MARKETPLACE)
 
     def test_founder_console_uses_server_side_admin_authorization(self):
         self.assertIn('actor.role!=="admin"', FOUNDER)

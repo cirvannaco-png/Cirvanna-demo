@@ -157,6 +157,22 @@ def test_authorization_requires_exact_subject_purpose_and_parent(client):
     assert wrong_purpose.status_code == 404
 
 
+def test_appearance_source_and_render_assets_are_owner_parent_bound(client):
+    response, _ = client
+    source = upload(response, purpose="appearance_source_image", parent_id="look-001").json()["asset_id"]
+    render = upload(response, purpose="appearance_render_output", parent_id="look-001").json()["asset_id"]
+    for asset_id, purpose in ((source, "appearance_source_image"), (render, "appearance_render_output")):
+        allowed = response.post("/internal/v1/assets/authorize", headers=auth(), json={
+            "subject_id": "subject-001", "asset_id": asset_id,
+            "purpose": purpose, "parent_id": "look-001",
+        })
+        wrong_parent = response.post("/internal/v1/assets/authorize", headers=auth(), json={
+            "subject_id": "subject-001", "asset_id": asset_id,
+            "purpose": purpose, "parent_id": "look-002",
+        })
+        assert allowed.status_code == 200
+        assert wrong_parent.status_code == 404
+
 def test_bulk_twin_authorization_requires_exact_owner_parent_and_asset_purposes(client):
     response, _ = client
     source = upload(response).json()["asset_id"]

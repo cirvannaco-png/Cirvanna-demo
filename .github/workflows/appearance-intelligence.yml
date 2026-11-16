@@ -1,0 +1,81 @@
+name: Appearance look-session checks
+
+on:
+  pull_request:
+    paths:
+      - "services/appearance-intelligence-service/**"
+      - "packages/appearance_intelligence/**"
+      - "services/marketplace-bff/**"
+      - "services/identity-learning-service/**"
+      - "services/asset-service/**"
+      - ".github/workflows/appearance-intelligence.yml"
+  push:
+    branches:
+      - main
+      - "feature/**"
+      - "engineering/**"
+    paths:
+      - "services/appearance-intelligence-service/**"
+      - "packages/appearance_intelligence/**"
+      - ".github/workflows/appearance-intelligence.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  appearance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: cirvanna
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: appearance_look_sessions
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cirvanna -d appearance_look_sessions"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    defaults:
+      run:
+        working-directory: services/appearance-intelligence-service
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/appearance-intelligence-service/requirements.txt
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Check dependency consistency
+        run: python -m pip check
+      - name: Compile service and tests
+        run: python -m compileall -q app tests
+      - name: Run look-session and privacy-boundary tests
+        run: python -m pytest -q
+      - name: Install PostgreSQL client
+        working-directory: .
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Apply migration and verify isolated restore
+        working-directory: .
+        env:
+          APPEARANCE_TEST_POSTGRES_DSN: postgresql://cirvanna@localhost:5432/appearance_look_sessions
+        run: |
+          psql "$APPEARANCE_TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f services/appearance-intelligence-service/migrations/0001_appearance_look_sessions.sql
+          psql "$APPEARANCE_TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f services/appearance-intelligence-service/migrations/0002_appearance_consent_events.sql
+          psql "$APPEARANCE_TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f services/appearance-intelligence-service/migrations/0003_appearance_deletion_outbox.sql
+          pg_dump --format=custom "$APPEARANCE_TEST_POSTGRES_DSN" > /tmp/appearance-look-sessions.dump
+          psql "$APPEARANCE_TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -c "CREATE DATABASE appearance_restore"
+          pg_restore --dbname="postgresql://cirvanna@localhost:5432/appearance_restore" --exit-on-error /tmp/appearance-look-sessions.dump
+          psql "postgresql://cirvanna@localhost:5432/appearance_restore" -v ON_ERROR_STOP=1 -c "SELECT look_id FROM appearance_look_sessions LIMIT 1"
+      - name: Build private appearance service image
+        working-directory: .
+        run: docker build -f services/appearance-intelligence-service/Dockerfile -t cirvanna-appearance-intelligence:ci .
+
