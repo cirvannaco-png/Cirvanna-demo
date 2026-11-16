@@ -10,13 +10,19 @@ import hmac
 import io
 import json
 import os
+import hashlib
+from datetime import datetime, timezone
+from urllib.parse import urlsplit
 from typing import Annotated, Any, Literal
+
+import httpx
 
 import numpy as np
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from PIL import Image
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.image_io import decode_image, evaluate_image_quality
 from app.color_calibration import (
@@ -26,6 +32,10 @@ from app.color_calibration import (
     build_skin_colour_preview,
 )
 from app import dsi_models
+from app.dsi_capture_verification import (
+    CaptureVerificationError,
+    verify_android_capture_envelope,
+)
 from app.dsi_device_baselines import (
     DeviceBaselineError,
     DeviceCaptureReport,
@@ -391,3 +401,290 @@ async def device_baseline(report: DeviceCaptureReport) -> JSONResponse:
         capture_attestation_verified=False,
     )
     return _no_store(result)
+
+
+DSI_CAPTURE_PURPOSES = {
+    "cosmetic_skin_analysis": {"image_processing", "skin_analysis"},
+    "facial_geometry_analysis": {"image_processing", "facial_geometry_analysis"},
+    "body_tone_analysis": {"image_processing", "body_tone_analysis"},
+    "appearance_correction": {"image_processing", "appearance_correction"},
+}
+
+
+class DSICaptureChallengeRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+    subject_id: str = Field(min_length=1, max_length=128)
+    consent_id: str = Field(min_length=8, max_length=128)
+    consent_version: str = Field(min_length=1, max_length=80)
+    resource_id: str = Field(min_length=3, max_length=160)
+    purpose: Literal[
+        "cosmetic_skin_analysis",
+        "facial_geometry_analysis",
+        "body_tone_analysis",
+        "appearance_correction",
+    ]
+
+
+class DSICaptureReceiptVerificationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True, str_strip_whitespace=True)
+    receipt_id: str = Field(min_length=12, max_length=80)
+    subject_id: str = Field(min_length=1, max_length=128)
+    resource_id: str = Field(min_length=3, max_length=160)
+    purpose: Literal[
+        "cosmetic_skin_analysis",
+        "facial_geometry_analysis",
+        "body_tone_analysis",
+        "appearance_correction",
+    ]
+    manifest_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    image_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    device_pipeline_fingerprint_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
+def _identity_dsi_capture_config() -> tuple[str, str]:
+    base = os.getenv("IDENTITY_LEARNING_API_URL", "").strip().rstrip("/")
+    token = os.getenv("IDENTITY_DSI_CAPTURE_SERVICE_TOKEN", "").strip()
+    parsed = urlsplit(base)
+    host = (parsed.hostname or "").lower()
+    local = host in {"localhost", "127.0.0.1", "::1"}
+    if (
+        not base
+        or len(token.encode("utf-8")) < 32
+        or not host
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or (parsed.scheme != "https" and not (parsed.scheme == "http" and local))
+    ):
+        raise HTTPException(503, detail={"code": "IDENTITY_DSI_CAPTURE_PROVIDER_NOT_CONFIGURED"})
+    return base, token
+
+
+async def _identity_dsi_capture_post(path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    base, token = _identity_dsi_capture_config()
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(5.0, connect=2.0),
+            follow_redirects=False,
+            trust_env=False,
+        ) as client:
+            response = await client.post(
+                base + path,
+                headers={
+                    "Authorization": "Bearer " + token,
+                    "Accept": "application/json",
+                },
+                json=payload,
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "IDENTITY_DSI_CAPTURE_PROVIDER_UNAVAILABLE"}) from exc
+
+    if response.status_code in {401, 403, 404, 409, 410}:
+        raise HTTPException(403, detail={"code": "DSI_CAPTURE_AUTHORIZATION_REJECTED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "IDENTITY_DSI_CAPTURE_PROVIDER_UNAVAILABLE"})
+    if "no-store" not in response.headers.get("cache-control", "").casefold():
+        raise HTTPException(503, detail={"code": "IDENTITY_DSI_CAPTURE_CACHE_POLICY_INVALID"})
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise HTTPException(503, detail={"code": "IDENTITY_DSI_CAPTURE_RESPONSE_INVALID"}) from exc
+    if not isinstance(result, dict):
+        raise HTTPException(503, detail={"code": "IDENTITY_DSI_CAPTURE_RESPONSE_INVALID"})
+    return result
+
+
+@router.post("/capture-challenges", dependencies=[Depends(require_dsi_worker)])
+async def create_capture_challenge(payload: DSICaptureChallengeRequest) -> JSONResponse:
+    """Issue a one-use, consent-bound challenge through Identity Learning."""
+    identity = await _identity_dsi_capture_post(
+        "/internal/v1/dsi/capture-challenges",
+        payload.model_dump(mode="json"),
+    )
+    try:
+        nonce_text = identity["nonce_b64url"]
+        nonce = base64.urlsafe_b64decode(
+            nonce_text + ("=" * ((4 - len(nonce_text) % 4) % 4))
+        )
+        expected_nonce_sha = hashlib.sha256(nonce).hexdigest()
+        expiry = datetime.fromisoformat(identity["expires_at"].replace("Z", "+00:00"))
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise HTTPException(503, detail={"code": "IDENTITY_DSI_CAPTURE_RESPONSE_INVALID"}) from exc
+    if (
+        identity.get("status") != "issued"
+        or identity.get("subject_id") != payload.subject_id
+        or identity.get("consent_id") != payload.consent_id
+        or identity.get("consent_version") != payload.consent_version
+        or identity.get("resource_id") != payload.resource_id
+        or identity.get("purpose") != payload.purpose
+        or len(nonce) != 32
+        or identity.get("nonce_bytes") != 32
+        or identity.get("nonce_sha256") != expected_nonce_sha
+        or expiry.tzinfo is None
+        or expiry <= datetime.now(timezone.utc)
+        or not isinstance(identity.get("challenge_id"), str)
+        or not isinstance(identity.get("consent_receipt_ids"), list)
+        or len(identity["consent_receipt_ids"]) < 2
+    ):
+        raise HTTPException(503, detail={"code": "IDENTITY_DSI_CAPTURE_RESPONSE_INVALID"})
+    return _no_store({
+        "status": "challenge_issued",
+        "challenge_id": identity["challenge_id"],
+        "nonce_b64url": nonce_text,
+        "nonce_bytes": 32,
+        "expires_at": identity["expires_at"],
+        "subject_id": payload.subject_id,
+        "consent_id": payload.consent_id,
+        "consent_version": payload.consent_version,
+        "resource_id": payload.resource_id,
+        "purpose": payload.purpose,
+        "required_scopes": sorted(DSI_CAPTURE_PURPOSES[payload.purpose]),
+        "verification_state": "pending_server_verification",
+    })
+
+
+@router.post("/capture-verifications", dependencies=[Depends(require_dsi_worker)])
+async def verify_capture_envelope(
+    subject_id: Annotated[str, Form(min_length=1, max_length=128)],
+    consent_id: Annotated[str, Form(min_length=8, max_length=128)],
+    consent_version: Annotated[str, Form(min_length=1, max_length=80)],
+    resource_id: Annotated[str, Form(min_length=3, max_length=160)],
+    purpose: Annotated[
+        Literal[
+            "cosmetic_skin_analysis",
+            "facial_geometry_analysis",
+            "body_tone_analysis",
+            "appearance_correction",
+        ],
+        Form(),
+    ],
+    challenge_id: Annotated[str, Form(min_length=12, max_length=80)],
+    nonce_b64url: Annotated[str, Form(min_length=43, max_length=64)],
+    manifest_canonical_json: Annotated[str, Form(min_length=2, max_length=128 * 1024)],
+    manifest_signature_base64url: Annotated[str, Form(min_length=80, max_length=512)],
+    attestation_certificate_chain_base64url: Annotated[str, Form(min_length=40, max_length=256 * 1024)],
+    play_integrity_token: Annotated[str, Form(min_length=100, max_length=16 * 1024)],
+    image: Annotated[UploadFile, File()],
+) -> JSONResponse:
+    """Verify image, Android Key Attestation and Play Integrity before receipt creation.
+
+    No client-provided verification booleans or device tier are accepted. Identity
+    Learning is called only after both independent Google-backed verifiers succeed.
+    """
+    _data, decoded = await _read_image(image)
+    try:
+        try:
+            chain = json.loads(attestation_certificate_chain_base64url)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(422, detail={"code": "DSI_ANDROID_ATTESTATION_CHAIN_INVALID"}) from exc
+        if (
+            not isinstance(chain, list)
+            or not (2 <= len(chain) <= 8)
+            or any(not isinstance(item, str) for item in chain)
+        ):
+            raise HTTPException(422, detail={"code": "DSI_ANDROID_ATTESTATION_CHAIN_INVALID"})
+
+        try:
+            verified = await verify_android_capture_envelope(
+                challenge_id=challenge_id,
+                nonce_b64url=nonce_b64url,
+                manifest_text=manifest_canonical_json,
+                manifest_signature_b64url=manifest_signature_base64url,
+                attestation_certificate_chain_base64url=chain,
+                play_integrity_token=play_integrity_token,
+                image_bytes=_data,
+            )
+        except CaptureVerificationError as exc:
+            raise HTTPException(
+                exc.status_code,
+                detail={"code": exc.code},
+            ) from exc
+
+        sdk_version = os.getenv("DSI_ANDROID_CAPTURE_SDK_VERSION", "").strip()
+        if not sdk_version:
+            raise HTTPException(503, detail={"code": "DSI_ANDROID_CAPTURE_SDK_VERSION_NOT_CONFIGURED"})
+
+        nonce = base64.urlsafe_b64decode(
+            nonce_b64url + ("=" * ((4 - len(nonce_b64url) % 4) % 4))
+        )
+        consume_payload = {
+            "nonce_b64url": nonce_b64url,
+            "manifest_sha256": verified.manifest_sha256,
+            "image_sha256": verified.image_sha256,
+            "device_pipeline_fingerprint_sha256": verified.device_pipeline_fingerprint_sha256,
+            "key_attestation_challenge_sha256": hashlib.sha256(nonce).hexdigest(),
+            # Identity persists the canonical hexadecimal digest, not the base64url
+            # wire representation returned by Play Integrity.
+            "play_integrity_request_hash": verified.play_integrity_request_hash,
+            "package_name": verified.package_name,
+            "package_certificate_sha256": verified.package_certificate_sha256,
+            "app_version": verified.app_version,
+            "sdk_version": sdk_version,
+            "verifier_policy_version": os.getenv("DSI_CAPTURE_VERIFIER_POLICY_VERSION", "dsi-android-policy-v1"),
+            "key_security_level": verified.key_security_level,
+            "verified_boot_state": verified.verified_boot_state,
+            "app_recognition_verdict": verified.app_recognition_verdict,
+            "account_licensing_verdict": verified.account_licensing_verdict,
+            "device_integrity_verdicts": list(verified.device_integrity_verdicts),
+        }
+        identity = await _identity_dsi_capture_post(
+            f"/internal/v1/dsi/capture-challenges/{challenge_id}/consume",
+            consume_payload,
+        )
+        receipt = identity.get("receipt")
+        if (
+            identity.get("status") != "verified_receipt_created"
+            or not isinstance(receipt, dict)
+            or receipt.get("manifest_sha256") != verified.manifest_sha256
+            or receipt.get("image_sha256") != verified.image_sha256
+            or receipt.get("device_pipeline_fingerprint_sha256") != verified.device_pipeline_fingerprint_sha256
+            or receipt.get("verification_status") != "verified_by_trusted_vision_service"
+        ):
+            raise HTTPException(503, detail={"code": "IDENTITY_DSI_CAPTURE_RECEIPT_INVALID"})
+        return _no_store({
+            "status": "capture_verified",
+            "receipt": receipt,
+            "verification": {
+                "android_key_attestation": "verified",
+                "play_integrity": "verified",
+                "verified_boot_state": verified.verified_boot_state,
+                "device_locked": verified.device_locked,
+                "key_security_level": verified.key_security_level,
+                "app_recognition_verdict": verified.app_recognition_verdict,
+                "account_licensing_verdict": verified.account_licensing_verdict,
+                "device_integrity_verdicts": list(verified.device_integrity_verdicts),
+            },
+            # Capture verification is not scientific colour measurement approval.
+            "absolute_colour_measurement_approved": False,
+            "measurement_release_required": True,
+        })
+    finally:
+        decoded.close()
+
+
+@router.post("/capture-receipts/verify", dependencies=[Depends(require_dsi_worker)])
+async def verify_capture_receipt(
+    payload: DSICaptureReceiptVerificationRequest,
+) -> JSONResponse:
+    """Re-check exact capture digest scope and live consent before each use."""
+    identity = await _identity_dsi_capture_post(
+        "/internal/v1/dsi/capture-receipts/verify",
+        payload.model_dump(mode="json"),
+    )
+    if identity.get("verified") is not True:
+        raise HTTPException(403, detail={"code": "DSI_CAPTURE_RECEIPT_NOT_VERIFIED"})
+    receipt = identity.get("receipt")
+    if (
+        not isinstance(receipt, dict)
+        or receipt.get("receipt_id") != payload.receipt_id
+        or receipt.get("subject_id") != payload.subject_id
+        or receipt.get("resource_id") != payload.resource_id
+        or receipt.get("purpose") != payload.purpose
+        or receipt.get("manifest_sha256") != payload.manifest_sha256
+        or receipt.get("image_sha256") != payload.image_sha256
+        or receipt.get("device_pipeline_fingerprint_sha256") != payload.device_pipeline_fingerprint_sha256
+        or receipt.get("verification_status") != "verified_by_trusted_vision_service"
+    ):
+        raise HTTPException(403, detail={"code": "DSI_CAPTURE_RECEIPT_SCOPE_MISMATCH"})
+    return _no_store({"verified": True, "receipt": receipt})
