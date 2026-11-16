@@ -30,6 +30,15 @@ from app.color_calibration import (
     build_skin_colour_preview,
 )
 from app import dsi_models
+from app.dsi_capture_verification import (
+    AndroidAttestationEnvelope,
+    CaptureVerificationError,
+    CaptureVerificationUnavailable,
+    IdentityCaptureChallengeRequest,
+    issue_identity_capture_challenge,
+    verify_and_persist_capture,
+    verify_identity_capture_receipt,
+)
 from app.dsi_device_baselines import (
     DeviceBaselineError,
     DeviceCaptureReport,
