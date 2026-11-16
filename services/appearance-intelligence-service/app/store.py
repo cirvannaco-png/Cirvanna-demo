@@ -36,6 +36,32 @@ class AppearanceLookRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class AppearanceLookDeletionRow(Base):
+    __tablename__ = "appearance_look_deletions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["look_id"], ["appearance_look_sessions.look_id"],
+            name="fk_appearance_look_deletion_session",
+        ),
+        UniqueConstraint("look_id", name="uq_appearance_look_deletion_look"),
+        UniqueConstraint("subject_id", "command_id", name="uq_appearance_look_deletion_command"),
+        Index("ix_appearance_look_deletion_status", "status", "updated_at"),
+    )
+
+    job_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    look_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    subject_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    command_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    asset_references: Mapped[list[dict[str, str]]] = mapped_column(JSON, nullable=False, default=list)
+    pending_asset_references: Mapped[list[dict[str, str]]] = mapped_column(JSON, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="queued")
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class AppearanceLookConsentEventRow(Base):
     __tablename__ = "appearance_look_consent_events"
     __table_args__ = (
