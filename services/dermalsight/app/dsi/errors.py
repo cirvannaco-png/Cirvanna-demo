@@ -7,3 +7,7 @@ class ConsentNotAuthorized(ValueError):
 
 class DSIProviderUnavailable(RuntimeError):
     """A configured DSI internal dependency cannot safely complete the request."""
+
+
+class DSICaptureRejected(ValueError):
+    """A device proof or capture binding was rejected by the trusted verifier."""
