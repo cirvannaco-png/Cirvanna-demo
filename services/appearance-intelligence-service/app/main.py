@@ -985,7 +985,12 @@ async def _process_deletion_job(job_id: str) -> dict:
             raise HTTPException(404, detail={"code": "APPEARANCE_DELETION_JOB_NOT_FOUND"})
         if job.status == "completed":
             return _deletion_payload(job)
-        if job.status == "processing" and job.updated_at > utcnow() - timedelta(minutes=5):
+        processing_updated_at = job.updated_at
+        # SQLite test databases return naive values even when DateTime(timezone=True)
+        # is declared; normalize those values to UTC before comparing.
+        if processing_updated_at.tzinfo is None or processing_updated_at.utcoffset() is None:
+            processing_updated_at = processing_updated_at.replace(tzinfo=timezone.utc)
+        if job.status == "processing" and processing_updated_at > utcnow() - timedelta(minutes=5):
             return _deletion_payload(job)
         job.status = "processing"
         job.updated_at = utcnow()
