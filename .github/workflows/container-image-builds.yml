@@ -8,6 +8,7 @@ on:
       - "services/decision-service/**"
       - "services/marketplace-bff/**"
       - "services/asset-service/**"
+      - "services/vision-intelligence/**"
       - "services/privacy-governance-service/**"
       - "services/intelligence-service/**"
       - "services/api-gateway/**"
@@ -35,6 +36,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Build Catalog service image
         run: docker build -f services/catalog-service/Dockerfile -t cirvanna-catalog:ci services/catalog-service
       - name: Build Commerce service image
