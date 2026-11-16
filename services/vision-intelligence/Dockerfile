@@ -1,4 +1,22 @@
-FROM python:3.12-slim
+FROM gradle:8.10-jdk21 AS dsi-attestation-build
+
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+ARG KEYATTESTATION_COMMIT=f1e8e0f46d0c8272a47ae0f30f82a3a378fdecca
+RUN git clone --filter=blob:none https://github.com/android/keyattestation.git /tmp/keyattestation && \
+    git -C /tmp/keyattestation checkout --detach ${KEYATTESTATION_COMMIT} && \
+    test "$(git -C /tmp/keyattestation rev-parse HEAD)" = "${KEYATTESTATION_COMMIT}" && \
+    cd /tmp/keyattestation && \
+    ./gradlew --no-daemon test publish -PKeyAttestationMavenRepo=/tmp/keyattestation-m2repo
+
+WORKDIR /src
+COPY android-attestation-verifier/ ./
+RUN gradle --no-daemon clean test installDist
+
+
+FROM python:3.12-slim-trixie AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -6,11 +24,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     HF_HUB_DISABLE_TELEMETRY=1 \
     HF_HOME=/home/app/.cache/huggingface \
     CLICK_IT_FACE_DETECTOR_MODEL_PATH=/opt/cirvanna-models/blaze_face_full_range.tflite \
-    CLICK_IT_FACE_DETECTOR_MODEL_SHA256=3698b18f063835bc609069ef052228fbe86d9c9a6dc8dcb7c7c2d69aed2b181b
+    CLICK_IT_FACE_DETECTOR_MODEL_SHA256=3698b18f063835bc609069ef052228fbe86d9c9a6dc8dcb7c7c2d69aed2b181b \
+    DSI_ANDROID_ATTESTATION_VERIFIER_BIN=/opt/dsi-attestation-verifier/bin/dsi-android-attestation-verifier
 
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      libgl1 libglib2.0-0 libgomp1 libegl1 libgles2 && \
+      libgl1 libglib2.0-0 libgomp1 libegl1 libgles2 openjdk-21-jre-headless && \
     rm -rf /var/lib/apt/lists/* && \
     groupadd --system app && \
     useradd --system --gid app --create-home --home-dir /home/app app && \
@@ -20,6 +39,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt ./requirements.txt
 RUN python -m pip install --upgrade pip && \
     python -m pip install -r requirements.txt
+
+COPY --from=dsi-attestation-build /src/build/install/dsi-android-attestation-verifier /opt/dsi-attestation-verifier
 
 # Pin the official Google MediaPipe BlazeFace full-range model by immutable
 # versioned URL, exact byte count and SHA-256. Do not use a floating "latest" URL.
@@ -41,14 +62,10 @@ if actual_sha256 != expected_sha256:
     raise SystemExit(f"BlazeFace model checksum mismatch: {actual_sha256}")
 Path("/opt/cirvanna-models/blaze_face_full_range.tflite").write_bytes(payload)
 PY
-RUN chown -R app:app /opt/cirvanna-models
 
 COPY app ./app
-# Build-time smoke test loads the real pinned MediaPipe model and verifies
-# that inference returns a structurally valid result. A synthetic image can
-# trigger a low-confidence candidate; production correctly fails closed on
-# uncertain detections, so this smoke test does not assert a zero-face result
-# or imply detector recall/precision validation.
+# Build-time smoke test validates the pinned model's runtime contract only. It is
+# not a physical-device test or a detector accuracy/recall claim.
 RUN python - <<'PY'
 import numpy as np
 import mediapipe as mp
@@ -61,6 +78,8 @@ result = detector.detect(image)
 assert result is not None and getattr(result, "detections", None) is not None
 detector.close()
 PY
+
+RUN chown -R app:app /opt/cirvanna-models /opt/dsi-attestation-verifier
 USER app
 EXPOSE 8000
 
