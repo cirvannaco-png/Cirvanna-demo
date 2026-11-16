@@ -994,6 +994,21 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
           }
         });
         actions.append(saveButton);
+        const appearanceButton = document.createElement("button");
+        appearanceButton.type = "button";
+        appearanceButton.className = "btn primary";
+        appearanceButton.textContent = "Edit this look in Appearance";
+        appearanceButton.addEventListener("click", () => window.dispatchEvent(new CustomEvent("cirvanna:appearance-add-wardrobe-look", {
+          detail: {
+            role: look.role,
+            items: (look.items || []).map(item => ({
+              item_id: item.item_id,
+              display_name: item.display_name,
+              category: item.category
+            }))
+          }
+        })));
+        actions.append(appearanceButton);
         const refineButton = document.createElement("button");
         refineButton.type = "button";
         refineButton.className = "btn primary";
