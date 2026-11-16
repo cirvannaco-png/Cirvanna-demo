@@ -129,7 +129,23 @@ def _canonical_json(value: Any) -> str:
             raise ValueError("non-finite JSON number")
         if value == 0:
             return "0"
-        return format(value.normalize(), "f")
+        sign, raw_digits, exponent = value.as_tuple()
+        digits = list(raw_digits)
+        while len(digits) > 1 and digits[-1] == 0:
+            digits.pop()
+            exponent += 1
+        if abs(exponent) > MAX_MANIFEST_BYTES:
+            raise ValueError("JSON number exponent exceeds manifest limits")
+        body = "".join(str(digit) for digit in digits)
+        if exponent >= 0:
+            rendered = body + ("0" * exponent)
+        else:
+            point = len(body) + exponent
+            if point > 0:
+                rendered = body[:point] + "." + body[point:]
+            else:
+                rendered = "0." + ("0" * (-point)) + body
+        return ("-" if sign else "") + rendered
     if isinstance(value, list):
         return "[" + ",".join(_canonical_json(item) for item in value) + "]"
     if isinstance(value, dict):
@@ -264,6 +280,7 @@ async def run_android_key_verifier(
     request_bytes = json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     if len(request_bytes) > 512 * 1024:
         raise CaptureVerificationError("Android attestation envelope exceeds size limit")
+    process = None
     try:
         process = await asyncio.create_subprocess_exec(
             executable,
@@ -272,7 +289,12 @@ async def run_android_key_verifier(
             stderr=asyncio.subprocess.PIPE,
         )
         stdout, _stderr = await asyncio.wait_for(process.communicate(request_bytes), timeout=18)
-    except (OSError, asyncio.TimeoutError) as exc:
+    except asyncio.TimeoutError as exc:
+        if process is not None and process.returncode is None:
+            process.kill()
+            await process.wait()
+        raise CaptureVerificationUnavailable("Android key-attestation verifier timed out") from exc
+    except OSError as exc:
         raise CaptureVerificationUnavailable("Android key-attestation verifier failed to run") from exc
     if process.returncode == 2:
         raise CaptureVerificationError("Android key-attestation proof rejected")
@@ -429,7 +451,10 @@ async def issue_identity_capture_challenge(payload: IdentityCaptureChallengeRequ
         raise CaptureVerificationError("Identity challenge could not be issued for this consent")
     if response.status_code != 200:
         raise CaptureVerificationUnavailable("Identity challenge service unavailable")
-    result = response.json()
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise CaptureVerificationUnavailable("Identity challenge response is invalid") from exc
     if not isinstance(result, dict) or result.get("status") != "issued":
         raise CaptureVerificationUnavailable("Identity challenge response is invalid")
     return result
@@ -487,7 +512,10 @@ async def persist_identity_capture_receipt(
         raise CaptureVerificationError("Identity rejected the capture challenge or consent")
     if response.status_code != 200:
         raise CaptureVerificationUnavailable("Identity receipt persistence unavailable")
-    result = response.json()
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise CaptureVerificationUnavailable("Identity receipt response is invalid") from exc
     receipt = result.get("receipt") if isinstance(result, dict) else None
     if not isinstance(result, dict) or result.get("status") != "verified_receipt_created" or not isinstance(receipt, dict):
         raise CaptureVerificationUnavailable("Identity receipt response is invalid")
@@ -593,7 +621,10 @@ async def verify_identity_capture_receipt(
         raise CaptureVerificationError("capture receipt is expired, revoked or out of scope")
     if response.status_code != 200:
         raise CaptureVerificationUnavailable("Identity receipt verification unavailable")
-    result = response.json()
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise CaptureVerificationUnavailable("Identity receipt verification response is invalid") from exc
     if not isinstance(result, dict) or result.get("verified") is not True or not isinstance(result.get("receipt"), dict):
         raise CaptureVerificationError("Identity receipt is not active")
     return result
