@@ -526,6 +526,7 @@ async def create_capture_challenge(payload: DSICaptureChallengeRequest) -> JSONR
         or not isinstance(identity.get("challenge_id"), str)
         or not isinstance(identity.get("consent_receipt_ids"), list)
         or len(identity["consent_receipt_ids"]) < 2
+        or sorted(identity.get("required_scopes", [])) != sorted(DSI_CAPTURE_PURPOSES[payload.purpose])
     ):
         raise HTTPException(503, detail={"code": "IDENTITY_DSI_CAPTURE_RESPONSE_INVALID"})
     return _no_store({
@@ -636,6 +637,11 @@ async def verify_capture_envelope(
         if (
             identity.get("status") != "verified_receipt_created"
             or not isinstance(receipt, dict)
+            or receipt.get("subject_id") != subject_id
+            or receipt.get("consent_id") != consent_id
+            or receipt.get("consent_version") != consent_version
+            or receipt.get("resource_id") != resource_id
+            or receipt.get("purpose") != purpose
             or receipt.get("manifest_sha256") != verified.manifest_sha256
             or receipt.get("image_sha256") != verified.image_sha256
             or receipt.get("device_pipeline_fingerprint_sha256") != verified.device_pipeline_fingerprint_sha256
