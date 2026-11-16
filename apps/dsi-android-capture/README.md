@@ -48,7 +48,7 @@ The backend must independently:
 - record an immutable, short-lived verification receipt bound to the exact manifest digest, image digest, pipeline fingerprint, challenge, app package/version, validation policy and capture runtime;
 - return a server-generated verification state. The client must never set `attestation_verified=true` or change the device operational tier.
 
-The backend does not yet perform these checks for Android captures. The server-side implementation is tracked in [issue #214](https://github.com/cirvannaco-png/Cirvanna-demo/issues/214). Until that verifier and the authenticated challenge endpoints are deployed and independently tested, every SDK envelope is `pending_server_verification` and **must remain relative-only**.
+The server-side implementation is being added on the DSI verification branch. It is still subject to automated CI, deployment configuration and physical-device acceptance. Every SDK envelope remains `pending_server_verification` until the Vision service independently verifies it and Identity Learning persists the receipt. See [issue #217](https://github.com/cirvannaco-png/Cirvanna-demo/issues/217) and [the physical-device test matrix](docs/PHYSICAL_DEVICE_TEST_MATRIX.md).
 
 **Threat-model limit:** Android Keystore attestation and Play Integrity can strengthen app/device integrity and bind a request manifest to a trusted key/token. They do not prove that the signed image bytes originated directly from the physical camera sensor, that no privileged OEM processing occurred, or that the device is free of every compromise. Treat the result as supporting evidence, not sensor-origin attestation. The capture app and all upload paths still require review and server-side validation.
 
@@ -76,3 +76,24 @@ Before promoting this SDK:
 - independently sign the exact Android SDK, capture pipeline, device profile and dataset scopes before any baseline promotion.
 
 No phone model is pre-certified by adding this library. No skin/colour result, model readiness or production capability is enabled by this scaffold.
+
+
+## Authenticated backend submission contract
+
+The host application must call the authenticated API gateway / DermalSight BFF. Do not embed the private DSI_INTERNAL_API_TOKEN or DSI_VISION_API_TOKEN in Android.
+
+1. POST multipart form data to /api/v1/dsi/capture-challenges with subject_id, consent_id, consent_version, resource_id and purpose. The returned challenge contains challengeId, nonceBase64Url and expiresAtEpochMs. Map those fields directly to DsiServerCaptureChallenge. Do not request a challenge until the user has granted the exact purpose consent.
+2. Create DsiCaptureManifest from the exact encoded image bytes and matching Camera2 TotalCaptureResult. The image and result timestamps must match.
+3. Call DsiAndroidCaptureAttestor.createAttestation(challenge, manifest). The returned DsiAndroidAttestationEnvelope is evidence only; its verificationState must remain pending_server_verification.
+4. Serialize the envelope using the exact camelCase property names in DsiAndroidAttestationEnvelope. POST multipart form data to /api/v1/dsi/capture-verifications with subject_id, consent_id, consent_version, resource_id, purpose, envelope_json, challenge_nonce_base64url and the exact original image bytes. The current BFF accepts JPEG, PNG and WebP up to 5 MiB and 16 megapixels. It does not accept RAW/DNG/HEIF through this API yet.
+5. Retain the server-created receipt ID and the signed digest metadata. For follow-on trusted analysis, use the receipt-bound DermalSight endpoints. Do not use the receipt to infer absolute colour accuracy, a skin diagnosis or permission to persist a profile.
+
+The API gateway/BFF re-checks consent at challenge and submission time. Vision independently validates the challenge, device certificate chain, ECDSA signature, image and manifest digests, Play Integrity token and server policy. Identity Learning persists the receipt only after both cryptographic checks pass. Vision re-checks active receipt and consent before each receipt-bound inference.
+
+## Current acceptance evidence
+
+- The SDK generates capture manifests and signed evidence; this does not itself authenticate the image or device.
+- The backend verification path is implemented in the DSI feature branch and requires CI before deployment.
+- The physical-device matrix is currently NOT RUN. No Pixel, Samsung, Transsion or modified-bootloader device has been represented as passing.
+- The Android SDK module is a library scaffold. Host-app camera UI, user authentication, Play Console setup, upload orchestration and staging/production secrets remain host/deployment responsibilities.
+- A successful certificate and Play Integrity check is not proof of original sensor pixels, no OEM enhancement, optical calibration or validated skin-colour measurements.
