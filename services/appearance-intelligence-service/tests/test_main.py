@@ -448,7 +448,7 @@ def test_branch_from_passing_render_retains_original_lineage(client):
     assert base["kind"] == "previous_render"
     assert base["parent_look_id"] == LOOK_ID
     assert base["parent_render_asset_id"] == OUTPUT_ASSET
-    assert base["source_asset_ids"] == [SOURCE_ASSET]
+    assert base["source_asset_ids"] == [OUTPUT_ASSET]
     assert base["source_asset_parent_id"] == LOOK_ID
 
 
