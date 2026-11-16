@@ -1,0 +1,44 @@
+name: Appearance deletion reconciliation
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: appearance-deletion-reconciliation
+  cancel-in-progress: false
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check deployment credentials
+        env:
+          APPEARANCE_SERVICE_URL: ${{ secrets.APPEARANCE_SERVICE_URL }}
+          APPEARANCE_SERVICE_TOKEN: ${{ secrets.APPEARANCE_SERVICE_TOKEN }}
+        run: |
+          if [ -z "$APPEARANCE_SERVICE_URL" ] || [ -z "$APPEARANCE_SERVICE_TOKEN" ]; then
+            echo "::warning::Configure APPEARANCE_SERVICE_URL and APPEARANCE_SERVICE_TOKEN repository secrets to enable deletion reconciliation."
+            exit 0
+          fi
+      - name: Process queued appearance deletions
+        env:
+          APPEARANCE_SERVICE_URL: ${{ secrets.APPEARANCE_SERVICE_URL }}
+          APPEARANCE_SERVICE_TOKEN: ${{ secrets.APPEARANCE_SERVICE_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$APPEARANCE_SERVICE_URL" ] || [ -z "$APPEARANCE_SERVICE_TOKEN" ]; then
+            echo "Deletion reconciliation is not configured; no request was sent."
+            exit 0
+          fi
+          base="${APPEARANCE_SERVICE_URL%/}"
+          curl --fail-with-body --silent --show-error \
+            --request POST "${base}/internal/v1/deletions/process?limit=100" \
+            --header "Authorization: Bearer ${APPEARANCE_SERVICE_TOKEN}" \
+            --header "Accept: application/json"
+
