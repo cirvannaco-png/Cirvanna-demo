@@ -2932,8 +2932,10 @@ def test_appearance_source_upload_verifies_consent_and_uses_private_asset_servic
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.post(
         "/api/appearance/looks/appearance-look-upload-01/source",
-        headers={"Authorization": "Bearer verified-browser-token"},
-        data={"consent_id": "appearance-source-consent"},
+        headers={
+            "Authorization": "Bearer verified-browser-token",
+            "X-Appearance-Consent-ID": "appearance-source-consent",
+        },
         files={"file": ("portrait.png", b"source-photo-bytes", "image/png")},
     )
     assert response.status_code == 201, response.text
@@ -2976,8 +2978,10 @@ def test_appearance_source_upload_rejects_wrong_resource_consent_before_asset_wr
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.post(
         "/api/appearance/looks/appearance-look-upload-02/source",
-        headers={"Authorization": "Bearer verified-browser-token"},
-        data={"consent_id": "appearance-source-consent"},
+        headers={
+            "Authorization": "Bearer verified-browser-token",
+            "X-Appearance-Consent-ID": "appearance-source-consent",
+        },
         files={"file": ("portrait.png", b"source-photo-bytes", "image/png")},
     )
     assert response.status_code == 403
