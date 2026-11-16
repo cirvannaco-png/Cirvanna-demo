@@ -6,7 +6,8 @@ plugins {
 dependencies {
     implementation("com.android.keyattestation:keyattestation:0.1-SNAPSHOT")
     implementation("com.google.code.gson:gson:2.11.0")
-    testImplementation(kotlin("test"))
+    testImplementation(kotlin("test-junit5"))
+    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.10.2")
 }
 
 kotlin {
