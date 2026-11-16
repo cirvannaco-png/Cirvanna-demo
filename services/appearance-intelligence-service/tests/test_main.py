@@ -44,8 +44,37 @@ class FakeAsyncClient:
     async def __aexit__(self, *args):
         return False
 
-    async def post(self, url, *, headers=None, json=None):
+    async def get(self, url, *, headers=None, params=None):
+        self.calls.append(("GET", url, params))
+        if "/v1/tal/consents/" in url:
+            return FakeResponse([
+                {
+                    "receipt_id": "appearance-delete-receipt-001",
+                    "consent_id": CONSENT_ID,
+                    "resource_id": LOOK_ID,
+                    "granted": True,
+                    "revoked_at": None,
+                },
+                {
+                    "receipt_id": "appearance-branch-receipt-001",
+                    "consent_id": "consent-branch-from-render-001",
+                    "resource_id": "look-branch-from-render-001",
+                    "granted": True,
+                    "revoked_at": None,
+                },
+            ])
+        pytest.fail(f"Unexpected provider GET URL: {url}")
+
+    async def delete(self, url, *, headers=None):
+        self.calls.append(("DELETE", url, headers))
+        if "/v1/assets/" in url:
+            return FakeResponse({}, 204)
+        pytest.fail(f"Unexpected provider DELETE URL: {url}")
+
+    async def post(self, url, *, headers=None, json=None, params=None):
         self.calls.append((url, json))
+        if url.endswith("/revoke"):
+            return FakeResponse({"status": "revoked"})
         if url.endswith("/internal/v1/consents/verify"):
             scopes = json["required_scopes"]
             if not self.consent_allowed:
@@ -541,3 +570,154 @@ def test_denied_renewal_does_not_replace_previous_consent(client):
     )
     assert current.status_code == 200
     assert current.json()["look"]["consent_id"] == CONSENT_ID
+
+
+def test_list_saved_looks_is_owner_scoped_and_exposes_only_minimal_metadata(client):
+    create_source_look(client)
+    response = client.get("/v1/looks", headers=auth(), params={"subject_id": SUBJECT})
+    assert response.status_code == 200
+    assert response.json()["count"] == 1
+    summary = response.json()["looks"][0]
+    assert summary["look_id"] == LOOK_ID
+    assert summary["subject_id"] == SUBJECT
+    assert summary["version"] == 1
+    assert summary["base_kind"] == "source_photo"
+    assert summary["consent_required"] is False
+    assert "source_asset_ids" not in summary
+    assert "operations" not in summary
+
+    client.app.state.provider.consent_allowed = False
+    expired = client.get("/v1/looks", headers=auth(), params={"subject_id": SUBJECT})
+    assert expired.status_code == 200
+    assert expired.json()["looks"][0]["consent_required"] is True
+
+
+def test_delete_look_revokes_exact_consent_and_deletes_private_source_asset(client):
+    create_source_look(client)
+    response = client.request(
+        "DELETE",
+        f"/v1/looks/{LOOK_ID}",
+        headers=auth(),
+        json={
+            "subject_id": SUBJECT,
+            "expected_version": 1,
+            "command_id": "delete-appearance-look-001",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "deleted"
+    deletion = response.json()["deletion"]
+    assert deletion["status"] == "completed"
+    assert deletion["consent_revoked"] is True
+    assert deletion["pending_asset_count"] == 0
+
+    consent_calls = [
+        call for call in client.app.state.provider.calls
+        if isinstance(call, tuple) and len(call) == 2 and call[0].endswith("/revoke")
+    ]
+    assert len(consent_calls) == 1
+    asset_calls = [
+        call for call in client.app.state.provider.calls
+        if isinstance(call, tuple) and call[0] == "DELETE" and "/v1/assets/" in call[1]
+    ]
+    assert len(asset_calls) == 1
+    assert asset_calls[0][2]["X-Asset-Owner-ID"] == SUBJECT
+    assert asset_calls[0][2]["Idempotency-Key"].startswith("appearance-delete-")
+
+    hidden = client.get(
+        f"/v1/looks/{LOOK_ID}", headers=auth(), params={"subject_id": SUBJECT},
+    )
+    assert hidden.status_code == 404
+
+    with store.open_session(__import__("os").environ["APPEARANCE_DATABASE_URL"]) as db:
+        job = db.query(store.AppearanceLookDeletionRow).filter_by(look_id=LOOK_ID).one()
+        assert job.status == "completed"
+        assert job.consent_revoked is True
+        assert job.pending_asset_references == []
+
+
+def test_delete_parent_look_preserves_render_asset_referenced_by_live_child(client):
+    create_source_look(client)
+    renderer_version = "renderer-v1@sha256:" + ("d" * 64)
+    attached = client.post(
+        f"/internal/v1/looks/{LOOK_ID}/render-result",
+        headers=renderer_auth(),
+        json={
+            "subject_id": SUBJECT,
+            "version": 1,
+            "output_asset_id": OUTPUT_ASSET,
+            "renderer_id": "renderer-v1",
+            "renderer_version": renderer_version,
+            "assessment_id": "assessment-delete-parent-001",
+            "checks": all_passing_gates(),
+        },
+    )
+    assert attached.status_code == 200
+    branch = client.post(f"/v1/looks/{LOOK_ID}/branch", headers=auth(), json={
+        "subject_id": SUBJECT,
+        "new_look_id": "look-branch-from-render-001",
+        "consent_id": "consent-branch-from-render-001",
+        "command_id": "branch-delete-parent-001",
+        "parent_version": 1,
+    })
+    assert branch.status_code == 201, branch.text
+
+    deleted = client.request("DELETE", f"/v1/looks/{LOOK_ID}", headers=auth(), json={
+        "subject_id": SUBJECT, "expected_version": 1,
+        "command_id": "delete-parent-look-001",
+    })
+    assert deleted.status_code == 200, deleted.text
+    with store.open_session(__import__("os").environ["APPEARANCE_DATABASE_URL"]) as db:
+        job = db.query(store.AppearanceLookDeletionRow).filter_by(look_id=LOOK_ID).one()
+        deleted_ids = {item["asset_id"] for item in job.asset_references}
+        assert SOURCE_ASSET in deleted_ids
+        assert OUTPUT_ASSET not in deleted_ids
+    child = client.get(
+        "/v1/looks/look-branch-from-render-001",
+        headers=auth(),
+        params={"subject_id": SUBJECT},
+    )
+    assert child.status_code == 200
+    assert child.json()["look"]["base"]["parent_render_asset_id"] == OUTPUT_ASSET
+
+
+def test_deleting_last_child_releases_parent_render_asset(client):
+    create_source_look(client)
+    renderer_version = "renderer-v1@sha256:" + ("e" * 64)
+    client.post(
+        f"/internal/v1/looks/{LOOK_ID}/render-result",
+        headers=renderer_auth(),
+        json={
+            "subject_id": SUBJECT, "version": 1, "output_asset_id": OUTPUT_ASSET,
+            "renderer_id": "renderer-v1", "renderer_version": renderer_version,
+            "assessment_id": "assessment-delete-child-001", "checks": all_passing_gates(),
+        },
+    )
+    client.post(f"/v1/looks/{LOOK_ID}/branch", headers=auth(), json={
+        "subject_id": SUBJECT, "new_look_id": "look-branch-from-render-001",
+        "consent_id": "consent-branch-from-render-001",
+        "command_id": "branch-delete-child-001", "parent_version": 1,
+    })
+    client.request("DELETE", f"/v1/looks/{LOOK_ID}", headers=auth(), json={
+        "subject_id": SUBJECT, "expected_version": 1,
+        "command_id": "delete-source-before-child-001",
+    })
+    deleted_child = client.request(
+        "DELETE", "/v1/looks/look-branch-from-render-001", headers=auth(), json={
+            "subject_id": SUBJECT, "expected_version": 1,
+            "command_id": "delete-last-child-001",
+        },
+    )
+    assert deleted_child.status_code == 200, deleted_child.text
+    assert deleted_child.json()["deletion"]["status"] == "completed"
+    assert deleted_child.json()["deletion"]["consent_revoked"] is True
+    last_asset_delete = [
+        call for call in client.app.state.provider.calls
+        if isinstance(call, tuple) and call[0] == "DELETE"
+        and call[1].endswith("/" + OUTPUT_ASSET)
+    ]
+    assert len(last_asset_delete) == 1
+
+
+def test_deletion_worker_recovers_interrupted_processing_jobs(client):
+    create_source_look(client)
