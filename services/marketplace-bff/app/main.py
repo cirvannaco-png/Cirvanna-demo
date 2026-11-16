@@ -1331,63 +1331,49 @@ async def revoke_appearance_consent(request: Request, payload: AppearanceConsent
 
 @app.delete("/api/appearance/looks/{look_id}/source/{asset_id}")
 async def cleanup_appearance_source(request: Request, look_id: str, asset_id: str) -> Response:
-    """Compensate an unreferenced source upload when look creation fails."""
+    """Ask Appearance to compensate-delete an upload only if no look references it."""
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{7,127}", look_id) or not UUID_RE.fullmatch(asset_id):
         raise HTTPException(422, detail={"code": "APPEARANCE_SOURCE_CLEANUP_ID_INVALID"})
     async with httpx.AsyncClient(
-        timeout=httpx.Timeout(12.0, connect=2.0),
+        timeout=httpx.Timeout(15.0, connect=2.0),
         trust_env=False,
         follow_redirects=False,
     ) as client:
         subject, _ = await _verified_commerce_subject(client, request)
-        asset_base, asset_token = _internal_service("ASSET_SERVICE_URL", "ASSET_SERVICE_TOKEN")
-        headers = {"Authorization": "Bearer " + asset_token, "Accept": "application/json"}
+        appearance_base, appearance_token = _appearance_service()
         try:
-            authorized = await client.post(
-                asset_base + "/internal/v1/assets/authorize",
-                headers=headers,
+            response = await client.post(
+                appearance_base + "/internal/v1/assets/compensate",
+                headers={"Authorization": "Bearer " + appearance_token, "Accept": "application/json"},
                 json={
                     "subject_id": subject,
+                    "parent_look_id": look_id,
                     "asset_id": asset_id,
-                    "purpose": "appearance_source_image",
-                    "parent_id": look_id,
                 },
             )
-        except httpx.HTTPError as exc:
-            raise HTTPException(503, detail={"code": "APPEARANCE_SOURCE_CLEANUP_AUTH_UNAVAILABLE"}) from exc
-        if authorized.status_code == 404:
-            return Response(status_code=204)
-        if authorized.status_code != 200:
-            raise HTTPException(503, detail={"code": "APPEARANCE_SOURCE_CLEANUP_AUTH_FAILED"})
-        try:
-            binding = authorized.json()
-        except ValueError as exc:
-            raise HTTPException(502, detail={"code": "APPEARANCE_SOURCE_CLEANUP_AUTH_INVALID"}) from exc
-        if not (
-            isinstance(binding, dict)
-            and binding.get("authorized") is True
-            and binding.get("active") is True
-            and binding.get("subject_id") == subject
-            and binding.get("asset_id") == asset_id
-            and binding.get("purpose") == "appearance_source_image"
-            and binding.get("parent_id") == look_id
-        ):
-            raise HTTPException(403, detail={"code": "APPEARANCE_SOURCE_CLEANUP_SCOPE_MISMATCH"})
-        try:
-            removed = await client.delete(
-                asset_base + f"/v1/assets/{asset_id}",
-                headers={
-                    "Authorization": "Bearer " + asset_token,
-                    "X-Asset-Owner-ID": subject,
-                    "Idempotency-Key": "appearance-create-compensation-" + asset_id,
-                },
-            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "APPEARANCE_SOURCE_CLEANUP_TIMEOUT"}) from exc
         except httpx.HTTPError as exc:
             raise HTTPException(503, detail={"code": "APPEARANCE_SOURCE_CLEANUP_UNAVAILABLE"}) from exc
-        if removed.status_code != 204:
-            raise HTTPException(503, detail={"code": "APPEARANCE_SOURCE_CLEANUP_FAILED"})
+    if response.status_code in {403, 404, 409, 422}:
+        try:
+            detail = response.json().get("detail", {})
+        except ValueError:
+            detail = {"code": "APPEARANCE_SOURCE_CLEANUP_REJECTED"}
+        raise HTTPException(response.status_code, detail=detail if isinstance(detail, dict) else {"code": "APPEARANCE_SOURCE_CLEANUP_REJECTED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "APPEARANCE_SOURCE_CLEANUP_FAILED"})
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "APPEARANCE_SOURCE_CLEANUP_RESPONSE_INVALID"}) from exc
+    if (
+        not isinstance(result, dict)
+        or result.get("status") != "deleted"
+        or result.get("asset_id") != asset_id
+    ):
+        raise HTTPException(502, detail={"code": "APPEARANCE_SOURCE_CLEANUP_RESPONSE_INVALID"})
     return Response(status_code=204)
-
 
 @app.post("/api/appearance/consents/renew")
 async def renew_appearance_consent(request: Request, payload: AppearanceConsentRenewalIn) -> Response:
