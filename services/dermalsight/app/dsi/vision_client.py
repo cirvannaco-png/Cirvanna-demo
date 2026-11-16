@@ -189,3 +189,189 @@ async def fetch_colorchecker_tone_preview(
     ):
         raise DSIProviderUnavailable("dsi_vision_color_calibration_contract_invalid")
     return payload
+
+
+async def _post_json(path: str, payload: dict) -> dict:
+    base, token = _config()
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(8.0, connect=2.0),
+            follow_redirects=False,
+            trust_env=False,
+        ) as client:
+            response = await client.post(
+                base + path,
+                headers={
+                    "Authorization": "Bearer " + token,
+                    "Accept": "application/json",
+                },
+                json=payload,
+            )
+    except httpx.TimeoutException as exc:
+        raise DSIProviderUnavailable("dsi_vision_timeout") from exc
+    except httpx.HTTPError as exc:
+        raise DSIProviderUnavailable("dsi_vision_unavailable") from exc
+    if response.status_code != 200:
+        raise DSIProviderUnavailable("dsi_vision_capture_verification_unavailable")
+    if "no-store" not in response.headers.get("cache-control", "").casefold():
+        raise DSIProviderUnavailable("dsi_vision_cache_policy_invalid")
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise DSIProviderUnavailable("dsi_vision_invalid_response") from exc
+    if not isinstance(result, dict):
+        raise DSIProviderUnavailable("dsi_vision_invalid_response")
+    return result
+
+
+async def create_dsi_capture_challenge(
+    *,
+    subject_id: str,
+    consent_id: str,
+    consent_version: str,
+    resource_id: str,
+    purpose: str,
+) -> dict:
+    if purpose not in {
+        "cosmetic_skin_analysis",
+        "facial_geometry_analysis",
+        "body_tone_analysis",
+        "appearance_correction",
+    }:
+        raise DSIProviderUnavailable("dsi_capture_purpose_invalid")
+    payload = await _post_json(
+        "/v1/dsi/capture-challenges",
+        {
+            "subject_id": subject_id,
+            "consent_id": consent_id,
+            "consent_version": consent_version,
+            "resource_id": resource_id,
+            "purpose": purpose,
+        },
+    )
+    if not (
+        payload.get("status") == "challenge_issued"
+        and isinstance(payload.get("challenge_id"), str)
+        and isinstance(payload.get("nonce_b64url"), str)
+        and payload.get("nonce_bytes") == 32
+        and payload.get("subject_id") == subject_id
+        and payload.get("resource_id") == resource_id
+        and payload.get("purpose") == purpose
+        and payload.get("verification_state") == "pending_server_verification"
+    ):
+        raise DSIProviderUnavailable("dsi_vision_capture_challenge_contract_invalid")
+    return payload
+
+
+async def verify_dsi_capture_envelope(
+    *,
+    subject_id: str,
+    consent_id: str,
+    consent_version: str,
+    resource_id: str,
+    purpose: str,
+    challenge_id: str,
+    nonce_b64url: str,
+    manifest_canonical_json: str,
+    manifest_signature_base64url: str,
+    attestation_certificate_chain: list[str],
+    play_integrity_token: str,
+    content: bytes,
+    content_type: str,
+    filename: str,
+) -> dict:
+    import json
+
+    if purpose not in {
+        "cosmetic_skin_analysis",
+        "facial_geometry_analysis",
+        "body_tone_analysis",
+        "appearance_correction",
+    }:
+        raise DSIProviderUnavailable("dsi_capture_purpose_invalid")
+    if not isinstance(attestation_certificate_chain, list) or not (
+        2 <= len(attestation_certificate_chain) <= 8
+    ):
+        raise DSIProviderUnavailable("dsi_vision_attestation_chain_invalid")
+
+    payload = await _post_image(
+        "/v1/dsi/capture-verifications",
+        content=content,
+        content_type=content_type,
+        filename=filename,
+        form_data={
+            "subject_id": subject_id,
+            "consent_id": consent_id,
+            "consent_version": consent_version,
+            "resource_id": resource_id,
+            "purpose": purpose,
+            "challenge_id": challenge_id,
+            "nonce_b64url": nonce_b64url,
+            "manifest_canonical_json": manifest_canonical_json,
+            "manifest_signature_base64url": manifest_signature_base64url,
+            "attestation_certificate_chain_base64url": json.dumps(
+                attestation_certificate_chain,
+                separators=(",", ":"),
+            ),
+            "play_integrity_token": play_integrity_token,
+        },
+    )
+    receipt = payload.get("receipt")
+    verification = payload.get("verification")
+    if not (
+        payload.get("status") == "capture_verified"
+        and isinstance(receipt, dict)
+        and isinstance(receipt.get("receipt_id"), str)
+        and receipt.get("verification_status") == "verified_by_trusted_vision_service"
+        and receipt.get("subject_id") == subject_id
+        and receipt.get("resource_id") == resource_id
+        and receipt.get("purpose") == purpose
+        and isinstance(receipt.get("manifest_sha256"), str)
+        and isinstance(receipt.get("image_sha256"), str)
+        and isinstance(receipt.get("device_pipeline_fingerprint_sha256"), str)
+        and isinstance(verification, dict)
+        and verification.get("android_key_attestation") == "verified"
+        and verification.get("play_integrity") == "verified"
+        and payload.get("absolute_colour_measurement_approved") is False
+    ):
+        raise DSIProviderUnavailable("dsi_vision_capture_receipt_contract_invalid")
+    return payload
+
+
+async def verify_dsi_capture_receipt(
+    *,
+    receipt_id: str,
+    subject_id: str,
+    resource_id: str,
+    purpose: str,
+    manifest_sha256: str,
+    image_sha256: str,
+    device_pipeline_fingerprint_sha256: str,
+) -> dict:
+    payload = await _post_json(
+        "/v1/dsi/capture-receipts/verify",
+        {
+            "receipt_id": receipt_id,
+            "subject_id": subject_id,
+            "resource_id": resource_id,
+            "purpose": purpose,
+            "manifest_sha256": manifest_sha256,
+            "image_sha256": image_sha256,
+            "device_pipeline_fingerprint_sha256": device_pipeline_fingerprint_sha256,
+        },
+    )
+    receipt = payload.get("receipt")
+    if not (
+        payload.get("verified") is True
+        and isinstance(receipt, dict)
+        and receipt.get("receipt_id") == receipt_id
+        and receipt.get("subject_id") == subject_id
+        and receipt.get("resource_id") == resource_id
+        and receipt.get("purpose") == purpose
+        and receipt.get("manifest_sha256") == manifest_sha256
+        and receipt.get("image_sha256") == image_sha256
+        and receipt.get("device_pipeline_fingerprint_sha256") == device_pipeline_fingerprint_sha256
+        and receipt.get("verification_status") == "verified_by_trusted_vision_service"
+    ):
+        raise DSIProviderUnavailable("dsi_vision_capture_receipt_contract_invalid")
+    return receipt
