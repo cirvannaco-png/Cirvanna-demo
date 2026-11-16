@@ -1166,6 +1166,12 @@ async def _appearance_forward(
             raise HTTPException(502, detail={"code": "APPEARANCE_SESSION_SCOPE_MISMATCH"})
         # The browser does not need the internal subject key; the BFF owns its binding.
         look.pop("subject_id", None)
+    looks = result.get("looks") if isinstance(result, dict) else None
+    if isinstance(looks, list):
+        for summary in looks:
+            if not isinstance(summary, dict) or summary.get("subject_id") != subject:
+                raise HTTPException(502, detail={"code": "APPEARANCE_SESSION_SCOPE_MISMATCH"})
+            summary.pop("subject_id", None)
     elif isinstance(result, dict) and result.get("subject_id") not in {None, subject}:
         raise HTTPException(502, detail={"code": "APPEARANCE_SESSION_SCOPE_MISMATCH"})
     return _private_json_response(result, status_code=upstream.status_code)
@@ -1541,6 +1547,14 @@ async def upload_appearance_source(request: Request, look_id: str) -> Response:
 @app.post("/api/appearance/looks", status_code=201)
 async def create_appearance_look(request: Request, payload: dict = Body(...)) -> Response:
     return await _appearance_forward(request, "POST", "/v1/looks", payload=payload)
+
+
+@app.get("/api/appearance/looks")
+async def list_appearance_looks(
+    request: Request,
+    limit: int = Query(default=24, ge=1, le=50),
+) -> Response:
+    return await _appearance_forward(request, "GET", "/v1/looks", query={"limit": limit})
 
 
 @app.get("/api/appearance/looks/{look_id}")
