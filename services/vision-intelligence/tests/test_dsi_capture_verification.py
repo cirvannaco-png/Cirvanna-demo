@@ -202,3 +202,94 @@ def test_future_dated_play_integrity_payload_is_rejected():
             signing_certificate_sha256_hex="ab" * 32,
             now_ms=now,
         )
+
+
+def test_identity_receipt_is_not_persisted_until_both_proofs_pass(monkeypatch):
+    import asyncio
+    from app import dsi_capture_verification as verification
+
+    envelope, image, nonce, _manifest, request_hash = envelope_and_image()
+    monkeypatch.setenv("DSI_ANDROID_CAPTURE_PACKAGE_NAME", "co.cirvanna.app")
+    monkeypatch.setenv("DSI_ANDROID_CAPTURE_MIN_VERSION_CODE", "40")
+    monkeypatch.setenv("DSI_ANDROID_CAPTURE_SIGNING_CERT_SHA256", "ab" * 32)
+    monkeypatch.setenv("DSI_ANDROID_CAPTURE_SDK_VERSION", "1.0.0")
+
+    async def key_verified(_envelope, _nonce, _policy):
+        return {
+            "status": "verified",
+            "keySecurityLevel": "trusted_environment",
+            "verifiedBootState": "verified",
+            "deviceLocked": True,
+            "certificateChainVerified": True,
+            "attestationChallengeMatched": True,
+            "manifestSignatureVerified": True,
+            "packageName": "co.cirvanna.app",
+            "packageCertificateSha256": "ab" * 32,
+        }
+
+    monkeypatch.setattr(verification, "run_android_key_verifier", key_verified)
+    payload = play_payload(now_ms=1_800_000_000_000, request_hash=request_hash)
+    monkeypatch.setattr(verification, "decode_play_integrity_token", lambda **_kwargs: payload)
+    persisted = []
+
+    async def persist(**_kwargs):
+        persisted.append(True)
+        return {"receipt_id": "dsi_receipt_1234567890"}
+
+    monkeypatch.setattr(verification, "persist_identity_capture_receipt", persist)
+    monkeypatch.setattr(verification.time, "time", lambda: 1_800_000_000)
+    result = asyncio.run(
+        verification.verify_and_persist_capture(
+            envelope,
+            challenge_nonce_base64url=nonce,
+            image_bytes=image,
+        )
+    )
+    assert result["status"] == "verified"
+    assert result["absolute_colour_measurement_approved"] is False
+    assert persisted == [True]
+
+
+def test_invalid_play_integrity_claim_never_consumes_identity_challenge(monkeypatch):
+    import asyncio
+    from app import dsi_capture_verification as verification
+
+    envelope, image, nonce, _manifest, request_hash = envelope_and_image()
+    monkeypatch.setenv("DSI_ANDROID_CAPTURE_PACKAGE_NAME", "co.cirvanna.app")
+    monkeypatch.setenv("DSI_ANDROID_CAPTURE_MIN_VERSION_CODE", "40")
+    monkeypatch.setenv("DSI_ANDROID_CAPTURE_SIGNING_CERT_SHA256", "ab" * 32)
+    monkeypatch.setenv("DSI_ANDROID_CAPTURE_SDK_VERSION", "1.0.0")
+
+    async def key_verified(_envelope, _nonce, _policy):
+        return {
+            "status": "verified",
+            "keySecurityLevel": "trusted_environment",
+            "verifiedBootState": "verified",
+            "deviceLocked": True,
+            "certificateChainVerified": True,
+            "attestationChallengeMatched": True,
+            "manifestSignatureVerified": True,
+            "packageName": "co.cirvanna.app",
+            "packageCertificateSha256": "ab" * 32,
+        }
+
+    monkeypatch.setattr(verification, "run_android_key_verifier", key_verified)
+    invalid_payload = play_payload(now_ms=1_800_000_000_000, request_hash="attacker-hash")
+    monkeypatch.setattr(verification, "decode_play_integrity_token", lambda **_kwargs: invalid_payload)
+    persisted = []
+
+    async def persist(**_kwargs):
+        persisted.append(True)
+        return {"receipt_id": "should-not-exist"}
+
+    monkeypatch.setattr(verification, "persist_identity_capture_receipt", persist)
+    monkeypatch.setattr(verification.time, "time", lambda: 1_800_000_000)
+    with pytest.raises(CaptureVerificationError):
+        asyncio.run(
+            verification.verify_and_persist_capture(
+                envelope,
+                challenge_nonce_base64url=nonce,
+                image_bytes=image,
+            )
+        )
+    assert persisted == []
