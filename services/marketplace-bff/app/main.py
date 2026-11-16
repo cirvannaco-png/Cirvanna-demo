@@ -1307,37 +1307,26 @@ async def revoke_appearance_consent(request: Request, payload: AppearanceConsent
         ]
         if not active:
             return _private_json_response({"status": "already_revoked", "look_id": payload.look_id})
-
-        # A consent bundle is represented by one receipt per granted scope. Validate
-        # every matching receipt before making writes, then revoke all of them. If a
-        # provider call fails partway through, a retry re-lists active receipts and
-        # safely continues with only the scopes that remain active.
-        receipt_ids: list[str] = []
-        for item in active:
-            receipt_id = item.get("receipt_id")
-            if not isinstance(receipt_id, str) or not receipt_id.strip():
-                raise HTTPException(502, detail={"code": "APPEARANCE_CONSENT_RECEIPT_INVALID"})
-            if receipt_id not in receipt_ids:
-                receipt_ids.append(receipt_id)
-
-        for receipt_id in receipt_ids:
-            try:
-                revoked = await client.post(
-                    identity_base + f"/v1/tal/consents/{receipt_id}/revoke",
-                    params={"subject_id": subject},
-                    headers=headers,
-                )
-            except httpx.HTTPError as exc:
-                raise HTTPException(503, detail={"code": "APPEARANCE_CONSENT_REVOCATION_UNAVAILABLE"}) from exc
-            if revoked.status_code != 200:
-                raise HTTPException(503, detail={"code": "APPEARANCE_CONSENT_REVOCATION_FAILED"})
-            try:
-                result = revoked.json()
-            except ValueError as exc:
-                raise HTTPException(502, detail={"code": "APPEARANCE_CONSENT_REVOCATION_RESPONSE_INVALID"}) from exc
-            if not isinstance(result, dict) or result.get("status") not in {"revoked", "already_denied"}:
-                raise HTTPException(502, detail={"code": "APPEARANCE_CONSENT_REVOCATION_RESPONSE_INVALID"})
-    return _private_json_response({"status": "revoked", "look_id": payload.look_id})
+        receipt_id = active[0].get("receipt_id")
+        if not isinstance(receipt_id, str):
+            raise HTTPException(502, detail={"code": "APPEARANCE_CONSENT_RECEIPT_INVALID"})
+        try:
+            revoked = await client.post(
+                identity_base + f"/v1/tal/consents/{receipt_id}/revoke",
+                params={"subject_id": subject},
+                headers=headers,
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "APPEARANCE_CONSENT_REVOCATION_UNAVAILABLE"}) from exc
+        if revoked.status_code != 200:
+            raise HTTPException(503, detail={"code": "APPEARANCE_CONSENT_REVOCATION_FAILED"})
+        try:
+            result = revoked.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "APPEARANCE_CONSENT_REVOCATION_RESPONSE_INVALID"}) from exc
+        if not isinstance(result, dict) or result.get("status") not in {"revoked", "already_denied"}:
+            raise HTTPException(502, detail={"code": "APPEARANCE_CONSENT_REVOCATION_RESPONSE_INVALID"})
+    return _private_json_response({"status": result["status"], "look_id": payload.look_id})
 
 
 @app.delete("/api/appearance/looks/{look_id}/source/{asset_id}")
