@@ -225,11 +225,11 @@ async def issue_dsi_capture_challenge(*, payload: dict[str, str]) -> dict:
         not isinstance(result, dict)
         or result.get("status") != "issued"
         or not isinstance(challenge, dict)
-        or not isinstance(challenge.get("challenge_id"), str)
-        or not isinstance(challenge.get("nonce_b64url"), str)
-        or len(challenge["nonce_b64url"]) != 43
-        or challenge.get("nonce_bytes") != 32
-        or not isinstance(challenge.get("expires_at"), str)
+        or not isinstance(challenge.get("challengeId"), str)
+        or not isinstance(challenge.get("nonceBase64Url"), str)
+        or len(challenge["nonceBase64Url"]) != 43
+        or not isinstance(challenge.get("expiresAtEpochMs"), int)
+        or challenge["expiresAtEpochMs"] <= 0
     ):
         raise DSIProviderUnavailable("dsi_capture_challenge_contract_invalid")
     return challenge
