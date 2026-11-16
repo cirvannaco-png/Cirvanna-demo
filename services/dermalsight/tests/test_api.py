@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import hashlib
 
 import numpy as np
 from fastapi.testclient import TestClient
@@ -27,6 +28,44 @@ def png_bytes() -> bytes:
     buffer = io.BytesIO()
     Image.new("RGB", (12, 10), color=(100, 120, 140)).save(buffer, format="PNG")
     return buffer.getvalue()
+
+
+
+def _analysis_form(image: bytes) -> dict[str, str]:
+    return {
+        "consent": "true",
+        "subject_id": "user-dsi-api-001",
+        "consent_id": "consent-dsi-api-001",
+        "consent_version": "dsi-v1",
+        "resource_id": "dsi-analysis-001",
+        "capture_receipt_id": "dsi-receipt-api-0001",
+        "capture_manifest_sha256": "1" * 64,
+        "capture_image_sha256": hashlib.sha256(image).hexdigest(),
+        "device_pipeline_fingerprint_sha256": "2" * 64,
+    }
+
+
+def _allow_capture_proof(monkeypatch, *, receipt_matches: bool = True) -> None:
+    async def allow_consent(**_kwargs):
+        return {"verified": True}
+
+    async def allow_receipt(**kwargs):
+        receipt = {
+            "receipt_id": kwargs["receipt_id"],
+            "subject_id": kwargs["subject_id"],
+            "resource_id": kwargs["resource_id"],
+            "purpose": kwargs["purpose"],
+            "manifest_sha256": kwargs["manifest_sha256"],
+            "image_sha256": kwargs["image_sha256"],
+            "device_pipeline_fingerprint_sha256": kwargs["device_pipeline_fingerprint_sha256"],
+            "verification_status": "verified_by_trusted_vision_service",
+        }
+        if not receipt_matches:
+            receipt["receipt_id"] = "wrong-receipt"
+        return receipt
+
+    monkeypatch.setattr(dermalsight, "verify_dsi_consent", allow_consent)
+    monkeypatch.setattr(dermalsight, "verify_dsi_capture_receipt", allow_receipt)
 
 
 def test_health_is_liveness_only():
@@ -99,26 +138,29 @@ def test_explicit_consent_is_required(monkeypatch):
 
 def test_no_model_means_no_heuristic_fallback(monkeypatch):
     monkeypatch.setenv("DERMALSIGHT_API_TOKEN", "test-only-token")
+    _allow_capture_proof(monkeypatch)
     monkeypatch.setattr(dermalsight, "get_model_adapter", lambda: None)
+    image = png_bytes()
     response = client.post(
         "/api/v1/analyze",
         headers={"Authorization": "Bearer test-only-token"},
-        data={"consent": "true"},
-        files={"image": ("x.png", png_bytes(), "image/png")},
+        data=_analysis_form(image),
+        files={"image": ("x.png", image, "image/png")},
     )
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "MODEL_NOT_CONFIGURED"
     assert "heuristic fallback is disabled" in response.json()["detail"]["detail"]
 
-
 def test_valid_image_uses_adapter_and_returns_non_diagnostic_scores(monkeypatch):
     monkeypatch.setenv("DERMALSIGHT_API_TOKEN", "test-only-token")
+    _allow_capture_proof(monkeypatch)
     monkeypatch.setattr(dermalsight, "get_model_adapter", lambda: FakeAdapter())
+    image = png_bytes()
     response = client.post(
         "/api/v1/analyze",
         headers={"Authorization": "Bearer test-only-token"},
-        data={"consent": "true"},
-        files={"image": ("x.png", png_bytes(), "image/png")},
+        data=_analysis_form(image),
+        files={"image": ("x.png", image, "image/png")},
     )
     assert response.status_code == 200, response.text
     data = response.json()
@@ -128,47 +170,48 @@ def test_valid_image_uses_adapter_and_returns_non_diagnostic_scores(monkeypatch)
     assert "not a medical diagnosis" in data["disclaimer"]
     assert "no-store" in response.headers["cache-control"]
 
-
 def test_rejects_mime_mismatch(monkeypatch):
     monkeypatch.setenv("DERMALSIGHT_API_TOKEN", "test-only-token")
+    _allow_capture_proof(monkeypatch)
     monkeypatch.setattr(dermalsight, "get_model_adapter", lambda: FakeAdapter())
+    image = png_bytes()
     response = client.post(
         "/api/v1/analyze",
         headers={"Authorization": "Bearer test-only-token"},
-        data={"consent": "true"},
-        files={"image": ("x.png", png_bytes(), "image/jpeg")},
+        data=_analysis_form(image),
+        files={"image": ("x.png", image, "image/jpeg")},
     )
     assert response.status_code == 415
     assert response.json()["detail"]["code"] == "IMAGE_MIME_MISMATCH"
 
-
 def test_rejects_invalid_image_bytes(monkeypatch):
     monkeypatch.setenv("DERMALSIGHT_API_TOKEN", "test-only-token")
+    _allow_capture_proof(monkeypatch)
     monkeypatch.setattr(dermalsight, "get_model_adapter", lambda: FakeAdapter())
+    image = b"not-an-image"
     response = client.post(
         "/api/v1/analyze",
         headers={"Authorization": "Bearer test-only-token"},
-        data={"consent": "true"},
-        files={"image": ("x.png", b"not-an-image", "image/png")},
+        data=_analysis_form(image),
+        files={"image": ("x.png", image, "image/png")},
     )
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "INVALID_IMAGE"
 
-
 def test_rejects_oversized_upload(monkeypatch):
     monkeypatch.setenv("DERMALSIGHT_API_TOKEN", "test-only-token")
+    _allow_capture_proof(monkeypatch)
     monkeypatch.setattr(dermalsight, "get_model_adapter", lambda: FakeAdapter())
     monkeypatch.setattr(dermalsight, "MAX_IMAGE_BYTES", 10)
+    image = png_bytes()
     response = client.post(
         "/api/v1/analyze",
         headers={"Authorization": "Bearer test-only-token"},
-        data={"consent": "true"},
-        files={"image": ("x.png", png_bytes(), "image/png")},
+        data=_analysis_form(image),
+        files={"image": ("x.png", image, "image/png")},
     )
     assert response.status_code == 413
     assert response.json()["detail"]["code"] == "IMAGE_SIZE_LIMIT_EXCEEDED"
-
-
 
 def test_dsi_capture_plan_requires_service_authentication(monkeypatch):
     monkeypatch.delenv("DERMALSIGHT_API_TOKEN", raising=False)
@@ -198,3 +241,59 @@ def test_dsi_capture_plan_returns_guidance_without_accepting_media(monkeypatch):
     assert payload["raw_media_retention_enabled"] is False
     assert payload["global_training_consent_included"] is False
     assert payload["discovery_must_continue_without_dsi"] is True
+
+    
+
+def test_legacy_analyze_rejects_missing_capture_receipt_before_inference(monkeypatch):
+    monkeypatch.setenv("DERMALSIGHT_API_TOKEN", "test-only-token")
+    monkeypatch.setattr(
+        dermalsight,
+        "get_model_adapter",
+        lambda: pytest.fail("model must not load without a verified capture receipt"),
+    )
+    response = client.post(
+        "/api/v1/analyze",
+        headers={"Authorization": "Bearer test-only-token"},
+        data={"consent": "true"},
+        files={"image": ("x.png", png_bytes(), "image/png")},
+    )
+    assert response.status_code == 422
+
+
+def test_legacy_analyze_rejects_image_substitution_before_model_loading(monkeypatch):
+    monkeypatch.setenv("DERMALSIGHT_API_TOKEN", "test-only-token")
+    _allow_capture_proof(monkeypatch)
+    monkeypatch.setattr(
+        dermalsight,
+        "get_model_adapter",
+        lambda: pytest.fail("model must not load for an image that differs from its receipt"),
+    )
+    image = png_bytes()
+    form = _analysis_form(image + b"substituted")
+    response = client.post(
+        "/api/v1/analyze",
+        headers={"Authorization": "Bearer test-only-token"},
+        data=form,
+        files={"image": ("x.png", image, "image/png")},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "DSI_CAPTURE_IMAGE_RECEIPT_MISMATCH"
+
+
+def test_legacy_analyze_rejects_wrong_receipt_scope(monkeypatch):
+    monkeypatch.setenv("DERMALSIGHT_API_TOKEN", "test-only-token")
+    _allow_capture_proof(monkeypatch, receipt_matches=False)
+    monkeypatch.setattr(
+        dermalsight,
+        "get_model_adapter",
+        lambda: pytest.fail("model must not load for a receipt with wrong scope"),
+    )
+    image = png_bytes()
+    response = client.post(
+        "/api/v1/analyze",
+        headers={"Authorization": "Bearer test-only-token"},
+        data=_analysis_form(image),
+        files={"image": ("x.png", image, "image/png")},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "DSI_CAPTURE_RECEIPT_SCOPE_MISMATCH"
