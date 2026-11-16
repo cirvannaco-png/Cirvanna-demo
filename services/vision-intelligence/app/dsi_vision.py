@@ -155,10 +155,29 @@ def dsi_ready() -> JSONResponse:
 
 
 @router.post("/face-landmarks", dependencies=[Depends(require_dsi_worker)])
-async def face_landmarks(image: Annotated[UploadFile, File()]) -> JSONResponse:
-    """Return single-face 478-point geometry landmarks; no identity features."""
+async def face_landmarks(
+    subject_id: Annotated[str, Form(min_length=1, max_length=128)],
+    resource_id: Annotated[str, Form(min_length=3, max_length=160)],
+    purpose: Literal["facial_geometry_analysis"] = Form(),
+    receipt_id: Annotated[str, Form(min_length=12, max_length=80)],
+    manifest_sha256: Annotated[str, Form(pattern=r"^[a-f0-9]{64}$")],
+    image_sha256: Annotated[str, Form(pattern=r"^[a-f0-9]{64}$")],
+    device_pipeline_fingerprint_sha256: Annotated[str, Form(pattern=r"^[a-f0-9]{64}$")],
+    image: Annotated[UploadFile, File()],
+) -> JSONResponse:
+    """Return single-face landmarks only after re-verifying exact capture receipt."""
     _data, decoded = await _read_image(image)
     try:
+        await _require_dsi_capture_receipt(
+            subject_id=subject_id,
+            resource_id=resource_id,
+            purpose=purpose,
+            receipt_id=receipt_id,
+            manifest_sha256=manifest_sha256,
+            image_sha256=image_sha256,
+            device_pipeline_fingerprint_sha256=device_pipeline_fingerprint_sha256,
+            image_bytes=_data,
+        )
         try:
             landmarker = dsi_models.get_face_landmarker()
             result = landmarker.detect(_mp_image(decoded))
@@ -217,10 +236,29 @@ def _png_base64(mask: np.ndarray) -> str:
 
 
 @router.post("/skin-segmentation", dependencies=[Depends(require_dsi_worker)])
-async def skin_segmentation(image: Annotated[UploadFile, File()]) -> JSONResponse:
-    """Return in-memory, pixel-aligned skin-region masks for authorized DSI callers."""
+async def skin_segmentation(
+    subject_id: Annotated[str, Form(min_length=1, max_length=128)],
+    resource_id: Annotated[str, Form(min_length=3, max_length=160)],
+    purpose: Literal["cosmetic_skin_analysis", "body_tone_analysis"] = Form(),
+    receipt_id: Annotated[str, Form(min_length=12, max_length=80)],
+    manifest_sha256: Annotated[str, Form(pattern=r"^[a-f0-9]{64}$")],
+    image_sha256: Annotated[str, Form(pattern=r"^[a-f0-9]{64}$")],
+    device_pipeline_fingerprint_sha256: Annotated[str, Form(pattern=r"^[a-f0-9]{64}$")],
+    image: Annotated[UploadFile, File()],
+) -> JSONResponse:
+    """Return segmentation masks only after re-verifying exact capture receipt."""
     _data, decoded = await _read_image(image)
     try:
+        await _require_dsi_capture_receipt(
+            subject_id=subject_id,
+            resource_id=resource_id,
+            purpose=purpose,
+            receipt_id=receipt_id,
+            manifest_sha256=manifest_sha256,
+            image_sha256=image_sha256,
+            device_pipeline_fingerprint_sha256=device_pipeline_fingerprint_sha256,
+            image_bytes=_data,
+        )
         try:
             segmenter = dsi_models.get_skin_segmenter()
             result = segmenter.segment(_mp_image(decoded))
@@ -298,6 +336,13 @@ async def skin_segmentation(image: Annotated[UploadFile, File()]) -> JSONRespons
 
 @router.post("/colorchecker-tone-preview", dependencies=[Depends(require_dsi_worker)])
 async def colorchecker_tone_preview(
+    subject_id: Annotated[str, Form(min_length=1, max_length=128)],
+    resource_id: Annotated[str, Form(min_length=3, max_length=160)],
+    purpose: Literal["cosmetic_skin_analysis", "body_tone_analysis"] = Form(),
+    receipt_id: Annotated[str, Form(min_length=12, max_length=80)],
+    manifest_sha256: Annotated[str, Form(pattern=r"^[a-f0-9]{64}$")],
+    image_sha256: Annotated[str, Form(pattern=r"^[a-f0-9]{64}$")],
+    device_pipeline_fingerprint_sha256: Annotated[str, Form(pattern=r"^[a-f0-9]{64}$")],
     image: Annotated[UploadFile, File()],
     profile_id: Annotated[str, Form(min_length=1, max_length=128)],
     patch_grid_corners: Annotated[str, Form(min_length=20, max_length=1000)],
@@ -325,6 +370,16 @@ async def colorchecker_tone_preview(
 
     _data, decoded = await _read_image(image)
     try:
+        await _require_dsi_capture_receipt(
+            subject_id=subject_id,
+            resource_id=resource_id,
+            purpose=purpose,
+            receipt_id=receipt_id,
+            manifest_sha256=manifest_sha256,
+            image_sha256=image_sha256,
+            device_pipeline_fingerprint_sha256=device_pipeline_fingerprint_sha256,
+            image_bytes=_data,
+        )
         try:
             segmenter = dsi_models.get_skin_segmenter()
             result = segmenter.segment(_mp_image(decoded))
@@ -694,3 +749,50 @@ async def verify_capture_receipt(
     ):
         raise HTTPException(403, detail={"code": "DSI_CAPTURE_RECEIPT_SCOPE_MISMATCH"})
     return _no_store({"verified": True, "receipt": receipt})
+
+
+async def _require_dsi_capture_receipt(
+    *,
+    subject_id: str,
+    resource_id: str,
+    purpose: str,
+    receipt_id: str,
+    manifest_sha256: str,
+    image_sha256: str,
+    device_pipeline_fingerprint_sha256: str,
+    image_bytes: bytes,
+) -> dict[str, Any]:
+    """Vision independently enforces the same receipt and byte binding as DermalSight."""
+    if hashlib.sha256(image_bytes).hexdigest() != image_sha256:
+        raise HTTPException(403, detail={"code": "DSI_CAPTURE_IMAGE_RECEIPT_MISMATCH"})
+    try:
+        request = DSICaptureReceiptVerificationRequest(
+            receipt_id=receipt_id,
+            subject_id=subject_id,
+            resource_id=resource_id,
+            purpose=purpose,
+            manifest_sha256=manifest_sha256,
+            image_sha256=image_sha256,
+            device_pipeline_fingerprint_sha256=device_pipeline_fingerprint_sha256,
+        )
+    except Exception as exc:
+        raise HTTPException(422, detail={"code": "DSI_CAPTURE_RECEIPT_REQUEST_INVALID"}) from exc
+    identity = await _identity_dsi_capture_post(
+        "/internal/v1/dsi/capture-receipts/verify",
+        request.model_dump(mode="json"),
+    )
+    receipt = identity.get("receipt")
+    if identity.get("verified") is not True or not isinstance(receipt, dict):
+        raise HTTPException(403, detail={"code": "DSI_CAPTURE_RECEIPT_NOT_VERIFIED"})
+    if (
+        receipt.get("receipt_id") != receipt_id
+        or receipt.get("subject_id") != subject_id
+        or receipt.get("resource_id") != resource_id
+        or receipt.get("purpose") != purpose
+        or receipt.get("manifest_sha256") != manifest_sha256
+        or receipt.get("image_sha256") != image_sha256
+        or receipt.get("device_pipeline_fingerprint_sha256") != device_pipeline_fingerprint_sha256
+        or receipt.get("verification_status") != "verified_by_trusted_vision_service"
+    ):
+        raise HTTPException(403, detail={"code": "DSI_CAPTURE_RECEIPT_SCOPE_MISMATCH"})
+    return receipt
