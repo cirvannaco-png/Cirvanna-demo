@@ -7,11 +7,13 @@ does not provision a second database or expose a public end-user identity API.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import hmac
 import json
 import os
 import re
+import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
@@ -115,6 +117,69 @@ class ConsentReceipt(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+
+
+
+class DSICaptureChallengeRow(Base):
+    """Short-lived DSI challenge state; raw nonce material is never persisted."""
+
+    __tablename__ = "identity_dsi_capture_challenges"
+    __table_args__ = (
+        Index("ix_identity_dsi_capture_challenge_subject", "subject_id", "created_at"),
+        Index("ix_identity_dsi_capture_challenge_expiry", "expires_at"),
+    )
+    challenge_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    subject_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    consent_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    consent_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    resource_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(64), nullable=False)
+    required_scopes: Mapped[list] = mapped_column(JSON, nullable=False)
+    consent_receipt_ids: Mapped[list] = mapped_column(JSON, nullable=False)
+    nonce_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    verification_receipt_id: Mapped[str | None] = mapped_column(String(80))
+
+
+class DSICaptureVerificationReceiptRow(Base):
+    """Immutable, short-lived record created only by the trusted Vision verifier."""
+
+    __tablename__ = "identity_dsi_capture_verification_receipts"
+    __table_args__ = (
+        UniqueConstraint("challenge_id", name="uq_identity_dsi_capture_receipt_challenge"),
+        Index("ix_identity_dsi_capture_receipt_subject", "subject_id", "issued_at"),
+        Index("ix_identity_dsi_capture_receipt_expiry", "expires_at"),
+    )
+    receipt_id: Mapped[str] = mapped_column(String(80), primary_key=True)
+    challenge_id: Mapped[str] = mapped_column(
+        ForeignKey("identity_dsi_capture_challenges.challenge_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    subject_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    consent_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    consent_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    resource_id: Mapped[str] = mapped_column(String(160), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(64), nullable=False)
+    consent_receipt_ids: Mapped[list] = mapped_column(JSON, nullable=False)
+    manifest_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    image_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    device_pipeline_fingerprint_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    key_attestation_challenge_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    play_integrity_request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    package_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    package_certificate_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    app_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    sdk_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    verifier_policy_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    key_security_level: Mapped[str] = mapped_column(String(32), nullable=False)
+    verified_boot_state: Mapped[str] = mapped_column(String(32), nullable=False)
+    app_recognition_verdict: Mapped[str] = mapped_column(String(40), nullable=False)
+    account_licensing_verdict: Mapped[str] = mapped_column(String(40), nullable=False)
+    device_integrity_verdicts: Mapped[list] = mapped_column(JSON, nullable=False)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class TALEvent(Base):
@@ -363,6 +428,96 @@ class ConsentVerify(StrictModel):
         return normalized
 
 
+
+DSI_CAPTURE_PURPOSE_SCOPES: dict[str, tuple[str, ...]] = {
+    "cosmetic_skin_analysis": ("image_processing", "skin_analysis"),
+    "facial_geometry_analysis": ("image_processing", "facial_geometry_analysis"),
+    "body_tone_analysis": ("image_processing", "body_tone_analysis"),
+    "appearance_correction": ("image_processing", "appearance_correction"),
+}
+DSI_CAPTURE_CHALLENGE_TTL_SECONDS = 180
+DSI_CAPTURE_RECEIPT_TTL_SECONDS = 120
+
+
+class DSICaptureChallengeCreate(StrictModel):
+    subject_id: str = Field(min_length=1, max_length=128)
+    consent_id: str = Field(min_length=8, max_length=128)
+    consent_version: str = Field(min_length=1, max_length=80)
+    resource_id: str = Field(min_length=3, max_length=160)
+    purpose: Literal[
+        "cosmetic_skin_analysis",
+        "facial_geometry_analysis",
+        "body_tone_analysis",
+        "appearance_correction",
+    ]
+
+
+class DSICaptureChallengeConsume(StrictModel):
+    nonce_b64url: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
+    manifest_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    image_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    device_pipeline_fingerprint_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    key_attestation_challenge_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    play_integrity_request_hash: str = Field(pattern=r"^[a-f0-9]{64}$")
+    package_name: str = Field(min_length=3, max_length=200)
+    package_certificate_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    app_version: str = Field(min_length=1, max_length=80)
+    sdk_version: str = Field(min_length=1, max_length=80)
+    verifier_policy_version: str = Field(min_length=1, max_length=80)
+    key_security_level: Literal["strongbox", "trusted_environment", "software"]
+    verified_boot_state: Literal["verified", "self_signed", "unverified", "failed"]
+    app_recognition_verdict: Literal["PLAY_RECOGNIZED", "UNRECOGNIZED_VERSION", "UNEVALUATED"]
+    account_licensing_verdict: Literal["LICENSED", "UNLICENSED", "UNEVALUATED"]
+    device_integrity_verdicts: list[
+        Literal["MEETS_BASIC_INTEGRITY", "MEETS_DEVICE_INTEGRITY", "MEETS_STRONG_INTEGRITY"]
+    ] = Field(min_length=1, max_length=3)
+
+    @field_validator("nonce_b64url")
+    @classmethod
+    def validate_nonce_encoding(cls, value: str) -> str:
+        try:
+            raw = base64.urlsafe_b64decode(value + "=")
+        except (ValueError, base64.binascii.Error) as exc:
+            raise ValueError("nonce must be canonical base64url") from exc
+        if len(raw) != 32 or base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii") != value:
+            raise ValueError("nonce must encode exactly 32 canonical bytes")
+        return value
+
+    @model_validator(mode="after")
+    def validate_verified_claims(self):
+        expected = hashlib.sha256(base64.urlsafe_b64decode(self.nonce_b64url + "=")).hexdigest()
+        if self.key_attestation_challenge_sha256 != expected:
+            raise ValueError("key-attestation challenge digest must match the issued nonce")
+        if self.play_integrity_request_hash != self.manifest_sha256:
+            raise ValueError("Play Integrity requestHash must match the canonical manifest digest")
+        if self.key_security_level == "software":
+            raise ValueError("software-backed keys cannot produce a hardware capture receipt")
+        if self.verified_boot_state != "verified":
+            raise ValueError("verified boot is required by the current capture verifier policy")
+        if self.app_recognition_verdict != "PLAY_RECOGNIZED":
+            raise ValueError("Play Integrity must recognize the expected application")
+        if self.account_licensing_verdict != "LICENSED":
+            raise ValueError("Play Integrity must report an active app license")
+        if not ({"MEETS_DEVICE_INTEGRITY", "MEETS_STRONG_INTEGRITY"} & set(self.device_integrity_verdicts)):
+            raise ValueError("Play Integrity must meet the configured device-integrity threshold")
+        return self
+
+
+class DSICaptureReceiptVerify(StrictModel):
+    receipt_id: str = Field(min_length=12, max_length=80)
+    subject_id: str = Field(min_length=1, max_length=128)
+    resource_id: str = Field(min_length=3, max_length=160)
+    purpose: Literal[
+        "cosmetic_skin_analysis",
+        "facial_geometry_analysis",
+        "body_tone_analysis",
+        "appearance_correction",
+    ]
+    manifest_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    image_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    device_pipeline_fingerprint_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+
 class EventPut(StrictModel):
     event_id: str = Field(min_length=1, max_length=128)
     idempotency_key: str = Field(min_length=8, max_length=160)
@@ -417,6 +572,98 @@ def require_internal_token(
         raise HTTPException(503, detail={"code": "IDENTITY_SERVICE_TOKEN_NOT_CONFIGURED"})
     if credentials is None or not hmac.compare_digest(credentials.credentials, expected):
         raise HTTPException(401, detail={"code": "INTERNAL_AUTH_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
+
+
+
+
+
+def require_dsi_capture_service(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+) -> None:
+    """Separate machine credential held only by DermalSight/Vision service identities."""
+    expected = os.getenv("IDENTITY_DSI_CAPTURE_SERVICE_TOKEN", "").strip()
+    if len(expected.encode("utf-8")) < 32:
+        raise HTTPException(503, detail={"code": "IDENTITY_DSI_CAPTURE_SERVICE_TOKEN_NOT_CONFIGURED"})
+    if credentials is None or not hmac.compare_digest(credentials.credentials, expected):
+        raise HTTPException(401, detail={"code": "DSI_CAPTURE_INTERNAL_AUTH_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
+
+
+def _active_dsi_capture_consent_bundle(
+    db: Session,
+    *,
+    subject_id: str,
+    consent_id: str,
+    consent_version: str,
+    resource_id: str,
+    purpose: str,
+) -> tuple[tuple[str, ...], list[str], datetime]:
+    required_scopes = DSI_CAPTURE_PURPOSE_SCOPES[purpose]
+    statement = select(ConsentReceipt).where(
+        ConsentReceipt.subject_id == subject_id,
+        ConsentReceipt.consent_id == consent_id,
+        ConsentReceipt.resource_id == resource_id,
+        ConsentReceipt.consent_version == consent_version,
+        ConsentReceipt.granted.is_(True),
+        ConsentReceipt.revoked_at.is_(None),
+        ConsentReceipt.expires_at.is_not(None),
+        ConsentReceipt.expires_at > utcnow(),
+    ).with_for_update()
+    rows = list(db.scalars(statement).all())
+    granted = {row.scope for row in rows}
+    missing = sorted(set(required_scopes) - granted)
+    if missing:
+        raise HTTPException(403, detail={"code": "DSI_CAPTURE_CONSENT_INCOMPLETE", "missing_scopes": missing})
+    selected = [row for row in rows if row.scope in required_scopes]
+    if len({row.consent_version for row in selected}) != 1:
+        raise HTTPException(403, detail={"code": "DSI_CAPTURE_CONSENT_VERSION_MISMATCH"})
+    receipt_ids = sorted(row.receipt_id for row in selected)
+    expiry_values = [normalize_utc(row.expires_at) for row in selected]
+    if not receipt_ids or any(value is None for value in expiry_values):
+        raise HTTPException(403, detail={"code": "DSI_CAPTURE_CONSENT_EXPIRY_REQUIRED"})
+    return required_scopes, receipt_ids, min(expiry_values)
+
+
+def _capture_receipt_public_payload(row: DSICaptureVerificationReceiptRow) -> dict[str, object]:
+    return {
+        "receipt_id": row.receipt_id,
+        "challenge_id": row.challenge_id,
+        "subject_id": row.subject_id,
+        "consent_id": row.consent_id,
+        "consent_version": row.consent_version,
+        "resource_id": row.resource_id,
+        "purpose": row.purpose,
+        "consent_receipt_ids": row.consent_receipt_ids,
+        "manifest_sha256": row.manifest_sha256,
+        "image_sha256": row.image_sha256,
+        "device_pipeline_fingerprint_sha256": row.device_pipeline_fingerprint_sha256,
+        "package_name": row.package_name,
+        "package_certificate_sha256": row.package_certificate_sha256,
+        "app_version": row.app_version,
+        "sdk_version": row.sdk_version,
+        "verifier_policy_version": row.verifier_policy_version,
+        "key_security_level": row.key_security_level,
+        "verified_boot_state": row.verified_boot_state,
+        "app_recognition_verdict": row.app_recognition_verdict,
+        "account_licensing_verdict": row.account_licensing_verdict,
+        "device_integrity_verdicts": row.device_integrity_verdicts,
+        "issued_at": normalize_utc(row.issued_at).isoformat(),
+        "expires_at": normalize_utc(row.expires_at).isoformat(),
+        "verification_status": "verified_by_trusted_vision_service",
+    }
+
+
+def _dsi_private_response(payload: dict[str, object], status_code: int = 200) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content=payload,
+        headers={
+            "Cache-Control": "no-store, private",
+            "Pragma": "no-cache",
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "no-referrer",
+        },
+    )
+
 
 
 def subject_or_404(subject_id: str) -> str:
@@ -768,6 +1015,215 @@ async def dispatch_twin_consent_revocations(
     db: Session = Depends(get_db),
 ):
     return await _dispatch_twin_consent_revocations(db, limit=limit)
+
+
+
+
+@app.post("/internal/v1/dsi/capture-challenges", dependencies=[Depends(require_dsi_capture_service)])
+def create_dsi_capture_challenge(
+    payload: DSICaptureChallengeCreate,
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Issue a one-use 256-bit challenge bound to an active, expiring DSI consent bundle.
+
+    The random nonce is returned once to the trusted Vision service. Only its SHA-256
+    digest, consent receipt IDs, opaque challenge ID and short expiry are persisted.
+    """
+    subject = subject_or_404(payload.subject_id)
+    now = utcnow()
+    required_scopes, receipt_ids, consent_expiry = _active_dsi_capture_consent_bundle(
+        db,
+        subject_id=subject,
+        consent_id=payload.consent_id,
+        consent_version=payload.consent_version,
+        resource_id=payload.resource_id,
+        purpose=payload.purpose,
+    )
+    expires_at = min(now + timedelta(seconds=DSI_CAPTURE_CHALLENGE_TTL_SECONDS), consent_expiry)
+    if expires_at <= now:
+        raise HTTPException(403, detail={"code": "DSI_CAPTURE_CONSENT_EXPIRED"})
+
+    nonce = secrets.token_bytes(32)
+    nonce_b64url = base64.urlsafe_b64encode(nonce).rstrip(b"=").decode("ascii")
+    nonce_sha256 = hashlib.sha256(nonce).hexdigest()
+    challenge_id = "dsi_challenge_" + uuid.uuid4().hex
+    row = DSICaptureChallengeRow(
+        challenge_id=challenge_id,
+        subject_id=subject,
+        consent_id=payload.consent_id,
+        consent_version=payload.consent_version,
+        resource_id=payload.resource_id,
+        purpose=payload.purpose,
+        required_scopes=list(required_scopes),
+        consent_receipt_ids=receipt_ids,
+        nonce_sha256=nonce_sha256,
+        created_at=now,
+        expires_at=expires_at,
+    )
+    db.add(row)
+    db.commit()
+    return _dsi_private_response({
+        "status": "issued",
+        "challenge_id": challenge_id,
+        "nonce_b64url": nonce_b64url,
+        "nonce_bytes": 32,
+        "nonce_sha256": nonce_sha256,
+        "subject_id": subject,
+        "consent_id": payload.consent_id,
+        "consent_version": payload.consent_version,
+        "resource_id": payload.resource_id,
+        "purpose": payload.purpose,
+        "required_scopes": list(required_scopes),
+        "consent_receipt_ids": receipt_ids,
+        "issued_at": now.isoformat(),
+        "expires_at": expires_at.isoformat(),
+    })
+
+
+@app.post(
+    "/internal/v1/dsi/capture-challenges/{challenge_id}/consume",
+    dependencies=[Depends(require_dsi_capture_service)],
+)
+def consume_dsi_capture_challenge(
+    challenge_id: str,
+    payload: DSICaptureChallengeConsume,
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Atomically consume one challenge after Vision has verified both Google proofs.
+
+    This persistence endpoint does not parse Android certificates or decode Play
+    Integrity tokens. Its dedicated service credential must only be held by the
+    Vision verifier, which must complete those checks before invoking this route.
+    """
+    now = utcnow()
+    challenge = db.scalar(
+        select(DSICaptureChallengeRow)
+        .where(DSICaptureChallengeRow.challenge_id == challenge_id)
+        .with_for_update()
+    )
+    if challenge is None:
+        raise HTTPException(404, detail={"code": "DSI_CAPTURE_CHALLENGE_NOT_FOUND"})
+    if challenge.consumed_at is not None:
+        raise HTTPException(409, detail={"code": "DSI_CAPTURE_CHALLENGE_ALREADY_CONSUMED"})
+    if normalize_utc(challenge.expires_at) <= now:
+        raise HTTPException(410, detail={"code": "DSI_CAPTURE_CHALLENGE_EXPIRED"})
+
+    nonce = base64.urlsafe_b64decode(payload.nonce_b64url + "=")
+    nonce_sha256 = hashlib.sha256(nonce).hexdigest()
+    if not hmac.compare_digest(nonce_sha256, challenge.nonce_sha256):
+        raise HTTPException(403, detail={"code": "DSI_CAPTURE_CHALLENGE_NONCE_MISMATCH"})
+    if payload.key_attestation_challenge_sha256 != nonce_sha256:
+        raise HTTPException(403, detail={"code": "DSI_CAPTURE_ATTESTATION_CHALLENGE_MISMATCH"})
+
+    required_scopes, receipt_ids, consent_expiry = _active_dsi_capture_consent_bundle(
+        db,
+        subject_id=challenge.subject_id,
+        consent_id=challenge.consent_id,
+        consent_version=challenge.consent_version,
+        resource_id=challenge.resource_id,
+        purpose=challenge.purpose,
+    )
+    if (
+        receipt_ids != challenge.consent_receipt_ids
+        or list(required_scopes) != challenge.required_scopes
+        or consent_expiry <= now
+    ):
+        raise HTTPException(403, detail={"code": "DSI_CAPTURE_CONSENT_BINDING_CHANGED"})
+
+    receipt_id = "dsi_receipt_" + uuid.uuid4().hex
+    receipt_expiry = min(now + timedelta(seconds=DSI_CAPTURE_RECEIPT_TTL_SECONDS), consent_expiry)
+    if receipt_expiry <= now:
+        raise HTTPException(403, detail={"code": "DSI_CAPTURE_CONSENT_EXPIRED"})
+
+    # The row lock serializes PostgreSQL consumers; the conditional UPDATE is the
+    # final compare-and-set guard for concurrent retries and SQLite-backed tests.
+    claimed = db.execute(
+        update(DSICaptureChallengeRow)
+        .where(
+            DSICaptureChallengeRow.challenge_id == challenge_id,
+            DSICaptureChallengeRow.nonce_sha256 == nonce_sha256,
+            DSICaptureChallengeRow.consumed_at.is_(None),
+            DSICaptureChallengeRow.expires_at > now,
+        )
+        .values(consumed_at=now, verification_receipt_id=receipt_id)
+    )
+    if claimed.rowcount != 1:
+        db.rollback()
+        raise HTTPException(409, detail={"code": "DSI_CAPTURE_CHALLENGE_ALREADY_CONSUMED_OR_EXPIRED"})
+
+    receipt = DSICaptureVerificationReceiptRow(
+        receipt_id=receipt_id,
+        challenge_id=challenge.challenge_id,
+        subject_id=challenge.subject_id,
+        consent_id=challenge.consent_id,
+        consent_version=challenge.consent_version,
+        resource_id=challenge.resource_id,
+        purpose=challenge.purpose,
+        consent_receipt_ids=receipt_ids,
+        manifest_sha256=payload.manifest_sha256,
+        image_sha256=payload.image_sha256,
+        device_pipeline_fingerprint_sha256=payload.device_pipeline_fingerprint_sha256,
+        key_attestation_challenge_sha256=payload.key_attestation_challenge_sha256,
+        play_integrity_request_hash=payload.play_integrity_request_hash,
+        package_name=payload.package_name,
+        package_certificate_sha256=payload.package_certificate_sha256,
+        app_version=payload.app_version,
+        sdk_version=payload.sdk_version,
+        verifier_policy_version=payload.verifier_policy_version,
+        key_security_level=payload.key_security_level,
+        verified_boot_state=payload.verified_boot_state,
+        app_recognition_verdict=payload.app_recognition_verdict,
+        account_licensing_verdict=payload.account_licensing_verdict,
+        device_integrity_verdicts=list(payload.device_integrity_verdicts),
+        issued_at=now,
+        expires_at=receipt_expiry,
+    )
+    db.add(receipt)
+    db.commit()
+    return _dsi_private_response({
+        "status": "verified_receipt_created",
+        "receipt": _capture_receipt_public_payload(receipt),
+    })
+
+
+@app.post("/internal/v1/dsi/capture-receipts/verify", dependencies=[Depends(require_dsi_capture_service)])
+def verify_dsi_capture_receipt(
+    payload: DSICaptureReceiptVerify,
+    db: Annotated[Session, Depends(get_db)],
+):
+    """Verify exact receipt scope, content digests, expiry and current consent."""
+    receipt = db.get(DSICaptureVerificationReceiptRow, payload.receipt_id)
+    if receipt is None:
+        raise HTTPException(404, detail={"code": "DSI_CAPTURE_RECEIPT_NOT_FOUND"})
+    now = utcnow()
+    if normalize_utc(receipt.expires_at) <= now:
+        raise HTTPException(403, detail={"code": "DSI_CAPTURE_RECEIPT_EXPIRED"})
+    exact = (
+        receipt.subject_id == subject_or_404(payload.subject_id)
+        and receipt.resource_id == payload.resource_id
+        and receipt.purpose == payload.purpose
+        and hmac.compare_digest(receipt.manifest_sha256, payload.manifest_sha256)
+        and hmac.compare_digest(receipt.image_sha256, payload.image_sha256)
+        and hmac.compare_digest(receipt.device_pipeline_fingerprint_sha256, payload.device_pipeline_fingerprint_sha256)
+    )
+    if not exact:
+        raise HTTPException(403, detail={"code": "DSI_CAPTURE_RECEIPT_SCOPE_OR_DIGEST_MISMATCH"})
+    required_scopes, receipt_ids, consent_expiry = _active_dsi_capture_consent_bundle(
+        db,
+        subject_id=receipt.subject_id,
+        consent_id=receipt.consent_id,
+        consent_version=receipt.consent_version,
+        resource_id=receipt.resource_id,
+        purpose=receipt.purpose,
+    )
+    if receipt_ids != receipt.consent_receipt_ids or consent_expiry <= now:
+        raise HTTPException(403, detail={"code": "DSI_CAPTURE_RECEIPT_CONSENT_REVOKED_OR_CHANGED"})
+    return _dsi_private_response({
+        "verified": True,
+        "required_scopes": list(required_scopes),
+        "receipt": _capture_receipt_public_payload(receipt),
+        "checked_at": now.isoformat(),
+    })
 
 
 @app.post("/internal/v1/consents/verify", dependencies=[Depends(require_internal_token)])
