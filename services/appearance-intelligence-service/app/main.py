@@ -807,7 +807,7 @@ def get_look_consent_context(
             raise HTTPException(404, detail={"code": "APPEARANCE_LOOK_NOT_FOUND"})
         base_kind = row.base.get("kind")
         if base_kind == LookBaseKind.SOURCE_PHOTO.value:
-            scopes = ["appearance_session_storage", "appearance_source_storage"]
+            scopes = ["appearance_session_storage", "appearance_source_storage", "image_processing"]
         elif base_kind in {LookBaseKind.VIRTUAL_TWIN.value, LookBaseKind.PREVIOUS_RENDER.value}:
             scopes = ["appearance_session_storage"]
         else:
@@ -831,7 +831,7 @@ async def renew_look_consent(look_id: str, payload: ConsentRenewalIn):
             raise HTTPException(404, detail={"code": "APPEARANCE_LOOK_NOT_FOUND"})
         base_kind = row.base.get("kind")
         if base_kind == LookBaseKind.SOURCE_PHOTO.value:
-            required_scopes = ["appearance_session_storage", "appearance_source_storage"]
+            required_scopes = ["appearance_session_storage", "appearance_source_storage", "image_processing"]
         elif base_kind in {LookBaseKind.VIRTUAL_TWIN.value, LookBaseKind.PREVIOUS_RENDER.value}:
             required_scopes = ["appearance_session_storage"]
         else:
