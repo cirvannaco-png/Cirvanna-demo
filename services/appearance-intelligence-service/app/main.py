@@ -702,29 +702,34 @@ async def list_looks(
             .order_by(AppearanceLookRow.updated_at.desc())
             .limit(limit)
         ).all())
-        summaries = []
-        for row in rows:
-            try:
-                await _verify_consent(
-                    subject_id=subject_id,
-                    consent_id=row.consent_id,
-                    resource_id=row.look_id,
-                    required_scopes=["appearance_session_storage"],
-                )
-                consent_required = False
-            except HTTPException as exc:
-                if exc.status_code != 403:
-                    raise
-                consent_required = True
-            summaries.append({
-                "look_id": row.look_id,
-                "base_kind": row.base.get("kind"),
-                "version": row.current_version,
-                "is_favorite": row.is_favorite,
-                "updated_at": row.updated_at.isoformat(),
-                "consent_required": consent_required,
-            })
-        return {"looks": summaries, "count": len(summaries)}
+        snapshots = [{
+            "look_id": row.look_id,
+            "subject_id": row.subject_id,
+            "base_kind": row.base.get("kind"),
+            "version": row.current_version,
+            "is_favorite": row.is_favorite,
+            "updated_at": row.updated_at.isoformat(),
+            "consent_id": row.consent_id,
+        } for row in rows]
+
+    summaries = []
+    for snapshot in snapshots:
+        try:
+            await _verify_consent(
+                subject_id=subject_id,
+                consent_id=snapshot["consent_id"],
+                resource_id=snapshot["look_id"],
+                required_scopes=["appearance_session_storage"],
+            )
+            consent_required = False
+        except HTTPException as exc:
+            if exc.status_code != 403:
+                raise
+            consent_required = True
+        snapshot.pop("consent_id", None)
+        snapshot["consent_required"] = consent_required
+        summaries.append(snapshot)
+    return {"looks": summaries, "count": len(summaries)}
 
 
 @app.get("/v1/looks/{look_id}", dependencies=[Depends(require_internal_token)])
