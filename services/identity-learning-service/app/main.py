@@ -729,6 +729,8 @@ def readiness(db: Annotated[Session, Depends(get_db)]):
         db.execute(select(TALEvent.event_id).limit(1))
         db.execute(select(PnellyConversation.conversation_id).limit(1))
         db.execute(select(ConsentRevocationOutbox.command_id).limit(1))
+        db.execute(select(DSICaptureChallengeRow.challenge_id).limit(1))
+        db.execute(select(DSICaptureVerificationReceiptRow.receipt_id).limit(1))
         return {
             "status": "ready",
             "service": SERVICE,
@@ -737,6 +739,8 @@ def readiness(db: Annotated[Session, Depends(get_db)]):
             "durable_tal": True,
             "pnelly_conversation_context": True,
             "twin_consent_cleanup_outbox": True,
+            "dsi_capture_challenge_state": True,
+            "dsi_capture_verification_receipts": True,
             "ready": True,
         }
     except SQLAlchemyError:
