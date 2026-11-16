@@ -27,6 +27,8 @@ All routes except /health require an internal bearer token. They are private ser
 - GET /internal/v1/looks/{look_id}/consent-context: private minimum metadata to renew a session after expiry.
 - POST /internal/v1/looks/{look_id}/renew-consent: bind a newly verified consent bundle and append an immutable consent-renewal event.
 - POST /v1/looks/{look_id}/branch: create a new look from a previously rendered version only when its output has a passing fidelity assessment and Asset Service authorizes the output.
+- DELETE /v1/looks/{look_id}: soft-delete a look and create a durable outbox job to revoke its exact consent bundle and delete appearance-owned assets that are not referenced by another active look.
+- POST /internal/v1/deletions/process: retry queued, failed or stale-processing deletion jobs. It is protected by the private service token.
 - POST /internal/v1/looks/{look_id}/render-result: renderer-only handoff, protected by a separate APPEARANCE_RENDERER_TOKEN. It accepts only SHA-256-pinned renderer revisions, exact look/version binding and a complete fidelity report whose gates are releasable.
 
 A render result is attached to a specific immutable look version. An edit creates a new version and does not silently carry forward the old render asset. A failed or uncertain fidelity report is rejected; it cannot become the base of a later branch.
@@ -44,17 +46,18 @@ The new appearance_session_storage scope is distinct from DSI analysis, Twin sto
 - Database rows use owner-scoped queries; a mismatched subject returns not-found.
 - Each mutation uses an expected version and a command ID. Replaying the same command/payload returns its prior version; reusing a command with a different payload returns a conflict.
 - The service does not store prompts, transcripts, face embeddings, raw DSI observations or training data.
-- Consent revocation and deletion orchestration still require a production event consumer and asset-cleanup workflow; this API is not evidence that such a worker is deployed.
+- Look deletion is durable: the service stores a deletion job before contacting Identity Learning or Asset Service. One resource-bound receipt revokes the full exact consent bundle. Asset deletion is owner-scoped and idempotent; a render still referenced by an active child look is retained until the final reference is removed. Failed operations remain in the outbox and stale `processing` jobs are retryable. `.github/workflows/appearance-deletion-reconciliation.yml` runs every 15 minutes once the `APPEARANCE_SERVICE_URL` and `APPEARANCE_SERVICE_TOKEN` repository secrets are configured. The workflow's existence is not evidence that production secrets or live provider access are configured.
 
 ## Configuration
 
 - APPEARANCE_DATABASE_URL: managed PostgreSQL URL in production; SQLite only for tests.
 - APPEARANCE_SERVICE_TOKEN: private BFF/service bearer, at least 32 bytes.
 - APPEARANCE_RENDERER_TOKEN: separate renderer-only bearer, at least 32 bytes.
+- The deletion reconciliation workflow also needs repository secrets `APPEARANCE_SERVICE_URL` and `APPEARANCE_SERVICE_TOKEN`; do not reuse a renderer credential for this purpose.
 - IDENTITY_SERVICE_URL / IDENTITY_SERVICE_TOKEN.
 - ASSET_SERVICE_URL / ASSET_SERVICE_TOKEN.
 - TWIN_REGISTRY_API_URL / TWIN_REGISTRY_API_TOKEN for Twin-based looks.
-- APPEARANCE_AUTO_CREATE_SCHEMA=true only for local tests. Production must apply migrations/0001_appearance_look_sessions.sql followed by migrations/0002_appearance_consent_events.sql and verify backup/restore.
+- APPEARANCE_AUTO_CREATE_SCHEMA=true only for local tests. Production must apply migrations/0001_appearance_look_sessions.sql, migrations/0002_appearance_consent_events.sql and migrations/0003_appearance_deletion_outbox.sql, then verify backup/restore.
 
 ## Local checks
 
