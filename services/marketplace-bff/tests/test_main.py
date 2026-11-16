@@ -200,6 +200,7 @@ class FakeAsyncClient:
     def __init__(self, responses):
         self.responses = list(responses)
         self.calls = []
+        self.auto_echo_identity_consent = False
 
     async def __aenter__(self):
         return self
@@ -213,6 +214,21 @@ class FakeAsyncClient:
 
     async def post(self, url, **kwargs):
         self.calls.append(("POST", url, kwargs))
+        if url.endswith("/v1/tal/consents") and self.auto_echo_identity_consent:
+            response = self.responses.pop(0) if self.responses else FakeResponse({})
+            if response.status_code >= 400:
+                return response
+            payload = dict(response._payload) if isinstance(response._payload, dict) else {}
+            payload.update({
+                "receipt_id": kwargs["json"]["receipt_id"],
+                "consent_id": kwargs["json"].get("consent_id") or kwargs["json"]["receipt_id"],
+                "resource_id": kwargs["json"].get("resource_id"),
+                "granted": kwargs["json"]["granted"],
+            })
+            payload.setdefault("status", "recorded")
+            return FakeResponse(payload, status_code=response.status_code)
+        if url.endswith("/revoke") and self.auto_echo_identity_consent:
+            return self.responses.pop(0) if self.responses else FakeResponse({"status": "revoked"})
         return self.responses.pop(0)
 
     async def patch(self, url, **kwargs):
@@ -2786,6 +2802,7 @@ def test_appearance_source_photo_consent_is_explicit_scoped_and_expires(client, 
             "status": "recorded",
         }),
     ])
+    fake.auto_echo_identity_consent = True
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.post(
         "/api/appearance/consents",
@@ -2830,6 +2847,7 @@ def test_appearance_twin_consent_does_not_imply_source_photo_storage(client, mon
             "status": "recorded",
         }),
     ])
+    fake.auto_echo_identity_consent = True
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.post(
         "/api/appearance/consents",
@@ -2878,6 +2896,7 @@ def test_appearance_partial_consent_failure_revokes_every_attempted_receipt(clie
         FakeResponse({"status": "revoked"}),
         FakeResponse({"status": "revoked"}),
     ])
+    fake.auto_echo_identity_consent = True
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.post(
         "/api/appearance/consents",
@@ -3123,6 +3142,7 @@ def test_appearance_consent_renewal_uses_verified_subject_and_source_scopes(clie
             "granted_scopes": ["appearance_session_storage", "appearance_source_storage"],
         }),
     ])
+    fake.auto_echo_identity_consent = True
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.post(
         "/api/appearance/consents/renew",
@@ -3180,6 +3200,7 @@ def test_appearance_consent_renewal_for_twin_does_not_grant_source_storage(clien
             "granted_scopes": ["appearance_session_storage"],
         }),
     ])
+    fake.auto_echo_identity_consent = True
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.post(
         "/api/appearance/consents/renew",
