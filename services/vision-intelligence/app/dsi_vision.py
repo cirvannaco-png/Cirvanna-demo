@@ -394,3 +394,158 @@ async def device_baseline(report: DeviceCaptureReport) -> JSONResponse:
         capture_attestation_verified=False,
     )
     return _no_store(result)
+
+
+@router.post("/capture-challenges", dependencies=[Depends(require_dsi_worker)])
+async def create_capture_challenge(payload: IdentityCaptureChallengeRequest) -> JSONResponse:
+    """Issue the one-time capture nonce only through Identity's live consent check."""
+    try:
+        challenge = await issue_identity_capture_challenge(payload)
+    except CaptureVerificationError as exc:
+        raise HTTPException(403, detail={"code": "DSI_CAPTURE_CHALLENGE_NOT_AUTHORIZED"}) from exc
+    except CaptureVerificationUnavailable as exc:
+        raise HTTPException(503, detail={"code": "DSI_CAPTURE_CHALLENGE_PROVIDER_UNAVAILABLE"}) from exc
+    return _no_store({"status": "issued", "challenge": challenge})
+
+
+@router.post("/capture-verifications", dependencies=[Depends(require_dsi_worker)])
+async def verify_capture_envelope(
+    envelope_json: Annotated[str, Form(min_length=2, max_length=512 * 1024)],
+    challenge_nonce_base64url: Annotated[str, Form(min_length=43, max_length=43)],
+    image: Annotated[UploadFile, File()],
+) -> JSONResponse:
+    """Verify native capture proofs and persist the receipt only after both Google checks pass."""
+    try:
+        envelope = AndroidAttestationEnvelope.model_validate_checked(json.loads(envelope_json))
+    except (ValidationError, ValueError, TypeError) as exc:
+        await image.close()
+        raise HTTPException(422, detail={"code": "DSI_CAPTURE_ENVELOPE_INVALID"}) from exc
+
+    try:
+        image_bytes, decoded = await _read_image(image)
+        try:
+            result = await verify_and_persist_capture(
+                envelope,
+                challenge_nonce_base64url=challenge_nonce_base64url,
+                image_bytes=image_bytes,
+            )
+        finally:
+            decoded.close()
+    except CaptureVerificationError as exc:
+        raise HTTPException(403, detail={"code": "DSI_CAPTURE_PROOF_REJECTED"}) from exc
+    except CaptureVerificationUnavailable as exc:
+        raise HTTPException(503, detail={"code": "DSI_CAPTURE_VERIFIER_UNAVAILABLE"}) from exc
+    return _no_store(result)
+
+
+def _replay_upload(image_bytes: bytes, content_type: str, filename: str) -> UploadFile:
+    from starlette.datastructures import Headers
+
+    return UploadFile(
+        filename=filename,
+        file=io.BytesIO(image_bytes),
+        headers=Headers({"content-type": content_type}),
+    )
+
+
+async def _verify_receipt_before_inference(
+    *,
+    receipt_id: str,
+    subject_id: str,
+    resource_id: str,
+    purpose: Literal[
+        "cosmetic_skin_analysis",
+        "facial_geometry_analysis",
+        "body_tone_analysis",
+        "appearance_correction",
+    ],
+    manifest_sha256: str,
+    image_sha256: str,
+    device_pipeline_fingerprint_sha256: str,
+    image: UploadFile,
+    allowed_purposes: set[str],
+) -> tuple[bytes, str]:
+    if purpose not in allowed_purposes:
+        await image.close()
+        raise HTTPException(422, detail={"code": "DSI_CAPTURE_PURPOSE_NOT_ALLOWED"})
+    content_type = image.content_type or ""
+    image_bytes, decoded = await _read_image(image)
+    decoded.close()
+    actual_image_sha256 = hashlib.sha256(image_bytes).hexdigest()
+    if not hmac.compare_digest(actual_image_sha256, image_sha256):
+        raise HTTPException(403, detail={"code": "DSI_CAPTURE_IMAGE_DIGEST_MISMATCH"})
+    if not re.fullmatch(r"^[a-f0-9]{64}$", manifest_sha256) or not re.fullmatch(
+        r"^[a-f0-9]{64}$", device_pipeline_fingerprint_sha256
+    ):
+        raise HTTPException(422, detail={"code": "DSI_CAPTURE_RECEIPT_DIGEST_INVALID"})
+    try:
+        await verify_identity_capture_receipt(
+            receipt_id=receipt_id,
+            subject_id=subject_id,
+            resource_id=resource_id,
+            purpose=purpose,
+            manifest_sha256=manifest_sha256,
+            image_sha256=actual_image_sha256,
+            device_pipeline_fingerprint_sha256=device_pipeline_fingerprint_sha256,
+        )
+    except CaptureVerificationError as exc:
+        raise HTTPException(403, detail={"code": "DSI_CAPTURE_RECEIPT_REJECTED"}) from exc
+    except CaptureVerificationUnavailable as exc:
+        raise HTTPException(503, detail={"code": "DSI_CAPTURE_RECEIPT_PROVIDER_UNAVAILABLE"}) from exc
+    return image_bytes, content_type
+
+
+@router.post("/capture/skin-segmentation", dependencies=[Depends(require_dsi_worker)])
+async def verified_capture_skin_segmentation(
+    receipt_id: Annotated[str, Form(min_length=12, max_length=80)],
+    subject_id: Annotated[str, Form(min_length=1, max_length=128)],
+    resource_id: Annotated[str, Form(min_length=3, max_length=160)],
+    purpose: Annotated[Literal["cosmetic_skin_analysis", "body_tone_analysis"], Form()],
+    manifest_sha256: Annotated[str, Form(min_length=64, max_length=64)],
+    image_sha256: Annotated[str, Form(min_length=64, max_length=64)],
+    device_pipeline_fingerprint_sha256: Annotated[str, Form(min_length=64, max_length=64)],
+    image: Annotated[UploadFile, File()],
+) -> JSONResponse:
+    """Run DSI segmentation only against bytes covered by a live Identity receipt."""
+    image_bytes, content_type = await _verify_receipt_before_inference(
+        receipt_id=receipt_id,
+        subject_id=subject_id,
+        resource_id=resource_id,
+        purpose=purpose,
+        manifest_sha256=manifest_sha256,
+        image_sha256=image_sha256,
+        device_pipeline_fingerprint_sha256=device_pipeline_fingerprint_sha256,
+        image=image,
+        allowed_purposes={"cosmetic_skin_analysis", "body_tone_analysis"},
+    )
+    return await skin_segmentation(
+        _replay_upload(image_bytes, content_type, "verified-dsi-capture")
+    )
+
+
+@router.post("/capture/face-landmarks", dependencies=[Depends(require_dsi_worker)])
+async def verified_capture_face_landmarks(
+    receipt_id: Annotated[str, Form(min_length=12, max_length=80)],
+    subject_id: Annotated[str, Form(min_length=1, max_length=128)],
+    resource_id: Annotated[str, Form(min_length=3, max_length=160)],
+    purpose: Annotated[Literal["facial_geometry_analysis"], Form()],
+    manifest_sha256: Annotated[str, Form(min_length=64, max_length=64)],
+    image_sha256: Annotated[str, Form(min_length=64, max_length=64)],
+    device_pipeline_fingerprint_sha256: Annotated[str, Form(min_length=64, max_length=64)],
+    image: Annotated[UploadFile, File()],
+) -> JSONResponse:
+    """Run geometry preview only against bytes covered by a live Identity receipt."""
+    image_bytes, content_type = await _verify_receipt_before_inference(
+        receipt_id=receipt_id,
+        subject_id=subject_id,
+        resource_id=resource_id,
+        purpose=purpose,
+        manifest_sha256=manifest_sha256,
+        image_sha256=image_sha256,
+        device_pipeline_fingerprint_sha256=device_pipeline_fingerprint_sha256,
+        image=image,
+        allowed_purposes={"facial_geometry_analysis"},
+    )
+    return await face_landmarks(
+        _replay_upload(image_bytes, content_type, "verified-dsi-capture")
+    )
