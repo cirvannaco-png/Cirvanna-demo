@@ -12,6 +12,7 @@ import io
 import re
 import json
 import os
+from datetime import datetime
 from typing import Annotated, Any, Literal
 
 import numpy as np
@@ -401,11 +402,30 @@ async def create_capture_challenge(payload: IdentityCaptureChallengeRequest) -> 
     """Issue the one-time capture nonce only through Identity's live consent check."""
     try:
         challenge = await issue_identity_capture_challenge(payload)
+        issued_expiry = challenge.get("expires_at")
+        if not isinstance(issued_expiry, str):
+            raise CaptureVerificationUnavailable("Identity challenge expiry is invalid")
+        expiry = datetime.fromisoformat(issued_expiry.replace("Z", "+00:00"))
+        if expiry.tzinfo is None or expiry.utcoffset() is None:
+            raise CaptureVerificationUnavailable("Identity challenge expiry is not timezone-aware")
+        challenge_wire = {
+            "challengeId": challenge.get("challenge_id"),
+            "nonceBase64Url": challenge.get("nonce_b64url"),
+            "expiresAtEpochMs": int(expiry.timestamp() * 1000),
+        }
+        if (
+            not isinstance(challenge_wire["challengeId"], str)
+            or not isinstance(challenge_wire["nonceBase64Url"], str)
+            or len(challenge_wire["nonceBase64Url"]) != 43
+        ):
+            raise CaptureVerificationUnavailable("Identity challenge response is invalid")
     except CaptureVerificationError as exc:
         raise HTTPException(403, detail={"code": "DSI_CAPTURE_CHALLENGE_NOT_AUTHORIZED"}) from exc
     except CaptureVerificationUnavailable as exc:
         raise HTTPException(503, detail={"code": "DSI_CAPTURE_CHALLENGE_PROVIDER_UNAVAILABLE"}) from exc
-    return _no_store({"status": "issued", "challenge": challenge})
+    except (ValueError, TypeError, OverflowError) as exc:
+        raise HTTPException(503, detail={"code": "DSI_CAPTURE_CHALLENGE_PROVIDER_UNAVAILABLE"}) from exc
+    return _no_store({"status": "issued", "challenge": challenge_wire})
 
 
 @router.post("/capture-verifications", dependencies=[Depends(require_dsi_worker)])
