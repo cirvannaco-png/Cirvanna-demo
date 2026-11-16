@@ -1131,7 +1131,11 @@ def consume_dsi_capture_challenge(
         raise HTTPException(403, detail={"code": "DSI_CAPTURE_CONSENT_BINDING_CHANGED"})
 
     receipt_id = "dsi_receipt_" + uuid.uuid4().hex
-    receipt_expiry = min(now + timedelta(seconds=DSI_CAPTURE_RECEIPT_TTL_SECONDS), consent_expiry)
+    receipt_expiry = min(
+        now + timedelta(seconds=DSI_CAPTURE_RECEIPT_TTL_SECONDS),
+        normalize_utc(challenge.expires_at),
+        consent_expiry,
+    )
     if receipt_expiry <= now:
         raise HTTPException(403, detail={"code": "DSI_CAPTURE_CONSENT_EXPIRED"})
 
@@ -1702,6 +1706,10 @@ async def delete_user_data(subject_id: str, db: Annotated[Session, Depends(get_d
             twin_cleanup_command_ids.add(cleanup.command_id)
     twin_cleanup_commands = len(twin_cleanup_command_ids)
     profile = db.get(USIProfileRow, subject)
+    # DSI capture receipts bind images and measurements to consent. User deletion
+    # removes these short-lived verification records before removing consent rows.
+    db.execute(delete(DSICaptureVerificationReceiptRow).where(DSICaptureVerificationReceiptRow.subject_id == subject))
+    db.execute(delete(DSICaptureChallengeRow).where(DSICaptureChallengeRow.subject_id == subject))
     db.execute(delete(PnellyConversation).where(PnellyConversation.subject_id == subject))
     db.execute(delete(TALEvent).where(TALEvent.subject_id == subject))
     db.execute(delete(ConsentReceipt).where(ConsentReceipt.subject_id == subject))
@@ -1765,6 +1773,12 @@ async def purge_expired(db: Annotated[Session, Depends(get_db)], cron_token: Ann
             twin_cleanup_command_ids.add(cleanup.command_id)
     twin_cleanup_commands = len(twin_cleanup_command_ids)
     result = db.execute(delete(TALEvent).where(TALEvent.expires_at.is_not(None), TALEvent.expires_at <= now))
+    expired_receipts = db.execute(
+        delete(DSICaptureVerificationReceiptRow).where(DSICaptureVerificationReceiptRow.expires_at <= now)
+    )
+    expired_challenges = db.execute(
+        delete(DSICaptureChallengeRow).where(DSICaptureChallengeRow.expires_at <= now)
+    )
     expired_conversations = _delete_inactive_pnelly_conversations(db)
     db.commit()
     # Every scheduled retention run also retries older durable cleanup commands
@@ -1774,6 +1788,8 @@ async def purge_expired(db: Annotated[Session, Depends(get_db)], cron_token: Ann
         "status": "complete",
         "purged_events": result.rowcount or 0,
         "purged_pnelly_conversations": expired_conversations,
+        "purged_dsi_capture_challenges": expired_challenges.rowcount or 0,
+        "purged_dsi_capture_receipts": expired_receipts.rowcount or 0,
         "twin_cleanup_commands": twin_cleanup_commands,
         "twin_cleanup_processed": cleanup_result["processed"],
         "twin_cleanup_delivered": cleanup_result["completed"],
