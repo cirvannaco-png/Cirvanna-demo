@@ -70,6 +70,7 @@ jobs:
         run: |
           psql "$APPEARANCE_TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f services/appearance-intelligence-service/migrations/0001_appearance_look_sessions.sql
           psql "$APPEARANCE_TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f services/appearance-intelligence-service/migrations/0002_appearance_consent_events.sql
+          psql "$APPEARANCE_TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f services/appearance-intelligence-service/migrations/0003_appearance_deletion_outbox.sql
           pg_dump --format=custom "$APPEARANCE_TEST_POSTGRES_DSN" > /tmp/appearance-look-sessions.dump
           psql "$APPEARANCE_TEST_POSTGRES_DSN" -v ON_ERROR_STOP=1 -c "CREATE DATABASE appearance_restore"
           pg_restore --dbname="postgresql://cirvanna@localhost:5432/appearance_restore" --exit-on-error /tmp/appearance-look-sessions.dump
