@@ -3122,7 +3122,7 @@ def test_appearance_consent_renewal_uses_verified_subject_and_source_scopes(clie
             "look_id": "appearance-renew-source-001",
             "subject_id": "verified-user-appearance",
             "base_kind": "source_photo",
-            "required_scopes": ["appearance_session_storage", "appearance_source_storage"],
+            "required_scopes": ["appearance_session_storage", "appearance_source_storage", "image_processing"],
         }),
         FakeResponse({
             "receipt_id": "renew-session-receipt",
@@ -3137,10 +3137,16 @@ def test_appearance_consent_renewal_uses_verified_subject_and_source_scopes(clie
             "granted": True,
         }),
         FakeResponse({
+            "receipt_id": "renew-image-processing-receipt",
+            "consent_id": "renewed-look-bundle",
+            "resource_id": "appearance-renew-source-001",
+            "granted": True,
+        }),
+        FakeResponse({
             "status": "renewed",
             "look_id": "appearance-renew-source-001",
             "consent_version": "appearance-look-session-v1",
-            "granted_scopes": ["appearance_session_storage", "appearance_source_storage"],
+            "granted_scopes": ["appearance_session_storage", "appearance_source_storage", "image_processing"],
         }),
     ])
     fake.auto_echo_identity_consent = True
@@ -3152,11 +3158,12 @@ def test_appearance_consent_renewal_uses_verified_subject_and_source_scopes(clie
             "look_id": "appearance-renew-source-001",
             "accept_session_storage": True,
             "accept_source_storage": True,
+            "accept_image_processing": True,
         },
     )
     assert response.status_code == 200, response.text
     assert response.json()["granted_scopes"] == [
-        "appearance_session_storage", "appearance_source_storage",
+        "appearance_session_storage", "appearance_source_storage", "image_processing",
     ]
     assert fake.calls[0][1] == "https://commerce.example.test/me"
     context_call = fake.calls[1]
@@ -3164,7 +3171,7 @@ def test_appearance_consent_renewal_uses_verified_subject_and_source_scopes(clie
     assert context_call[2]["params"]["subject_id"] == "verified-user-appearance"
     grants = [call for call in fake.calls if call[1] == "https://identity.example.test/v1/tal/consents"]
     assert [call[2]["json"]["scope"] for call in grants] == [
-        "appearance_session_storage", "appearance_source_storage",
+        "appearance_session_storage", "appearance_source_storage", "image_processing",
     ]
     assert all(call[2]["json"]["resource_id"] == "appearance-renew-source-001" for call in grants)
     renew_call = fake.calls[-1]
@@ -3216,6 +3223,37 @@ def test_appearance_consent_renewal_for_twin_does_not_grant_source_storage(clien
     grants = [call for call in fake.calls if call[1] == "https://identity.example.test/v1/tal/consents"]
     assert len(grants) == 1
     assert grants[0][2]["json"]["scope"] == "appearance_session_storage"
+
+
+def test_appearance_source_renewal_requires_explicit_image_processing_acceptance(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("APPEARANCE_SERVICE_URL", "https://appearance.example.test")
+    monkeypatch.setenv("APPEARANCE_SERVICE_TOKEN", "appearance-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "verified-user-appearance"}),
+        FakeResponse({
+            "look_id": "appearance-renew-source-003",
+            "subject_id": "verified-user-appearance",
+            "base_kind": "source_photo",
+            "required_scopes": [
+                "appearance_session_storage", "appearance_source_storage", "image_processing",
+            ],
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/appearance/consents/renew",
+        headers={"Authorization": "Bearer browser-token"},
+        json={
+            "look_id": "appearance-renew-source-003",
+            "accept_session_storage": True,
+            "accept_source_storage": True,
+            "accept_image_processing": False,
+        },
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "APPEARANCE_IMAGE_PROCESSING_CONSENT_REQUIRED"
+    assert len(fake.calls) == 2
 
 
 def test_appearance_source_renewal_requires_explicit_source_storage_acceptance(client, monkeypatch):
