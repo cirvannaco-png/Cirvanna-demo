@@ -489,7 +489,7 @@ async def persist_identity_capture_receipt(
         raise CaptureVerificationUnavailable("Identity receipt persistence unavailable")
     result = response.json()
     receipt = result.get("receipt") if isinstance(result, dict) else None
-    if result.get("status") != "verified_receipt_created" or not isinstance(receipt, dict):
+    if not isinstance(result, dict) or result.get("status") != "verified_receipt_created" or not isinstance(receipt, dict):
         raise CaptureVerificationUnavailable("Identity receipt response is invalid")
     return receipt
 
@@ -594,6 +594,6 @@ async def verify_identity_capture_receipt(
     if response.status_code != 200:
         raise CaptureVerificationUnavailable("Identity receipt verification unavailable")
     result = response.json()
-    if not isinstance(result, dict) or result.get("status") not in {"verified", "active"}:
+    if not isinstance(result, dict) or result.get("verified") is not True or not isinstance(result.get("receipt"), dict):
         raise CaptureVerificationError("Identity receipt is not active")
     return result
