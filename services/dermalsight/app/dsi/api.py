@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 
 from .consent import verify_dsi_consent
-from .errors import ConsentNotAuthorized, DSIProviderUnavailable
+from .errors import ConsentNotAuthorized, DSICaptureRejected, DSIProviderUnavailable
 from .contracts import ConsentPurpose
 from .features import summarize_face_geometry
 from .media import read_and_decode_payload
@@ -17,6 +17,8 @@ from .vision_client import (
     fetch_colorchecker_tone_preview,
     fetch_face_landmarks,
     fetch_skin_segmentation,
+    issue_dsi_capture_challenge,
+    verify_dsi_native_capture,
 )
 
 router = APIRouter(prefix="/api/v1/dsi", tags=["dsi-analysis"])
@@ -259,5 +261,124 @@ async def color_calibration_preview(
             "validated skin-tone measurement. Do not use it for product shade decisions or "
             "persistent personalization until independent camera, lighting, chart and "
             "population validation is complete."
+        ),
+    })
+
+
+_CAPTURE_PURPOSES = {
+    "cosmetic_skin_analysis": ConsentPurpose.COSMETIC_SKIN_ANALYSIS,
+    "facial_geometry_analysis": ConsentPurpose.FACIAL_GEOMETRY_ANALYSIS,
+    "body_tone_analysis": ConsentPurpose.BODY_TONE_ANALYSIS,
+    "appearance_correction": ConsentPurpose.APPEARANCE_CORRECTION,
+}
+
+
+@router.post("/capture-challenges", dependencies=[Depends(require_dsi_api_token)])
+async def create_native_capture_challenge(
+    subject_id: Annotated[str, Form(min_length=1, max_length=128)],
+    consent_id: Annotated[str, Form(min_length=8, max_length=128)],
+    consent_version: Annotated[str, Form(min_length=1, max_length=80)],
+    resource_id: Annotated[str, Form(min_length=3, max_length=160)],
+    purpose: Annotated[
+        Literal[
+            "cosmetic_skin_analysis",
+            "facial_geometry_analysis",
+            "body_tone_analysis",
+            "appearance_correction",
+        ],
+        Form(),
+    ],
+) -> JSONResponse:
+    """Issue the one-time Android capture challenge after exact purpose consent."""
+    purpose_enum = _CAPTURE_PURPOSES[purpose]
+    await _verify_purpose(
+        subject_id=subject_id,
+        consent_id=consent_id,
+        consent_version=consent_version,
+        resource_id=resource_id,
+        purpose=purpose_enum,
+    )
+    try:
+        challenge = await issue_dsi_capture_challenge(
+            payload={
+                "subject_id": subject_id,
+                "consent_id": consent_id,
+                "consent_version": consent_version,
+                "resource_id": resource_id,
+                "purpose": purpose,
+            }
+        )
+    except DSICaptureRejected as exc:
+        raise HTTPException(403, detail={"code": "DSI_CAPTURE_CHALLENGE_REJECTED"}) from exc
+    except DSIProviderUnavailable as exc:
+        raise HTTPException(503, detail={"code": "DSI_CAPTURE_CHALLENGE_UNAVAILABLE"}) from exc
+    return _private_response({
+        "status": "issued",
+        "challenge": challenge,
+        "purpose": purpose,
+        "subject_id": subject_id,
+        "resource_id": resource_id,
+        "absolute_colour_measurement_approved": False,
+    })
+
+
+@router.post("/capture-verifications", dependencies=[Depends(require_dsi_api_token)])
+async def verify_native_capture(
+    subject_id: Annotated[str, Form(min_length=1, max_length=128)],
+    consent_id: Annotated[str, Form(min_length=8, max_length=128)],
+    consent_version: Annotated[str, Form(min_length=1, max_length=80)],
+    resource_id: Annotated[str, Form(min_length=3, max_length=160)],
+    purpose: Annotated[
+        Literal[
+            "cosmetic_skin_analysis",
+            "facial_geometry_analysis",
+            "body_tone_analysis",
+            "appearance_correction",
+        ],
+        Form(),
+    ],
+    envelope_json: Annotated[str, Form(min_length=2, max_length=512 * 1024)],
+    challenge_nonce_base64url: Annotated[str, Form(min_length=43, max_length=43)],
+    image: Annotated[UploadFile, File()],
+) -> JSONResponse:
+    """Forward original image bytes and signed evidence to the private Vision verifier."""
+    await _verify_purpose(
+        subject_id=subject_id,
+        consent_id=consent_id,
+        consent_version=consent_version,
+        resource_id=resource_id,
+        purpose=_CAPTURE_PURPOSES[purpose],
+        image=image,
+    )
+    content_type = image.content_type or ""
+    filename = image.filename or "dsi-native-capture"
+    content, decoded = await _read_payload(image)
+    del decoded
+    try:
+        result = await verify_dsi_native_capture(
+            envelope_json=envelope_json,
+            challenge_nonce_base64url=challenge_nonce_base64url,
+            content=content,
+            content_type=content_type,
+            filename=filename,
+        )
+    except DSICaptureRejected as exc:
+        raise HTTPException(403, detail={"code": "DSI_CAPTURE_PROOF_REJECTED"}) from exc
+    except DSIProviderUnavailable as exc:
+        raise HTTPException(503, detail={"code": "DSI_CAPTURE_VERIFIER_UNAVAILABLE"}) from exc
+
+    receipt = result["receipt"]
+    return _private_response({
+        "status": "verified",
+        "receipt": receipt,
+        "key_attestation": result.get("key_attestation"),
+        "play_integrity": result.get("play_integrity"),
+        "absolute_colour_measurement_approved": False,
+        "measurement_uncertainty_validated": False,
+        "profile_persistence_authorized": False,
+        "note": (
+            "Device provenance and app integrity were verified. This does not establish "
+            "camera colour accuracy, genuine sensor pixels, calibrated measurements, or "
+            "population-level model validity."
         ),
     })
