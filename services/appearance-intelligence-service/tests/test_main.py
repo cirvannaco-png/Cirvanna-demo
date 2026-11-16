@@ -473,7 +473,7 @@ def test_expired_look_consent_context_is_private_and_returns_minimum_scopes(clie
     assert context.json()["subject_id"] == SUBJECT
     assert context.json()["base_kind"] == "source_photo"
     assert context.json()["required_scopes"] == [
-        "appearance_session_storage", "appearance_source_storage",
+        "appearance_session_storage", "appearance_source_storage", "image_processing",
     ]
     assert "source_asset_ids" not in context.text
     assert client.get(
