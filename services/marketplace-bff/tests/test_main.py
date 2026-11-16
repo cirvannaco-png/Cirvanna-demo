@@ -3014,6 +3014,33 @@ def test_appearance_look_delete_uses_verified_subject_and_delete_method(client, 
     assert "appearance-internal-token" not in response.text
 
 
+def test_appearance_source_compensation_uses_appearance_reference_guard(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("APPEARANCE_SERVICE_URL", "https://appearance.example.test")
+    monkeypatch.setenv("APPEARANCE_SERVICE_TOKEN", "appearance-internal-token-more-than-thirty-two-bytes")
+    asset_id = "8c3d78e2-9f42-4b5f-a0b5-1c8831c42f1b"
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "verified-user-appearance"}),
+        FakeResponse({"status": "deleted", "asset_id": asset_id}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.delete(
+        "/api/appearance/looks/appearance-look-failed-001/source/" + asset_id,
+        headers={"Authorization": "Bearer browser-token"},
+    )
+    assert response.status_code == 204
+    assert fake.calls[0][1] == "https://commerce.example.test/me"
+    cleanup_call = fake.calls[1]
+    assert cleanup_call[0] == "POST"
+    assert cleanup_call[1] == "https://appearance.example.test/internal/v1/assets/compensate"
+    assert cleanup_call[2]["json"] == {
+        "subject_id": "verified-user-appearance",
+        "parent_look_id": "appearance-look-failed-001",
+        "asset_id": asset_id,
+    }
+    assert "appearance-internal-token" not in response.text
+
+
 def test_appearance_consent_revoke_targets_exact_user_bundle_and_resource(client, monkeypatch):
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
     monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
