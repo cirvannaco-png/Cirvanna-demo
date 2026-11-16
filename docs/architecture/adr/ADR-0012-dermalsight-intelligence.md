@@ -79,3 +79,37 @@ The evaluator requires:
 - adequate samples for required skin regions, camera models, lighting and other declared slices.
 
 No thresholds are asserted by this ADR. Incomplete or unsigned evidence remains REVIEW_REQUIRED; measured threshold breaches yield FAIL. The tool exports no subject pseudonyms or raw media and does not alter live inference, CAL, profile persistence, global training or appearance correction. See `services/vision-intelligence/validation/dsi_color/README.md`.
+
+
+## P0 capture provenance contract (15 November 2026)
+
+The Vision Intelligence service now has a strict, non-identifying DSI capture-provenance schema and declaration-assessment helper under app.dsi_capture. It records device/runtime declarations, capture mode, illumination/meter provenance, exposure/white-balance state, colour-profile digest, chart integrity, HDR/beauty-filter state and cross-polarizer/analyzer references.
+
+This is not a trusted capture attestation and does not authorize a measurement, inference, profile write or CAL evidence. No existing image route consumes the schema. A complete declaration remains a candidate for independent review only. Promotion requires a trusted capture runtime, calibrated light-meter records, optical verification for cross-polarization, reference measurements and an independently signed held-out evaluation. See services/vision-intelligence/validation/dsi_color/capture-protocol.md.
+
+
+## Exact-pipeline device baselines (15 November 2026)
+
+Vision Intelligence adds a private `POST /v1/dsi/device-baseline` lookup and a SHA-256-pinned deployment registry. Profiles are keyed to an exact camera pipeline: platform, manufacturer/model, camera module, lens role, OS release, camera API, capture runtime/version, processing-pipeline revision, output format and colour-profile digest. Each entry defines its own minimum capture standard and can be qualified as a capture candidate, colour validated, or separately cross-polarized validated.
+
+The registry is intentionally empty by default. No phone model is pre-certified. Missing registry, unknown pipeline, stale/revoked profile, unmet capture standard, or unsigned/unverified client claims returns the relative-only tier. The endpoint receives no image and always supplies `capture_attestation_verified=false`; a client-supplied attestation reference is only a locator and is never treated as proof.
+
+The registry template is `services/vision-intelligence/dsi-device-baseline-registry.example.json`. A deployment-managed registry must be pinned through `DSI_DEVICE_BASELINE_REGISTRY_PATH` and `DSI_DEVICE_BASELINE_REGISTRY_SHA256`. Any device profile must be supported by the exact pipeline scope, independent reference measurements, held-out device/region/lighting validation, reviewer evidence and a finite validity period. A model-level profile is not assumed to represent every physical unit; same-frame chart checks and between-unit variation remain part of the validation protocol.
+
+A device baseline is a prerequisite for downstream processing, not a stand-alone proof of any individual skin measurement. Downstream measurement release must still enforce its task-specific model report, requested body region, measured-colour range, chart, lighting, capture-quality and uncertainty scope. No current device profile is populated, and no measurement capability is enabled by this increment.
+
+
+The baseline resolver distinguishes **camera-pipeline qualification** from **individual measurement authorization**. A qualified profile may expose its validated region, measured-lightness and lighting scope to downstream checks, but it never authorizes an absolute skin-colour result by itself. The baseline result keeps `absolute_colour_measurement_allowed=false`; the downstream measurement operation must check its own requested region, observed lightness range, current chart/capture provenance, image quality, task-specific model evidence and uncertainty before emitting an absolute result.
+
+
+## Native Android capture evidence SDK (15 November 2026)
+
+A standalone Android library scaffold now lives at `apps/dsi-android-capture`; it is an app-layer capture adapter, not a new service and not a complete mobile application. The SDK uses Camera2 characteristics/results, fingerprints a backend-compatible exact camera-pipeline contract, performs two-stage AE/AWB control, checks actual lock result keys/states and requires the captured `Image.timestamp` to equal the paired `CaptureResult.SENSOR_TIMESTAMP`.
+
+The signed manifest includes the exact image SHA-256, output dimensions, frame timestamp, device-baseline request, challenge ID/nonce digest, Camera2 result values and declared chart/illumination/polarization metadata. Per-capture Android Keystore key attestation uses the server nonce as its attestation challenge; Play Integrity Standard API's requestHash binds the exact canonical manifest digest.
+
+This is client-generated evidence only. The server must validate the Android key-attestation chain against current Google roots, attestation extension/challenge, root signatures, certificate revocation, the ECDSA manifest signature and decoded Play Integrity verdict. It must verify subject/resource/purpose-bound consent and consume the challenge exactly once before accepting any image. This backend work is tracked by issue #214 and is not live yet. Client-provided security levels, attestation references, camera facts and integrity claims are never authority.
+
+Camera2 does not expose a universal signal for hidden OEM HDR/beauty processing, so the Android manifest reports those states as unknown. Neither hardware-backed key attestation nor Play Integrity proves that signed image bytes originated directly from a physical camera sensor or that OEM processing was absent. The SDK is not a sensor-origin attestation.
+
+All resulting envelopes stay `pending_server_verification`; device baseline qualification and individual measurement release remain separate. No camera profile is pre-certified and no inference/model readiness, absolute colour measurement, persistent profile write or CAL signal is enabled by this scaffold. See `apps/dsi-android-capture/README.md` and [issue #214](https://github.com/cirvannaco-png/Cirvanna-demo/issues/214).

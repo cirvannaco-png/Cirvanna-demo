@@ -10,6 +10,12 @@
   },
   "canonical_roots": [
     {
+      "path": "apps/dsi-android-capture",
+      "owner": "DSI Android Capture SDK",
+      "status": "implementation-scaffold",
+      "scope": "Native Android Camera2 evidence SDK for exact camera-pipeline inspection, AE/AWB capture-result observation, image-digest-bound manifests and client-generated Android Keystore/Play Integrity attestation candidates. Not a complete Android app or trusted server verifier; all envelopes remain pending server verification and cannot authorize absolute colour measurement."
+    },
+    {
       "path": "apps/demo-web",
       "owner": "Presentation",
       "status": "demo-surface",

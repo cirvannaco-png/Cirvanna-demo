@@ -1,0 +1,49 @@
+name: DSI Android capture SDK tests
+
+on:
+  push:
+    branches: ["main", "feature/**", "engineering/**"]
+    paths:
+      - "apps/dsi-android-capture/**"
+      - ".github/workflows/dsi-android-capture.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/dsi-android-capture/**"
+      - ".github/workflows/dsi-android-capture.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle 8.11.1
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.11.1"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: 'platform-tools'
+
+      - name: Install Android SDK Platform 35
+        run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Compile library, lint and unit tests
+        working-directory: apps/dsi-android-capture
+        run: |
+          gradle :dsi-android-capture:assembleRelease
+          gradle :dsi-android-capture:testDebugUnitTest
