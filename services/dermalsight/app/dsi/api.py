@@ -82,9 +82,6 @@ async def _verify_purpose(
         raise HTTPException(503, detail={"code": "DSI_CONSENT_PROVIDER_UNAVAILABLE"}) from exc
 
 
-@router.post("/face-geometry-preview", dependencies=[Depends(require_dsi_api_token)])
-
-
 async def _verify_capture_receipt(
     *,
     receipt_id: str,
@@ -263,6 +260,7 @@ async def capture_verification(
         decoded.close()
 
 
+@router.post("/face-geometry-preview", dependencies=[Depends(require_dsi_api_token)])
 async def face_geometry_preview(
     subject_id: Annotated[str, Form(min_length=1, max_length=128)],
     consent_id: Annotated[str, Form(min_length=8, max_length=128)],
@@ -470,7 +468,7 @@ async def color_calibration_preview(
             detail={"code": "DSI_COLOR_CALIBRATION_UNAVAILABLE"},
         ) from exc
     finally:
-        del decoded
+        decoded.close()
 
     return _private_response({
         "status": "completed_experimental_preview",
