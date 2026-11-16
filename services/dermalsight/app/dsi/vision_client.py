@@ -6,7 +6,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from .errors import DSIProviderUnavailable
+from .errors import DSICaptureRejected, DSIProviderUnavailable
 
 
 def _config() -> tuple[str, str]:
@@ -189,3 +189,99 @@ async def fetch_colorchecker_tone_preview(
     ):
         raise DSIProviderUnavailable("dsi_vision_color_calibration_contract_invalid")
     return payload
+
+
+
+async def issue_dsi_capture_challenge(*, payload: dict[str, str]) -> dict:
+    """Request a one-time challenge from Vision; Identity remains the consent authority."""
+    base, token = _config()
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(10.0, connect=2.0),
+            follow_redirects=False,
+            trust_env=False,
+        ) as client:
+            response = await client.post(
+                base + "/v1/dsi/capture-challenges",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json=payload,
+            )
+    except httpx.TimeoutException as exc:
+        raise DSIProviderUnavailable("dsi_capture_challenge_timeout") from exc
+    except httpx.HTTPError as exc:
+        raise DSIProviderUnavailable("dsi_capture_challenge_unavailable") from exc
+    if response.status_code in {401, 403, 404, 409, 422}:
+        raise DSICaptureRejected("dsi_capture_challenge_rejected")
+    if response.status_code != 200:
+        raise DSIProviderUnavailable("dsi_capture_challenge_unavailable")
+    if "no-store" not in response.headers.get("cache-control", "").casefold():
+        raise DSIProviderUnavailable("dsi_capture_challenge_cache_policy_invalid")
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise DSIProviderUnavailable("dsi_capture_challenge_invalid_response") from exc
+    challenge = result.get("challenge") if isinstance(result, dict) else None
+    if (
+        not isinstance(result, dict)
+        or result.get("status") != "issued"
+        or not isinstance(challenge, dict)
+        or not isinstance(challenge.get("challenge_id"), str)
+        or not isinstance(challenge.get("nonce_b64url"), str)
+        or len(challenge["nonce_b64url"]) != 43
+        or challenge.get("nonce_bytes") != 32
+        or not isinstance(challenge.get("expires_at"), str)
+    ):
+        raise DSIProviderUnavailable("dsi_capture_challenge_contract_invalid")
+    return challenge
+
+
+async def verify_dsi_native_capture(
+    *,
+    envelope_json: str,
+    challenge_nonce_base64url: str,
+    content: bytes,
+    content_type: str,
+    filename: str,
+) -> dict:
+    """Forward exact multipart bytes to Vision and validate the server-created receipt."""
+    base, token = _config()
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(40.0, connect=2.0),
+            follow_redirects=False,
+            trust_env=False,
+        ) as client:
+            response = await client.post(
+                base + "/v1/dsi/capture-verifications",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                data={
+                    "envelope_json": envelope_json,
+                    "challenge_nonce_base64url": challenge_nonce_base64url,
+                },
+                files={"image": (filename, content, content_type)},
+            )
+    except httpx.TimeoutException as exc:
+        raise DSIProviderUnavailable("dsi_capture_verification_timeout") from exc
+    except httpx.HTTPError as exc:
+        raise DSIProviderUnavailable("dsi_capture_verification_unavailable") from exc
+    if response.status_code in {401, 403, 404, 409, 410, 422}:
+        raise DSICaptureRejected("dsi_capture_proof_rejected")
+    if response.status_code != 200:
+        raise DSIProviderUnavailable("dsi_capture_verification_unavailable")
+    if "no-store" not in response.headers.get("cache-control", "").casefold():
+        raise DSIProviderUnavailable("dsi_capture_verification_cache_policy_invalid")
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise DSIProviderUnavailable("dsi_capture_verification_invalid_response") from exc
+    receipt = result.get("receipt") if isinstance(result, dict) else None
+    if (
+        not isinstance(result, dict)
+        or result.get("status") != "verified"
+        or not isinstance(receipt, dict)
+        or not isinstance(receipt.get("receipt_id"), str)
+        or result.get("absolute_colour_measurement_approved") is not False
+        or result.get("profile_persistence_authorized") is not False
+    ):
+        raise DSIProviderUnavailable("dsi_capture_verification_contract_invalid")
+    return result
