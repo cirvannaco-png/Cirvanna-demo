@@ -470,3 +470,151 @@ def test_color_calibration_preview_sanitizes_unavailable_vision_worker(client, m
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "DSI_COLOR_CALIBRATION_UNAVAILABLE"
     assert "private model path" not in response.text
+
+
+def test_native_capture_challenge_requires_consent_and_returns_no_store(client, monkeypatch):
+    checked = {}
+    issued = {}
+
+    async def allow_consent(**kwargs):
+        checked.update(kwargs)
+        return {"verified": True}
+
+    async def issue(payload):
+        issued.update(payload)
+        return {
+            "challenge_id": "dsi_challenge_0123456789abcdef",
+            "nonce_b64url": "A" * 43,
+            "nonce_bytes": 32,
+            "expires_at": "2026-11-16T13:00:00+03:00",
+        }
+
+    monkeypatch.setattr(dsi_api, "verify_dsi_consent", allow_consent)
+    monkeypatch.setattr(dsi_api, "issue_dsi_capture_challenge", issue)
+    response = client.post(
+        "/api/v1/dsi/capture-challenges",
+        headers=auth(),
+        data={**consent_form(), "purpose": "cosmetic_skin_analysis"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.json()["status"] == "issued"
+    assert response.json()["absolute_colour_measurement_approved"] is False
+    assert issued["subject_id"] == "user-dsi-001"
+    assert issued["purpose"] == "cosmetic_skin_analysis"
+    assert checked["purpose"] == ConsentPurpose.COSMETIC_SKIN_ANALYSIS
+
+
+def test_native_capture_challenge_does_not_issue_without_live_consent(client, monkeypatch):
+    async def deny(**_kwargs):
+        raise ConsentNotAuthorized("revoked")
+
+    async def forbidden(**_kwargs):
+        pytest.fail("Vision challenge must not be issued without current consent")
+
+    monkeypatch.setattr(dsi_api, "verify_dsi_consent", deny)
+    monkeypatch.setattr(dsi_api, "issue_dsi_capture_challenge", forbidden)
+    response = client.post(
+        "/api/v1/dsi/capture-challenges",
+        headers=auth(),
+        data={**consent_form(), "purpose": "facial_geometry_analysis"},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "DSI_PURPOSE_CONSENT_NOT_VERIFIED"
+
+
+def test_native_capture_verification_rechecks_consent_and_forwards_original_bytes(client, monkeypatch):
+    checked = {}
+    forwarded = {}
+    expected_bytes = capture_bytes()
+
+    async def allow_consent(**kwargs):
+        checked.update(kwargs)
+        return {"verified": True}
+
+    async def fake_verify(**kwargs):
+        forwarded.update(kwargs)
+        assert kwargs["content"] == expected_bytes
+        assert kwargs["content_type"] == "image/png"
+        assert kwargs["filename"] == "capture.png"
+        return {
+            "status": "verified",
+            "receipt": {"receipt_id": "dsi_receipt_1234567890"},
+            "key_attestation": {"verified_boot_state": "verified"},
+            "play_integrity": {"app_recognition_verdict": "PLAY_RECOGNIZED"},
+            "absolute_colour_measurement_approved": False,
+            "profile_persistence_authorized": False,
+        }
+
+    monkeypatch.setattr(dsi_api, "verify_dsi_consent", allow_consent)
+    monkeypatch.setattr(dsi_api, "verify_dsi_native_capture", fake_verify)
+    response = client.post(
+        "/api/v1/dsi/capture-verifications",
+        headers=auth(),
+        data={
+            **consent_form(),
+            "purpose": "cosmetic_skin_analysis",
+            "envelope_json": '{"verificationState":"pending_server_verification"}',
+            "challenge_nonce_base64url": "A" * 43,
+        },
+        files={"image": ("capture.png", expected_bytes, "image/png")},
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.json()["status"] == "verified"
+    assert response.json()["receipt"]["receipt_id"] == "dsi_receipt_1234567890"
+    assert response.json()["absolute_colour_measurement_approved"] is False
+    assert response.json()["profile_persistence_authorized"] is False
+    assert forwarded["envelope_json"] == '{"verificationState":"pending_server_verification"}'
+    assert forwarded["challenge_nonce_base64url"] == "A" * 43
+    assert checked["purpose"] == ConsentPurpose.COSMETIC_SKIN_ANALYSIS
+
+
+def test_native_capture_verification_rejects_proof_failure_without_success_receipt(client, monkeypatch):
+    async def allow_consent(**_kwargs):
+        return {"verified": True}
+
+    async def reject(**_kwargs):
+        from app.dsi.errors import DSICaptureRejected
+        raise DSICaptureRejected("forged")
+
+    monkeypatch.setattr(dsi_api, "verify_dsi_consent", allow_consent)
+    monkeypatch.setattr(dsi_api, "verify_dsi_native_capture", reject)
+    response = client.post(
+        "/api/v1/dsi/capture-verifications",
+        headers=auth(),
+        data={
+            **consent_form(),
+            "purpose": "cosmetic_skin_analysis",
+            "envelope_json": "{}",
+            "challenge_nonce_base64url": "A" * 43,
+        },
+        files={"image": ("capture.png", capture_bytes(), "image/png")},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "DSI_CAPTURE_PROOF_REJECTED"
+
+
+def test_native_capture_verification_fails_closed_when_vision_is_unavailable(client, monkeypatch):
+    async def allow_consent(**_kwargs):
+        return {"verified": True}
+
+    async def unavailable(**_kwargs):
+        raise DSIProviderUnavailable("private provider failure")
+
+    monkeypatch.setattr(dsi_api, "verify_dsi_consent", allow_consent)
+    monkeypatch.setattr(dsi_api, "verify_dsi_native_capture", unavailable)
+    response = client.post(
+        "/api/v1/dsi/capture-verifications",
+        headers=auth(),
+        data={
+            **consent_form(),
+            "purpose": "cosmetic_skin_analysis",
+            "envelope_json": "{}",
+            "challenge_nonce_base64url": "A" * 43,
+        },
+        files={"image": ("capture.png", capture_bytes(), "image/png")},
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "DSI_CAPTURE_VERIFIER_UNAVAILABLE"
+    assert "private provider failure" not in response.text
