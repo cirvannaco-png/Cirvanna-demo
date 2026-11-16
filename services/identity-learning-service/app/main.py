@@ -1155,6 +1155,7 @@ def consume_dsi_capture_challenge(
             DSICaptureChallengeRow.expires_at > now,
         )
         .values(consumed_at=now, verification_receipt_id=receipt_id)
+        .execution_options(synchronize_session=False)
     )
     if claimed.rowcount != 1:
         db.rollback()
