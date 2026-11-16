@@ -3083,3 +3083,138 @@ def test_appearance_look_edit_uses_verified_subject_and_does_not_expose_service_
     assert fake.calls[1][2]["json"]["subject_id"] == "verified-user-appearance"
     assert response.json()["look"]["version"] == 2
     assert "appearance-internal-token" not in response.text
+
+
+
+def test_appearance_consent_renewal_uses_verified_subject_and_source_scopes(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("APPEARANCE_SERVICE_URL", "https://appearance.example.test")
+    monkeypatch.setenv("APPEARANCE_SERVICE_TOKEN", "appearance-internal-token-more-than-thirty-two-bytes")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "verified-user-appearance"}),
+        FakeResponse({
+            "look_id": "appearance-renew-source-001",
+            "subject_id": "verified-user-appearance",
+            "base_kind": "source_photo",
+            "required_scopes": ["appearance_session_storage", "appearance_source_storage"],
+        }),
+        FakeResponse({
+            "receipt_id": "renew-session-receipt",
+            "consent_id": "renewed-look-bundle",
+            "resource_id": "appearance-renew-source-001",
+            "granted": True,
+        }),
+        FakeResponse({
+            "receipt_id": "renew-source-receipt",
+            "consent_id": "renewed-look-bundle",
+            "resource_id": "appearance-renew-source-001",
+            "granted": True,
+        }),
+        FakeResponse({
+            "status": "renewed",
+            "look_id": "appearance-renew-source-001",
+            "consent_version": "appearance-look-session-v1",
+            "granted_scopes": ["appearance_session_storage", "appearance_source_storage"],
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/appearance/consents/renew",
+        headers={"Authorization": "Bearer browser-token"},
+        json={
+            "look_id": "appearance-renew-source-001",
+            "accept_session_storage": True,
+            "accept_source_storage": True,
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["granted_scopes"] == [
+        "appearance_session_storage", "appearance_source_storage",
+    ]
+    assert fake.calls[0][1] == "https://commerce.example.test/me"
+    context_call = fake.calls[1]
+    assert context_call[1] == "https://appearance.example.test/internal/v1/looks/appearance-renew-source-001/consent-context"
+    assert context_call[2]["params"]["subject_id"] == "verified-user-appearance"
+    grants = [call for call in fake.calls if call[1] == "https://identity.example.test/v1/tal/consents"]
+    assert [call[2]["json"]["scope"] for call in grants] == [
+        "appearance_session_storage", "appearance_source_storage",
+    ]
+    assert all(call[2]["json"]["resource_id"] == "appearance-renew-source-001" for call in grants)
+    renew_call = fake.calls[-1]
+    assert renew_call[1] == "https://appearance.example.test/internal/v1/looks/appearance-renew-source-001/renew-consent"
+    assert renew_call[2]["json"]["subject_id"] == "verified-user-appearance"
+    assert "appearance-internal-token" not in response.text
+    assert "identity-internal-token" not in response.text
+
+
+def test_appearance_consent_renewal_for_twin_does_not_grant_source_storage(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("APPEARANCE_SERVICE_URL", "https://appearance.example.test")
+    monkeypatch.setenv("APPEARANCE_SERVICE_TOKEN", "appearance-internal-token-more-than-thirty-two-bytes")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "verified-user-appearance"}),
+        FakeResponse({
+            "look_id": "appearance-renew-twin-001",
+            "subject_id": "verified-user-appearance",
+            "base_kind": "virtual_twin",
+            "required_scopes": ["appearance_session_storage"],
+        }),
+        FakeResponse({
+            "receipt_id": "renew-twin-session-receipt",
+            "consent_id": "renewed-twin-bundle",
+            "resource_id": "appearance-renew-twin-001",
+            "granted": True,
+        }),
+        FakeResponse({
+            "status": "renewed",
+            "look_id": "appearance-renew-twin-001",
+            "consent_version": "appearance-look-session-v1",
+            "granted_scopes": ["appearance_session_storage"],
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/appearance/consents/renew",
+        headers={"Authorization": "Bearer browser-token"},
+        json={
+            "look_id": "appearance-renew-twin-001",
+            "accept_session_storage": True,
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["granted_scopes"] == ["appearance_session_storage"]
+    grants = [call for call in fake.calls if call[1] == "https://identity.example.test/v1/tal/consents"]
+    assert len(grants) == 1
+    assert grants[0][2]["json"]["scope"] == "appearance_session_storage"
+
+
+def test_appearance_source_renewal_requires_explicit_source_storage_acceptance(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("APPEARANCE_SERVICE_URL", "https://appearance.example.test")
+    monkeypatch.setenv("APPEARANCE_SERVICE_TOKEN", "appearance-internal-token-more-than-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "verified-user-appearance"}),
+        FakeResponse({
+            "look_id": "appearance-renew-source-002",
+            "subject_id": "verified-user-appearance",
+            "base_kind": "source_photo",
+            "required_scopes": ["appearance_session_storage", "appearance_source_storage"],
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/appearance/consents/renew",
+        headers={"Authorization": "Bearer browser-token"},
+        json={
+            "look_id": "appearance-renew-source-002",
+            "accept_session_storage": True,
+            "accept_source_storage": False,
+        },
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "APPEARANCE_SOURCE_STORAGE_CONSENT_REQUIRED"
+    assert len(fake.calls) == 2
