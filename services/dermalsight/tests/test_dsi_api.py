@@ -483,10 +483,9 @@ def test_native_capture_challenge_requires_consent_and_returns_no_store(client, 
     async def issue(payload):
         issued.update(payload)
         return {
-            "challenge_id": "dsi_challenge_0123456789abcdef",
-            "nonce_b64url": "A" * 43,
-            "nonce_bytes": 32,
-            "expires_at": "2026-11-16T13:00:00+03:00",
+            "challengeId": "dsi_challenge_0123456789abcdef",
+            "nonceBase64Url": "A" * 43,
+            "expiresAtEpochMs": 1_795_000_000_000,
         }
 
     monkeypatch.setattr(dsi_api, "verify_dsi_consent", allow_consent)
