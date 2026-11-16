@@ -29,6 +29,7 @@ All routes except /health require an internal bearer token. They are private ser
 - POST /v1/looks/{look_id}/branch: create a new look from a previously rendered version only when its output has a passing fidelity assessment and Asset Service authorizes the output.
 - DELETE /v1/looks/{look_id}: soft-delete a look and create a durable outbox job to revoke its exact consent bundle and delete appearance-owned assets that are not referenced by another active look.
 - POST /internal/v1/deletions/process: retry queued, failed or stale-processing deletion jobs. It is protected by the private service token.
+- POST /internal/v1/assets/compensate: delete a failed-create source upload only after checking that no saved look, render version or deletion job references it; Asset Service then revalidates owner, purpose and parent.
 - POST /internal/v1/looks/{look_id}/render-result: renderer-only handoff, protected by a separate APPEARANCE_RENDERER_TOKEN. It accepts only SHA-256-pinned renderer revisions, exact look/version binding and a complete fidelity report whose gates are releasable.
 
 A render result is attached to a specific immutable look version. An edit creates a new version and does not silently carry forward the old render asset. A failed or uncertain fidelity report is rejected; it cannot become the base of a later branch.
