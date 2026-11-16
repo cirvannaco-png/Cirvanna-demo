@@ -121,8 +121,10 @@ def test_noncanonical_manifest_is_rejected():
 
 def test_false_or_missing_measurement_boundary_is_not_accepted():
     envelope, _image, _nonce, _manifest, _request_hash = envelope_and_image()
+    payload = envelope.model_dump(by_alias=True)
+    payload["absoluteColourMeasurementApproved"] = True
     with pytest.raises(ValidationError):
-        envelope.model_copy(update={"absolute_colour_measurement_approved": True})
+        AndroidAttestationEnvelope.model_validate_checked(payload)
 
 
 def play_payload(*, now_ms: int, request_hash: str, cert_hex: str = "ab" * 32):
