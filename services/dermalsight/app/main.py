@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hmac
 import io
+import hashlib
 import os
 from functools import lru_cache
 from typing import Annotated, Any
@@ -16,7 +17,11 @@ from starlette import status
 
 from .dsi.api import router as dsi_analysis_router
 from .dsi.capture import CapturePlanRequest, build_capture_plan
-from .dsi.media import read_and_decode_image
+from .dsi.media import read_and_decode_image, read_and_decode_payload
+from .dsi.consent import verify_dsi_consent
+from .dsi.contracts import ConsentPurpose
+from .dsi.errors import ConsentNotAuthorized, DSIProviderUnavailable
+from .dsi.vision_client import verify_dsi_capture_receipt
 from .dsi.router import router as dsi_router
 from .model_adapter import ModelConfigurationError, SkinAnalysisEngine
 from .validation import verify_signed_validation_report
@@ -204,9 +209,17 @@ async def _read_and_decode_image(upload: UploadFile) -> np.ndarray:
 )
 async def analyze_skin(
     consent: Annotated[bool, Form(description="Must be true to consent to in-memory image analysis.")],
+    subject_id: Annotated[str, Form(min_length=1, max_length=128)],
+    consent_id: Annotated[str, Form(min_length=8, max_length=128)],
+    consent_version: Annotated[str, Form(min_length=1, max_length=80)],
+    resource_id: Annotated[str, Form(min_length=3, max_length=160)],
+    capture_receipt_id: Annotated[str, Form(min_length=12, max_length=80)],
+    capture_manifest_sha256: Annotated[str, Form(pattern=r"^[a-f0-9]{64}$")],
+    capture_image_sha256: Annotated[str, Form(pattern=r"^[a-f0-9]{64}$")],
+    device_pipeline_fingerprint_sha256: Annotated[str, Form(pattern=r"^[a-f0-9]{64}$")],
     image: Annotated[UploadFile, File(description="JPEG, PNG, or WebP image; never persisted by the service.")],
 ) -> AnalysisResponse:
-    """Analyze a user-provided image in memory only; requires a verified model."""
+    """Analyze only an exact image protected by an active DSI capture receipt."""
     if not consent:
         await image.close()
         raise HTTPException(
@@ -215,15 +228,78 @@ async def analyze_skin(
         )
 
     try:
+        await verify_dsi_consent(
+            subject_id=subject_id,
+            consent_id=consent_id,
+            consent_version=consent_version,
+            resource_id=resource_id,
+            purpose=ConsentPurpose.COSMETIC_SKIN_ANALYSIS,
+        )
+    except ConsentNotAuthorized as exc:
+        await image.close()
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "DSI_PURPOSE_CONSENT_NOT_VERIFIED"},
+        ) from exc
+    except DSIProviderUnavailable as exc:
+        await image.close()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "DSI_CONSENT_PROVIDER_UNAVAILABLE"},
+        ) from exc
+
+    image_bytes, rgb_image = await read_and_decode_payload(
+        image,
+        max_bytes=MAX_IMAGE_BYTES,
+        max_pixels=MAX_IMAGE_PIXELS,
+        allowed_mime_types=ALLOWED_MIME_TYPES,
+        mime_to_format=MIME_TO_FORMAT,
+    )
+    actual_image_sha256 = hashlib.sha256(image_bytes).hexdigest()
+    if not hmac.compare_digest(actual_image_sha256, capture_image_sha256):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "DSI_CAPTURE_IMAGE_RECEIPT_MISMATCH"},
+        )
+
+    try:
+        receipt = await verify_dsi_capture_receipt(
+            receipt_id=capture_receipt_id,
+            subject_id=subject_id,
+            resource_id=resource_id,
+            purpose=ConsentPurpose.COSMETIC_SKIN_ANALYSIS.value,
+            manifest_sha256=capture_manifest_sha256,
+            image_sha256=capture_image_sha256,
+            device_pipeline_fingerprint_sha256=device_pipeline_fingerprint_sha256,
+        )
+    except DSIProviderUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "DSI_CAPTURE_RECEIPT_PROVIDER_UNAVAILABLE"},
+        ) from exc
+    if not (
+        receipt.get("receipt_id") == capture_receipt_id
+        and receipt.get("subject_id") == subject_id
+        and receipt.get("resource_id") == resource_id
+        and receipt.get("purpose") == ConsentPurpose.COSMETIC_SKIN_ANALYSIS.value
+        and receipt.get("manifest_sha256") == capture_manifest_sha256
+        and receipt.get("image_sha256") == capture_image_sha256
+        and receipt.get("device_pipeline_fingerprint_sha256") == device_pipeline_fingerprint_sha256
+        and receipt.get("verification_status") == "verified_by_trusted_vision_service"
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"code": "DSI_CAPTURE_RECEIPT_SCOPE_MISMATCH"},
+        )
+
+    try:
         adapter = get_model_adapter()
     except ModelConfigurationError as exc:
-        await image.close()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={"code": "MODEL_CONFIGURATION_INVALID", "detail": "Validated inference is unavailable."},
         ) from exc
     if adapter is None:
-        await image.close()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={
@@ -232,7 +308,6 @@ async def analyze_skin(
             },
         )
 
-    rgb_image = await _read_and_decode_image(image)
     try:
         prediction = adapter.predict(rgb_image)
     except (ValueError, RuntimeError) as exc:
