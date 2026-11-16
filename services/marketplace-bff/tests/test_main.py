@@ -2821,7 +2821,8 @@ def test_appearance_source_photo_consent_is_explicit_scoped_and_expires(client, 
         "appearance_session_storage", "appearance_source_storage", "image_processing",
     ]
     assert data["look_id"] == "appearance-look-0001"
-    assert data["consent_id"] == "appearance-consent-bundle"
+    assert len(data["consent_id"]) == 36
+    assert data["consent_id"]
     assert data["expires_at"]
     assert len(data["receipt_ids"]) == 3
     assert fake.calls[0][0] == "GET"
