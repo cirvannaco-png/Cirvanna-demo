@@ -19,6 +19,8 @@ from .vision_client import (
     fetch_skin_segmentation,
     issue_dsi_capture_challenge,
     verify_dsi_native_capture,
+    fetch_verified_capture_skin_segmentation,
+    fetch_verified_capture_face_landmarks,
 )
 
 router = APIRouter(prefix="/api/v1/dsi", tags=["dsi-analysis"])
@@ -381,4 +383,100 @@ async def verify_native_capture(
             "camera colour accuracy, genuine sensor pixels, calibrated measurements, or "
             "population-level model validity."
         ),
+    })
+
+
+@router.post("/capture/skin-region-analysis", dependencies=[Depends(require_dsi_api_token)])
+async def verified_capture_skin_region_analysis(
+    receipt_id: Annotated[str, Form(min_length=12, max_length=80)],
+    subject_id: Annotated[str, Form(min_length=1, max_length=128)],
+    resource_id: Annotated[str, Form(min_length=3, max_length=160)],
+    purpose: Annotated[Literal["cosmetic_skin_analysis", "body_tone_analysis"], Form()],
+    manifest_sha256: Annotated[str, Form(min_length=64, max_length=64)],
+    image_sha256: Annotated[str, Form(min_length=64, max_length=64)],
+    device_pipeline_fingerprint_sha256: Annotated[str, Form(min_length=64, max_length=64)],
+    image: Annotated[UploadFile, File()],
+) -> JSONResponse:
+    """Run a receipt-bound skin-region inference; this is not calibrated colour measurement."""
+    content_type = image.content_type or ""
+    filename = image.filename or "dsi-verified-capture"
+    content, decoded = await _read_payload(image)
+    del decoded
+    try:
+        payload = await fetch_verified_capture_skin_segmentation(
+            content=content,
+            content_type=content_type,
+            filename=filename,
+            receipt_id=receipt_id,
+            subject_id=subject_id,
+            resource_id=resource_id,
+            purpose=purpose,
+            manifest_sha256=manifest_sha256,
+            image_sha256=image_sha256,
+            device_pipeline_fingerprint_sha256=device_pipeline_fingerprint_sha256,
+        )
+    except DSICaptureRejected as exc:
+        raise HTTPException(403, detail={"code": "DSI_CAPTURE_RECEIPT_REJECTED"}) from exc
+    except DSIProviderUnavailable as exc:
+        raise HTTPException(503, detail={"code": "DSI_VERIFIED_CAPTURE_INFERENCE_UNAVAILABLE"}) from exc
+    return _private_response({
+        "status": "verified_capture_inference_completed",
+        "receipt_id": receipt_id,
+        "purpose": purpose,
+        "segmentation_status": payload["status"],
+        "region_coverage": payload.get("region_coverage"),
+        "model": payload.get("model"),
+        "skin_tone_value_computed": False,
+        "absolute_color_calibration_performed": False,
+        "measurement_uncertainty_validated": False,
+        "image_persisted": False,
+        "profile_persisted": False,
+        "discovery_restricted": False,
+        "note": "Capture provenance was checked; this output is not a calibrated or independently validated skin-colour measurement.",
+    })
+
+
+@router.post("/capture/face-geometry-analysis", dependencies=[Depends(require_dsi_api_token)])
+async def verified_capture_face_geometry_analysis(
+    receipt_id: Annotated[str, Form(min_length=12, max_length=80)],
+    subject_id: Annotated[str, Form(min_length=1, max_length=128)],
+    resource_id: Annotated[str, Form(min_length=3, max_length=160)],
+    purpose: Annotated[Literal["facial_geometry_analysis"], Form()],
+    manifest_sha256: Annotated[str, Form(min_length=64, max_length=64)],
+    image_sha256: Annotated[str, Form(min_length=64, max_length=64)],
+    device_pipeline_fingerprint_sha256: Annotated[str, Form(min_length=64, max_length=64)],
+    image: Annotated[UploadFile, File()],
+) -> JSONResponse:
+    """Run geometric inference only after the trusted Vision service rechecks the receipt."""
+    content_type = image.content_type or ""
+    filename = image.filename or "dsi-verified-capture"
+    content, decoded = await _read_payload(image)
+    del decoded
+    try:
+        payload = await fetch_verified_capture_face_landmarks(
+            content=content,
+            content_type=content_type,
+            filename=filename,
+            receipt_id=receipt_id,
+            subject_id=subject_id,
+            resource_id=resource_id,
+            purpose=purpose,
+            manifest_sha256=manifest_sha256,
+            image_sha256=image_sha256,
+            device_pipeline_fingerprint_sha256=device_pipeline_fingerprint_sha256,
+        )
+        geometry = summarize_face_geometry(payload)
+    except DSICaptureRejected as exc:
+        raise HTTPException(403, detail={"code": "DSI_CAPTURE_RECEIPT_REJECTED"}) from exc
+    except (DSIProviderUnavailable, ValueError) as exc:
+        raise HTTPException(503, detail={"code": "DSI_VERIFIED_CAPTURE_INFERENCE_UNAVAILABLE"}) from exc
+    return _private_response({
+        "status": "verified_capture_inference_completed",
+        "receipt_id": receipt_id,
+        "purpose": purpose,
+        "geometry": geometry,
+        "image_persisted": False,
+        "profile_persisted": False,
+        "discovery_restricted": False,
+        "note": "Capture provenance was checked; geometric model outputs remain uncalibrated and independently unvalidated.",
     })
