@@ -24,6 +24,8 @@ All routes except /health require an internal bearer token. They are private ser
 - POST /v1/looks/{look_id}/reset: create a new version with no transformations, returning to that look's chosen base.
 - POST /v1/looks/{look_id}/undo: create a new version from an earlier version in the same look history.
 - POST /v1/looks/{look_id}/favorite: set the saved/favorite state.
+- GET /internal/v1/looks/{look_id}/consent-context: private minimum metadata to renew a session after expiry.
+- POST /internal/v1/looks/{look_id}/renew-consent: bind a newly verified consent bundle and append an immutable consent-renewal event.
 - POST /v1/looks/{look_id}/branch: create a new look from a previously rendered version only when its output has a passing fidelity assessment and Asset Service authorizes the output.
 - POST /internal/v1/looks/{look_id}/render-result: renderer-only handoff, protected by a separate APPEARANCE_RENDERER_TOKEN. It accepts only SHA-256-pinned renderer revisions, exact look/version binding and a complete fidelity report whose gates are releasable.
 
@@ -31,7 +33,7 @@ A render result is attached to a specific immutable look version. An edit create
 
 ## Consent model
 
-The new appearance_session_storage scope is distinct from DSI analysis, Twin storage, image processing, style learning and global model training. A source-photo look requires appearance_session_storage, appearance_source_storage and image_processing in one resource-bound bundle whose resource is the exact look ID. A Twin-based look requires the session-storage grant for the new look; the Twin Registry separately checks the Twin's existing consent and owner authorization. Consent is rechecked at each mutating operation and before a render result is attached.
+The new appearance_session_storage scope is distinct from DSI analysis, Twin storage, image processing, style learning and global model training. A source-photo look requires appearance_session_storage, appearance_source_storage and image_processing in one resource-bound bundle whose resource is the exact look ID. A Twin-based look requires the session-storage grant for the new look; the Twin Registry separately checks the Twin's existing consent and owner authorization. Consent is rechecked at each read, mutating operation and before a render result is attached. An expired grant blocks access until the BFF records fresh explicit consent; renewal preserves the previous bundle ID, new bundle ID, version and scope set in append-only history.
 
 ## Data and privacy
 
@@ -52,7 +54,7 @@ The new appearance_session_storage scope is distinct from DSI analysis, Twin sto
 - IDENTITY_SERVICE_URL / IDENTITY_SERVICE_TOKEN.
 - ASSET_SERVICE_URL / ASSET_SERVICE_TOKEN.
 - TWIN_REGISTRY_API_URL / TWIN_REGISTRY_API_TOKEN for Twin-based looks.
-- APPEARANCE_AUTO_CREATE_SCHEMA=true only for local tests. Production must apply migrations/0001_appearance_look_sessions.sql and verify backup/restore.
+- APPEARANCE_AUTO_CREATE_SCHEMA=true only for local tests. Production must apply migrations/0001_appearance_look_sessions.sql followed by migrations/0002_appearance_consent_events.sql and verify backup/restore.
 
 ## Local checks
 
