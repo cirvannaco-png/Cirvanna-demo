@@ -285,3 +285,135 @@ async def verify_dsi_native_capture(
     ):
         raise DSIProviderUnavailable("dsi_capture_verification_contract_invalid")
     return result
+
+
+
+async def _post_receipt_bound_inference(
+    path: str,
+    *,
+    content: bytes,
+    content_type: str,
+    filename: str,
+    receipt_id: str,
+    subject_id: str,
+    resource_id: str,
+    purpose: str,
+    manifest_sha256: str,
+    image_sha256: str,
+    device_pipeline_fingerprint_sha256: str,
+) -> dict:
+    base, token = _config()
+    form_data = {
+        "receipt_id": receipt_id,
+        "subject_id": subject_id,
+        "resource_id": resource_id,
+        "purpose": purpose,
+        "manifest_sha256": manifest_sha256,
+        "image_sha256": image_sha256,
+        "device_pipeline_fingerprint_sha256": device_pipeline_fingerprint_sha256,
+    }
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(25.0, connect=2.0),
+            follow_redirects=False,
+            trust_env=False,
+        ) as client:
+            response = await client.post(
+                base + path,
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                files={"image": (filename, content, content_type)},
+                data=form_data,
+            )
+    except httpx.TimeoutException as exc:
+        raise DSIProviderUnavailable("dsi_verified_capture_inference_timeout") from exc
+    except httpx.HTTPError as exc:
+        raise DSIProviderUnavailable("dsi_verified_capture_inference_unavailable") from exc
+    if response.status_code in {401, 403, 404, 409, 410, 422}:
+        raise DSICaptureRejected("dsi_capture_receipt_rejected")
+    if response.status_code != 200:
+        raise DSIProviderUnavailable("dsi_verified_capture_inference_unavailable")
+    if "no-store" not in response.headers.get("cache-control", "").casefold():
+        raise DSIProviderUnavailable("dsi_verified_capture_cache_policy_invalid")
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise DSIProviderUnavailable("dsi_verified_capture_invalid_response") from exc
+    if not isinstance(payload, dict):
+        raise DSIProviderUnavailable("dsi_verified_capture_invalid_response")
+    return payload
+
+
+async def fetch_verified_capture_skin_segmentation(
+    *,
+    content: bytes,
+    content_type: str,
+    filename: str,
+    receipt_id: str,
+    subject_id: str,
+    resource_id: str,
+    purpose: str,
+    manifest_sha256: str,
+    image_sha256: str,
+    device_pipeline_fingerprint_sha256: str,
+) -> dict:
+    if purpose not in {"cosmetic_skin_analysis", "body_tone_analysis"}:
+        raise DSICaptureRejected("dsi_capture_purpose_rejected")
+    payload = await _post_receipt_bound_inference(
+        "/v1/dsi/capture/skin-segmentation",
+        content=content,
+        content_type=content_type,
+        filename=filename,
+        receipt_id=receipt_id,
+        subject_id=subject_id,
+        resource_id=resource_id,
+        purpose=purpose,
+        manifest_sha256=manifest_sha256,
+        image_sha256=image_sha256,
+        device_pipeline_fingerprint_sha256=device_pipeline_fingerprint_sha256,
+    )
+    if not (
+        payload.get("status") == "segmentation_detected_unvalidated_skin_masks"
+        and payload.get("image_persisted") is False
+        and payload.get("skin_tone_value_computed") is False
+        and payload.get("absolute_color_calibration_performed") is False
+    ):
+        raise DSIProviderUnavailable("dsi_verified_capture_segmentation_contract_invalid")
+    return payload
+
+
+async def fetch_verified_capture_face_landmarks(
+    *,
+    content: bytes,
+    content_type: str,
+    filename: str,
+    receipt_id: str,
+    subject_id: str,
+    resource_id: str,
+    purpose: str,
+    manifest_sha256: str,
+    image_sha256: str,
+    device_pipeline_fingerprint_sha256: str,
+) -> dict:
+    if purpose != "facial_geometry_analysis":
+        raise DSICaptureRejected("dsi_capture_purpose_rejected")
+    payload = await _post_receipt_bound_inference(
+        "/v1/dsi/capture/face-landmarks",
+        content=content,
+        content_type=content_type,
+        filename=filename,
+        receipt_id=receipt_id,
+        subject_id=subject_id,
+        resource_id=resource_id,
+        purpose=purpose,
+        manifest_sha256=manifest_sha256,
+        image_sha256=image_sha256,
+        device_pipeline_fingerprint_sha256=device_pipeline_fingerprint_sha256,
+    )
+    if not (
+        payload.get("status") == "landmarks_detected_unvalidated_geometry"
+        and payload.get("image_persisted") is False
+        and payload.get("face_recognition_performed") is False
+        and payload.get("identity_matching_performed") is False
+    ):
+        raise DSIProviderUnavailable("dsi_verified_capture_face_contract_invalid")
+    return payload
