@@ -44,3 +44,5 @@ jobs:
         run: python -m compileall -q services/marketplace-bff/app
       - name: Validate shared appearance browser bundle
         run: node --check apps/demo-web/assets/appearance-workspace.js
+      - name: Test shared Appearance portal integration
+        run: python -m pytest -q apps/demo-web/test_portal_contract.py
