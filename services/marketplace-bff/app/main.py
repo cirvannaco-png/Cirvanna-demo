@@ -209,6 +209,7 @@ class AppearanceConsentRenewalIn(BaseModel):
     look_id: str = Field(min_length=8, max_length=128)
     accept_session_storage: bool
     accept_source_storage: bool = False
+    accept_image_processing: bool = False
 
     @field_validator("look_id")
     @classmethod
@@ -1280,14 +1281,17 @@ async def renew_appearance_consent(request: Request, payload: AppearanceConsentR
             raise HTTPException(502, detail={"code": "APPEARANCE_CONSENT_CONTEXT_SCOPE_MISMATCH"})
         scopes = context["required_scopes"]
         expected_scopes = (
-            ["appearance_session_storage", "appearance_source_storage"]
+            ["appearance_session_storage", "appearance_source_storage", "image_processing"]
             if context["base_kind"] == "source_photo"
             else ["appearance_session_storage"]
         )
         if scopes != expected_scopes:
             raise HTTPException(502, detail={"code": "APPEARANCE_CONSENT_CONTEXT_INVALID"})
-        if context["base_kind"] == "source_photo" and payload.accept_source_storage is not True:
-            raise HTTPException(422, detail={"code": "APPEARANCE_SOURCE_STORAGE_CONSENT_REQUIRED"})
+        if context["base_kind"] == "source_photo":
+            if payload.accept_source_storage is not True:
+                raise HTTPException(422, detail={"code": "APPEARANCE_SOURCE_STORAGE_CONSENT_REQUIRED"})
+            if payload.accept_image_processing is not True:
+                raise HTTPException(422, detail={"code": "APPEARANCE_IMAGE_PROCESSING_CONSENT_REQUIRED"})
 
         identity_base, identity_token = _identity_learning_service()
         consent_id = str(uuid.uuid4())
