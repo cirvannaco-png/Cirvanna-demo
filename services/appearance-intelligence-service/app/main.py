@@ -13,7 +13,7 @@ import os
 import re
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
@@ -23,7 +23,7 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -850,6 +850,56 @@ def _consent_id_for_look(look_id: str, subject_id: str) -> str:
         return row.consent_id
 
 
+async def _revoke_identity_consent_bundle(
+    *, subject_id: str, consent_id: str, resource_id: str,
+) -> None:
+    """Withdraw one exact subject/bundle/resource; one receipt revokes the complete bundle."""
+    base, token = _provider_base("IDENTITY_SERVICE_URL", "IDENTITY_SERVICE_TOKEN")
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(10.0, connect=2.0),
+        trust_env=False,
+        follow_redirects=False,
+    ) as client:
+        listing = await client.get(
+            base + f"/v1/tal/consents/{subject_id}",
+            headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+        )
+        if listing.status_code != 200:
+            raise HTTPException(503, detail={"code": "APPEARANCE_OLD_CONSENT_LIST_UNAVAILABLE"})
+        try:
+            receipts = listing.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "APPEARANCE_OLD_CONSENT_LIST_INVALID"}) from exc
+        if not isinstance(receipts, list):
+            raise HTTPException(502, detail={"code": "APPEARANCE_OLD_CONSENT_LIST_INVALID"})
+        active = [
+            item for item in receipts
+            if isinstance(item, dict)
+            and item.get("consent_id") == consent_id
+            and item.get("resource_id") == resource_id
+            and item.get("granted") is True
+            and item.get("revoked_at") is None
+        ]
+        if not active:
+            return
+        receipt_id = active[0].get("receipt_id")
+        if not isinstance(receipt_id, str):
+            raise HTTPException(502, detail={"code": "APPEARANCE_OLD_CONSENT_RECEIPT_INVALID"})
+        response = await client.post(
+            base + f"/v1/tal/consents/{receipt_id}/revoke",
+            params={"subject_id": subject_id},
+            headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+        )
+        if response.status_code != 200:
+            raise HTTPException(503, detail={"code": "APPEARANCE_OLD_CONSENT_REVOCATION_FAILED"})
+        try:
+            result = response.json()
+        except ValueError as exc:
+            raise HTTPException(502, detail={"code": "APPEARANCE_OLD_CONSENT_REVOCATION_INVALID"}) from exc
+        if not isinstance(result, dict) or result.get("status") not in {"revoked", "already_denied"}:
+            raise HTTPException(502, detail={"code": "APPEARANCE_OLD_CONSENT_REVOCATION_INVALID"})
+
+
 def _deletion_payload(job: AppearanceLookDeletionRow) -> dict:
     return {
         "job_id": job.job_id,
@@ -930,7 +980,7 @@ async def _process_deletion_job(job_id: str) -> dict:
             raise HTTPException(404, detail={"code": "APPEARANCE_DELETION_JOB_NOT_FOUND"})
         if job.status == "completed":
             return _deletion_payload(job)
-        if job.status == "processing":
+        if job.status == "processing" and job.updated_at > utcnow() - timedelta(minutes=5):
             return _deletion_payload(job)
         job.status = "processing"
         job.updated_at = utcnow()
@@ -1110,9 +1160,13 @@ async def delete_look(look_id: str, payload: DeleteLookIn):
 @app.post("/internal/v1/deletions/process", dependencies=[Depends(require_internal_token)])
 async def process_deletions(limit: int = Query(default=20, ge=1, le=100)):
     with _database() as db:
-        jobs = list(db.scalars(select(AppearanceLookDeletionRow).where(
-            AppearanceLookDeletionRow.status.in_(["queued", "retry"])
-        ).order_by(AppearanceLookDeletionRow.created_at.asc()).limit(limit)).all())
+        jobs = list(db.scalars(select(AppearanceLookDeletionRow).where(or_(
+            AppearanceLookDeletionRow.status.in_(["queued", "retry"]),
+            (
+                (AppearanceLookDeletionRow.status == "processing")
+                & (AppearanceLookDeletionRow.updated_at < utcnow() - timedelta(minutes=5))
+            ),
+        )).order_by(AppearanceLookDeletionRow.created_at.asc()).limit(limit)).all())
         job_ids = [job.job_id for job in jobs]
     results = []
     for job_id in job_ids:
@@ -1156,6 +1210,14 @@ def get_look_consent_context(
 async def renew_look_consent(look_id: str, payload: ConsentRenewalIn):
     """Atomically bind a new, verified consent bundle while preserving its history."""
     _identifier(look_id, "look_id")
+    if consent["consent_version"] != payload.consent_version:
+        raise HTTPException(403, detail={"code": "APPEARANCE_CONSENT_VERSION_MISMATCH"})
+    if payload.consent_id != previous_consent_id:
+        await _revoke_identity_consent_bundle(
+            subject_id=payload.subject_id,
+            consent_id=previous_consent_id,
+            resource_id=look_id,
+        )
     with _database() as db:
         row = get_look(db, payload.subject_id, look_id, lock=True)
         if row is None:
@@ -1318,8 +1380,8 @@ async def branch_from_render(look_id: str, payload: BranchLookIn):
         parent_base = _base_from_document(parent_version.base_snapshot)
         branch_base = LookBase(
             kind=LookBaseKind.PREVIOUS_RENDER,
-            source_asset_ids=parent_base.source_asset_ids,
-            source_asset_parent_id=parent_base.source_asset_parent_id,
+            source_asset_ids=(parent_version.output_asset_id,),
+            source_asset_parent_id=look_id,
             twin_id=parent_base.twin_id,
             parent_look_id=look_id,
             parent_render_asset_id=parent_version.output_asset_id,
