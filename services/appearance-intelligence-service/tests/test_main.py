@@ -549,6 +549,55 @@ def test_renew_consent_rebinds_active_bundle_and_preserves_history(client):
         ]
 
 
+def test_renewal_revokes_old_bundle_only_after_new_bundle_is_verified(client):
+    create_source_look(client)
+    response = client.post(
+        f"/internal/v1/looks/{LOOK_ID}/renew-consent",
+        headers=auth(),
+        json={
+            "subject_id": SUBJECT,
+            "consent_id": "consent-appearance-renewed-002",
+            "consent_version": "appearance-look-session-v1",
+        },
+    )
+    assert response.status_code == 200, response.text
+    revocations = [
+        call for call in client.app.state.provider.calls
+        if isinstance(call, tuple) and len(call) == 2 and call[0].endswith("/revoke")
+    ]
+    assert len(revocations) == 1
+    assert revocations[0][0].endswith("/appearance-delete-receipt-001/revoke")
+    assert revocations[0][1]["subject_id"] == SUBJECT
+
+    consent_verify_calls = [
+        call for call in client.app.state.provider.calls
+        if isinstance(call, tuple) and len(call) == 2
+        and call[0].endswith("/internal/v1/consents/verify")
+    ]
+    assert len(consent_verify_calls) == 1
+    assert consent_verify_calls[0][1]["consent_id"] == "consent-appearance-renewed-002"
+
+
+def test_consent_version_mismatch_does_not_revoke_previous_bundle(client):
+    create_source_look(client)
+    response = client.post(
+        f"/internal/v1/looks/{LOOK_ID}/renew-consent",
+        headers=auth(),
+        json={
+            "subject_id": SUBJECT,
+            "consent_id": "consent-appearance-wrong-version",
+            "consent_version": "wrong-appearance-policy-version",
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "APPEARANCE_CONSENT_VERSION_MISMATCH"
+    revocations = [
+        call for call in client.app.state.provider.calls
+        if isinstance(call, tuple) and len(call) == 2 and call[0].endswith("/revoke")
+    ]
+    assert revocations == []
+
+
 def test_denied_renewal_does_not_replace_previous_consent(client):
     create_source_look(client)
     client.app.state.provider.consent_allowed = False
