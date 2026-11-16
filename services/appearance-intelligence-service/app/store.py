@@ -36,6 +36,27 @@ class AppearanceLookRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class AppearanceLookConsentEventRow(Base):
+    __tablename__ = "appearance_look_consent_events"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["look_id"], ["appearance_look_sessions.look_id"],
+            name="fk_appearance_look_consent_event_session",
+        ),
+        UniqueConstraint("look_id", "consent_id", name="uq_appearance_look_consent_event"),
+        Index("ix_appearance_look_consent_event_subject", "subject_id", "created_at"),
+    )
+
+    event_id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    look_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    subject_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    previous_consent_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    consent_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    consent_version: Mapped[str] = mapped_column(String(80), nullable=False)
+    granted_scopes: Mapped[list[str]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class AppearanceLookVersionRow(Base):
     __tablename__ = "appearance_look_versions"
     __table_args__ = (
