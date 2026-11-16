@@ -164,7 +164,9 @@ def test_create_look_binds_consent_private_source_asset_and_owner(client):
 
     provider_calls = client.app.state.provider.calls
     assert provider_calls[0][0].endswith("/internal/v1/consents/verify")
-    assert provider_calls[0][1]["required_scopes"] == ["appearance_session_storage", "image_processing"]
+    assert provider_calls[0][1]["required_scopes"] == [
+        "appearance_session_storage", "appearance_source_storage", "image_processing",
+    ]
     assert provider_calls[1][1]["purpose"] == "appearance_source_image"
     assert provider_calls[1][1]["parent_id"] == LOOK_ID
 
@@ -297,7 +299,9 @@ def test_reset_and_undo_create_new_versions_without_mutating_history(client):
     })
     assert undo.status_code == 200
     assert undo.json()["look"]["version"] == 4
-    assert undo.json()["look"]["operations"][0]["component"] == "facial_hair"
+    assert {item["component"] for item in undo.json()["look"]["operations"]} == {
+        "hairstyle", "facial_hair",
+    }
 
     versions = client.get(f"/v1/looks/{LOOK_ID}/versions", headers=auth(), params={"subject_id": SUBJECT})
     assert versions.status_code == 200
