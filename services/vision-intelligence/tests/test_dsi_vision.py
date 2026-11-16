@@ -407,6 +407,7 @@ def test_capture_challenge_is_issued_through_identity(dsi_client, monkeypatch):
             "status": "issued",
             "challenge_id": "dsi_challenge_0123456789abcdef",
             "nonce_b64url": "A" * 43,
+            "expires_at": "2026-11-16T13:00:00+03:00",
         }
 
     monkeypatch.setattr(dsi_vision, "issue_identity_capture_challenge", issue)
@@ -423,6 +424,9 @@ def test_capture_challenge_is_issued_through_identity(dsi_client, monkeypatch):
     )
     assert response.status_code == 200, response.text
     assert response.json()["status"] == "issued"
+    assert response.json()["challenge"]["challengeId"] == "dsi_challenge_0123456789abcdef"
+    assert response.json()["challenge"]["nonceBase64Url"] == "A" * 43
+    assert response.json()["challenge"]["expiresAtEpochMs"] > 0
     assert calls[0].subject_id == "subject-1"
     assert calls[0].purpose == "cosmetic_skin_analysis"
 
