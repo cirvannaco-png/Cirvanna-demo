@@ -1407,17 +1407,21 @@ async def renew_appearance_consent(request: Request, payload: AppearanceConsentR
 
 @app.post("/api/appearance/looks/{look_id}/source")
 async def upload_appearance_source(request: Request, look_id: str) -> Response:
-    """Upload a source photo only after its look-bound storage and processing consent."""
+    """Upload a source photo only after account and look-bound consent checks."""
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:@-]{7,127}", look_id):
         raise HTTPException(422, detail={"code": "APPEARANCE_LOOK_ID_INVALID"})
-    try:
-        form = await request.form()
-    except Exception as exc:
-        raise HTTPException(400, detail={"code": "APPEARANCE_UPLOAD_FORM_INVALID"}) from exc
-    consent_id = form.get("consent_id")
-    uploaded = form.get("file")
-    if not isinstance(consent_id, str) or len(consent_id.strip()) < 8 or not isinstance(uploaded, StarletteUploadFile):
-        raise HTTPException(422, detail={"code": "APPEARANCE_SOURCE_UPLOAD_FIELDS_REQUIRED"})
+    consent_id = request.headers.get("x-appearance-consent-id", "").strip()
+    if len(consent_id) < 8:
+        raise HTTPException(422, detail={"code": "APPEARANCE_CONSENT_HEADER_REQUIRED"})
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            declared_length = int(content_length)
+        except ValueError as exc:
+            raise HTTPException(400, detail={"code": "APPEARANCE_UPLOAD_LENGTH_INVALID"}) from exc
+        if declared_length <= 0 or declared_length > MAX_VISION_IMAGE_BYTES + 512_000:
+            raise HTTPException(413, detail={"code": "APPEARANCE_SOURCE_IMAGE_SIZE_INVALID"})
+
     async with httpx.AsyncClient(timeout=httpx.Timeout(20.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
         subject, _ = await _verified_commerce_subject(client, request)
         identity_base, identity_token = _identity_learning_service()
@@ -1427,7 +1431,7 @@ async def upload_appearance_source(request: Request, look_id: str) -> Response:
                 headers={"Authorization": "Bearer " + identity_token, "Accept": "application/json"},
                 json={
                     "subject_id": subject,
-                    "consent_id": consent_id.strip(),
+                    "consent_id": consent_id,
                     "resource_id": look_id,
                     "required_scopes": [
                         "appearance_session_storage", "appearance_source_storage", "image_processing",
@@ -1446,37 +1450,58 @@ async def upload_appearance_source(request: Request, look_id: str) -> Response:
         except ValueError as exc:
             raise HTTPException(502, detail={"code": "APPEARANCE_SOURCE_CONSENT_RESPONSE_INVALID"}) from exc
         required = {"appearance_session_storage", "appearance_source_storage", "image_processing"}
+        expires_at = receipt.get("expires_at") if isinstance(receipt, dict) else None
+        try:
+            parsed_expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00")) if isinstance(expires_at, str) else None
+        except ValueError:
+            parsed_expiry = None
         if not (
             isinstance(receipt, dict)
             and receipt.get("verified") is True
             and receipt.get("active") is True
             and receipt.get("subject_id") == subject
-            and receipt.get("consent_id") == consent_id.strip()
+            and receipt.get("consent_id") == consent_id
             and receipt.get("resource_id") == look_id
             and required.issubset(set(receipt.get("granted_scopes", [])))
-            and isinstance(receipt.get("expires_at"), str)
+            and parsed_expiry is not None
+            and parsed_expiry.tzinfo is not None
+            and parsed_expiry > datetime.now(timezone.utc)
         ):
             raise HTTPException(403, detail={"code": "APPEARANCE_SOURCE_CONSENT_BINDING_INVALID"})
-        # Do not read the uploaded photo into application memory until the
-        # exact subject/resource storage and processing consent is verified.
-        raw = await uploaded.read(MAX_VISION_IMAGE_BYTES + 1)
-        await uploaded.close()
-        if not raw or len(raw) > MAX_VISION_IMAGE_BYTES:
-            raise HTTPException(413, detail={"code": "APPEARANCE_SOURCE_IMAGE_SIZE_INVALID"})
-        asset_base, asset_token = _internal_service("ASSET_SERVICE_URL", "ASSET_SERVICE_TOKEN")
+
+        # Only parse the multipart body after the exact account/resource grant passes.
         try:
-            response = await client.post(
-                asset_base + "/internal/v1/assets",
-                headers={"Authorization": "Bearer " + asset_token, "Accept": "application/json"},
-                data={
-                    "owner_user_id": subject,
-                    "purpose": "appearance_source_image",
-                    "parent_id": look_id,
-                },
-                files={"file": (uploaded.filename or "appearance-source", raw, uploaded.content_type or "application/octet-stream")},
-            )
-        except httpx.HTTPError as exc:
-            raise HTTPException(503, detail={"code": "APPEARANCE_SOURCE_ASSET_UPLOAD_UNAVAILABLE"}) from exc
+            form = await request.form(max_files=1, max_fields=0)
+        except Exception as exc:
+            raise HTTPException(400, detail={"code": "APPEARANCE_UPLOAD_FORM_INVALID"}) from exc
+        try:
+            uploaded = form.get("file")
+            if not isinstance(uploaded, StarletteUploadFile):
+                raise HTTPException(422, detail={"code": "APPEARANCE_SOURCE_FILE_REQUIRED"})
+            raw = await uploaded.read(MAX_VISION_IMAGE_BYTES + 1)
+            if not raw or len(raw) > MAX_VISION_IMAGE_BYTES:
+                raise HTTPException(413, detail={"code": "APPEARANCE_SOURCE_IMAGE_SIZE_INVALID"})
+            asset_base, asset_token = _internal_service("ASSET_SERVICE_URL", "ASSET_SERVICE_TOKEN")
+            try:
+                response = await client.post(
+                    asset_base + "/internal/v1/assets",
+                    headers={"Authorization": "Bearer " + asset_token, "Accept": "application/json"},
+                    data={
+                        "owner_user_id": subject,
+                        "purpose": "appearance_source_image",
+                        "parent_id": look_id,
+                    },
+                    files={"file": (
+                        uploaded.filename or "appearance-source",
+                        raw,
+                        uploaded.content_type or "application/octet-stream",
+                    )},
+                )
+            except httpx.HTTPError as exc:
+                raise HTTPException(503, detail={"code": "APPEARANCE_SOURCE_ASSET_UPLOAD_UNAVAILABLE"}) from exc
+        finally:
+            await form.close()
+
     if response.status_code in {400, 403, 404, 413, 415, 422}:
         try:
             detail = response.json().get("detail", {})
