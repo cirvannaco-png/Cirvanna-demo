@@ -117,6 +117,9 @@
       renderCapabilities(data);
     } catch (error) {
       bearer = "";
+      tokenInput.disabled = false;
+      tokenInput.value = "";
+      tokenInput.placeholder = "Paste a signed customer session token";
       setStatus(error instanceof Error ? error.message : "Could not verify your session or Twin service.", "error");
       connectButton.disabled = false;
       connectButton.textContent = "Verify session";
