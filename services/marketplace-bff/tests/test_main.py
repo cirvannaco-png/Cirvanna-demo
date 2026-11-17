@@ -839,6 +839,31 @@ def test_wardrobe_recommendations_forward_verified_token_to_cal_decision_gateway
     assert "Authorization" not in response.text
 
 
+def test_sanctuary_and_twin_onboarding_pages_are_served_without_cache(client):
+    sanctuary = client.get("/sanctuary.html")
+    assert sanctuary.status_code == 200
+    assert "Cirvanna — Your Sanctuary" in sanctuary.text
+    assert "twin-onboarding.html" in sanctuary.text
+    assert sanctuary.headers["cache-control"] == "no-store"
+
+    onboarding = client.get("/twin-onboarding.html")
+    assert onboarding.status_code == 200
+    assert "Cirvanna — Your Twin Journey" in onboarding.text
+    assert "/api/virtual-twin/capabilities" in onboarding.text
+    assert "No consent is being recorded on this page" in onboarding.text
+    assert "Capture is currently locked" in onboarding.text
+    assert onboarding.headers["cache-control"] == "no-store"
+    assert onboarding.headers["permissions-policy"] == "camera=(), microphone=(), geolocation=()"
+
+    stylesheet = client.get("/assets/cirvanna-twin-onboarding.css")
+    script = client.get("/assets/cirvanna-twin-onboarding.js")
+    assert stylesheet.status_code == 200
+    assert script.status_code == 200
+    assert "prefers-reduced-motion" in stylesheet.text
+    assert "localStorage" not in script.text
+    assert "sessionStorage" not in script.text
+
+
 def test_wardrobe_page_exposes_feedback_and_consent_controls(client):
     response = client.get("/wardrobe")
     assert response.status_code == 200
