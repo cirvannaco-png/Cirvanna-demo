@@ -849,7 +849,7 @@ def test_sanctuary_and_twin_onboarding_pages_are_served_without_cache(client):
     onboarding = client.get("/twin-onboarding.html")
     assert onboarding.status_code == 200
     assert "Cirvanna — Your Twin Journey" in onboarding.text
-    assert "/api/virtual-twin/capabilities" in onboarding.text
+    assert "cirvanna-twin-onboarding.js" in onboarding.text
     assert "No consent is being recorded on this page" in onboarding.text
     assert "Capture is currently locked" in onboarding.text
     assert onboarding.headers["cache-control"] == "no-store"
