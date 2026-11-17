@@ -39,6 +39,7 @@ def test_demo_pages_have_no_horizontal_overflow_on_mobile_and_landscape():
                 if page_path.name == "sanctuary.html":
                     assert page.locator("#primaryNav").count() == 1
                     assert page.locator("#menuToggle").count() == 1
+                    page.set_viewport_size({"width": 393, "height": 873})
                     page.locator("#menuToggle").click()
                     assert page.locator("#menuToggle").get_attribute("aria-expanded") == "true"
                     page.keyboard.press("Escape")
