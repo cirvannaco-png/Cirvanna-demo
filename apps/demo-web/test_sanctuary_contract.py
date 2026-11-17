@@ -44,8 +44,8 @@ class SanctuaryContractTests(unittest.TestCase):
     def test_local_asset_references_resolve(self):
         self.assertTrue((ROOT / "assets" / "cirvanna-sanctuary.css").is_file())
         self.assertTrue((ROOT / "assets" / "cirvanna-sanctuary.js").is_file())
-        self.assertRegex(HTML, r'<link rel="stylesheet" href="/assets/cirvanna-sanctuary\.css">')
-        self.assertRegex(HTML, r'<script src="/assets/cirvanna-sanctuary\.js" defer></script>')
+        self.assertRegex(HTML, r'<link rel="stylesheet" href="assets/cirvanna-sanctuary\.css">')
+        self.assertRegex(HTML, r'<script src="assets/cirvanna-sanctuary\.js" defer></script>')
 
 
 if __name__ == "__main__":
