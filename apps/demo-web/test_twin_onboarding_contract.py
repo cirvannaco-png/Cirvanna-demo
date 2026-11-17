@@ -6,16 +6,18 @@ import unittest
 ROOT = Path(__file__).resolve().parent
 HTML = (ROOT / "twin-onboarding.html").read_text(encoding="utf-8")
 CSS = (ROOT / "assets" / "cirvanna-twin-onboarding.css").read_text(encoding="utf-8")
+BASE_CSS = (ROOT / "assets" / "cirvanna-sanctuary.css").read_text(encoding="utf-8")
 JS = (ROOT / "assets" / "cirvanna-twin-onboarding.js").read_text(encoding="utf-8")
 SANCTUARY = (ROOT / "sanctuary.html").read_text(encoding="utf-8")
 
 
 class TwinOnboardingContractTests(unittest.TestCase):
     def test_brand_direction_and_blue_flame_are_preserved(self):
-        self.assertIn("--cv-obsidian", CSS)
-        self.assertIn("--cv-gold", CSS)
-        self.assertIn("--cv-purple", CSS)
-        self.assertIn("--cv-blue", CSS)
+        self.assertIn("--cv-obsidian", BASE_CSS)
+        self.assertIn("--cv-gold", BASE_CSS)
+        self.assertIn("--cv-purple", BASE_CSS)
+        self.assertIn("--cv-blue", BASE_CSS)
+        self.assertIn("var(--cv-gold)", CSS)
         self.assertIn("From blue flame", HTML)
         self.assertIn("Your Twin", HTML)
 
