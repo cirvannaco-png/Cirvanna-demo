@@ -7,6 +7,7 @@ import pytest
 
 PAGE_CANDIDATES = (
     Path("apps/demo-web/sanctuary.html"),
+    Path("apps/demo-web/twin-onboarding.html"),
     Path("apps/demo-web/living-filters.html"),
     Path("apps/demo-web/marketplace.html"),
     Path("apps/demo-web/wardrobe.html"),
@@ -44,6 +45,11 @@ def test_demo_pages_have_no_horizontal_overflow_on_mobile_and_landscape():
                     assert page.locator("#menuToggle").get_attribute("aria-expanded") == "true"
                     page.keyboard.press("Escape")
                     assert page.locator("#menuToggle").get_attribute("aria-expanded") == "false"
+                if page_path.name == "twin-onboarding.html":
+                    assert page.locator("#connectSession").count() == 1
+                    assert page.locator("#startCapture").is_disabled()
+                    assert page.locator('input[type="file"]').count() == 0
+                    assert page.locator("#capabilityGrid").count() == 1
                 for width, height in VIEWPORTS:
                     page.set_viewport_size({"width": width, "height": height})
                     page.wait_for_timeout(100)
