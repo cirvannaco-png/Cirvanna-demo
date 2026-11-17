@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
+
 import pytest
 from pydantic import ValidationError
 
@@ -10,6 +14,7 @@ from app.generation_contract import (
     TwinGenerationResult,
     assert_generation_transition,
     validate_generation_bundle,
+    registry_registration_payload,
 )
 
 SOURCE_IDS = ["source-image-001", "source-image-002"]
@@ -265,3 +270,82 @@ def test_generation_lifecycle_rejects_unknown_states_without_key_error():
         match="TWIN_GENERATION_INVALID_STATE_TRANSITION",
     ):
         assert_generation_transition("unexpected", "active")  # type: ignore[arg-type]
+
+
+def test_validated_bundle_builds_registry_compatible_hmac_attestation():
+    sources = [
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+    ]
+    command = TwinGenerationCommand(
+        subject_id="subject-001",
+        twin_id="twin-001",
+        consent_id="consent-receipt-001",
+        consent_version="privacy-v1",
+        idempotency_key="generate-twin-001",
+        source_image_asset_ids=sources,
+    )
+    result = TwinGenerationResult(
+        subject_id="subject-001",
+        twin_id="twin-001",
+        provider_id="body-provider",
+        provider_job_id="provider-job-001",
+        representation_type="full_body_mesh",
+        artifact_content_type="model/gltf-binary",
+        artifact_asset_id="33333333-3333-4333-8333-333333333333",
+        source_image_asset_ids=sources,
+        model_id=MODEL_ID,
+        model_revision=MODEL_REVISION,
+        model_release_sha256=MODEL_RELEASE_SHA256,
+        artifact_sha256=ARTIFACT_SHA256,
+    )
+    receipt = MeshValidationReceipt(
+        validator_id="independent-mesh-validator",
+        receipt_id="validation-receipt-001",
+        validated=True,
+        consent_id="consent-receipt-001",
+        consent_version="privacy-v1",
+        subject_id="subject-001",
+        twin_id="twin-001",
+        representation_type="full_body_mesh",
+        artifact_content_type="model/gltf-binary",
+        artifact_asset_id=result.artifact_asset_id,
+        artifact_sha256=ARTIFACT_SHA256,
+        source_image_asset_ids=sources,
+        model_id=MODEL_ID,
+        model_revision=MODEL_REVISION,
+        model_release_sha256=MODEL_RELEASE_SHA256,
+        checks={
+            "artifact_readable": True,
+            "geometry_finite": True,
+            "topology_valid": True,
+            "body_coverage_valid": True,
+            "scale_within_bounds": True,
+            "privacy_scan_passed": True,
+            "source_photo_not_embedded": True,
+        },
+    )
+    secret = "test-only-secret-with-at-least-32-bytes"
+    payload = registry_registration_payload(
+        command, result, receipt, validation_hmac_secret=secret
+    )
+    signed_fields = {key: value for key, value in payload.items() if key != "validation_attestation_hmac"}
+    canonical = json.dumps(signed_fields, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    expected = hmac.new(secret.encode(), canonical.encode(), hashlib.sha256).hexdigest()
+    assert payload["validation_attestation_hmac"] == expected
+    assert payload["mesh_asset_id"] == result.artifact_asset_id
+    assert payload["source_image_asset_ids"] == sorted(sources)
+    assert payload["validation_report_sha256"] == hashlib.sha256(
+        json.dumps(receipt.model_dump(mode="json"), sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    ).hexdigest()
+
+
+def test_registry_attestation_refuses_short_secrets_and_non_asset_ids():
+    command, result, receipt = bundle()
+    with pytest.raises(GenerationContractError, match="TWIN_VALIDATION_ATTESTATION_NOT_CONFIGURED"):
+        registry_registration_payload(command, result, receipt, validation_hmac_secret="short")
+    with pytest.raises(GenerationContractError, match="TWIN_GENERATION_ASSET_ID_INVALID"):
+        registry_registration_payload(
+            command, result, receipt,
+            validation_hmac_secret="test-only-secret-with-at-least-32-bytes",
+        )
