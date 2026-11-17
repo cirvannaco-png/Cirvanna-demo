@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#09080d">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Prepare your personal Cirvanna Twin journey with clear capability and privacy checks.">
+  <title>Cirvanna — Your Twin Journey</title>
+  <link rel="stylesheet" href="assets/cirvanna-sanctuary.css">
+  <link rel="stylesheet" href="assets/cirvanna-twin-onboarding.css">
+  <script src="assets/cirvanna-twin-onboarding.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="cv-header">
+    <div class="cv-shell cv-header-inner">
+      <a class="cv-brand" href="sanctuary.html" aria-label="Cirvanna Sanctuary home">
+        <span class="cv-brand-mark" aria-hidden="true">✧</span>
+        <span><span class="cv-brand-name">CIRVANNA</span><span class="cv-brand-sub">Discover · Transform · Thrive</span></span>
+      </a>
+      <nav class="cv-nav" aria-label="Primary navigation" data-open="true">
+        <a href="sanctuary.html">Sanctuary</a>
+        <a href="wardrobe.html">My Wardrobe</a>
+        <a href="marketplace.html">Marketplace</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="cv-shell to-page" id="main">
+    <div class="to-breadcrumb"><a href="sanctuary.html">Sanctuary</a><span aria-hidden="true">/</span><span>Your Twin journey</span></div>
+
+    <section class="to-hero" aria-labelledby="pageTitle">
+      <div>
+        <div class="to-eyebrow">Your identity · your choice · your control</div>
+        <h1 id="pageTitle">From blue flame<br>to <em>your Twin.</em></h1>
+        <p class="to-lead">Your Twin should be a faithful, private representation—not a decorative avatar or a guessed body shape. Cirvanna will only replace the Blue Flame after a consented capture, full-body reconstruction, independent validation and owner-bound persistence are genuinely complete.</p>
+        <div class="cv-actions">
+          <a class="cv-button cv-button-primary" href="#capabilityCheck">Check Twin readiness <span aria-hidden="true">↓</span></a>
+          <a class="cv-button" href="sanctuary.html">Return to sanctuary</a>
+        </div>
+      </div>
+
+      <div class="to-flame-stage" role="img" aria-label="The electric-blue human silhouette remains the temporary Cirvanna identity until your persistent Twin is ready">
+        <div class="to-flame-aura" aria-hidden="true"></div>
+        <svg class="to-flame" viewBox="0 0 220 380" aria-hidden="true">
+          <defs>
+            <linearGradient id="toBlue" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#d6fbff"/><stop offset=".45" stop-color="#45b5ff"/><stop offset="1" stop-color="#574ce0"/></linearGradient>
+            <filter id="toGlow"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+          </defs>
+          <g fill="none" stroke="url(#toBlue)" stroke-linecap="round" filter="url(#toGlow)">
+            <path d="M109 29C91 5 108-5 119 14c8 15 0 27-2 38M73 64C55 39 62 24 78 13c-2 25 9 31 17 46M147 64c22-25 16-40 0-51 2 25-9 31-17 46" stroke-width="4"/>
+            <path d="M78 136C55 111 53 91 65 72c1 23 15 35 26 44M142 136c23-25 25-45 13-64-1 23-15 35-26 44" stroke-width="4"/>
+            <path d="M83 205c-23-20-28-43-16-63 2 21 13 31 25 40M137 205c23-20 28-43 16-63-2 21-13 31-25 40" stroke-width="4"/>
+            <path d="M92 291c-19 24-13 46 0 66-1-20 8-30 18-39M128 291c19 24 13 46 0 66 1-20-8-30-18-39" stroke-width="4"/>
+          </g>
+          <g fill="url(#toBlue)" stroke="#b9f4ff" stroke-width="1.3" opacity=".88">
+            <circle cx="110" cy="77" r="25"/>
+            <path d="M110 106c-22 0-38 12-45 35l-18 48c-3 9 1 16 9 18 8 2 14-3 17-12l14-33-8 63-13 85c-1 11 4 18 13 19 9 1 14-5 17-15l14-73 14 73c3 10 8 16 17 15 9-1 14-8 13-19l-13-85-8-63 14 33c3 9 9 14 17 12 8-2 12-9 9-18l-18-48c-7-23-23-35-45-35Z"/>
+          </g>
+        </svg>
+        <div class="to-platform" aria-hidden="true"></div>
+        <div class="to-stage-caption">The flame remains until your Twin is real</div>
+      </div>
+    </section>
+
+    <section class="to-card" id="capabilityCheck" aria-labelledby="capabilityTitle">
+      <div class="to-eyebrow">Live service check</div>
+      <h2 id="capabilityTitle">Connect your account to check readiness.</h2>
+      <p>This development preview verifies your signed customer session through Cirvanna's Marketplace BFF, then reads the Virtual Twin service's actual capability response. The token stays in this page's memory and is never written to browser storage. Do not use an administrator or internal service credential.</p>
+      <div class="to-session-grid">
+        <label>
+          <span class="to-eyebrow" style="display:block;margin:0 0 7px">Short-lived customer session token</span>
+          <input class="to-input" id="sessionToken" type="password" autocomplete="off" spellcheck="false" placeholder="Paste a signed customer session token">
+        </label>
+        <button class="to-button" id="connectSession" type="button">Verify session</button>
+      </div>
+      <div class="to-status" id="sessionStatus" role="status" aria-live="polite">Not connected. No image, video or biometric data has been requested or uploaded.</div>
+      <div class="to-capability-grid" id="capabilityGrid" aria-live="polite"></div>
+      <div class="to-footnote">Production identity-provider sign-in is not yet integrated into this demo. This temporary token-entry control is for development validation only.</div>
+    </section>
+
+    <section class="to-layout">
+      <section class="to-card" aria-labelledby="journeyTitle">
+        <div class="to-eyebrow">The creation journey</div>
+        <h2 id="journeyTitle">What must happen before the flame changes.</h2>
+        <ol class="to-steps">
+          <li class="to-step"><span class="to-step-number">01</span><div><strong>Verify your account</strong><p>Cirvanna derives the owner from the signed identity session. The browser cannot nominate another user.</p></div></li>
+          <li class="to-step"><span class="to-step-number">02</span><div><strong>Ask for separate permissions</strong><p>Image processing, body measurements and persistent Twin storage are distinct choices. Consent must be resource-bound, revocable and checked before every operation.</p></div></li>
+          <li class="to-step"><span class="to-step-number">03</span><div><strong>Capture source images</strong><p>The production flow must disclose supported angles, image quality, retention and whether any video is accepted before asking you to share media.</p></div></li>
+          <li class="to-step"><span class="to-step-number">04</span><div><strong>Reconstruct and independently validate</strong><p>A separate validator must inspect the actual private mesh bytes, body-surface coverage, scale, topology and privacy properties.</p></div></li>
+          <li class="to-step"><span class="to-step-number">05</span><div><strong>Persist your owner-bound Twin</strong><p>The Twin Registry and private Asset Service must confirm ownership, active consent, private assets and deletion lifecycle before the Twin can appear.</p></div></li>
+        </ol>
+      </section>
+
+      <aside class="to-card" aria-labelledby="privacyTitle">
+        <div class="to-eyebrow">Privacy by purpose</div>
+        <h2 id="privacyTitle">Your permissions stay separate.</h2>
+        <div class="to-scope-list">
+          <div class="to-scope"><strong>Image processing</strong><span>Allows the specifically described image-processing operation. It does not, by itself, authorize long-term image storage.</span></div>
+          <div class="to-scope"><strong>Body measurements</strong><span>Allows the specified measurement process. A pose skeleton is not a calibrated measurement or fit result.</span></div>
+          <div class="to-scope"><strong>Virtual Twin storage</strong><span>Allows an owner-bound persistent Twin and its controlled lifecycle. Withdrawal must revoke access and trigger deletion.</span></div>
+        </div>
+        <div class="to-footnote">No consent is being recorded on this page. The actual creation workflow must request each permission against a specific Twin resource immediately before the corresponding operation.</div>
+      </aside>
+    </section>
+
+    <section class="to-card" aria-labelledby="lockedTitle">
+      <div class="to-locked">
+        <div>
+          <div class="to-eyebrow">Capture is currently locked</div>
+          <strong id="lockedTitle">The Blue Flame stays in place for now.</strong>
+          <p>The existing API can return an ephemeral pose skeleton from one still image. It rejects video and does not persist a Twin, create a full-body mesh or store source images. Starting an upload now would not deliver the experience promised.</p>
+        </div>
+        <span class="to-lock-icon" aria-hidden="true">✧</span>
+      </div>
+      <button class="to-button" id="startCapture" type="button" disabled aria-disabled="true">Capture is not enabled</button>
+      <p class="to-footnote">No camera is opened, no file picker is launched, no upload request is sent, and no consent receipt is created by this preview. Capture will only be enabled after the persistent generation, independent validation, registry, private storage and user-facing BFF workflow are live and tested.</p>
+    </section>
+
+    <footer class="cv-footer">
+      <span>© Cirvanna · Discover · Transform · Thrive</span>
+      <span>Obsidian · White · Gold · Purple · Blue Flame</span>
+      <span><a href="sanctuary.html">Sanctuary</a> · <a href="wardrobe.html">Wardrobe</a></span>
+    </footer>
+  </main>
+</body>
+</html>
