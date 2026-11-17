@@ -805,7 +805,8 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     try { await connect(); }
     catch (error) { status("connectionStatus",error.message,"error"); }
   });
-  $("addItemForm").addEventListener("submit", addWardrobeItem);\n  $("createOutfitForm").addEventListener("submit", createOutfit);
+  $("addItemForm").addEventListener("submit", addWardrobeItem);
+  $("createOutfitForm").addEventListener("submit", createOutfit);
   $("colorProfileForm").addEventListener("submit", saveColorProfile);
   $("refresh").addEventListener("click", async () => {
     try { await loadWardrobe(); }
