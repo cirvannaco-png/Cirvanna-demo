@@ -7,6 +7,9 @@ consent, private-asset, database, and commercially approved provider adapters.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import re
 from typing import Literal
 
@@ -279,3 +282,68 @@ def assert_generation_transition(current: GenerationStatus, target: GenerationSt
     allowed = _ALLOWED_TRANSITIONS.get(current)
     if allowed is None or target not in allowed:
         raise GenerationContractError("TWIN_GENERATION_INVALID_STATE_TRANSITION")
+
+
+def registry_registration_payload(
+    command: TwinGenerationCommand,
+    result: TwinGenerationResult,
+    receipt: MeshValidationReceipt,
+    *,
+    validation_hmac_secret: str,
+) -> dict[str, object]:
+    """Build the exact Twin Registry create request after independent validation.
+
+    The HMAC secret belongs only to the orchestration/validation trust boundary
+    and Twin Registry. It must never be sent to a browser or model provider.
+    The registry independently rechecks consent and private Asset Service
+    ownership before persisting this record.
+    """
+    validate_generation_bundle(command, result, receipt)
+    secret = validation_hmac_secret.strip()
+    if len(secret.encode("utf-8")) < 32:
+        raise GenerationContractError("TWIN_VALIDATION_ATTESTATION_NOT_CONFIGURED")
+
+    # Asset Service identifiers are UUIDs; the registry deliberately accepts
+    # no URL, object key, or arbitrary provider path.
+    import uuid
+
+    try:
+        uuid.UUID(result.artifact_asset_id)
+        for asset_id in command.source_image_asset_ids:
+            uuid.UUID(asset_id)
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise GenerationContractError("TWIN_GENERATION_ASSET_ID_INVALID") from exc
+
+    canonical_receipt = json.dumps(
+        receipt.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    validation_report_sha256 = hashlib.sha256(
+        canonical_receipt.encode("utf-8")
+    ).hexdigest()
+    body = {
+        "twin_id": command.twin_id,
+        "subject_id": command.subject_id,
+        "mesh_asset_id": result.artifact_asset_id,
+        "source_image_asset_ids": sorted(command.source_image_asset_ids),
+        "consent_id": command.consent_id,
+        "model_id": result.model_id,
+        "model_revision": result.model_revision,
+        "model_release_sha256": result.model_release_sha256,
+        "validation_report_sha256": validation_report_sha256,
+        "representation_type": "full_body_mesh",
+    }
+    canonical_body = json.dumps(
+        body, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    )
+    attestation = hmac.new(
+        secret.encode("utf-8"),
+        canonical_body.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return {
+        **body,
+        "validation_attestation_hmac": attestation,
+    }
