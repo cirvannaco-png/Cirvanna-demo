@@ -1,0 +1,35 @@
+name: Cirvanna demo web UI checks
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "apps/demo-web/sanctuary.html"
+      - "apps/demo-web/assets/cirvanna-sanctuary.css"
+      - "apps/demo-web/assets/cirvanna-sanctuary.js"
+      - "apps/demo-web/test_sanctuary_contract.py"
+      - "apps/demo-web/test_mobile_layouts.py"
+      - ".github/workflows/demo-web-ui.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  sanctuary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install UI test dependencies
+        run: python -m pip install pytest playwright
+      - name: Install Chromium
+        run: python -m playwright install --with-deps chromium
+      - name: Run sanctuary contract tests
+        run: python -m pytest apps/demo-web/test_sanctuary_contract.py -q
+      - name: Run responsive browser checks
+        run: python -m pytest apps/demo-web/test_mobile_layouts.py -q
+      - name: Check sanctuary JavaScript syntax
+        run: node --check apps/demo-web/assets/cirvanna-sanctuary.js
