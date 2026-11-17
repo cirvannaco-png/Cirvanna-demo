@@ -34,8 +34,8 @@ def test_demo_pages_have_no_horizontal_overflow_on_mobile_and_landscape():
                 page.on("pageerror", lambda error: page_errors.append(str(error)))
                 page.goto(page_path.resolve().as_uri(), wait_until="domcontentloaded")
                 if page_path.name == "wardrobe.html":
-                    assert page.locator("#dailyLooksPanel").count() == 1
-                    assert page.locator("#dailyLooksForm").count() == 1
+                    assert page.locator("#pnellyForm").count() == 1
+                    assert page.locator("#generatePNELLY").count() == 1
                 if page_path.name == "sanctuary.html":
                     assert page.locator("#primaryNav").count() == 1
                     assert page.locator("#menuToggle").count() == 1
