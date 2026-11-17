@@ -34,7 +34,7 @@ class TwinOnboardingContractTests(unittest.TestCase):
         self.assertIn("Capture is currently locked", HTML)
         self.assertIn("does not persist a Twin", HTML)
         self.assertIn("It rejects video", HTML)
-        self.assertIn("No photo, video or biometric data", HTML)
+        self.assertIn("No image, video or biometric data", HTML)
         self.assertNotIn('type="file"', HTML)
         self.assertNotIn("getUserMedia", HTML)
         self.assertNotIn("FormData", JS)
