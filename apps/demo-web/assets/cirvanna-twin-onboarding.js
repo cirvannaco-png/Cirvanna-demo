@@ -73,7 +73,7 @@
   }
 
   async function connect() {
-    const token = tokenInput.value.trim();
+    const token = bearer || tokenInput.value.trim();
     if (!token) {
       setStatus("Enter a short-lived signed customer session token. Do not use an admin or service credential.", "error");
       tokenInput.focus();
@@ -123,19 +123,5 @@
     }
   }
 
-  connectButton.addEventListener("click", () => {
-    if (bearer) {
-      // The verified token remains in volatile page memory only.
-      tokenInput.disabled = false;
-      tokenInput.value = "";
-      tokenInput.placeholder = "Re-enter a short-lived customer session token";
-      bearer = "";
-      connectButton.textContent = "Verify session";
-      capabilityGrid.replaceChildren();
-      captureButton.disabled = true;
-      setStatus("Session cleared. No image was uploaded or retained.");
-      return;
-    }
-    connect();
-  });
+  connectButton.addEventListener("click", connect);
 })();
