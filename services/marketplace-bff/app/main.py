@@ -27,6 +27,8 @@ SERVICE = "cirvanna-marketplace-bff"
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_HTML = ROOT / "apps" / "demo-web" / "marketplace.html"
 DEFAULT_WARDROBE_HTML = ROOT / "apps" / "demo-web" / "wardrobe.html"
+DEFAULT_SANCTUARY_HTML = ROOT / "apps" / "demo-web" / "sanctuary.html"
+DEFAULT_TWIN_ONBOARDING_HTML = ROOT / "apps" / "demo-web" / "twin-onboarding.html"
 DEFAULT_BRAND_PORTAL_HTML = ROOT / "apps" / "demo-web" / "brand-portal.html"
 DEFAULT_FOUNDER_CONSOLE_HTML = ROOT / "apps" / "demo-web" / "founder-console.html"
 DEFAULT_PORTAL_ASSETS = ROOT / "apps" / "demo-web" / "assets"
@@ -815,11 +817,32 @@ def _private_json_response(data: dict, *, status_code: int = 200) -> JSONRespons
 
 
 @app.get("/wardrobe", response_class=HTMLResponse)
+@app.get("/wardrobe.html", response_class=HTMLResponse)
 def wardrobe_page() -> HTMLResponse:
     try:
         html = DEFAULT_WARDROBE_HTML.read_text(encoding="utf-8")
     except OSError as exc:
         raise HTTPException(status_code=503, detail={"code": "WARDROBE_PAGE_UNAVAILABLE"}) from exc
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/sanctuary", response_class=HTMLResponse)
+@app.get("/sanctuary.html", response_class=HTMLResponse)
+def sanctuary_page() -> HTMLResponse:
+    try:
+        html = DEFAULT_SANCTUARY_HTML.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail={"code": "SANCTUARY_PAGE_UNAVAILABLE"}) from exc
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/twin-onboarding", response_class=HTMLResponse)
+@app.get("/twin-onboarding.html", response_class=HTMLResponse)
+def twin_onboarding_page() -> HTMLResponse:
+    try:
+        html = DEFAULT_TWIN_ONBOARDING_HTML.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail={"code": "TWIN_ONBOARDING_PAGE_UNAVAILABLE"}) from exc
     return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
