@@ -982,6 +982,89 @@ async def virtual_twin_capabilities(request: Request) -> Response:
     })
 
 
+@app.get("/api/virtual-twin/me")
+async def my_virtual_twins(request: Request) -> Response:
+    """Return metadata-only, owner-scoped active Twin records from the canonical registry."""
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(10.0, connect=2.0),
+        trust_env=False,
+        follow_redirects=False,
+    ) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        registry_base, registry_token = _internal_service(
+            "TWIN_REGISTRY_API_URL", "TWIN_REGISTRY_API_TOKEN"
+        )
+        try:
+            response = await client.get(
+                registry_base + "/internal/v1/twins",
+                params={"subject_id": subject, "limit": 10},
+                headers={
+                    "Authorization": "Bearer " + registry_token,
+                    "Accept": "application/json",
+                },
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "TWIN_REGISTRY_LIST_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "TWIN_REGISTRY_UNAVAILABLE"}) from exc
+
+    if response.status_code in {401, 403, 404}:
+        raise HTTPException(503, detail={"code": "TWIN_REGISTRY_UNAVAILABLE"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "TWIN_REGISTRY_UNAVAILABLE"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "TWIN_REGISTRY_RESPONSE_INVALID"}) from exc
+
+    records = data.get("twins") if isinstance(data, dict) else None
+    count = data.get("count") if isinstance(data, dict) else None
+    if (
+        not isinstance(records, list)
+        or isinstance(count, bool)
+        or not isinstance(count, int)
+        or count != len(records)
+        or count > 10
+    ):
+        raise HTTPException(502, detail={"code": "TWIN_REGISTRY_RESPONSE_INVALID"})
+
+    safe_records = []
+    allowed_states = {"active", "revoked", "deletion_pending", "deleted"}
+    for record in records:
+        if not isinstance(record, dict):
+            raise HTTPException(502, detail={"code": "TWIN_REGISTRY_RESPONSE_INVALID"})
+        twin_id = record.get("twin_id")
+        state = record.get("status")
+        version = record.get("version")
+        representation = record.get("representation_type")
+        model_id = record.get("model_id")
+        model_revision = record.get("model_revision")
+        created_at = record.get("created_at")
+        updated_at = record.get("updated_at")
+        if (
+            not isinstance(twin_id, str) or not twin_id.strip()
+            or not isinstance(state, str) or state not in allowed_states
+            or isinstance(version, bool) or not isinstance(version, int) or version < 1
+            or representation != "full_body_mesh"
+            or not isinstance(model_id, str) or not model_id.strip()
+            or not isinstance(model_revision, str) or not re.fullmatch(r"[0-9a-f]{40}", model_revision)
+            or not isinstance(created_at, str) or not isinstance(updated_at, str)
+        ):
+            raise HTTPException(502, detail={"code": "TWIN_REGISTRY_RESPONSE_INVALID"})
+        safe_records.append({
+            "twin_id": twin_id,
+            "status": state,
+            "version": version,
+            "representation_type": representation,
+            "model_id": model_id,
+            "model_revision": model_revision,
+            "created_at": created_at,
+            "updated_at": updated_at,
+        })
+
+    return _private_json_response({"twins": safe_records, "count": len(safe_records)})
+
+
 @app.post("/api/wardrobe/items/{item_id}/try-on")
 async def try_on_wardrobe_item(item_id: str, request: Request, payload: WardrobeTryOnIn) -> Response:
     """Start a private Twin render for an exact, active, user-owned wardrobe image."""

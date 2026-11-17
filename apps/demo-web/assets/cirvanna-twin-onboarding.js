@@ -35,6 +35,78 @@
     statusNode.dataset.kind = kind;
   }
 
+  async function loadSavedTwin(token) {
+    const statusNode = $("savedTwinStatus");
+    const details = $("savedTwinDetails");
+    details.replaceChildren();
+    statusNode.textContent = "Checking your owner-scoped Twin Registry record. This does not request or display any private image asset.";
+    statusNode.dataset.kind = "";
+
+    try {
+      const response = await fetch("/api/virtual-twin/me", {
+        method: "GET",
+        headers: {
+          Accept: "application/json",
+          Authorization: "Bearer " + token
+        },
+        cache: "no-store",
+        credentials: "same-origin"
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        const code = data?.detail?.code || data?.detail || ("HTTP " + response.status);
+        const messages = {
+          TWIN_REGISTRY_API_URL_NOT_CONFIGURED: "The private Twin Registry is not configured in this environment yet.",
+          TWIN_REGISTRY_API_TOKEN_NOT_CONFIGURED: "The private Twin Registry credentials are not configured yet.",
+          TWIN_REGISTRY_UNAVAILABLE: "The private Twin Registry is temporarily unavailable.",
+          TWIN_REGISTRY_LIST_TIMEOUT: "The Twin Registry did not respond in time."
+        };
+        throw new Error(typeof code === "string" ? (messages[code] || code) : JSON.stringify(code));
+      }
+      if (!data || !Array.isArray(data.twins) || data.count !== data.twins.length) {
+        throw new Error("TWIN_REGISTRY_RESPONSE_INVALID");
+      }
+      if (data.twins.length === 0) {
+        statusNode.textContent = "No currently authorized persistent Twin record was returned for this account. The Blue Flame remains your Cirvanna identity.";
+        return;
+      }
+
+      const activeCount = data.twins.filter((twin) => twin.status === "active").length;
+      statusNode.textContent = activeCount === 1
+        ? "One active persistent Twin is authorized for this account."
+        : activeCount > 1
+          ? activeCount + " active persistent Twins are authorized for this account."
+          : "No active persistent Twin is currently authorized. Historical or deletion-state records may still be listed below.";
+      statusNode.dataset.kind = activeCount > 0 ? "good" : "";
+
+      for (const twin of data.twins) {
+        const card = document.createElement("article");
+        card.className = "to-twin-record";
+        const meta = document.createElement("div");
+        const title = document.createElement("strong");
+        title.textContent = twin.status === "active" ? "Persistent Twin · " + twin.twin_id : "Historical Twin record · " + twin.twin_id;
+        const model = document.createElement("span");
+        model.textContent = (twin.model_id || "Model") + " · revision " + (twin.model_revision || "unavailable");
+        const created = document.createElement("span");
+        created.textContent = "Created " + twin.created_at + " · record version " + twin.version;
+        meta.append(title, model, created);
+        const badge = document.createElement("span");
+        badge.className = "to-twin-badge" + (twin.status === "active" ? " is-active" : " is-historical");
+        badge.textContent = twin.status;
+        card.append(meta, badge);
+        details.append(card);
+      }
+
+      const note = document.createElement("p");
+      note.className = "to-footnote";
+      note.textContent = "Registry metadata only. A private mesh preview/readback route has not yet been released, so this page does not render or download your Twin asset.";
+      details.append(note);
+    } catch (error) {
+      statusNode.textContent = "The Twin Registry could not confirm a saved Twin (" + (error instanceof Error ? error.message : "unavailable") + "). This is not proof that no Twin exists. The Blue Flame remains until the registry can be checked.";
+      statusNode.dataset.kind = "error";
+    }
+  }
+
   function renderCapabilities(data) {
     capabilityGrid.replaceChildren();
     for (const [key, label] of capabilityLabels) {
@@ -115,6 +187,7 @@
       connectButton.textContent = "Refresh capability check";
       connectButton.disabled = false;
       renderCapabilities(data);
+      await loadSavedTwin(token);
     } catch (error) {
       bearer = "";
       tokenInput.disabled = false;

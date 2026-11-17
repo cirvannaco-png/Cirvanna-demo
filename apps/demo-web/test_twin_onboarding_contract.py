@@ -42,6 +42,16 @@ class TwinOnboardingContractTests(unittest.TestCase):
         self.assertNotIn("FormData", JS)
         self.assertNotIn('fetch("/twin"', JS)
 
+    def test_saved_twin_lookup_uses_owner_scoped_bff_and_never_reads_private_assets(self):
+        self.assertIn('"/api/virtual-twin/me"', JS)
+        self.assertIn('Authorization: "Bearer " + token', JS)
+        self.assertIn('id="savedTwinPanel"', HTML)
+        self.assertIn('id="savedTwinStatus"', HTML)
+        self.assertIn("Registry metadata only", JS)
+        self.assertNotIn("mesh_asset_id", JS)
+        self.assertNotIn("source_image_asset_ids", JS)
+        self.assertNotIn("/internal/v1/twins", JS)
+
     def test_purpose_specific_consent_is_explained_but_not_granted(self):
         for scope in ("Image processing", "Body measurements", "Virtual Twin storage"):
             with self.subTest(scope=scope):

@@ -87,7 +87,7 @@ Complementer is advisory. It is not a second profile database, product database,
 ### Beauty, visualization, and personal experiences
 
 - **DermalSight:** non-diagnostic cosmetic skin-attribute inference. It requires an approved model, signed validation evidence, explicit consent, and privacy controls.
-- **Virtual Twin and Virtual Try-On:** guarded API/orchestration foundations exist; actual generation/rendering depends on validated models, consent, asset authorization, and runtime deployment.
+- **Virtual Twin and Virtual Try-On:** guarded API/orchestration foundations exist; the canonical Twin Registry now exposes owner-scoped metadata lookup with live consent/private-asset rechecks through the Marketplace BFF. Actual generation/rendering remains blocked on a commercially approved body/avatar provider, an independent validator, private asset integration and deployment. See the [Twin provider qualification assessment](docs/architecture/twin-provider-qualification-2026-11-17.md) and [generation trust-chain contract](docs/architecture/twin-generation-provider-contract-2026-11-08.md).
 - **Complete Appearance Transformation:** a shared versioned look contract now defines an extensible combination of hairstyle, hair colour, hairline, facial hair, brows, lashes, lipstick, makeup, skincare-finish preview, clothing, footwear, jewellery, eyewear, headwear, bags, hair accessories, nails and fragrance references. The same look identity/version is designed to travel across Cirvanna, Twin, Try-On, PNELLY, Wardrobe and Marketplace. The contract is implemented; category renderers and end-to-end surface integration are not yet complete. See [ADR-0013](docs/architecture/adr/ADR-0013-complete-appearance-transformation.md).
 - **Living Filters:** face-tracked makeup, hairstyle, and accessory visualization requires licensed runtime/model assets, segmentation/tracking validation, device QA, and offline/CSP/security review.
 - **Wardrobe:** owner-scoped inventory and saved outfit foundations. Taxonomy 1.1.0 adds dedicated wigs/extensions, hair colour/styling, brow, lash, lip, nail, earring and necklace categories alongside existing apparel, accessories, makeup and skincare. Product/image storage remains subject to the existing ownership and consent rules.
@@ -212,7 +212,9 @@ The actual repository is a multi-service monorepo. Important areas are:
 | services/commerce-service | Merchant offers, inventory, carts, orders, payments, and webhook boundaries |
 | services/marketplace-bff | Same-origin marketplace UI and server-side proxy boundary |
 | services/vision-intelligence | Vision model runtime and worker-facing APIs |
-| services/virtual-twin | Guarded Twin and Click It APIs |
+| services/virtual-twin | Guarded Twin and Click It APIs; ephemeral pose inference and provider-neutral generation contract |
+| services/twin-registry | Canonical owner-bound Twin metadata, consent/asset authorization and deletion outbox |
+| services/asset-service | Private binary storage, owner/purpose/parent authorization and deletion lifecycle |
 | services/virtual-try-on | Consent-gated try-on orchestration; renderer is not enabled |
 | services/wardrobe-service | Wardrobe API foundation |
 | services/xari | PNELLY conversational discovery/orchestration (preserved Xari compatibility source path) |
@@ -477,7 +479,7 @@ Status below reflects repository contracts and code, not production deployment.
 | DermalSight | Consent/image validation, ONNX adapter, signed model release gate | Approved model artifact, representative evaluation, validated inference, deployment readiness |
 | Longitudinal skin forecast | Explicitly disabled in capability contract | Licensed repeated-measures dataset, separate temporal model, calibrated ranges, subgroup validation, privacy review |
 | Commerce / marketplace | PR #181 schema foundation plus current-main #102 port: market declarations, zone-bound FX/fulfilment/tax/payment evidence contracts, localized offers, exact-product/variant comparison and market-aware checkout (`20261109_0008`) | Exact-head integrated regression; live provider adapters and operation-level verification; managed DB/restore; real staging checkout/webhook and CAL authorization across every display route |
-| Twin / Try-On / Living Filters | Guarded service and orchestration foundations | Consent/asset authorization, validated renderer/tracking models, licensed assets, device/quality QA |
+| Twin / Try-On / Living Filters | Owner-scoped Twin registry lookup and metadata-only BFF route; provider-neutral generation/validation contract; no source capture or full-body generation enabled | Select and contract a commercial provider; independent mesh validator; private asset pipeline; resource-bound capture consent; validated preview/readback; renderer/tracking models; device and subgroup quality QA |
 | Production operations | CI workflows, container builds, readiness contracts and a provider-neutral canonical service inventory | Select and provision one deployment environment; real provider operations; managed DB/migration/restore; durable decision audit; central monitoring/alerts; key rotation; staging smoke/load/failure tests; rollback and on-call sign-off |
 
 ### PR #72

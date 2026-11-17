@@ -5,7 +5,7 @@
 ## Pages and route ownership
 
 - `sanctuary.html`: Primal Atelier × Living Couture entry experience, served by the Marketplace BFF at `/sanctuary.html`.
-- `twin-onboarding.html`: authenticated capability check and truthful Twin-readiness journey, served by the BFF at `/twin-onboarding.html`.
+- `twin-onboarding.html`: authenticated capability check plus an owner-scoped, metadata-only saved-Twin lookup, served by the BFF at `/twin-onboarding.html`.
 - `wardrobe.html`: owner-scoped Wardrobe, PNELLY styling and explicit learning controls, served by the BFF at `/wardrobe` and `/wardrobe.html`.
 - `marketplace.html`: CAL-governed Marketplace, PNELLY discovery and the separate Look It workflow, served at `/` and `/marketplace.html`.
 
@@ -13,7 +13,7 @@
 
 The shared Sanctuary design tokens preserve Cirvanna's obsidian black, warm white, gold and purple palette. Electric blue is reserved for the human-shaped Blue Flame / Twin identity transition.
 
-The onboarding page reads only the existing authenticated `GET /api/virtual-twin/capabilities` BFF route. It does not collect, upload or persist images or video and does not create consent receipts. Its capture action is intentionally disabled: the current Virtual Twin API supports only a single still-image ephemeral pose skeleton, rejects video, and does not generate or persist a full-body Twin. Persistent generation, independent mesh validation, owner-scoped registry access, private asset storage and the complete capture BFF workflow remain release blockers.
+The onboarding page reads the authenticated `GET /api/virtual-twin/capabilities` and `GET /api/virtual-twin/me` BFF routes. The second route returns only owner-scoped registry metadata after consent and private asset checks; it does not return mesh/source asset IDs or preview bytes. The page does not collect, upload or persist images or video and does not create consent receipts. Its capture action is intentionally disabled: the current Virtual Twin API supports only a single still-image ephemeral pose skeleton, rejects video, and does not generate or persist a full-body Twin. Persistent generation, independent mesh validation, owner-scoped registry access, private asset storage and the complete capture BFF workflow remain release blockers.
 
 Keep presentation code in this directory. Do not put identity arbitration, consent authority, image retention, fit logic, database access, product truth or CAL policy in browser code.
 
