@@ -1039,6 +1039,7 @@ async def my_virtual_twins(request: Request) -> Response:
         representation = record.get("representation_type")
         model_id = record.get("model_id")
         model_revision = record.get("model_revision")
+        model_release_sha256 = record.get("model_release_sha256")
         created_at = record.get("created_at")
         updated_at = record.get("updated_at")
         if (
@@ -1048,6 +1049,7 @@ async def my_virtual_twins(request: Request) -> Response:
             or representation != "full_body_mesh"
             or not isinstance(model_id, str) or not model_id.strip()
             or not isinstance(model_revision, str) or not re.fullmatch(r"[0-9a-f]{40}", model_revision)
+            or not isinstance(model_release_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", model_release_sha256)
             or not isinstance(created_at, str) or not isinstance(updated_at, str)
         ):
             raise HTTPException(502, detail={"code": "TWIN_REGISTRY_RESPONSE_INVALID"})
@@ -1058,6 +1060,7 @@ async def my_virtual_twins(request: Request) -> Response:
             "representation_type": representation,
             "model_id": model_id,
             "model_revision": model_revision,
+            "model_release_sha256": model_release_sha256,
             "created_at": created_at,
             "updated_at": updated_at,
         })

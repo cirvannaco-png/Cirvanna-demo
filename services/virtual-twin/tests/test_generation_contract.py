@@ -13,7 +13,9 @@ from app.generation_contract import (
 )
 
 SOURCE_IDS = ["source-image-001", "source-image-002"]
-MODEL_VERSION = "cirvanna-body-model@sha256:" + ("a" * 64)
+MODEL_ID = "cirvanna-body-model"
+MODEL_REVISION = "a" * 40
+MODEL_RELEASE_SHA256 = "c" * 64
 ARTIFACT_SHA256 = "b" * 64
 
 
@@ -33,9 +35,12 @@ def bundle(*, source_ids=None, receipt_overrides=None, result_overrides=None):
         "provider_id": "body-provider",
         "provider_job_id": "provider-job-001",
         "representation_type": "full_body_mesh",
+        "artifact_content_type": "model/gltf-binary",
         "artifact_asset_id": "private-mesh-001",
         "source_image_asset_ids": sources,
-        "model_version": MODEL_VERSION,
+        "model_id": MODEL_ID,
+        "model_revision": MODEL_REVISION,
+        "model_release_sha256": MODEL_RELEASE_SHA256,
         "artifact_sha256": ARTIFACT_SHA256,
     }
     result_data.update(result_overrides or {})
@@ -49,10 +54,13 @@ def bundle(*, source_ids=None, receipt_overrides=None, result_overrides=None):
         "subject_id": "subject-001",
         "twin_id": "twin-001",
         "representation_type": "full_body_mesh",
+        "artifact_content_type": "model/gltf-binary",
         "artifact_asset_id": "private-mesh-001",
         "artifact_sha256": ARTIFACT_SHA256,
         "source_image_asset_ids": sources,
-        "model_version": MODEL_VERSION,
+        "model_id": MODEL_ID,
+        "model_revision": MODEL_REVISION,
+        "model_release_sha256": MODEL_RELEASE_SHA256,
         "checks": {
             "artifact_readable": True,
             "geometry_finite": True,
@@ -105,10 +113,15 @@ def test_validator_must_attest_to_exact_artifact_digest():
         validate_generation_bundle(command, result, receipt)
 
 
-def test_validator_must_attest_to_exact_model_revision():
-    other_model = "cirvanna-body-model@sha256:" + ("d" * 64)
+def test_validator_must_attest_to_exact_model_revision_and_release_digest():
     command, result, receipt = bundle(
-        receipt_overrides={"model_version": other_model}
+        receipt_overrides={"model_revision": "d" * 40}
+    )
+    with pytest.raises(GenerationContractError, match="TWIN_VALIDATION_MODEL_MISMATCH"):
+        validate_generation_bundle(command, result, receipt)
+
+    command, result, receipt = bundle(
+        receipt_overrides={"model_release_sha256": "d" * 64}
     )
     with pytest.raises(GenerationContractError, match="TWIN_VALIDATION_MODEL_MISMATCH"):
         validate_generation_bundle(command, result, receipt)
@@ -161,9 +174,20 @@ def test_command_rejects_urls_and_paths(field, value):
         TwinGenerationCommand(**payload)
 
 
-def test_provider_result_requires_digest_pinned_model_version():
+def test_provider_result_requires_pinned_model_revision_and_release_digest():
     with pytest.raises(ValidationError):
-        bundle(result_overrides={"model_version": "latest"})
+        bundle(result_overrides={"model_revision": "latest"})
+    with pytest.raises(ValidationError):
+        bundle(result_overrides={"model_release_sha256": "latest"})
+
+
+def test_generation_bundle_requires_canonical_glb_artifact_format():
+    with pytest.raises(ValidationError):
+        bundle(result_overrides={"artifact_content_type": "model/obj"})
+    with pytest.raises(GenerationContractError, match="TWIN_VALIDATION_CONTENT_TYPE_MISMATCH"):
+        command, result, receipt = bundle(receipt_overrides={"artifact_content_type": "model/gltf-binary"})
+        object.__setattr__(receipt, "artifact_content_type", "model/obj")
+        validate_generation_bundle(command, result, receipt)
 
 
 def test_generation_lifecycle_accepts_only_the_ordered_happy_path():

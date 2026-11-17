@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import io
+import json
+import struct
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -97,6 +99,37 @@ def upload(client, **overrides):
     )
 
 
+def glb(*, external_buffer_uri: str | None = None) -> bytes:
+    binary = struct.pack("<9f", 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+    buffer = {"byteLength": len(binary)}
+    if external_buffer_uri is not None:
+        buffer["uri"] = external_buffer_uri
+    document = {
+        "asset": {"version": "2.0", "generator": "Cirvanna GLB contract test"},
+        "buffers": [buffer],
+        "bufferViews": [{"buffer": 0, "byteOffset": 0, "byteLength": len(binary)}],
+        "accessors": [{"bufferView": 0, "byteOffset": 0, "componentType": 5126, "count": 3, "type": "VEC3"}],
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "mode": 4}]}],
+    }
+    json_chunk = json.dumps(document, separators=(",", ":")).encode("utf-8")
+    json_chunk += b" " * ((-len(json_chunk)) % 4)
+    total = 12 + 8 + len(json_chunk) + 8 + len(binary)
+    return (
+        struct.pack("<4sII", b"glTF", 2, total)
+        + struct.pack("<II", len(json_chunk), 0x4E4F534A) + json_chunk
+        + struct.pack("<II", len(binary), 0x004E4942) + binary
+    )
+
+
+def upload_mesh(client, *, owner_user_id="subject-001", parent_id="twin-001", content=None, content_type="model/gltf-binary"):
+    return client.post(
+        "/internal/v1/twin-meshes",
+        headers=auth(),
+        data={"owner_user_id": owner_user_id, "parent_id": parent_id},
+        files={"file": ("twin.glb", content if content is not None else glb(), content_type)},
+    )
+
+
 def test_health_is_liveness_only(client):
     response, _ = client
     assert response.get("/health").json()["status"] == "alive"
@@ -130,6 +163,79 @@ def test_upload_normalizes_and_returns_only_opaque_asset_metadata(client):
     assert len(data["sha256"]) == 64
     assert "object_key" not in data
     assert len(fake.objects) == 1
+
+
+def test_twin_mesh_upload_stores_a_private_glb_without_image_normalization(client):
+    response, fake = client
+    raw = glb()
+    result = upload_mesh(response, content=raw)
+    assert result.status_code == 201, result.text
+    metadata = result.json()
+    assert metadata["purpose"] == "twin_representation"
+    assert metadata["content_type"] == "model/gltf-binary"
+    assert metadata["byte_size"] == len(raw)
+    assert metadata["sha256"] == __import__("hashlib").sha256(raw).hexdigest()
+    assert "object_key" not in metadata
+    stored = next(iter(fake.objects.values()))
+    assert stored == raw
+    assert stored.startswith(b"glTF")
+
+
+def test_twin_mesh_upload_rejects_non_glb_and_external_buffer_references(client):
+    response, _ = client
+    wrong_type = upload_mesh(response, content=glb(), content_type="application/octet-stream")
+    wrong_magic = upload_mesh(response, content=b"not-a-glb-container", content_type="model/gltf-binary")
+    external = upload_mesh(response, content=glb(external_buffer_uri="https://example.test/body.bin"))
+    nonfinite_document = json.dumps({"asset": {"version": "2.0"}, "invalid": float("nan")}, separators=(",", ":")).encode()
+    nonfinite_document += b" " * ((-len(nonfinite_document)) % 4)
+    nonfinite_total = 12 + 8 + len(nonfinite_document)
+    nonfinite = struct.pack("<4sII", b"glTF", 2, nonfinite_total) + struct.pack("<II", len(nonfinite_document), 0x4E4F534A) + nonfinite_document
+    bad_json = upload_mesh(response, content=nonfinite)
+    assert wrong_type.status_code == 415
+    assert wrong_type.json()["detail"]["code"] == "UNSUPPORTED_TWIN_MESH_TYPE"
+    assert wrong_magic.status_code == 422
+    assert external.status_code == 422
+    assert external.json()["detail"]["code"] == "INVALID_GLB_CONTAINER"
+    assert bad_json.status_code == 422
+    assert bad_json.json()["detail"]["code"] == "INVALID_GLB_CONTAINER"
+
+
+def test_twin_mesh_upload_enforces_independent_size_limit(client, monkeypatch):
+    response, _ = client
+    monkeypatch.setattr(main, "MAX_TWIN_MESH_BYTES", 32)
+    result = upload_mesh(response, content=b"g" * 33)
+    assert result.status_code == 413
+    assert result.json()["detail"]["code"] == "TWIN_MESH_SIZE_LIMIT_EXCEEDED"
+
+
+def test_image_upload_route_cannot_store_a_twin_representation(client):
+    response, _ = client
+    result = upload(response, purpose="twin_representation")
+    assert result.status_code == 422
+    assert result.json()["detail"]["code"] == "MESH_UPLOAD_REQUIRES_GLB_ENDPOINT"
+
+
+def test_twin_mesh_bytes_require_exact_owner_purpose_and_parent(client):
+    response, _ = client
+    mesh = upload_mesh(response).json()["asset_id"]
+    allowed = response.get(
+        f"/internal/v1/assets/{mesh}/content", headers=auth(),
+        params={"subject_id": "subject-001", "purpose": "twin_representation", "parent_id": "twin-001"},
+    )
+    wrong_owner = response.get(
+        f"/internal/v1/assets/{mesh}/content", headers=auth(),
+        params={"subject_id": "subject-002", "purpose": "twin_representation", "parent_id": "twin-001"},
+    )
+    wrong_parent = response.get(
+        f"/internal/v1/assets/{mesh}/content", headers=auth(),
+        params={"subject_id": "subject-001", "purpose": "twin_representation", "parent_id": "twin-002"},
+    )
+    assert allowed.status_code == 200
+    assert allowed.headers["cache-control"] == "no-store, private"
+    assert allowed.headers["content-type"].startswith("model/gltf-binary")
+    assert allowed.content == glb()
+    assert wrong_owner.status_code == 404
+    assert wrong_parent.status_code == 404
 
 
 def test_authorization_requires_exact_subject_purpose_and_parent(client):
@@ -176,7 +282,7 @@ def test_appearance_source_and_render_assets_are_owner_parent_bound(client):
 def test_bulk_twin_authorization_requires_exact_owner_parent_and_asset_purposes(client):
     response, _ = client
     source = upload(response).json()["asset_id"]
-    mesh = upload(response, purpose="twin_representation").json()["asset_id"]
+    mesh = upload_mesh(response).json()["asset_id"]
     allowed = response.post("/internal/v1/assets/authorize", headers=auth(), json={
         "subject_id": "subject-001", "asset_ids": [source, mesh],
         "purpose": "virtual_twin_storage", "parent_id": "twin-001",
@@ -194,10 +300,23 @@ def test_bulk_twin_authorization_requires_exact_owner_parent_and_asset_purposes(
     assert wrong_parent.status_code == 404
     assert wrong_owner.status_code == 404
 
+def test_bulk_twin_authorization_requires_one_glb_and_source_images(client):
+    response, _ = client
+    source = upload(response).json()["asset_id"]
+    first_mesh = upload_mesh(response).json()["asset_id"]
+    second_mesh = upload_mesh(response).json()["asset_id"]
+    result = response.post("/internal/v1/assets/authorize", headers=auth(), json={
+        "subject_id": "subject-001", "asset_ids": [source, first_mesh, second_mesh],
+        "purpose": "virtual_twin_storage", "parent_id": "twin-001",
+    })
+    assert result.status_code == 404
+    assert result.json()["detail"]["code"] == "ASSET_NOT_FOUND"
+
+
 def test_bulk_twin_deletion_cascades_derived_assets_and_is_idempotent(client):
     response, fake = client
     source = upload(response).json()["asset_id"]
-    mesh = upload(response, purpose="twin_representation").json()["asset_id"]
+    mesh = upload_mesh(response).json()["asset_id"]
     output = upload(response, purpose="try_on_output", retention_days="1").json()["asset_id"]
     payload = {
         "subject_id": "subject-001", "asset_ids": [source, mesh],

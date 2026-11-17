@@ -49,7 +49,8 @@ The checkpoint repository is gated. The SAM License (last updated 19 November 20
 - Keep **Twin Registry** as the one owner-bound metadata authority.
 - Keep **Asset Service** as the one private binary authority for source images, canonical Twin representation and derived previews.
 - Use a provider adapter for body geometry and, only if selected, a separate avatar/appearance adapter. Keep both behind the current trusted orchestration boundary.
-- Require the generator to write its result to Asset Service and return only an opaque asset ID, pinned provider/model revision and content digest.
+- Normalize the canonical representation to a private GLB 2.0 artifact. Asset Service now has a bounded GLB upload route that checks container structure and blocks external buffer/image URIs; this is not body geometry validation.
+- Require the generator to write its result to Asset Service and return only an opaque asset ID, pinned model ID, source commit revision, model-release digest and artifact digest.
 - Require an independent validator to fetch and inspect the stored bytes itself, then issue a signed validation receipt bound to owner, Twin, consent version, exact source set, model revision, artifact ID and digest.
 - Register only after re-checking resource-bound consent, asset ownership and validation attestation. Never allow a provider-supplied `validated=true` flag to create a Twin.
 - Store only validated Twin asset references and provenance in Twin Registry. On consent withdrawal/deletion, immediately block authorization and dispatch all source/derived assets through the deletion outbox.

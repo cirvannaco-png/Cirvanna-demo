@@ -3,7 +3,9 @@ from __future__ import annotations
 import hashlib
 import hmac
 import io
+import json
 import os
+import struct
 import uuid
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
@@ -21,6 +23,9 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 
 SERVICE = "cirvanna-asset-service"
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_TWIN_MESH_BYTES = 100 * 1024 * 1024
+MAX_GLB_JSON_BYTES = 4 * 1024 * 1024
+GLB_CONTENT_TYPE = "model/gltf-binary"
 MAX_IMAGE_PIXELS = 25_000_000
 ASSET_ID_PATTERN = r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
 AssetPurpose = Literal[
@@ -204,6 +209,120 @@ def _normalize_image(data: bytes, content_type: str) -> bytes:
         raise HTTPException(422, detail={"code": "INVALID_IMAGE_DATA"}) from exc
 
 
+def _validate_glb(data: bytes, content_type: str) -> bytes:
+    """Validate the GLB v2 container and embedded buffer references.
+
+    This is format/container validation only. It is not a mesh-quality, geometry,
+    topology, scale, anatomical plausibility or privacy validator; those checks
+    must be performed by the independent Twin validator before registry enrollment.
+    """
+    if content_type != GLB_CONTENT_TYPE:
+        raise HTTPException(415, detail={"code": "UNSUPPORTED_TWIN_MESH_TYPE"})
+    if not data:
+        raise HTTPException(400, detail={"code": "EMPTY_TWIN_MESH"})
+    if len(data) > MAX_TWIN_MESH_BYTES:
+        raise HTTPException(413, detail={"code": "TWIN_MESH_SIZE_LIMIT_EXCEEDED", "maximum_bytes": MAX_TWIN_MESH_BYTES})
+    if len(data) < 20 or data[:4] != b"glTF":
+        raise HTTPException(422, detail={"code": "INVALID_GLB_CONTAINER"})
+
+    try:
+        version, declared_total = struct.unpack_from("<II", data, 4)
+        if version != 2 or declared_total != len(data):
+            raise ValueError("GLB version or declared length mismatch")
+        json_length, json_type = struct.unpack_from("<II", data, 12)
+        if json_type != 0x4E4F534A or json_length < 2 or json_length > MAX_GLB_JSON_BYTES:
+            raise ValueError("GLB JSON chunk invalid")
+        json_end = 20 + json_length
+        if json_end > len(data) or json_length % 4:
+            raise ValueError("GLB JSON chunk bounds invalid")
+        def reject_nonfinite(_value):
+            raise ValueError("Non-finite JSON numbers are not valid glTF values")
+
+        document = json.loads(data[20:json_end].decode("utf-8"), parse_constant=reject_nonfinite)
+        if not isinstance(document, dict) or not isinstance(document.get("asset"), dict) or document["asset"].get("version") != "2.0":
+            raise ValueError("glTF asset version must be 2.0")
+
+        cursor = json_end
+        binary_data = b""
+        if cursor < len(data):
+            if cursor + 8 > len(data):
+                raise ValueError("GLB binary chunk header truncated")
+            binary_length, binary_type = struct.unpack_from("<II", data, cursor)
+            if binary_type != 0x004E4942 or binary_length % 4 or cursor + 8 + binary_length != len(data):
+                raise ValueError("GLB binary chunk invalid")
+            binary_data = data[cursor + 8:]
+            cursor += 8 + binary_length
+        if cursor != len(data):
+            raise ValueError("Unexpected trailing GLB data")
+
+        buffers = document.get("buffers")
+        views = document.get("bufferViews")
+        accessors = document.get("accessors")
+        meshes = document.get("meshes")
+        if not isinstance(buffers, list) or len(buffers) != 1 or not isinstance(buffers[0], dict):
+            raise ValueError("GLB must contain exactly one embedded binary buffer")
+        if "uri" in buffers[0]:
+            raise ValueError("External buffer URIs are not accepted")
+        byte_length = buffers[0].get("byteLength")
+        if isinstance(byte_length, bool) or not isinstance(byte_length, int) or byte_length <= 0 or byte_length > len(binary_data) or len(binary_data) - byte_length > 3:
+            raise ValueError("GLB binary buffer length does not match its BIN chunk")
+        if not isinstance(views, list) or not views or not isinstance(accessors, list) or not accessors:
+            raise ValueError("GLB buffer views and accessors are required")
+        for view in views:
+            if not isinstance(view, dict) or view.get("buffer") != 0:
+                raise ValueError("GLB buffer view must reference the embedded buffer")
+            offset = view.get("byteOffset", 0)
+            length = view.get("byteLength")
+            stride = view.get("byteStride", 0)
+            if (
+                isinstance(offset, bool) or not isinstance(offset, int)
+                or isinstance(length, bool) or not isinstance(length, int)
+                or offset < 0 or offset % 4 or length <= 0 or offset + length > byte_length
+                or (stride and (isinstance(stride, bool) or not isinstance(stride, int) or stride < 4 or stride > 252 or stride % 4))
+            ):
+                raise ValueError("GLB buffer view is outside the embedded buffer or has invalid alignment")
+        for image in document.get("images", []):
+            if not isinstance(image, dict) or "uri" in image:
+                raise ValueError("External image URIs are not accepted in Twin GLB assets")
+        if not isinstance(meshes, list) or not meshes:
+            raise ValueError("GLB contains no mesh primitives")
+        position_count = 0
+        for mesh in meshes:
+            if not isinstance(mesh, dict) or not isinstance(mesh.get("primitives"), list):
+                raise ValueError("GLB mesh primitive list is invalid")
+            for primitive in mesh["primitives"]:
+                attributes = primitive.get("attributes") if isinstance(primitive, dict) else None
+                position = attributes.get("POSITION") if isinstance(attributes, dict) else None
+                if isinstance(position, bool) or not isinstance(position, int) or position < 0 or position >= len(accessors):
+                    raise ValueError("GLB primitive must reference a valid POSITION accessor")
+                accessor = accessors[position]
+                if not isinstance(accessor, dict) or accessor.get("type") != "VEC3" or accessor.get("componentType") != 5126:
+                    raise ValueError("GLB POSITION accessor must use float32 VEC3 values")
+                view_index = accessor.get("bufferView")
+                count = accessor.get("count")
+                accessor_offset = accessor.get("byteOffset", 0)
+                if (
+                    isinstance(view_index, bool) or not isinstance(view_index, int) or view_index < 0 or view_index >= len(views)
+                    or isinstance(count, bool) or not isinstance(count, int) or count < 3
+                    or isinstance(accessor_offset, bool) or not isinstance(accessor_offset, int) or accessor_offset < 0 or accessor_offset % 4
+                ):
+                    raise ValueError("GLB POSITION accessor bounds are invalid")
+                view = views[view_index]
+                stride = view.get("byteStride", 12)
+                if isinstance(stride, bool) or not isinstance(stride, int) or stride < 12 or stride % 4:
+                    raise ValueError("GLB POSITION accessor stride is invalid")
+                if accessor_offset + (count - 1) * stride + 12 > view["byteLength"]:
+                    raise ValueError("GLB POSITION accessor exceeds its buffer view")
+                position_count += count
+        if position_count < 3:
+            raise ValueError("GLB contains insufficient position data")
+    except HTTPException:
+        raise
+    except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError, struct.error, RecursionError) as exc:
+        raise HTTPException(422, detail={"code": "INVALID_GLB_CONTAINER"}) from exc
+    return data
+
+
 def _owned_asset(db: Session, asset_id: str, owner: str, purpose: str, parent_id: str) -> AssetRow:
     row = db.get(AssetRow, asset_id)
     if (
@@ -271,6 +390,9 @@ async def upload_asset(
 ):
     owner = owner_user_id.strip()
     parent = parent_id.strip()
+    if purpose == "twin_representation":
+        await file.close()
+        raise HTTPException(422, detail={"code": "MESH_UPLOAD_REQUIRES_GLB_ENDPOINT"})
     try:
         raw = await file.read(MAX_IMAGE_BYTES + 1)
     finally:
@@ -312,6 +434,59 @@ async def upload_asset(
     }
 
 
+@app.post("/internal/v1/twin-meshes", dependencies=[Depends(require_internal_token)], status_code=201)
+async def upload_twin_mesh(
+    owner_user_id: Annotated[str, Form(min_length=3, max_length=128)],
+    parent_id: Annotated[str, Form(min_length=3, max_length=160)],
+    file: Annotated[UploadFile, File()],
+    db: Session = Depends(get_db),
+):
+    """Store a private GLB representation; validation of geometry happens elsewhere."""
+    owner = owner_user_id.strip()
+    parent = parent_id.strip()
+    if not owner or not parent:
+        await file.close()
+        raise HTTPException(422, detail={"code": "TWIN_MESH_OWNER_OR_PARENT_INVALID"})
+    try:
+        raw = await file.read(MAX_TWIN_MESH_BYTES + 1)
+    finally:
+        await file.close()
+    validated = _validate_glb(raw, file.content_type or "")
+    asset_id = str(uuid.uuid4())
+    object_key = f"private/{asset_id[:2]}/{asset_id}.glb"
+    digest = hashlib.sha256(validated).hexdigest()
+    now = datetime.now(timezone.utc)
+    client, bucket = _object_store()
+    try:
+        client.put_object(
+            Bucket=bucket, Key=object_key, Body=validated,
+            ContentType=GLB_CONTENT_TYPE, Metadata={"sha256": digest, "asset-id": asset_id},
+        )
+    except (BotoCoreError, ClientError) as exc:
+        raise HTTPException(503, detail={"code": "ASSET_OBJECT_WRITE_FAILED"}) from exc
+    row = AssetRow(
+        asset_id=asset_id, owner_user_id=owner, purpose="twin_representation", parent_id=parent,
+        object_key=object_key, content_type=GLB_CONTENT_TYPE, byte_size=len(validated),
+        sha256=digest, status="active", created_at=now, retention_until=None,
+    )
+    try:
+        db.add(row)
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        try:
+            client.delete_object(Bucket=bucket, Key=object_key)
+        except Exception:
+            pass
+        raise HTTPException(503, detail={"code": "ASSET_METADATA_WRITE_FAILED"}) from exc
+    return {
+        "asset_id": asset_id, "owner_user_id": owner, "purpose": row.purpose,
+        "parent_id": parent, "content_type": row.content_type,
+        "byte_size": row.byte_size, "sha256": row.sha256,
+        "status": row.status, "retention_until": None,
+    }
+
+
 @app.post("/internal/v1/assets/authorize", dependencies=[Depends(require_internal_token)])
 def authorize_asset(
     payload: dict,
@@ -347,7 +522,15 @@ def authorize_asset(
             row = _owned_asset(db, row.asset_id, owner.strip(), row.purpose, row.parent_id)
             rows.append(row)
         parents = {row.parent_id for row in rows}
-        if len(parents) != 1:
+        mesh_rows = [row for row in rows if row.purpose == "twin_representation"]
+        source_rows = [row for row in rows if row.purpose in {"twin_source_image", "twin_person_image"}]
+        if (
+            len(parents) != 1
+            or len(mesh_rows) != 1
+            or not source_rows
+            or mesh_rows[0].content_type != "model/gltf-binary"
+            or any(row.content_type != "image/png" for row in source_rows)
+        ):
             raise HTTPException(404, detail={"code": "ASSET_NOT_FOUND"})
         return {
             "authorized": True, "subject_id": owner.strip(),
@@ -377,13 +560,16 @@ def read_asset_content(
 ):
     row = _owned_asset(db, asset_id, subject_id, purpose, parent_id)
     client, bucket = _object_store()
+    max_bytes = MAX_TWIN_MESH_BYTES if row.purpose == "twin_representation" else MAX_IMAGE_BYTES
     try:
         response = client.get_object(Bucket=bucket, Key=row.object_key)
-        data = response["Body"].read(MAX_IMAGE_BYTES + 1)
+        data = response["Body"].read(max_bytes + 1)
     except (BotoCoreError, ClientError, KeyError) as exc:
         raise HTTPException(503, detail={"code": "ASSET_OBJECT_READ_FAILED"}) from exc
-    if not data or len(data) > MAX_IMAGE_BYTES or hashlib.sha256(data).hexdigest() != row.sha256:
+    if not data or len(data) > max_bytes or hashlib.sha256(data).hexdigest() != row.sha256:
         raise HTTPException(502, detail={"code": "ASSET_OBJECT_INTEGRITY_FAILED"})
+    if row.purpose == "twin_representation":
+        _validate_glb(data, row.content_type)
     return Response(content=data, media_type=row.content_type, headers={"Cache-Control": "no-store, private", "X-Content-Type-Options": "nosniff"})
 
 

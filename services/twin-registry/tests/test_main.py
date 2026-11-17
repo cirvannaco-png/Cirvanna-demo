@@ -362,6 +362,7 @@ def test_twin_list_is_owner_scoped_and_returns_metadata_only(client):
     assert twin["status"] == "active"
     assert twin["representation_type"] == "full_body_mesh"
     assert twin["model_id"] == "cirvanna-full-body-mesh"
+    assert twin["model_release_sha256"] == "c" * 64
     assert "mesh_asset_id" not in twin
     assert "source_image_asset_ids" not in twin
     assert "subject_id" not in twin

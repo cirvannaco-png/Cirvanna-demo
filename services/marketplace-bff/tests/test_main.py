@@ -2118,6 +2118,7 @@ def test_my_virtual_twins_uses_verified_owner_and_returns_metadata_only(client, 
             "representation_type": "full_body_mesh",
             "model_id": "cirvanna-full-body-mesh",
             "model_revision": "a" * 40,
+            "model_release_sha256": "c" * 64,
             "created_at": "2026-11-17T10:00:00+00:00",
             "updated_at": "2026-11-17T10:05:00+00:00",
             "subject_id": "signed-user-42",
@@ -2137,6 +2138,7 @@ def test_my_virtual_twins_uses_verified_owner_and_returns_metadata_only(client, 
     assert payload["count"] == 1
     assert payload["twins"][0]["twin_id"] == "twin-owned-001"
     assert payload["twins"][0]["status"] == "active"
+    assert payload["twins"][0]["model_release_sha256"] == "c" * 64
     for secret in ("subject_id", "mesh_asset_id", "source_image_asset_ids", "object_store_key"):
         assert secret not in response.text
     assert fake.calls[1][1] == "https://registry.example.test/internal/v1/twins"
@@ -2163,8 +2165,28 @@ def test_my_virtual_twins_rejects_registry_payload_with_invalid_model_revision(c
         FakeResponse({"count": 1, "twins": [{
             "twin_id": "twin-owned-001", "status": "active", "version": 1,
             "representation_type": "full_body_mesh", "model_id": "body-model",
-            "model_revision": "latest", "created_at": "2026-11-17T10:00:00Z",
+            "model_revision": "latest", "model_release_sha256": "c" * 64,
+            "created_at": "2026-11-17T10:00:00Z",
             "updated_at": "2026-11-17T10:00:00Z",
+        }]}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get("/api/virtual-twin/me", headers={"Authorization": "Bearer signed-session"})
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "TWIN_REGISTRY_RESPONSE_INVALID"
+
+
+def test_my_virtual_twins_rejects_malformed_model_release_digest(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("TWIN_REGISTRY_API_URL", "https://registry.example.test")
+    monkeypatch.setenv("TWIN_REGISTRY_API_TOKEN", "twin-registry-internal-token-at-least-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42"}),
+        FakeResponse({"count": 1, "twins": [{
+            "twin_id": "twin-owned-001", "status": "active", "version": 1,
+            "representation_type": "full_body_mesh", "model_id": "body-model",
+            "model_revision": "a" * 40, "model_release_sha256": "latest",
+            "created_at": "2026-11-17T10:00:00Z", "updated_at": "2026-11-17T10:00:00Z",
         }]}),
     ])
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)

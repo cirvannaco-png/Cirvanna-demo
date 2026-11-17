@@ -753,6 +753,7 @@ async def list_twins(
             "representation_type": row.representation_type,
             "model_id": row.model_id,
             "model_revision": row.model_revision,
+            "model_release_sha256": row.model_release_sha256,
             "created_at": row.created_at.isoformat(),
             "updated_at": row.updated_at.isoformat(),
         })
