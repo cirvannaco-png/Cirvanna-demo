@@ -28,7 +28,7 @@ Trusted Virtual Twin orchestration
 - Triangle indices are decoded and range-checked. Degenerate triangles and edges shared by more than two faces are rejected.
 - Explicit glTF images, textures, extensions, extras, external/data URIs and common embedded image signatures are rejected.
 
-The topology result is deliberately narrow: it detects invalid indices, degenerate triangles and non-manifold edges. It does not prove watertightness, anatomical completeness, or that the surface represents a human body.
+The validator does not emit a single “topology valid” result. It reports local checks for in-range triangle indices, absence of degenerate triangles and absence of edges shared by more than two faces; it also reports the boundary-edge count. An open surface can pass those local checks. Anatomical topology and watertightness remain null/unverified, as do connectedness, self-intersection and human-body completeness.
 
 ## Explicitly not verified
 
