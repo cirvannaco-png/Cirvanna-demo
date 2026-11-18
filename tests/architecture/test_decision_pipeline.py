@@ -17,7 +17,7 @@ from catacaci.pipeline import evaluate_candidate  # noqa: E402
 from cultural_identity import CulturalRequirement, RequirementKind, RequirementVerdict  # noqa: E402
 from eepl import EEPLContext, EEPLPolicy  # noqa: E402
 from fci import ConfidenceStatus, FitConfidenceEstimate  # noqa: E402
-from npl import NegativePreference, PreferenceSource, TargetType  # noqa: E402
+from npl import NegativePreference, PreferenceSource, TargetType, record_rejection  # noqa: E402
 from usi import StylePreference, USIProfile  # noqa: E402
 
 
@@ -194,8 +194,45 @@ class DecisionPipelineIntegrationTests(unittest.TestCase):
         self.assertEqual(result.arbitration.verdict, DecisionVerdict.REVIEW)
         self.assertFalse(result.may_display)
 
-    def test_soft_style_mismatch_routes_to_review_not_hard_block(self):
+    def test_soft_style_mismatch_routes_to_unknown_and_review_not_hard_block(self):
         result = evaluate_candidate(**inputs(candidate_attributes=("formal",)))
+        self.assertEqual(result.usi.verdict.value, "below_threshold")
+        self.assertEqual(result.usi.to_cal_signal().state, SignalState.UNKNOWN)
+        self.assertIsNone(result.usi.to_cal_signal().confidence)
+        self.assertEqual(result.arbitration.verdict, DecisionVerdict.REVIEW)
+        self.assertFalse(result.may_display)
+
+    def test_explicit_npl_veto_dominates_a_soft_usi_mismatch(self):
+        veto = NegativePreference(
+            preference_id="no-blue", user_id="user-1",
+            target_type=TargetType.ATTRIBUTE, target_value="blue",
+            source=PreferenceSource.USER_DECLARED,
+        )
+        result = evaluate_candidate(**inputs(
+            candidate_attributes=("blue",),
+            negative_preferences=(veto,),
+        ))
+        self.assertEqual(result.usi.verdict.value, "below_threshold")
+        self.assertEqual(result.usi.to_cal_signal().state, SignalState.UNKNOWN)
+        self.assertTrue(result.npl.blocked)
+        self.assertEqual(result.arbitration.verdict, DecisionVerdict.BLOCK)
+        self.assertFalse(result.may_display)
+
+    def test_repeated_learned_rejections_remain_non_veto_below_threshold(self):
+        preference = NegativePreference(
+            preference_id="learned-no-red", user_id="user-1",
+            target_type=TargetType.ATTRIBUTE, target_value="red",
+            source=PreferenceSource.LEARNED_REJECTION,
+        )
+        preference = record_rejection(preference, "reject-1")
+        preference = record_rejection(preference, "reject-2")
+        result = evaluate_candidate(**inputs(
+            candidate_attributes=("formal",),
+            negative_preferences=(preference,),
+        ))
+        self.assertFalse(result.npl.blocked)
+        self.assertEqual(result.npl.soft_negative_preference_ids, ("learned-no-red",))
+        self.assertEqual(result.usi.to_cal_signal().state, SignalState.UNKNOWN)
         self.assertEqual(result.arbitration.verdict, DecisionVerdict.REVIEW)
         self.assertFalse(result.may_display)
 
