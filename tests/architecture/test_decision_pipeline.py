@@ -227,7 +227,7 @@ class DecisionPipelineIntegrationTests(unittest.TestCase):
         preference = record_rejection(preference, "reject-1")
         preference = record_rejection(preference, "reject-2")
         result = evaluate_candidate(**inputs(
-            candidate_attributes=("formal",),
+            candidate_attributes=("formal", "red"),
             negative_preferences=(preference,),
         ))
         self.assertFalse(result.npl.blocked)
