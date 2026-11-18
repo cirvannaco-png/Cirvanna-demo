@@ -2,7 +2,7 @@
 
 **Status: implementation candidate; not production-ready.**
 
-This is a small, dependency-free browser surface built from the uploaded `Marketplace .txt` patterns: searchable product cards, category filtering, saved items, bag interactions, a PNELLY natural-language discovery entry point, and honest capability boundaries. It reuses Cirvanna's dark/cream/gold visual direction.
+This is a dependency-free browser surface for the Marketplace vertical: searchable product cards, category filtering, saved items, bag interactions, PNELLY natural-language discovery, Look It and Complementer entry points, and honest capability boundaries. The Marketplace has a distinct obsidian-black and gold direction, using pure white for high-contrast typography and controls. Cirvanna's wider brand palette now explicitly includes white alongside obsidian black and gold; warm white, purple and the electric-blue Twin motif remain supporting system colours.
 
 ## Open the interface
 
