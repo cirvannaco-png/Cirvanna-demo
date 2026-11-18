@@ -51,7 +51,7 @@ Required server-side environment:
 - \`CONSENT_API_URL\`, \`CONSENT_API_TOKEN\`: private consent service base URL and internal bearer token. The verification response must include the matching `consent_version`.
 - \`ASSET_SERVICE_URL\`, \`ASSET_SERVICE_TOKEN\`: private Asset Service base URL and internal bearer token.
 
-All service URLs must use HTTPS. \`ALLOW_INSECURE_INTERNAL_HTTP=true\` is for isolated local development only and must not be set in a deployed environment. Never put these values in browser code, app bundles, model prompts or logs.
+All service URLs must use HTTPS. Internal HTTP clients disable inherited proxy environment settings and do not follow redirects. \`ALLOW_INSECURE_INTERNAL_HTTP=true\` is for isolated local development only and must not be set in a deployed environment. Never put these values in browser code, app bundles, model prompts or logs.
 
 \`GET /ready\` verifies required configuration is present. It does not claim that remote services are reachable; a real deployment smoke test must verify both dependencies and private-network policy.
 
