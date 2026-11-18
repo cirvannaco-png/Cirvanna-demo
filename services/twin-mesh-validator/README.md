@@ -6,7 +6,7 @@ This service is a separate trust boundary from the Virtual Twin generator/orches
 
 ## Request flow
 
-\`\`\`text
+```text
 Trusted Virtual Twin orchestration
   -> POST /internal/v1/preflight
   -> resource-bound consent verification (image_processing, body_measurements,
@@ -15,7 +15,7 @@ Trusted Virtual Twin orchestration
      (subject_id + purpose=twin_representation + parent_id=twin_id)
   -> SHA-256 and GLB 2.0 structural/geometry inspection
   -> metadata-only preflight report; never a Registry create request
-\`\`\`
+```
 
 ## Verified during preflight
 
@@ -32,40 +32,40 @@ The topology result is deliberately narrow: it detects invalid indices, degenera
 
 ## Explicitly not verified
 
-The response leaves these fields \`null\` (not false, and not passed):
+The response leaves these fields `null` (not false, and not passed):
 
-- \`body_coverage_valid\`: needs independently validated body-surface/landmark coverage evidence.
-- \`scale_within_bounds\`: needs capture calibration and an independent reference measurement.
-- \`source_photo_not_embedded\`: needs byte-level comparison against the authorized source assets, not only a glTF resource scan.
-- \`privacy_scan_passed\`: needs a separate sensitive-data/privacy scan and approved acceptance criteria.
+- `body_coverage_valid`: needs independently validated body-surface/landmark coverage evidence.
+- `scale_within_bounds`: needs capture calibration and an independent reference measurement.
+- `source_photo_not_embedded`: needs byte-level comparison against the authorized source assets, not only a glTF resource scan.
+- `privacy_scan_passed`: needs a separate sensitive-data/privacy scan and approved acceptance criteria.
 
-Therefore \`/internal/v1/preflight\` always returns \`registry_eligible=false\`, \`receipt_issued=false\`, and \`attestation=NOT_ISSUED\`. Do not translate a successful structural preflight into a \`MeshValidationReceipt\`, a Registry HMAC, a saved Twin, or a Try-On capability.
+Therefore `/internal/v1/preflight` always returns `registry_eligible=false`, `receipt_issued=false`, and `attestation=NOT_ISSUED`. Do not translate a successful structural preflight into a `MeshValidationReceipt`, a Registry HMAC, a saved Twin, or a Try-On capability.
 
-The validator service intentionally has **no** \`TWIN_REGISTRY_VALIDATION_HMAC_SECRET\` and no Registry registration client. The generation/orchestration service assembles the Registry body but must receive the HMAC from the independent validator after every acceptance gate is evidenced. Until that complete validator exists, no HMAC is issued.
+The validator service intentionally has **no** `TWIN_REGISTRY_VALIDATION_HMAC_SECRET` and no Registry registration client. The generation/orchestration service assembles the Registry body but must receive the HMAC from the independent validator after every acceptance gate is evidenced. Until that complete validator exists, no HMAC is issued.
 
 ## Configuration
 
 Required server-side environment:
 
-- \`TWIN_MESH_VALIDATOR_API_TOKEN\`: internal caller bearer token (at least 32 bytes).
-- \`CONSENT_API_URL\`, \`CONSENT_API_TOKEN\`: private consent service base URL and internal bearer token. The verification response must include the matching `consent_version`.
-- \`ASSET_SERVICE_URL\`, \`ASSET_SERVICE_TOKEN\`: private Asset Service base URL and internal bearer token.
+- `TWIN_MESH_VALIDATOR_API_TOKEN`: internal caller bearer token (at least 32 bytes).
+- `CONSENT_API_URL`, `CONSENT_API_TOKEN`: private consent service base URL and internal bearer token. The verification response must include the matching `consent_version`.
+- `ASSET_SERVICE_URL`, `ASSET_SERVICE_TOKEN`: private Asset Service base URL and internal bearer token.
 
-All service URLs must use HTTPS. Internal HTTP clients disable inherited proxy environment settings and do not follow redirects. \`ALLOW_INSECURE_INTERNAL_HTTP=true\` is for isolated local development only and must not be set in a deployed environment. Never put these values in browser code, app bundles, model prompts or logs.
+All service URLs must use HTTPS. Internal HTTP clients disable inherited proxy environment settings and do not follow redirects. `ALLOW_INSECURE_INTERNAL_HTTP=true` is for isolated local development only and must not be set in a deployed environment. Never put these values in browser code, app bundles, model prompts or logs.
 
-\`GET /ready\` verifies required configuration is present. It does not claim that remote services are reachable; a real deployment smoke test must verify both dependencies and private-network policy.
+`GET /ready` verifies required configuration is present. It does not claim that remote services are reachable; a real deployment smoke test must verify both dependencies and private-network policy.
 
 ## Run checks
 
 From this directory:
 
-\`\`\`bash
+```bash
 python -m pip install -r requirements.txt
 python -m pip check
 python -m compileall -q app tests
 python -m pytest -q
 docker build -t cirvanna-twin-mesh-validator:local .
-\`\`\`
+```
 
 The tests use generated non-personal synthetic GLB data. They do not prove production consent, deployment, model performance, anatomical quality, scale accuracy, or privacy compliance.
 
