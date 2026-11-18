@@ -94,6 +94,10 @@ class MarketplaceBrowserTests(unittest.TestCase):
         page.add_init_script("""
             // Set bootstrap first: this script may run for the initial opaque about:blank document.
             window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce",allowDeveloperTokenInput:true});
+            window.__marketplaceSessionReady = null;
+            window.addEventListener("cirvanna:session-ready", event => {
+                window.__marketplaceSessionReady = event.detail || null;
+            });
             try {
                 localStorage.setItem("cirvanna-marketplace-saved", JSON.stringify([{product_id:"demo-saved"}]));
                 localStorage.setItem("cirvanna-marketplace-bag", JSON.stringify([{product_id:"demo-bag",quantity:1}]));
@@ -156,6 +160,9 @@ class MarketplaceBrowserTests(unittest.TestCase):
         page.locator("#commerceToken").fill("signed-user-session-token")
         page.get_by_role("button", name="Connect test customer session").click()
         page.wait_for_function("document.querySelector('#status').textContent.includes('CAL-GOVERNED LIVE COMMERCE')")
+        page.wait_for_function(
+            "window.__marketplaceSessionReady && window.__marketplaceSessionReady.accessToken === 'signed-user-session-token'"
+        )
         return page
 
     def test_live_bff_cart_gate_off_keeps_purchase_controls_locked_and_demo_state_out(self):
