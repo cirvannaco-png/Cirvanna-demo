@@ -20,6 +20,7 @@ PUBLIC_MEDIA_SURFACE_SEGMENTS = {
 # skincare routine sharing is a strict text-only resource. Exact route/function
 # tuples are allowlisted here and separately covered by invariant tests below.
 NON_PUBLICATION_ROUTE_EXCEPTIONS = {
+    ("services/marketplace-bff/app/main.py", "POST", "/api/appearance/looks/{look_id}/source", "upload_appearance_source"),
     ("services/marketplace-bff/app/main.py", "POST", "/api/vision/look-it", "marketplace_look_it"),
     ("services/marketplace-bff/app/main.py", "POST", "/api/vision/click-it", "marketplace_click_it"),
     ("services/vision-intelligence/app/main.py", "POST", "/v1/search/image", "look_it_image_search"),
@@ -235,6 +236,28 @@ def test_nonpublication_media_adjacent_routes_remain_narrow_and_explicit():
 
     # BFF Look It is authenticated, purpose-bound, short-lived and cleans up both
     # the upload and consent. It returns no-store metadata, not a user image.
+    # Source-photo upload is private ingress to Asset Service, not public publication.
+    # It must authenticate the subject, verify all three exact look-bound grants before
+    # reading multipart bytes, and store only an owner/purpose/parent-bound private asset.
+    appearance_source_key = (
+        "services/marketplace-bff/app/main.py", "POST",
+        "/api/appearance/looks/{look_id}/source", "upload_appearance_source",
+    )
+    appearance_source_source, appearance_source_handler = route_handlers[appearance_source_key]
+    appearance_source_body = ast.get_source_segment(appearance_source_source, appearance_source_handler) or ""
+    for token in (
+        "_verified_commerce_subject", "/internal/v1/consents/verify",
+        "appearance_session_storage", "appearance_source_storage", "image_processing",
+        "require_expiring", "receipt.get(\"subject_id\") == subject",
+        "receipt.get(\"resource_id\") == look_id",
+        '"purpose": "appearance_source_image"',
+        '"parent_id": look_id', '_private_json_response({',
+    ):
+        assert token in appearance_source_body
+    assert appearance_source_body.index("request.form(") > appearance_source_body.index("APPEARANCE_SOURCE_CONSENT_BINDING_INVALID")
+    assert "generate_presigned_url" not in appearance_source_body
+    assert "public_url" not in appearance_source_body
+
     look_it_key = ("services/marketplace-bff/app/main.py", "POST", "/api/vision/look-it", "marketplace_look_it")
     look_it_source, look_it_handler = route_handlers[look_it_key]
     look_it_body = ast.get_source_segment(look_it_source, look_it_handler) or ""

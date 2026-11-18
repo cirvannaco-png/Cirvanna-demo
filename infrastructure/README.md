@@ -4,7 +4,7 @@
 
 The single source of truth for the intended Cirvanna service/dependency graph is [deployment/canonical-stack.json](deployment/canonical-stack.json). It inventories canonical service owners, build contexts, exposure boundaries, data stores, provider dependencies and release gates. Provider-specific overlays must derive from this inventory; do not create competing service lists in individual deployment files.
 
-The manifest is intentionally a provider-neutral inventory, not an executable deployment, Docker Compose stack, Kubernetes release, or proof that any service is running. It currently records no selected production platform, release commit, service IDs, database provisioning, secret bindings, live provider configuration, monitoring, recovery owner, or verified backup/restore. Its release state must remain blocked until those facts are independently evidenced.
+The manifest is intentionally a provider-neutral inventory, not an executable deployment, Docker Compose stack, Kubernetes release, or proof that any service is running. It records merchant-verification and centralized-observability providers as explicit but unconfigured dependencies. It still has no selected production platform, release commit, service IDs, database provisioning, secret bindings, live provider configuration, alert routes, named recovery owner or verified backup/restore. Its release state must remain blocked until those facts are independently evidenced.
 
 ## Deployment rules
 
@@ -22,7 +22,9 @@ The manifest is intentionally a provider-neutral inventory, not an executable de
 - Catalog, Commerce, identity-learning, privacy-governance and other required durable stores still need approved provisioning and restore drills.
 - The identity provider and Stripe staging lifecycle need real browser/session and payment/webhook verification.
 - FX, tax, fulfilment, safety, FCI, jurisdiction, content lifecycle, masking-attestation, guardian and image-rights providers need configuration and operation-level verification before their dependent features are enabled.
-- Central logs, traces, metrics, alert routing, incident ownership, on-call, SLOs, rate limits, secret rotation, rollback and failure drills are not yet operationally evidenced.
+- Merchant business/KYB verification and complete fulfilment booking, tracking, cancellation and reconciliation providers are not selected or operationally verified.
+- The selected private observability backend, central collection for every service, dashboards, alert routing, named on-call, SLO/error-budget agreement, incident exercises, rate limits, secret rotation, rollback and failure drills are not yet operationally evidenced.
+- The three instrumented critical services now expose a protected internal metrics endpoint when enabled; this is only a code-level telemetry primitive. Counters are process-local and require private scraping, centralized retention and tested alert delivery.
 
 ## Validation
 
@@ -30,6 +32,7 @@ Run:
 
 ```bash
 python scripts/validate_canonical_stack.py
+python scripts/validate_release_gates.py
 python -m unittest discover -s tests/architecture -v
 ```
 
