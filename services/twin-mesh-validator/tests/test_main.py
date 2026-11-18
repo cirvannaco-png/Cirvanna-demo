@@ -139,6 +139,38 @@ def test_consent_receipt_requires_exact_subject_resource_version_and_scopes():
         with pytest.raises(main.HTTPException):
             main._verify_consent_response(candidate, request)
 
+
+def test_dependency_urls_require_https_or_explicit_localhost_http(monkeypatch):
+    monkeypatch.setenv("CONSENT_API_TOKEN", "c" * 40)
+    monkeypatch.setenv("CONSENT_API_URL", "http://consent.internal")
+    monkeypatch.delenv("ALLOW_INSECURE_INTERNAL_HTTP", raising=False)
+    with pytest.raises(main.HTTPException) as insecure_remote:
+        main._configured_pair("CONSENT_API_URL", "CONSENT_API_TOKEN")
+    assert insecure_remote.value.detail["code"] == "VALIDATOR_DEPENDENCY_MUST_USE_HTTPS"
+
+    monkeypatch.setenv("ALLOW_INSECURE_INTERNAL_HTTP", "true")
+    with pytest.raises(main.HTTPException):
+        main._configured_pair("CONSENT_API_URL", "CONSENT_API_TOKEN")
+
+    monkeypatch.setenv("CONSENT_API_URL", "http://127.0.0.1:8001")
+    assert main._configured_pair("CONSENT_API_URL", "CONSENT_API_TOKEN")[0] == "http://127.0.0.1:8001"
+
+    monkeypatch.setenv("CONSENT_API_URL", "https://consent.internal")
+    assert main._configured_pair("CONSENT_API_URL", "CONSENT_API_TOKEN")[0] == "https://consent.internal"
+
+
+def test_ready_requires_valid_private_dependency_configuration(monkeypatch):
+    monkeypatch.setenv("TWIN_MESH_VALIDATOR_API_TOKEN", TOKEN)
+    monkeypatch.setenv("CONSENT_API_TOKEN", "c" * 40)
+    monkeypatch.setenv("CONSENT_API_URL", "https://consent.internal")
+    monkeypatch.setenv("ASSET_SERVICE_TOKEN", "a" * 40)
+    monkeypatch.setenv("ASSET_SERVICE_URL", "https://asset.internal")
+    assert main.ready()["registry_attestation"] is False
+
+    monkeypatch.setenv("ASSET_SERVICE_URL", "http://asset.internal")
+    with pytest.raises(main.HTTPException):
+        main.ready()
+
 def test_internal_endpoint_requires_service_authentication(client):
     response = client.post("/internal/v1/preflight", json=request_body())
     assert response.status_code == 401
