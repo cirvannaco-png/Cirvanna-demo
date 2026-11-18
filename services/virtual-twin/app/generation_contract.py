@@ -8,7 +8,6 @@ consent, private-asset, database, and commercially approved provider adapters.
 from __future__ import annotations
 
 import hashlib
-import hmac
 import json
 import re
 from typing import Literal
@@ -289,19 +288,19 @@ def registry_registration_payload(
     result: TwinGenerationResult,
     receipt: MeshValidationReceipt,
     *,
-    validation_hmac_secret: str,
+    validation_attestation_hmac: str,
 ) -> dict[str, object]:
-    """Build the exact Twin Registry create request after independent validation.
+    """Build the exact Registry request using a signature issued by the independent validator.
 
-    The HMAC secret belongs only to the orchestration/validation trust boundary
-    and Twin Registry. It must never be sent to a browser or model provider.
-    The registry independently rechecks consent and private Asset Service
-    ownership before persisting this record.
+    This orchestration contract deliberately has no signing secret and cannot
+    mint a Registry attestation. Twin Registry verifies the validator-issued
+    HMAC independently, then rechecks resource-bound consent and private asset
+    ownership before persisting the Twin.
     """
     validate_generation_bundle(command, result, receipt)
-    secret = validation_hmac_secret.strip()
-    if len(secret.encode("utf-8")) < 32:
-        raise GenerationContractError("TWIN_VALIDATION_ATTESTATION_NOT_CONFIGURED")
+    signature = validation_attestation_hmac.strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", signature):
+        raise GenerationContractError("TWIN_VALIDATION_ATTESTATION_INVALID_FORMAT")
 
     # Asset Service identifiers are UUIDs; the registry deliberately accepts
     # no URL, object key, or arbitrary provider path.
@@ -335,15 +334,7 @@ def registry_registration_payload(
         "validation_report_sha256": validation_report_sha256,
         "representation_type": "full_body_mesh",
     }
-    canonical_body = json.dumps(
-        body, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    )
-    attestation = hmac.new(
-        secret.encode("utf-8"),
-        canonical_body.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
     return {
         **body,
-        "validation_attestation_hmac": attestation,
+        "validation_attestation_hmac": signature,
     }
