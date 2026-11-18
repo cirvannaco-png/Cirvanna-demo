@@ -214,6 +214,7 @@ The actual repository is a multi-service monorepo. Important areas are:
 | services/vision-intelligence | Vision model runtime and worker-facing APIs |
 | services/virtual-twin | Guarded Twin and Click It APIs; ephemeral pose inference and provider-neutral generation contract |
 | services/twin-registry | Canonical owner-bound Twin metadata, consent/asset authorization and deletion outbox |
+| services/twin-mesh-validator | Separate private-byte GLB geometry preflight; no Registry attestation until body-coverage, scale and privacy evidence are independently validated |
 | services/asset-service | Private binary storage, owner/purpose/parent authorization and deletion lifecycle |
 | services/virtual-try-on | Consent-gated try-on orchestration; renderer is not enabled |
 | services/wardrobe-service | Wardrobe API foundation |
