@@ -20,8 +20,8 @@ SERVICE = "cirvanna-twin-mesh-validator"
 GLB_CONTENT_TYPE = "model/gltf-binary"
 MAX_GLB_BYTES = 100 * 1024 * 1024
 MAX_JSON_BYTES = 16 * 1024 * 1024
-MAX_VERTICES_PER_ACCESSOR = 500_000
-MAX_TRIANGLES = 1_000_000
+MAX_VERTICES_PER_ACCESSOR = 100_000
+MAX_TRIANGLES = 250_000
 MAX_PRIMITIVES = 256
 HEX_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 MODEL_REVISION = re.compile(r"^[0-9a-f]{40}$")
@@ -171,7 +171,7 @@ async def verify_resource_bound_consent(request: PreflightRequest) -> None:
 
 
 async def load_private_mesh_asset(request: PreflightRequest) -> tuple[bytes, str]:
-    base, token = _configured_pair("ASSET_SERVICE_URL", "ASSET_SERVICE_INTERNAL_TOKEN")
+    base, token = _configured_pair("ASSET_SERVICE_URL", "ASSET_SERVICE_TOKEN")
     params = {
         "subject_id": request.subject_id,
         "purpose": "twin_representation",
@@ -304,7 +304,7 @@ def _view_layout(
         raise MeshFormatError("GLB_ACCESSOR_FORMAT_INVALID")
     count = accessor.get("count")
     view_index = accessor.get("bufferView")
-    if not isinstance(count, int) or count <= 0 or count > max_count:
+    if type(count) is not int or count <= 0 or count > max_count:
         raise MeshFormatError("GLB_ACCESSOR_COUNT_INVALID")
     views = document.get("bufferViews")
     if (
@@ -321,8 +321,8 @@ def _view_layout(
     view_length = view.get("byteLength")
     accessor_offset = accessor.get("byteOffset", 0)
     if (
-        not isinstance(view_offset, int) or not isinstance(view_length, int)
-        or not isinstance(accessor_offset, int) or min(view_offset, view_length, accessor_offset) < 0
+        type(view_offset) is not int or type(view_length) is not int
+        or type(accessor_offset) is not int or min(view_offset, view_length, accessor_offset) < 0
     ):
         raise MeshFormatError("GLB_BUFFER_VIEW_BOUNDS_INVALID")
     if view_offset + view_length > len(binary):
@@ -576,7 +576,7 @@ def ready() -> dict[str, Any]:
         len(os.getenv("TWIN_MESH_VALIDATOR_API_TOKEN", "").encode("utf-8")) >= 32
         and len(os.getenv("CONSENT_API_TOKEN", "").encode("utf-8")) >= 32
         and bool(os.getenv("CONSENT_API_URL", "").strip())
-        and len(os.getenv("ASSET_SERVICE_INTERNAL_TOKEN", "").encode("utf-8")) >= 32
+        and len(os.getenv("ASSET_SERVICE_TOKEN", "").encode("utf-8")) >= 32
         and bool(os.getenv("ASSET_SERVICE_URL", "").strip())
     )
     if not configured:
