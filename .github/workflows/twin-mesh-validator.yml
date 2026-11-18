@@ -46,5 +46,5 @@ jobs:
       - name: Run mesh preflight tests
         run: python -m pytest -q
       - name: Build validator container
-        working-directory: .
-        run: docker build -f services/twin-mesh-validator/Dockerfile -t cirvanna-twin-mesh-validator:ci .
+        working-directory: services/twin-mesh-validator
+        run: docker build -t cirvanna-twin-mesh-validator:ci .
