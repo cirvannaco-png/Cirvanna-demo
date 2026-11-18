@@ -102,7 +102,11 @@ def test_glb_preflight_reads_geometry_but_never_attests(client):
     assert body["receipt_issued"] is False
     assert body["checks"]["artifact_sha256_matches"] is True
     assert body["checks"]["geometry_finite"] is True
-    assert body["checks"]["topology_valid"] is True
+    assert body["checks"]["degenerate_triangles_absent"] is True
+    assert body["checks"]["nonmanifold_edges_absent"] is True
+    assert body["checks"]["anatomical_topology_valid"] is None
+    assert body["checks"]["watertight_surface"] is None
+    assert "topology_valid" not in body["checks"]
     assert body["checks"]["body_coverage_valid"] is None
     assert body["checks"]["scale_within_bounds"] is None
     assert body["checks"]["source_photo_not_embedded"] is None
@@ -111,6 +115,17 @@ def test_glb_preflight_reads_geometry_but_never_attests(client):
     assert body["geometry_summary"]["triangle_count"] == 4
     assert "BODY_COVERAGE_REQUIRES_INDEPENDENT_BODY_SURFACE_EVIDENCE" in body["unverified_gates"]
 
+
+
+def test_open_mesh_boundaries_are_reported_without_claiming_topology_or_watertightness():
+    # A tetrahedron with one face removed has three boundary edges. Structural
+    # checks can report it, but must not label the body topology as valid.
+    mesh = tetrahedron_glb(indices_override=[0, 2, 1, 0, 1, 3, 2, 0, 3])
+    geometry = main.inspect_glb(mesh)
+    assert geometry["boundary_edge_count"] == 3
+    assert geometry["nonmanifold_edge_count"] == 0
+    assert geometry["degenerate_triangles_absent"] is True
+    assert geometry["nonmanifold_edges_absent"] is True
 
 
 def test_consent_receipt_requires_exact_subject_resource_version_and_scopes():
