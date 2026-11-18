@@ -22,6 +22,7 @@ Every operation is private and requires `ASSET_SERVICE_TOKEN`. Cross-tenant or w
 - `ASSET_SERVICE_TOKEN`: unique internal bearer token, at least 32 bytes.
 - `ASSET_S3_BUCKET`, `ASSET_S3_ACCESS_KEY_ID`, `ASSET_S3_SECRET_ACCESS_KEY`, `ASSET_S3_REGION`.
 - `ASSET_S3_ENDPOINT_URL`: optional S3-compatible endpoint; non-local endpoints must use HTTPS.
+- The service's runtime object-store identity must be able to read bucket public-access, bucket policy status, encryption, ownership controls and versioning state. In particular, it needs `s3:GetBucketVersioning`; missing/unsupported control reads fail readiness.
 - `ASSET_AUTO_CREATE_SCHEMA`: local/test only. Apply `migrations/0001_asset_objects.sql` in staging/production.
 
 ## Privacy and lifecycle
