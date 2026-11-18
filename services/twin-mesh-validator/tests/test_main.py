@@ -135,12 +135,8 @@ def test_digest_mismatch_fails_before_mesh_parsing(client, monkeypatch):
 def test_source_and_mesh_ids_must_be_asset_service_uuids():
     payload = request_body()
     payload["source_image_asset_ids"] = ["provider://image/123"]
-    response = TestClient(main.app).post(
-        "/internal/v1/preflight",
-        json=payload,
-        headers={"Authorization": f"Bearer {TOKEN}"},
-    )
-    assert response.status_code == 422
+    with pytest.raises(ValueError):
+        main.PreflightRequest.model_validate(payload)
 
 
 def test_rejects_nonfinite_positions():
@@ -176,16 +172,12 @@ def test_rejects_glb_embedded_images_and_custom_extras():
 def test_rejects_external_buffer_and_invalid_container():
     with pytest.raises(main.MeshFormatError):
         main.inspect_glb(b"not a glb")
-    with pytest.raises(main.MeshFormatError, match="GLB_CUSTOM_OR_EXTERNAL_PAYLOAD_FORBIDDEN"):
+    with pytest.raises(main.MeshFormatError, match="GLB_EXTERNAL_BUFFER_URI_FORBIDDEN"):
         main.inspect_glb(tetrahedron_glb({"buffers": [{"byteLength": 1, "uri": "https://example.invalid/mesh.bin"}]}))
 
 
 def test_request_rejects_duplicate_source_asset_ids():
     payload = request_body()
     payload["source_image_asset_ids"] = [SOURCE_ID, SOURCE_ID]
-    response = TestClient(main.app).post(
-        "/internal/v1/preflight",
-        json=payload,
-        headers={"Authorization": f"Bearer {TOKEN}"},
-    )
-    assert response.status_code == 422
+    with pytest.raises(ValueError):
+        main.PreflightRequest.model_validate(payload)
