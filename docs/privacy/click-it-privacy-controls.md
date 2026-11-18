@@ -144,3 +144,10 @@ Do not merge or deploy this feature until:
 - Vision Intelligence, Virtual Twin, Marketplace BFF, architecture and integration workflows pass.
 
 No production deployment or automatic release is authorized by this code alone.
+
+
+## 9. Current release evidence boundary (14 November 2026)
+
+The BFF Click It route remains a pre-read HTTP 503. The internal Vision scan is not a public enablement path. Privacy Governance has explicit readiness probes for the jurisdiction resolver, content lifecycle, guardian verification, requester-authority verification and vision privacy attestation; each is a required dependency, and any missing/unhealthy provider keeps readiness at 503. The asset service is still a provider-neutral boundary until private object storage is provisioned and lifecycle behavior is tested against the real bucket.
+
+The repository does not currently contain an independent assessor report, a deployed masking detector pin plus subgroup evaluation, a verified content lifecycle implementation across the production bucket/CDN/backups, or proof that no unmasked media can escape every deployed route. These must be supplied as exact-release evidence under [the independent verification plan](click-it-independent-verification-plan.md). Unit tests, route AST guards and provider mocks are necessary engineering evidence, not independent privacy verification. Click It remains disabled until REL-14 passes.

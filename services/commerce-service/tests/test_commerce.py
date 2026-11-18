@@ -97,6 +97,7 @@ def client(monkeypatch):
     monkeypatch.setenv("COMMERCE_JWT_ISSUER", "cirvanna-auth")
     monkeypatch.setenv("COMMERCE_JWT_AUDIENCE", "cirvanna-commerce")
     monkeypatch.delenv("COMMERCE_ENVIRONMENT", raising=False)
+    monkeypatch.delenv("COMMERCE_MARKET_PROVIDER_VERIFICATION_REQUIRED", raising=False)
     monkeypatch.delenv("COMMERCE_AUTH_MODE", raising=False)
     monkeypatch.delenv("COMMERCE_JWT_JWKS_URL", raising=False)
     monkeypatch.delenv("COMMERCE_JWT_ROLE_CLAIM", raising=False)
@@ -2054,3 +2055,166 @@ def test_checkout_learning_consent_rejects_version_mismatch(monkeypatch):
             "buyer-1", "consent-bundle-001", "personalization-v1"
         )
     assert exc.value.status_code == 403
+
+
+
+def test_production_merchant_approval_fails_closed_without_provider_verification(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_MARKET_PROVIDER_VERIFICATION_REQUIRED", "true")
+    monkeypatch.delenv("MERCHANT_VERIFICATION_ADAPTER_URL", raising=False)
+    monkeypatch.delenv("MERCHANT_VERIFICATION_ADAPTER_TOKEN", raising=False)
+    seller = auth("provider-gated-seller", "merchant")
+    created = client.post("/merchants/applications", headers=seller, json={
+        "display_name": "Provider Gated Studio",
+        "legal_name": "Provider Gated Studio Limited",
+        "legal_country_code": "KE",
+        "operating_markets": ["KE"],
+        "contact_email": "seller@example.test",
+    })
+    assert created.status_code == 201
+    merchant_id = created.json()["merchant_id"]
+
+    approval = client.post(
+        f"/admin/merchants/{merchant_id}/decision",
+        headers=auth("provider-gated-admin", "admin"),
+        json={"decision": "approve", "verification_reference": "unverified-ref-001"},
+    )
+
+    assert approval.status_code == 503
+    assert approval.json()["detail"]["code"] == "MERCHANT_VERIFICATION_ADAPTER_NOT_TRUSTED"
+    stored = client.get("/merchants/me", headers=seller)
+    assert stored.status_code == 200
+    assert stored.json()["status"] == "pending"
+    assert stored.json()["verification_reference"] is None
+
+
+def test_production_fulfilment_quote_ingestion_fails_without_provider_attestation(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_MARKET_PROVIDER_VERIFICATION_REQUIRED", "true")
+    monkeypatch.setenv("COMMERCE_MARKET_CONTEXT_TOKEN", "market-context-token-long-enough-for-tests")
+    monkeypatch.delenv("FULFILLMENT_ADAPTER_URL", raising=False)
+    monkeypatch.delenv("FULFILLMENT_ADAPTER_TOKEN", raising=False)
+    seeded = seed_offer()
+    observed = main.now()
+    response = client.post(
+        f"/internal/market-context/variants/{seeded['variant_id']}/fulfillment-quotes",
+        headers={"X-Commerce-Market-Context-Token": "market-context-token-long-enough-for-tests"},
+        json={
+            "provider": "carrier-001",
+            "provider_quote_id": "quote-001",
+            "destination_country_code": "KE",
+            "destination_key": "Nakuru/Subukia",
+            "fulfillment_mode": "courier_delivery",
+            "charge_basis": "per_quote",
+            "amount_minor": 250,
+            "currency": "KES",
+            "status": "confirmed",
+            "distance_km": 14.5,
+            "observed_at": observed.isoformat(),
+            "expires_at": (observed + main.timedelta(hours=1)).isoformat(),
+        },
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "FULFILLMENT_ADAPTER_NOT_TRUSTED"
+
+
+def test_production_readiness_exposes_provider_adapter_blockers(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_MARKET_PROVIDER_VERIFICATION_REQUIRED", "true")
+    monkeypatch.delenv("MERCHANT_VERIFICATION_ADAPTER_URL", raising=False)
+    monkeypatch.delenv("MERCHANT_VERIFICATION_ADAPTER_TOKEN", raising=False)
+    for key in (
+        "MERCHANT_VERIFICATION_ADAPTER_URL", "MERCHANT_VERIFICATION_ADAPTER_TOKEN",
+        "FULFILLMENT_ADAPTER_URL", "FULFILLMENT_ADAPTER_TOKEN",
+        "FX_ADAPTER_URL", "FX_ADAPTER_TOKEN",
+        "TAX_ADAPTER_URL", "TAX_ADAPTER_TOKEN",
+        "PAYMENT_CAPABILITY_ADAPTER_URL", "PAYMENT_CAPABILITY_ADAPTER_TOKEN",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    response = client.get("/ready")
+
+    assert response.status_code == 503
+    detail = response.json()["detail"]
+    assert detail["provider_verification_required"] is True
+    assert detail["merchant_verification_provider_ready"] is False
+    assert detail["fulfillment_provider_ready"] is False
+    assert detail["fx_provider_ready"] is False
+    assert detail["tax_provider_ready"] is False
+    assert detail["payment_capability_provider_ready"] is False
+
+
+
+def test_production_fx_tax_and_payment_ingestion_fail_closed_without_provider_adapters(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_MARKET_PROVIDER_VERIFICATION_REQUIRED", "true")
+    monkeypatch.setenv("COMMERCE_MARKET_CONTEXT_TOKEN", "market-context-token-long-enough-for-tests")
+    for key in (
+        "FX_ADAPTER_URL", "FX_ADAPTER_TOKEN",
+        "TAX_ADAPTER_URL", "TAX_ADAPTER_TOKEN",
+        "PAYMENT_CAPABILITY_ADAPTER_URL", "PAYMENT_CAPABILITY_ADAPTER_TOKEN",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    seeded = seed_offer()
+    observed = main.now()
+    market_token = {"X-Commerce-Market-Context-Token": "market-context-token-long-enough-for-tests"}
+
+    fx = client.post(
+        f"/internal/market-context/variants/{seeded['variant_id']}/fx-quotes",
+        headers=market_token,
+        json={
+            "provider": "fx-provider",
+            "provider_quote_id": "fx-001",
+            "base_currency": "USD",
+            "quote_currency": "KES",
+            "rate": "129.25",
+            "observed_at": observed.isoformat(),
+            "expires_at": (observed + main.timedelta(minutes=5)).isoformat(),
+        },
+    )
+    assert fx.status_code == 503
+    assert fx.json()["detail"]["code"] == "FX_ADAPTER_NOT_TRUSTED"
+
+    tax = client.post(
+        f"/internal/market-context/variants/{seeded['variant_id']}/tax-quotes",
+        headers=market_token,
+        json={
+            "provider": "tax-provider",
+            "provider_quote_id": "tax-001",
+            "destination_country_code": "KE",
+            "destination_key": "Nakuru/Subukia",
+            "jurisdiction": "KE-32",
+            "tax_category": "apparel",
+            "basis": "exclusive",
+            "amount_minor": 180,
+            "currency": "KES",
+            "status": "confirmed",
+            "authoritative": True,
+            "rule_version": "tax-2026-01",
+            "observed_at": observed.isoformat(),
+            "expires_at": (observed + main.timedelta(hours=1)).isoformat(),
+        },
+    )
+    assert tax.status_code == 503
+    assert tax.json()["detail"]["code"] == "TAX_ADAPTER_NOT_TRUSTED"
+
+    market = client.post(
+        "/merchant/markets",
+        headers=auth("merchant-1", "merchant"),
+        json={"market_country_code": "KE", "display_currency": "KES", "locale": "en-KE"},
+    )
+    assert market.status_code == 201, market.text
+
+    capability = client.put(
+        f"/internal/market-context/merchants/{seeded['merchant_id']}/payment-capabilities",
+        headers=market_token,
+        json={
+            "market_country_code": "KE",
+            "provider": "stripe",
+            "state": "active",
+            "transaction_currencies": ["KES"],
+            "settlement_currencies": ["KES"],
+            "payment_methods": ["card"],
+            "provider_reference": "acct-market-ke-01",
+            "observed_at": observed.isoformat(),
+            "expires_at": (observed + main.timedelta(hours=1)).isoformat(),
+        },
+    )
+    assert capability.status_code == 503
+    assert capability.json()["detail"]["code"] == "PAYMENT_CAPABILITY_ADAPTER_NOT_TRUSTED"

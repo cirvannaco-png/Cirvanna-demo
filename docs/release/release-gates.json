@@ -60,7 +60,7 @@
       "required": true,
       "status": "blocked",
       "owner_role": "Marketplace operations owner",
-      "acceptance": "Approved merchant applications and human KYC decisions exist; real product/offer/variant/inventory data is reviewed; suspended merchants and unavailable stock cannot appear; concurrent checkout cannot oversell. Brand and distributor entities, legal verification, tenant membership and permissions are independently governed rather than inferred from a merchant display-name field.",
+      "acceptance": "Approved merchant applications and human KYC decisions exist; real product/offer/variant/inventory data is reviewed; suspended merchants and unavailable stock cannot appear; concurrent checkout cannot oversell. Brand and distributor entities, legal verification, tenant membership and permissions are independently governed rather than inferred from a merchant display-name field. Merchant activation additionally requires a current, authenticated provider verification result for the exact merchant/legal entity, approved operating market and an auditable admin decision; a free-text verification reference alone is insufficient. Inventory source freshness and merchant-owner isolation are verified.",
       "evidence_refs": [],
       "verified_commit": null
     },
@@ -100,7 +100,7 @@
       "required": true,
       "status": "blocked",
       "owner_role": "Service operations owner",
-      "acceptance": "Dashboards, logs, latency/error alerts, on-call/contact ownership, support/refund/returns, fulfilment/shipping/tax procedures, incident response, backup schedule, rollback plan, timeout/dependency failure exercises, and incident/rollback drill are approved.",
+      "acceptance": "Dashboards, logs, latency/error alerts, on-call/contact ownership, support/refund/returns, fulfilment/shipping/tax procedures, incident response, backup schedule, rollback plan, timeout/dependency failure exercises, and incident/rollback drill are approved. Central metrics, structured logs and traces are collected privately for every production service; named alert routes are tested; service owners/on-call and incident commander are assigned; payment, provider, privacy and database recovery runbooks are exercised; RPO/RTO and restore evidence are recorded.",
       "evidence_refs": [],
       "verified_commit": null
     },
@@ -130,7 +130,7 @@
       "required": true,
       "status": "blocked",
       "owner_role": "Commerce / marketplace owner",
-      "acceptance": "The multi-market implementation is based on current main and one migration chain after 20261109_0007. It proves market-specific merchant capability, source/payable/display currency separation, fresh provider-sourced FX, shipping/courier/merchant delivery/collection/local transport, authoritative jurisdiction-matched tax, payment-method capability, exact cross-market canonical product/variant identity, like-for-like comparison, stale/missing-evidence unavailable reasons, radius behavior and checkout-time quote revalidation with consistent order/Stripe/webhook totals.",
+      "acceptance": "The multi-market implementation is based on current main and one migration chain after 20261109_0007. It proves market-specific merchant capability, source/payable/display currency separation, fresh provider-sourced FX, shipping/courier/merchant delivery/collection/local transport, authoritative jurisdiction-matched tax, payment-method capability, exact cross-market canonical product/variant identity, like-for-like comparison, stale/missing-evidence unavailable reasons, radius behavior and checkout-time quote revalidation with consistent order/Stripe/webhook totals. Fulfilment is not quote-only: each enabled market/mode demonstrates provider-authenticated serviceability/quote, order-bound idempotent booking, shipment tracking, cancellation/exception handling and provider reconciliation. No quote or booking is inferred from merchant-supplied data. In staging/production, each FX, tax, payment-capability and fulfilment quote/capability ingestion request must be attested by its configured trusted adapter against the exact variant, merchant, market, destination, value, currency, provider reference and validity window; internal HMAC/service tokens alone are not third-party evidence.",
       "evidence_refs": [],
       "verified_commit": null
     },
@@ -140,7 +140,7 @@
       "required": true,
       "status": "blocked",
       "owner_role": "Security / privacy owner",
-      "acceptance": "Click It remains disabled until real purpose-bound consent and revocation, trusted jurisdiction policy, licensed pinned face-masking attestation, fail-closed uncertainty, zero public unmasked-face exposure, retention/purge and deletion propagation, photographed-person rights intake/review/quarantine, guardian verification where required, minor-specific restrictions and every public publish/restore/syndication/share/media-delivery route are exercised against real staging providers and immutable asset digests.",
+      "acceptance": "Click It remains disabled until real purpose-bound consent and revocation, trusted jurisdiction policy, licensed pinned face-masking attestation, fail-closed uncertainty, zero public unmasked-face exposure, retention/purge and deletion propagation, photographed-person rights intake/review/quarantine, guardian verification where required, minor-specific restrictions and every public publish/restore/syndication/share/media-delivery route are exercised against real staging providers and immutable asset digests. An independent assessor verifies the exact deployed route inventory, detector artifact/dataset digest, subgroup false-negative confidence intervals, source-to-mask ordering, zero unmasked-media escape, consent revocation, urgent quarantine and deletion across source, derivatives, replicas, backups where applicable, caches, CDN, merchant surfaces and shared links. The assessor report is digest-bound to the release commit.",
       "evidence_refs": [],
       "verified_commit": null
     },
@@ -211,6 +211,26 @@
       "status": "blocked",
       "owner_role": "Product / recommendation / identity owner",
       "acceptance": "Authenticated conversational discovery uses the active subject's wardrobe and only consented style-learning/profile signals, with current user-provided or trusted context, bounded conversation state, explicit reset/export/deletion and no cross-user memory. PNELLY's three daily looks are sourced from active wardrobe items and persistent rotation state; Complementer remains a separately authenticated advisory and cannot grant product authority. Catalog/Commerce candidates are surfaced only after CAL SHOW and CIL rights/evidence approval. Explicit look/item feedback reaches the appropriate consented Identity Learning/NPL path, and only explicit, receipt-bound suitability reports enter the CIL cohort pipeline.",
+      "evidence_refs": [],
+      "verified_commit": null
+    },
+    {
+      "id": "REL-22",
+      "name": "Merchant verification and fulfilment execution lifecycle",
+      "required": true,
+      "status": "blocked",
+      "owner_role": "Commerce / merchant operations / logistics owner",
+      "acceptance": "An approved provider is selected for each operating market. Merchant onboarding uses independent legal-entity/representative and required beneficial-owner verification, authenticated provider results, revocation/re-verification and auditable human approval; unverified merchants cannot activate listings or markets. Fulfilment supports provider-authenticated serviceability and fresh zone-bound quotes, order/quote binding, idempotent booking, shipment tracking, cancellation/exceptions, webhooks, settlement/reconciliation and operational holds. Sandbox plus controlled live-staging transactions prove the complete path; mocks and quote-row ingestion alone do not pass.",
+      "evidence_refs": [],
+      "verified_commit": null
+    },
+    {
+      "id": "REL-23",
+      "name": "Production telemetry, alerting and incident operations",
+      "required": true,
+      "status": "blocked",
+      "owner_role": "Platform reliability / security / service owners",
+      "acceptance": "All production services export privacy-safe low-cardinality metrics, structured logs and traces through an approved private telemetry backend; secrets, user IDs, images and sensitive request content are excluded. Dashboards, SLOs, alert routes and notifications are tested with named owners/on-call. Payment reconciliation, provider outage, image/privacy incident, rights quarantine/deletion, database backup/restore, rollback and disaster-recovery runbooks are executed. Exact configuration, retention/access controls, measured RPO/RTO and exercise evidence are tied to the release commit.",
       "evidence_refs": [],
       "verified_commit": null
     }

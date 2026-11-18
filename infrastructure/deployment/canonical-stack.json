@@ -9,7 +9,15 @@
     "production_environment_id": null,
     "production_release_commit": null,
     "operationally_complete": false,
-    "note": "This is the canonical service/dependency inventory, not an executable deployment or proof of provisioning. Provider-specific deployment is blocked until the platform, region, budget, identity, databases, secrets, monitoring and recovery ownership are approved."
+    "note": "This is the canonical service/dependency inventory, not an executable deployment or proof of provisioning. Provider-specific deployment is blocked until the platform, region, budget, identity, databases, secrets, monitoring and recovery ownership are approved.",
+    "observability": {
+      "backend_provider": "observability_backend",
+      "configured_for_production": false,
+      "alert_routes_configured": false,
+      "on_call_owner_assigned": false,
+      "restore_drill_verified": false,
+      "note": "Internal service metrics endpoints are implemented in selected services; centralized collection, alerts, on-call and recovery evidence remain unconfigured."
+    }
   },
   "public_ingress": "marketplace-bff",
   "policy": {
@@ -125,7 +133,8 @@
         "stripe",
         "fx_provider",
         "tax_provider",
-        "fulfillment_provider"
+        "fulfillment_provider",
+        "merchant_verification_provider"
       ],
       "data_store_refs": [
         "commerce-postgres"
@@ -714,6 +723,20 @@
       "configured_for_production": false,
       "operationally_verified": false,
       "release_gate": "REL-12"
+    },
+    {
+      "id": "merchant_verification_provider",
+      "purpose": "independent business identity, beneficial-owner and operating-market verification before merchant activation",
+      "configured_for_production": false,
+      "operationally_verified": false,
+      "release_gate": "REL-22"
+    },
+    {
+      "id": "observability_backend",
+      "purpose": "private centralized metrics, logs, traces, dashboards, alert delivery and retention",
+      "configured_for_production": false,
+      "operationally_verified": false,
+      "release_gate": "REL-23"
     }
   ]
 }

@@ -23,6 +23,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.observability import install_observability
+
 SERVICE = "cirvanna-marketplace-bff"
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_HTML = ROOT / "apps" / "demo-web" / "marketplace.html"
@@ -64,6 +66,8 @@ app = FastAPI(
     version="0.1.0",
     description="Same-origin marketplace, Wardrobe and governed merchant portals with verified account identity and private service proxies.",
 )
+
+install_observability(app, SERVICE)
 
 app.mount("/assets", StaticFiles(directory=str(PORTAL_ASSETS_DIR), check_dir=True), name="portal-assets")
 
