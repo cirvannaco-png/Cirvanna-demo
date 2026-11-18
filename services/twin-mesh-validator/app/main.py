@@ -131,6 +131,7 @@ def _verify_consent_response(payload: Any, request: PreflightRequest) -> None:
         and payload.get("consent_id") == request.consent_id
         and payload.get("resource_id") == request.twin_id
         and isinstance(granted, list)
+        and all(isinstance(scope, str) for scope in granted)
         and required.issubset(set(granted))
     )
     if not valid:
@@ -240,12 +241,13 @@ def _parse_glb(data: bytes) -> tuple[dict[str, Any], bytes]:
     if not isinstance(buffers, list) or len(buffers) != 1 or not isinstance(buffers[0], dict):
         raise MeshFormatError("GLB_BUFFER_LAYOUT_UNSUPPORTED")
     buffer_declared = buffers[0].get("byteLength")
+    if "uri" in buffers[0]:
+        raise MeshFormatError("GLB_EXTERNAL_BUFFER_URI_FORBIDDEN")
     if (
         not isinstance(buffer_declared, int)
         or buffer_declared <= 0
         or buffer_declared > len(binary)
         or len(binary) - buffer_declared > 3
-        or "uri" in buffers[0]
     ):
         raise MeshFormatError("GLB_BUFFER_BOUNDS_INVALID")
     return document, binary[:buffer_declared]
