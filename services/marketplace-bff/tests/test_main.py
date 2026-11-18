@@ -3585,25 +3585,38 @@ def test_production_never_renders_developer_token_entry_even_when_opted_in(clien
 def test_cart_proxy_requires_bearer_before_cal_readiness_probe(client, monkeypatch):
     configure_upstreams(monkeypatch)
     monkeypatch.setenv("COMMERCE_CAL_PURCHASE_PROXY_ENABLED", "true")
-    probes = []
-    forwarded = []
-    monkeypatch.setattr(
-        main.httpx,
-        "get",
-        lambda url, **kwargs: probes.append(url) or FakeResponse({"ready": True}),
-    )
-    monkeypatch.setattr(
-        main.httpx,
-        "request",
-        lambda *args, **kwargs: forwarded.append(args) or FakeResponse({}),
-    )
+    fake = FakeAsyncClient([])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
 
     response = client.get("/api/commerce/cart")
 
     assert response.status_code == 401
     assert response.json()["detail"]["code"] == "USER_BEARER_REQUIRED"
-    assert probes == []
-    assert forwarded == []
+    assert fake.calls == []
+
+
+def test_cart_proxy_rejects_invalid_bearer_before_cal_readiness_probe(client, monkeypatch):
+    configure_upstreams(monkeypatch)
+    monkeypatch.setenv("COMMERCE_CAL_PURCHASE_PROXY_ENABLED", "true")
+    fake = FakeAsyncClient([FakeResponse({"detail": "expired"}, status_code=401)])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+
+    response = client.get(
+        "/api/commerce/cart",
+        headers={"Authorization": "Bearer expired-customer-token"},
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "USER_AUTHENTICATION_FAILED"
+    assert fake.calls == [
+        ("GET", "https://commerce.example.test/me", {
+            "headers": {
+                "Authorization": "Bearer expired-customer-token",
+                "Accept": "application/json",
+            }
+        })
+    ]
+
 
 def test_cart_and_checkout_proxy_only_when_operator_flag_and_live_cal_readiness_pass(client, monkeypatch):
     configure_upstreams(monkeypatch)
@@ -3616,21 +3629,15 @@ def test_cart_and_checkout_proxy_only_when_operator_flag_and_live_cal_readiness_
         "migrations_applied": True,
     }
     capabilities = {"candidate_bound_purchase_authorization_configured": True}
-    probes = []
-    def fake_get(url, **kwargs):
-        probes.append(url)
-        if url.endswith("/ready"):
-            return FakeResponse(readiness)
-        if url.endswith("/capabilities"):
-            return FakeResponse(capabilities)
-        return FakeResponse({}, status_code=404)
-    monkeypatch.setattr(main.httpx, "get", fake_get)
-    forwarded = []
-    monkeypatch.setattr(
-        main.httpx,
-        "request",
-        lambda *args, **kwargs: forwarded.append((args, kwargs)) or FakeResponse({"accepted": True}),
-    )
+    fake = FakeAsyncClient([])
+    for _ in range(4):
+        fake.responses.extend([
+            FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+            FakeResponse(readiness),
+            FakeResponse(capabilities),
+            FakeResponse({"accepted": True}),
+        ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     headers = {"Authorization": "Bearer customer-token", "Content-Type": "application/json"}
     variant = "123e4567-e89b-12d3-a456-426614174000"
 
@@ -3641,30 +3648,54 @@ def test_cart_and_checkout_proxy_only_when_operator_flag_and_live_cal_readiness_
         client.post("/api/commerce/checkout", headers={**headers, "Idempotency-Key": "cal-proxy-checkout-01"}, json={"confirm": True}),
     ]
     assert [response.status_code for response in responses] == [200, 200, 200, 200]
-    assert [call[0][0] for call in forwarded] == ["GET", "POST", "PATCH", "POST"]
-    assert [call[0][1] for call in forwarded] == [
+    assert [call[0] for call in fake.calls] == [
+        "GET", "GET", "GET", "GET",
+        "GET", "GET", "GET", "POST",
+        "GET", "GET", "GET", "PATCH",
+        "GET", "GET", "GET", "POST",
+    ]
+    expected_urls = [
+        "https://commerce.example.test/me",
+        "https://commerce.example.test/ready",
+        "https://commerce.example.test/capabilities",
+        "https://commerce.example.test/cart",
+        "https://commerce.example.test/me",
+        "https://commerce.example.test/ready",
+        "https://commerce.example.test/capabilities",
+        "https://commerce.example.test/cart/items",
+        "https://commerce.example.test/me",
+        "https://commerce.example.test/ready",
+        "https://commerce.example.test/capabilities",
+        f"https://commerce.example.test/cart/items/{variant}",
+        "https://commerce.example.test/me",
+        "https://commerce.example.test/ready",
+        "https://commerce.example.test/capabilities",
+        "https://commerce.example.test/checkout",
+    ]
+    assert [call[1] for call in fake.calls] == expected_urls
+    forwarded = [call for call in fake.calls if call[1] in {
         "https://commerce.example.test/cart",
         "https://commerce.example.test/cart/items",
         f"https://commerce.example.test/cart/items/{variant}",
         "https://commerce.example.test/checkout",
-    ]
-    assert all(call[1]["headers"]["Authorization"] == "Bearer customer-token" for call in forwarded)
-    assert all(url.endswith("/ready") or url.endswith("/capabilities") for url in probes)
-    assert probes.count("https://commerce.example.test/ready") == 4
-    assert probes.count("https://commerce.example.test/capabilities") == 4
+    }]
+    assert all(call[2]["headers"]["Authorization"] == "Bearer customer-token" for call in forwarded)
+
 
 def test_cart_and_checkout_remain_blocked_when_live_cal_readiness_is_incomplete(client, monkeypatch):
     configure_upstreams(monkeypatch)
     monkeypatch.setenv("COMMERCE_CAL_PURCHASE_PROXY_ENABLED", "true")
-    monkeypatch.setattr(main.httpx, "get", lambda url, **kwargs: FakeResponse({
-        "ready": False,
-        "cal_purchase_gateway_configured": True,
-        "cal_purchase_receipt_signer_configured": True,
-        "cal_gateway_ready": False,
-        "migrations_applied": True,
-    }, status_code=503))
-    calls = []
-    monkeypatch.setattr(main.httpx, "request", lambda *args, **kwargs: calls.append(args) or FakeResponse({}))
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({
+            "ready": False,
+            "cal_purchase_gateway_configured": True,
+            "cal_purchase_receipt_signer_configured": True,
+            "cal_gateway_ready": False,
+            "migrations_applied": True,
+        }, status_code=503),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.post(
         "/api/commerce/checkout",
         headers={"Authorization": "Bearer customer-token", "Content-Type": "application/json"},
@@ -3672,4 +3703,7 @@ def test_cart_and_checkout_remain_blocked_when_live_cal_readiness_is_incomplete(
     )
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "CAL_CANDIDATE_PURCHASE_REAUTH_REQUIRED"
-    assert calls == []
+    assert [call[1] for call in fake.calls] == [
+        "https://commerce.example.test/me",
+        "https://commerce.example.test/ready",
+    ]
