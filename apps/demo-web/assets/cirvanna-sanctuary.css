@@ -1,5 +1,5 @@
 /* Cirvanna Sanctuary — Primal Atelier × Living Couture
-   Palette: obsidian, warm white, gold and purple.
+   Core brand palette: obsidian black, gold and white; warm white, purple and stone remain supporting tones.
    Flame blue is reserved for the onboarding/Twin identity motif. */
 :root {
   color-scheme: dark;
@@ -7,7 +7,8 @@
   --cv-obsidian-soft: #111019;
   --cv-panel: #17131f;
   --cv-panel-raised: #21192c;
-  --cv-white: #f7f3ed;
+  --cv-white: #ffffff;
+  --cv-white-warm: #f7f3ed;
   --cv-white-muted: #d8d0dc;
   --cv-muted: #a99fb0;
   --cv-gold: #d7b36a;
