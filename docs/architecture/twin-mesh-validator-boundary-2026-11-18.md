@@ -16,11 +16,11 @@ Generator/orchestrator
   -> Twin Registry verifies HMAC, current consent and owner/purpose/Twin asset binding
 ```
 
-Only the first structural-preflight stage is implemented here. The new service performs resource-bound consent/version verification, retrieves the actual GLB bytes through Asset Service, verifies the digest, parses GLB 2.0, inspects triangle geometry and rejects malformed, degenerate or non-manifold content. It rejects explicit images, textures, extension/extra payloads and common image signatures.
+Only the first structural-preflight stage is implemented here. The new service performs resource-bound consent/version verification, retrieves the actual GLB bytes through Asset Service, verifies the digest, parses GLB 2.0, inspects triangle geometry and rejects malformed, degenerate or non-manifold content. It reports boundary edges but does not claim a full topology or watertightness verdict. It rejects explicit images, textures, extension/extra payloads and common image signatures.
 
 ## Important limits
 
-The preflight does not prove full human-body surface coverage, anatomical correspondence, real-world scale, fit accuracy, identity fidelity or absence of all sensitive data. It does not fetch source photos for byte comparison. Those results are returned as `null` / unverified, not `true`.
+The preflight does not prove full human-body surface coverage, anatomical correspondence, real-world scale, fit accuracy, identity fidelity, watertightness, connectedness, self-intersection absence or absence of all sensitive data. It reports boundary-edge counts and narrow local triangle checks but does not return a broad topology-valid flag. It does not fetch source photos for byte comparison. Those results are returned as `null` / unverified, not `true`.
 
 The service therefore always sets `registry_eligible=false`, issues no `MeshValidationReceipt`, and produces no HMAC. It has no Registry registration client and no Registry signing secret. This is intentional fail-closed behavior, not a temporary UI flag.
 
