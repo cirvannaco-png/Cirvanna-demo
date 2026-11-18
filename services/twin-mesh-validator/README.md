@@ -20,7 +20,7 @@ Trusted Virtual Twin orchestration
 ## Verified during preflight
 
 - Actual private Asset Service bytes are read; owner, purpose and Twin-parent authorization are enforced again by Asset Service.
-- Resource-bound consent is rechecked before the validator reads the artifact.
+- Resource-bound consent and the exact consent version are rechecked before the validator reads the artifact.
 - GLB magic, version, declared length, chunk order/alignment and bounded JSON/BIN layout.
 - Exactly one embedded GLB binary buffer; external buffer URIs and unsupported chunks are rejected.
 - Triangle primitives only; bounded vertex/triangle/accessor counts.
@@ -48,7 +48,7 @@ The validator service intentionally has **no** \`TWIN_REGISTRY_VALIDATION_HMAC_S
 Required server-side environment:
 
 - \`TWIN_MESH_VALIDATOR_API_TOKEN\`: internal caller bearer token (at least 32 bytes).
-- \`CONSENT_API_URL\`, \`CONSENT_API_TOKEN\`: private consent service base URL and internal bearer token.
+- \`CONSENT_API_URL\`, \`CONSENT_API_TOKEN\`: private consent service base URL and internal bearer token. The verification response must include the matching `consent_version`.
 - \`ASSET_SERVICE_URL\`, \`ASSET_SERVICE_TOKEN\`: private Asset Service base URL and internal bearer token.
 
 All service URLs must use HTTPS. \`ALLOW_INSECURE_INTERNAL_HTTP=true\` is for isolated local development only and must not be set in a deployed environment. Never put these values in browser code, app bundles, model prompts or logs.
