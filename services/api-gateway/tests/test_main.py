@@ -1006,9 +1006,9 @@ def _install_discovery_pipeline_contract_boundaries(
     monkeypatch.setattr(main, "fetch_product", lambda _product_id: candidate)
     monkeypatch.setattr(main, "_load_cil_feedback_decisions", lambda _ids, _context: {})
     if safety_pass:
-        monkeypatch.setattr(main, "_load_safety_signal", pass_safety)
+        monkeypatch.setattr(main, "_load_safety_signal", lambda product_payload, **_kwargs: pass_safety(product_payload))
     if fit_calibrated:
-        monkeypatch.setattr(main, "_load_fci_estimate", calibrated_fit)
+        monkeypatch.setattr(main, "_load_fci_estimate", lambda user_id, product_id, *_args: calibrated_fit(user_id, product_id))
         monkeypatch.setattr(
             main,
             "_fit_evidence_fields",
