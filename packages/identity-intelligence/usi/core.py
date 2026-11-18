@@ -82,9 +82,11 @@ class USIResult:
             state = SignalState.UNKNOWN
             confidence = None
         elif self.verdict is USIVerdict.BELOW_THRESHOLD:
-            # A soft style mismatch requires review; it is not a hard exclusion.
-            state = SignalState.BLOCK
-            confidence = self.alignment_score
+            # A soft style mismatch is insufficient positive evidence, not a veto.
+            # UNKNOWN deliberately routes through CAL REVIEW without conflating it
+            # with user-declared NPL hard exclusions.
+            state = SignalState.UNKNOWN
+            confidence = None
         else:
             state = SignalState.PASS
             confidence = self.alignment_score
