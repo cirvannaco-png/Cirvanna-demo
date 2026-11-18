@@ -39,6 +39,7 @@ class PreflightRequest(StrictModel):
     subject_id: str = Field(min_length=3, max_length=128)
     twin_id: str = Field(min_length=8, max_length=128)
     consent_id: str = Field(min_length=8, max_length=160)
+    consent_version: str = Field(min_length=1, max_length=80)
     artifact_asset_id: str = Field(min_length=36, max_length=36)
     artifact_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     source_image_asset_ids: list[str] = Field(min_length=1, max_length=6)
@@ -129,6 +130,7 @@ def _verify_consent_response(payload: Any, request: PreflightRequest) -> None:
         and payload.get("active") is True
         and payload.get("subject_id") == request.subject_id
         and payload.get("consent_id") == request.consent_id
+        and payload.get("consent_version") == request.consent_version
         and payload.get("resource_id") == request.twin_id
         and isinstance(granted, list)
         and all(isinstance(scope, str) for scope in granted)
@@ -143,6 +145,7 @@ async def verify_resource_bound_consent(request: PreflightRequest) -> None:
     body = {
         "subject_id": request.subject_id,
         "consent_id": request.consent_id,
+        "consent_version": request.consent_version,
         "required_scopes": ["image_processing", "body_measurements", "virtual_twin_storage"],
         "resource_id": request.twin_id,
     }
@@ -179,26 +182,38 @@ async def load_private_mesh_asset(request: PreflightRequest) -> tuple[bytes, str
     }
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(35.0, connect=5.0)) as client:
-            response = await client.get(
+            async with client.stream(
+                "GET",
                 f"{base}/internal/v1/assets/{request.artifact_asset_id}/content",
                 params=params,
                 headers={"Authorization": f"Bearer {token}", "Cache-Control": "no-store"},
-            )
+            ) as response:
+                if response.status_code == 404:
+                    raise HTTPException(404, detail={"code": "ASSET_NOT_FOUND_OR_NOT_AUTHORIZED"})
+                if response.status_code >= 500:
+                    raise HTTPException(503, detail={"code": "ASSET_SERVICE_UNAVAILABLE"})
+                if response.status_code != 200:
+                    raise HTTPException(502, detail={"code": "ASSET_READ_FAILED"})
+                content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+                content_length = response.headers.get("content-length")
+                if content_length:
+                    try:
+                        if int(content_length) > MAX_GLB_BYTES:
+                            raise HTTPException(413, detail={"code": "GLB_SIZE_LIMIT_EXCEEDED"})
+                    except ValueError as exc:
+                        raise HTTPException(502, detail={"code": "ASSET_CONTENT_LENGTH_INVALID"}) from exc
+                data = bytearray()
+                async for chunk in response.aiter_bytes():
+                    data.extend(chunk)
+                    if len(data) > MAX_GLB_BYTES:
+                        raise HTTPException(413, detail={"code": "GLB_SIZE_LIMIT_EXCEEDED"})
+                return bytes(data), content_type
+    except HTTPException:
+        raise
     except httpx.TimeoutException as exc:
         raise HTTPException(504, detail={"code": "ASSET_SERVICE_TIMEOUT"}) from exc
     except httpx.HTTPError as exc:
         raise HTTPException(503, detail={"code": "ASSET_SERVICE_UNAVAILABLE"}) from exc
-
-    if response.status_code == 404:
-        raise HTTPException(404, detail={"code": "ASSET_NOT_FOUND_OR_NOT_AUTHORIZED"})
-    if response.status_code >= 500:
-        raise HTTPException(503, detail={"code": "ASSET_SERVICE_UNAVAILABLE"})
-    if response.status_code != 200:
-        raise HTTPException(502, detail={"code": "ASSET_READ_FAILED"})
-    if len(response.content) > MAX_GLB_BYTES:
-        raise HTTPException(413, detail={"code": "GLB_SIZE_LIMIT_EXCEEDED"})
-    content_type = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
-    return response.content, content_type
 
 
 def _parse_glb(data: bytes) -> tuple[dict[str, Any], bytes]:
@@ -357,7 +372,8 @@ def _read_positions(
         return cache[accessor_index]
     accessors = document.get("accessors")
     if (
-        not isinstance(accessors, list)
+        type(accessor_index) is not int
+        or not isinstance(accessors, list)
         or accessor_index < 0
         or accessor_index >= len(accessors)
         or not isinstance(accessors[accessor_index], dict)
@@ -396,7 +412,8 @@ def _read_indices(
 ) -> list[int]:
     accessors = document.get("accessors")
     if (
-        not isinstance(accessors, list)
+        type(accessor_index) is not int
+        or not isinstance(accessors, list)
         or accessor_index < 0
         or accessor_index >= len(accessors)
         or not isinstance(accessors[accessor_index], dict)
@@ -486,7 +503,7 @@ def inspect_glb(data: bytes) -> dict[str, Any]:
             if primitive.get("mode", 4) != 4 or primitive.get("targets"):
                 raise MeshFormatError("GLB_TRIANGLE_PROFILE_REQUIRED")
             attributes = primitive.get("attributes")
-            if not isinstance(attributes, dict) or not isinstance(attributes.get("POSITION"), int):
+            if not isinstance(attributes, dict) or type(attributes.get("POSITION")) is not int:
                 raise MeshFormatError("GLB_POSITION_ATTRIBUTE_REQUIRED")
             points = _read_positions(document, binary, attributes["POSITION"], position_cache)
             indices = (
