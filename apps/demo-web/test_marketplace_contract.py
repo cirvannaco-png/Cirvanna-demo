@@ -12,6 +12,15 @@ CATALOG = (ROOT / "services/catalog-service" / "app" / "main.py").read_text(enco
 
 
 class MarketplaceContractTests(unittest.TestCase):
+    def test_marketplace_uses_obsidian_gold_and_white_brand_palette(self):
+        self.assertIn("--ink:#080808", HTML)
+        self.assertIn("--gold:#d6ae62", HTML)
+        self.assertIn("--cream:#ffffff", HTML)
+        self.assertIn('name="theme-color" content="#080808"', HTML)
+        self.assertIn('class="skip-link" href="#mainContent"', HTML)
+        self.assertIn("--cv-white: #ffffff", (ROOT / "apps/demo-web/assets/cirvanna-sanctuary.css").read_text(encoding="utf-8"))
+        self.assertIn("--cv-white-warm: #f7f3ed", (ROOT / "apps/demo-web/assets/cirvanna-sanctuary.css").read_text(encoding="utf-8"))
+
     def test_page_has_search_and_pagination_controls(self):
         self.assertIn("CIRVANNA_MARKETPLACE_CONFIG", HTML)
         self.assertIn("bootstrap.publicOffersBase", HTML)
