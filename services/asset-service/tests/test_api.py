@@ -18,6 +18,7 @@ class FakeObjectStore:
     def __init__(self):
         self.objects = {}
         self.private_controls_valid = True
+        self.versioning_status = None
 
     def put_object(self, *, Bucket, Key, Body, ContentType, Metadata):
         self.objects[(Bucket, Key)] = bytes(Body)
@@ -52,6 +53,9 @@ class FakeObjectStore:
     def get_bucket_ownership_controls(self, *, Bucket):
         rules = [{"ObjectOwnership": "BucketOwnerEnforced"}] if self.private_controls_valid else []
         return {"OwnershipControls": {"Rules": rules}}
+
+    def get_bucket_versioning(self, *, Bucket):
+        return {"Status": self.versioning_status} if self.versioning_status else {}
 
 
 @pytest.fixture
@@ -140,12 +144,22 @@ def test_readiness_checks_database_and_object_store(client):
     result = response.get("/ready")
     assert result.status_code == 200
     assert result.json()["object_storage"] == "reachable"
+    assert result.json()["object_versioning"] == "disabled"
     assert result.json()["private_access"] == "verified"
 
 
 def test_readiness_fails_closed_when_bucket_privacy_controls_are_missing(client):
     response, fake = client
     fake.private_controls_valid = False
+    result = response.get("/ready")
+    assert result.status_code == 503
+    assert result.json()["detail"]["reason"] == "private_bucket_controls_unverified"
+
+
+@pytest.mark.parametrize("status", ["Enabled", "Suspended"])
+def test_readiness_fails_closed_when_bucket_versioning_can_retain_old_objects(client, status):
+    response, fake = client
+    fake.versioning_status = status
     result = response.get("/ready")
     assert result.status_code == 503
     assert result.json()["detail"]["reason"] == "private_bucket_controls_unverified"
