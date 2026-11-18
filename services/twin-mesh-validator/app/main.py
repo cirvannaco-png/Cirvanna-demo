@@ -559,7 +559,8 @@ def inspect_glb(data: bytes) -> dict[str, Any]:
         "boundary_edge_count": boundary_edges,
         "nonmanifold_edge_count": 0,
         "geometry_finite": True,
-        "topology_valid": True,
+        "degenerate_triangles_absent": True,
+        "nonmanifold_edges_absent": True,
         "glb_embedded_image_resources_absent": True,
     }
 
@@ -591,8 +592,11 @@ async def preflight_mesh(request: PreflightRequest) -> dict[str, Any]:
             "artifact_sha256_matches": True,
             "glb_container_valid": True,
             "geometry_finite": geometry["geometry_finite"],
-            "topology_valid": geometry["topology_valid"],
+            "degenerate_triangles_absent": geometry["degenerate_triangles_absent"],
+            "nonmanifold_edges_absent": geometry["nonmanifold_edges_absent"],
             "glb_embedded_image_resources_absent": geometry["glb_embedded_image_resources_absent"],
+            "anatomical_topology_valid": None,
+            "watertight_surface": None,
             "body_coverage_valid": None,
             "scale_within_bounds": None,
             "source_photo_not_embedded": None,
