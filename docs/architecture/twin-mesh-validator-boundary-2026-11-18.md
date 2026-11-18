@@ -16,7 +16,7 @@ Generator/orchestrator
   -> Twin Registry verifies HMAC, current consent and owner/purpose/Twin asset binding
 \`\`\`
 
-Only the first structural-preflight stage is implemented here. The new service performs resource-bound consent verification, retrieves the actual GLB bytes through Asset Service, verifies the digest, parses GLB 2.0, inspects triangle geometry and rejects malformed, degenerate or non-manifold content. It rejects explicit images, textures, extension/extra payloads and common image signatures.
+Only the first structural-preflight stage is implemented here. The new service performs resource-bound consent/version verification, retrieves the actual GLB bytes through Asset Service, verifies the digest, parses GLB 2.0, inspects triangle geometry and rejects malformed, degenerate or non-manifold content. It rejects explicit images, textures, extension/extra payloads and common image signatures.
 
 ## Important limits
 
