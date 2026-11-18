@@ -21,8 +21,9 @@ GLB_CONTENT_TYPE = "model/gltf-binary"
 MAX_GLB_BYTES = 100 * 1024 * 1024
 MAX_JSON_BYTES = 16 * 1024 * 1024
 MAX_VERTICES_PER_ACCESSOR = 100_000
-MAX_TRIANGLES = 250_000
-MAX_PRIMITIVES = 256
+MAX_TOTAL_VERTICES = 100_000
+MAX_TRIANGLES = 50_000
+MAX_PRIMITIVES = 64
 HEX_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 MODEL_REVISION = re.compile(r"^[0-9a-f]{40}$")
 OPAQUE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@-]{2,159}$")
@@ -366,8 +367,9 @@ def _read_positions(
     document: dict[str, Any],
     binary: bytes,
     accessor_index: int,
-    cache: dict[int, list[tuple[float, float, float]]],
-) -> list[tuple[float, float, float]]:
+    cache: dict[int, tuple[int, int, int]],
+) -> tuple[int, int, int]:
+    """Validate positions in-place without materializing a Python tuple per vertex."""
     if accessor_index in cache:
         return cache[accessor_index]
     accessors = document.get("accessors")
@@ -385,7 +387,6 @@ def _read_positions(
         expected_component_type=5126, expected_type="VEC3",
         max_count=MAX_VERTICES_PER_ACCESSOR,
     )
-    points: list[tuple[float, float, float]] = []
     minima = [math.inf, math.inf, math.inf]
     maxima = [-math.inf, -math.inf, -math.inf]
     for index in range(count):
@@ -397,12 +398,11 @@ def _read_positions(
         for axis, value in enumerate(point):
             minima[axis] = min(minima[axis], value)
             maxima[axis] = max(maxima[axis], value)
-        points.append((point[0], point[1], point[2]))
     if any(maxima[axis] - minima[axis] <= 1e-8 for axis in range(3)):
         raise MeshFormatError("GLB_GEOMETRY_NOT_THREE_DIMENSIONAL")
-    cache[accessor_index] = points
-    return points
-
+    descriptor = (start, stride, count)
+    cache[accessor_index] = descriptor
+    return descriptor
 
 def _read_indices(
     document: dict[str, Any],
@@ -442,7 +442,10 @@ def _read_indices(
 
 
 def _validate_primitive_topology(
-    points: list[tuple[float, float, float]],
+    binary: bytes,
+    position_start: int,
+    position_stride: int,
+    vertex_count: int,
     indices: list[int],
 ) -> tuple[int, int]:
     if len(indices) < 3 or len(indices) % 3 != 0:
@@ -451,10 +454,14 @@ def _validate_primitive_topology(
     degenerate = 0
     for offset in range(0, len(indices), 3):
         a, b, c = indices[offset:offset + 3]
+        if a >= vertex_count or b >= vertex_count or c >= vertex_count:
+            raise MeshFormatError("GLB_INDEX_OUT_OF_RANGE")
         if a == b or b == c or a == c:
             degenerate += 1
             continue
-        pa, pb, pc = points[a], points[b], points[c]
+        pa = struct.unpack_from("<fff", binary, position_start + a * position_stride)
+        pb = struct.unpack_from("<fff", binary, position_start + b * position_stride)
+        pc = struct.unpack_from("<fff", binary, position_start + c * position_stride)
         ab = (pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2])
         ac = (pc[0] - pa[0], pc[1] - pa[1], pc[2] - pa[2])
         cross = (
@@ -476,7 +483,6 @@ def _validate_primitive_topology(
         raise MeshFormatError("GLB_NONMANIFOLD_EDGES_DETECTED")
     return boundary, nonmanifold
 
-
 def inspect_glb(data: bytes) -> dict[str, Any]:
     document, binary = _parse_glb(data)
     _check_embedded_media_policy(document, binary)
@@ -484,7 +490,7 @@ def inspect_glb(data: bytes) -> dict[str, Any]:
     if not isinstance(meshes, list) or not meshes or len(meshes) > MAX_PRIMITIVES:
         raise MeshFormatError("GLB_MESH_LIST_INVALID")
 
-    position_cache: dict[int, list[tuple[float, float, float]]] = {}
+    position_cache: dict[int, tuple[int, int, int]] = {}
     vertex_count = 0
     triangle_count = 0
     boundary_edges = 0
@@ -505,15 +511,21 @@ def inspect_glb(data: bytes) -> dict[str, Any]:
             attributes = primitive.get("attributes")
             if not isinstance(attributes, dict) or type(attributes.get("POSITION")) is not int:
                 raise MeshFormatError("GLB_POSITION_ATTRIBUTE_REQUIRED")
-            points = _read_positions(document, binary, attributes["POSITION"], position_cache)
-            indices = (
-                _read_indices(document, binary, primitive["indices"], len(points))
-                if "indices" in primitive else list(range(len(points)))
+            position_start, position_stride, position_count = _read_positions(
+                document, binary, attributes["POSITION"], position_cache
             )
-            boundary, _ = _validate_primitive_topology(points, indices)
-            vertex_count += len(points)
+            indices = (
+                _read_indices(document, binary, primitive["indices"], position_count)
+                if "indices" in primitive else list(range(position_count))
+            )
+            boundary, _ = _validate_primitive_topology(
+                binary, position_start, position_stride, position_count, indices
+            )
+            vertex_count += position_count
             triangle_count += len(indices) // 3
             boundary_edges += boundary
+            if vertex_count > MAX_TOTAL_VERTICES:
+                raise MeshFormatError("GLB_TOTAL_VERTEX_LIMIT_EXCEEDED")
             if triangle_count > MAX_TRIANGLES:
                 raise MeshFormatError("GLB_TRIANGLE_LIMIT_EXCEEDED")
 
