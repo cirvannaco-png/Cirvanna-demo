@@ -134,6 +134,10 @@ def test_account_proxy_requires_bearer_and_blocks_admin_routes(client, monkeypat
 
 def test_cart_and_checkout_require_candidate_bound_cal_reauthorization(client, monkeypatch):
     configure_upstreams(monkeypatch)
+    identity = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}) for _ in range(4)
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: identity)
     calls = []
     monkeypatch.setattr(main.httpx, "request", lambda *args, **kwargs: calls.append((args, kwargs)) or FakeResponse({}))
     headers = {"Authorization": "Bearer customer-token", "Content-Type": "application/json"}
@@ -156,6 +160,8 @@ def test_cart_and_checkout_require_candidate_bound_cal_reauthorization(client, m
 
 def test_account_proxy_does_not_forward_checkout_without_candidate_authorization(client, monkeypatch):
     configure_upstreams(monkeypatch)
+    identity = FakeAsyncClient([FakeResponse({"user_id": "signed-user-42", "role": "customer"})])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: identity)
     calls = []
     monkeypatch.setattr(main.httpx, "request", lambda *args, **kwargs: calls.append((args, kwargs)) or FakeResponse({}))
     response = client.post(
