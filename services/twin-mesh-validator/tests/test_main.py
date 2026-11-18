@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import struct
-import uuid
 
 import pytest
 from fastapi.testclient import TestClient
