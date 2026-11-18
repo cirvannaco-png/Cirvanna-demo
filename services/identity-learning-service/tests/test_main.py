@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from app import main
 
 TOKEN = "identity-service-test-token-that-is-at-least-32-bytes"
+DSI_CAPTURE_TOKEN = "identity-dsi-capture-verifier-token-at-least-32-bytes"
 
 
 @pytest.fixture
@@ -14,6 +15,7 @@ def client(tmp_path, monkeypatch):
     url = "sqlite:///" + str(tmp_path / "identity.db")
     monkeypatch.setenv("IDENTITY_DATABASE_URL", url)
     monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", TOKEN)
+    monkeypatch.setenv("IDENTITY_DSI_CAPTURE_SERVICE_TOKEN", DSI_CAPTURE_TOKEN)
     monkeypatch.setenv("IDENTITY_AUTO_CREATE_SCHEMA", "true")
     monkeypatch.setenv("IDENTITY_CRON_TOKEN", "identity-cron-token-that-is-at-least-32-bytes")
     main._engine.cache_clear()
@@ -27,6 +29,10 @@ def client(tmp_path, monkeypatch):
 
 def auth():
     return {"Authorization": f"Bearer {TOKEN}"}
+
+
+def dsi_capture_auth():
+    return {"Authorization": f"Bearer {DSI_CAPTURE_TOKEN}"}
 
 
 def consent(client, subject="user-verified-1", scope="style_learning", receipt="receipt-style-0001"):
@@ -1333,3 +1339,380 @@ def test_dsi_strict_expiry_requires_every_scope_in_bundle_to_expire(client):
     )
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "CONSENT_EXPIRY_REQUIRED"
+
+
+
+DSI_CHALLENGE_SCOPES = {
+    "cosmetic_skin_analysis": ["image_processing", "skin_analysis"],
+    "facial_geometry_analysis": ["image_processing", "facial_geometry_analysis"],
+    "body_tone_analysis": ["image_processing", "body_tone_analysis"],
+    "appearance_correction": ["image_processing", "appearance_correction"],
+}
+
+
+def _grant_dsi_capture_bundle(client, *, purpose="facial_geometry_analysis", subject="user-verified-1",
+                              bundle="dsi-capture-bundle-0001", resource="dsi-capture-resource-0001",
+                              expires_at=None):
+    expiry = expires_at or (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+    receipt_ids = []
+    for scope in DSI_CHALLENGE_SCOPES[purpose]:
+        receipt_id = f"{bundle}-{scope}"
+        response = client.post(
+            "/v1/tal/consents",
+            params={"subject_id": subject},
+            headers=auth(),
+            json={
+                "receipt_id": receipt_id,
+                "consent_id": bundle,
+                "resource_id": resource,
+                "scope": scope,
+                "consent_version": "dsi-capture-v1",
+                "granted": True,
+                "expires_at": expiry,
+            },
+        )
+        assert response.status_code == 200, response.text
+        receipt_ids.append(receipt_id)
+    return receipt_ids
+
+
+def _issue_dsi_capture_challenge(client, *, purpose="facial_geometry_analysis", subject="user-verified-1",
+                                 bundle="dsi-capture-bundle-0001", resource="dsi-capture-resource-0001",
+                                 headers=None):
+    return client.post(
+        "/internal/v1/dsi/capture-challenges",
+        headers=headers or dsi_capture_auth(),
+        json={
+            "subject_id": subject,
+            "consent_id": bundle,
+            "consent_version": "dsi-capture-v1",
+            "resource_id": resource,
+            "purpose": purpose,
+        },
+    )
+
+
+def _capture_verification_payload(challenge, **overrides):
+    nonce = challenge["nonce_b64url"]
+    digest = __import__("hashlib").sha256(__import__("base64").urlsafe_b64decode(nonce + "=")).hexdigest()
+    manifest = "a" * 64
+    payload = {
+        "nonce_b64url": nonce,
+        "manifest_sha256": manifest,
+        "image_sha256": "b" * 64,
+        "device_pipeline_fingerprint_sha256": "c" * 64,
+        "key_attestation_challenge_sha256": digest,
+        "play_integrity_request_hash": manifest,
+        "package_name": "com.cirvanna.app",
+        "package_certificate_sha256": "d" * 64,
+        "app_version": "1.2.3",
+        "sdk_version": "0.1.0",
+        "verifier_policy_version": "dsi-android-policy-v1",
+        "key_security_level": "trusted_environment",
+        "verified_boot_state": "verified",
+        "app_recognition_verdict": "PLAY_RECOGNIZED",
+        "account_licensing_verdict": "LICENSED",
+        "device_integrity_verdicts": ["MEETS_DEVICE_INTEGRITY"],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_dsi_capture_challenge_requires_separate_service_credential_and_exact_expiring_consent(client):
+    no_auth = _issue_dsi_capture_challenge(client, headers=auth())
+    assert no_auth.status_code == 401
+    assert no_auth.json()["detail"]["code"] == "DSI_CAPTURE_INTERNAL_AUTH_REQUIRED"
+
+    not_configured = client.post(
+        "/internal/v1/dsi/capture-challenges",
+        headers={"Authorization": "Bearer " + TOKEN},
+        json={
+            "subject_id": "user-verified-1",
+            "consent_id": "missing-dsi-bundle",
+            "consent_version": "dsi-capture-v1",
+            "resource_id": "dsi-capture-resource-0001",
+            "purpose": "facial_geometry_analysis",
+        },
+    )
+    assert not_configured.status_code == 401
+
+    denied = _issue_dsi_capture_challenge(client)
+    assert denied.status_code == 403
+    assert denied.json()["detail"]["code"] == "DSI_CAPTURE_CONSENT_INCOMPLETE"
+
+    expiry = (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat()
+    _grant_dsi_capture_bundle(client, expires_at=expiry)
+    issued = _issue_dsi_capture_challenge(client)
+    assert issued.status_code == 200, issued.text
+    body = issued.json()
+    assert body["status"] == "issued"
+    assert body["nonce_bytes"] == 32
+    assert len(__import__("base64").urlsafe_b64decode(body["nonce_b64url"] + "=")) == 32
+    assert body["required_scopes"] == ["image_processing", "facial_geometry_analysis"]
+    assert set(body["consent_receipt_ids"]) == {
+        "dsi-capture-bundle-0001-image_processing",
+        "dsi-capture-bundle-0001-facial_geometry_analysis",
+    }
+    issued_at = datetime.fromisoformat(body["issued_at"])
+    expires_at = datetime.fromisoformat(body["expires_at"])
+    assert timedelta(0) < expires_at - issued_at <= timedelta(seconds=main.DSI_CAPTURE_CHALLENGE_TTL_SECONDS)
+
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    row = db.get(main.DSICaptureChallengeRow, body["challenge_id"])
+    assert row is not None
+    assert row.nonce_sha256 == body["nonce_sha256"]
+    assert body["nonce_b64url"] not in row.nonce_sha256
+    assert not hasattr(row, "nonce_b64url")
+    db.close()
+
+
+def test_dsi_capture_challenge_refuses_unbound_resource_subject_and_expiryless_legacy_consent(client):
+    expiry = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    _grant_dsi_capture_bundle(
+        client, bundle="dsi-capture-bound", resource="resource-bound", expires_at=expiry,
+    )
+    wrong_resource = _issue_dsi_capture_challenge(
+        client, bundle="dsi-capture-bound", resource="resource-other",
+    )
+    assert wrong_resource.status_code == 403
+    wrong_subject = _issue_dsi_capture_challenge(
+        client, bundle="dsi-capture-bound", resource="resource-bound", subject="another-subject",
+    )
+    assert wrong_subject.status_code == 403
+
+    for scope in DSI_CHALLENGE_SCOPES["facial_geometry_analysis"]:
+        created = client.post(
+            "/v1/tal/consents",
+            params={"subject_id": "user-verified-1"},
+            headers=auth(),
+            json={
+                "receipt_id": f"dsi-legacy-{scope}",
+                "consent_id": "dsi-legacy-no-expiry",
+                "resource_id": "dsi-legacy-resource",
+                "scope": scope,
+                "consent_version": "dsi-capture-v1",
+                "granted": True,
+            },
+        )
+        assert created.status_code == 200, created.text
+    legacy = _issue_dsi_capture_challenge(
+        client, bundle="dsi-legacy-no-expiry", resource="dsi-legacy-resource",
+    )
+    assert legacy.status_code == 403
+    assert legacy.json()["detail"]["code"] == "DSI_CAPTURE_CONSENT_INCOMPLETE"
+
+
+def test_dsi_capture_challenge_is_consumed_once_and_receipt_checks_exact_digests(client):
+    _grant_dsi_capture_bundle(client)
+    challenge_response = _issue_dsi_capture_challenge(client)
+    assert challenge_response.status_code == 200, challenge_response.text
+    challenge = challenge_response.json()
+    payload = _capture_verification_payload(challenge)
+    consumed = client.post(
+        f"/internal/v1/dsi/capture-challenges/{challenge['challenge_id']}/consume",
+        headers=dsi_capture_auth(),
+        json=payload,
+    )
+    assert consumed.status_code == 200, consumed.text
+    receipt = consumed.json()["receipt"]
+    assert consumed.json()["status"] == "verified_receipt_created"
+    assert receipt["verification_status"] == "verified_by_trusted_vision_service"
+    assert receipt["purpose"] == "facial_geometry_analysis"
+    assert receipt["image_sha256"] == payload["image_sha256"]
+    assert receipt["manifest_sha256"] == payload["manifest_sha256"]
+    assert receipt["expires_at"]
+
+    replay = client.post(
+        f"/internal/v1/dsi/capture-challenges/{challenge['challenge_id']}/consume",
+        headers=dsi_capture_auth(),
+        json=payload,
+    )
+    assert replay.status_code == 409
+    assert replay.json()["detail"]["code"] == "DSI_CAPTURE_CHALLENGE_ALREADY_CONSUMED"
+
+    verified = client.post(
+        "/internal/v1/dsi/capture-receipts/verify",
+        headers=dsi_capture_auth(),
+        json={
+            "receipt_id": receipt["receipt_id"],
+            "subject_id": "user-verified-1",
+            "resource_id": "dsi-capture-resource-0001",
+            "purpose": "facial_geometry_analysis",
+            "manifest_sha256": payload["manifest_sha256"],
+            "image_sha256": payload["image_sha256"],
+            "device_pipeline_fingerprint_sha256": payload["device_pipeline_fingerprint_sha256"],
+        },
+    )
+    assert verified.status_code == 200, verified.text
+    assert verified.json()["verified"] is True
+
+    changed_digest = client.post(
+        "/internal/v1/dsi/capture-receipts/verify",
+        headers=dsi_capture_auth(),
+        json={
+            "receipt_id": receipt["receipt_id"],
+            "subject_id": "user-verified-1",
+            "resource_id": "dsi-capture-resource-0001",
+            "purpose": "facial_geometry_analysis",
+            "manifest_sha256": "e" * 64,
+            "image_sha256": payload["image_sha256"],
+            "device_pipeline_fingerprint_sha256": payload["device_pipeline_fingerprint_sha256"],
+        },
+    )
+    assert changed_digest.status_code == 403
+    assert changed_digest.json()["detail"]["code"] == "DSI_CAPTURE_RECEIPT_SCOPE_OR_DIGEST_MISMATCH"
+
+
+@pytest.mark.parametrize(
+    "overrides,expected_code",
+    [
+        ({"key_attestation_challenge_sha256": "f" * 64}, "validation"),
+        ({"play_integrity_request_hash": "f" * 64}, "validation"),
+        ({"key_security_level": "software"}, "validation"),
+        ({"verified_boot_state": "unverified"}, "validation"),
+        ({"app_recognition_verdict": "UNRECOGNIZED_VERSION"}, "validation"),
+        ({"account_licensing_verdict": "UNLICENSED"}, "validation"),
+        ({"device_integrity_verdicts": ["MEETS_BASIC_INTEGRITY"]}, "validation"),
+    ],
+)
+def test_dsi_capture_receipt_rejects_unqualified_verifier_claims(client, overrides, expected_code):
+    _grant_dsi_capture_bundle(client)
+    challenge = _issue_dsi_capture_challenge(client).json()
+    payload = _capture_verification_payload(challenge, **overrides)
+    response = client.post(
+        f"/internal/v1/dsi/capture-challenges/{challenge['challenge_id']}/consume",
+        headers=dsi_capture_auth(),
+        json=payload,
+    )
+    assert response.status_code == 422
+
+
+def test_dsi_capture_challenge_cannot_be_consumed_after_consent_revocation(client):
+    receipt_ids = _grant_dsi_capture_bundle(client)
+    challenge = _issue_dsi_capture_challenge(client).json()
+    revoked = client.post(
+        f"/v1/tal/consents/{receipt_ids[0]}/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert revoked.status_code == 200
+    response = client.post(
+        f"/internal/v1/dsi/capture-challenges/{challenge['challenge_id']}/consume",
+        headers=dsi_capture_auth(),
+        json=_capture_verification_payload(challenge),
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "DSI_CAPTURE_CONSENT_INCOMPLETE"
+
+
+def test_dsi_capture_receipt_is_denied_after_consent_revocation(client):
+    receipt_ids = _grant_dsi_capture_bundle(client)
+    challenge = _issue_dsi_capture_challenge(client).json()
+    payload = _capture_verification_payload(challenge)
+    consumed = client.post(
+        f"/internal/v1/dsi/capture-challenges/{challenge['challenge_id']}/consume",
+        headers=dsi_capture_auth(),
+        json=payload,
+    )
+    assert consumed.status_code == 200
+    receipt = consumed.json()["receipt"]
+    revoked = client.post(
+        f"/v1/tal/consents/{receipt_ids[0]}/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert revoked.status_code == 200
+    verification = client.post(
+        "/internal/v1/dsi/capture-receipts/verify",
+        headers=dsi_capture_auth(),
+        json={
+            "receipt_id": receipt["receipt_id"],
+            "subject_id": "user-verified-1",
+            "resource_id": "dsi-capture-resource-0001",
+            "purpose": "facial_geometry_analysis",
+            "manifest_sha256": payload["manifest_sha256"],
+            "image_sha256": payload["image_sha256"],
+            "device_pipeline_fingerprint_sha256": payload["device_pipeline_fingerprint_sha256"],
+        },
+    )
+    assert verification.status_code == 403
+    assert verification.json()["detail"]["code"] == "DSI_CAPTURE_CONSENT_INCOMPLETE"
+
+
+def test_dsi_capture_challenge_rejects_invalid_or_expired_nonce_and_user_deletion_removes_receipts(client):
+    _grant_dsi_capture_bundle(client)
+    challenge = _issue_dsi_capture_challenge(client).json()
+    wrong_nonce_payload = _capture_verification_payload(
+        challenge,
+        nonce_b64url=__import__("base64").urlsafe_b64encode(b"x" * 32).rstrip(b"=").decode("ascii"),
+        key_attestation_challenge_sha256=__import__("hashlib").sha256(b"x" * 32).hexdigest(),
+    )
+    mismatch = client.post(
+        f"/internal/v1/dsi/capture-challenges/{challenge['challenge_id']}/consume",
+        headers=dsi_capture_auth(),
+        json=wrong_nonce_payload,
+    )
+    assert mismatch.status_code == 403
+    assert mismatch.json()["detail"]["code"] == "DSI_CAPTURE_CHALLENGE_NONCE_MISMATCH"
+
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    row = db.get(main.DSICaptureChallengeRow, challenge["challenge_id"])
+    row.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    db.commit()
+    db.close()
+    expired = client.post(
+        f"/internal/v1/dsi/capture-challenges/{challenge['challenge_id']}/consume",
+        headers=dsi_capture_auth(),
+        json=_capture_verification_payload(challenge),
+    )
+    assert expired.status_code == 410
+
+    # Create and consume a fresh challenge, then prove user deletion removes
+    # the challenge and receipt records together with the canonical consent.
+    _grant_dsi_capture_bundle(
+        client, bundle="dsi-delete-bundle", resource="dsi-delete-resource",
+    )
+    fresh = _issue_dsi_capture_challenge(
+        client, bundle="dsi-delete-bundle", resource="dsi-delete-resource",
+    ).json()
+    consumed = client.post(
+        f"/internal/v1/dsi/capture-challenges/{fresh['challenge_id']}/consume",
+        headers=dsi_capture_auth(),
+        json=_capture_verification_payload(fresh),
+    )
+    assert consumed.status_code == 200
+    deleted = client.delete("/v1/tal/users/user-verified-1", headers=auth())
+    assert deleted.status_code == 200
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    assert db.query(main.DSICaptureChallengeRow).filter_by(subject_id="user-verified-1").count() == 0
+    assert db.query(main.DSICaptureVerificationReceiptRow).filter_by(subject_id="user-verified-1").count() == 0
+    db.close()
+
+
+def test_dsi_capture_retention_purges_expired_challenge_and_receipt_state(client):
+    _grant_dsi_capture_bundle(client)
+    challenge = _issue_dsi_capture_challenge(client).json()
+    payload = _capture_verification_payload(challenge)
+    consumed = client.post(
+        f"/internal/v1/dsi/capture-challenges/{challenge['challenge_id']}/consume",
+        headers=dsi_capture_auth(),
+        json=payload,
+    )
+    assert consumed.status_code == 200
+    receipt_id = consumed.json()["receipt"]["receipt_id"]
+
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    challenge_row = db.get(main.DSICaptureChallengeRow, challenge["challenge_id"])
+    receipt_row = db.get(main.DSICaptureVerificationReceiptRow, receipt_id)
+    past = datetime.now(timezone.utc) - timedelta(minutes=1)
+    challenge_row.expires_at = past
+    receipt_row.expires_at = past
+    db.commit()
+    db.close()
+
+    purged = client.post(
+        "/internal/retention/purge",
+        headers={**auth(), "X-Identity-Cron-Token": "identity-cron-token-that-is-at-least-32-bytes"},
+    )
+    assert purged.status_code == 200, purged.text
+    assert purged.json()["purged_dsi_capture_challenges"] == 1
+    assert purged.json()["purged_dsi_capture_receipts"] == 1
+
