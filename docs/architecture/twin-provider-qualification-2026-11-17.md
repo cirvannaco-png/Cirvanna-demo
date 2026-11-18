@@ -95,3 +95,10 @@ Pre-register thresholds and subgroup slices before testing. Missing subgroup evi
 - SAM 3D Body checkpoint model card: https://huggingface.co/facebook/sam-3d-body-dinov3
 - SAM License: https://github.com/facebookresearch/sam-3d-body/blob/main/LICENSE
 - SAM 3D Body install guide: https://github.com/facebookresearch/sam-3d-body/blob/main/INSTALL.md
+
+
+## Independent mesh-validator foundation — 18 November 2026
+
+A separate \`services/twin-mesh-validator\` service now reads private, owner/purpose/Twin-bound GLB bytes and performs a bounded structural geometry preflight after verifying current, version-bound consent. It validates the actual digest, GLB 2.0 container, triangle indices, finite positions, degeneracy and non-manifold edges. It rejects explicit glTF images/textures, custom extension/extra payloads, external/data URIs and common embedded image signatures.
+
+This is intentionally not full body validation. The service issues no Registry receipt or HMAC and does not claim anatomical coverage, calibrated scale, exact source-photo non-embedding or full privacy validation. Those remain independently evidenced release gates. The Virtual Twin orchestration helper no longer accepts the shared HMAC secret; it can only attach a validator-issued signature that the Registry independently verifies.
