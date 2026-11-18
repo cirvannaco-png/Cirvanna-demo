@@ -39,6 +39,24 @@ class MarketplaceBrowserTests(unittest.TestCase):
         self.page.goto(f"{self.base_url}/marketplace.html", wait_until="domcontentloaded")
         self.page.wait_for_function("document.querySelector('#status').textContent.includes('DEMO MODE')", timeout=5000)
 
+
+    def test_mobile_and_tablet_layouts_have_no_horizontal_overflow(self):
+        for width in (320, 360, 393, 430, 768, 1024):
+            with self.subTest(width=width):
+                self.page.set_viewport_size({"width": width, "height": 900})
+                self.page.wait_for_timeout(50)
+                metrics = self.page.evaluate("""() => ({
+                    viewport: document.documentElement.clientWidth,
+                    document: document.documentElement.scrollWidth,
+                    body: document.body.scrollWidth,
+                    buttonMinHeight: Math.min(...Array.from(document.querySelectorAll('.btn')).map(
+                        node => node.getBoundingClientRect().height
+                    ))
+                })""")
+                self.assertLessEqual(metrics["document"], width)
+                self.assertLessEqual(metrics["body"], width)
+                self.assertGreaterEqual(metrics["buttonMinHeight"], 44)
+
     def test_demo_search_save_and_bag_are_interactive(self):
         self.assertEqual(self.page.locator(".card").count(), 6)
         self.page.locator("#query").fill("serum")

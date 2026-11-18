@@ -27,6 +27,8 @@ SERVICE = "cirvanna-marketplace-bff"
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_HTML = ROOT / "apps" / "demo-web" / "marketplace.html"
 DEFAULT_WARDROBE_HTML = ROOT / "apps" / "demo-web" / "wardrobe.html"
+DEFAULT_SANCTUARY_HTML = ROOT / "apps" / "demo-web" / "sanctuary.html"
+DEFAULT_TWIN_ONBOARDING_HTML = ROOT / "apps" / "demo-web" / "twin-onboarding.html"
 DEFAULT_BRAND_PORTAL_HTML = ROOT / "apps" / "demo-web" / "brand-portal.html"
 DEFAULT_FOUNDER_CONSOLE_HTML = ROOT / "apps" / "demo-web" / "founder-console.html"
 DEFAULT_PORTAL_ASSETS = ROOT / "apps" / "demo-web" / "assets"
@@ -815,11 +817,32 @@ def _private_json_response(data: dict, *, status_code: int = 200) -> JSONRespons
 
 
 @app.get("/wardrobe", response_class=HTMLResponse)
+@app.get("/wardrobe.html", response_class=HTMLResponse)
 def wardrobe_page() -> HTMLResponse:
     try:
         html = DEFAULT_WARDROBE_HTML.read_text(encoding="utf-8")
     except OSError as exc:
         raise HTTPException(status_code=503, detail={"code": "WARDROBE_PAGE_UNAVAILABLE"}) from exc
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/sanctuary", response_class=HTMLResponse)
+@app.get("/sanctuary.html", response_class=HTMLResponse)
+def sanctuary_page() -> HTMLResponse:
+    try:
+        html = DEFAULT_SANCTUARY_HTML.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail={"code": "SANCTUARY_PAGE_UNAVAILABLE"}) from exc
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/twin-onboarding", response_class=HTMLResponse)
+@app.get("/twin-onboarding.html", response_class=HTMLResponse)
+def twin_onboarding_page() -> HTMLResponse:
+    try:
+        html = DEFAULT_TWIN_ONBOARDING_HTML.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise HTTPException(status_code=503, detail={"code": "TWIN_ONBOARDING_PAGE_UNAVAILABLE"}) from exc
     return HTMLResponse(html, headers={"Cache-Control": "no-store"})
 
 
@@ -957,6 +980,92 @@ async def virtual_twin_capabilities(request: Request) -> Response:
         "try_on_available": False,
         "reason": source.get("reason") if isinstance(source.get("reason"), str) else None,
     })
+
+
+@app.get("/api/virtual-twin/me")
+async def my_virtual_twins(request: Request) -> Response:
+    """Return metadata-only, owner-scoped active Twin records from the canonical registry."""
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(10.0, connect=2.0),
+        trust_env=False,
+        follow_redirects=False,
+    ) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        registry_base, registry_token = _internal_service(
+            "TWIN_REGISTRY_API_URL", "TWIN_REGISTRY_API_TOKEN"
+        )
+        try:
+            response = await client.get(
+                registry_base + "/internal/v1/twins",
+                params={"subject_id": subject, "limit": 10},
+                headers={
+                    "Authorization": "Bearer " + registry_token,
+                    "Accept": "application/json",
+                },
+            )
+        except httpx.TimeoutException as exc:
+            raise HTTPException(504, detail={"code": "TWIN_REGISTRY_LIST_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "TWIN_REGISTRY_UNAVAILABLE"}) from exc
+
+    if response.status_code in {401, 403, 404}:
+        raise HTTPException(503, detail={"code": "TWIN_REGISTRY_UNAVAILABLE"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "TWIN_REGISTRY_UNAVAILABLE"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "TWIN_REGISTRY_RESPONSE_INVALID"}) from exc
+
+    records = data.get("twins") if isinstance(data, dict) else None
+    count = data.get("count") if isinstance(data, dict) else None
+    if (
+        not isinstance(records, list)
+        or isinstance(count, bool)
+        or not isinstance(count, int)
+        or count != len(records)
+        or count > 10
+    ):
+        raise HTTPException(502, detail={"code": "TWIN_REGISTRY_RESPONSE_INVALID"})
+
+    safe_records = []
+    allowed_states = {"active", "revoked", "deletion_pending", "deleted"}
+    for record in records:
+        if not isinstance(record, dict):
+            raise HTTPException(502, detail={"code": "TWIN_REGISTRY_RESPONSE_INVALID"})
+        twin_id = record.get("twin_id")
+        state = record.get("status")
+        version = record.get("version")
+        representation = record.get("representation_type")
+        model_id = record.get("model_id")
+        model_revision = record.get("model_revision")
+        model_release_sha256 = record.get("model_release_sha256")
+        created_at = record.get("created_at")
+        updated_at = record.get("updated_at")
+        if (
+            not isinstance(twin_id, str) or not twin_id.strip()
+            or not isinstance(state, str) or state not in allowed_states
+            or isinstance(version, bool) or not isinstance(version, int) or version < 1
+            or representation != "full_body_mesh"
+            or not isinstance(model_id, str) or not model_id.strip()
+            or not isinstance(model_revision, str) or not re.fullmatch(r"[0-9a-f]{40}", model_revision)
+            or not isinstance(model_release_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", model_release_sha256)
+            or not isinstance(created_at, str) or not isinstance(updated_at, str)
+        ):
+            raise HTTPException(502, detail={"code": "TWIN_REGISTRY_RESPONSE_INVALID"})
+        safe_records.append({
+            "twin_id": twin_id,
+            "status": state,
+            "version": version,
+            "representation_type": representation,
+            "model_id": model_id,
+            "model_revision": model_revision,
+            "model_release_sha256": model_release_sha256,
+            "created_at": created_at,
+            "updated_at": updated_at,
+        })
+
+    return _private_json_response({"twins": safe_records, "count": len(safe_records)})
 
 
 @app.post("/api/wardrobe/items/{item_id}/try-on")

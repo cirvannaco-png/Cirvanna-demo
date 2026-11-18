@@ -839,6 +839,31 @@ def test_wardrobe_recommendations_forward_verified_token_to_cal_decision_gateway
     assert "Authorization" not in response.text
 
 
+def test_sanctuary_and_twin_onboarding_pages_are_served_without_cache(client):
+    sanctuary = client.get("/sanctuary.html")
+    assert sanctuary.status_code == 200
+    assert "Cirvanna — Your Sanctuary" in sanctuary.text
+    assert "twin-onboarding.html" in sanctuary.text
+    assert sanctuary.headers["cache-control"] == "no-store"
+
+    onboarding = client.get("/twin-onboarding.html")
+    assert onboarding.status_code == 200
+    assert "Cirvanna — Your Twin Journey" in onboarding.text
+    assert "cirvanna-twin-onboarding.js" in onboarding.text
+    assert "No consent is being recorded on this page" in onboarding.text
+    assert "Capture is currently locked" in onboarding.text
+    assert onboarding.headers["cache-control"] == "no-store"
+    assert onboarding.headers["permissions-policy"] == "camera=(), microphone=(), geolocation=()"
+
+    stylesheet = client.get("/assets/cirvanna-twin-onboarding.css")
+    script = client.get("/assets/cirvanna-twin-onboarding.js")
+    assert stylesheet.status_code == 200
+    assert script.status_code == 200
+    assert "prefers-reduced-motion" in stylesheet.text
+    assert "localStorage" not in script.text
+    assert "sessionStorage" not in script.text
+
+
 def test_wardrobe_page_exposes_feedback_and_consent_controls(client):
     response = client.get("/wardrobe")
     assert response.status_code == 200
@@ -2078,6 +2103,96 @@ def test_virtual_twin_capabilities_are_authenticated_minimal_and_no_store(client
     assert len(fake.calls) == 2
     assert fake.calls[1][0] == "GET"
     assert fake.calls[1][1] == "https://twin.example.test/capabilities"
+
+
+def test_my_virtual_twins_uses_verified_owner_and_returns_metadata_only(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("TWIN_REGISTRY_API_URL", "https://registry.example.test")
+    monkeypatch.setenv("TWIN_REGISTRY_API_TOKEN", "twin-registry-internal-token-at-least-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"count": 1, "twins": [{
+            "twin_id": "twin-owned-001",
+            "status": "active",
+            "version": 2,
+            "representation_type": "full_body_mesh",
+            "model_id": "cirvanna-full-body-mesh",
+            "model_revision": "a" * 40,
+            "model_release_sha256": "c" * 64,
+            "created_at": "2026-11-17T10:00:00+00:00",
+            "updated_at": "2026-11-17T10:05:00+00:00",
+            "subject_id": "signed-user-42",
+            "mesh_asset_id": "private-mesh-secret",
+            "source_image_asset_ids": ["private-source-secret"],
+            "object_store_key": "must-not-leak",
+        }]}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get(
+        "/api/virtual-twin/me",
+        headers={"Authorization": "Bearer signed-session"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store, private"
+    payload = response.json()
+    assert payload["count"] == 1
+    assert payload["twins"][0]["twin_id"] == "twin-owned-001"
+    assert payload["twins"][0]["status"] == "active"
+    assert payload["twins"][0]["model_release_sha256"] == "c" * 64
+    for secret in ("subject_id", "mesh_asset_id", "source_image_asset_ids", "object_store_key"):
+        assert secret not in response.text
+    assert fake.calls[1][1] == "https://registry.example.test/internal/v1/twins"
+    assert fake.calls[1][2]["params"] == {"subject_id": "signed-user-42", "limit": 10}
+    assert fake.calls[1][2]["headers"]["Authorization"].startswith("Bearer ")
+
+
+def test_my_virtual_twins_requires_signed_customer_identity_before_registry(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    fake = FakeAsyncClient([])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get("/api/virtual-twin/me")
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "USER_BEARER_REQUIRED"
+    assert fake.calls == []
+
+
+def test_my_virtual_twins_rejects_registry_payload_with_invalid_model_revision(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("TWIN_REGISTRY_API_URL", "https://registry.example.test")
+    monkeypatch.setenv("TWIN_REGISTRY_API_TOKEN", "twin-registry-internal-token-at-least-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42"}),
+        FakeResponse({"count": 1, "twins": [{
+            "twin_id": "twin-owned-001", "status": "active", "version": 1,
+            "representation_type": "full_body_mesh", "model_id": "body-model",
+            "model_revision": "latest", "model_release_sha256": "c" * 64,
+            "created_at": "2026-11-17T10:00:00Z",
+            "updated_at": "2026-11-17T10:00:00Z",
+        }]}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get("/api/virtual-twin/me", headers={"Authorization": "Bearer signed-session"})
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "TWIN_REGISTRY_RESPONSE_INVALID"
+
+
+def test_my_virtual_twins_rejects_malformed_model_release_digest(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("TWIN_REGISTRY_API_URL", "https://registry.example.test")
+    monkeypatch.setenv("TWIN_REGISTRY_API_TOKEN", "twin-registry-internal-token-at-least-thirty-two-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42"}),
+        FakeResponse({"count": 1, "twins": [{
+            "twin_id": "twin-owned-001", "status": "active", "version": 1,
+            "representation_type": "full_body_mesh", "model_id": "body-model",
+            "model_revision": "a" * 40, "model_release_sha256": "latest",
+            "created_at": "2026-11-17T10:00:00Z", "updated_at": "2026-11-17T10:00:00Z",
+        }]}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get("/api/virtual-twin/me", headers={"Authorization": "Bearer signed-session"})
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "TWIN_REGISTRY_RESPONSE_INVALID"
 
 
 def test_virtual_twin_capabilities_reject_invalid_boolean_contract(client, monkeypatch):

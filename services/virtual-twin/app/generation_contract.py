@@ -7,6 +7,8 @@ consent, private-asset, database, and commercially approved provider adapters.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from typing import Literal
 
@@ -14,9 +16,8 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
 
 
 IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@-]{2,159}$")
-MODEL_VERSION_RE = re.compile(
-    r"^[A-Za-z0-9][A-Za-z0-9._-]{1,63}@sha256:[0-9a-f]{64}$"
-)
+MODEL_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{1,79}$")
+MODEL_REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 _REQUIRED_MESH_CHECKS = (
@@ -46,10 +47,17 @@ def _opaque_identifier(value: str) -> str:
     return value
 
 
-def _pinned_model_version(value: str) -> str:
+def _model_id(value: str) -> str:
     value = value.strip()
-    if not MODEL_VERSION_RE.fullmatch(value):
-        raise ValueError("Model versions must include a lowercase SHA-256 digest.")
+    if not MODEL_ID_RE.fullmatch(value):
+        raise ValueError("Expected a canonical provider model identifier.")
+    return value
+
+
+def _model_revision(value: str) -> str:
+    value = value.strip().lower()
+    if not MODEL_REVISION_RE.fullmatch(value):
+        raise ValueError("Model revision must be a pinned 40-character lowercase commit digest.")
     return value
 
 
@@ -92,9 +100,12 @@ class TwinGenerationResult(StrictContractModel):
     provider_id: str = Field(min_length=3, max_length=80)
     provider_job_id: str = Field(min_length=3, max_length=160)
     representation_type: Literal["full_body_mesh"]
+    artifact_content_type: Literal["model/gltf-binary"]
     artifact_asset_id: str = Field(min_length=3, max_length=160)
     source_image_asset_ids: list[str] = Field(min_length=1, max_length=6)
-    model_version: str = Field(min_length=3, max_length=160)
+    model_id: str = Field(min_length=3, max_length=80)
+    model_revision: str = Field(min_length=40, max_length=40)
+    model_release_sha256: str = Field(min_length=64, max_length=64)
     artifact_sha256: str = Field(min_length=64, max_length=64)
 
     @field_validator("subject_id", "twin_id", "provider_id", "provider_job_id", "artifact_asset_id")
@@ -110,14 +121,19 @@ class TwinGenerationResult(StrictContractModel):
             raise ValueError("Source image asset IDs must be unique.")
         return normalized
 
-    @field_validator("model_version")
+    @field_validator("model_id")
     @classmethod
-    def validate_model_version(cls, value: str) -> str:
-        return _pinned_model_version(value)
+    def validate_model_id(cls, value: str) -> str:
+        return _model_id(value)
 
-    @field_validator("artifact_sha256")
+    @field_validator("model_revision")
     @classmethod
-    def validate_artifact_digest(cls, value: str) -> str:
+    def validate_model_revision(cls, value: str) -> str:
+        return _model_revision(value)
+
+    @field_validator("model_release_sha256", "artifact_sha256")
+    @classmethod
+    def validate_sha256_digest(cls, value: str) -> str:
         return _sha256(value)
 
 
@@ -144,10 +160,13 @@ class MeshValidationReceipt(StrictContractModel):
     subject_id: str = Field(min_length=3, max_length=128)
     twin_id: str = Field(min_length=3, max_length=128)
     representation_type: Literal["full_body_mesh"]
+    artifact_content_type: Literal["model/gltf-binary"]
     artifact_asset_id: str = Field(min_length=3, max_length=160)
     artifact_sha256: str = Field(min_length=64, max_length=64)
     source_image_asset_ids: list[str] = Field(min_length=1, max_length=6)
-    model_version: str = Field(min_length=3, max_length=160)
+    model_id: str = Field(min_length=3, max_length=80)
+    model_revision: str = Field(min_length=40, max_length=40)
+    model_release_sha256: str = Field(min_length=64, max_length=64)
     checks: MeshValidationChecks
 
     @field_validator("validator_id", "receipt_id", "consent_id", "consent_version", "subject_id", "twin_id", "artifact_asset_id")
@@ -168,10 +187,20 @@ class MeshValidationReceipt(StrictContractModel):
             raise ValueError("Source image asset IDs must be unique.")
         return normalized
 
-    @field_validator("model_version")
+    @field_validator("model_id")
     @classmethod
-    def validate_model_version(cls, value: str) -> str:
-        return _pinned_model_version(value)
+    def validate_model_id(cls, value: str) -> str:
+        return _model_id(value)
+
+    @field_validator("model_revision")
+    @classmethod
+    def validate_model_revision(cls, value: str) -> str:
+        return _model_revision(value)
+
+    @field_validator("model_release_sha256")
+    @classmethod
+    def validate_model_release_digest(cls, value: str) -> str:
+        return _sha256(value)
 
 
 class GenerationContractError(ValueError):
@@ -210,11 +239,17 @@ def validate_generation_bundle(
         raise GenerationContractError("TWIN_VALIDATION_CONSENT_MISMATCH")
     if receipt.representation_type != result.representation_type:
         raise GenerationContractError("TWIN_VALIDATION_REPRESENTATION_MISMATCH")
+    if receipt.artifact_content_type != result.artifact_content_type:
+        raise GenerationContractError("TWIN_VALIDATION_CONTENT_TYPE_MISMATCH")
     if receipt.artifact_asset_id != result.artifact_asset_id:
         raise GenerationContractError("TWIN_VALIDATION_ASSET_MISMATCH")
     if receipt.artifact_sha256 != result.artifact_sha256:
         raise GenerationContractError("TWIN_VALIDATION_DIGEST_MISMATCH")
-    if receipt.model_version != result.model_version:
+    if (
+        receipt.model_id != result.model_id
+        or receipt.model_revision != result.model_revision
+        or receipt.model_release_sha256 != result.model_release_sha256
+    ):
         raise GenerationContractError("TWIN_VALIDATION_MODEL_MISMATCH")
     if set(receipt.source_image_asset_ids) != set(command.source_image_asset_ids):
         raise GenerationContractError("TWIN_VALIDATION_SOURCE_SET_MISMATCH")
@@ -246,3 +281,60 @@ def assert_generation_transition(current: GenerationStatus, target: GenerationSt
     allowed = _ALLOWED_TRANSITIONS.get(current)
     if allowed is None or target not in allowed:
         raise GenerationContractError("TWIN_GENERATION_INVALID_STATE_TRANSITION")
+
+
+def registry_registration_payload(
+    command: TwinGenerationCommand,
+    result: TwinGenerationResult,
+    receipt: MeshValidationReceipt,
+    *,
+    validation_attestation_hmac: str,
+) -> dict[str, object]:
+    """Build the exact Registry request using a signature issued by the independent validator.
+
+    This orchestration contract deliberately has no signing secret and cannot
+    mint a Registry attestation. Twin Registry verifies the validator-issued
+    HMAC independently, then rechecks resource-bound consent and private asset
+    ownership before persisting the Twin.
+    """
+    validate_generation_bundle(command, result, receipt)
+    signature = validation_attestation_hmac.strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{64}", signature):
+        raise GenerationContractError("TWIN_VALIDATION_ATTESTATION_INVALID_FORMAT")
+
+    # Asset Service identifiers are UUIDs; the registry deliberately accepts
+    # no URL, object key, or arbitrary provider path.
+    import uuid
+
+    try:
+        uuid.UUID(result.artifact_asset_id)
+        for asset_id in command.source_image_asset_ids:
+            uuid.UUID(asset_id)
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise GenerationContractError("TWIN_GENERATION_ASSET_ID_INVALID") from exc
+
+    canonical_receipt = json.dumps(
+        receipt.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
+    validation_report_sha256 = hashlib.sha256(
+        canonical_receipt.encode("utf-8")
+    ).hexdigest()
+    body = {
+        "twin_id": command.twin_id,
+        "subject_id": command.subject_id,
+        "mesh_asset_id": result.artifact_asset_id,
+        "source_image_asset_ids": sorted(command.source_image_asset_ids),
+        "consent_id": command.consent_id,
+        "model_id": result.model_id,
+        "model_revision": result.model_revision,
+        "model_release_sha256": result.model_release_sha256,
+        "validation_report_sha256": validation_report_sha256,
+        "representation_type": "full_body_mesh",
+    }
+    return {
+        **body,
+        "validation_attestation_hmac": signature,
+    }

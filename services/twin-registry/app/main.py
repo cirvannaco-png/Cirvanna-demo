@@ -17,10 +17,10 @@ from functools import lru_cache
 from typing import Annotated, Iterator
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, JSON, String, UniqueConstraint, select
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, JSON, String, UniqueConstraint, case, select
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -695,6 +695,70 @@ async def dispatch_twin_deletions(db: Session = Depends(get_db), limit: int = 20
             failed += 1
     db.commit()
     return {"processed": len(pending), "completed": completed, "failed": failed}
+
+
+@app.get("/internal/v1/twins", dependencies=[Depends(require_internal_token)])
+async def list_twins(
+    subject_id: Annotated[str, Query(min_length=3, max_length=128)],
+    limit: Annotated[int, Query(ge=1, le=50)] = 10,
+    db: Session = Depends(get_db),
+):
+    """List only this subject's Twin lifecycle summaries, rechecking active access.
+
+    Asset identifiers and storage details are deliberately omitted. Active records
+    are returned only while their exact resource consent and private assets remain
+    authorized. An expired/revoked consent or unauthorized asset suppresses the
+    record; dependency outages fail the request rather than claiming no Twin exists.
+    """
+    subject = subject_id.strip()
+    if not SUBJECT_RE.fullmatch(subject):
+        raise HTTPException(422, detail={"code": "INVALID_SUBJECT_ID"})
+
+    rows = db.scalars(
+        select(TwinRecord)
+        .where(TwinRecord.subject_id == subject)
+        .order_by(
+            case((TwinRecord.state == "active", 0), else_=1),
+            TwinRecord.created_at.desc(),
+            TwinRecord.twin_id.asc(),
+        )
+        .limit(limit)
+    ).all()
+
+    twins = []
+    for row in rows:
+        if row.state == "active":
+            try:
+                await _verify_consent(
+                    subject_id=subject,
+                    consent_id=row.consent_id,
+                    twin_id=row.twin_id,
+                    consent_version=row.consent_version,
+                )
+                await _authorize_assets(
+                    subject_id=subject,
+                    twin_id=row.twin_id,
+                    mesh_asset_id=row.mesh_asset_id,
+                    source_image_asset_ids=list(row.source_image_asset_ids),
+                )
+            except HTTPException as exc:
+                if exc.status_code in {401, 403, 404}:
+                    continue
+                raise
+
+        twins.append({
+            "twin_id": row.twin_id,
+            "status": row.state,
+            "version": row.version,
+            "representation_type": row.representation_type,
+            "model_id": row.model_id,
+            "model_revision": row.model_revision,
+            "model_release_sha256": row.model_release_sha256,
+            "created_at": row.created_at.isoformat(),
+            "updated_at": row.updated_at.isoformat(),
+        })
+
+    return {"twins": twins, "count": len(twins)}
 
 
 @app.get("/internal/v1/twins/{twin_id}/status", dependencies=[Depends(require_internal_token)])

@@ -346,3 +346,67 @@ def test_readiness_does_not_claim_ready_without_providers(client, monkeypatch):
     result = client.get("/ready", headers=auth())
     assert result.status_code == 503
     assert result.json()["detail"]["code"] == "ASSET_SERVICE_NOT_CONFIGURED"
+
+
+def test_twin_list_is_owner_scoped_and_returns_metadata_only(client):
+    assert create(client).status_code == 200
+    response = client.get(
+        "/internal/v1/twins?subject_id=customer-123",
+        headers=auth(),
+    )
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["count"] == 1
+    twin = payload["twins"][0]
+    assert twin["twin_id"] == "twin-123"
+    assert twin["status"] == "active"
+    assert twin["representation_type"] == "full_body_mesh"
+    assert twin["model_id"] == "cirvanna-full-body-mesh"
+    assert twin["model_release_sha256"] == "c" * 64
+    assert "mesh_asset_id" not in twin
+    assert "source_image_asset_ids" not in twin
+    assert "subject_id" not in twin
+
+    foreign = client.get(
+        "/internal/v1/twins?subject_id=customer-456",
+        headers=auth(),
+    )
+    assert foreign.status_code == 200
+    assert foreign.json() == {"twins": [], "count": 0}
+
+
+def test_twin_list_rechecks_active_consent_and_suppresses_revoked_records(client, monkeypatch):
+    assert create(client).status_code == 200
+
+    async def revoked(*args, **kwargs):
+        from fastapi import HTTPException
+        raise HTTPException(403, detail={"code": "TWIN_CONSENT_NOT_ACTIVE"})
+
+    monkeypatch.setattr(main, "_verify_consent", revoked)
+    response = client.get(
+        "/internal/v1/twins?subject_id=customer-123",
+        headers=auth(),
+    )
+    assert response.status_code == 200
+    assert response.json() == {"twins": [], "count": 0}
+
+
+def test_twin_list_fails_closed_on_consent_dependency_outage(client, monkeypatch):
+    assert create(client).status_code == 200
+
+    async def unavailable(*args, **kwargs):
+        from fastapi import HTTPException
+        raise HTTPException(503, detail={"code": "CONSENT_PROVIDER_UNAVAILABLE"})
+
+    monkeypatch.setattr(main, "_verify_consent", unavailable)
+    response = client.get(
+        "/internal/v1/twins?subject_id=customer-123",
+        headers=auth(),
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "CONSENT_PROVIDER_UNAVAILABLE"
+
+
+def test_twin_list_requires_internal_authentication(client):
+    response = client.get("/internal/v1/twins?subject_id=customer-123")
+    assert response.status_code == 401

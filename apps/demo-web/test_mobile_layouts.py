@@ -6,6 +6,8 @@ import pytest
 
 
 PAGE_CANDIDATES = (
+    Path("apps/demo-web/sanctuary.html"),
+    Path("apps/demo-web/twin-onboarding.html"),
     Path("apps/demo-web/living-filters.html"),
     Path("apps/demo-web/marketplace.html"),
     Path("apps/demo-web/wardrobe.html"),
@@ -33,8 +35,23 @@ def test_demo_pages_have_no_horizontal_overflow_on_mobile_and_landscape():
                 page.on("pageerror", lambda error: page_errors.append(str(error)))
                 page.goto(page_path.resolve().as_uri(), wait_until="domcontentloaded")
                 if page_path.name == "wardrobe.html":
-                    assert page.locator("#dailyLooksPanel").count() == 1
-                    assert page.locator("#dailyLooksForm").count() == 1
+                    assert page.locator("#pnellyForm").count() == 1
+                    assert page.locator("#generatePNELLY").count() == 1
+                if page_path.name == "sanctuary.html":
+                    assert page.locator("#primaryNav").count() == 1
+                    assert page.locator("#menuToggle").count() == 1
+                    page.set_viewport_size({"width": 393, "height": 873})
+                    page.locator("#menuToggle").click()
+                    assert page.locator("#menuToggle").get_attribute("aria-expanded") == "true"
+                    page.keyboard.press("Escape")
+                    assert page.locator("#menuToggle").get_attribute("aria-expanded") == "false"
+                if page_path.name == "twin-onboarding.html":
+                    assert page.locator("#connectSession").count() == 1
+                    assert page.locator("#startCapture").is_disabled()
+                    assert page.locator('input[type="file"]').count() == 0
+                    assert page.locator("#capabilityGrid").count() == 1
+                    assert page.locator("#savedTwinPanel").count() == 1
+                    assert page.locator("#savedTwinStatus").count() == 1
                 for width, height in VIEWPORTS:
                     page.set_viewport_size({"width": width, "height": height})
                     page.wait_for_timeout(100)

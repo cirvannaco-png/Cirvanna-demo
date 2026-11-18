@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+
 import pytest
 from pydantic import ValidationError
 
@@ -10,10 +13,13 @@ from app.generation_contract import (
     TwinGenerationResult,
     assert_generation_transition,
     validate_generation_bundle,
+    registry_registration_payload,
 )
 
 SOURCE_IDS = ["source-image-001", "source-image-002"]
-MODEL_VERSION = "cirvanna-body-model@sha256:" + ("a" * 64)
+MODEL_ID = "cirvanna-body-model"
+MODEL_REVISION = "a" * 40
+MODEL_RELEASE_SHA256 = "c" * 64
 ARTIFACT_SHA256 = "b" * 64
 
 
@@ -33,9 +39,12 @@ def bundle(*, source_ids=None, receipt_overrides=None, result_overrides=None):
         "provider_id": "body-provider",
         "provider_job_id": "provider-job-001",
         "representation_type": "full_body_mesh",
+        "artifact_content_type": "model/gltf-binary",
         "artifact_asset_id": "private-mesh-001",
         "source_image_asset_ids": sources,
-        "model_version": MODEL_VERSION,
+        "model_id": MODEL_ID,
+        "model_revision": MODEL_REVISION,
+        "model_release_sha256": MODEL_RELEASE_SHA256,
         "artifact_sha256": ARTIFACT_SHA256,
     }
     result_data.update(result_overrides or {})
@@ -49,10 +58,13 @@ def bundle(*, source_ids=None, receipt_overrides=None, result_overrides=None):
         "subject_id": "subject-001",
         "twin_id": "twin-001",
         "representation_type": "full_body_mesh",
+        "artifact_content_type": "model/gltf-binary",
         "artifact_asset_id": "private-mesh-001",
         "artifact_sha256": ARTIFACT_SHA256,
         "source_image_asset_ids": sources,
-        "model_version": MODEL_VERSION,
+        "model_id": MODEL_ID,
+        "model_revision": MODEL_REVISION,
+        "model_release_sha256": MODEL_RELEASE_SHA256,
         "checks": {
             "artifact_readable": True,
             "geometry_finite": True,
@@ -105,10 +117,15 @@ def test_validator_must_attest_to_exact_artifact_digest():
         validate_generation_bundle(command, result, receipt)
 
 
-def test_validator_must_attest_to_exact_model_revision():
-    other_model = "cirvanna-body-model@sha256:" + ("d" * 64)
+def test_validator_must_attest_to_exact_model_revision_and_release_digest():
     command, result, receipt = bundle(
-        receipt_overrides={"model_version": other_model}
+        receipt_overrides={"model_revision": "d" * 40}
+    )
+    with pytest.raises(GenerationContractError, match="TWIN_VALIDATION_MODEL_MISMATCH"):
+        validate_generation_bundle(command, result, receipt)
+
+    command, result, receipt = bundle(
+        receipt_overrides={"model_release_sha256": "d" * 64}
     )
     with pytest.raises(GenerationContractError, match="TWIN_VALIDATION_MODEL_MISMATCH"):
         validate_generation_bundle(command, result, receipt)
@@ -161,9 +178,20 @@ def test_command_rejects_urls_and_paths(field, value):
         TwinGenerationCommand(**payload)
 
 
-def test_provider_result_requires_digest_pinned_model_version():
+def test_provider_result_requires_pinned_model_revision_and_release_digest():
     with pytest.raises(ValidationError):
-        bundle(result_overrides={"model_version": "latest"})
+        bundle(result_overrides={"model_revision": "latest"})
+    with pytest.raises(ValidationError):
+        bundle(result_overrides={"model_release_sha256": "latest"})
+
+
+def test_generation_bundle_requires_canonical_glb_artifact_format():
+    with pytest.raises(ValidationError):
+        bundle(result_overrides={"artifact_content_type": "model/obj"})
+    with pytest.raises(GenerationContractError, match="TWIN_VALIDATION_CONTENT_TYPE_MISMATCH"):
+        command, result, receipt = bundle(receipt_overrides={"artifact_content_type": "model/gltf-binary"})
+        object.__setattr__(receipt, "artifact_content_type", "model/obj")
+        validate_generation_bundle(command, result, receipt)
 
 
 def test_generation_lifecycle_accepts_only_the_ordered_happy_path():
@@ -241,3 +269,81 @@ def test_generation_lifecycle_rejects_unknown_states_without_key_error():
         match="TWIN_GENERATION_INVALID_STATE_TRANSITION",
     ):
         assert_generation_transition("unexpected", "active")  # type: ignore[arg-type]
+
+
+def test_validated_bundle_uses_independent_validator_hmac_attestation():
+    sources = [
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+    ]
+    command = TwinGenerationCommand(
+        subject_id="subject-001",
+        twin_id="twin-001",
+        consent_id="consent-receipt-001",
+        consent_version="privacy-v1",
+        idempotency_key="generate-twin-001",
+        source_image_asset_ids=sources,
+    )
+    result = TwinGenerationResult(
+        subject_id="subject-001",
+        twin_id="twin-001",
+        provider_id="body-provider",
+        provider_job_id="provider-job-001",
+        representation_type="full_body_mesh",
+        artifact_content_type="model/gltf-binary",
+        artifact_asset_id="33333333-3333-4333-8333-333333333333",
+        source_image_asset_ids=sources,
+        model_id=MODEL_ID,
+        model_revision=MODEL_REVISION,
+        model_release_sha256=MODEL_RELEASE_SHA256,
+        artifact_sha256=ARTIFACT_SHA256,
+    )
+    receipt = MeshValidationReceipt(
+        validator_id="independent-mesh-validator",
+        receipt_id="validation-receipt-001",
+        validated=True,
+        consent_id="consent-receipt-001",
+        consent_version="privacy-v1",
+        subject_id="subject-001",
+        twin_id="twin-001",
+        representation_type="full_body_mesh",
+        artifact_content_type="model/gltf-binary",
+        artifact_asset_id=result.artifact_asset_id,
+        artifact_sha256=ARTIFACT_SHA256,
+        source_image_asset_ids=sources,
+        model_id=MODEL_ID,
+        model_revision=MODEL_REVISION,
+        model_release_sha256=MODEL_RELEASE_SHA256,
+        checks={
+            "artifact_readable": True,
+            "geometry_finite": True,
+            "topology_valid": True,
+            "body_coverage_valid": True,
+            "scale_within_bounds": True,
+            "privacy_scan_passed": True,
+            "source_photo_not_embedded": True,
+        },
+    )
+    validator_signature = "d" * 64
+    payload = registry_registration_payload(
+        command, result, receipt, validation_attestation_hmac=validator_signature
+    )
+    assert payload["validation_attestation_hmac"] == validator_signature
+    assert payload["mesh_asset_id"] == result.artifact_asset_id
+    assert payload["source_image_asset_ids"] == sorted(sources)
+    assert payload["validation_report_sha256"] == hashlib.sha256(
+        json.dumps(receipt.model_dump(mode="json"), sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    ).hexdigest()
+
+
+def test_registry_payload_requires_validator_signature_and_asset_ids():
+    command, result, receipt = bundle()
+    with pytest.raises(GenerationContractError, match="TWIN_VALIDATION_ATTESTATION_INVALID_FORMAT"):
+        registry_registration_payload(
+            command, result, receipt, validation_attestation_hmac="not-a-signature"
+        )
+    with pytest.raises(GenerationContractError, match="TWIN_GENERATION_ASSET_ID_INVALID"):
+        registry_registration_payload(
+            command, result, receipt,
+            validation_attestation_hmac="d" * 64,
+        )

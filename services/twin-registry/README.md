@@ -5,7 +5,7 @@
 ## Single sources of truth
 
 - **Twin Registry** owns the persistent Twin ID, owner, model/release provenance, validation-report digest, representation type and source-asset references.
-- **Asset Service** remains the only authority for binary bytes, asset IDs, tenant ownership, active/revoked state, private storage and deletion lifecycle. Twin Registry does not duplicate its asset table or store object keys.
+- **Asset Service** remains the only authority for binary bytes, asset IDs, tenant ownership, active/revoked state, private storage and deletion lifecycle. Twin Registry does not duplicate its asset table or store object keys. The Twin representation must be one privately stored GLB 2.0 `twin_representation`; its exact owner/Twin parent must also contain at least one normalized PNG source image. Asset Service performs container checks only; the separate mesh validator must inspect the stored bytes before registration.
 - **Identity Learning / Consent** remains the only authority for resource-bound consent. Twin Registry verifies the exact subject, consent ID, consent version, Twin resource ID and required scopes on creation and every authorization.
 - **Virtual Try-On** owns renderer orchestration and job persistence; it asks Twin Registry for the owner-bound full-body mesh and source-image asset IDs, then resolves bytes through Asset Service.
 - **Virtual Twin** owns ephemeral image/pose inference and Click It candidate retrieval. A pose skeleton is not a persistent Twin and does not satisfy the full-body-mesh registration contract.
@@ -17,6 +17,7 @@ All routes except `/health` require the internal `TWIN_REGISTRY_API_TOKEN` beare
 
 - `POST /internal/v1/twins`: registers a Twin only after a trusted model-validation HMAC, active resource-bound consent and Asset Service authorization of the mesh plus all source images.
 - `POST /internal/v1/twins/authorize`: re-checks owner, active consent/version, mesh and every source asset on every call. Its response includes `representation_type=full_body_mesh` and `source_image_asset_ids` required by the current Virtual Try-On contract.
+- `GET /internal/v1/twins?subject_id=...&limit=...`: lists lifecycle summaries for one verified subject. Every active row is rechecked against its exact current consent bundle and private Asset Service ownership before it is returned. Unauthorized active rows are suppressed; dependency outages fail the request. The response omits subject IDs, asset IDs, object keys, and media URLs. This is metadata discovery only, not mesh preview/readback.
 - `POST /internal/v1/twins/deactivate`: immediately blocks authorization and creates a versioned deletion-outbox command.
 - `POST /internal/v1/twins/revoke-consent`: queues deletion only for the exact owner, consent ID and `resource_id` (Twin ID) from the withdrawn consent receipt. A shared bundle ID cannot delete another resource.
 - `POST /internal/v1/twins/deletions/dispatch`: a separately authenticated worker dispatches idempotent deletion to Asset Service and marks records deleted only after the provider confirms the full asset set. A consent-notification retry reports `pending` until this separate asset deletion completes. No in-process timer is assumed: the deployment must schedule this endpoint using the separate `TWIN_REGISTRY_DELETION_TOKEN` and alert on pending/failed counts.

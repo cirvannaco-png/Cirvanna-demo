@@ -9,6 +9,12 @@ on:
       - "apps/demo-web/marketplace.html"
       - "apps/demo-web/merchant-portal.html"
       - "apps/demo-web/assets/appearance-workspace.js"
+      - "apps/demo-web/sanctuary.html"
+      - "apps/demo-web/twin-onboarding.html"
+      - "apps/demo-web/assets/cirvanna-sanctuary.css"
+      - "apps/demo-web/assets/cirvanna-sanctuary.js"
+      - "apps/demo-web/assets/cirvanna-twin-onboarding.css"
+      - "apps/demo-web/assets/cirvanna-twin-onboarding.js"
       - ".github/workflows/marketplace-bff.yml"
   push:
     branches:
@@ -21,6 +27,12 @@ on:
       - "apps/demo-web/marketplace.html"
       - "apps/demo-web/wardrobe.html"
       - "apps/demo-web/assets/appearance-workspace.js"
+      - "apps/demo-web/sanctuary.html"
+      - "apps/demo-web/twin-onboarding.html"
+      - "apps/demo-web/assets/cirvanna-sanctuary.css"
+      - "apps/demo-web/assets/cirvanna-sanctuary.js"
+      - "apps/demo-web/assets/cirvanna-twin-onboarding.css"
+      - "apps/demo-web/assets/cirvanna-twin-onboarding.js"
       - ".github/workflows/marketplace-bff.yml"
 
 permissions:

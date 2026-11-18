@@ -30,8 +30,8 @@ The provider result must include:
 - Provider and provider-job identifiers.
 - An opaque private artifact_asset_id, not an arbitrary URL or path.
 - The exact source image asset set supplied to the job.
-- A model version containing a lowercase SHA-256 revision digest.
-- The SHA-256 digest of the stored mesh bytes.
+- A canonical model_id, a pinned 40-character source commit revision, and a separate lowercase SHA-256 digest of the complete model release/weights.
+- Canonical `model/gltf-binary` GLB 2.0 content type and the SHA-256 digest of the stored mesh bytes.
 
 The independent validation receipt must repeat the binding above and attest all required checks:
 
@@ -73,10 +73,10 @@ This contract is **not yet wired to an HTTP endpoint or provider adapter**. It d
 
 Remaining integration work:
 
-1. Select and approve a commercially cleared generation model and runtime.
-2. Implement an isolated provider adapter with pinned revisions, bounded timeouts/concurrency, retries, and no source-photo logging.
-3. Implement the independent validator and evidence receipt store.
-4. Bind both services to the existing private Asset Service and exact asset digest.
+1. Select and approve a commercially cleared body/avatar generation model and runtime.
+2. Implement an isolated provider adapter with pinned source revision and model-release digests, canonical GLB output, bounded timeouts/concurrency, retries and no source-photo logging.
+3. Implement the independent validator and evidence receipt store; it must inspect the private GLB bytes, not trust Asset Service container checks.
+4. Bind generator and validator to the existing private Asset Service and exact GLB/source asset digests.
 5. Orchestrate consent checks, idempotent job persistence, validation, registry registration, and compensating deletion on failure.
 6. Add authenticated Twin listing/read/preview and revocation flows, with deletion propagation evidence.
 7. Run representative, consented human evaluation and physical Android acceptance tests.
