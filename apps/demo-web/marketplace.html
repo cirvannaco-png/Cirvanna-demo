@@ -547,6 +547,7 @@ footer{
       if(!token){alert("Enter your signed Cirvanna user session token.");return}
       if(!bootstrap.publicOffersBase){setStatus("The same-origin Cirvanna Marketplace BFF is not configured on this page.",true);alert("The same-origin Cirvanna Marketplace BFF is not configured.");return}
       config={base:"",token:"",commerceBase:bootstrap.publicOffersBase.replace(/\/$/,""),userToken:token};
+      window.dispatchEvent(new CustomEvent("cirvanna:session-ready",{detail:{accessToken:token,source:"marketplace"}}));
       forceDemo=false;page=0;closeDrawer();load();
     }
     if(e.target.id==="checkoutBtn"){
