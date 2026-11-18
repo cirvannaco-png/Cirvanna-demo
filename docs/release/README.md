@@ -1,6 +1,8 @@
 # Production release evidence
 
-The machine-readable source of truth is [release-gates.json](release-gates.json). It contains 16 required gates and is **blocked** because there is no complete, verified production evidence package in this repository. The canonical provider-neutral deployment inventory is [infrastructure/deployment/canonical-stack.json](../../infrastructure/deployment/canonical-stack.json); it is not an executable deployment or operational proof.
+The machine-readable source of truth is [release-gates.json](release-gates.json). It contains 21 required gates and is **blocked** because there is no complete, verified production evidence package in this repository. The canonical provider-neutral deployment inventory is [infrastructure/deployment/canonical-stack.json](../../infrastructure/deployment/canonical-stack.json); it is not an executable deployment or operational proof.
+
+The current registry has **21/21 required gates blocked** and no exact-release-commit evidence references. This is the correct state: CI success and implementation foundations do not satisfy provider approval, production infrastructure, identity, payment, privacy, operational recovery or deployed end-to-end acceptance.
 
 ## How to close a gate
 
