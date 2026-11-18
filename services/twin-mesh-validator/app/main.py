@@ -8,6 +8,7 @@ import os
 import re
 import struct
 import uuid
+from urllib.parse import urlsplit
 from typing import Annotated, Any
 
 import httpx
@@ -102,10 +103,30 @@ def _configured_pair(base_name: str, token_name: str) -> tuple[str, str]:
     token = os.getenv(token_name, "").strip()
     if not base or len(token.encode("utf-8")) < 32:
         raise HTTPException(503, detail={"code": "VALIDATOR_DEPENDENCY_NOT_CONFIGURED"})
-    if not base.startswith("https://") and not (
+    try:
+        parsed = urlsplit(base)
+        hostname = (parsed.hostname or "").lower()
+        parsed.port  # Force validation of malformed port strings.
+    except ValueError as exc:
+        raise HTTPException(503, detail={"code": "VALIDATOR_DEPENDENCY_URL_INVALID"}) from exc
+    https_allowed = (
+        parsed.scheme == "https"
+        and bool(hostname)
+        and parsed.username is None
+        and parsed.password is None
+        and not parsed.query
+        and not parsed.fragment
+    )
+    local_http_allowed = (
         os.getenv("ALLOW_INSECURE_INTERNAL_HTTP", "").lower() == "true"
-        and base.startswith("http://")
-    ):
+        and parsed.scheme == "http"
+        and hostname in {"localhost", "127.0.0.1", "::1"}
+        and parsed.username is None
+        and parsed.password is None
+        and not parsed.query
+        and not parsed.fragment
+    )
+    if not (https_allowed or local_http_allowed):
         raise HTTPException(503, detail={"code": "VALIDATOR_DEPENDENCY_MUST_USE_HTTPS"})
     return base, token
 
@@ -601,15 +622,10 @@ def health() -> dict[str, str]:
 
 @app.get("/ready")
 def ready() -> dict[str, Any]:
-    configured = (
-        len(os.getenv("TWIN_MESH_VALIDATOR_API_TOKEN", "").encode("utf-8")) >= 32
-        and len(os.getenv("CONSENT_API_TOKEN", "").encode("utf-8")) >= 32
-        and bool(os.getenv("CONSENT_API_URL", "").strip())
-        and len(os.getenv("ASSET_SERVICE_TOKEN", "").encode("utf-8")) >= 32
-        and bool(os.getenv("ASSET_SERVICE_URL", "").strip())
-    )
-    if not configured:
-        raise HTTPException(503, detail={"code": "VALIDATOR_DEPENDENCIES_NOT_CONFIGURED"})
+    if len(os.getenv("TWIN_MESH_VALIDATOR_API_TOKEN", "").encode("utf-8")) < 32:
+        raise HTTPException(503, detail={"code": "VALIDATOR_API_TOKEN_NOT_CONFIGURED"})
+    _configured_pair("CONSENT_API_URL", "CONSENT_API_TOKEN")
+    _configured_pair("ASSET_SERVICE_URL", "ASSET_SERVICE_TOKEN")
     return {"status": "ready", "service": SERVICE, "registry_attestation": False}
 
 
