@@ -160,6 +160,14 @@ def _verify_private_bucket(client, bucket: str) -> bool:
         if policy.get("IsPublic") is not False:
             return False
 
+        # A plain DeleteObject can leave prior object versions recoverable when
+        # bucket versioning is Enabled or Suspended. Accept only a bucket that
+        # has never enabled versioning (Status omitted) or explicitly reports
+        # Disabled. Providers that cannot report this control fail closed.
+        versioning = client.get_bucket_versioning(Bucket=bucket)
+        if versioning.get("Status") not in (None, "Disabled"):
+            return False
+
         encryption = client.get_bucket_encryption(Bucket=bucket).get("ServerSideEncryptionConfiguration", {})
         rules = encryption.get("Rules", [])
         if not rules or not any(
@@ -374,6 +382,7 @@ def ready(db: Annotated[Session, Depends(get_db)]):
         "service": SERVICE,
         "database": "reachable",
         "object_storage": "reachable",
+        "object_versioning": "disabled",
         "private_access": "verified",
         "ready": True,
     }
