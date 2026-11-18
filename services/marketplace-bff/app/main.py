@@ -3544,7 +3544,7 @@ def _authorized_commerce_path(method: str, path: str) -> bool:
 
 @app.api_route("/api/commerce/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 async def commerce_proxy(path: str, request: Request) -> Response:
-    """Forward allowlisted customer operations after authenticating the customer session."""
+    """Forward allowlisted customer operations; purchase paths verify identity before readiness."""
     method = request.method.upper()
     cart_item_match = re.fullmatch(r"cart/items/[0-9a-fA-F-]{36}", path)
     is_purchase_path = (
@@ -3555,44 +3555,66 @@ async def commerce_proxy(path: str, request: Request) -> Response:
     if not _authorized_commerce_path(method, path):
         raise HTTPException(status_code=404, detail={"code": "COMMERCE_ROUTE_NOT_AVAILABLE"})
 
-    base = _upstream_base("COMMERCE_API_URL")
-    try:
-        async with httpx.AsyncClient(
-            timeout=httpx.Timeout(TIMEOUT_SECONDS, connect=2.0),
-            trust_env=False,
-            follow_redirects=False,
-        ) as client:
-            # Verify the bearer with Commerce before probing internal purchase readiness.
-            # An expired token must receive an authentication response, not reveal gate health.
-            _, verified_user_token = await _verified_commerce_subject(client, request)
-            if is_purchase_path and not await _commerce_purchase_authorization_ready(client, base):
-                raise HTTPException(
-                    status_code=503,
-                    detail={"code": "CAL_CANDIDATE_PURCHASE_REAUTH_REQUIRED"},
-                    headers={"Cache-Control": "no-store"},
-                )
+    authorization = request.headers.get("authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token.strip():
+        raise HTTPException(
+            status_code=401,
+            detail={"code": "USER_BEARER_REQUIRED"},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
-            headers = {
-                "Authorization": "Bearer " + verified_user_token,
-                "Accept": request.headers.get("accept", "application/json"),
-            }
-            for key in ("content-type", "idempotency-key"):
-                if request.headers.get(key):
-                    headers[key] = request.headers[key]
-            body = await request.body()
-            upstream = await client.request(
+    base = _upstream_base("COMMERCE_API_URL")
+    headers = {"Authorization": authorization, "Accept": request.headers.get("accept", "application/json")}
+    for key in ("content-type", "idempotency-key"):
+        if request.headers.get(key):
+            headers[key] = request.headers[key]
+    body = await request.body()
+
+    if is_purchase_path:
+        try:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(TIMEOUT_SECONDS, connect=2.0),
+                trust_env=False,
+                follow_redirects=False,
+            ) as client:
+                # Authenticate against Commerce first. Invalid/expired tokens must not
+                # receive information about the internal CAL purchase-readiness gate.
+                _, verified_user_token = await _verified_commerce_subject(client, request)
+                if not await _commerce_purchase_authorization_ready(client, base):
+                    raise HTTPException(
+                        status_code=503,
+                        detail={"code": "CAL_CANDIDATE_PURCHASE_REAUTH_REQUIRED"},
+                        headers={"Cache-Control": "no-store"},
+                    )
+                headers["Authorization"] = "Bearer " + verified_user_token
+                upstream = await client.request(
+                    method,
+                    base + "/" + path,
+                    params=list(request.query_params.multi_items()),
+                    content=body if body else None,
+                    headers=headers,
+                )
+        except HTTPException:
+            raise
+        except httpx.TimeoutException as exc:
+            raise HTTPException(status_code=504, detail={"code": "COMMERCE_API_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=503, detail={"code": "COMMERCE_API_UNAVAILABLE"}) from exc
+    else:
+        try:
+            upstream = httpx.request(
                 method,
                 base + "/" + path,
                 params=list(request.query_params.multi_items()),
                 content=body if body else None,
                 headers=headers,
+                timeout=TIMEOUT_SECONDS,
+                follow_redirects=False,
+                trust_env=False,
             )
-    except HTTPException:
-        raise
-    except httpx.TimeoutException as exc:
-        raise HTTPException(status_code=504, detail={"code": "COMMERCE_API_TIMEOUT"}) from exc
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=503, detail={"code": "COMMERCE_API_UNAVAILABLE"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=503, detail={"code": "COMMERCE_API_UNAVAILABLE"}) from exc
 
     response_headers = {}
     if upstream.headers.get("content-type"):
