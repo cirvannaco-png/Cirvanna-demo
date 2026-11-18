@@ -9,9 +9,9 @@ Cirvanna's visual language should feel carefully composed rather than ostentatio
 
 | Role | Colour | Hex | Application |
 |---|---|---:|---|
-| Primary dark | Obsidian black | \`#080808\` | Main canvas, navigation, immersive product surfaces |
-| Primary metallic | Cirvanna gold | \`#D6AE62\` | Actions, borders, selected states, emphasis and signature details |
-| Primary light | White | \`#FFFFFF\` | Wordmark, high-contrast typography, clean surfaces and controls |
+| Primary dark | Obsidian black | `#080808` | Main canvas, navigation, immersive product surfaces |
+| Primary metallic | Cirvanna gold | `#D6AE62` | Actions, borders, selected states, emphasis and signature details |
+| Primary light | White | `#FFFFFF` | Wordmark, high-contrast typography, clean surfaces and controls |
 
 White is a core Cirvanna colour, not merely a temporary text colour. It gives the black-and-gold system clarity, air and precision.
 
@@ -19,13 +19,13 @@ White is a core Cirvanna colour, not merely a temporary text colour. It gives th
 
 | Role | Colour | Hex | Application |
 |---|---|---:|---|
-| Warm white | Atelier ivory | \`#F7F3ED\` | Softer light surfaces and warm editorial moments |
-| Muted text | Warm grey | \`#B8B1A5\` | Secondary labels and explanatory copy on dark surfaces |
-| Gold light | Champagne gold | \`#F3D99A\` | Gold highlights and accessible focus treatment |
-| Gold deep | Bronze | \`#8E682F\` | Restrained borders and metallic depth |
-| Purple | Atelier plum | \`#76518F\` | Secondary creative and sanctuary accents |
-| Deep purple | Aubergine | \`#30213E\` | Supporting panels and atmospheric gradients |
-| Blue Flame | Electric blue | \`#39A7FF\` | Reserved for the Blue Flame / Twin identity motif only |
+| Warm white | Atelier ivory | `#F7F3ED` | Softer light surfaces and warm editorial moments |
+| Muted text | Warm grey | `#B8B1A5` | Secondary labels and explanatory copy on dark surfaces |
+| Gold light | Champagne gold | `#F3D99A` | Gold highlights and accessible focus treatment |
+| Gold deep | Bronze | `#8E682F` | Restrained borders and metallic depth |
+| Purple | Atelier plum | `#76518F` | Secondary creative and sanctuary accents |
+| Deep purple | Aubergine | `#30213E` | Supporting panels and atmospheric gradients |
+| Blue Flame | Electric blue | `#39A7FF` | Reserved for the Blue Flame / Twin identity motif only |
 
 The colour roles should remain stable across web and mobile. A feature may emphasize a subset of the palette, but it must not invent a competing product identity.
 
@@ -60,10 +60,10 @@ The Blue Flame must remain the pre-Twin state until a persistent user-specific T
 
 - Design mobile first, with usable touch targets and no horizontal page overflow at narrow widths.
 - Provide visible keyboard focus, semantic labels, live status feedback and accessible names for icon-only controls.
-- Respect \`prefers-reduced-motion\`; motion should explain hierarchy or state, not distract.
+- Respect `prefers-reduced-motion`; motion should explain hierarchy or state, not distract.
 - Maintain sufficient contrast for text, borders, and disabled states. Gold is an accent, not a substitute for readable body text.
 - Colour alone must never communicate status or authorization.
 
 ## Source tokens
 
-The Sanctuary design tokens live in \`apps/demo-web/assets/cirvanna-sanctuary.css\`. The Marketplace's focused theme is declared in the inline style block in \`apps/demo-web/marketplace.html\`. Keep these token roles aligned when extending the shared design system.
+The Sanctuary design tokens live in `apps/demo-web/assets/cirvanna-sanctuary.css`. The Marketplace's focused theme is declared in the inline style block in `apps/demo-web/marketplace.html`. Keep these token roles aligned when extending the shared design system.
