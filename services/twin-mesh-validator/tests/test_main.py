@@ -63,6 +63,7 @@ def request_body(mesh_bytes=None):
         "subject_id": SUBJECT,
         "twin_id": TWIN,
         "consent_id": CONSENT,
+        "consent_version": "consent-v1",
         "artifact_asset_id": MESH_ID,
         "artifact_sha256": hashlib.sha256(data).hexdigest(),
         "source_image_asset_ids": [SOURCE_ID],
