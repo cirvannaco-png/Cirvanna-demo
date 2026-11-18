@@ -151,7 +151,7 @@ async def verify_resource_bound_consent(request: PreflightRequest) -> None:
         "resource_id": request.twin_id,
     }
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=4.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(12.0, connect=4.0), trust_env=False, follow_redirects=False) as client:
             response = await client.post(
                 f"{base}/internal/v1/consents/verify",
                 json=body,
@@ -182,7 +182,7 @@ async def load_private_mesh_asset(request: PreflightRequest) -> tuple[bytes, str
         "parent_id": request.twin_id,
     }
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(35.0, connect=5.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(35.0, connect=5.0), trust_env=False, follow_redirects=False) as client:
             async with client.stream(
                 "GET",
                 f"{base}/internal/v1/assets/{request.artifact_asset_id}/content",
