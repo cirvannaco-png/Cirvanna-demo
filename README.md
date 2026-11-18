@@ -9,6 +9,7 @@ Cirvanna is an identity-first beauty, fashion, fit, and commerce-intelligence pl
 ## Contents
 
 - [Product vision](#product-vision)
+- [Brand and visual identity](#brand-and-visual-identity)
 - [Experience and capability map](#experience-and-capability-map)
 - [Architecture and domain ownership](#architecture-and-domain-ownership)
 - [Decision and display flow](#decision-and-display-flow)
@@ -26,6 +27,11 @@ Cirvanna is an identity-first beauty, fashion, fit, and commerce-intelligence pl
 - [Release roadmap](#release-roadmap)
 - [Contribution rules](#contribution-rules)
 - [Architecture references](#architecture-references)
+
+
+## Brand and visual identity
+
+Cirvanna's primary brand palette is **obsidian black, gold, and white**. Warm white and stone support readability and material warmth; purple is a secondary creative accent; electric blue is reserved for the Blue Flame / Virtual Twin identity motif. The Marketplace uses its own stronger black-and-gold expression with white typography and control surfaces. See [the Cirvanna visual identity guide](docs/brand/visual-identity.md) for palette tokens and application rules.
 
 ## Product vision
 
