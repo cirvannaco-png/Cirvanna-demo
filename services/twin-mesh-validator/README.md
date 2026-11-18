@@ -49,7 +49,7 @@ Required server-side environment:
 
 - \`TWIN_MESH_VALIDATOR_API_TOKEN\`: internal caller bearer token (at least 32 bytes).
 - \`CONSENT_API_URL\`, \`CONSENT_API_TOKEN\`: private consent service base URL and internal bearer token.
-- \`ASSET_SERVICE_URL\`, \`ASSET_SERVICE_INTERNAL_TOKEN\`: private Asset Service base URL and internal bearer token.
+- \`ASSET_SERVICE_URL\`, \`ASSET_SERVICE_TOKEN\`: private Asset Service base URL and internal bearer token.
 
 All service URLs must use HTTPS. \`ALLOW_INSECURE_INTERNAL_HTTP=true\` is for isolated local development only and must not be set in a deployed environment. Never put these values in browser code, app bundles, model prompts or logs.
 
