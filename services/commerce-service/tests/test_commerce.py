@@ -292,7 +292,7 @@ def test_tax_quote_requires_explicit_destination_zone(client, monkeypatch):
     assert response.json()["destination_key"] == "Nakuru/Subukia"
 
 
-def test_multi_market_checkout_learning_and_cal_purchase_schema_revision_0010_is_registered():
+def test_multi_market_checkout_learning_and_cal_purchase_schema_revision_0011_is_registered():
     from app.main import CommerceOrder, OrderCharge, OrderItem, OfferTaxQuote, CALPurchaseAudit
     assert "fulfillment_total_minor" in CommerceOrder.__table__.columns
     assert "total_minor" in CommerceOrder.__table__.columns
@@ -329,7 +329,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
         ))
         connection.execute(
             text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
-            {"revision": "20261110_0010"},
+            {"revision": "20261112_0011"},
         )
 
     ready = client.get("/ready")
@@ -342,7 +342,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
     assert payload["payment_configured"] is True
     assert payload["migrations_required"] is True
     assert payload["migrations_applied"] is True
-    assert payload["schema_revision"] == "20261110_0010"
+    assert payload["schema_revision"] == "20261112_0011"
     assert payload["ready"] is True
 
 
