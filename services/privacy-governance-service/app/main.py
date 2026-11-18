@@ -37,6 +37,8 @@ from sqlalchemy import (
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
+from app.observability import install_observability
+
 SERVICE = "cirvanna-privacy-governance-service"
 bearer = HTTPBearer(auto_error=False)
 SUBJECT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$")
@@ -413,6 +415,7 @@ app = FastAPI(
     version="0.1.0",
     description="Internal consent, signed jurisdiction-policy and image-rights case service. No image uploads are accepted.",
 )
+install_observability(app, SERVICE)
 
 
 @app.on_event("startup")
