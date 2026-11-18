@@ -112,6 +112,33 @@ def test_glb_preflight_reads_geometry_but_never_attests(client):
     assert "BODY_COVERAGE_REQUIRES_INDEPENDENT_BODY_SURFACE_EVIDENCE" in body["unverified_gates"]
 
 
+
+def test_consent_receipt_requires_exact_subject_resource_version_and_scopes():
+    request = main.PreflightRequest.model_validate(request_body())
+    valid = {
+        "verified": True,
+        "active": True,
+        "subject_id": SUBJECT,
+        "consent_id": CONSENT,
+        "resource_id": TWIN,
+        "consent_version": "consent-v1",
+        "granted_scopes": ["image_processing", "body_measurements", "virtual_twin_storage"],
+    }
+    main._verify_consent_response(valid, request)
+
+    for field, bad_value in (
+        ("subject_id", "another-subject"),
+        ("resource_id", "another-twin"),
+        ("consent_version", "old-version"),
+        ("active", False),
+        ("verified", False),
+        ("granted_scopes", ["image_processing", "body_measurements"]),
+        ("granted_scopes", ["image_processing", "body_measurements", 7]),
+    ):
+        candidate = {**valid, field: bad_value}
+        with pytest.raises(main.HTTPException):
+            main._verify_consent_response(candidate, request)
+
 def test_internal_endpoint_requires_service_authentication(client):
     response = client.post("/internal/v1/preflight", json=request_body())
     assert response.status_code == 401
