@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import hmac
 import json
 
 import pytest
@@ -272,7 +271,7 @@ def test_generation_lifecycle_rejects_unknown_states_without_key_error():
         assert_generation_transition("unexpected", "active")  # type: ignore[arg-type]
 
 
-def test_validated_bundle_builds_registry_compatible_hmac_attestation():
+def test_validated_bundle_uses_independent_validator_hmac_attestation():
     sources = [
         "11111111-1111-4111-8111-111111111111",
         "22222222-2222-4222-8222-222222222222",
@@ -325,14 +324,11 @@ def test_validated_bundle_builds_registry_compatible_hmac_attestation():
             "source_photo_not_embedded": True,
         },
     )
-    secret = "test-only-secret-with-at-least-32-bytes"
+    validator_signature = "d" * 64
     payload = registry_registration_payload(
-        command, result, receipt, validation_hmac_secret=secret
+        command, result, receipt, validation_attestation_hmac=validator_signature
     )
-    signed_fields = {key: value for key, value in payload.items() if key != "validation_attestation_hmac"}
-    canonical = json.dumps(signed_fields, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    expected = hmac.new(secret.encode(), canonical.encode(), hashlib.sha256).hexdigest()
-    assert payload["validation_attestation_hmac"] == expected
+    assert payload["validation_attestation_hmac"] == validator_signature
     assert payload["mesh_asset_id"] == result.artifact_asset_id
     assert payload["source_image_asset_ids"] == sorted(sources)
     assert payload["validation_report_sha256"] == hashlib.sha256(
@@ -340,12 +336,14 @@ def test_validated_bundle_builds_registry_compatible_hmac_attestation():
     ).hexdigest()
 
 
-def test_registry_attestation_refuses_short_secrets_and_non_asset_ids():
+def test_registry_payload_requires_validator_signature_and_asset_ids():
     command, result, receipt = bundle()
-    with pytest.raises(GenerationContractError, match="TWIN_VALIDATION_ATTESTATION_NOT_CONFIGURED"):
-        registry_registration_payload(command, result, receipt, validation_hmac_secret="short")
+    with pytest.raises(GenerationContractError, match="TWIN_VALIDATION_ATTESTATION_INVALID_FORMAT"):
+        registry_registration_payload(
+            command, result, receipt, validation_attestation_hmac="not-a-signature"
+        )
     with pytest.raises(GenerationContractError, match="TWIN_GENERATION_ASSET_ID_INVALID"):
         registry_registration_payload(
             command, result, receipt,
-            validation_hmac_secret="test-only-secret-with-at-least-32-bytes",
+            validation_attestation_hmac="d" * 64,
         )
