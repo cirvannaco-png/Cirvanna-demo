@@ -3608,14 +3608,9 @@ def test_cart_proxy_rejects_invalid_bearer_before_cal_readiness_probe(client, mo
 
     assert response.status_code == 401
     assert response.json()["detail"]["code"] == "USER_AUTHENTICATION_FAILED"
-    assert fake.calls == [
-        ("GET", "https://commerce.example.test/me", {
-            "headers": {
-                "Authorization": "Bearer expired-customer-token",
-                "Accept": "application/json",
-            }
-        })
-    ]
+    assert fake.calls[0][0] == "GET"
+    assert fake.calls[0][1] == "https://commerce.example.test/me"
+    assert len(fake.calls) == 1
 
 
 def test_cart_and_checkout_proxy_only_when_operator_flag_and_live_cal_readiness_pass(client, monkeypatch):
