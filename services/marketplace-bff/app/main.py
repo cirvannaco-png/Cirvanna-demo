@@ -109,7 +109,7 @@ def _upstream_base(key: str) -> str:
 
 def _upstream_ready(base: str) -> bool:
     try:
-        response = httpx.get(base + "/ready", timeout=TIMEOUT_SECONDS, follow_redirects=False)
+        response = httpx.get(base + "/ready", timeout=TIMEOUT_SECONDS, follow_redirects=False, trust_env=False)
         if response.status_code != 200:
             return False
         payload = response.json()
@@ -117,6 +117,37 @@ def _upstream_ready(base: str) -> bool:
     except (httpx.HTTPError, ValueError):
         return False
 
+
+async def _commerce_purchase_authorization_ready(
+    client: httpx.AsyncClient,
+    base: str,
+) -> bool:
+    """Require operator opt-in and live Commerce/CAL readiness without blocking the event loop."""
+    if os.getenv("COMMERCE_CAL_PURCHASE_PROXY_ENABLED", "").strip().lower() != "true":
+        return False
+    try:
+        ready = await client.get(base + "/ready", timeout=TIMEOUT_SECONDS)
+        if ready.status_code != 200:
+            return False
+        readiness = ready.json()
+        if not isinstance(readiness, dict) or readiness.get("ready") is not True:
+            return False
+        if readiness.get("cal_purchase_gateway_configured") is not True:
+            return False
+        if readiness.get("cal_purchase_receipt_signer_configured") is not True:
+            return False
+        if readiness.get("cal_gateway_ready") is not True or readiness.get("migrations_applied") is not True:
+            return False
+        capabilities = await client.get(base + "/capabilities", timeout=TIMEOUT_SECONDS)
+        if capabilities.status_code != 200:
+            return False
+        declared = capabilities.json()
+        return (
+            isinstance(declared, dict)
+            and declared.get("candidate_bound_purchase_authorization_configured") is True
+        )
+    except (httpx.HTTPError, ValueError, HTTPException):
+        return False
 
 def _internal_service(url_key: str, token_key: str) -> tuple[str, str]:
     base = _upstream_base(url_key)
@@ -3282,14 +3313,25 @@ async def marketplace_click_it(request: Request) -> Response:
     )
 
 
+def _developer_token_input_allowed() -> bool:
+    """Allow manual bearer entry only in an explicitly opted-in non-production environment."""
+    environment = os.getenv("MARKETPLACE_ENVIRONMENT", "").strip().lower()
+    if environment in {"production", "prod"}:
+        return False
+    return os.getenv("MARKETPLACE_ENABLE_DEVELOPER_TOKEN_INPUT", "false").strip().lower() == "true"
+
+
 def _page_html() -> str:
     try:
         html = HTML_PATH.read_text(encoding="utf-8")
     except OSError as exc:
         raise HTTPException(status_code=503, detail={"code": "MARKETPLACE_PAGE_UNAVAILABLE"}) from exc
     marker = "<script>\n(() => {"
+    developer_token_input = "true" if _developer_token_input_allowed() else "false"
     bootstrap = (
-        '<script>window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce"});</script>\n'
+        '<script>window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce",allowDeveloperTokenInput:'
+        + developer_token_input
+        + '});</script>\n'
         + "<script>\n(() => {"
     )
     if 'window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({' not in html:
@@ -3502,21 +3544,17 @@ def _authorized_commerce_path(method: str, path: str) -> bool:
 
 @app.api_route("/api/commerce/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
 async def commerce_proxy(path: str, request: Request) -> Response:
-    """Forward customer operations only; admin/internal/webhook routes are not exposed."""
+    """Forward allowlisted customer operations; purchase paths verify identity before readiness."""
     method = request.method.upper()
     cart_item_match = re.fullmatch(r"cart/items/[0-9a-fA-F-]{36}", path)
-    if (
+    is_purchase_path = (
         (method == "GET" and path == "cart")
         or (method == "POST" and path in {"cart/items", "checkout"})
         or (method == "PATCH" and cart_item_match is not None)
-    ):
-        raise HTTPException(
-            status_code=503,
-            detail={"code": "CAL_CANDIDATE_PURCHASE_REAUTH_REQUIRED"},
-            headers={"Cache-Control": "no-store"},
-        )
+    )
     if not _authorized_commerce_path(method, path):
         raise HTTPException(status_code=404, detail={"code": "COMMERCE_ROUTE_NOT_AVAILABLE"})
+
     authorization = request.headers.get("authorization", "")
     scheme, _, token = authorization.partition(" ")
     if scheme.lower() != "bearer" or not token.strip():
@@ -3525,31 +3563,65 @@ async def commerce_proxy(path: str, request: Request) -> Response:
             detail={"code": "USER_BEARER_REQUIRED"},
             headers={"WWW-Authenticate": "Bearer"},
         )
+
     base = _upstream_base("COMMERCE_API_URL")
     headers = {"Authorization": authorization, "Accept": request.headers.get("accept", "application/json")}
     for key in ("content-type", "idempotency-key"):
         if request.headers.get(key):
             headers[key] = request.headers[key]
     body = await request.body()
-    try:
-        upstream = httpx.request(
-            method,
-            base + "/" + path,
-            params=list(request.query_params.multi_items()),
-            content=body if body else None,
-            headers=headers,
-            timeout=TIMEOUT_SECONDS,
-            follow_redirects=False,
-        )
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=503, detail={"code": "COMMERCE_API_UNAVAILABLE"}) from exc
+
+    if is_purchase_path:
+        try:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(TIMEOUT_SECONDS, connect=2.0),
+                trust_env=False,
+                follow_redirects=False,
+            ) as client:
+                # Authenticate against Commerce first. Invalid/expired tokens must not
+                # receive information about the internal CAL purchase-readiness gate.
+                _, verified_user_token = await _verified_commerce_subject(client, request)
+                if not await _commerce_purchase_authorization_ready(client, base):
+                    raise HTTPException(
+                        status_code=503,
+                        detail={"code": "CAL_CANDIDATE_PURCHASE_REAUTH_REQUIRED"},
+                        headers={"Cache-Control": "no-store"},
+                    )
+                headers["Authorization"] = "Bearer " + verified_user_token
+                upstream = await client.request(
+                    method,
+                    base + "/" + path,
+                    params=list(request.query_params.multi_items()),
+                    content=body if body else None,
+                    headers=headers,
+                )
+        except HTTPException:
+            raise
+        except httpx.TimeoutException as exc:
+            raise HTTPException(status_code=504, detail={"code": "COMMERCE_API_TIMEOUT"}) from exc
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=503, detail={"code": "COMMERCE_API_UNAVAILABLE"}) from exc
+    else:
+        try:
+            upstream = httpx.request(
+                method,
+                base + "/" + path,
+                params=list(request.query_params.multi_items()),
+                content=body if body else None,
+                headers=headers,
+                timeout=TIMEOUT_SECONDS,
+                follow_redirects=False,
+                trust_env=False,
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=503, detail={"code": "COMMERCE_API_UNAVAILABLE"}) from exc
+
     response_headers = {}
     if upstream.headers.get("content-type"):
         response_headers["Content-Type"] = upstream.headers["content-type"]
     if upstream.headers.get("retry-after"):
         response_headers["Retry-After"] = upstream.headers["retry-after"]
     return Response(content=upstream.content, status_code=upstream.status_code, headers=response_headers)
-
 
 @app.post("/api/wardrobe/items", status_code=201)
 async def create_wardrobe_item(request: Request, payload: CreateWardrobeItemIn = Body(...)) -> Response:
