@@ -1,0 +1,50 @@
+name: Twin mesh validator checks
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "services/twin-mesh-validator/**"
+      - ".github/workflows/twin-mesh-validator.yml"
+      - "services/virtual-twin/app/generation_contract.py"
+      - "services/virtual-twin/tests/test_generation_contract.py"
+  push:
+    branches:
+      - main
+      - "integration/**"
+      - "engineering/**"
+      - "feature/**"
+    paths:
+      - "services/twin-mesh-validator/**"
+      - ".github/workflows/twin-mesh-validator.yml"
+      - "services/virtual-twin/app/generation_contract.py"
+      - "services/virtual-twin/tests/test_generation_contract.py"
+
+permissions:
+  contents: read
+
+jobs:
+  mesh-validator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/twin-mesh-validator
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: services/twin-mesh-validator/requirements.txt
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Check dependency consistency
+        run: python -m pip check
+      - name: Compile service
+        run: python -m compileall -q app tests
+      - name: Run mesh preflight tests
+        run: python -m pytest -q
+      - name: Build validator container
+        working-directory: .
+        run: docker build -f services/twin-mesh-validator/Dockerfile -t cirvanna-twin-mesh-validator:ci .
