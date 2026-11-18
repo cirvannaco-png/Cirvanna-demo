@@ -31,7 +31,8 @@ class USIExplicitAlignmentTests(unittest.TestCase):
         profile = self.profile((StylePreference("p1", "u1", "minimal"),))
         result = evaluate(profile, "item-1", ("maximalist",), candidate_attributes_complete=True)
         self.assertEqual(result.verdict, USIVerdict.BELOW_THRESHOLD)
-        self.assertEqual(result.to_cal_signal().state, SignalState.BLOCK)
+        self.assertEqual(result.to_cal_signal().state, SignalState.UNKNOWN)
+        self.assertIsNone(result.to_cal_signal().confidence)
         self.assertEqual(result.reason_code, "USI_ALIGNMENT_BELOW_THRESHOLD")
 
     def test_missing_profile_routes_to_review(self):
