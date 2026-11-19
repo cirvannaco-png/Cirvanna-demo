@@ -36,3 +36,24 @@ The release command is intentionally stricter than normal CI: ordinary pull requ
 ## Change control
 
 Gate definitions and acceptance criteria change through reviewed PRs. Do not delete a gate to make the validator pass. Any scope reduction requires explicit product and risk-owner approval and an ADR describing the revised launch boundary. A release record must be updated only after evidence is collected, not in anticipation of deployment.
+
+
+## Rollback evidence
+
+The operational rollback procedure is [release-rollback-procedure.md](../operations/release-rollback-procedure.md). It separates application rollback from database recovery and defines containment, immutable image restoration, schema compatibility, critical-path checks and independent approval.
+
+A new event must be recorded using [rollback-evidence-template.json](../operations/rollback-evidence-template.json). The template is intentionally marked not_executed; it is not evidence that a rollback has happened.
+
+Validate the evidence record:
+
+```bash
+python scripts/validate_rollback_evidence.py
+```
+
+Require a complete, passed exercise for release sign-off (this must fail until a real evidence record replaces the unexecuted template):
+
+```bash
+python scripts/validate_rollback_evidence.py --require-passed
+```
+
+The current source-control reconciliation snapshot is [pr-branch-reconciliation-2026-11-19.md](pr-branch-reconciliation-2026-11-19.md). It does not replace PR review or release-gate evidence.
