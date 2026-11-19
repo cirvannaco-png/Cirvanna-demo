@@ -71,11 +71,12 @@ def validate_rollback_evidence(document: dict[str, Any]) -> list[str]:
         return errors
 
     environment = document.get("environment")
+    scope = document.get("deployment_scope")
     candidate = document.get("candidate_release")
     target = document.get("rollback_target")
     exercise = document.get("exercise")
     database = document.get("database_recovery")
-    for name, value in (("environment", environment), ("candidate_release", candidate),
+    for name, value in (("environment", environment), ("deployment_scope", scope), ("candidate_release", candidate),
                         ("rollback_target", target), ("database_recovery", database), ("exercise", exercise)):
         if not isinstance(value, dict):
             errors.append(f"{name} must be an object")
@@ -86,6 +87,13 @@ def validate_rollback_evidence(document: dict[str, Any]) -> list[str]:
         errors.append("passed evidence requires environment.id")
     if not isinstance(environment.get("region"), str) or not environment["region"].strip():
         errors.append("passed evidence requires environment.region")
+    if not _is_reference(scope.get("service_inventory_reference")):
+        errors.append("deployment_scope.service_inventory_reference must be an https:// or evidence:// reference")
+    expected_services = scope.get("expected_service_ids")
+    if (not isinstance(expected_services, list) or not expected_services
+            or any(not isinstance(item, str) or not item.strip() for item in expected_services)
+            or len(expected_services) != len(set(expected_services))):
+        errors.append("deployment_scope.expected_service_ids must be a non-empty unique service ID array")
     for name, release in (("candidate_release", candidate), ("rollback_target", target)):
         sha = release.get("commit_sha")
         if not isinstance(sha, str) or not FULL_SHA.fullmatch(sha):
@@ -108,6 +116,10 @@ def validate_rollback_evidence(document: dict[str, Any]) -> list[str]:
     if isinstance(candidate_digests, dict) and isinstance(target_digests, dict) and candidate_digests and target_digests:
         if set(candidate_digests) != set(target_digests):
             errors.append("candidate and rollback image digest maps must cover the same service set")
+        if isinstance(expected_services, list) and expected_services:
+            expected_set = set(expected_services)
+            if set(candidate_digests) != expected_set or set(target_digests) != expected_set:
+                errors.append("candidate and rollback image digest maps must cover every expected deployment service")
 
     started = _parse_timestamp(exercise.get("started_at"))
     completed = _parse_timestamp(exercise.get("completed_at"))
