@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "repository": "cirvannaco-png/Cirvanna-demo",
+  "status": "not_executed",
+  "environment": {
+    "id": null,
+    "region": null
+  },
+  "candidate_release": {
+    "commit_sha": null,
+    "deployment_id": null,
+    "image_digests": {}
+  },
+  "rollback_target": {
+    "commit_sha": null,
+    "deployment_id": null,
+    "image_digests": {}
+  },
+  "exercise": {
+    "started_at": null,
+    "completed_at": null,
+    "trigger": null,
+    "traffic_switch_reference": null,
+    "pre_rollback_health_reference": null,
+    "post_rollback_health_reference": null,
+    "database_compatibility_or_restore_reference": null,
+    "payment_and_order_reconciliation_reference": null,
+    "consent_and_privacy_reconciliation_reference": null,
+    "monitoring_alert_reference": null,
+    "operator": null,
+    "independent_approver": null,
+    "measured_rollback_seconds": null,
+    "approved_rto_seconds": null,
+    "data_loss_observed": null,
+    "reconciliation_gap_count": null,
+    "post_rollback_checks": {
+      "service_versions": "not_run",
+      "readiness_and_dependencies": "not_run",
+      "identity_and_tenant_isolation": "not_run",
+      "discovery_usi_npl_eepl_fci_cal": "not_run",
+      "purchase_authorization_and_kill_switch": "not_run",
+      "payment_and_order_reconciliation": "not_run",
+      "consent_privacy_and_deletion": "not_run",
+      "queues_workers_and_inventory": "not_run",
+      "telemetry_and_alert_delivery": "not_run"
+    }
+  },
+  "database_recovery": {
+    "candidate_migration_revision": null,
+    "rollback_target_compatibility": "not_assessed",
+    "strategy": null,
+    "pre_release_backup_reference": null,
+    "schema_validation_reference": null,
+    "isolated_restore_reference": null,
+    "external_event_reconciliation_reference": null,
+    "measured_data_loss_seconds": null,
+    "approved_rpo_seconds": null
+  },
+  "deployment_scope": {
+    "service_inventory_reference": null,
+    "expected_service_ids": []
+  }
+}
