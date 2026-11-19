@@ -57,3 +57,14 @@ python scripts/validate_rollback_evidence.py --require-passed
 ```
 
 The current source-control reconciliation snapshot is [pr-branch-reconciliation-2026-11-19.md](pr-branch-reconciliation-2026-11-19.md). It does not replace PR review or release-gate evidence.
+
+
+## Strict release-candidate check
+
+The manual [Release candidate readiness workflow](../../.github/workflows/release-candidate-readiness.yml) assesses a supplied full commit SHA without deploying it. It checks the exact checkout, runs the source-lineage audit **without** `--allow-unreconciled`, requires all 23 gates to be passed with exact-commit evidence, and requires a real rollback exercise. It is intentionally separate from normal pull-request CI: normal architecture validation may report lineage differences during migration, but that permissive result does not pass REL-01.
+
+Run it from GitHub Actions on `main`, supplying the exact candidate SHA. The workflow is expected to fail while source mappings, release gates or rollback evidence remain incomplete.
+
+## Remediation sequence
+
+See [Production release gate remediation plan](production-gate-remediation-plan-2026-11-19.md) for gate dependencies, ordered work, evidence requirements, current infrastructure findings and stop conditions. The registry remains the machine-readable source of truth; the plan does not change any gate status.
