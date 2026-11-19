@@ -57,6 +57,7 @@ The branch listing contains 218 refs, so branch cleanup must not be based on age
 | `fix/pnelly-evaluation-reviewer-ci-current-main` | 19 / 99 | Broader evaluator + reviewer workflow; compare against the human-reviewed evaluation branch before selecting one canonical path. |
 | `feature/pnelly-outfit-evaluation-benchmark` | 163 / 136 | Mixed evaluation and stale privacy/application changes; do not merge wholesale. |
 | `feature/wardrobe-pnelly-npl-eepl` | 44 / 139 | Stale BFF/Gateway/Wardrobe integration delta; port only verified missing behavior. |
+| `release/rollback-evidence-and-pr-reconciliation-2026-11-19` | 8 / 1 | Earlier rollback/reconciliation implementation based one commit behind the post-PR-225 main; its eight-file work has been forward-ported and strengthened on `integration/rollback-pr-reconciliation-current-main` (16 / 0). Retain the old branch until the current-main PR merges, then archive/delete only after verification. |
 
 No branch was deleted in this audit. Branches with zero unique commits are cleanup candidates only after confirming there is no active collaborator, release, or external reference dependency. Remaining refs require paginated comparison before deletion.
 
