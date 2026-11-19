@@ -1005,6 +1005,10 @@ def _install_discovery_pipeline_contract_boundaries(
     )
     monkeypatch.setattr(main, "fetch_product", lambda _product_id: candidate)
     monkeypatch.setattr(main, "_load_cil_feedback_decisions", lambda _ids, _context: {})
+    # Keep the contract test fully in-process even when CI provides provider credentials.
+    # The request-local hard exclusions are still evaluated by the real NPL pipeline.
+    monkeypatch.setattr(main, "_load_cil_feedback_signals", lambda _ids, _context: ({}, "test_fixture"))
+    monkeypatch.setattr(main, "_load_persisted_npl_preferences", lambda **_kwargs: ())
     if safety_pass:
         monkeypatch.setattr(main, "_load_safety_signal", lambda product_payload, **_kwargs: pass_safety(product_payload))
     if fit_calibrated:
