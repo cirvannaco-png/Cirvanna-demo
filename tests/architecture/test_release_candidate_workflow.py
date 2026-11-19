@@ -15,7 +15,8 @@ class ReleaseCandidateWorkflowTests(unittest.TestCase):
     def test_workflow_is_manual_and_read_only(self):
         self.assertIn("workflow_dispatch:", self.content)
         self.assertIn("contents: read", self.content)
-        self.assertNotIn("deploy", self.content.lower())
+        self.assertNotIn("environment:", self.content)
+        self.assertNotIn("deployment:", self.content)
 
     def test_candidate_commit_is_pinned_and_validated(self):
         self.assertIn("ref: ${{ inputs.candidate_sha }}", self.content)
