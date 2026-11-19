@@ -97,7 +97,7 @@ class RollbackEvidenceTests(unittest.TestCase):
 
     def test_operator_cannot_be_the_only_approver(self):
         record = self.passed_record()
-        record["independent_approver"] = record["operator"]
+        record["exercise"]["independent_approver"] = record["exercise"]["operator"]
         self.assertTrue(any("must be different" in error
                             for error in validate_rollback_evidence(record)))
 
