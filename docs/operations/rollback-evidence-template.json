@@ -55,5 +55,9 @@
     "external_event_reconciliation_reference": null,
     "measured_data_loss_seconds": null,
     "approved_rpo_seconds": null
+  },
+  "deployment_scope": {
+    "service_inventory_reference": null,
+    "expected_service_ids": []
   }
 }
