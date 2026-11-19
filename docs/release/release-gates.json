@@ -10,7 +10,7 @@
       "required": true,
       "status": "blocked",
       "owner_role": "Release engineer",
-      "acceptance": "All required GitHub Actions workflows pass on the exact proposed release commit; skips and warnings are reviewed and justified.",
+      "acceptance": "All required GitHub Actions workflows pass on the exact proposed release commit; source archive, snapshot and candidate-lineage integrity checks pass, and source-content comparison is run in strict mode without --allow-unreconciled; skips and warnings are reviewed and justified.",
       "evidence_refs": [],
       "verified_commit": null
     },
