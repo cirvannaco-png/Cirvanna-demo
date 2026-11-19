@@ -36,6 +36,8 @@ jobs:
         run: python scripts/validate_source_boundaries.py
       - name: Validate canonical deployment inventory
         run: python scripts/validate_canonical_stack.py
+      - name: Validate rollback evidence record structure
+        run: python scripts/validate_rollback_evidence.py
       - name: Validate production release gate registry
         run: python scripts/validate_release_gates.py
       - name: Run architecture tests
