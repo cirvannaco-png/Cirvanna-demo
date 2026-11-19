@@ -15,12 +15,12 @@
 
 Before promoting a candidate, the release owner must record and verify:
 
-- exact release commit SHA and immutable image digest for every deployed service;
-- exact previous known-good commit SHA and immutable image digest for every service in the rollback set;
+- exact release commit SHA and immutable image digest for every deployed service, recorded as a service-ID → `sha256:` digest map;
+- exact previous known-good commit SHA and immutable image digest for every service in the rollback set; candidate and rollback maps must cover the same service inventory;
 - deployment and environment identifiers, region, service inventory, and current traffic-routing configuration;
 - configuration and secret-version references (never secret values), feature-flag state, queue/worker version, and migration revision;
-- compatibility statement proving the previous application can safely run against the post-deploy schema;
-- latest encrypted backup reference, backup timestamp, retention class, restore-point window, and successful isolated restore reference;
+- candidate migration revision, explicit rollback-target schema compatibility decision, and the chosen database strategy (`backward_compatible_application_rollback`, `forward_fix`, or `point_in_time_restore`);
+- latest encrypted pre-release backup reference, backup timestamp, retention class, restore-point window, schema-validation reference, external-event reconciliation reference, and isolated restore reference whenever point-in-time restore is selected;
 - owner for application rollback, database recovery, payments, privacy, and incident command;
 - approved RPO/RTO and tested health checks for the exact deployment topology.
 
@@ -87,7 +87,7 @@ A successful HTTP health response alone is insufficient.
 
 Complete a copy of rollback-evidence-template.json for each exercised environment and rollback event. The record must include:
 
-- full candidate and rollback commit SHAs;
+- full candidate and rollback commit SHAs;\n- a per-service map of candidate and rollback immutable image digests covering the same service inventory;\n- database migration revision, recovery strategy, schema compatibility proof, backup/restore proof, external-event reconciliation, measured data-loss interval and approved RPO;
 - immutable candidate and rollback image digests;
 - environment/deployment identifiers;
 - trigger, start/end timestamps, and traffic-switch reference;
