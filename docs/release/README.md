@@ -42,7 +42,7 @@ Gate definitions and acceptance criteria change through reviewed PRs. Do not del
 
 The operational rollback procedure is [release-rollback-procedure.md](../operations/release-rollback-procedure.md). It separates application rollback from database recovery and defines containment, immutable image restoration, schema compatibility, critical-path checks and independent approval.
 
-A new event must be recorded using [rollback-evidence-template.json](../operations/rollback-evidence-template.json). The template is intentionally marked not_executed; it is not evidence that a rollback has happened.
+A new event must be recorded using [rollback-evidence-template.json](../operations/rollback-evidence-template.json). The template is intentionally marked not_executed; it is not evidence that a rollback has happened. A passed record requires the exact service inventory, a distinct immutable SHA-256 image digest per service for both releases, an explicit database recovery strategy, schema compatibility/restore and external-event reconciliation evidence, measured RPO/RTO, and independent approval.
 
 Validate the evidence record:
 
