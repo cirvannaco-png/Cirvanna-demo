@@ -948,3 +948,223 @@ def test_complementer_returns_only_advisory_for_verified_customer(client, monkey
     assert response.json()["mode"] == "advisory_only"
     assert captured["payload"].user_id == "verified-customer-42"
     assert captured["payload"].look["description"] == "navy trousers and cream knit"
+
+
+def _install_discovery_pipeline_contract_boundaries(
+    monkeypatch, *, safety_pass: bool = True, fit_calibrated: bool = True
+):
+    """Stub only external identity/catalog/provider edges; execute real USI/NPL/CAL logic."""
+    from datetime import datetime, timezone
+
+    from usi import StylePreference, USIProfile
+
+    subject = "user-test-1"
+    candidate = product()
+    merchant_offer = {
+        "catalog_product_id": PRODUCT_ID,
+        "merchant_id": "merchant-test-1",
+        "merchant_name": "Test merchant",
+        "listing_id": "listing-test-1",
+        "variant_id": "variant-test-1",
+        "sku": "CIRVANNA-TEST-1",
+        "canonical_variant_id": "a1c3ce84-3d67-4eac-95c1-49b6fe3d1a20",
+        "price_minor": 150000,
+        "currency": "KES",
+        "available_stock": 4,
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    profile = USIProfile(
+        profile_id="usi-profile-test-1",
+        user_id=subject,
+        version="usi-contract-test-v1",
+        preferences=(StylePreference("style-minimal", subject, "minimal", 1.0),),
+    )
+
+    monkeypatch.setenv("CIRVANNA_REQUIRE_VERIFIED_IDENTITY", "true")
+    monkeypatch.setenv("CIRVANNA_ENVIRONMENT", "development")
+    monkeypatch.setenv("CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED", "false")
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda _token: subject)
+    monkeypatch.setattr(main, "_load_verified_usi_profile", lambda _subject, **_kwargs: profile)
+    monkeypatch.setattr(
+        main,
+        "_fresh_context_for_eepl",
+        lambda context, strict: (
+            context,
+            {
+                "location": {"status": "legacy_explicit_value"},
+                "occasion": {"status": "legacy_explicit_value"},
+                "climate": {"status": "legacy_explicit_value"},
+                "strict": strict,
+            },
+        ),
+    )
+    monkeypatch.setattr(
+        main,
+        "_discover_catalog_and_offers",
+        lambda _payload: ([candidate], [merchant_offer]),
+    )
+    monkeypatch.setattr(main, "fetch_product", lambda _product_id: candidate)
+    monkeypatch.setattr(main, "_load_cil_feedback_decisions", lambda _ids, _context: {})
+    # Keep the contract test fully in-process even when CI provides provider credentials.
+    # The request-local hard exclusions are still evaluated by the real NPL pipeline.
+    monkeypatch.setattr(main, "_load_cil_feedback_signals", lambda _ids, _context: ({}, "test_fixture"))
+    monkeypatch.setattr(main, "_load_persisted_npl_preferences", lambda **_kwargs: ())
+    if safety_pass:
+        monkeypatch.setattr(main, "_load_safety_signal", lambda product_payload, **_kwargs: pass_safety(product_payload))
+    if fit_calibrated:
+        monkeypatch.setattr(main, "_load_fci_estimate", lambda user_id, product_id, *_args: calibrated_fit(user_id, product_id))
+        monkeypatch.setattr(
+            main,
+            "_fit_evidence_fields",
+            lambda _estimate: (
+                ("body_measurements", "garment_size_chart", "garment_geometry"),
+                ("body_measurements", "garment_size_chart", "garment_geometry"),
+            ),
+        )
+    return candidate, merchant_offer
+
+
+def _discovery_payload(**overrides):
+    payload = {
+        "user_id": "user-test-1",
+        "query": "minimal cotton shirt",
+        "category": "shirt",
+        "currency": "KES",
+        "market_country_code": "KE",
+        "display_currency": "KES",
+        "limit": 10,
+        "context": {
+            "age_years": 25,
+            "location": "Nairobi",
+            "occasion": "everyday",
+            "climate": "warm",
+        },
+        "use_wardrobe_context": False,
+        "negative_preferences": [],
+        "cultural_requirements": [],
+        "hard_constraints": [],
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_discovery_runs_real_cal_pipeline_before_releasing_catalog_and_offer_details(
+    client, monkeypatch
+):
+    """The only doubles are the external identity/catalog/model/CIL provider boundaries."""
+    candidate, offer = _install_discovery_pipeline_contract_boundaries(monkeypatch)
+
+    response = client.post(
+        "/v1/discover",
+        json=_discovery_payload(),
+        headers={
+            **auth_headers(),
+            "X-End-User-Authorization": "Bearer signed-customer-session",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["display_authority"] == "CaTaCaCi/CAL"
+    assert result["ranked_candidate_count"] == 1
+    assert result["display_rule"].startswith("Only candidates with CAL SHOW")
+    assert len(result["displayable_products"]) == 1
+    item = result["displayable_products"][0]
+    assert item["product"]["product_id"] == candidate["product_id"]
+    assert item["product"]["name"] == candidate["name"]
+    assert item["offer"]["merchant_id"] == offer["merchant_id"]
+    assert item["offer"]["price_minor"] == offer["price_minor"]
+    assert item["decision"]["verdict"] == "show"
+    assert item["decision"]["may_display"] is True
+    assert item["cil_serving_assessment"]["status"] == "eligible"
+    # A CAL SHOW decision does not independently authorize unverified product media.
+    assert item["product"].get("image_urls", []) == []
+
+
+def test_discovery_npl_hard_exclusion_withholds_product_and_offer_details(
+    client, monkeypatch
+):
+    candidate, offer = _install_discovery_pipeline_contract_boundaries(monkeypatch)
+    candidate["attributes"] = {
+        "style": "minimal",
+        "material": "cotton",
+        "color": "blue",
+    }
+    payload = _discovery_payload(
+        negative_preferences=[{
+            "preference_id": "never-blue",
+            "target_type": "attribute",
+            "target_value": "blue",
+        }]
+    )
+
+    response = client.post(
+        "/v1/discover",
+        json=payload,
+        headers={
+            **auth_headers(),
+            "X-End-User-Authorization": "Bearer signed-customer-session",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["ranked_candidate_count"] == 1
+    assert result["displayable_products"] == []
+    withheld = result["withheld_candidate_ids"]
+    assert len(withheld) == 1
+    assert withheld[0]["product_id"] == candidate["product_id"]
+    assert withheld[0]["decision"] == "block"
+    assert withheld[0]["reason_code"] == "CAL_DISPLAY_NOT_AUTHORIZED"
+    assert offer["merchant_id"] not in response.text
+    assert candidate["name"] not in response.text
+
+
+@pytest.mark.parametrize("missing_provider", ["safety", "fci"])
+def test_discovery_fails_closed_when_safety_or_fci_evidence_is_missing(
+    client, monkeypatch, missing_provider
+):
+    _install_discovery_pipeline_contract_boundaries(
+        monkeypatch,
+        safety_pass=missing_provider != "safety",
+        fit_calibrated=missing_provider != "fci",
+    )
+
+    response = client.post(
+        "/v1/discover",
+        json=_discovery_payload(),
+        headers={
+            **auth_headers(),
+            "X-End-User-Authorization": "Bearer signed-customer-session",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["ranked_candidate_count"] == 1
+    assert result["displayable_products"] == []
+    assert len(result["withheld_candidate_ids"]) == 1
+    assert result["withheld_candidate_ids"][0]["decision"] == "review"
+    assert result["withheld_candidate_ids"][0]["reason_code"] == "CAL_DISPLAY_NOT_AUTHORIZED"
+
+
+def test_discovery_rejects_subject_mismatch_before_catalog_retrieval(client, monkeypatch):
+    monkeypatch.setenv("CIRVANNA_REQUIRE_VERIFIED_IDENTITY", "true")
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda _token: "verified-customer-42")
+    monkeypatch.setattr(
+        main,
+        "_discover_catalog_and_offers",
+        lambda _payload: pytest.fail("Catalog retrieval must not run for a mismatched customer"),
+    )
+
+    response = client.post(
+        "/v1/discover",
+        json=_discovery_payload(),
+        headers={
+            **auth_headers(),
+            "X-End-User-Authorization": "Bearer signed-customer-session",
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "REQUEST_SUBJECT_MISMATCH"
