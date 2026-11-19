@@ -22,6 +22,10 @@ class RollbackEvidenceTests(unittest.TestCase):
         record["status"] = "passed"
         record["environment"]["id"] = "staging-rollback-drill-01"
         record["environment"]["region"] = "approved-test-region"
+        record["deployment_scope"] = {
+            "service_inventory_reference": "evidence://rollback/service-inventory",
+            "expected_service_ids": ["api-gateway", "commerce-service"],
+        }
         record["candidate_release"] = {
             "commit_sha": "a" * 40,
             "deployment_id": "deploy-candidate-01",
@@ -94,6 +98,12 @@ class RollbackEvidenceTests(unittest.TestCase):
         record = self.passed_record()
         record["rollback_target"]["image_digests"].pop("commerce-service")
         self.assertTrue(any("same service set" in error for error in validate_rollback_evidence(record)))
+
+    def test_image_digest_maps_must_cover_every_expected_service(self):
+        record = self.passed_record()
+        record["candidate_release"]["image_digests"].pop("commerce-service")
+        self.assertTrue(any("every expected deployment service" in error
+                            for error in validate_rollback_evidence(record)))
 
     def test_operator_cannot_be_the_only_approver(self):
         record = self.passed_record()
