@@ -20,6 +20,12 @@ class ReleaseGateValidationTests(unittest.TestCase):
     def test_repository_registry_is_structurally_valid(self):
         self.assertEqual(validate_release_gates(self.document), [])
 
+    def test_rel_01_requires_strict_source_lineage(self):
+        rel01 = next(gate for gate in self.document["gates"] if gate["id"] == "REL-01")
+        self.assertIn("audit_source_lineage.py", rel01["acceptance"])
+        self.assertIn("strict mode", rel01["acceptance"])
+        self.assertIn("--allow-unreconciled", rel01["acceptance"])
+
     def test_passed_gate_requires_evidence_and_exact_commit(self):
         document = copy.deepcopy(self.document)
         document["gates"][0]["status"] = "passed"
