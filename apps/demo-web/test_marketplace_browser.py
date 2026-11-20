@@ -89,7 +89,7 @@ class MarketplaceBrowserTests(unittest.TestCase):
         self.assertTrue(self.page.get_by_role("dialog").get_by_role("button", name="Checkout unavailable").is_disabled())
 
 
-    def _open_live_marketplace(self, cart_status=503):
+    def _open_live_marketplace(self, cart_status=503, image_urls=None):
         page = self.browser.new_page()
         page.add_init_script("""
             // Set bootstrap first: this script may run for the initial opaque about:blank document.
@@ -129,7 +129,7 @@ class MarketplaceBrowserTests(unittest.TestCase):
             "price_minor": 1200,
             "currency": "KES",
             "category": "Beauty",
-            "image_urls": [],
+            "image_urls": image_urls if image_urls is not None else [],
             "available_stock": 4,
             "options": {}
         }
@@ -193,6 +193,23 @@ class MarketplaceBrowserTests(unittest.TestCase):
             dialog = page.get_by_role("dialog")
             self.assertTrue(dialog.get_by_role("button", name="Continue to secure checkout").is_enabled())
             self.assertIn("Every cart view, change and checkout is reauthorized by CAL.", dialog.inner_text())
+        finally:
+            page.close()
+
+
+    def test_live_marketplace_never_renders_unapproved_external_media_urls(self):
+        page = self._open_live_marketplace(
+            cart_status=503,
+            image_urls=["https://cdn.example.test/unapproved-person-photo.jpg"],
+        )
+        try:
+            self.assertEqual(page.locator(".card").count(), 1)
+            self.assertEqual(page.locator(".card img").count(), 0)
+            self.assertEqual(page.locator(".card .placeholder").count(), 1)
+            rendered_media = page.locator(".card").evaluate(
+                "(node) => node.querySelector('img, video, source')?.outerHTML || null"
+            )
+            self.assertIsNone(rendered_media)
         finally:
             page.close()
 
