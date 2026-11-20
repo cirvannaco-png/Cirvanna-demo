@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -157,29 +158,30 @@ def test_public_static_media_mount_is_fixed_to_repository_owned_portal_assets():
     # Inventory every StaticFiles mount in every service, not only the BFF
     # currently known to expose public portal assets.
     mounts = []
-    for source_path in sorted(SERVICES.rglob("*.py")):
-        relative_parts = source_path.relative_to(SERVICES).parts
-        if {"tests", "migrations", "__pycache__"}.intersection(relative_parts):
-            continue
-        module = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
-        for node in ast.walk(module):
-            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+    for source_root in (SERVICES, ROOT / "apps"):
+        for source_path in sorted(source_root.rglob("*.py")):
+            relative_parts = source_path.relative_to(source_root).parts
+            if {"tests", "migrations", "__pycache__", "node_modules"}.intersection(relative_parts):
                 continue
-            if node.func.attr != "mount" or len(node.args) < 2:
-                continue
-            app_expression = node.args[1]
-            uses_static_files = any(
-                isinstance(item, ast.Name) and item.id == "StaticFiles"
-                for item in ast.walk(app_expression)
-            )
-            if not uses_static_files:
-                continue
-            route = _route_path(node)
-            uses_fixed_portal_directory = any(
-                isinstance(item, ast.Name) and item.id == "PORTAL_ASSETS_DIR"
-                for item in ast.walk(app_expression)
-            )
-            mounts.append((source_path.relative_to(ROOT).as_posix(), route, uses_fixed_portal_directory))
+            module = ast.parse(source_path.read_text(encoding="utf-8"), filename=str(source_path))
+            for node in ast.walk(module):
+                if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+                    continue
+                if node.func.attr != "mount" or len(node.args) < 2:
+                    continue
+                app_expression = node.args[1]
+                uses_static_files = any(
+                    isinstance(item, ast.Name) and item.id == "StaticFiles"
+                    for item in ast.walk(app_expression)
+                )
+                if not uses_static_files:
+                    continue
+                route = _route_path(node)
+                uses_fixed_portal_directory = any(
+                    isinstance(item, ast.Name) and item.id == "PORTAL_ASSETS_DIR"
+                    for item in ast.walk(app_expression)
+                )
+                mounts.append((source_path.relative_to(ROOT).as_posix(), route, uses_fixed_portal_directory))
 
     assert mounts == [("services/marketplace-bff/app/main.py", "/assets", True)], (
         "Every public StaticFiles mount must be explicitly inventoried and limited "
@@ -387,3 +389,90 @@ def test_binary_image_response_routes_are_private_owner_or_worker_scoped_and_no_
             assert "person_image.read" in body and "garment_image.read" in body
             assert 'media_type="image/png"' in body
             assert "put_object" not in body and "generate_presigned_url" not in body
+
+def test_active_runtime_does_not_generate_direct_object_store_urls():
+    """User-originated and derived media must not leave storage via public presigned URLs."""
+    forbidden_tokens = (
+        "generate_presigned_url",
+        "X-Amz-Signature=",
+        "AWSAccessKeyId=",
+    )
+    roots = (SERVICES, ROOT / "apps")
+    suffixes = {".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".html"}
+    offenders = []
+    for source_root in roots:
+        for source_path in sorted(source_root.rglob("*")):
+            if not source_path.is_file() or source_path.suffix.casefold() not in suffixes:
+                continue
+            relative_parts = source_path.relative_to(source_root).parts
+            if {"tests", "migrations", "__pycache__", "node_modules", "dist", "build"}.intersection(relative_parts):
+                continue
+            source = source_path.read_text(encoding="utf-8", errors="ignore")
+            for token in forbidden_tokens:
+                if token in source:
+                    offenders.append(f"{source_path.relative_to(ROOT).as_posix()} contains {token}")
+    assert offenders == [], (
+        "Active application code must use opaque Asset Service identifiers and private "
+        "authenticated reads, not direct object-store URLs: " + "; ".join(offenders)
+    )
+
+
+def test_binary_media_inventory_is_complete_and_fail_closed():
+    """Track the current allowed public static root and all unverified external origins."""
+    inventory_path = ROOT / "infrastructure" / "deployment" / "media-delivery-inventory.json"
+    inventory = json.loads(inventory_path.read_text(encoding="utf-8"))
+    assert inventory["schema_version"] == 1
+    assert inventory["release_gate"] == "REL-14"
+    assert inventory["issue"] == 121
+    assert inventory["status"] == "blocked"
+
+    public_routes = inventory["public_binary_delivery"]
+    assert len(public_routes) == 1
+    portal = public_routes[0]
+    assert portal["route"] == "/assets/*"
+    assert portal["source_root"] == "apps/demo-web/assets"
+    assert portal["allows_user_originated_media"] is False
+    assert portal["allows_uploaded_or_derived_media"] is False
+    assert portal["symlinks_allowed"] is False
+
+    private_routes = {
+        item["route"]: item for item in inventory["private_binary_delivery"]
+    }
+    assert "/internal/v1/assets/{asset_id}/content" in private_routes
+    assert private_routes["/internal/v1/assets/{asset_id}/content"]["authentication"] == "internal_bearer"
+    assert private_routes["/internal/v1/assets/{asset_id}/content"]["public_url_or_presigned_url"] is False
+    assert private_routes["/internal/v1/assets/{asset_id}/content"]["cache_control"] == "no-store, private"
+    assert "/v1/render" in private_routes
+    assert private_routes["/v1/render"]["persistence"] is False
+    assert private_routes["/v1/render"]["customer_publication"] is False
+
+    origins = inventory["external_origins"]
+    assert origins["private_object_storage"]["production_configured"] is False
+    assert origins["private_object_storage"]["live_staging_origin_probe_verified"] is False
+    assert origins["cdn_and_origin"]["production_configured"] is False
+    assert origins["cdn_and_origin"]["anonymous_origin_read_probe_verified"] is False
+    assert origins["cdn_and_origin"]["cdn_cache_revocation_verified"] is False
+    assert origins["legacy_public_object_urls"]["all_origins_enumerated"] is False
+    assert origins["legacy_public_object_urls"]["revocation_verified"] is False
+    assert all(value is False for value in inventory["deletion_propagation"].values())
+
+    stack = json.loads((ROOT / "infrastructure" / "deployment" / "canonical-stack.json").read_text(encoding="utf-8"))
+    providers = {provider["id"]: provider for provider in stack["providers"]}
+    for provider_id in ("private_object_storage", "content_lifecycle_provider"):
+        provider = providers[provider_id]
+        assert provider["configured_for_production"] is False
+        assert provider["operationally_verified"] is False
+    services = {service["id"]: service for service in stack["services"]}
+    for service_id in ("asset-service", "privacy-governance-service"):
+        assert services[service_id]["production_enabled"] is False
+        assert services[service_id]["exposure"] == "private_api"
+
+
+def test_marketplace_browser_does_not_render_api_supplied_media_urls():
+    """Defense in depth: even a future BFF serialization regression stays non-rendering."""
+    page = ROOT / "apps" / "demo-web" / "marketplace.html"
+    source = page.read_text(encoding="utf-8")
+    assert 'const image=\'<div class="placeholder" aria-hidden="true">C.</div>\';' in source
+    assert "p.image_urls[0]" not in source
+    assert 'src="\'+escapeHtml(p.image_urls[0])' not in source
+
