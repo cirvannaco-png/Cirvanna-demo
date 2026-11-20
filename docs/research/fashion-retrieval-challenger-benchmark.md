@@ -200,7 +200,29 @@ A logic transfer may be marked VALIDATED_FOR_SCOPED_PILOT only when it beats the
 
 Stop and mark BLOCKED when provenance, commercial rights, dataset rights, model weights, compute, ground truth, human-review capacity, privacy approval or exact baseline reproducibility is missing. Do not interpret a blocked run as a failed model or a successful model.
 
-## 10. Current status
+## 10. Executable ranking evaluator
+
+The repository now includes a standard-library ranking evaluator at
+`tools/model_evaluation/fashion_retrieval/evaluate_retrieval.py`, with its
+input contract and run instructions in the adjacent README and tests under
+`tests/model_evaluation`.
+
+The evaluator consumes precomputed rankings and independently reviewed graded
+qrels for the same query IDs and candidate universe. It computes Recall@k,
+Precision@k, MRR@k, nDCG@k, top-1 hit rate, no-result rate, top-k fill,
+candidate coverage, hard-exclusion violations, paired challenger-minus-baseline
+deltas, cluster-bootstrap 95% intervals, and task-grounded subgroup reports.
+It rejects mixed tasks, inconsistent model sets, out-of-pool results, invalid
+grades, and malformed exclusions.
+
+This is an evaluation component, not a model runner. It does not download model
+weights, fetch images, create human labels, verify licences, or claim that any
+model inference has run. The next implementation step is to build pinned
+inference adapters that produce the same JSONL contract, then run them against
+a rights-cleared frozen catalogue and human-reviewed qrels. Its CI workflow
+compiles the evaluator, runs the unit suite, and checks the CLI.
+
+## 11. Current status
 
 - Cirvanna baseline and route semantics have been inspected in services/vision-intelligence/app/main.py.
 - The current FashionCLIP pin is recorded above; the model is not production-validated.
