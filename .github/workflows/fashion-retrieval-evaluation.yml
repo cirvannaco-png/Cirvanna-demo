@@ -1,0 +1,34 @@
+name: Fashion retrieval evaluator
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "tools/model_evaluation/fashion_retrieval/**"
+      - "tests/model_evaluation/**"
+      - ".github/workflows/fashion-retrieval-evaluation.yml"
+  push:
+    branches: [main, "research/**"]
+    paths:
+      - "tools/model_evaluation/fashion_retrieval/**"
+      - "tests/model_evaluation/**"
+      - ".github/workflows/fashion-retrieval-evaluation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  evaluator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile evaluator
+        run: python -m py_compile tools/model_evaluation/fashion_retrieval/evaluate_retrieval.py
+      - name: Run evaluator tests
+        run: python -m unittest discover -s tests/model_evaluation -v
+      - name: Validate CLI
+        run: python tools/model_evaluation/fashion_retrieval/evaluate_retrieval.py --help
