@@ -205,6 +205,7 @@ def _decode_image(data: bytes, content_type: str) -> Image.Image:
 def _render(
     person: Image.Image, garment: Image.Image, category: str, garment_photo_type: str
 ) -> bytes:
+    generated_images: list[Image.Image] | tuple[Image.Image, ...] | None = None
     try:
         result = _pipeline()(
             person_image=person,
@@ -212,22 +213,37 @@ def _render(
             category=CATEGORY_MAP[category],
             garment_photo_type=garment_photo_type,
         )
-        output = result.images[0]
+        images = getattr(result, "images", None)
+        if not isinstance(images, (list, tuple)) or not images:
+            raise ValueError("renderer returned no image")
+        generated_images = images
+        output = images[0]
         if not isinstance(output, Image.Image):
             raise ValueError("renderer did not return a PIL image")
         if output.width < 64 or output.height < 64 or output.width * output.height > MAX_IMAGE_PIXELS:
             raise ValueError("renderer output dimensions are invalid")
-        stream = io.BytesIO()
-        output.convert("RGB").save(stream, format="PNG", optimize=True)
-        encoded = stream.getvalue()
+        with io.BytesIO() as stream:
+            normalized = output.convert("RGB")
+            try:
+                normalized.save(stream, format="PNG", optimize=True)
+                encoded = stream.getvalue()
+            finally:
+                normalized.close()
         if not encoded or len(encoded) > MAX_IMAGE_BYTES:
             raise ValueError("renderer output size is invalid")
         # Re-decode bytes so the worker never returns malformed encoded output.
-        with Image.open(io.BytesIO(encoded)) as check:
-            check.verify()
+        with io.BytesIO(encoded) as verification_buffer:
+            with Image.open(verification_buffer) as check:
+                check.verify()
         return encoded
     except Exception as exc:
         raise HTTPException(502, detail={"code": "INFERENCE_FAILED"}) from exc
+    finally:
+        # Release every image returned by the request-local model pipeline.
+        if generated_images is not None:
+            for generated in generated_images:
+                if isinstance(generated, Image.Image):
+                    generated.close()
 
 
 @app.get("/health", tags=["operations"])
@@ -294,26 +310,36 @@ async def render(
         await person_image.close()
         await garment_image.close()
     person = _decode_image(person_bytes, person_type)
-    garment = _decode_image(garment_bytes, garment_type)
-    if not _INFERENCE_SLOT.acquire(blocking=False):
-        raise HTTPException(
-            429,
-            detail={"code": "GPU_WORKER_BUSY", "retryable": True},
-            headers={"Retry-After": "2"},
-        )
+    garment: Image.Image | None = None
     try:
-        output = await run_in_threadpool(
-            _render, person, garment, category, garment_photo_type
+        garment = _decode_image(garment_bytes, garment_type)
+        # Drop encoded request buffers once their bounded decoded images exist.
+        del person_bytes
+        del garment_bytes
+        if not _INFERENCE_SLOT.acquire(blocking=False):
+            raise HTTPException(
+                429,
+                detail={"code": "GPU_WORKER_BUSY", "retryable": True},
+                headers={"Retry-After": "2"},
+            )
+        try:
+            output = await run_in_threadpool(
+                _render, person, garment, category, garment_photo_type
+            )
+        finally:
+            _INFERENCE_SLOT.release()
+        return Response(
+            content=output,
+            media_type="image/png",
+            headers={
+                "Cache-Control": "no-store, private",
+                "X-Cirvanna-Renderer": SERVICE,
+                "X-Cirvanna-Model-Commit": PINNED_FASHN_VTON_COMMIT,
+            },
         )
     finally:
-        _INFERENCE_SLOT.release()
-    return Response(
-        content=output,
-        media_type="image/png",
-        headers={
-            "Cache-Control": "no-store, private",
-            "X-Cirvanna-Renderer": SERVICE,
-            "X-Cirvanna-Model-Commit": PINNED_FASHN_VTON_COMMIT,
-        },
-    )
+        # Decoded person and garment uploads are request-scoped working data.
+        person.close()
+        if garment is not None:
+            garment.close()
 

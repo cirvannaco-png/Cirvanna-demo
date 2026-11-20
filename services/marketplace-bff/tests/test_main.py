@@ -41,6 +41,20 @@ def test_marketplace_pnelly_search_uses_wardrobe_cil_path_and_complementer_advis
     assert 'id="aiDiscoveryResults"' in response.text
     assert '"/api/wardrobe/recommendations"' in response.text
     assert '"/api/vision/complementer"' in response.text
+    assert 'id="pnellyConversationConsent"' in response.text
+    assert 'window.addEventListener("cirvanna:session-ready"' in response.text
+    assert 'function acceptMarketplaceSession(token)' in response.text
+    assert 'if(config.userToken&&pnellyConversationId)' in response.text
+    assert 'previous_conversation_revocation_unconfirmed' in response.text
+    assert 'Its structured context remains bound to that account and expires within 24 hours' in response.text
+    assert 'bootstrap.publicOffersBase.replace(/\\/$/,"")' in response.text
+    assert 'id="pnellyStartConversationBtn"' in response.text
+    assert 'id="pnellyEndConversationBtn"' in response.text
+    assert '"/api/wardrobe/pnelly/conversations"' in response.text
+    assert 'body.conversation_id=pnellyConversationId' in response.text
+    assert 'body.conversation_turn_id="pnelly-turn-"+crypto.randomUUID()' in response.text
+    assert 'raw_transcript_stored!==false' in response.text
+    assert 'localStorage.setItem("cirvanna-pnelly-conversation"' not in response.text
     assert "CAL SHOW" in response.text
     assert "wardrobe-aware marketplace" in response.text
     # Click It stays explicitly unavailable while its publication lifecycle remains unverified.

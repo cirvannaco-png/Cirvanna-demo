@@ -297,6 +297,12 @@ footer{
         <button class="btn primary wide" id="aiSearchBtn">Search my wardrobe-aware marketplace</button>
       </div>
       <div class="ai-status" id="aiSearchStatus" role="status" aria-live="polite">Connect a signed-in customer session. Search is fail-closed if Wardrobe, NPL, Catalog, Commerce, CAL or required CIL evidence is unavailable.</div>
+      <label class="consent-line wide"><input id="pnellyConversationConsent" type="checkbox"><span>Optional conversational continuity: retain only structured discovery context (your latest query and selected constraints) for up to 24 hours. No raw chat transcript or image is stored. You can end and delete this context at any time.</span></label>
+      <div class="ai-controls">
+        <button class="btn" id="pnellyStartConversationBtn" type="button" disabled>Enable 24-hour continuity</button>
+        <button class="btn" id="pnellyEndConversationBtn" type="button" disabled>End and delete context</button>
+      </div>
+      <div class="ai-status" id="pnellyConversationStatus" role="status" aria-live="polite">Continuity is off. Each discovery request is handled independently unless you explicitly enable it.</div>
       <div id="aiDiscoveryResults" class="ai-discovery-results" aria-live="polite"></div>
     </section>
     <section class="ai-panel" aria-labelledby="complementerTitle">
@@ -359,6 +365,9 @@ footer{
   let activeComplementerRequestId = null;
   let complementerConsentReceiptId = null;
   let complementerFeedbackSubmitted = false;
+  // Conversation identifiers are deliberately page-memory-only.
+  let pnellyConversationId = null;
+  let pnellyConversationStateVersion = null;
   let saved = readStore("cirvanna-marketplace-saved"), cart = readStore("cirvanna-marketplace-bag");
   function readStore(key){try{return JSON.parse(localStorage.getItem(key)||"[]")}catch{return []}}
   function writeStore(){localStorage.setItem("cirvanna-marketplace-saved",JSON.stringify(saved));localStorage.setItem("cirvanna-marketplace-bag",JSON.stringify(cart));updateCounts()}
@@ -546,9 +555,8 @@ footer{
       const token=$("commerceToken").value.trim();
       if(!token){alert("Enter your signed Cirvanna user session token.");return}
       if(!bootstrap.publicOffersBase){setStatus("The same-origin Cirvanna Marketplace BFF is not configured on this page.",true);alert("The same-origin Cirvanna Marketplace BFF is not configured.");return}
-      config={base:"",token:"",commerceBase:bootstrap.publicOffersBase.replace(/\/$/,""),userToken:token};
+      closeDrawer();
       window.dispatchEvent(new CustomEvent("cirvanna:session-ready",{detail:{accessToken:token,source:"marketplace"}}));
-      forceDemo=false;page=0;closeDrawer();load();
     }
     if(e.target.id==="checkoutBtn"){
       if(mode!=="commerce"||!config.commerceBase||!config.userToken||!purchaseEnabled){setStatus(purchaseMessage,true);return}
@@ -586,6 +594,128 @@ footer{
 
   function setAiStatus(id,message,error=false){const el=$(id);el.textContent=message;el.classList.toggle("error",error)}
   function setAiBusy(id,busy,label){const el=$(id);el.disabled=busy;if(label)el.textContent=label}
+  function updatePnellyConversationControls(){
+    const active=Boolean(pnellyConversationId);
+    $("pnellyStartConversationBtn").disabled=!config.userToken||!$("pnellyConversationConsent").checked||active;
+    $("pnellyEndConversationBtn").disabled=!config.userToken||!active;
+    $("pnellyStartConversationBtn").textContent=active?"Continuity enabled":"Enable 24-hour continuity";
+  }
+  async function acceptMarketplaceSession(token){
+    if(typeof token!=="string"||token.trim().length<12)return false;
+    const nextToken=token.trim();
+    if(!bootstrap.publicOffersBase){
+      setStatus("The same-origin Cirvanna Marketplace BFF is not configured; the signed-in session was not attached.",true);
+      return false;
+    }
+    if(config.userToken===nextToken)return true;
+    // Conversation state is scoped to the previous signed-in subject. Revoke
+    // it with the old token before attaching a different customer's session.
+    if(config.userToken&&pnellyConversationId){
+      const previousConversationId=pnellyConversationId;
+      try{
+        const response=await fetch("/api/wardrobe/pnelly/conversations/"+encodeURIComponent(previousConversationId),{
+          method:"DELETE",
+          headers:{Authorization:"Bearer "+config.userToken,Accept:"application/json"},
+          cache:"no-store"
+        });
+        const data=await response.json().catch(()=>({}));
+        if(!response.ok||data.status!=="deleted"||data.conversation_id!==previousConversationId||data.consent_inactive!==true){
+          throw new Error((data.detail&&data.detail.code)||"previous_conversation_revocation_unconfirmed");
+        }
+        setAiStatus("pnellyConversationStatus","Previous account conversation deleted and its consent revoked during account switching.");
+      }catch(_error){
+        setAiStatus("pnellyConversationStatus","The previous account's conversation could not be deleted during account switching. Its structured context remains bound to that account and expires within 24 hours; reconnect that account to retry deletion.",true);
+      }
+      pnellyConversationId=null;pnellyConversationStateVersion=null;
+      $("pnellyConversationConsent").checked=false;
+    }
+    config={base:"",token:"",commerceBase:bootstrap.publicOffersBase.replace(/\/$/,""),userToken:nextToken};
+    forceDemo=false;page=0;
+    updatePnellyConversationControls();
+    load();
+    return true;
+  }
+  // The host OIDC/session bootstrap and the developer-only test connector use
+  // the same same-origin, server-verified customer-token handoff.
+  window.addEventListener("cirvanna:session-ready",event=>{
+    const detail=event&&event.detail;
+    if(detail)void acceptMarketplaceSession(detail.accessToken);
+  });
+  async function startPnellyConversation(){
+    if(!config.userToken){setAiStatus("pnellyConversationStatus","Connect a signed-in customer session before enabling continuity.",true);return}
+    if(!$("pnellyConversationConsent").checked){setAiStatus("pnellyConversationStatus","Select the optional continuity consent before enabling it.",true);return}
+    setAiBusy("pnellyStartConversationBtn",true,"Enabling…");
+    $("pnellyConversationConsent").disabled=true;
+    try{
+      const response=await fetch("/api/wardrobe/pnelly/conversations",{
+        method:"POST",
+        headers:{Authorization:"Bearer "+config.userToken,Accept:"application/json"},
+        cache:"no-store"
+      });
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok)throw new Error((data.detail&&data.detail.code)||("Conversation setup returned HTTP "+response.status+"."));
+      if(!["created","replayed"].includes(data.status)||typeof data.conversation_id!=="string"||
+         !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(data.conversation_id)||
+         data.raw_transcript_stored!==false||data.stored_data!=="structured_discovery_context_only"||data.retention_hours!==24||
+         !Number.isFinite(Date.parse(data.expires_at))||Date.parse(data.expires_at)<=Date.now()||
+         Date.parse(data.expires_at)>Date.now()+24*60*60*1000+60*1000){
+        throw new Error("PNELLY returned an invalid or unsafe conversation contract.");
+      }
+      pnellyConversationId=data.conversation_id;
+      pnellyConversationStateVersion=Number.isInteger(data.state_version)?data.state_version:0;
+      setAiStatus("pnellyConversationStatus","Conversational continuity is active for up to 24 hours. Only structured discovery context is retained; raw transcripts and images are not stored. End the conversation here to revoke its consent and delete its context.");
+    }catch(error){
+      $("pnellyConversationConsent").checked=false;
+      setAiStatus("pnellyConversationStatus",(error&&error.message?error.message:"PNELLY continuity could not be enabled")+" No discovery context was enabled.",true);
+    }finally{
+      $("pnellyConversationConsent").disabled=false;
+      setAiBusy("pnellyStartConversationBtn",false,"Enable 24-hour continuity");
+      updatePnellyConversationControls();
+    }
+  }
+  async function endPnellyConversation(){
+    if(!pnellyConversationId)return;
+    if(!config.userToken){setAiStatus("pnellyConversationStatus","Reconnect the same signed-in customer session before deleting the active conversation.",true);return}
+    const conversationId=pnellyConversationId;
+    setAiBusy("pnellyEndConversationBtn",true,"Deleting…");
+    $("pnellyConversationConsent").disabled=true;
+    try{
+      const response=await fetch("/api/wardrobe/pnelly/conversations/"+encodeURIComponent(conversationId),{
+        method:"DELETE",
+        headers:{Authorization:"Bearer "+config.userToken,Accept:"application/json"},
+        cache:"no-store"
+      });
+      const data=await response.json().catch(()=>({}));
+      if(!response.ok)throw new Error((data.detail&&data.detail.code)||("Conversation deletion returned HTTP "+response.status+"."));
+      if(data.status!=="deleted"||data.conversation_id!==conversationId||data.consent_inactive!==true){
+        throw new Error("PNELLY did not confirm conversation deletion and consent revocation.");
+      }
+      pnellyConversationId=null;
+      pnellyConversationStateVersion=null;
+      $("pnellyConversationConsent").checked=false;
+      setAiStatus("pnellyConversationStatus","Conversation context deleted and its consent revoked. Future searches will be independent requests.");
+    }catch(error){
+      $("pnellyConversationConsent").checked=true;
+      setAiStatus("pnellyConversationStatus",(error&&error.message?error.message:"Conversation could not be deleted")+" Continuity remains enabled until revocation is confirmed.",true);
+    }finally{
+      $("pnellyConversationConsent").disabled=false;
+      setAiBusy("pnellyEndConversationBtn",false,"End and delete context");
+      updatePnellyConversationControls();
+    }
+  }
+  $("pnellyConversationConsent").addEventListener("change",()=>{
+    if($("pnellyConversationConsent").checked){
+      setAiStatus("pnellyConversationStatus","Optional continuity selected. Press Enable 24-hour continuity to create a purpose-bound consent receipt and structured context session.");
+      updatePnellyConversationControls();
+    }else if(pnellyConversationId){
+      void endPnellyConversation();
+    }else{
+      setAiStatus("pnellyConversationStatus","Continuity is off. No conversational context was retained.");
+      updatePnellyConversationControls();
+    }
+  });
+  $("pnellyStartConversationBtn").addEventListener("click",()=>startPnellyConversation());
+  $("pnellyEndConversationBtn").addEventListener("click",()=>endPnellyConversation());
   function presentAiSearchResult(data,source){
     const count=Number(data.candidate_count)||0;
     // PNELLY is a retrieval assistant, not the final display authority.
@@ -801,6 +931,10 @@ footer{
         climate:$("aiClimate").value.trim()||null,
         exclude_owned_products:true
       };
+      if(pnellyConversationId){
+        body.conversation_id=pnellyConversationId;
+        body.conversation_turn_id="pnelly-turn-"+crypto.randomUUID();
+      }
       const response=await fetch("/api/wardrobe/recommendations",{
         method:"POST",
         headers:{Authorization:"Bearer "+config.userToken,"Content-Type":"application/json",Accept:"application/json"},
@@ -813,16 +947,29 @@ footer{
          !Number.isInteger(data.ranked_candidate_count)||!Number.isInteger(data.withheld_candidate_count)){
         throw new Error("Wardrobe-aware discovery returned an invalid authorization response.");
       }
+      if(pnellyConversationId){
+        const state=data.conversation;
+        if(!state||state.conversation_id!==pnellyConversationId||state.raw_transcript_stored!==false||!Number.isInteger(state.state_version)){
+          throw new Error("PNELLY did not confirm the expected structured conversation update.");
+        }
+        pnellyConversationStateVersion=state.state_version;
+        setAiStatus("pnellyConversationStatus","Continuity updated (state "+pnellyConversationStateVersion+"). Structured context only; no raw transcript or image is stored.");
+      }
       renderWardrobeDiscovery(data);
       const shown=data.displayable_products.length;
       setAiStatus("aiSearchStatus","PNELLY evaluated "+data.ranked_candidate_count+" candidates using your active Wardrobe. "+shown+" passed CAL SHOW and CIL serving checks; "+data.withheld_candidate_count+" were withheld. Only authorized candidates are shown.");
     }catch(e){
-      setAiStatus("aiSearchStatus",(e&&e.message?e.message:"Wardrobe-aware discovery is unavailable")+". No demo or unreviewed product details were shown.",true);
+      const message=e&&e.message?e.message:"Wardrobe-aware discovery is unavailable";
+      if(message.includes("PNELLY_CONVERSATION_EXPIRED_OR_REVOKED")||message.includes("ACTIVE_PNELLY_CONVERSATION_CONSENT_REQUIRED")){
+        pnellyConversationId=null;pnellyConversationStateVersion=null;$("pnellyConversationConsent").checked=false;updatePnellyConversationControls();
+        setAiStatus("pnellyConversationStatus","The saved context expired or its consent was revoked. Continuity is now off.",true);
+      }
+      setAiStatus("aiSearchStatus",message+". No demo or unreviewed product details were shown.",true);
     }finally{setAiBusy("aiSearchBtn",false,"Search my wardrobe-aware marketplace")}
   });
 
 
-  updateCounts();load();
+  updateCounts();updatePnellyConversationControls();load();
 })();
 </script>
 <script src="/assets/appearance-workspace.js" defer></script>
