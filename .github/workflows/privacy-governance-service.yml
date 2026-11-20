@@ -3,19 +3,18 @@ name: Privacy Governance Service checks
 on:
   pull_request:
     paths:
-      - "services/privacy-governance-service/**"
-      - "services/asset-service/**"
-      - "services/marketplace-bff/**"
-      - "services/virtual-try-on/model-worker/**"
-      - "apps/demo-web/marketplace.html"
-      - "apps/demo-web/test_marketplace_browser.py"
+      - "services/**"
+      - "apps/**"
       - "infrastructure/deployment/canonical-stack.json"
       - "infrastructure/deployment/media-delivery-inventory.json"
       - ".github/workflows/privacy-governance-service.yml"
   push:
     branches: [main]
     paths:
-      - "services/privacy-governance-service/**"
+      - "services/**"
+      - "apps/**"
+      - "infrastructure/deployment/canonical-stack.json"
+      - "infrastructure/deployment/media-delivery-inventory.json"
       - ".github/workflows/privacy-governance-service.yml"
 
 permissions:
