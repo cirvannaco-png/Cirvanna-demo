@@ -3909,6 +3909,67 @@ async def create_pnelly_conversation(request: Request) -> Response:
     })
 
 
+@app.get("/api/wardrobe/pnelly/conversations/{conversation_id}")
+async def get_pnelly_conversation(conversation_id: str, request: Request) -> Response:
+    """Restore an opaque conversation pointer only for its verified subject."""
+    normalized_id = conversation_id.strip().lower()
+    if not UUID_RE.fullmatch(normalized_id):
+        raise HTTPException(422, detail={"code": "INVALID_PNELLY_CONVERSATION_ID"})
+    async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=2.0), trust_env=False, follow_redirects=False) as client:
+        subject, _ = await _verified_commerce_subject(client, request)
+        base, token = _identity_learning_service()
+        try:
+            response = await client.get(
+                base + f"/v1/pnelly/conversations/{normalized_id}",
+                params={"subject_id": subject},
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+            )
+        except httpx.HTTPError as exc:
+            raise HTTPException(503, detail={"code": "PNELLY_CONVERSATION_RESTORE_UNAVAILABLE"}) from exc
+    if response.status_code in {403, 404}:
+        raise HTTPException(404, detail={"code": "PNELLY_CONVERSATION_NOT_FOUND_FOR_SUBJECT"})
+    if response.status_code in {409, 410}:
+        raise HTTPException(409, detail={"code": "PNELLY_CONVERSATION_EXPIRED_OR_REVOKED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "PNELLY_CONVERSATION_RESTORE_FAILED"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_RESTORE_RESPONSE_INVALID"}) from exc
+    if (
+        not isinstance(data, dict)
+        or data.get("status") != "active"
+        or data.get("conversation_id") != normalized_id
+        or isinstance(data.get("state_version"), bool)
+        or not isinstance(data.get("state_version"), int)
+        or not isinstance(data.get("context"), dict)
+    ):
+        raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_RESTORE_RESPONSE_INVALID"})
+    try:
+        expires_at = datetime.fromisoformat(str(data["expires_at"]).replace("Z", "+00:00"))
+        if expires_at.tzinfo is None:
+            raise ValueError("Expiry must include a timezone")
+        expires_at = expires_at.astimezone(timezone.utc)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_RESTORE_EXPIRY_INVALID"}) from exc
+    now = datetime.now(timezone.utc)
+    if expires_at <= now:
+        raise HTTPException(409, detail={"code": "PNELLY_CONVERSATION_EXPIRED_OR_REVOKED"})
+    if expires_at > now + timedelta(hours=24, minutes=1):
+        raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_RESTORE_EXPIRY_INVALID"})
+    # Never return stored context to the browser; only prove that this opaque ID
+    # is active for the authenticated subject and expose the deletion handle.
+    return _private_json_response({
+        "status": "active",
+        "conversation_id": normalized_id,
+        "state_version": data["state_version"],
+        "expires_at": data["expires_at"],
+        "retention_hours": 24,
+        "stored_data": "structured_discovery_context_only",
+        "raw_transcript_stored": False,
+    })
+
+
 @app.delete("/api/wardrobe/pnelly/conversations/{conversation_id}")
 async def delete_pnelly_conversation(conversation_id: str, request: Request) -> Response:
     if not UUID_RE.fullmatch(conversation_id.strip().lower()):
@@ -3935,10 +3996,11 @@ async def delete_pnelly_conversation(conversation_id: str, request: Request) -> 
     if (
         not isinstance(data, dict)
         or data.get("status") != "deleted"
+        or data.get("conversation_id") != conversation_id.strip().lower()
         or data.get("consent_inactive") is not True
     ):
         raise HTTPException(502, detail={"code": "PNELLY_CONVERSATION_DELETE_RESPONSE_INVALID"})
-    return _private_json_response({"status": "deleted", "conversation_id": conversation_id.strip().lower()})
+    return _private_json_response({"status": "deleted", "conversation_id": conversation_id.strip().lower(), "consent_inactive": True})
 
 
 @app.post("/api/wardrobe/recommendations")

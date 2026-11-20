@@ -41,6 +41,26 @@ def test_marketplace_pnelly_search_uses_wardrobe_cil_path_and_complementer_advis
     assert 'id="aiDiscoveryResults"' in response.text
     assert '"/api/wardrobe/recommendations"' in response.text
     assert '"/api/vision/complementer"' in response.text
+    assert 'id="pnellyConversationConsent"' in response.text
+    assert 'window.addEventListener("cirvanna:session-ready"' in response.text
+    assert 'function acceptMarketplaceSession(token)' in response.text
+    assert 'if(previousToken&&previousConversationId)' in response.text
+    assert "marketplaceSessionGeneration" in response.text
+    assert "restorePnellyConversationForSession" in response.text
+    assert "sessionStorage.setItem(PNELLY_CONVERSATION_STORAGE_KEY" in response.text
+    assert "deletePnellyConversationRemotely(creatingToken,conversationId)" in response.text
+    assert "requestGeneration!==marketplaceSessionGeneration" in response.text
+    assert '$("aiDiscoveryResults").replaceChildren();' in response.text
+    assert "The previous account's conversation could not be deleted during account switching" in response.text
+    assert 'Its structured context remains bound to that account and expires within 24 hours' in response.text
+    assert 'bootstrap.publicOffersBase.replace(/\\/$/,"")' in response.text
+    assert 'id="pnellyStartConversationBtn"' in response.text
+    assert 'id="pnellyEndConversationBtn"' in response.text
+    assert '"/api/wardrobe/pnelly/conversations"' in response.text
+    assert 'body.conversation_id=pnellyConversationId' in response.text
+    assert 'body.conversation_turn_id="pnelly-turn-"+crypto.randomUUID()' in response.text
+    assert 'raw_transcript_stored!==false' in response.text
+    assert 'localStorage.setItem("cirvanna-pnelly-conversation"' not in response.text
     assert "CAL SHOW" in response.text
     assert "wardrobe-aware marketplace" in response.text
     # Click It stays explicitly unavailable while its publication lifecycle remains unverified.
@@ -593,6 +613,58 @@ def test_wardrobe_consent_receipt_is_created_server_side_and_subject_scoped(clie
     assert fake.calls[1][2]["json"]["scope"] == "style_learning"
 
 
+def test_pnelly_conversation_restore_is_subject_scoped_and_returns_metadata_only(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-internal-token-more-than-thirty-two-bytes")
+    conversation_id = "4a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({
+            "status": "active",
+            "conversation_id": conversation_id,
+            "state_version": 3,
+            "expires_at": future_expiry(),
+            "context": {"query": "private phrase must not reach the browser"},
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get(
+        "/api/wardrobe/pnelly/conversations/" + conversation_id,
+        headers={"Authorization": "Bearer signed-session"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "no-store, private"
+    assert response.json()["status"] == "active"
+    assert response.json()["conversation_id"] == conversation_id
+    assert response.json()["state_version"] == 3
+    assert response.json()["retention_hours"] == 24
+    assert response.json()["raw_transcript_stored"] is False
+    assert "context" not in response.json()
+    assert "private phrase must not reach the browser" not in response.text
+    assert fake.calls[1][1].endswith("/v1/pnelly/conversations/" + conversation_id)
+    assert fake.calls[1][2]["params"]["subject_id"] == "signed-user-42"
+
+
+def test_pnelly_conversation_restore_does_not_disclose_foreign_subject_context(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-internal-token-more-than-thirty-two-bytes")
+    conversation_id = "4a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d"
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "different-signed-user", "role": "customer"}),
+        FakeResponse({"detail": "not found"}, status_code=404),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get(
+        "/api/wardrobe/pnelly/conversations/" + conversation_id,
+        headers={"Authorization": "Bearer other-session"},
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "PNELLY_CONVERSATION_NOT_FOUND_FOR_SUBJECT"
+    assert fake.calls[1][2]["params"]["subject_id"] == "different-signed-user"
+
+
 def test_pnelly_conversation_delete_requires_confirmed_inactive_consent(client, monkeypatch):
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
     monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
@@ -608,6 +680,9 @@ def test_pnelly_conversation_delete_requires_confirmed_inactive_consent(client, 
         headers={"Authorization": "Bearer signed-session"},
     )
     assert response.status_code == 200
+    assert response.json()["status"] == "deleted"
+    assert response.json()["conversation_id"] == conversation_id
+    assert response.json()["consent_inactive"] is True
     assert fake.calls[1][1].endswith("/v1/pnelly/conversations/" + conversation_id)
     assert fake.calls[1][2]["params"]["subject_id"] == "signed-user-42"
 

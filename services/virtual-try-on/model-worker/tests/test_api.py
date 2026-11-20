@@ -256,3 +256,127 @@ def test_gpu_worker_returns_retryable_429_when_render_slot_is_busy(client, monke
     assert response.json()["detail"]["retryable"] is True
     assert response.headers["Retry-After"]=="2"
 
+
+
+def test_render_closes_pipeline_output_after_encoding(client, monkeypatch):
+    output_image = Image.new("RGB", (128, 160), (20, 200, 80))
+
+    class FakeResult:
+        images = [output_image]
+
+    class FakePipeline:
+        def __call__(self, **kwargs):
+            assert isinstance(kwargs["person_image"], Image.Image)
+            assert isinstance(kwargs["garment_image"], Image.Image)
+            return FakeResult()
+
+    monkeypatch.setattr(main, "_PIPELINE", FakePipeline())
+    response = post(client)
+    assert response.status_code == 200
+    assert response.content.startswith(b"\x89PNG")
+    with pytest.raises(ValueError, match="closed image"):
+        output_image.getpixel((0, 0))
+
+
+def test_render_closes_every_pipeline_output_image(monkeypatch):
+    first = Image.new("RGB", (128, 160), (10, 20, 30))
+    second = Image.new("RGB", (128, 160), (40, 50, 60))
+
+    class FakeResult:
+        images = [first, second]
+
+    class FakePipeline:
+        def __call__(self, **kwargs):
+            return FakeResult()
+
+    monkeypatch.setattr(main, "_PIPELINE", FakePipeline())
+    encoded = main._render(
+        Image.new("RGB", (128, 160)),
+        Image.new("RGB", (128, 160)),
+        "upper_body",
+        "flat-lay",
+    )
+    assert encoded.startswith(b"\x89PNG")
+    for generated in (first, second):
+        with pytest.raises(ValueError, match="closed image"):
+            generated.getpixel((0, 0))
+
+
+def test_render_request_closes_decoded_uploads_after_success(client, monkeypatch):
+    decoded = []
+
+    def decode(data, content_type):
+        with Image.open(io.BytesIO(data)) as source:
+            result = source.convert("RGB")
+        decoded.append(result)
+        return result
+
+    def render(person, garment, category, garment_photo_type):
+        assert person.getpixel((0, 0)) is not None
+        assert garment.getpixel((0, 0)) is not None
+        assert category == "upper_body"
+        assert garment_photo_type == "flat-lay"
+        return png()
+
+    async def inline_threadpool(function, *args):
+        return function(*args)
+
+    monkeypatch.setattr(main, "_decode_image", decode)
+    monkeypatch.setattr(main, "_render", render)
+    monkeypatch.setattr(main, "run_in_threadpool", inline_threadpool)
+    response = post(client)
+    assert response.status_code == 200
+    assert len(decoded) == 2
+    for image in decoded:
+        with pytest.raises(ValueError, match="closed image"):
+            image.getpixel((0, 0))
+
+
+def test_render_request_closes_decoded_uploads_when_gpu_worker_is_busy(client, monkeypatch):
+    decoded = []
+
+    def decode(data, content_type):
+        with Image.open(io.BytesIO(data)) as source:
+            result = source.convert("RGB")
+        decoded.append(result)
+        return result
+
+    monkeypatch.setattr(main, "_decode_image", decode)
+    assert main._INFERENCE_SLOT.acquire(blocking=False)
+    try:
+        response = post(client)
+    finally:
+        main._INFERENCE_SLOT.release()
+    assert response.status_code == 429
+    assert len(decoded) == 2
+    for image in decoded:
+        with pytest.raises(ValueError, match="closed image"):
+            image.getpixel((0, 0))
+
+
+def test_render_request_closes_decoded_uploads_when_inference_fails(client, monkeypatch):
+    from fastapi import HTTPException
+
+    decoded = []
+
+    def decode(data, content_type):
+        with Image.open(io.BytesIO(data)) as source:
+            result = source.convert("RGB")
+        decoded.append(result)
+        return result
+
+    def fail_render(*_args):
+        raise HTTPException(502, detail={"code": "INFERENCE_FAILED"})
+
+    async def inline_threadpool(function, *args):
+        return function(*args)
+
+    monkeypatch.setattr(main, "_decode_image", decode)
+    monkeypatch.setattr(main, "_render", fail_render)
+    monkeypatch.setattr(main, "run_in_threadpool", inline_threadpool)
+    response = post(client)
+    assert response.status_code == 502
+    assert len(decoded) == 2
+    for image in decoded:
+        with pytest.raises(ValueError, match="closed image"):
+            image.getpixel((0, 0))
