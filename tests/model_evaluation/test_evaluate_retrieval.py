@@ -59,6 +59,16 @@ class RetrievalEvaluationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "same model IDs"):
                 read_cases(path)
 
+    def test_rejects_non_list_rankings_and_normalized_model_id_collisions(self):
+        row = make_case("query-001", "cluster-001", ["p1"], ["p2"])
+        row["rankings"]["challenger"] = "p1"
+        with self.assertRaisesRegex(ValueError, "array of non-empty strings"):
+            _validate_record(row, 1)
+        row = make_case("query-001", "cluster-001", ["p1"], ["p2"])
+        row["rankings"][" challenger "] = ["p1"]
+        with self.assertRaisesRegex(ValueError, "unique after normalization"):
+            _validate_record(row, 1)
+
     def test_one_cluster_does_not_claim_confidence_interval(self):
         case = make_case("query-001", "single-cluster", ["p1"], ["p2"])
         report = evaluate([case], baseline_model_id="cirvanna-fashion-clip", k=2,
