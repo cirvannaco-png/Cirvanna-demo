@@ -51,7 +51,7 @@ def test_marketplace_pnelly_search_uses_wardrobe_cil_path_and_complementer_advis
     assert "deletePnellyConversationRemotely(creatingToken,conversationId)" in response.text
     assert "requestGeneration!==marketplaceSessionGeneration" in response.text
     assert '$("aiDiscoveryResults").replaceChildren();' in response.text
-    assert 'previous_conversation_revocation_unconfirmed' in response.text
+    assert "The previous account's conversation could not be deleted during account switching" in response.text
     assert 'Its structured context remains bound to that account and expires within 24 hours' in response.text
     assert 'bootstrap.publicOffersBase.replace(/\\/$/,"")' in response.text
     assert 'id="pnellyStartConversationBtn"' in response.text
