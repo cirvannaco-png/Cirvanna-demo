@@ -55,10 +55,13 @@ def _validate_record(row: Any, line: int) -> dict[str, Any]:
     for model_id, ranking in rankings.items():
         if not isinstance(model_id, str) or not model_id.strip():
             raise ValueError(f"{prefix}: model IDs must be non-empty")
-        ranked = _strings(ranking, f"rankings[{model_id!r}]") if ranking else []
+        model_key = model_id.strip()
+        if model_key in normalized:
+            raise ValueError(f"{prefix}: model IDs must be unique after normalization")
+        ranked = _strings(ranking, f"rankings[{model_id!r}]")
         if not set(ranked).issubset(candidate_set):
             raise ValueError(f"{prefix}: model {model_id!r} ranked an ID outside candidate_ids")
-        normalized[model_id.strip()] = ranked
+        normalized[model_key] = ranked
     excluded = _strings(row.get("excluded_product_ids", []), "excluded_product_ids")
     if not set(excluded).issubset(candidate_set):
         raise ValueError(f"{prefix}: excluded_product_ids must be part of candidate_ids")
