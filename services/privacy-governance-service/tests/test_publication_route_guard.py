@@ -457,7 +457,7 @@ def test_binary_media_inventory_is_complete_and_fail_closed():
     assert all(value is False for value in inventory["deletion_propagation"].values())
 
     stack = json.loads((ROOT / "infrastructure" / "deployment" / "canonical-stack.json").read_text(encoding="utf-8"))
-    providers = {provider["id"]: provider for provider in stack["providers"]}
+    providers = {provider["id"]: provider for provider in stack["external_providers"]}
     for provider_id in ("private_object_storage", "content_lifecycle_provider"):
         provider = providers[provider_id]
         assert provider["configured_for_production"] is False
