@@ -36,6 +36,25 @@ This register is a diligence queue, not an endorsement list. Every candidate mus
 
 No candidate in this register has SELECTED_FOR_SCOPED_PILOT or PRODUCTION_ELIGIBLE status.
 
+### Immutable revisions and artifact inventory
+
+The current Hugging Face file inventory reports these primary checkpoint sizes:
+
+| Candidate | Weight file | Current file size | Full commit SHA | Current benchmark state |
+|---|---|---:|---|---|
+| Cirvanna FashionCLIP baseline | `model.safetensors` | 605,157,890 bytes | `afacf5e5851d5979ab030e228eab60e2c95a912c` | Baseline pin already present in Vision Intelligence |
+| Marqo FashionCLIP | `open_clip_model.safetensors` | 598,516,980 bytes | **Not recorded** | Runner supports local OpenCLIP loading; immutable revision pin still required |
+| Marqo FashionSigLIP | `open_clip_model.safetensors` | 812,658,408 bytes | **Not recorded** | Runner localizes the tokenizer to the same model snapshot; immutable revision pin still required |
+| ZooClaw-FashionSigLIP2 | `model.safetensors` | 1,501,968,264 bytes | **Not recorded** | Standard Transformers loader; immutable revision pin still required |
+
+These are individual checkpoint-file sizes from the Hub file listing, not full download size, peak RAM/VRAM, or deployment requirements. The runner uses an explicit allow-list to avoid downloading duplicate formats and hashes the included weights, processor/tokenizer files and model-card/licence notices after download.
+
+The current connected Hub inspection can list model metadata and files, but does not expose the full 40-character challenger commit SHA. Abbreviated history IDs are not accepted as pins and are not embedded in the runner configuration. **No challenger inference run is allowed until each full SHA is obtained from an authoritative Hub revision source.** A moving `main` reference is not an acceptable fallback.
+
+The research dependency file is a set of compatible package ranges, not a lock. Generate an exact dependency lock with hashes, record its digest, and use that locked environment for all official comparisons.
+
+
+
 ## 2. Dataset candidates
 
 | Dataset | Intended use | Current classification | Rights / methodology notes |
