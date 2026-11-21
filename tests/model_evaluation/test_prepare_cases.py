@@ -39,6 +39,19 @@ class PrepareCasesTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "not in the frozen eligible offer snapshot"):
             prepare(catalog(), [row])
 
+    def test_rejects_candidate_order_that_differs_from_frozen_commerce_order(self):
+        row = query()
+        row["candidate_ids"] = ["variant-b", "variant-a"]
+        row["qrels"] = {"variant-a": 4, "variant-b": 0}
+        with self.assertRaisesRegex(ValueError, "preserve their frozen Commerce offer order"):
+            prepare(catalog(), [row])
+
+    def test_requires_a_grade_for_every_candidate(self):
+        row = query()
+        row["qrels"] = {"variant-a": 4}
+        with self.assertRaisesRegex(ValueError, "explicit grade for every candidate"):
+            prepare(catalog(), [row])
+
     def test_rejects_qrels_with_no_positive_relevance(self):
         row = query()
         row["qrels"] = {"variant-a": 0, "variant-b": 0}
