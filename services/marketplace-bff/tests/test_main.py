@@ -78,7 +78,17 @@ def test_marketplace_offers_rejects_unbound_or_cil_ineligible_cal_decisions(clie
         {"product_id": "product-1", "catalog_version": 7, "verdict": "show",
          "may_display": True, "cil_serving_status": "review"},
         {"product_id": "product-1", "catalog_version": 7, "verdict": "show",
-         "may_display": True, "cil_serving_status": "not_assessed"},
+         "may_display": True, "cil_serving_status": "not_assessed",
+         "policy_version": "policy-1", "arbitration_contract_version": "1",
+         "decision_pipeline_contract_version": "1"},
+        {"product_id": "product-1", "catalog_version": 7, "verdict": "show",
+         "may_display": True, "cil_serving_status": "eligible",
+         "policy_version": "", "arbitration_contract_version": "1",
+         "decision_pipeline_contract_version": "1"},
+        {"product_id": "product-1", "catalog_version": 7, "verdict": "show",
+         "may_display": True, "cil_serving_status": "eligible",
+         "policy_version": "policy-1", "arbitration_contract_version": "1",
+         "decision_pipeline_contract_version": ""},
     ]
     for decision in invalid_decisions:
         configure_upstreams(monkeypatch)
@@ -147,7 +157,7 @@ def test_marketplace_offers_use_authenticated_gateway_cal_show_only(client, monk
                     "available_stock": 3, "image_urls": ["https://cdn.example.test/unverified-offer.jpg"],
                     "product": {"image_urls": ["https://cdn.example.test/nested.jpg"]},
                 },
-                "decision": {"product_id": "product-1", "catalog_version": 7, "verdict": "show", "may_display": True, "cil_serving_status": "eligible", "policy_version": "policy-1"},
+                "decision": {"product_id": "product-1", "catalog_version": 7, "verdict": "show", "may_display": True, "cil_serving_status": "eligible", "policy_version": "policy-1", "arbitration_contract_version": "1", "decision_pipeline_contract_version": "1"},
             }],
             "withheld_candidate_ids": [{"product_id": "blocked-product-secret", "decision": "review"}],
             "display_authority": "CaTaCaCi/CAL",
