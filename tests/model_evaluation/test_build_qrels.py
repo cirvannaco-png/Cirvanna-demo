@@ -43,6 +43,20 @@ class BuildQrelsTests(unittest.TestCase):
         self.assertEqual(summary["adjudicated_pair_count"], 1)
         self.assertEqual(summary["exact_reviewer_agreement_rate"], 0.5)
 
+    def test_export_drops_unapproved_fields_and_reviewer_identifiers(self):
+        query = queries()[0]
+        query["query_text"] = "navy shirt"
+        query["user_email"] = "private@example.invalid"
+        query["account_id"] = "account-123"
+        rows, _ = aggregate([query], reviews(), [{
+            "query_id": "query-0001", "candidate_id": "variant-b", "adjudicator_key": "reviewer-c",
+            "relevance": 1, "exclusion_violation": True,
+        }])
+        self.assertNotIn("user_email", rows[0])
+        self.assertNotIn("account_id", rows[0])
+        self.assertNotIn("human_reviews", rows[0])
+        self.assertEqual(rows[0]["query_text"], "navy shirt")
+
     def test_requires_two_distinct_reviews_for_every_candidate(self):
         with self.assertRaisesRegex(ValueError, "exactly two distinct independent reviewer records"):
             aggregate(queries(), reviews()[:-1], [])
