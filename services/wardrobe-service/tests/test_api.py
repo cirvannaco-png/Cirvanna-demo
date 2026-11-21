@@ -784,3 +784,17 @@ def test_failed_learning_delivery_is_audited_and_same_event_can_retry(client, mo
         row = session.get(WardrobeFeedbackEventRow, ("user-1", "feedback-retry-001"))
         assert row.delivery_state == "delivered"
         assert row.error_code is None
+
+
+def test_refund_snapshot_accepts_order_total_above_item_subtotal_for_tax_and_fulfilment(client):
+    purchase = client.post(
+        "/v1/purchases/verified", headers=auth(), json=verified_purchase_body()
+    )
+    assert purchase.status_code == 201, purchase.text
+    # The paid Commerce total includes non-item charges; Wardrobe stores only
+    # purchase line snapshots and must not reject the authoritative total.
+    body = refund_snapshot_body(order_total_minor=550000, amount_refunded_minor=275000)
+    response = client.post("/v1/purchases/refund-status", headers=auth(), json=body)
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "recorded"
+    assert response.json()["amount_refunded_minor"] == 275000
