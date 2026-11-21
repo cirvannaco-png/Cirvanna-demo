@@ -4171,3 +4171,52 @@ def test_consent_revocation_rejects_missing_user_auth_before_upstream(client, mo
     )
     assert response.status_code == 401
     assert not calls
+
+def test_click_it_consent_rejects_provider_receipt_missing_required_scope(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_URL", "https://privacy.example.test")
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_TOKEN", "privacy-governance-internal-token-at-least-32-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-customer-42"}),
+        FakeResponse({
+            "consent_id": "e340b1e2-7c6b-4cc2-9c0b-16dbf2e2a228",
+            "active": True,
+            "granted_scopes": ["image_processing", "photographed_people_adult_attestation"],
+            "photographed_people_status": "adults_only",
+            "guardian_authority_verified": False,
+            "consent_version": "click-it-privacy-v1",
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/privacy/consents",
+        headers={"Authorization": "Bearer signed-shopper-token"},
+        json={
+            "consent_image_processing": True,
+            "consent_click_it": True,
+            "photographed_people_status": "adults_only",
+            "photographed_people_consent_confirmed": True,
+            "consent_version": "click-it-privacy-v1",
+        },
+    )
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "CONSENT_CREATION_INVALID_RESPONSE"
+
+
+def test_click_it_revocation_rejects_mismatched_provider_receipt(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_URL", "https://privacy.example.test")
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_TOKEN", "privacy-governance-internal-token-at-least-32-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-customer-42"}),
+        FakeResponse({"consent_id": "00000000-0000-4000-8000-000000000000", "active": False, "revoked": True}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/privacy/consents/e340b1e2-7c6b-4cc2-9c0b-16dbf2e2a227/revoke",
+        headers={"Authorization": "Bearer signed-shopper-token"},
+        json={"reason_code": "user_request"},
+    )
+    assert response.status_code == 502
+    assert response.json()["detail"]["code"] == "CONSENT_REVOCATION_RESPONSE_INVALID"
+
