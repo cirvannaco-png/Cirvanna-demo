@@ -156,7 +156,7 @@ def main() -> int:
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w", encoding="utf-8") as handle:
         for case in cases:
-            handle.write(json.dumps(case, sort_keys=True) + "\\n")
+            handle.write(json.dumps(case, sort_keys=True) + "\n")
     split_counts = dict(Counter(case["split"] for case in cases))
     tasks = sorted({case["task_id"] for case in cases})
     manifest = {
@@ -176,7 +176,7 @@ def main() -> int:
         "privacy_note": "Keep the input, output, source paths, and manifest in an approved restricted evaluation workspace.",
     }
     manifest_path = output.with_suffix(output.suffix + ".manifest.json")
-    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps({"status": "prepared", "catalog_candidates": len(catalog_rows),
                       "queries": len(cases), "splits": split_counts, "manifest": str(manifest_path)},
                      sort_keys=True))
