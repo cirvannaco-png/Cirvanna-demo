@@ -28,7 +28,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import (
     Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, and_, or_,
-    UniqueConstraint, select,
+    UniqueConstraint, select, update,
 )
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Mapped, Session, mapped_column
@@ -1387,6 +1387,55 @@ def _resource_gid(topic: str, payload: dict[str, Any]) -> str | None:
     return None
 
 
+def _flag_connection_orders_manual_review(db: Session, connection: ShopifyConnection, reason: str) -> int:
+    """Preserve fulfilment safety before uninstall/redaction removes provider linkage."""
+    handled: set[str] = set()
+    cases = list(db.scalars(select(ShopifyCompensationCase).where(
+        ShopifyCompensationCase.connection_id == connection.id
+    )).all())
+    for case in cases:
+        order = db.get(commerce.CommerceOrder, case.commerce_order_id)
+        if order is not None and order.refund_state != "refunded":
+            _case_manual_review(db, case, order, reason)
+            handled.add(order.id)
+    order_ids = set(db.scalars(select(ShopifyInventoryReservation.commerce_order_id).where(
+        ShopifyInventoryReservation.connection_id == connection.id
+    )).all())
+    order_ids.update(db.scalars(select(ShopifyOrderLink.commerce_order_id).where(
+        ShopifyOrderLink.connection_id == connection.id
+    )).all())
+    flagged = len(handled)
+    if order_ids:
+        orders = list(db.scalars(select(commerce.CommerceOrder).where(
+            commerce.CommerceOrder.id.in_(order_ids)
+        )).all())
+        for order in orders:
+            if order.id in handled or order.refund_state == "refunded":
+                continue
+            if order.state not in {"pending_payment", "paid"}:
+                continue
+            order.fulfillment_state = "manual_review"
+            order.updated_at = utcnow()
+            event_type = "commerce.shopify.compensation.manual_review"
+            exists = db.scalar(select(commerce.CommerceOutboxEvent.event_id).where(
+                commerce.CommerceOutboxEvent.aggregate_type == "commerce_order",
+                commerce.CommerceOutboxEvent.aggregate_id == order.id,
+                commerce.CommerceOutboxEvent.event_type == event_type,
+            ))
+            if not exists:
+                event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cirvanna:{event_type}:{order.id}"))
+                db.add(commerce.CommerceOutboxEvent(
+                    event_id=event_id, aggregate_type="commerce_order", aggregate_id=order.id,
+                    event_type=event_type, schema_version=1,
+                    payload={"event_id": event_id, "event_type": event_type, "schema_version": 1,
+                        "order_id": order.id, "merchant_id": connection.merchant_id,
+                        "reason_code": reason[:180], "action_required": "operator_review",
+                        "fulfillment_blocked": True},
+                ))
+            flagged += 1
+    db.commit()
+    return flagged
+
 @router.post("/webhooks/shopify")
 async def receive_shopify_webhook(
     request: Request,
@@ -1416,6 +1465,7 @@ async def receive_shopify_webhook(
     # Shopify may retry app/uninstalled after the connection has already been removed.
     if topic == "app/uninstalled":
         if connection:
+            _flag_connection_orders_manual_review(db, connection, "SHOPIFY_APP_UNINSTALLED_DURING_ORDER_LIFECYCLE")
             _quarantine_connection_listings(db, connection)
             connection.status = "revoked"
             connection.access_token_ciphertext = None
@@ -1552,13 +1602,16 @@ def process_shopify_events(
                     ShopifyConnection.shop_domain == event.shop_domain
                 ))
                 if connection:
+                    _flag_connection_orders_manual_review(db, connection, "SHOPIFY_SHOP_REDACTED_DURING_ORDER_LIFECYCLE")
                     _quarantine_connection_listings(db, connection)
-                    db.execute(ShopifyWebhookEvent.__table__.delete().where(
-                        ShopifyWebhookEvent.shop_domain == event.shop_domain,
-                        ShopifyWebhookEvent.id != event.id,
-                    ))
                     db.execute(ShopifyOrderLink.__table__.delete().where(
                         ShopifyOrderLink.connection_id == connection.id
+                    ))
+                    db.execute(ShopifyCompensationCase.__table__.delete().where(
+                        ShopifyCompensationCase.connection_id == connection.id
+                    ))
+                    db.execute(ShopifyInventoryReservation.__table__.delete().where(
+                        ShopifyInventoryReservation.connection_id == connection.id
                     ))
                     db.execute(ShopifyVariantSnapshot.__table__.delete().where(
                         ShopifyVariantSnapshot.connection_id == connection.id
@@ -1569,6 +1622,15 @@ def process_shopify_events(
                     connection.access_token_ciphertext = None
                     connection.refresh_token_ciphertext = None
                     db.delete(connection)
+                # Delete every webhook delivery record for the redacted shop,
+                # including this event; the durable Commerce manual-review outbox
+                # above contains only order/merchant IDs and a reason code.
+                db.execute(ShopifyWebhookEvent.__table__.delete().where(
+                    ShopifyWebhookEvent.shop_domain == event.shop_domain
+                ))
+                db.commit()
+                processed += 1
+                continue
             elif event.topic in {"customers/data_request", "customers/redact"}:
                 # Cirvanna does not request customer scopes or persist Shopify
                 # customer records/addresses; keep this compliance handler PII-free.
@@ -2173,6 +2235,37 @@ def _verify_compensation_inventory_restock(connection: ShopifyConnection, db: Se
     ) and set(after) == set(case.inventory_before_json) == set(expected)
 
 
+def _claim_shopify_cancellation_intent(db: Session, case: ShopifyCompensationCase) -> bool:
+    """Fence the irreversible orderCancel call with an atomic, owner-checked lease renewal."""
+    current = utcnow()
+    owner = case.lease_owner or uuid.uuid4().hex
+    claim = db.execute(update(ShopifyCompensationCase).where(
+        ShopifyCompensationCase.id == case.id,
+        ShopifyCompensationCase.state.in_(["pending", "cancel_pending"]),
+        or_(
+            ShopifyCompensationCase.lease_until.is_(None),
+            ShopifyCompensationCase.lease_until < current,
+            and_(ShopifyCompensationCase.lease_owner == owner, ShopifyCompensationCase.lease_until >= current),
+        ),
+        or_(ShopifyCompensationCase.lease_owner.is_(None),
+            ShopifyCompensationCase.lease_owner == owner,
+            ShopifyCompensationCase.lease_until < current),
+    ).values(
+        state="cancel_requesting",
+        lease_owner=owner,
+        lease_until=current + timedelta(seconds=90),
+        last_error="SHOPIFY_ORDER_CANCEL_REQUEST_STARTED",
+        updated_at=current,
+    ).execution_options(synchronize_session=False))
+    if claim.rowcount != 1:
+        db.rollback()
+        db.refresh(case)
+        return False
+    db.commit()
+    db.refresh(case)
+    return case.lease_owner == owner and case.state == "cancel_requesting"
+
+
 def _process_shopify_compensation_case(db: Session, case: ShopifyCompensationCase,
                                        order: commerce.CommerceOrder) -> str:
     connection = db.get(ShopifyConnection, case.connection_id)
@@ -2287,12 +2380,12 @@ def _process_shopify_compensation_case(db: Session, case: ShopifyCompensationCas
             return case.state
         case.inventory_before_json = inventory_before
         case.inventory_expected_restore_json = inventory_expected
-        # Persist the irreversible-action intent before calling Shopify. If the
-        # network outcome is ambiguous, the next worker reconciles but never repeats.
-        case.state = "cancel_requesting"
-        case.last_error = "SHOPIFY_ORDER_CANCEL_REQUEST_STARTED"
-        case.updated_at = utcnow()
-        db.commit()
+        # Persist and renew the irreversible-action intent with a conditional
+        # lease-owner compare-and-swap immediately before calling Shopify. Long
+        # inventory reads cannot let a second worker inherit this mutation.
+        if not _claim_shopify_cancellation_intent(db, case):
+            return case.state
+        cancellation_lease_owner = case.lease_owner
         try:
             cancelled = _graphql(connection, db, """
           mutation CirvannaCancelCompensatedOrder($orderId: ID!, $notifyCustomer: Boolean, $refundMethod: OrderCancelRefundMethodInput!, $restock: Boolean!, $reason: OrderCancelReason!, $staffNote: String) {
@@ -2306,13 +2399,18 @@ def _process_shopify_compensation_case(db: Session, case: ShopifyCompensationCas
                 "refundMethod": {"originalPaymentMethodsRefund": False}, "restock": True,
                 "reason": "INVENTORY", "staffNote": "Cirvanna checkout compensation; Stripe refund is managed by Cirvanna."})
         except Exception:
-            case.state = "cancel_requesting"
-            case.last_error = "SHOPIFY_ORDER_CANCEL_OUTCOME_AMBIGUOUS"
-            case.lease_owner = None
-            case.lease_until = None
-            case.updated_at = utcnow()
-            db.commit()
+            db.rollback()
+            current_case = db.get(ShopifyCompensationCase, case.id)
+            if current_case and current_case.lease_owner == cancellation_lease_owner and current_case.state == "cancel_requesting":
+                current_case.last_error = "SHOPIFY_ORDER_CANCEL_OUTCOME_AMBIGUOUS"
+                current_case.lease_owner = None
+                current_case.lease_until = None
+                current_case.updated_at = utcnow()
+                db.commit()
             raise
+        db.refresh(case)
+        if case.lease_owner != cancellation_lease_owner or case.state != "cancel_requesting":
+            return case.state
         result = cancelled.get("orderCancel") or {}
         errors = result.get("orderCancelUserErrors") or []
         if errors:
@@ -2481,6 +2579,7 @@ def compensate_paid_shopify_orders(
         case.lease_until = utcnow() + timedelta(seconds=90)
         case.attempts += 1
         db.commit()
+        worker_lease_owner = case.lease_owner
         try:
             state = _process_shopify_compensation_case(db, case, order)
             processed += 1
@@ -2491,7 +2590,7 @@ def compensate_paid_shopify_orders(
         except HTTPException as exc:
             db.rollback()
             current = db.get(ShopifyCompensationCase, case.id)
-            if current:
+            if current and current.lease_owner == worker_lease_owner:
                 # Once orderCancel intent is persisted, never reset to pending:
                 # a timeout may hide a successful irreversible provider action.
                 if current.state != "cancel_requesting":
@@ -2504,7 +2603,7 @@ def compensate_paid_shopify_orders(
         except Exception:
             db.rollback()
             current = db.get(ShopifyCompensationCase, case.id)
-            if current:
+            if current and current.lease_owner == worker_lease_owner:
                 if current.state != "cancel_requesting":
                     current.state = "pending"
                 current.last_error = "SHOPIFY_COMPENSATION_RETRY_REQUIRED"

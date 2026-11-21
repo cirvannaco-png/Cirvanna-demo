@@ -3346,3 +3346,220 @@ def test_shopify_successful_cancel_without_inventory_restock_delta_is_manual_rev
     assert case.state == "manual_review"
     assert order.fulfillment_state == "manual_review"
     db.close()
+
+
+@pytest.mark.parametrize("refund_has_charge", [False, True])
+def test_refund_object_before_charge_event_always_emits_one_wardrobe_snapshot(client, monkeypatch, refund_has_charge):
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_test_unit_only_secret")
+    db = TEST_SESSION()
+    order_id = str(uuid.uuid4())
+    order = main.CommerceOrder(
+        id=order_id, order_number="CV-REFUND-ORDER-CHARGES", buyer_user_id="buyer-refund-order-charges",
+        state="paid", payment_state="paid", fulfillment_state="refunded", currency="KES",
+        subtotal_minor=500, total_minor=550, commission_minor=0, payment_intent_id="pi_refund_order_charges",
+        idempotency_key="refund-order-charges-" + order_id,
+        expires_at=main.now() + main.timedelta(minutes=30), paid_at=main.now(),
+    )
+    item = main.OrderItem(
+        id=str(uuid.uuid4()), order_id=order_id, merchant_id="merchant-refund-order-charges",
+        variant_id="variant-refund-order-charges", catalog_product_id="product-refund-order-charges",
+        product_name="Linen shirt", sku="LINEN-CHARGES", options={}, quantity=1,
+        unit_price_minor=500, line_total_minor=500, source_unit_price_minor=500,
+        source_currency="KES", commission_bps=0, commission_minor=0,
+    )
+    attempt = main.StripeRefundAttempt(
+        id=str(uuid.uuid4()), order_id=order_id, payment_intent_id=order.payment_intent_id,
+        amount_minor=550, currency="KES", idempotency_key="refund-order-charges-key-" + order_id,
+        state="provider_succeeded", attempts=1,
+    )
+    db.add_all([order, item, attempt])
+    db.commit()
+
+    refund_object = {
+        "id": "re_order_charges_1", "payment_intent": order.payment_intent_id,
+        "amount": 550, "currency": "kes", "status": "succeeded",
+        "metadata": {"commerce_order_id": order.id, "compensation_key": attempt.idempotency_key},
+    }
+    if refund_has_charge:
+        refund_object["charge"] = "ch_order_charges_1"
+    refund_event = {"id": "evt_refund_object_first_" + str(refund_has_charge),
+        "type": "refund.created", "data": {"object": refund_object}}
+    raw = json.dumps(refund_event, separators=(",", ":")).encode()
+    response = client.post("/webhooks/stripe", content=raw,
+        headers={"Stripe-Signature": sign_stripe_event(raw, "whsec_test_unit_only_secret")})
+    assert response.status_code == 200, response.text
+    db.refresh(order)
+    assert order.amount_refunded_minor == 550
+    events = [event for event in db.scalars(select(main.CommerceOutboxEvent).where(
+        main.CommerceOutboxEvent.event_type == "commerce.order.refund.updated",
+    )).all() if event.payload.get("order_id") == order.id]
+    assert len(events) == (1 if refund_has_charge else 0)
+
+    charge_event = {"id": "evt_charge_refunded_after_object_" + str(refund_has_charge),
+        "type": "charge.refunded", "data": {"object": {
+            "id": "ch_order_charges_1", "payment_intent": order.payment_intent_id,
+            "amount": 550, "amount_refunded": 550, "currency": "kes",
+        }}}
+    charge_raw = json.dumps(charge_event, separators=(",", ":")).encode()
+    charge_response = client.post("/webhooks/stripe", content=charge_raw,
+        headers={"Stripe-Signature": sign_stripe_event(charge_raw, "whsec_test_unit_only_secret")})
+    assert charge_response.status_code == 200, charge_response.text
+    db.expire_all()
+    events = [event for event in db.scalars(select(main.CommerceOutboxEvent).where(
+        main.CommerceOutboxEvent.event_type == "commerce.order.refund.updated",
+    )).all() if event.payload.get("order_id") == order.id]
+    assert len(events) == 1
+    payload = events[0].payload
+    assert payload["order_total_minor"] == 550
+    assert payload["purchase_items_total_minor"] == 500
+    assert payload["amount_refunded_minor"] == 550
+    assert payload["charge_id"] == "ch_order_charges_1"
+    assert payload["ownership_authority"] == (
+        "verified_stripe_refund_event" if refund_has_charge else "verified_stripe_charge_refund"
+    )
+    db.close()
+
+
+def test_manual_review_events_stay_in_admin_operations_inbox_not_wardrobe_sync(client, monkeypatch):
+    token = "commerce-sync-token-with-at-least-32-bytes"
+    monkeypatch.setenv("COMMERCE_SYNC_TOKEN", token)
+    db = TEST_SESSION()
+    event_id = str(uuid.uuid4())
+    db.add(main.CommerceOutboxEvent(
+        event_id=event_id, aggregate_type="commerce_order", aggregate_id=str(uuid.uuid4()),
+        event_type="commerce.shopify.compensation.manual_review", schema_version=1,
+        payload={"event_id": event_id, "order_id": str(uuid.uuid4()), "reason_code": "SHOPIFY_CANCEL_RESTOCK_UNVERIFIED",
+            "action_required": "operator_review", "fulfillment_blocked": True},
+    ))
+    db.commit()
+    db.close()
+
+    assert client.get("/admin/operations/alerts", headers=auth("customer-ops", "customer")).status_code == 403
+    inbox = client.get("/admin/operations/alerts", headers=auth("admin-ops", "admin"))
+    assert inbox.status_code == 200, inbox.text
+    assert inbox.json()["count"] == 1
+    assert inbox.json()["alerts"][0]["event_id"] == event_id
+    assert inbox.json()["alerts"][0]["payload"]["fulfillment_blocked"] is True
+
+    claimed = client.post("/internal/outbox/claim", headers={"X-Commerce-Sync-Token": token},
+        json={"worker_id": "sync-worker"})
+    assert claimed.status_code == 200, claimed.text
+    assert claimed.json()["events"] == []
+
+    forbidden = client.post(f"/admin/operations/alerts/{event_id}/acknowledge",
+        headers=auth("merchant-ops", "merchant"))
+    assert forbidden.status_code == 403
+    acknowledged = client.post(f"/admin/operations/alerts/{event_id}/acknowledge",
+        headers=auth("admin-ops", "admin"))
+    assert acknowledged.status_code == 200, acknowledged.text
+    assert acknowledged.json()["status"] == "acknowledged"
+    assert acknowledged.json()["case_resolved"] is False
+    row = TEST_SESSION().get(main.CommerceOutboxEvent, event_id)
+    assert row.delivered_at is not None
+    assert row.last_error == "operator_acknowledged:admin-ops"
+
+
+def test_shopify_cancel_mutation_is_fenced_when_another_worker_reclaims_lease(client, monkeypatch):
+    from app import shopify
+    from sqlalchemy import update
+    seeded = seed_offer(stock=4)
+    db = TEST_SESSION()
+    order, connection, reservation, case = _seed_shopify_compensation_case(db, seeded)
+    mutation_calls = []
+
+    def fake_graphql(conn, session, query, variables=None):
+        if "CirvannaReadCompensationDraft" in query:
+            return {"draftOrder": {"id": reservation.draft_order_gid, "status": "COMPLETED",
+                "tags": [reservation.reservation_key], "order": {
+                    "id": "gid://shopify/Order/lease-fence", "cancelledAt": None,
+                    "displayFulfillmentStatus": "UNFULFILLED"}}}
+        if "CirvannaCancelCompensatedOrder" in query:
+            mutation_calls.append(variables["orderId"])
+            raise AssertionError("A stale worker must not issue orderCancel")
+        raise AssertionError("Unexpected Shopify GraphQL query")
+
+    def simulate_other_worker_reclaim(conn, session, paid_order, merchant_id):
+        session.execute(update(shopify.ShopifyCompensationCase).where(
+            shopify.ShopifyCompensationCase.id == case.id
+        ).values(lease_owner="new-worker-owner", lease_until=main.now() + main.timedelta(minutes=5)))
+        session.commit()
+        return ({"gid://shopify/InventoryItem/comp": 8}, {"gid://shopify/InventoryItem/comp": 1})
+
+    monkeypatch.setattr(shopify, "_graphql", fake_graphql)
+    monkeypatch.setattr(shopify, "_read_compensation_inventory_state", simulate_other_worker_reclaim)
+    assert shopify._process_shopify_compensation_case(db, case, order) == "pending"
+    db.refresh(case)
+    assert case.state == "pending"
+    assert case.lease_owner == "new-worker-owner"
+    assert mutation_calls == []
+    db.close()
+
+
+def test_shopify_shop_redaction_preserves_manual_fulfillment_hold_through_later_payment(client, monkeypatch):
+    import base64
+    import hashlib
+    import hmac
+    import json
+    from app import shopify
+
+    secret = "s" * 40
+    token = "shopify-sync-token-with-more-than-32-bytes"
+    monkeypatch.setenv("SHOPIFY_API_KEY", "shopify-api-key")
+    monkeypatch.setenv("SHOPIFY_API_SECRET", secret)
+    monkeypatch.setenv("SHOPIFY_APP_BASE_URL", "https://commerce.example")
+    monkeypatch.setenv("COMMERCE_SHOPIFY_SYNC_TOKEN", token)
+    seeded = seed_offer(stock=4)
+    db = TEST_SESSION()
+    order, connection, reservation, case = _seed_shopify_compensation_case(db, seeded)
+    connection_id, reservation_id = connection.id, reservation.id
+    order.state = "pending_payment"
+    order.payment_state = "pending"
+    order.fulfillment_state = "provider_pending"
+    order.paid_at = None
+    db.delete(case)
+    variant = db.get(main.Variant, seeded["variant_id"])
+    variant.reserved_qty = 1
+    db.add(main.StockReservation(
+        id=str(uuid.uuid4()), order_id=order.id, variant_id=variant.id, quantity=1,
+        state="reserved", expires_at=main.now() + main.timedelta(minutes=30),
+    ))
+    db.commit()
+
+    payload = json.dumps({"shop_domain": connection.shop_domain}).encode()
+    signature = base64.b64encode(hmac.new(secret.encode(), payload, hashlib.sha256).digest()).decode()
+    received = client.post("/webhooks/shopify", content=payload, headers={
+        "X-Shopify-Hmac-Sha256": signature,
+        "X-Shopify-Topic": "shop/redact",
+        "X-Shopify-Shop-Domain": connection.shop_domain,
+        "X-Shopify-Webhook-Id": "shop-redact-delivery-1",
+    })
+    assert received.status_code == 200, received.text
+    processed = client.post("/internal/shopify/process-events", headers={"X-Commerce-Shopify-Sync-Token": token})
+    assert processed.status_code == 200, processed.text
+    assert processed.json()["processed"] == 1 and processed.json()["failed"] == 0
+    db.refresh(order)
+    assert order.fulfillment_state == "manual_review"
+    db.expire_all()
+    assert db.get(shopify.ShopifyConnection, connection_id) is None
+    assert db.get(shopify.ShopifyInventoryReservation, reservation_id) is None
+    assert db.scalar(select(shopify.ShopifyWebhookEvent).where(
+        shopify.ShopifyWebhookEvent.shop_domain == "compensation.myshopify.com"
+    )) is None
+
+    main.settle_paid(db, order, 500, "KES", order.payment_intent_id)
+    db.commit()
+    db.refresh(order)
+    assert order.state == "paid"
+    assert order.fulfillment_state == "manual_review"
+    paid_event = db.scalar(select(main.CommerceOutboxEvent).where(
+        main.CommerceOutboxEvent.aggregate_id == order.id,
+        main.CommerceOutboxEvent.event_type == "commerce.order.paid",
+    ))
+    assert paid_event is not None
+    assert paid_event.payload["fulfillment_ready"] is False
+    review_event = db.scalar(select(main.CommerceOutboxEvent).where(
+        main.CommerceOutboxEvent.aggregate_id == order.id,
+        main.CommerceOutboxEvent.event_type == "commerce.shopify.compensation.manual_review",
+    ))
+    assert review_event is not None and review_event.payload["fulfillment_blocked"] is True
+    db.close()

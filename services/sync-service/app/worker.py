@@ -212,14 +212,17 @@ def _refund_payload(event: dict[str, Any]) -> dict[str, Any]:
         raise SyncContractError("unsupported_refund_event_type")
     if event.get("schema_version") != 1 or payload.get("schema_version") != 1:
         raise SyncContractError("unsupported_refund_event_schema")
-    if payload.get("ownership_authority") != "verified_stripe_charge_refund":
+    authority = payload.get("ownership_authority")
+    if authority not in {"verified_stripe_charge_refund", "verified_stripe_refund_event"}:
         raise SyncContractError("unverified_refund_authority")
     if payload.get("physical_return_confirmed") is not False or payload.get("ownership_effect") != "financial_status_only":
         raise SyncContractError("refund_must_not_imply_physical_return")
     order_total = payload.get("order_total_minor")
+    purchase_items_total = payload.get("purchase_items_total_minor")
     refunded = payload.get("amount_refunded_minor")
     if (
         not isinstance(order_total, int) or isinstance(order_total, bool) or order_total <= 0
+        or not isinstance(purchase_items_total, int) or isinstance(purchase_items_total, bool) or purchase_items_total < 0
         or not isinstance(refunded, int) or isinstance(refunded, bool) or refunded <= 0
         or refunded > order_total
     ):
@@ -230,18 +233,28 @@ def _refund_payload(event: dict[str, Any]) -> dict[str, Any]:
     currency = _required_string(payload.get("currency"), "currency", 3)
     if len(currency) != 3 or not currency.isalpha() or currency != currency.upper():
         raise SyncContractError("invalid_refund_currency")
+    charge_id = _required_string(payload.get("charge_id"), "charge_id", 180)
+    if not charge_id.startswith("ch_"):
+        raise SyncContractError("invalid_refund_charge_id")
+    refund_id = payload.get("refund_id")
+    if refund_id is not None:
+        refund_id = _required_string(refund_id, "refund_id", 180)
+        if not refund_id.startswith("re_"):
+            raise SyncContractError("invalid_refund_id")
     return {
         "event_id": event_id,
         "provider_event_id": _required_string(payload.get("provider_event_id"), "provider_event_id", 180),
         "event_type": "commerce.order.refund.updated",
         "schema_version": 1,
-        "ownership_authority": "verified_stripe_charge_refund",
+        "ownership_authority": authority,
         "owner_user_id": _required_string(payload.get("buyer_user_id"), "buyer_user_id", 128),
         "order_id": _required_string(payload.get("order_id"), "order_id", 36),
         "payment_intent_id": _required_string(payload.get("payment_intent_id"), "payment_intent_id", 180),
-        "charge_id": _required_string(payload.get("charge_id"), "charge_id", 180),
+        "charge_id": charge_id,
+        "refund_id": refund_id,
         "currency": currency,
         "order_total_minor": order_total,
+        "purchase_items_total_minor": purchase_items_total,
         "amount_refunded_minor": refunded,
         "refund_state": expected_state,
         "refunded_at": _required_string(payload.get("refunded_at"), "refunded_at", 64),

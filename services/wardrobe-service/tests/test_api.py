@@ -508,7 +508,8 @@ def refund_snapshot_body(**overrides):
         "payment_intent_id": "pi_test_purchase_0001",
         "charge_id": "ch_test_purchase_0001",
         "currency": "KES",
-        "order_total_minor": 500000,
+        "order_total_minor": 550000,
+        "purchase_items_total_minor": 500000,
         "amount_refunded_minor": 250000,
         "refund_state": "partial_refund",
         "refunded_at": "2026-11-07T12:00:00Z",
@@ -551,13 +552,13 @@ def test_refund_snapshot_is_order_scoped_monotonic_and_does_not_change_items(cli
         json=refund_snapshot_body(
             event_id="723e4567-e89b-42d3-a456-426614174000",
             provider_event_id="evt_refund_snapshot_full",
-            amount_refunded_minor=500000,
+            amount_refunded_minor=550000,
             refund_state="refunded",
         ),
     )
     assert full.status_code == 200
     assert full.json()["refund_state"] == "refunded"
-    assert full.json()["amount_refunded_minor"] == 500000
+    assert full.json()["amount_refunded_minor"] == 550000
 
     snapshot = client.get(
         "/v1/purchases/refund-status", headers=auth(),
@@ -593,7 +594,7 @@ def test_refund_snapshot_rejects_cross_owner_resource_and_invalid_return_claims(
         json=refund_snapshot_body(
             event_id="823e4567-e89b-42d3-a456-426614174000",
             provider_event_id="evt_refund_bad_total",
-            order_total_minor=400000,
+            purchase_items_total_minor=400000,
         ),
     )
     assert wrong_total.status_code == 409
@@ -784,3 +785,27 @@ def test_failed_learning_delivery_is_audited_and_same_event_can_retry(client, mo
         row = session.get(WardrobeFeedbackEventRow, ("user-1", "feedback-retry-001"))
         assert row.delivery_state == "delivered"
         assert row.error_code is None
+
+
+
+def test_refund_snapshot_accepts_order_charges_outside_wardrobe_line_totals(client):
+    purchase = client.post(
+        "/v1/purchases/verified", headers=auth(), json=verified_purchase_body()
+    )
+    assert purchase.status_code == 201, purchase.text
+    response = client.post(
+        "/v1/purchases/refund-status", headers=auth(),
+        json=refund_snapshot_body(
+            event_id="b23e4567-e89b-42d3-a456-426614174000",
+            provider_event_id="evt_refund_includes_shipping_tax",
+            order_total_minor=550000,
+            purchase_items_total_minor=500000,
+            amount_refunded_minor=550000,
+            refund_state="refunded",
+            ownership_authority="verified_stripe_refund_event",
+            refund_id="re_shipping_tax_1",
+        ),
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["refund_state"] == "refunded"
+    assert response.json()["amount_refunded_minor"] == 550000

@@ -123,6 +123,8 @@ Shopify order webhook/reconciliation status updates only the Shopify link's fina
 
 Webhook HMAC is checked against the raw request bytes before parsing. The queue stores the shop domain, delivery/event IDs, topic, remote resource ID and payload digest—not the raw body—so customer or address fields are not accidentally persisted. Event processing is idempotent; retries use bounded attempts and dead-letter after repeated failures. Stale processing jobs are reclaimable after worker interruption. A merchant disconnect or app/uninstalled event immediately clears encrypted token material and quarantines all Shopify-backed listings/variants from shopper availability; a later reconnection requires a complete inventory sync and explicit merchant reactivation. shop/redact deletes the connection's linked product/order data. Customer data request/redact deliveries are acknowledged without lookup because customer data is not requested or stored.
 
+Manual-review outbox events are not leased to the Wardrobe Sync worker. They remain in the durable Commerce operations inbox at `GET /admin/operations/alerts` for authenticated administrators; `POST /admin/operations/alerts/{event_id}/acknowledge` records that an operator has seen the alert but does not resolve the underlying case. The Marketplace BFF exposes these admin-only routes. Shopify compensation and Stripe refund manual-review alerts therefore cannot be retried into the Sync worker's unsupported-event dead-letter path.
+
 Webhook delivery order is not guaranteed, and delivery itself is not a complete synchronization mechanism. Keep scheduled reconciliation enabled and monitor pending/dead-letter counts.
 
 ## Required staging acceptance before production
