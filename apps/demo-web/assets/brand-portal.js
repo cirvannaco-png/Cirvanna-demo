@@ -1,6 +1,6 @@
 (() => {
   "use strict";
-  const state = { base: "/api/commerce", token: "", actor: null, merchant: null, listings: [], orders: [] };
+  const state = { base: "/api/commerce", token: "", actor: null, merchant: null, listings: [], orders: [], shopify: null, staged: [] };
   const $ = id => document.getElementById(id);
   const notice = $("notice");
   const esc = value => String(value ?? "").replace(/[&<>"']/g, char => ({
@@ -118,6 +118,7 @@
     state.orders = Array.isArray(values[1] && values[1].items) ? values[1].items : [];
     renderListings();
     renderOrders();
+    await loadShopifyConnection();
     const variants = state.listings.flatMap(item => item.variants || []);
     $("mListings").textContent = state.listings.length.toLocaleString();
     $("mVariants").textContent = variants.length.toLocaleString();
@@ -161,6 +162,107 @@
           '</td><td>' + statusPill(order.payment_status) + '</td></tr>';
       }).join("") + '</tbody></table>';
   }
+  async function loadShopifyConnection() {
+    const data = await api("/integrations/shopify/connection");
+    state.shopify = data;
+    $("shopifyStatus").textContent = data.connected ? (data.status || "connected") : "not connected";
+    $("shopifyMeta").textContent = data.connected
+      ? [data.shop_name || data.shop_domain, data.shop_currency, data.webhooks_complete ? "webhooks registered" : "webhook setup incomplete", data.products_synced_at ? "last sync " + new Date(data.products_synced_at).toLocaleString() : "not synced"].filter(Boolean).join(" · ")
+      : "No Shopify store connected. OAuth and webhook configuration must be enabled by Cirvanna operations.";
+    $("shopifySync").disabled = !data.connected;
+    $("shopifyReload").disabled = !data.connected;
+    $("shopifyDisconnect").disabled = !data.connected;
+    if (data.connected) await loadShopifyStaged();
+    else {
+      state.staged = [];
+      $("shopifyStaged").innerHTML = '<p class="muted">Connect a store and run the first sync to stage products privately.</p>';
+    }
+  }
+  async function loadShopifyStaged() {
+    const data = await api("/integrations/shopify/staged-products?offset=0&limit=50");
+    state.staged = Array.isArray(data.items) ? data.items : [];
+    renderShopifyStaged();
+  }
+  function renderShopifyStaged() {
+    const root = $("shopifyStaged");
+    if (!state.staged.length) {
+      root.innerHTML = '<p class="muted">No staged products in the latest page.</p>';
+      return;
+    }
+    root.innerHTML = state.staged.map(product => {
+      const variants = (product.variants || []).map(variant =>
+        '<label class="wide">' + esc(variant.sku || variant.title || "Variant") + ' · ' +
+        esc(variant.currency) + ' · ' + esc(variant.tracked && variant.inventory_complete ? String(variant.available_quantity) + ' available' : 'inventory unverified') +
+        '<input data-shopify-variant="' + esc(variant.shopify_variant_gid) + '" placeholder="Canonical Catalog variant UUID" value="' +
+        esc(variant.canonical_variant_id || "") + '"></label>'
+      ).join("");
+      const ready = product.remote_status === "ACTIVE" && product.variants_complete;
+      return '<article class="listing" data-shopify-snapshot="' + esc(product.snapshot_id) + '"><div class="row"><div><h3>' +
+        esc(product.title) + '</h3><div class="sub">' + esc(product.vendor || "Shopify") + ' · ' +
+        esc(product.product_type || "Uncategorized") + ' · ' + esc(product.remote_status) + '</div></div>' +
+        statusPill(product.mapping_state) + '</div><p class="sub">' + (ready ? "Variant set complete. Map to an existing Catalog product and exact variants." : "Mapping disabled until an active, complete variant set is synchronized.") + '</p>' +
+        '<label class="wide">Canonical Catalog product UUID<input data-canonical-product placeholder="Existing Catalog product UUID"></label>' +
+        '<div class="grid">' + variants + '</div><button type="button" data-shopify-map ' + (ready ? "" : "disabled") + '>Map variants to Catalog</button></article>';
+    }).join("");
+  }
+  async function startShopifyOAuth(event) {
+    event.preventDefault();
+    const domain = $("shopifyDomain").value.trim().toLowerCase();
+    if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.myshopify\.com$/.test(domain)) {
+      throw new Error("Enter the canonical your-store.myshopify.com domain.");
+    }
+    const response = await fetch(state.base + "/integrations/shopify/install?shop=" + encodeURIComponent(domain), {
+      method: "GET", headers: { "Accept": "application/json", "Authorization": "Bearer " + state.token },
+      cache: "no-store", credentials: "same-origin", redirect: "manual"
+    });
+    if (response.status !== 302) {
+      const data = await response.json().catch(() => null);
+      const detail = data && data.detail;
+      const code = detail && typeof detail === "object" ? detail.code : (detail || "SHOPIFY_OAUTH_START_FAILED");
+      throw new Error(String(code) + " (HTTP " + response.status + ")");
+    }
+    const location = response.headers.get("Location");
+    if (!location || !location.startsWith("https://" + domain + "/admin/oauth/authorize?")) {
+      throw new Error("Shopify did not return a valid authorization destination.");
+    }
+    window.location.assign(location);
+  }
+  async function syncShopify() {
+    const result = await api("/integrations/shopify/sync/products", { method: "POST" });
+    await loadShopifyConnection();
+    notify("Shopify sync processed " + Number(result.variants_seen || 0) + " variants. Products remain private until Catalog mapping and CAL authorization.", "success");
+  }
+  async function disconnectShopify() {
+    if (!window.confirm("Disconnect this Shopify store from Cirvanna? Existing imported orders remain in Cirvanna records.")) return;
+    await api("/integrations/shopify/disconnect", { method: "POST" });
+    await loadShopifyConnection();
+    notify("Shopify connection revoked. Reconnect through OAuth to resume synchronization.", "success");
+  }
+  async function mapShopifyProduct(article) {
+    const snapshotId = article.dataset.shopifySnapshot;
+    const canonicalProductId = article.querySelector("[data-canonical-product]").value.trim();
+    const variantInputs = Array.from(article.querySelectorAll("[data-shopify-variant]"));
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(canonicalProductId)) {
+      throw new Error("Enter a valid existing Catalog product UUID.");
+    }
+    if (!variantInputs.length || variantInputs.some(input => !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input.value.trim()))) {
+      throw new Error("Enter a canonical Catalog variant UUID for every Shopify variant.");
+    }
+    await api("/integrations/shopify/products/" + encodeURIComponent(snapshotId) + "/map", {
+      method: "POST",
+      body: {
+        canonical_product_id: canonicalProductId,
+        variants: variantInputs.map(input => ({
+          shopify_variant_gid: input.dataset.shopifyVariant,
+          canonical_variant_id: input.value.trim()
+        }))
+      }
+    });
+    await loadShopifyStaged();
+    await loadDashboard();
+    notify("Shopify variants mapped to canonical Catalog identities. Shopper display still requires CAL SHOW.", "success");
+  }
+
   async function submitApplication(event) {
     event.preventDefault();
     await api("/merchants/applications", { method: "POST", body: {
@@ -238,6 +340,14 @@
   }
   $("connectForm").addEventListener("submit", event => { event.preventDefault(); run(connect); });
   $("applicationForm").addEventListener("submit", event => run(() => submitApplication(event)));
+  $("shopifyConnectForm").addEventListener("submit", event => run(() => startShopifyOAuth(event)));
+  $("shopifySync").addEventListener("click", () => run(syncShopify));
+  $("shopifyReload").addEventListener("click", () => run(loadShopifyStaged));
+  $("shopifyDisconnect").addEventListener("click", () => run(disconnectShopify));
+  $("shopifyStaged").addEventListener("click", event => {
+    const button = event.target.closest("[data-shopify-map]");
+    if (button) run(() => mapShopifyProduct(button.closest("[data-shopify-snapshot]")));
+  });
   $("listingForm").addEventListener("submit", event => run(() => linkProduct(event)));
   $("variantForm").addEventListener("submit", event => run(() => addVariant(event)));
   $("stockForm").addEventListener("submit", event => run(() => adjustStock(event)));
