@@ -44,6 +44,15 @@ class RetrievalEvaluationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "outside candidate_ids"):
                 read_cases(path)
 
+    def test_human_adjudicated_violation_triggers_hard_gate(self):
+        row = make_case("query-001", "cluster-001", ["p1", "p3"], ["p1", "p2"])
+        row["excluded_product_ids"] = []
+        row["human_exclusion_violation_ids"] = ["p1"]
+        report = evaluate([row], baseline_model_id="cirvanna-fashion-clip", k=1,
+                          primary_metric="ndcg_at_k", bootstrap_samples=100)
+        self.assertFalse(report["hard_exclusion_gate_passed"]["cirvanna-fashion-clip"])
+        self.assertTrue(report["hard_exclusion_gate_passed"]["challenger"])
+
     def test_rejects_mixed_tasks_and_model_sets(self):
         a = make_case("query-001", "cluster-001", ["p1"], ["p2"])
         b = make_case("query-002", "cluster-002", ["p1"], ["p2"])
