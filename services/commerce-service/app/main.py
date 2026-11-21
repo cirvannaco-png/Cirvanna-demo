@@ -55,7 +55,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 
 
 SERVICE = "cirvanna-commerce-service"
-EXPECTED_SCHEMA_REVISION = "20261121_0014"
+EXPECTED_SCHEMA_REVISION = "20261121_0015"
 MAX_QTY = 50
 RESERVATION_MINUTES = 60
 SKU_RE = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,79}$")
@@ -3993,31 +3993,21 @@ async def stripe_webhook(request: Request, db: Annotated[Session, Depends(get_db
             attempt.provider_refund_id = str(provider_refund_id)
             status = str(obj.get("status", "")).lower()
             if status == "succeeded":
-                order = db.get(CommerceOrder, attempt.order_id)
-                if order is None:
-                    raise HTTPException(409, detail={"code": "REFUND_ORDER_NOT_FOUND"})
                 if attempt.state != "confirmed":
                     attempt.state = "confirmed"
                     attempt.confirmed_at = now()
                     attempt.last_error = None
+                    order = db.get(CommerceOrder, attempt.order_id)
+                    if order is None:
+                        raise HTTPException(409, detail={"code": "REFUND_ORDER_NOT_FOUND"})
                     order.amount_refunded_minor = max(order.amount_refunded_minor, attempt.amount_minor)
                     order.refund_state = "refunded"
                     order.payment_state = "refunded"
                     order.fulfillment_state = "refunded"
                     order.updated_at = now()
-                # refund.created/refund.updated can precede charge.refunded. Emit
-                # only when Stripe supplies the real Charge ID required by the
-                # downstream contract; otherwise charge.refunded backfills later.
-                refund_charge_id = obj.get("charge")
-                if isinstance(refund_charge_id, dict):
-                    refund_charge_id = refund_charge_id.get("id")
-                if isinstance(refund_charge_id, str) and refund_charge_id.startswith("ch_"):
                     refund_event_id = str(uuid.uuid5(uuid.NAMESPACE_URL,
                         f"cirvanna:order-refund:{order.id}:{attempt.amount_minor}"))
                     if db.get(CommerceOutboxEvent, refund_event_id) is None:
-                        purchase_items = list(db.scalars(select(OrderItem).where(OrderItem.order_id == order.id)).all())
-                        purchase_items_total_minor = sum(int(item.unit_price_minor) * int(item.quantity) for item in purchase_items)
-                        order_total_minor = order.total_minor if order.total_minor is not None else order.subtotal_minor
                         db.add(CommerceOutboxEvent(
                             event_id=refund_event_id, aggregate_type="stripe_event", aggregate_id=refund_event_id,
                             event_type="commerce.order.refund.updated", schema_version=1,
@@ -4027,9 +4017,9 @@ async def stripe_webhook(request: Request, db: Annotated[Session, Depends(get_db
                                 "ownership_authority": "verified_stripe_refund_event",
                                 "order_id": order.id, "buyer_user_id": order.buyer_user_id,
                                 "payment_intent_id": attempt.payment_intent_id,
-                                "charge_id": refund_charge_id, "refund_id": str(provider_refund_id),
-                                "currency": order.currency, "order_total_minor": order_total_minor,
-                                "purchase_items_total_minor": purchase_items_total_minor,
+                                "refund_id": str(provider_refund_id), "currency": order.currency,
+                                "order_total_minor": attempt.amount_minor,
+                                "merchandise_subtotal_minor": order.subtotal_minor,
                                 "amount_refunded_minor": attempt.amount_minor, "refund_state": "refunded",
                                 "refunded_at": now().isoformat(), "physical_return_confirmed": False,
                                 "ownership_effect": "financial_status_only",
@@ -4086,26 +4076,20 @@ async def stripe_webhook(request: Request, db: Annotated[Session, Depends(get_db
             or charge_currency != order.currency
             or amount_refunded < 0
             or amount_refunded > expected_charge_minor
-            or not isinstance(obj.get("id"), str) or not str(obj.get("id")).startswith("ch_")
+            or not obj.get("id")
         ):
             raise HTTPException(400, detail={"code": "REFUND_AMOUNT_OR_CURRENCY_MISMATCH"})
-        # Stripe reports a cumulative charge-level refund amount. Keep the
-        # order snapshot monotonic, but emit the deterministic event whenever it
-        # is absent—even if refund.created already advanced the order amount.
+        # Stripe reports a cumulative charge-level refund amount. Only monotonic
+        # increases update the order snapshot or emit a downstream event.
         if amount_refunded > order.amount_refunded_minor:
             refund_state = "refunded" if amount_refunded == charge_amount else "partial_refund"
             order.amount_refunded_minor = amount_refunded
             order.refund_state = refund_state
             order.payment_state = refund_state
             order.updated_at = now()
-        else:
-            refund_state = "refunded" if amount_refunded == charge_amount else "partial_refund"
-        if amount_refunded > 0 and amount_refunded >= order.amount_refunded_minor:
             refund_event_id = str(uuid.uuid5(uuid.NAMESPACE_URL,
                 f"cirvanna:order-refund:{order.id}:{amount_refunded}"))
             if db.get(CommerceOutboxEvent, refund_event_id) is None:
-                purchase_items = list(db.scalars(select(OrderItem).where(OrderItem.order_id == order.id)).all())
-                purchase_items_total_minor = sum(int(item.unit_price_minor) * int(item.quantity) for item in purchase_items)
                 db.add(CommerceOutboxEvent(
                     event_id=refund_event_id,
                     aggregate_type="stripe_event",
@@ -4124,7 +4108,7 @@ async def stripe_webhook(request: Request, db: Annotated[Session, Depends(get_db
                         "charge_id": str(obj["id"]),
                         "currency": order.currency,
                         "order_total_minor": expected_charge_minor,
-                        "purchase_items_total_minor": purchase_items_total_minor,
+                        "merchandise_subtotal_minor": order.subtotal_minor,
                         "amount_refunded_minor": amount_refunded,
                         "refund_state": refund_state,
                         "refunded_at": now().isoformat(),
@@ -4205,57 +4189,6 @@ def inventory_audit(actor: Annotated[Actor, Depends(require_actor)], db: Annotat
         "reserved_qty": v.reserved_qty, "version": v.version} for v in bad]}
 
 
-OPERATOR_REVIEW_EVENT_TYPES = {
-    "commerce.shopify.compensation.manual_review",
-    "commerce.payment.refund.manual_review",
-}
-
-
-@app.get("/admin/operations/alerts")
-def list_operations_alerts(
-    actor: Annotated[Actor, Depends(require_actor)],
-    db: Annotated[Session, Depends(get_db)],
-    limit: int = Query(50, ge=1, le=200),
-) -> dict[str, object]:
-    """Durable admin inbox for manual-review events excluded from the Wardrobe Sync queue."""
-    if actor.role != "admin":
-        raise HTTPException(403, detail={"code": "ADMIN_REQUIRED"})
-    events = list(db.scalars(select(CommerceOutboxEvent).where(
-        CommerceOutboxEvent.event_type.in_(OPERATOR_REVIEW_EVENT_TYPES),
-        CommerceOutboxEvent.delivered_at.is_(None),
-    ).order_by(CommerceOutboxEvent.created_at, CommerceOutboxEvent.event_id).limit(limit)).all())
-    return {"alerts": [{
-        "event_id": event.event_id,
-        "event_type": event.event_type,
-        "created_at": event.created_at.isoformat(),
-        "payload": event.payload,
-    } for event in events], "count": len(events)}
-
-
-@app.post("/admin/operations/alerts/{event_id}/acknowledge")
-def acknowledge_operations_alert(
-    event_id: str,
-    actor: Annotated[Actor, Depends(require_actor)],
-    db: Annotated[Session, Depends(get_db)],
-) -> dict[str, object]:
-    """Record an authenticated operator acknowledgement; this is not a case resolution."""
-    if actor.role != "admin":
-        raise HTTPException(403, detail={"code": "ADMIN_REQUIRED"})
-    event = db.scalar(select(CommerceOutboxEvent).where(
-        CommerceOutboxEvent.event_id == event_id
-    ).with_for_update())
-    if event is None or event.event_type not in OPERATOR_REVIEW_EVENT_TYPES:
-        raise HTTPException(404, detail={"code": "OPERATIONS_ALERT_NOT_FOUND"})
-    if event.delivered_at is None:
-        event.delivered_at = now()
-        event.last_error = f"operator_acknowledged:{actor.user_id}"[:500]
-        event.lease_owner = None
-        event.lease_until = None
-        db.commit()
-    return {"status": "acknowledged", "event_id": event.event_id,
-        "acknowledged_by": actor.user_id, "case_resolved": False}
-
-
 @app.post("/internal/outbox/claim", dependencies=[Depends(require_sync_token)], tags=["internal event delivery"])
 def claim_outbox_events(payload: OutboxClaimIn) -> dict[str, object]:
     """Lease pending outbox events for the authenticated Sync worker."""
@@ -4266,7 +4199,6 @@ def claim_outbox_events(payload: OutboxClaimIn) -> dict[str, object]:
                 CommerceOutboxEvent.delivered_at.is_(None),
                 CommerceOutboxEvent.dead_letter_at.is_(None),
                 CommerceOutboxEvent.next_attempt_at <= current,
-                CommerceOutboxEvent.event_type.not_in(OPERATOR_REVIEW_EVENT_TYPES),
                 (CommerceOutboxEvent.lease_until.is_(None) | (CommerceOutboxEvent.lease_until < current)),
             ).order_by(CommerceOutboxEvent.created_at, CommerceOutboxEvent.event_id)
               .with_for_update(skip_locked=True).limit(payload.limit)).all())
