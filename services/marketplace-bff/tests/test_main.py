@@ -2331,6 +2331,7 @@ def test_commerce_proxy_allowlist_routes_role_based_operations():
         ("POST", "integrations/shopify/disconnect"),
         ("POST", "integrations/shopify/sync/products"),
         ("POST", "integrations/shopify/products/123e4567-e89b-12d3-a456-426614174000/map"),
+        ("POST", "integrations/shopify/products/123e4567-e89b-12d3-a456-426614174000/reactivate"),
         ("POST", "integrations/shopify/markets/KE/sync-pricing"),
     ]
     for method, route in allowed:
@@ -2346,6 +2347,7 @@ def test_commerce_proxy_allowlist_routes_role_based_operations():
         ("POST", "webhooks/shopify"),
         ("POST", "internal/shopify/process-events"),
         ("POST", "integrations/shopify/products/not-a-uuid/map"),
+        ("POST", "integrations/shopify/products/not-a-uuid/reactivate"),
         ("DELETE", "integrations/shopify/disconnect"),
     ]
     for method, route in blocked:
