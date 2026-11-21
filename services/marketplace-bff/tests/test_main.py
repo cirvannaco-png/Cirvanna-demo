@@ -2286,6 +2286,18 @@ def test_virtual_twin_capabilities_reject_invalid_boolean_contract(client, monke
     assert response.json()["detail"]["code"] == "VIRTUAL_TWIN_CAPABILITIES_INVALID"
 
 
+def test_brand_portal_exposes_shopify_merchant_controls(client):
+    response = client.get("/brand-portal")
+    script = client.get("/assets/brand-portal.js")
+    assert response.status_code == script.status_code == 200
+    for element in ("shopifyPanel", "shopifyDomain", "shopifyConnectForm", "shopifySync", "shopifyStaged"):
+        assert element in response.text
+    for behavior in ("startShopifyOAuth", "loadShopifyConnection", "loadShopifyStaged", "mapShopifyProduct"):
+        assert behavior in script.text
+    assert "credentials: \"same-origin\"" in script.text
+    assert "redirect: \"manual\"" in script.text
+
+
 def test_brand_and_founder_portals_are_served_same_origin(client):
     brand = client.get("/brand-portal")
     founder = client.get("/founder-console")
