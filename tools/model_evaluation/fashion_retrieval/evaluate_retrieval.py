@@ -278,6 +278,10 @@ def validate_run_manifest(
         raise ValueError("rankings input SHA-256 does not match the runner manifest")
     if manifest.get("input_sha256") != data_manifest.get("output_sha256"):
         raise ValueError("runner input SHA-256 does not match the preregistered prepared-data manifest")
+    if manifest.get("query_count") != data_manifest.get("query_count"):
+        raise ValueError("runner query count differs from the preregistered prepared-data manifest")
+    if manifest.get("candidate_pool_sizes") != data_manifest.get("candidate_pool_sizes"):
+        raise ValueError("runner candidate-pool sizes differ from the preregistered prepared-data manifest")
     if manifest.get("split") != "test":
         raise ValueError("runner manifest split must be test for final evaluation")
     if manifest.get("task_id") != registration["task_id"]:
