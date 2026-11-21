@@ -52,7 +52,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 
 
 SERVICE = "cirvanna-commerce-service"
-EXPECTED_SCHEMA_REVISION = "20261121_0012"
+EXPECTED_SCHEMA_REVISION = "20261121_0013"
 MAX_QTY = 50
 RESERVATION_MINUTES = 60
 SKU_RE = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,79}$")
@@ -740,7 +740,7 @@ class StripeGateway:
             and self.success_url.startswith("https://") and self.cancel_url.startswith("https://")
             and self.countries and all(COUNTRY_RE.fullmatch(x) for x in self.countries))
 
-    def create_session(self, order: CommerceOrder, items: list[OrderItem], charges: list[OrderCharge], email: str | None) -> dict[str, str]:
+    def create_session(self, order: CommerceOrder, items: list[OrderItem], charges: list[OrderCharge], email: str | None, *, card_only: bool = False) -> dict[str, str]:
         if not self.ready:
             raise RuntimeError("Stripe not configured")
         params: dict[str, str] = {
@@ -748,6 +748,10 @@ class StripeGateway:
             "client_reference_id": order.id, "expires_at": str(int(order.expires_at.timestamp())),
             "metadata[order_id]": order.id, "metadata[order_number]": order.order_number,
         }
+        if card_only:
+            # Shopify's provider-side stock hold expires with this checkout. Do not
+            # offer delayed-settlement methods that can succeed after that hold expires.
+            params["payment_method_types[0]"] = "card"
         if order.destination_country_code:
             # Market-aware destination is a provider-quoted zone key. Do not let
             # Stripe collect a second, potentially different address after the quote.
@@ -1835,8 +1839,12 @@ def persist_stripe_session(db: Session, order_id: str, email: str | None, gatewa
         raise HTTPException(409, detail={"code": "ORDER_NOT_PAYABLE", "state": order.state})
     lines = list(db.scalars(select(OrderItem).where(OrderItem.order_id == order.id).order_by(OrderItem.id)).all())
     charges = list(db.scalars(select(OrderCharge).where(OrderCharge.order_id == order.id).order_by(OrderCharge.charge_type, OrderCharge.id)).all())
+    from app.shopify import ShopifyInventoryReservation
+    has_shopify_reservation = db.scalar(select(ShopifyInventoryReservation.id).where(
+        ShopifyInventoryReservation.commerce_order_id == order.id
+    ).limit(1)) is not None
     try:
-        session = gateway.create_session(order, lines, charges, email)
+        session = gateway.create_session(order, lines, charges, email, card_only=has_shopify_reservation)
     except RuntimeError as exc:
         # Network failure may occur after Stripe accepted the request. Keep the
         # reservation and recover via stable provider idempotency on retry.
@@ -3415,6 +3423,10 @@ def checkout(
         )
         if not authorization_matches_snapshot:
             raise HTTPException(409, detail={"code": "EXISTING_ORDER_CAL_AUTHORIZATION_MISSING"})
+        from app.shopify import prepare_checkout_inventory_reservations
+        prepare_checkout_inventory_reservations(
+            db, existing, allow_create=existing.payment_session_id is None,
+        )
         return persist_stripe_session(db, existing.id, actor.email, gateway)
 
     cart = ensure_cart(db, actor.user_id)
@@ -3755,8 +3767,16 @@ def checkout(
                 raise HTTPException(409, detail={"code": "IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PERSONALIZATION_CONSENT"})
             if existing.checkout_context_hash != context_hash:
                 raise HTTPException(409, detail={"code": "IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_CHECKOUT_CONTEXT"})
+            from app.shopify import prepare_checkout_inventory_reservations
+            prepare_checkout_inventory_reservations(
+                db, existing, allow_create=existing.payment_session_id is None,
+            )
             return persist_stripe_session(db, existing.id, actor.email, gateway)
         raise HTTPException(409, detail={"code": "ORDER_CONFLICT_RETRY_SAME_IDEMPOTENCY_KEY"}) from exc
+    # Shopify-backed seller stock must be reserved remotely before Stripe can
+    # create a payable session. Local Commerce reservations alone are insufficient.
+    from app.shopify import prepare_checkout_inventory_reservations
+    prepare_checkout_inventory_reservations(db, order)
     return persist_stripe_session(db, order.id, actor.email, gateway)
 
 
@@ -3897,8 +3917,12 @@ async def stripe_webhook(request: Request, db: Annotated[Session, Depends(get_db
                 )
         elif event_type == "checkout.session.expired" and order.state == "pending_payment":
             release_reservations(db, order, "expired")
+            from app.shopify import release_shopify_checkout_reservations
+            release_shopify_checkout_reservations(db, order)
         elif event_type == "checkout.session.async_payment_failed" and order.state == "pending_payment":
             release_reservations(db, order, "payment_failed")
+            from app.shopify import release_shopify_checkout_reservations
+            release_shopify_checkout_reservations(db, order)
     db.add(PaymentWebhookEvent(event_id=event_id, event_type=event_type))
     try:
         db.commit()
@@ -3928,6 +3952,8 @@ def expire_reservations(db: Annotated[Session, Depends(get_db)],
             if order and order.state == "pending_payment":
                 release_reservations(db, order, "expired")
                 db.commit()
+                from app.shopify import release_shopify_checkout_reservations
+                release_shopify_checkout_reservations(db, order)
                 expired += 1
     return {"expired_reservations": expired, "examined_orders": len(orders)}
 

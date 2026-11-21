@@ -42,8 +42,21 @@ API_VERSION = os.getenv("SHOPIFY_ADMIN_API_VERSION", "2026-10").strip()
 SHOP_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.myshopify\.com$")
 GID_RE = re.compile(r"^gid://shopify/(Product|ProductVariant|Order|InventoryItem|InventoryLevel)/[0-9]+$")
 CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
+
+
+def _shopify_inventory_reservation_enabled() -> bool:
+    """Keep the new provider reservation saga staging-only by default."""
+    environment = os.getenv("COMMERCE_ENVIRONMENT", "production").strip().lower()
+    if environment in {"development", "dev", "test", "testing", "staging"}:
+        return True
+    return os.getenv("SHOPIFY_INVENTORY_RESERVATION_PRODUCTION_ENABLED", "false").strip().lower() in {
+        "1", "true", "yes",
+    }
+
+
 REQUIRED_SCOPES = {
-    "read_products", "read_inventory", "read_locations", "read_orders", "write_orders"
+    "read_products", "read_inventory", "read_locations", "read_orders",
+    "read_draft_orders", "write_draft_orders",
 }
 WEBHOOK_TOPICS = (
     "PRODUCTS_CREATE", "PRODUCTS_UPDATE", "PRODUCTS_DELETE",
@@ -306,6 +319,29 @@ class ShopifyOrderLink(commerce.Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
 
+class ShopifyInventoryReservation(commerce.Base):
+    __tablename__ = "commerce_shopify_inventory_reservations"
+    __table_args__ = (
+        UniqueConstraint("commerce_order_id", "merchant_id", name="uq_shopify_inventory_reservation_order_merchant"),
+        UniqueConstraint("reservation_key", name="uq_shopify_inventory_reservation_key"),
+        UniqueConstraint("draft_order_gid", name="uq_shopify_inventory_reservation_draft"),
+        Index("ix_shopify_inventory_reservation_state_expiry", "state", "expires_at"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    connection_id: Mapped[str] = mapped_column(ForeignKey("commerce_shopify_connections.id", ondelete="CASCADE"), nullable=False)
+    merchant_id: Mapped[str] = mapped_column(ForeignKey("commerce_merchants.id", ondelete="CASCADE"), nullable=False)
+    commerce_order_id: Mapped[str] = mapped_column(ForeignKey("commerce_orders.id", ondelete="CASCADE"), nullable=False)
+    reservation_key: Mapped[str] = mapped_column(String(100), nullable=False)
+    draft_order_gid: Mapped[str | None] = mapped_column(String(180))
+    state: Mapped[str] = mapped_column(String(24), nullable=False, default="creating")
+    lease_owner: Mapped[str | None] = mapped_column(String(64))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_error: Mapped[str | None] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+
 class ShopifyVariantMap(BaseModel):
     model_config = ConfigDict(extra="forbid")
     shopify_variant_gid: str = Field(min_length=1, max_length=180)
@@ -377,6 +413,12 @@ def _refresh_access_token(connection: ShopifyConnection, db: Session) -> str:
         select(ShopifyConnection).where(ShopifyConnection.id == connection.id).with_for_update()
     )
     if locked is None or locked.status != "active":
+        raise HTTPException(409, detail={"code": "SHOPIFY_REAUTH_REQUIRED"})
+    if not REQUIRED_SCOPES.issubset(_required_scopes(locked.granted_scopes or [])):
+        # Stores connected before draft-order permissions were added must explicitly
+        # reauthorize; never discover missing scopes only after a buyer starts checkout.
+        locked.status = "reauthorization_required"
+        db.commit()
         raise HTTPException(409, detail={"code": "SHOPIFY_REAUTH_REQUIRED"})
     if locked.access_expires_at and commerce._aware_utc(locked.access_expires_at) > utcnow() + timedelta(minutes=5):
         return _unseal(locked.access_token_ciphertext or "", locked, "access")
@@ -1542,6 +1584,311 @@ def process_shopify_events(
     }
 
 
+def _reservation_key(order_id: str, merchant_id: str) -> str:
+    digest = hashlib.sha256(f"cirvanna-shopify-reservation:{order_id}:{merchant_id}".encode()).hexdigest()[:32]
+    return "cirvanna-reserve-" + digest
+
+
+def _find_reservation_draft(connection: ShopifyConnection, db: Session, key: str) -> dict[str, Any] | None:
+    data = _graphql(connection, db, """
+      query CirvannaFindInventoryReservation($query: String!) {
+        draftOrders(first: 10, query: $query, sortKey: CREATED_AT, reverse: true) {
+          nodes { id tags status reserveInventoryUntil order { id } }
+        }
+      }
+    """, {"query": "tag:" + key})
+    nodes = (data.get("draftOrders") or {}).get("nodes") or []
+    return next((
+        node for node in nodes
+        if isinstance(node, dict) and node.get("id") and key in (node.get("tags") or [])
+    ), None)
+
+
+def _create_inventory_draft(connection: ShopifyConnection, db: Session,
+                            reservation: ShopifyInventoryReservation,
+                            items: list[commerce.OrderItem]) -> str:
+    existing = _find_reservation_draft(connection, db, reservation.reservation_key)
+    if existing:
+        if existing.get("order"):
+            raise HTTPException(409, detail={"code": "SHOPIFY_RESERVATION_ALREADY_COMPLETED"})
+        reservation.draft_order_gid = existing["id"]
+        reservation.state = "reserved"
+        reservation.last_error = None
+        db.commit()
+        return existing["id"]
+    snapshots = {x.local_variant_id: x for x in db.scalars(select(ShopifyVariantSnapshot).where(
+        ShopifyVariantSnapshot.connection_id == connection.id,
+        ShopifyVariantSnapshot.local_variant_id.is_not(None),
+    )).all()}
+    order = db.get(commerce.CommerceOrder, reservation.commerce_order_id)
+    buyer_currency = (order.currency if order else '').upper()
+    line_items = []
+    for item in items:
+        snap = snapshots.get(item.variant_id)
+        if not snap or snap.mapping_state != "mapped" or not snap.tracked or not snap.inventory_complete:
+            raise HTTPException(409, detail={"code": "SHOPIFY_INVENTORY_MAPPING_OR_FRESHNESS_REQUIRED"})
+        source_currency = (item.source_currency or buyer_currency).upper()
+        source_minor = item.source_unit_price_minor if item.source_unit_price_minor is not None else item.unit_price_minor
+        if (
+            not connection.shop_currency or source_currency != connection.shop_currency
+            or snap.currency != connection.shop_currency or source_minor is None
+        ):
+            raise HTTPException(409, detail={"code": "SHOPIFY_RESERVATION_PRICE_CURRENCY_MISMATCH"})
+        line_items.append({
+            "variantId": snap.shopify_variant_gid,
+            "quantity": item.quantity,
+            "priceOverride": {
+                "amount": _major_units(source_minor, connection.shop_currency),
+                "currencyCode": connection.shop_currency,
+            },
+        })
+    mutation = """
+      mutation CirvannaReserveInventory($input: DraftOrderInput!) {
+        draftOrderCreate(input: $input) {
+          draftOrder { id status reserveInventoryUntil ready }
+          userErrors { field message }
+        }
+      }
+    """
+    expiry = commerce._aware_utc(reservation.expires_at).isoformat().replace("+00:00", "Z")
+    try:
+        data = _graphql(connection, db, mutation, {"input": {
+            "lineItems": line_items,
+            "presentmentCurrencyCode": connection.shop_currency,
+            "tags": ["Cirvanna", "Cirvanna-Inventory-Reservation", reservation.reservation_key],
+            "note": "Temporary inventory reservation for a Cirvanna checkout. Do not collect payment in Shopify.",
+            "reserveInventoryUntil": expiry,
+        }})
+    except HTTPException as exc:
+        try:
+            recovered = _find_reservation_draft(connection, db, reservation.reservation_key)
+        except HTTPException:
+            recovered = None
+        if recovered and recovered.get("id") and not recovered.get("order"):
+            reservation.draft_order_gid = recovered["id"]
+            reservation.state = "reserved"
+            reservation.last_error = None
+            db.commit()
+            return recovered["id"]
+        reservation.state = "unknown"
+        reservation.last_error = "SHOPIFY_RESERVATION_CREATE_OUTCOME_UNKNOWN"
+        db.commit()
+        raise HTTPException(503, detail={"code": "SHOPIFY_RESERVATION_OUTCOME_UNKNOWN"}) from exc
+    result = data.get("draftOrderCreate") or {}
+    errors, draft = result.get("userErrors") or [], result.get("draftOrder")
+    if isinstance(draft, dict) and draft.get("id"):
+        # Persist a returned draft ID even alongside userErrors: if Shopify
+        # partially created the draft, compensation must still be able to delete it.
+        reservation.draft_order_gid = draft["id"]
+        reservation.state = "reserved"
+        reservation.last_error = None
+        db.commit()
+    if errors or not isinstance(draft, dict) or not draft.get("id"):
+        reservation.state = "failed"
+        reservation.last_error = json.dumps(errors[:3], ensure_ascii=True)[:300] or "SHOPIFY_DRAFT_RESERVATION_FAILED"
+        db.commit()
+        raise HTTPException(409, detail={"code": "SHOPIFY_INVENTORY_RESERVATION_REJECTED"})
+    if draft.get("ready") is False:
+        reservation.last_error = "SHOPIFY_DRAFT_RESERVATION_NOT_READY"
+        db.commit()
+        raise HTTPException(409, detail={"code": "SHOPIFY_INVENTORY_RESERVATION_NOT_READY"})
+    reservation.draft_order_gid = draft["id"]
+    reservation.state = "reserved"
+    reservation.last_error = None
+    db.commit()
+    return draft["id"]
+
+
+def prepare_checkout_inventory_reservations(db: Session, order: commerce.CommerceOrder, *,
+                                            allow_create: bool = True) -> int:
+    items = list(db.scalars(select(commerce.OrderItem).where(
+        commerce.OrderItem.order_id == order.id
+    ).order_by(commerce.OrderItem.merchant_id, commerce.OrderItem.id)).all())
+    grouped: dict[str, list[commerce.OrderItem]] = {}
+    for item in items:
+        grouped.setdefault(item.merchant_id, []).append(item)
+    prepared: list[ShopifyInventoryReservation] = []
+    worker_id = uuid.uuid4().hex
+    try:
+        for merchant_id, merchant_items in grouped.items():
+            connection = db.scalar(select(ShopifyConnection).where(ShopifyConnection.merchant_id == merchant_id))
+            if connection is None:
+                continue
+            if not _shopify_inventory_reservation_enabled():
+                raise HTTPException(503, detail={
+                    "code": "SHOPIFY_INVENTORY_RESERVATION_STAGING_ONLY",
+                })
+            if connection.status != "active":
+                raise HTTPException(409, detail={"code": "SHOPIFY_CONNECTION_NOT_READY"})
+            reservation = db.scalar(select(ShopifyInventoryReservation).where(
+                ShopifyInventoryReservation.commerce_order_id == order.id,
+                ShopifyInventoryReservation.merchant_id == merchant_id,
+            ).with_for_update())
+            created_here = reservation is None
+            if reservation is None:
+                if not allow_create:
+                    raise HTTPException(409, detail={"code": "SHOPIFY_PREPAYMENT_RESERVATION_MISSING"})
+                reservation = ShopifyInventoryReservation(
+                    id=str(uuid.uuid4()), connection_id=connection.id, merchant_id=merchant_id,
+                    commerce_order_id=order.id, reservation_key=_reservation_key(order.id, merchant_id),
+                    state="creating", lease_owner=worker_id,
+                    lease_until=utcnow() + timedelta(seconds=45), expires_at=order.expires_at,
+                )
+                db.add(reservation)
+                db.commit()
+            prepared.append(reservation)
+            if reservation.state == "reserved" and reservation.draft_order_gid:
+                if commerce._aware_utc(reservation.expires_at) <= commerce.now():
+                    raise HTTPException(409, detail={"code": "SHOPIFY_RESERVATION_EXPIRED"})
+                continue
+            if not created_here:
+                if reservation.state == "creating" and reservation.lease_until and commerce._aware_utc(reservation.lease_until) > commerce.now():
+                    raise HTTPException(409, detail={"code": "SHOPIFY_RESERVATION_IN_PROGRESS"})
+                if reservation.state not in {"creating", "unknown"}:
+                    raise HTTPException(409, detail={"code": "SHOPIFY_RESERVATION_NOT_REUSABLE"})
+                found = _find_reservation_draft(connection, db, reservation.reservation_key)
+                if not found or not found.get("id") or found.get("order"):
+                    reservation.state = "unknown"
+                    reservation.last_error = "SHOPIFY_RESERVATION_RECONCILIATION_REQUIRED"
+                    db.commit()
+                    raise HTTPException(503, detail={"code": "SHOPIFY_RESERVATION_OUTCOME_UNKNOWN"})
+                reservation.draft_order_gid = found["id"]
+                reservation.state = "reserved"
+                reservation.lease_owner = None
+                reservation.lease_until = None
+                reservation.last_error = None
+                db.commit()
+                continue
+            _create_inventory_draft(connection, db, reservation, merchant_items)
+            reservation.lease_owner = None
+            reservation.lease_until = None
+            db.commit()
+        return len(prepared)
+    except HTTPException as exc:
+        if (exc.detail or {}).get("code") == "SHOPIFY_RESERVATION_IN_PROGRESS":
+            raise
+        for reservation in prepared:
+            connection = db.get(ShopifyConnection, reservation.connection_id)
+            if connection and reservation.state in {"reserved", "failed", "unknown", "release_pending"}:
+                try:
+                    release_one_shopify_reservation(connection, db, reservation)
+                except HTTPException:
+                    reservation.state = "release_pending"
+                    reservation.last_error = "SHOPIFY_RESERVATION_COMPENSATION_PENDING"
+                    db.commit()
+        current = db.get(commerce.CommerceOrder, order.id)
+        if current and current.state == "pending_payment":
+            commerce.release_reservations(db, current, "checkout_failed")
+            db.commit()
+        raise
+    except Exception:
+        for reservation in prepared:
+            connection = db.get(ShopifyConnection, reservation.connection_id)
+            if connection and reservation.state in {"reserved", "failed", "unknown", "release_pending"}:
+                try:
+                    release_one_shopify_reservation(connection, db, reservation)
+                except HTTPException:
+                    reservation.state = "release_pending"
+                    reservation.last_error = "SHOPIFY_RESERVATION_COMPENSATION_PENDING"
+                    db.commit()
+        current = db.get(commerce.CommerceOrder, order.id)
+        if current and current.state == "pending_payment":
+            commerce.release_reservations(db, current, "checkout_failed")
+            db.commit()
+        raise
+
+
+def release_one_shopify_reservation(connection: ShopifyConnection, db: Session,
+                                    reservation: ShopifyInventoryReservation) -> bool:
+    draft_gid = reservation.draft_order_gid
+    if not draft_gid:
+        found = _find_reservation_draft(connection, db, reservation.reservation_key)
+        draft_gid = found.get("id") if found else None
+    if not draft_gid:
+        reservation.state = "release_pending"
+        reservation.last_error = "SHOPIFY_RESERVATION_ID_NOT_DISCOVERABLE"
+        db.commit()
+        return False
+    data = _graphql(connection, db, """
+      mutation CirvannaReleaseInventoryReservation($id: ID!) {
+        draftOrderDelete(id: $id) { deletedId userErrors { field message } }
+      }
+    """, {"id": draft_gid})
+    result = data.get("draftOrderDelete") or {}
+    if result.get("userErrors") or result.get("deletedId") != draft_gid:
+        reservation.state = "release_pending"
+        reservation.last_error = "SHOPIFY_DRAFT_DELETE_NOT_CONFIRMED"
+        db.commit()
+        return False
+    reservation.draft_order_gid = draft_gid
+    reservation.state = "released"
+    reservation.last_error = None
+    reservation.updated_at = utcnow()
+    db.commit()
+    return True
+
+
+def release_shopify_checkout_reservations(db: Session, order: commerce.CommerceOrder) -> int:
+    rows = list(db.scalars(select(ShopifyInventoryReservation).where(
+        ShopifyInventoryReservation.commerce_order_id == order.id,
+        ShopifyInventoryReservation.state.in_(["creating", "reserved", "failed", "unknown", "release_pending"]),
+    )).all())
+    released = 0
+    for reservation in rows:
+        connection = db.get(ShopifyConnection, reservation.connection_id)
+        if not connection or connection.status != "active":
+            reservation.state = "release_pending"
+            reservation.last_error = "SHOPIFY_CONNECTION_UNAVAILABLE_FOR_RELEASE"
+            db.commit()
+            continue
+        try:
+            released += int(release_one_shopify_reservation(connection, db, reservation))
+        except HTTPException:
+            reservation.state = "release_pending"
+            reservation.last_error = "SHOPIFY_RESERVATION_RELEASE_RETRY_REQUIRED"
+            db.commit()
+    return released
+
+
+def _complete_shopify_inventory_reservation(connection: ShopifyConnection, db: Session,
+                                            reservation: ShopifyInventoryReservation) -> dict[str, Any]:
+    if not reservation.draft_order_gid:
+        raise HTTPException(409, detail={"code": "SHOPIFY_INVENTORY_RESERVATION_MISSING"})
+    data = _graphql(connection, db, """
+      query CirvannaReadReservedDraft($id: ID!) {
+        draftOrder(id: $id) { id status reserveInventoryUntil order { id name displayFinancialStatus displayFulfillmentStatus } }
+      }
+    """, {"id": reservation.draft_order_gid})
+    draft = data.get("draftOrder")
+    if not isinstance(draft, dict) or draft.get("id") != reservation.draft_order_gid:
+        raise HTTPException(409, detail={"code": "SHOPIFY_RESERVED_DRAFT_NOT_FOUND"})
+    remote = draft.get("order")
+    if not isinstance(remote, dict) or not remote.get("id"):
+        if draft.get("status") != "OPEN" or commerce._aware_utc(reservation.expires_at) <= commerce.now():
+            raise HTTPException(409, detail={"code": "SHOPIFY_RESERVED_DRAFT_NOT_COMPLETABLE"})
+        completed = _graphql(connection, db, """
+          mutation CirvannaCompleteReservedDraft($id: ID!) {
+            draftOrderComplete(id: $id) {
+              draftOrder { id status order { id name displayFinancialStatus displayFulfillmentStatus } }
+              userErrors { field message }
+            }
+          }
+        """, {"id": reservation.draft_order_gid})
+        result = completed.get("draftOrderComplete") or {}
+        errors = result.get("userErrors") or []
+        remote = (result.get("draftOrder") or {}).get("order")
+        if errors or not isinstance(remote, dict) or not remote.get("id"):
+            reservation.state = "completion_pending"
+            reservation.last_error = "SHOPIFY_DRAFT_COMPLETION_NOT_CONFIRMED"
+            db.commit()
+            raise HTTPException(502, detail={"code": "SHOPIFY_DRAFT_COMPLETION_PENDING"})
+    reservation.state = "completed"
+    reservation.last_error = None
+    reservation.updated_at = utcnow()
+    db.commit()
+    return remote
+
+
 def _create_paid_order(connection: ShopifyConnection, db: Session, commerce_order: commerce.CommerceOrder, merchant_id: str) -> ShopifyOrderLink:
     items = list(db.scalars(select(commerce.OrderItem).where(
         commerce.OrderItem.order_id == commerce_order.id,
@@ -1556,9 +1903,6 @@ def _create_paid_order(connection: ShopifyConnection, db: Session, commerce_orde
             ShopifyVariantSnapshot.local_variant_id.is_not(None),
         )).all()
     }
-    line_items = []
-    total_shop_minor = 0
-    presentment_total_minor = 0
     presentment_currency = commerce_order.currency.upper()
     for item in items:
         snapshot = snapshots_by_local.get(item.variant_id)
@@ -1573,31 +1917,18 @@ def _create_paid_order(connection: ShopifyConnection, db: Session, commerce_orde
             source_currency = presentment_currency
         if source_currency != connection.shop_currency:
             raise HTTPException(409, detail={"code": "SHOPIFY_ORDER_SOURCE_CURRENCY_MISMATCH"})
-        shop_line_minor = source_minor * item.quantity
-        presentment_line_minor = item.unit_price_minor * item.quantity
-        total_shop_minor += shop_line_minor
-        presentment_total_minor += presentment_line_minor
-        line_items.append({
-            "variantId": snapshot.shopify_variant_gid,
-            "quantity": item.quantity,
-            "priceSet": {
-                "shopMoney": {
-                    "amount": _major_units(source_minor, connection.shop_currency),
-                    "currencyCode": connection.shop_currency,
-                },
-                "presentmentMoney": {
-                    "amount": _major_units(item.unit_price_minor, presentment_currency),
-                    "currencyCode": presentment_currency,
-                },
-            },
-        })
     if (commerce_order.fulfillment_total_minor or 0) != 0 or (commerce_order.tax_total_minor or 0) != 0:
         raise HTTPException(409, detail={"code": "SHOPIFY_ORDER_CHARGES_NOT_ALLOCATED_PER_MERCHANT"})
     if commerce_order.total_minor is not None and commerce_order.total_minor != commerce_order.subtotal_minor:
         raise HTTPException(409, detail={"code": "SHOPIFY_ORDER_TOTAL_REQUIRES_MERCHANT_ALLOCATION"})
-    # Shopify imports one sub-order per merchant. Source shop money must match
-    # the seller's immutable offer snapshots; presentment money remains buyer
-    # checkout currency. No customer identity or delivery address is exported.
+    # Complete the provider-native draft created before payment. This commits
+    # the held Shopify inventory; orderCreate with a decrement option is forbidden.
+    reservation = db.scalar(select(ShopifyInventoryReservation).where(
+        ShopifyInventoryReservation.commerce_order_id == commerce_order.id,
+        ShopifyInventoryReservation.merchant_id == merchant_id,
+    ))
+    if reservation is None or reservation.state not in {"reserved", "completed", "completion_pending"}:
+        raise HTTPException(409, detail={"code": "SHOPIFY_PREPAYMENT_RESERVATION_REQUIRED"})
     tag = "cirvanna-link-" + uuid.uuid5(uuid.NAMESPACE_URL, commerce_order.id + ":" + merchant_id).hex[:24]
     link = db.scalar(select(ShopifyOrderLink).where(
         ShopifyOrderLink.commerce_order_id == commerce_order.id,
@@ -1612,56 +1943,7 @@ def _create_paid_order(connection: ShopifyConnection, db: Session, commerce_orde
         db.commit()
     if link.shopify_order_gid:
         return link
-    # Reconcile an ambiguous timeout before re-issuing a non-idempotent mutation.
-    lookup = _graphql(connection, db, """
-      query CirvannaFindImportedOrder($query: String!) {
-        orders(first: 5, query: $query, sortKey: CREATED_AT, reverse: true) {
-          nodes { id name displayFinancialStatus displayFulfillmentStatus updatedAt }
-        }
-      }
-    """, {"query": "tag:" + tag})
-    existing = (lookup.get("orders") or {}).get("nodes") or []
-    if existing:
-        remote = existing[0]
-    else:
-        mutation = """
-        mutation CirvannaImportPaidOrder($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {
-          orderCreate(order: $order, options: $options) {
-            order { id name displayFinancialStatus displayFulfillmentStatus updatedAt }
-            userErrors { field message }
-          }
-        }
-        """
-        variables = {"order": {
-            "currency": connection.shop_currency,
-            "presentmentCurrency": presentment_currency,
-            "financialStatus": "PAID",
-            "sourceName": "Cirvanna",
-            "sourceIdentifier": commerce_order.id,
-            "tags": ["Cirvanna", "Cirvanna-Externally-Paid", tag],
-            "note": "Paid through Cirvanna. This Shopify order is an external order record; do not collect payment again.",
-            "customAttributes": [
-                {"key": "cirvanna_order_id", "value": commerce_order.id},
-                {"key": "cirvanna_order_link_id", "value": link.id},
-            ],
-            "lineItems": line_items,
-        }}
-        data = _graphql(connection, db, mutation, {
-            "order": variables["order"],
-            "options": {
-                "inventoryBehaviour": "DECREMENT_OBEYING_POLICY",
-                "sendReceipt": False,
-                "sendFulfillmentReceipt": False,
-            },
-        })
-        result = data.get("orderCreate") or {}
-        errors = result.get("userErrors") or []
-        remote = result.get("order")
-        if errors or not isinstance(remote, dict) or not remote.get("id"):
-            link.link_state = "failed"
-            link.last_error = json.dumps(errors[:3], ensure_ascii=True)[:300] or "SHOPIFY_ORDER_CREATE_FAILED"
-            db.commit()
-            raise HTTPException(502, detail={"code": "SHOPIFY_ORDER_CREATE_FAILED"})
+    remote = _complete_shopify_inventory_reservation(connection, db, reservation)
     link.shopify_order_gid = remote["id"]
     link.shopify_order_name = str(remote.get("name") or "")[:80] or None
     link.financial_status = remote.get("displayFinancialStatus")

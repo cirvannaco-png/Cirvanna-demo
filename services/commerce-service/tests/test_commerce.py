@@ -14,7 +14,7 @@ os.environ.setdefault("COMMERCE_AUTO_CREATE_SCHEMA", "true")
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -96,7 +96,7 @@ def client(monkeypatch):
     monkeypatch.setenv("COMMERCE_MARKETPLACE_READ_TOKEN", MARKETPLACE_READ_TOKEN)
     monkeypatch.setenv("COMMERCE_JWT_ISSUER", "cirvanna-auth")
     monkeypatch.setenv("COMMERCE_JWT_AUDIENCE", "cirvanna-commerce")
-    monkeypatch.delenv("COMMERCE_ENVIRONMENT", raising=False)
+    monkeypatch.setenv("COMMERCE_ENVIRONMENT", "development")
     monkeypatch.delenv("COMMERCE_MARKET_PROVIDER_VERIFICATION_REQUIRED", raising=False)
     monkeypatch.delenv("COMMERCE_AUTH_MODE", raising=False)
     monkeypatch.delenv("COMMERCE_JWT_JWKS_URL", raising=False)
@@ -329,7 +329,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
         ))
         connection.execute(
             text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
-            {"revision": "20261121_0012"},
+            {"revision": "20261121_0013"},
         )
 
     ready = client.get("/ready")
@@ -342,7 +342,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
     assert payload["payment_configured"] is True
     assert payload["migrations_required"] is True
     assert payload["migrations_applied"] is True
-    assert payload["schema_revision"] == "20261121_0012"
+    assert payload["schema_revision"] == "20261121_0013"
     assert payload["ready"] is True
 
 
@@ -2329,3 +2329,295 @@ def test_shopify_product_delete_maps_to_canonical_product_gid():
     assert _resource_gid("products/delete", {"id": 1234}) == "gid://shopify/Product/1234"
     assert _resource_gid("orders/updated", {"id": 456}) == "gid://shopify/Order/456"
 
+
+
+def test_shopify_checkout_reservation_uses_deterministic_provider_draft(monkeypatch, client):
+    from datetime import timedelta
+    from app import shopify
+
+    seeded = seed_offer(stock=4)
+    db = TEST_SESSION()
+    connection = shopify.ShopifyConnection(
+        id=str(uuid.uuid4()), merchant_id=seeded["merchant_id"],
+        shop_domain="northwind.myshopify.com", shop_currency="KES",
+        granted_scopes=["read_products", "read_inventory"], status="active",
+        webhook_registration={}, installed_at=main.now(), updated_at=main.now(),
+    )
+    product = shopify.ShopifyProductSnapshot(
+        id=str(uuid.uuid4()), connection_id=connection.id,
+        shopify_product_gid="gid://shopify/Product/100", title="Linen Shirt",
+        remote_status="ACTIVE", mapping_state="mapped", variants_complete=True, synced_at=main.now(),
+    )
+    variant_snapshot = shopify.ShopifyVariantSnapshot(
+        id=str(uuid.uuid4()), connection_id=connection.id, product_snapshot_id=product.id,
+        shopify_variant_gid="gid://shopify/ProductVariant/200",
+        shopify_inventory_item_gid="gid://shopify/InventoryItem/300",
+        sku="LINEN-S", title="Small", options={"Size": "S"}, price_minor=250,
+        currency="KES", tracked=True, available_quantity=4, on_hand_quantity=4,
+        inventory_complete=True, local_variant_id=seeded["variant_id"],
+        canonical_variant_id=str(uuid.uuid4()), mapping_state="mapped", synced_at=main.now(),
+    )
+    order = main.CommerceOrder(
+        id=str(uuid.uuid4()), order_number="CV-TEST-RESERVE", buyer_user_id="buyer-1",
+        state="pending_payment", payment_state="pending", currency="KES",
+        subtotal_minor=250, commission_minor=0, idempotency_key="shopify-reserve-test",
+        expires_at=main.now() + timedelta(minutes=30),
+    )
+    item = main.OrderItem(
+        id=str(uuid.uuid4()), order_id=order.id, merchant_id=seeded["merchant_id"],
+        variant_id=seeded["variant_id"], catalog_product_id=seeded["catalog_product_id"],
+        product_name="Linen Shirt", sku="LINEN-S", options={"size": "S"},
+        quantity=1, unit_price_minor=250, line_total_minor=250,
+        source_unit_price_minor=250, source_currency="KES", commission_bps=300, commission_minor=7,
+    )
+    db.add_all([connection, product, variant_snapshot, order, item])
+    db.commit()
+    calls = []
+
+    def fake_graphql(conn, session, query, variables=None):
+        calls.append((query, variables or {}))
+        if "CirvannaFindInventoryReservation" in query:
+            return {"draftOrders": {"nodes": []}}
+        if "CirvannaReserveInventory" in query:
+            return {"draftOrderCreate": {
+                "draftOrder": {"id": "gid://shopify/DraftOrder/900", "status": "OPEN", "ready": True},
+                "userErrors": [],
+            }}
+        if "CirvannaReadReservedDraft" in query:
+            return {"draftOrder": {
+                "id": "gid://shopify/DraftOrder/900", "status": "OPEN",
+                "order": None,
+            }}
+        if "CirvannaCompleteReservedDraft" in query:
+            return {"draftOrderComplete": {
+                "draftOrder": {"id": "gid://shopify/DraftOrder/900", "status": "COMPLETED",
+                    "order": {"id": "gid://shopify/Order/901", "name": "#CV901",
+                        "displayFinancialStatus": "PAID", "displayFulfillmentStatus": "UNFULFILLED"}},
+                "userErrors": [],
+            }}
+        raise AssertionError("Unexpected Shopify GraphQL operation")
+
+    monkeypatch.setattr(shopify, "_graphql", fake_graphql)
+    assert shopify.prepare_checkout_inventory_reservations(db, order) == 1
+    reservation = db.scalar(select(shopify.ShopifyInventoryReservation).where(
+        shopify.ShopifyInventoryReservation.commerce_order_id == order.id
+    ))
+    assert reservation is not None
+    assert reservation.state == "reserved"
+    assert reservation.draft_order_gid == "gid://shopify/DraftOrder/900"
+    create_call = next(call for call in calls if "CirvannaReserveInventory" in call[0])
+    draft_input = create_call[1]["input"]
+    assert draft_input["lineItems"] == [{
+        "variantId": "gid://shopify/ProductVariant/200", "quantity": 1,
+        "priceOverride": {"amount": "2.50", "currencyCode": "KES"},
+    }]
+    assert draft_input["presentmentCurrencyCode"] == "KES"
+    assert draft_input["reserveInventoryUntil"].endswith("Z")
+    assert reservation.reservation_key in draft_input["tags"]
+
+    # A concurrent retry must not create a second Shopify draft while the lease
+    # is held by the first worker.
+    reservation.state = "creating"
+    reservation.lease_owner = "other-worker"
+    reservation.lease_until = main.now() + timedelta(seconds=30)
+    db.commit()
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as in_progress:
+        shopify.prepare_checkout_inventory_reservations(db, order)
+    assert in_progress.value.detail["code"] == "SHOPIFY_RESERVATION_IN_PROGRESS"
+    reservation.state = "reserved"
+    reservation.lease_owner = None
+    reservation.lease_until = None
+    db.commit()
+    before_retry = len(calls)
+    assert shopify.prepare_checkout_inventory_reservations(db, order) == 1
+    assert len(calls) == before_retry
+
+    completed = shopify._complete_shopify_inventory_reservation(connection, db, reservation)
+    assert completed["id"] == "gid://shopify/Order/901"
+    db.refresh(reservation)
+    assert reservation.state == "completed"
+    assert not any("orderCreate(" in query for query, _ in calls)
+    db.close()
+
+
+def test_shopify_reservation_key_is_stable_and_merchant_scoped():
+    from app.shopify import _reservation_key
+
+    first = _reservation_key("order-1", "merchant-1")
+    assert first == _reservation_key("order-1", "merchant-1")
+    assert first != _reservation_key("order-1", "merchant-2")
+    assert first.startswith("cirvanna-reserve-")
+
+
+@pytest.mark.parametrize("partial_draft", [False, True])
+def test_shopify_reservation_rejection_releases_local_stock_before_payment(monkeypatch, client, partial_draft):
+    from datetime import timedelta
+    from app import shopify
+
+    seeded = seed_offer(stock=4)
+    db = TEST_SESSION()
+    variant = db.get(main.Variant, seeded["variant_id"])
+    variant.reserved_qty = 1
+    order = main.CommerceOrder(
+        id=str(uuid.uuid4()), order_number="CV-TEST-RESERVE-FAIL", buyer_user_id="buyer-2",
+        state="pending_payment", payment_state="pending", currency="KES",
+        subtotal_minor=250, commission_minor=0, idempotency_key="shopify-reserve-fail",
+        expires_at=main.now() + timedelta(minutes=30),
+    )
+    item = main.OrderItem(
+        id=str(uuid.uuid4()), order_id=order.id, merchant_id=seeded["merchant_id"],
+        variant_id=seeded["variant_id"], catalog_product_id=seeded["catalog_product_id"],
+        product_name="Linen Shirt", sku="LINEN-S", options={"size": "S"},
+        quantity=1, unit_price_minor=250, line_total_minor=250,
+        source_unit_price_minor=250, source_currency="KES", commission_bps=300, commission_minor=7,
+    )
+    db.add_all([order, item, main.StockReservation(
+        id=str(uuid.uuid4()), order_id=order.id, variant_id=variant.id,
+        quantity=1, state="reserved", expires_at=order.expires_at,
+    )])
+    connection = shopify.ShopifyConnection(
+        id=str(uuid.uuid4()), merchant_id=seeded["merchant_id"],
+        shop_domain="northwind.myshopify.com", shop_currency="KES",
+        granted_scopes=["read_products", "read_inventory"], status="active",
+        webhook_registration={}, installed_at=main.now(), updated_at=main.now(),
+    )
+    product = shopify.ShopifyProductSnapshot(
+        id=str(uuid.uuid4()), connection_id=connection.id,
+        shopify_product_gid="gid://shopify/Product/101", title="Linen Shirt",
+        remote_status="ACTIVE", mapping_state="mapped", variants_complete=True, synced_at=main.now(),
+    )
+    snapshot = shopify.ShopifyVariantSnapshot(
+        id=str(uuid.uuid4()), connection_id=connection.id, product_snapshot_id=product.id,
+        shopify_variant_gid="gid://shopify/ProductVariant/201", sku="LINEN-S",
+        title="Small", options={"Size": "S"}, price_minor=250, currency="KES",
+        tracked=True, available_quantity=4, on_hand_quantity=4, inventory_complete=True,
+        local_variant_id=variant.id, canonical_variant_id=str(uuid.uuid4()),
+        mapping_state="mapped", synced_at=main.now(),
+    )
+    db.add_all([connection, product, snapshot])
+    db.commit()
+
+    deleted_drafts = []
+
+    def reject_reservation(conn, session, query, variables=None):
+        if "CirvannaFindInventoryReservation" in query:
+            return {"draftOrders": {"nodes": []}}
+        if "CirvannaReserveInventory" in query:
+            return {"draftOrderCreate": {
+                "draftOrder": (
+                    {"id": "gid://shopify/DraftOrder/902", "status": "OPEN", "ready": False}
+                    if partial_draft else None
+                ),
+                "userErrors": [{"field": ["input", "lineItems"], "message": "Insufficient inventory"}],
+            }}
+        if "CirvannaReleaseInventoryReservation" in query:
+            deleted_drafts.append(variables["id"])
+            return {"draftOrderDelete": {"deletedId": variables["id"], "userErrors": []}}
+        raise AssertionError("Unexpected Shopify GraphQL operation")
+
+    monkeypatch.setattr(shopify, "_graphql", reject_reservation)
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as error:
+        shopify.prepare_checkout_inventory_reservations(db, order)
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "SHOPIFY_INVENTORY_RESERVATION_REJECTED"
+    db.refresh(order)
+    db.refresh(variant)
+    local = db.scalar(select(main.StockReservation).where(main.StockReservation.order_id == order.id))
+    assert order.state == "checkout_failed"
+    assert local.state == "released"
+    assert variant.reserved_qty == 0
+    assert order.payment_session_id is None
+    reservation = db.scalar(select(shopify.ShopifyInventoryReservation).where(
+        shopify.ShopifyInventoryReservation.commerce_order_id == order.id
+    ))
+    if partial_draft:
+        assert deleted_drafts == ["gid://shopify/DraftOrder/902"]
+        assert reservation.state == "released"
+    else:
+        assert deleted_drafts == []
+        assert reservation.state == "release_pending"
+    db.close()
+
+
+def test_shopify_inventory_reservation_is_staging_only_in_production_by_default(monkeypatch):
+    from app.shopify import _shopify_inventory_reservation_enabled
+
+    monkeypatch.delenv("COMMERCE_ENVIRONMENT", raising=False)
+    monkeypatch.delenv("SHOPIFY_INVENTORY_RESERVATION_PRODUCTION_ENABLED", raising=False)
+    assert _shopify_inventory_reservation_enabled() is False
+
+    monkeypatch.setenv("COMMERCE_ENVIRONMENT", "production")
+    assert _shopify_inventory_reservation_enabled() is False
+
+    monkeypatch.setenv("SHOPIFY_INVENTORY_RESERVATION_PRODUCTION_ENABLED", "true")
+    assert _shopify_inventory_reservation_enabled() is True
+
+    monkeypatch.setenv("COMMERCE_ENVIRONMENT", "staging")
+    monkeypatch.delenv("SHOPIFY_INVENTORY_RESERVATION_PRODUCTION_ENABLED", raising=False)
+    assert _shopify_inventory_reservation_enabled() is True
+
+
+def test_shopify_required_scopes_cover_draft_reservation_without_order_write_scope():
+    from app.shopify import REQUIRED_SCOPES
+
+    assert {"read_draft_orders", "write_draft_orders", "read_orders"} <= REQUIRED_SCOPES
+    assert "write_orders" not in REQUIRED_SCOPES
+
+
+def test_shopify_existing_connection_without_draft_scopes_requires_reauthorization(monkeypatch, client):
+    from app import shopify
+    from fastapi import HTTPException
+
+    seeded = seed_offer(stock=2)
+    db = TEST_SESSION()
+    connection = shopify.ShopifyConnection(
+        id=str(uuid.uuid4()), merchant_id=seeded["merchant_id"],
+        shop_domain="legacy.myshopify.com", shop_currency="KES",
+        granted_scopes=["read_products", "read_inventory", "read_locations", "read_orders"],
+        status="active", webhook_registration={}, installed_at=main.now(), updated_at=main.now(),
+    )
+    db.add(connection)
+    db.commit()
+    monkeypatch.setattr(shopify, "_oauth_config", lambda: ("api-key", "x" * 32, "https://commerce.example"))
+    with pytest.raises(HTTPException) as error:
+        shopify._refresh_access_token(connection, db)
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "SHOPIFY_REAUTH_REQUIRED"
+    db.refresh(connection)
+    assert connection.status == "reauthorization_required"
+    db.close()
+
+
+def test_shopify_backed_stripe_checkout_disables_delayed_payment_methods(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_cirvanna")
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_cirvanna")
+    monkeypatch.setenv("COMMERCE_CHECKOUT_SUCCESS_URL", "https://cirvanna.example/success")
+    monkeypatch.setenv("COMMERCE_CHECKOUT_CANCEL_URL", "https://cirvanna.example/cancel")
+    monkeypatch.setenv("COMMERCE_SHIPPING_COUNTRIES", "KE")
+    captured = {}
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"id": "cs_test_card_only", "url": "https://checkout.stripe.com/test", "status": "open"}
+
+    def fake_post(url, *, data, **kwargs):
+        captured.update(data)
+        return Response()
+
+    monkeypatch.setattr(main.httpx, "post", fake_post)
+    order = SimpleNamespace(
+        id="order-shopify-card-only", order_number="CV-CARD-ONLY",
+        expires_at=main.now() + main.timedelta(minutes=30),
+        destination_country_code=None, currency="KES",
+    )
+    result = main.StripeGateway().create_session(order, [], [], None, card_only=True)
+    assert result["id"] == "cs_test_card_only"
+    assert captured["payment_method_types[0]"] == "card"
+    assert not any(key.startswith("payment_method_types[") and key != "payment_method_types[0]" for key in captured)
