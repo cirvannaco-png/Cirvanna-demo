@@ -37,10 +37,8 @@ def _validate_record(row: Any, line: int) -> dict[str, Any]:
     candidates = _strings(row.get("candidate_ids"), "candidate_ids")
     candidate_set = set(candidates)
     qrels = row.get("qrels")
-    if not isinstance(qrels, dict) or not qrels:
-        raise ValueError(f"{prefix}: qrels must be a non-empty object")
-    if not set(qrels).issubset(candidate_set):
-        raise ValueError(f"{prefix}: qrels contain IDs outside candidate_ids")
+    if not isinstance(qrels, dict) or set(qrels) != candidate_set:
+        raise ValueError(f"{prefix}: qrels must contain an explicit grade for every candidate ID")
     for product_id, grade in qrels.items():
         if not isinstance(product_id, str) or not product_id.strip():
             raise ValueError(f"{prefix}: qrel product IDs must be non-empty")
