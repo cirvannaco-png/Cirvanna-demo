@@ -118,9 +118,7 @@ def _configured() -> tuple[bool, str]:
     token = os.getenv("VTON_WORKER_TOKEN", "")
     weights = os.getenv("FASHN_VTON_WEIGHTS_DIR", "")
     usage_mode = os.getenv("CIRVANNA_DEPLOYMENT_MODE", "production").strip().lower()
-    parser_license_approved = os.getenv(
-        "FASHN_HUMAN_PARSER_COMMERCIAL_LICENSE_APPROVED", ""
-    ).lower() == "true"
+    parser_mode = os.getenv("FASHN_VTON_PARSER_MODE", "maskless_flat_lay").strip().lower()
     if len(token.encode()) < 32:
         return False, "worker_token_not_configured"
     if os.getenv("FASHN_VTON_SOURCE_REF", "") != PINNED_FASHN_VTON_COMMIT:
@@ -131,8 +129,8 @@ def _configured() -> tuple[bool, str]:
         return False, "source_checkout_does_not_match_pin"
     if usage_mode not in {"research", "production"}:
         return False, "invalid_deployment_mode"
-    if usage_mode == "production" and not parser_license_approved:
-        return False, "human_parser_commercial_license_not_cleared"
+    if parser_mode != "maskless_flat_lay":
+        return False, "unsupported_or_unlicensed_parser_mode"
     if not weights or not Path(weights).is_dir():
         return False, "model_weights_directory_missing"
     verified, reason = _verify_artifact_manifest(Path(weights), PINNED_FASHN_VTON_COMMIT)
@@ -167,8 +165,8 @@ def _pipeline():
     if _PIPELINE is None:
         with _PIPELINE_LOCK:
             if _PIPELINE is None:
-                # Never trigger network downloads during runtime. Provision the
-                # exact parser/model cache before the worker can become ready.
+                # Never trigger network downloads during runtime. The local
+                # no-op parser adapter is safe only for maskless flat-lay mode.
                 os.environ["HF_HUB_OFFLINE"] = "1"
                 os.environ["TRANSFORMERS_OFFLINE"] = "1"
                 from fashn_vton import TryOnPipeline
@@ -211,7 +209,8 @@ def _render(
             person_image=person,
             garment_image=garment,
             category=CATEGORY_MAP[category],
-            garment_photo_type=garment_photo_type,
+            garment_photo_type="flat-lay",
+            segmentation_free=True,
         )
         images = getattr(result, "images", None)
         if not isinstance(images, (list, tuple)) or not images:
@@ -283,7 +282,9 @@ def capabilities() -> dict[str, object]:
             )[0]
         ),
         "artifact_manifest_required": True,
-        "commercial_license_gate": os.getenv("FASHN_HUMAN_PARSER_COMMERCIAL_LICENSE_APPROVED", "").lower() == "true",
+        "supported_garment_photo_types": ["flat-lay"],
+        "parser_mode": os.getenv("FASHN_VTON_PARSER_MODE", "maskless_flat_lay"),
+        "restricted_human_parser_installed": False,
     }
 
 
@@ -294,7 +295,7 @@ async def render(
     ],
     person_image: Annotated[UploadFile, File()],
     garment_image: Annotated[UploadFile, File()],
-    garment_photo_type: Annotated[Literal["model", "flat-lay"], Form()] = "flat-lay",
+    garment_photo_type: Annotated[str, Form()] = "flat-lay",
 ) -> Response:
     # Consent is verified by the authenticated orchestrator before this private
     # worker is called. Browser-supplied booleans are not consent evidence.
@@ -302,6 +303,13 @@ async def render(
         await person_image.close()
         await garment_image.close()
         raise HTTPException(422, detail={"code": "UNSUPPORTED_CATEGORY"})
+    if garment_photo_type != "flat-lay":
+        await person_image.close()
+        await garment_image.close()
+        raise HTTPException(422, detail={
+            "code": "UNSUPPORTED_GARMENT_PHOTO_TYPE",
+            "supported": ["flat-lay"],
+        })
     try:
         person_bytes = await person_image.read(MAX_IMAGE_BYTES + 1)
         garment_bytes = await garment_image.read(MAX_IMAGE_BYTES + 1)
