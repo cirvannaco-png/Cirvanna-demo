@@ -106,3 +106,8 @@ Before REL-10/REL-16 can pass, provide evidence for:
 - exact release commit, image digests, migration revisions, provider/API versions, SLO report, test-run links and operator sign-off.
 
 Do not set REL-10 or REL-16 to passed because the metrics endpoint returns text, a CI test succeeds, or a runbook exists. They require deployed collection, alert delivery, a real restore and an exercised incident procedure.
+
+
+### Shopify compensation and Stripe refund manual review
+
+Commerce emits durable manual-review events when a seller-side compensation or Stripe refund cannot safely complete. Before enabling the worker's manual-review consumer, configure an approved HTTPS receiver using `COMMERCE_OPERATIONS_WEBHOOK_URL` and `COMMERCE_OPERATIONS_WEBHOOK_SECRET`. The receiver must verify the exact-body HMAC, persist by idempotency key, notify the assigned Commerce operator, and return success only after durable acceptance. Missing configuration or a failed receiver must leave the Commerce outbox event unacknowledged for retry. The repository does not currently prove that a production recipient, pager, dashboard or on-call rotation exists; REL-10 remains blocked until a real notification delivery test reaches a named owner.
