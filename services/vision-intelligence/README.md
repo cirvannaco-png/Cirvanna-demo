@@ -219,3 +219,20 @@ The SDK:
 The SDK deliberately reports HDR and beauty-processing state as unknown because Camera2 does not expose a universal attestation of hidden OEM processing. Key attestation and Play Integrity support app/device integrity and request binding; they do not prove physical sensor origin of the signed pixels. The backend challenge, nonce replay protection, Android certificate-chain/root/CRL verification, Play Integrity decode, consent/resource binding and server-issued verification receipt are not implemented yet; track that work in issue #214.
 
 Every SDK envelope remains `pending_server_verification`. No Android device is certified and no absolute colour measurement, inference readiness or CAL authorization is enabled by the native library. See [Android SDK protocol and physical acceptance gates](../../apps/dsi-android-capture/README.md).
+
+## Private retrieval benchmark catalogue snapshot export
+
+The Vision service includes a one-off CLI, `app/retrieval_snapshot_export.py`, for the fashion retrieval research workflow. It calls the same internal `_live_offers()` function used by marketplace retrieval, so active Catalog filtering, current Commerce eligibility, the existing 1,000-offer bound, Commerce order and exact `_offer_description()` text are reused rather than rebuilt by a separate script.
+
+Run it only from an isolated build/checkout of the reviewed research branch, inside a trusted Vision service environment; the exporter is not present in `main` until this PR is merged. Do not deploy this research branch to the customer-facing Vision service just to obtain a snapshot. The environment must already have the existing `COMMERCE_API_URL`, `CATALOG_API_URL` and `CATALOG_API_TOKEN` or `CATALOG_READ_TOKEN` are already configured. Mount or provide a restricted evaluation volume, then run from the service's `/app` working directory:
+
+```sh
+python -m app.retrieval_snapshot_export \
+  --output /restricted-evaluation/catalog-offers.jsonl
+```
+
+The exporter emits only `variant_id` and the exact `search_text` used by the current ranker. It does not export product names separately, image URLs, raw Commerce/Catalog objects, service URLs or credentials. It writes a sibling SHA-256 manifest and creates both files with mode `0600`; existing files are not overwritten unless `--overwrite` is supplied.
+
+The manifest records candidate count, source service/model pin, Commerce truncation state, source field semantics, order preservation, file digest and the fact that this is a sequential point-in-time Commerce/Catalog read rather than a cross-service transaction. If the service reports that the Commerce offers list exceeded its 1,000-offer cap, that fact is recorded; the exported candidate set still represents the service's current bounded retrieval universe.
+
+The output contains commercial catalogue text and variant identifiers. Keep it in an approved access-controlled evaluation workspace. Never commit it to GitHub, attach it to a public issue/PR, or send it to an unapproved external model endpoint. The exporter is a research utility, not a new public API or customer-data export endpoint.

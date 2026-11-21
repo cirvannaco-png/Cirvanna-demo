@@ -1,0 +1,30 @@
+{
+  "schema_version": "1.0",
+  "experiment_id": "fashion-retrieval-final-001",
+  "status": "REPLACE_WITH_locked_ONLY_AFTER_REVIEW",
+  "registered_at_utc": "REPLACE_WITH_ISO8601_TIMESTAMP_WITH_TIMEZONE",
+  "task_id": "image_to_catalog_text",
+  "split": "test",
+  "primary_metric": "ndcg_at_k",
+  "k": 10,
+  "minimum_practically_important_delta": null,
+  "minimum_query_count": null,
+  "minimum_independent_clusters": null,
+  "candidate_pool_sizes": [100, 500, 1000],
+  "bootstrap_samples": 2000,
+  "bootstrap_seed": 20261121,
+  "baseline": {
+    "model_id": "cirvanna-fashion-clip",
+    "revision": "afacf5e5851d5979ab030e228eab60e2c95a912c"
+  },
+  "challengers": {
+    "marqo-fashionclip": "44f4c655124ed71e90cbf528d82f508d69d8a81b",
+    "marqo-fashionsiglip": "c56244cc94f92419e8369fa71efdaf403b124ce8"
+  },
+  "data_manifest_sha256": "REPLACE_WITH_64_CHARACTER_SHA256",
+  "qrels_manifest_sha256": "REPLACE_WITH_64_CHARACTER_SHA256",
+  "dependency_lock_sha256": "REPLACE_WITH_64_CHARACTER_SHA256",
+  "data_manifest_path": "/secure/evaluation/prepared-cases.jsonl.manifest.json",
+  "qrels_manifest_path": "/secure/evaluation/human-qrels.manifest.json",
+  "dependency_lock_path": "/secure/evaluation/requirements-research.lock"
+}

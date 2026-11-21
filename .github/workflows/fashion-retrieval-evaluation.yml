@@ -1,0 +1,49 @@
+name: Fashion retrieval evaluator
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+    branches: [main]
+    paths:
+      - "tools/model_evaluation/fashion_retrieval/**"
+      - "tests/model_evaluation/**"
+      - "services/vision-intelligence/app/retrieval_snapshot_export.py"
+      - "services/vision-intelligence/README.md"
+      - ".github/workflows/fashion-retrieval-evaluation.yml"
+  push:
+    branches: [main, "research/**"]
+    paths:
+      - "tools/model_evaluation/fashion_retrieval/**"
+      - "tests/model_evaluation/**"
+      - "services/vision-intelligence/app/retrieval_snapshot_export.py"
+      - "services/vision-intelligence/README.md"
+      - ".github/workflows/fashion-retrieval-evaluation.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  evaluator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile evaluator and model runner
+        run: |
+          python -m py_compile tools/model_evaluation/fashion_retrieval/evaluate_retrieval.py
+          python -m py_compile tools/model_evaluation/fashion_retrieval/run_retrieval.py
+          python -m py_compile tools/model_evaluation/fashion_retrieval/prepare_cases.py
+          python -m py_compile tools/model_evaluation/fashion_retrieval/build_qrels.py
+          python -m py_compile services/vision-intelligence/app/retrieval_snapshot_export.py
+      - name: Run evaluator and runner contract tests
+        run: python -m unittest discover -s tests/model_evaluation -v
+      - name: Validate evaluator and runner CLIs
+        run: |
+          python tools/model_evaluation/fashion_retrieval/evaluate_retrieval.py --help
+          python tools/model_evaluation/fashion_retrieval/run_retrieval.py --help
+          python tools/model_evaluation/fashion_retrieval/prepare_cases.py --help
+          python tools/model_evaluation/fashion_retrieval/build_qrels.py --help
+          python services/vision-intelligence/app/retrieval_snapshot_export.py --help
