@@ -2777,7 +2777,9 @@ def _seed_shopify_compensation_case(db, seeded, *, fulfillment_status="UNFULFILL
     case = shopify.ShopifyCompensationCase(
         id=str(uuid.uuid4()), commerce_order_id=order_id, merchant_id=seeded["merchant_id"],
         connection_id=connection.id, reservation_id=reservation.id,
-        state="pending", last_error="SHOPIFY_DRAFT_COMPLETION_PENDING",
+        state="pending", lease_owner="test-compensation-worker",
+        lease_until=main.now() + main.timedelta(seconds=90),
+        last_error="SHOPIFY_DRAFT_COMPLETION_PENDING",
     )
     rows = [order, item, connection, product_snapshot, variant_snapshot, reservation, case]
     if include_link:
@@ -2922,7 +2924,7 @@ def test_stripe_refund_updated_webhook_confirms_full_compensation_refund_only(cl
     db.add_all([order, attempt])
     db.commit()
     event = {"id": "evt_refund_compensation_confirm", "type": "refund.updated", "data": {"object": {
-        "id": "re_compensation_1", "payment_intent": "pi_refund_confirm", "amount": 500,
+        "id": "re_compensation_1", "payment_intent": "pi_refund_confirm", "charge": "ch_refund_confirm", "amount": 500,
         "currency": "kes", "status": "succeeded", "metadata": {
             "commerce_order_id": order.id, "compensation_key": attempt.idempotency_key,
         },
@@ -3346,3 +3348,54 @@ def test_shopify_successful_cancel_without_inventory_restock_delta_is_manual_rev
     assert case.state == "manual_review"
     assert order.fulfillment_state == "manual_review"
     db.close()
+
+
+def test_shopify_compensation_cancel_intent_rejects_stale_lease_owner(client):
+    from app import shopify
+    from fastapi import HTTPException
+    seeded = seed_offer(stock=4)
+    db = TEST_SESSION()
+    order, connection, reservation, case = _seed_shopify_compensation_case(db, seeded)
+    case.lease_owner = "stale-worker"
+    case.lease_until = main.now() + main.timedelta(seconds=90)
+    db.commit()
+    # A second worker has reclaimed the case after the original worker's
+    # inventory reads. The stale worker must not persist intent or call Shopify.
+    case.lease_owner = "current-worker"
+    case.lease_until = main.now() + main.timedelta(seconds=90)
+    db.commit()
+    with pytest.raises(HTTPException) as raised:
+        shopify._persist_compensation_cancel_intent(
+            db, case, {"gid://shopify/InventoryItem/1": 8},
+            {"gid://shopify/InventoryItem/1": 1},
+        )
+    assert raised.value.status_code == 409
+    assert raised.value.detail["code"] == "SHOPIFY_COMPENSATION_LEASE_LOST"
+    db.refresh(case)
+    assert case.state == "pending"
+    assert case.lease_owner == "current-worker"
+    db.close()
+
+
+def test_sync_outbox_does_not_claim_manual_review_events(client, monkeypatch):
+    token = "commerce-sync-token-with-at-least-32-bytes"
+    monkeypatch.setenv("COMMERCE_SYNC_TOKEN", token)
+    db = TEST_SESSION()
+    event_id = str(uuid.uuid4())
+    db.add(main.CommerceOutboxEvent(
+        event_id=event_id, aggregate_type="shopify_compensation_case",
+        aggregate_id=str(uuid.uuid4()),
+        event_type="commerce.shopify.compensation.manual_review", schema_version=1,
+        payload={"event_id": event_id, "order_id": str(uuid.uuid4()),
+                 "action_required": "operator_review", "fulfillment_blocked": True},
+    ))
+    db.commit()
+    db.close()
+    claimed = client.post(
+        "/internal/outbox/claim", headers={"X-Commerce-Sync-Token": token},
+        json={"worker_id": "sync-worker"},
+    )
+    assert claimed.status_code == 200, claimed.text
+    assert all(item["event_id"] != event_id for item in claimed.json()["events"])
+    row = TEST_SESSION().get(main.CommerceOutboxEvent, event_id)
+    assert row is not None and row.delivered_at is None and row.dead_letter_at is None
