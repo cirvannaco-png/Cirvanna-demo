@@ -6,6 +6,8 @@ on:
       - "services/commerce-service/**"
       - "apps/demo-web/founder-console.html"
       - "apps/demo-web/merchant-portal.html"
+      - "apps/demo-web/brand-portal.html"
+      - "apps/demo-web/assets/brand-portal.js"
       - "apps/demo-web/marketplace.html"
       - "apps/demo-web/test_portal_contract.py"
       - "apps/demo-web/PORTALS.md"
