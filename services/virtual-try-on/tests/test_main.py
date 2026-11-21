@@ -306,7 +306,7 @@ def test_look_render_binds_versions_and_wardrobe_asset_owner(client, monkeypatch
     async def read_asset(*, subject_id, asset_id, purpose, parent_id):
         if purpose == "twin_source_image":
             assert parent_id == "twin-test-001"
-        elif purpose == "wardrobe_garment_image":
+        elif purpose == "wardrobe_garment_flat_lay":
             assert parent_id == "wardrobe-item-001"
         elif purpose == "try_on_output":
             assert parent_id == "twin-test-001"
@@ -316,7 +316,7 @@ def test_look_render_binds_versions_and_wardrobe_asset_owner(client, monkeypatch
 
     monkeypatch.setattr(main, "_read_authorized_asset", read_asset)
     body = payload(
-        garment_asset_purpose="wardrobe_garment_image",
+        garment_asset_purpose="wardrobe_garment_flat_lay",
         garment_asset_parent_id="wardrobe-item-001",
         look_id="pnelly-look-001",
         look_version=2,
