@@ -4190,6 +4190,50 @@ def inventory_audit(actor: Annotated[Actor, Depends(require_actor)], db: Annotat
         "reserved_qty": v.reserved_qty, "version": v.version} for v in bad]}
 
 
+MANUAL_REVIEW_EVENT_TYPES = {
+    "commerce.shopify.compensation.manual_review",
+    "commerce.payment.refund.manual_review",
+}
+
+
+@app.get("/admin/operations/manual-review", tags=["operations"])
+def list_manual_review_queue(
+    actor: Annotated[Actor, Depends(require_actor)],
+    limit: int = Query(50, ge=1, le=200),
+) -> dict[str, object]:
+    """Admin-only durable queue for cases requiring human operational action."""
+    if actor.role != "admin":
+        raise HTTPException(403, detail={"code": "ADMIN_REQUIRED"})
+    try:
+        with SessionLocal() as db:
+            rows = list(db.scalars(select(CommerceOutboxEvent).where(
+                CommerceOutboxEvent.event_type.in_(MANUAL_REVIEW_EVENT_TYPES),
+                CommerceOutboxEvent.delivered_at.is_(None),
+            ).order_by(CommerceOutboxEvent.created_at, CommerceOutboxEvent.event_id)
+              .limit(limit)).all())
+            return {
+                "items": [{
+                    "event_id": row.event_id,
+                    "event_type": row.event_type,
+                    "created_at": row.created_at.isoformat(),
+                    "dead_lettered": row.dead_letter_at is not None,
+                    "order_id": row.payload.get("order_id"),
+                    "merchant_id": row.payload.get("merchant_id"),
+                    "case_id": row.payload.get("case_id"),
+                    "refund_attempt_id": row.payload.get("refund_attempt_id"),
+                    "reason_code": row.payload.get("reason_code"),
+                    "action_required": row.payload.get("action_required", "operator_review"),
+                    "fulfillment_blocked": row.payload.get("fulfillment_blocked", True),
+                } for row in rows],
+                "count": len(rows),
+                "requires_operator_action": bool(rows),
+            }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503, detail={"code": "MANUAL_REVIEW_QUEUE_UNAVAILABLE"}) from exc
+
+
 @app.post("/internal/outbox/claim", dependencies=[Depends(require_sync_token)], tags=["internal event delivery"])
 def claim_outbox_events(payload: OutboxClaimIn) -> dict[str, object]:
     """Lease pending outbox events for the authenticated Sync worker."""
@@ -4200,6 +4244,11 @@ def claim_outbox_events(payload: OutboxClaimIn) -> dict[str, object]:
                 CommerceOutboxEvent.delivered_at.is_(None),
                 CommerceOutboxEvent.dead_letter_at.is_(None),
                 CommerceOutboxEvent.next_attempt_at <= current,
+                CommerceOutboxEvent.event_type.in_({
+                    "commerce.checkout.started",
+                    "commerce.order.paid",
+                    "commerce.order.refund.updated",
+                }),
                 (CommerceOutboxEvent.lease_until.is_(None) | (CommerceOutboxEvent.lease_until < current)),
             ).order_by(CommerceOutboxEvent.created_at, CommerceOutboxEvent.event_id)
               .with_for_update(skip_locked=True).limit(payload.limit)).all())
