@@ -11,7 +11,7 @@ The current code establishes useful fail-closed boundaries:
 - Marketplace BFF returns `503 CLICK_IT_PRIVACY_PIPELINE_NOT_RELEASED` without reading or parsing the uploaded body.
 - Vision's internal `/v1/click-it/scan` checks explicit processing/purpose consent and photographed-person declaration, requires detector readiness, masks before quality scoring/embedding, closes the unmasked decoded image, and closes the masked working image on success and failure.
 - Privacy Governance owns purpose-bound consent receipts, signed jurisdiction policy bundles, photographed-person rights cases, urgent quarantine requests, requester-authority checks and required deletion-surface assertions.
-- The privacy route-guard test scans public media routes and static mounts. It is a code-level inventory guard, not proof that external object storage, CDN, caches, backups or provider systems behave correctly.
+- The privacy route-guard test scans service media routes and static mounts in both service and app source roots; the media-delivery inventory also records the known private binary read paths, the one repository-owned public static root, and currently unverified external origins. These are code-level inventory guards, not proof that external object storage, CDN, caches, backups or provider systems behave correctly.
 
 The following privacy providers are still declared unconfigured/unverified in the canonical deployment inventory: jurisdiction resolver, content-lifecycle provider, guardian verification, requester-authority verification, vision privacy attestation and private object storage. The Privacy Governance `/ready` endpoint must remain 503 while a required provider or its database/signing dependency is unavailable.
 
@@ -73,7 +73,7 @@ Required tests include:
 9. test key rotation, provider timeout, queue backlog, retries, duplicate events, stale receipts, provider account mismatch and disaster restore;
 10. repeat the audit after any route, storage, CDN, model, consent, provider, deployment or frontend change that can alter the media lifecycle.
 
-The assessor must state tested limitations, residual risk, false-negative confidence bounds, exact evidence references, reviewer identity/independence and report digest. A self-attestation by the team that built the route is not independent verification.
+The assessor must state tested limitations, residual risk, false-negative confidence bounds, exact evidence references, reviewer identity/independence and report digest. The assessor must reconcile the deployed origin, CDN, legacy public URLs, cache/replica/backup surfaces against `infrastructure/deployment/media-delivery-inventory.json`; repository entries alone do not count as provider-backed evidence. A self-attestation by the team that built the route is not independent verification.
 
 ## 5. Required operational response
 

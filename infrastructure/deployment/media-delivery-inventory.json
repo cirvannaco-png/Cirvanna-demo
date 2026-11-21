@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "release_gate": "REL-14",
+  "issue": 121,
+  "status": "blocked",
+  "policy": "No customer-facing binary media is enabled until the exact asset, bytes, consent, privacy attestation, publication decision, delivery origin and deletion lifecycle are independently verified.",
+  "repository_baseline": {
+    "click_it_ingress": "blocked_before_multipart_read",
+    "customer_media_api_fields": "recursively_withheld",
+    "marketplace_browser_media": "placeholder_only",
+    "public_user_asset_routes": "none_in_current_service_route_inventory"
+  },
+  "public_binary_delivery": [
+    {
+      "id": "repository_owned_portal_assets",
+      "service": "marketplace-bff",
+      "method": "GET",
+      "route": "/assets/*",
+      "source_root": "apps/demo-web/assets",
+      "classification": "presentation_assets_only",
+      "allows_user_originated_media": false,
+      "allows_uploaded_or_derived_media": false,
+      "symlinks_allowed": false
+    }
+  ],
+  "private_binary_delivery": [
+    {
+      "id": "asset_service_authorized_read",
+      "service": "asset-service",
+      "method": "GET",
+      "route": "/internal/v1/assets/{asset_id}/content",
+      "authentication": "internal_bearer",
+      "authorization": [
+        "exact_owner",
+        "asset_purpose",
+        "parent_resource",
+        "active_status",
+        "retention_window"
+      ],
+      "integrity": "stored_sha256_recomputed_on_read",
+      "cache_control": "no-store, private",
+      "public_url_or_presigned_url": false,
+      "production_storage_provider_verified": false
+    },
+    {
+      "id": "private_try_on_worker_response",
+      "service": "virtual-try-on/model-worker",
+      "method": "POST",
+      "route": "/v1/render",
+      "authentication": "worker_bearer",
+      "persistence": false,
+      "cache_control": "no-store, private",
+      "customer_publication": false
+    }
+  ],
+  "customer_media_surfaces": [
+    {
+      "id": "marketplace_offers",
+      "service": "commerce-service",
+      "media_fields": "withheld",
+      "verified": "contract_and_tests_only"
+    },
+    {
+      "id": "marketplace_bff_json",
+      "service": "marketplace-bff",
+      "media_fields": "recursively_withheld",
+      "verified": "contract_and_tests_only"
+    },
+    {
+      "id": "api_gateway_discovery",
+      "service": "api-gateway",
+      "media_fields": "recursively_withheld",
+      "verified": "contract_and_tests_only"
+    },
+    {
+      "id": "vision_search",
+      "service": "vision-intelligence",
+      "media_fields": "unattested_media_references_withheld",
+      "verified": "contract_and_tests_only"
+    },
+    {
+      "id": "marketplace_browser",
+      "path": "apps/demo-web/marketplace.html",
+      "media_rendering": "fixed_placeholder",
+      "renders_api_supplied_image_urls": false,
+      "verified": "browser_regression_test"
+    }
+  ],
+  "external_origins": {
+    "private_object_storage": {
+      "provider": "S3-compatible",
+      "production_configured": false,
+      "provider_reported_bucket_controls_required": [
+        "BlockPublicAcls",
+        "IgnorePublicAcls",
+        "BlockPublicPolicy",
+        "RestrictPublicBuckets",
+        "non_public_bucket_policy",
+        "default_server_side_encryption",
+        "BucketOwnerEnforced",
+        "versioning_disabled"
+      ],
+      "live_staging_origin_probe_verified": false
+    },
+    "cdn_and_origin": {
+      "production_configured": false,
+      "origin_access_restriction_verified": false,
+      "anonymous_origin_read_probe_verified": false,
+      "cdn_cache_revocation_verified": false,
+      "signed_delivery_scope_verified": false
+    },
+    "legacy_public_object_urls": {
+      "all_origins_enumerated": false,
+      "revocation_verified": false,
+      "cache_and_replica_purge_verified": false
+    },
+    "backups_and_replicas": {
+      "version_aware_deletion_verified": false,
+      "replica_deletion_verified": false,
+      "backup_retention_and_restore_controls_verified": false
+    }
+  },
+  "deletion_propagation": {
+    "source_objects": false,
+    "derived_assets": false,
+    "object_versions": false,
+    "replicas": false,
+    "cdn_and_edge_caches": false,
+    "legacy_shared_links": false,
+    "backups": false,
+    "end_to_end_provider_test": false
+  },
+  "release_rule": "Keep Click It and customer-facing user-media delivery disabled. A passing route guard, mocked S3 policy response, API redaction test or unit test does not verify a deployed storage origin, CDN, cache, replica or backup."
+}

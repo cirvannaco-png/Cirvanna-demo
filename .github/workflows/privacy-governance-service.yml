@@ -3,12 +3,18 @@ name: Privacy Governance Service checks
 on:
   pull_request:
     paths:
-      - "services/privacy-governance-service/**"
+      - "services/**"
+      - "apps/**"
+      - "infrastructure/deployment/canonical-stack.json"
+      - "infrastructure/deployment/media-delivery-inventory.json"
       - ".github/workflows/privacy-governance-service.yml"
   push:
     branches: [main]
     paths:
-      - "services/privacy-governance-service/**"
+      - "services/**"
+      - "apps/**"
+      - "infrastructure/deployment/canonical-stack.json"
+      - "infrastructure/deployment/media-delivery-inventory.json"
       - ".github/workflows/privacy-governance-service.yml"
 
 permissions:

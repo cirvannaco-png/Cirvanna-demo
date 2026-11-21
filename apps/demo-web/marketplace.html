@@ -427,7 +427,8 @@ footer{
     const visible=items;
     $("products").innerHTML=visible.length?visible.map(p=>{
       const id=getId(p),saveId=productSaveId(p),isSaved=saved.some(x=>x.product_id===saveId),inBag=cart.some(x=>x.product_id===id||x.variant_id===id);
-      const image=Array.isArray(p.image_urls)&&p.image_urls[0]?'<img loading="lazy" alt="'+escapeHtml(p.name)+'" src="'+escapeHtml(p.image_urls[0])+'" referrerpolicy="no-referrer">':'<div class="placeholder" aria-hidden="true">C.</div>';
+      // Product media stays withheld until a server-side publication receipt and governed delivery URL exist.
+      const image='<div class="placeholder" aria-hidden="true">C.</div>';
       const fq=p.fulfillment_quote;
       const transport=fq?'<div class="brandline">Delivery: '+moneyMinor(fq.display_conversion_status==="localized"?fq.display_amount_minor:fq.amount_minor,fq.display_conversion_status==="localized"?fq.display_currency:fq.currency)+' · '+escapeHtml(fq.distance_km)+' km</div>':'';
       const comparablePeers=p.canonical_variant_id?items.filter(x=>x.canonical_variant_id===p.canonical_variant_id&&x.merchant_id!==p.merchant_id&&x.available_stock>0):[];
