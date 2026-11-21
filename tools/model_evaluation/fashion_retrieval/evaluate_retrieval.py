@@ -11,6 +11,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from validate_preregistration import validate_registration
+
 METRICS = ("recall_at_k", "precision_at_k", "mrr_at_k", "ndcg_at_k",
            "top1_hit_rate", "no_result_rate", "top_k_fill_rate",
            "candidate_coverage", "hard_exclusion_violation_rate")
@@ -231,6 +233,41 @@ def evaluate(cases: list[dict[str, Any]], *, baseline_model_id: str, k: int = 10
     }
 
 
+def validate_final_test_registration(
+    cases: list[dict[str, Any]], registration: dict[str, Any], *,
+    baseline_model_id: str, k: int, primary_metric: str,
+    bootstrap_samples: int, seed: int,
+) -> None:
+    """Enforce the locked protocol before final-test metrics are calculated."""
+    registration = validate_registration(registration)
+    if not cases:
+        raise ValueError("final-test cases must not be empty")
+    if registration["task_id"] != cases[0]["task_id"]:
+        raise ValueError("preregistration task_id does not match evaluation cases")
+    if registration["primary_metric"] != primary_metric or registration["k"] != k:
+        raise ValueError("evaluation metric/k differs from the locked preregistration")
+    if registration["bootstrap_samples"] != bootstrap_samples:
+        raise ValueError("bootstrap_samples differs from the locked preregistration")
+    if registration["bootstrap_seed"] != seed:
+        raise ValueError("bootstrap seed differs from the locked preregistration")
+    if registration["baseline"]["model_id"] != baseline_model_id:
+        raise ValueError("baseline model ID differs from the locked preregistration")
+    models = set(cases[0]["rankings"])
+    expected = {baseline_model_id, *registration["challengers"].keys()}
+    if models != expected:
+        raise ValueError("evaluated model IDs differ from the locked baseline/challenger set")
+    query_count = len(cases)
+    cluster_count = len({case["cluster_id"] for case in cases})
+    if query_count < registration["minimum_query_count"]:
+        raise ValueError("final-test query count is below the preregistered minimum")
+    if cluster_count < registration["minimum_independent_clusters"]:
+        raise ValueError("final-test independent cluster count is below the preregistered minimum")
+    allowed_pool_sizes = set(registration["candidate_pool_sizes"])
+    observed_pool_sizes = {len(case["candidate_ids"]) for case in cases}
+    if not observed_pool_sizes.issubset(allowed_pool_sizes):
+        raise ValueError("candidate pool sizes differ from the locked preregistration")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", required=True)
@@ -241,8 +278,18 @@ def main() -> int:
     parser.add_argument("--primary-metric", required=True, choices=METRICS)
     parser.add_argument("--bootstrap-samples", type=int, default=2000)
     parser.add_argument("--seed", type=int, default=20261120)
+    parser.add_argument("--preregistration", help="Required for final split=test; private locked registration JSON")
     args = parser.parse_args()
     cases = read_cases(args.input, args.split)
+    if args.split == "test":
+        if not args.preregistration:
+            raise ValueError("--preregistration is required for final split=test evaluation")
+        registration = json.loads(Path(args.preregistration).read_text(encoding="utf-8"))
+        validate_final_test_registration(
+            cases, registration, baseline_model_id=args.baseline_model_id, k=args.k,
+            primary_metric=args.primary_metric, bootstrap_samples=args.bootstrap_samples,
+            seed=args.seed,
+        )
     report = evaluate(cases, baseline_model_id=args.baseline_model_id, k=args.k,
                       primary_metric=args.primary_metric, bootstrap_samples=args.bootstrap_samples,
                       seed=args.seed)
