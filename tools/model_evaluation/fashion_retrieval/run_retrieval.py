@@ -1,0 +1,529 @@
+#!/usr/bin/env python3
+"""Generate matched fashion retrieval rankings from immutable Hugging Face snapshots.
+
+The runner never uploads source images. Input media is read from a caller-supplied
+local root. The output contains opaque candidate IDs, rankings, scores, and qrels.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import importlib.metadata
+import json
+import math
+import os
+import platform
+import re
+import sys
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Iterable
+
+BASELINE_REVISION = "afacf5e5851d5979ab030e228eab60e2c95a912c"
+TEXT_QUERY_PREFIX = "A marketplace product matching this description: "
+SHA40 = re.compile(r"^[0-9a-f]{40}$")
+MODEL_SPECS = {
+    "cirvanna-fashion-clip": {
+        "repo_id": "patrickjohncyh/fashion-clip",
+        "loader": "transformers_clip",
+        "default_revision": BASELINE_REVISION,
+    },
+    "marqo-fashionclip": {
+        "repo_id": "Marqo/marqo-fashionCLIP",
+        "loader": "open_clip",
+        "default_revision": None,
+    },
+    "marqo-fashionsiglip": {
+        "repo_id": "Marqo/marqo-fashionSigLIP",
+        "loader": "open_clip",
+        "default_revision": None,
+    },
+    "zooclaw-fashionsiglip2": {
+        "repo_id": "srpone/zooclaw-fashionsiglip2",
+        "loader": "transformers_auto",
+        "default_revision": None,
+    },
+}
+
+
+def chunks(values: list[Any], size: int) -> Iterable[list[Any]]:
+    if size < 1:
+        raise ValueError("batch size must be positive")
+    for start in range(0, len(values), size):
+        yield values[start:start + size]
+
+
+def normalize_vector(values: Any) -> list[float]:
+    """Convert a tensor/list to a finite unit-length Python vector."""
+    if hasattr(values, "detach"):
+        values = values.detach().float().cpu().tolist()
+    if values and isinstance(values[0], list):
+        if len(values) != 1:
+            raise ValueError("expected exactly one embedding row")
+        values = values[0]
+    vector = [float(value) for value in values]
+    if not vector or any(not math.isfinite(value) for value in vector):
+        raise ValueError("embedding is empty or contains non-finite values")
+    norm = math.sqrt(sum(value * value for value in vector))
+    if not math.isfinite(norm) or norm <= 0:
+        raise ValueError("embedding has a zero or invalid norm")
+    return [value / norm for value in vector]
+
+
+def rank_candidates(
+    query_vector: list[float],
+    candidate_vectors: dict[str, list[float]],
+    *,
+    top_k: int | None = None,
+) -> tuple[list[str], dict[str, float]]:
+    """Rank vectors in one embedding space; scores are cosine similarities only."""
+    if not candidate_vectors:
+        raise ValueError("candidate_vectors must not be empty")
+    query = normalize_vector(query_vector)
+    scores: dict[str, float] = {}
+    for candidate_id, raw_vector in candidate_vectors.items():
+        vector = normalize_vector(raw_vector)
+        if len(vector) != len(query):
+            raise ValueError(f"embedding dimension mismatch for candidate {candidate_id!r}")
+        score = sum(left * right for left, right in zip(query, vector))
+        if not math.isfinite(score):
+            raise ValueError(f"non-finite similarity for candidate {candidate_id!r}")
+        scores[candidate_id] = score
+    ordered = sorted(scores, key=lambda item: (-scores[item], item))
+    if top_k is not None:
+        ordered = ordered[:top_k]
+    return ordered, scores
+
+
+def validate_case(row: Any, line_number: int) -> dict[str, Any]:
+    prefix = f"line {line_number}"
+    if not isinstance(row, dict):
+        raise ValueError(f"{prefix}: each input row must be an object")
+    required_strings = ("schema_version", "query_id", "cluster_id", "task_id", "split")
+    for field in required_strings:
+        if not isinstance(row.get(field), str) or not row[field].strip():
+            raise ValueError(f"{prefix}: {field} must be a non-empty string")
+    if row["schema_version"] != "1.0":
+        raise ValueError(f"{prefix}: schema_version must be 1.0")
+    if row["task_id"] not in {"image_to_catalog_text", "text_to_catalog_text"}:
+        raise ValueError(f"{prefix}: supported tasks are image_to_catalog_text and text_to_catalog_text")
+    candidate_ids = row.get("candidate_ids")
+    if not isinstance(candidate_ids, list) or not candidate_ids:
+        raise ValueError(f"{prefix}: candidate_ids must be a non-empty array")
+    if any(not isinstance(item, str) or not item.strip() for item in candidate_ids):
+        raise ValueError(f"{prefix}: candidate_ids must contain non-empty strings")
+    if len(candidate_ids) != len(set(candidate_ids)):
+        raise ValueError(f"{prefix}: candidate_ids must be unique")
+    candidate_texts = row.get("candidate_texts")
+    if not isinstance(candidate_texts, dict) or set(candidate_texts) != set(candidate_ids):
+        raise ValueError(f"{prefix}: candidate_texts must map every candidate_id exactly once")
+    if any(not isinstance(value, str) or not value.strip() for value in candidate_texts.values()):
+        raise ValueError(f"{prefix}: candidate_texts must contain non-empty strings")
+    qrels = row.get("qrels")
+    if not isinstance(qrels, dict) or not set(qrels).issubset(set(candidate_ids)):
+        raise ValueError(f"{prefix}: qrels must map known candidate IDs to relevance grades")
+    if not any(isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in qrels.values()):
+        raise ValueError(f"{prefix}: qrels must contain at least one positive relevance grade")
+    for candidate_id, grade in qrels.items():
+        if isinstance(grade, bool) or not isinstance(grade, int) or not 0 <= grade <= 4:
+            raise ValueError(f"{prefix}: qrel for {candidate_id!r} must be an integer from 0 to 4")
+    excluded = row.get("excluded_product_ids", [])
+    if not isinstance(excluded, list) or any(not isinstance(x, str) for x in excluded):
+        raise ValueError(f"{prefix}: excluded_product_ids must be an array of IDs")
+    if not set(excluded).issubset(set(candidate_ids)):
+        raise ValueError(f"{prefix}: excluded_product_ids contains an ID outside candidate_ids")
+    subgroups = row.get("subgroups", {})
+    if not isinstance(subgroups, dict):
+        raise ValueError(f"{prefix}: subgroups must be an object")
+    if row["task_id"] == "image_to_catalog_text":
+        if not isinstance(row.get("query_image_path"), str) or not row["query_image_path"].strip():
+            raise ValueError(f"{prefix}: query_image_path is required for image_to_catalog_text")
+    if row["task_id"] == "text_to_catalog_text":
+        if not isinstance(row.get("query_text"), str) or not row["query_text"].strip():
+            raise ValueError(f"{prefix}: query_text is required for text_to_catalog_text")
+    return {
+        **row,
+        "candidate_ids": candidate_ids,
+        "candidate_texts": candidate_texts,
+        "qrels": qrels,
+        "excluded_product_ids": excluded,
+        "subgroups": subgroups,
+    }
+
+
+def resolve_media_path(media_root: str | Path, relative_path: str) -> Path:
+    root = Path(media_root).expanduser().resolve()
+    path = (root / relative_path).resolve()
+    if root not in path.parents:
+        raise ValueError("query image path must remain inside --media-root")
+    if not path.is_file():
+        raise FileNotFoundError(f"query image does not exist: {relative_path}")
+    return path
+
+
+def read_cases(input_path: str | Path) -> list[dict[str, Any]]:
+    rows = []
+    with Path(input_path).open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            if line.strip():
+                rows.append(validate_case(json.loads(line), line_number))
+    if not rows:
+        raise ValueError("input JSONL contains no cases")
+    if len({row["query_id"] for row in rows}) != len(rows):
+        raise ValueError("query_id values must be unique")
+    if len({row["task_id"] for row in rows}) != 1:
+        raise ValueError("do not mix retrieval tasks in one model run")
+    if len({row["split"] for row in rows}) != 1:
+        raise ValueError("do not mix data splits in one model run")
+    return rows
+
+
+def parse_revisions(items: list[str]) -> dict[str, str]:
+    revisions = {}
+    for item in items:
+        if "=" not in item:
+            raise ValueError("--revision must use model-id=40-character-commit-sha")
+        model_id, revision = item.split("=", 1)
+        model_id = model_id.strip()
+        revision = revision.strip().lower()
+        if model_id not in MODEL_SPECS:
+            raise ValueError(f"unknown model ID in --revision: {model_id}")
+        if not SHA40.fullmatch(revision):
+            raise ValueError(f"{model_id}: revision must be a full 40-character lowercase commit SHA")
+        if model_id in revisions:
+            raise ValueError(f"duplicate revision for model {model_id}")
+        revisions[model_id] = revision
+    return revisions
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def hash_snapshot(snapshot_dir: str | Path) -> dict[str, dict[str, Any]]:
+    root = Path(snapshot_dir).resolve()
+    files = {}
+    for path in sorted(root.rglob("*")):
+        if path.is_file():
+            relative = path.relative_to(root).as_posix()
+            files[relative] = {"size_bytes": path.stat().st_size, "sha256": sha256_file(path)}
+    if not files:
+        raise RuntimeError("model snapshot contains no files")
+    return files
+
+
+def _to_device(batch: dict[str, Any], device: str) -> dict[str, Any]:
+    return {key: value.to(device) if hasattr(value, "to") else value for key, value in batch.items()}
+
+
+@dataclass
+class EmbeddingAdapter:
+    model: Any
+    processor: Any
+    device: str
+    loader: str
+    tokenizer: Any = None
+    image_preprocess: Any = None
+
+    @classmethod
+    def load(cls, model_id: str, snapshot_dir: str | Path, device: str) -> "EmbeddingAdapter":
+        spec = MODEL_SPECS[model_id]
+        snapshot = str(Path(snapshot_dir).resolve())
+        if spec["loader"] == "open_clip":
+            try:
+                import open_clip
+            except ImportError as exc:
+                raise RuntimeError("install open_clip_torch to run Marqo challengers") from exc
+            local_uri = "local-dir:" + snapshot
+            try:
+                model, _, preprocess = open_clip.create_model_and_transforms(local_uri, device=device)
+                tokenizer = open_clip.get_tokenizer(local_uri)
+            except Exception as exc:
+                raise RuntimeError(
+                    "OpenCLIP must support the local-dir: schema and load only the pinned local snapshot"
+                ) from exc
+            model.eval()
+            return cls(model=model, processor=None, device=device, loader="open_clip",
+                       tokenizer=tokenizer, image_preprocess=preprocess)
+
+        import torch
+        if spec["loader"] == "transformers_clip":
+            from transformers import CLIPModel, CLIPProcessor
+            model = CLIPModel.from_pretrained(
+                snapshot, local_files_only=True, trust_remote_code=False, use_safetensors=True
+            )
+            processor = CLIPProcessor.from_pretrained(
+                snapshot, local_files_only=True, trust_remote_code=False
+            )
+        else:
+            from transformers import AutoModel, AutoProcessor
+            model = AutoModel.from_pretrained(
+                snapshot, local_files_only=True, trust_remote_code=False, use_safetensors=True
+            )
+            processor = AutoProcessor.from_pretrained(
+                snapshot, local_files_only=True, trust_remote_code=False
+            )
+        model.to(device)
+        model.eval()
+        return cls(model=model, processor=processor, device=device, loader="transformers")
+
+    def encode_texts(self, texts: list[str]) -> list[list[float]]:
+        import torch
+        outputs: list[list[float]] = []
+        for batch in chunks(texts, 32):
+            if self.loader == "open_clip":
+                tokens = self.tokenizer(batch).to(self.device)
+                with torch.inference_mode():
+                    features = self.model.encode_text(tokens)
+            else:
+                inputs = self.processor(
+                    text=batch, return_tensors="pt", padding=True, truncation=True,
+                    **({"max_length": 77} if self.loader == "transformers" and
+                       MODEL_SPECS[next(k for k, v in MODEL_SPECS.items()
+                                        if v["loader"] == "transformers_clip")]["loader"] == "transformers_clip"
+                       and self.model.__class__.__name__ == "CLIPModel" else {})
+                )
+                inputs = _to_device(inputs, self.device)
+                with torch.inference_mode():
+                    features = self.model.get_text_features(**inputs)
+            features = features.detach().float().cpu()
+            for row in features:
+                outputs.append(normalize_vector(row))
+        return outputs
+
+    def encode_images(self, image_paths: list[Path], batch_size: int) -> list[list[float]]:
+        import torch
+        from PIL import Image
+        outputs: list[list[float]] = []
+        for path_batch in chunks(image_paths, batch_size):
+            images = []
+            try:
+                for path in path_batch:
+                    with Image.open(path) as image:
+                        images.append(image.convert("RGB"))
+                if self.loader == "open_clip":
+                    pixels = torch.stack([self.image_preprocess(image) for image in images]).to(self.device)
+                    with torch.inference_mode():
+                        features = self.model.encode_image(pixels)
+                else:
+                    inputs = self.processor(images=images, return_tensors="pt")
+                    inputs = _to_device(inputs, self.device)
+                    with torch.inference_mode():
+                        features = self.model.get_image_features(**inputs)
+                features = features.detach().float().cpu()
+                for row in features:
+                    outputs.append(normalize_vector(row))
+            finally:
+                for image in images:
+                    image.close()
+        return outputs
+
+
+def installed_versions() -> dict[str, str | None]:
+    packages = ("torch", "transformers", "huggingface-hub", "open_clip_torch",
+                "safetensors", "Pillow")
+    versions = {}
+    for package in packages:
+        try:
+            versions[package] = importlib.metadata.version(package)
+        except importlib.metadata.PackageNotFoundError:
+            versions[package] = None
+    return versions
+
+
+def run_model(
+    model_id: str,
+    revision: str,
+    cases: list[dict[str, Any]],
+    media_root: str | Path,
+    cache_dir: str | Path,
+    device: str,
+    batch_size: int,
+) -> tuple[dict[str, list[str]], dict[str, dict[str, float]], dict[str, Any]]:
+    from huggingface_hub import snapshot_download
+    import torch
+
+    spec = MODEL_SPECS[model_id]
+    torch.manual_seed(20261120)
+    snapshot = snapshot_download(
+        repo_id=spec["repo_id"],
+        revision=revision,
+        cache_dir=str(cache_dir),
+    )
+    artifact_manifest = hash_snapshot(snapshot)
+    adapter = EmbeddingAdapter.load(model_id, snapshot, device)
+    try:
+        all_texts = sorted({
+            str(text)[:1000]
+            for case in cases
+            for text in case["candidate_texts"].values()
+        })
+        candidate_text_vectors: dict[str, list[float]] = {}
+        for batch in chunks(all_texts, batch_size):
+            vectors = adapter.encode_texts(batch)
+            if len(vectors) != len(batch):
+                raise RuntimeError("text encoder returned an unexpected number of embeddings")
+            candidate_text_vectors.update(zip(batch, vectors))
+
+        rankings: dict[str, list[str]] = {}
+        score_maps: dict[str, dict[str, float]] = {}
+        for case in cases:
+            candidate_vectors = {
+                candidate_id: candidate_text_vectors[str(case["candidate_texts"][candidate_id])[:1000]]
+                for candidate_id in case["candidate_ids"]
+            }
+            if case["task_id"] == "image_to_catalog_text":
+                image_path = resolve_media_path(media_root, case["query_image_path"])
+                query_vector = adapter.encode_images([image_path], batch_size=1)[0]
+            else:
+                query_text = TEXT_QUERY_PREFIX + " ".join(case["query_text"].split())
+                query_vector = adapter.encode_texts([query_text])[0]
+            ordered, scores = rank_candidates(query_vector, candidate_vectors)
+            rankings[case["query_id"]] = ordered
+            score_maps[case["query_id"]] = {key: round(value, 8) for key, value in scores.items()}
+        metadata = {
+            "repo_id": spec["repo_id"],
+            "revision": revision,
+            "loader": spec["loader"],
+            "artifact_files": artifact_manifest,
+            "weight_files": {
+                path: item for path, item in artifact_manifest.items()
+                if path.endswith((".safetensors", ".bin", ".pt"))
+            },
+            "embedding_dimension": len(next(iter(candidate_text_vectors.values()))),
+            "device": device,
+        }
+        return rankings, score_maps, metadata
+    finally:
+        del adapter
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--input", required=True, help="Private JSONL query/candidate cases")
+    parser.add_argument("--media-root", required=True, help="Root directory for relative query_image_path values")
+    parser.add_argument("--output", required=True, help="Private output JSONL path")
+    parser.add_argument("--models", nargs="+", required=True, choices=sorted(MODEL_SPECS))
+    parser.add_argument("--revision", action="append", default=[],
+                        help="Immutable model-id=40-character-commit-sha; repeat for each challenger")
+    parser.add_argument("--cache-dir", default=os.environ.get("HF_HOME", "~/.cache/huggingface"))
+    parser.add_argument("--device", default="auto", choices=("auto", "cpu", "cuda"))
+    parser.add_argument("--batch-size", type=int, default=32)
+    args = parser.parse_args()
+    if args.batch_size < 1:
+        raise ValueError("--batch-size must be positive")
+    if len(args.models) < 2 or "cirvanna-fashion-clip" not in args.models:
+        raise ValueError("--models must include cirvanna-fashion-clip and at least one challenger")
+    if len(args.models) != len(set(args.models)):
+        raise ValueError("--models must not contain duplicates")
+    revisions = parse_revisions(args.revision)
+    for model_id in args.models:
+        revision = revisions.get(model_id) or MODEL_SPECS[model_id]["default_revision"]
+        if not revision:
+            raise ValueError(f"full immutable --revision {model_id}=<40-char SHA> is required")
+        revisions[model_id] = revision
+
+    import torch
+    if args.device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    else:
+        device = args.device
+    if device == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("--device cuda requested but CUDA is not available")
+
+    cases = read_cases(args.input)
+    media_root = Path(args.media_root).expanduser().resolve()
+    cache_dir = Path(args.cache_dir).expanduser().resolve()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    model_rankings: dict[str, dict[str, list[str]]] = {}
+    model_scores: dict[str, dict[str, dict[str, float]]] = {}
+    model_manifest: dict[str, Any] = {}
+    for model_id in args.models:
+        rankings, scores, metadata = run_model(
+            model_id, revisions[model_id], cases, media_root, cache_dir, device, args.batch_size
+        )
+        model_rankings[model_id] = rankings
+        model_scores[model_id] = scores
+        model_manifest[model_id] = metadata
+
+    output_path = Path(args.output).expanduser()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8") as handle:
+        for case in cases:
+            record = {
+                "schema_version": "1.0",
+                "query_id": case["query_id"],
+                "cluster_id": case["cluster_id"],
+                "task_id": case["task_id"],
+                "split": case["split"],
+                "candidate_ids": case["candidate_ids"],
+                "qrels": case["qrels"],
+                "rankings": {model_id: model_rankings[model_id][case["query_id"]]
+                             for model_id in args.models},
+                "model_scores": {model_id: model_scores[model_id][case["query_id"]]
+                                 for model_id in args.models},
+                "score_type": "cosine_similarity_not_probability",
+                "excluded_product_ids": case["excluded_product_ids"],
+                "subgroups": case["subgroups"],
+            }
+            handle.write(json.dumps(record, sort_keys=True) + "\n")
+
+    manifest = {
+        "schema_version": "1.0",
+        "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "runner": "cirvanna-fashion-retrieval-runner/1.0",
+        "input_sha256": sha256_file(Path(args.input)),
+        "query_count": len(cases),
+        "task_id": cases[0]["task_id"],
+        "split": cases[0]["split"],
+        "candidate_pool_sizes": sorted({len(case["candidate_ids"]) for case in cases}),
+        "model_revisions": revisions,
+        "models": model_manifest,
+        "runtime": {
+            "python": platform.python_version(),
+            "platform": platform.platform(),
+            "device": device,
+            "cuda_available": torch.cuda.is_available(),
+            "cuda_device_name": torch.cuda.get_device_name(0) if device == "cuda" else None,
+            "package_versions": installed_versions(),
+            "batch_size": args.batch_size,
+        },
+        "privacy": {
+            "source_images_uploaded": False,
+            "source_images_written_to_output": False,
+            "source_images_persisted_by_runner": False,
+            "input_and_output_must_remain_in_restricted_workspace": True,
+        },
+        "limitations": [
+            "Only image-to-catalog-text and text-to-catalog-text are implemented; image-to-image is a separate task.",
+            "The runner ranks all supplied eligible candidates; no calibrated no-match threshold is applied.",
+            "Scores are cosine similarities, not probabilities or calibrated confidence.",
+            "The runner does not verify dataset/model commercial rights or human-review independence.",
+        ],
+    }
+    manifest_path = output_path.with_suffix(output_path.suffix + ".manifest.json")
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    print(json.dumps({
+        "status": "rankings_generated",
+        "query_count": len(cases),
+        "models": args.models,
+        "output": str(output_path),
+        "manifest": str(manifest_path),
+        "device": device,
+    }, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (OSError, json.JSONDecodeError, ValueError, RuntimeError) as exc:
+        print(f"retrieval run failed: {exc}", file=sys.stderr)
+        raise SystemExit(2)
