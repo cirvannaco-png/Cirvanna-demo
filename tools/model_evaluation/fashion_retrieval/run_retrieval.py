@@ -16,6 +16,8 @@ import platform
 import re
 import sys
 import tempfile
+import time
+import statistics
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -65,6 +67,36 @@ def chunks(values: list[Any], size: int) -> Iterable[list[Any]]:
         raise ValueError("batch size must be positive")
     for start in range(0, len(values), size):
         yield values[start:start + size]
+
+
+def candidate_text_for_embedding(search_text: str) -> str:
+    """Match _rank_offers(): use the exact Vision search_text prefix up to 1,000 chars."""
+    if not isinstance(search_text, str):
+        raise ValueError("candidate search_text must be a string")
+    return search_text[:1000]
+
+
+def build_text_query(query: str) -> str:
+    """Match TextSearchRequest.normalized_query and _text_embedding() preprocessing."""
+    if not isinstance(query, str):
+        raise ValueError("query must be a string")
+    clean = " ".join(query.split())[:1000]
+    if len(clean) < 3:
+        raise ValueError("query must contain at least three non-whitespace characters")
+    return (TEXT_QUERY_PREFIX + clean)[:1000]
+
+
+def _percentile(values: list[float], percentile: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return round(ordered[0], 3)
+    position = (len(ordered) - 1) * percentile
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    value = ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower)
+    return round(value, 3)
 
 
 def normalize_vector(values: Any) -> list[float]:
@@ -404,45 +436,60 @@ def run_model(
     from huggingface_hub import snapshot_download
     import torch
 
+    run_started = time.perf_counter()
     spec = MODEL_SPECS[model_id]
     torch.manual_seed(20261120)
+    download_started = time.perf_counter()
     snapshot = snapshot_download(
         repo_id=spec["repo_id"],
         revision=revision,
         cache_dir=str(cache_dir),
         allow_patterns=spec["allow_patterns"],
     )
+    snapshot_download_seconds = time.perf_counter() - download_started
+    hash_started = time.perf_counter()
     artifact_manifest = hash_snapshot(snapshot)
+    artifact_hash_seconds = time.perf_counter() - hash_started
+    if device == "cuda" and torch.cuda.is_available():
+        torch.cuda.reset_peak_memory_stats()
+    model_load_started = time.perf_counter()
     adapter = EmbeddingAdapter.load(model_id, snapshot, device)
+    model_load_seconds = time.perf_counter() - model_load_started
     try:
         all_texts = sorted({
-            str(text)[:1000]
+            candidate_text_for_embedding(str(text))
             for case in cases
             for text in case["candidate_texts"].values()
         })
         candidate_text_vectors: dict[str, list[float]] = {}
+        candidate_embedding_started = time.perf_counter()
         for batch in chunks(all_texts, batch_size):
             vectors = adapter.encode_texts(batch, batch_size=batch_size)
             if len(vectors) != len(batch):
                 raise RuntimeError("text encoder returned an unexpected number of embeddings")
             candidate_text_vectors.update(zip(batch, vectors))
+        candidate_embedding_seconds = time.perf_counter() - candidate_embedding_started
 
         rankings: dict[str, list[str]] = {}
         score_maps: dict[str, dict[str, float]] = {}
+        query_latency_ms: list[float] = []
         for case in cases:
+            query_started = time.perf_counter()
             candidate_vectors = {
-                candidate_id: candidate_text_vectors[str(case["candidate_texts"][candidate_id])[:1000]]
+                candidate_id: candidate_text_vectors[candidate_text_for_embedding(str(case["candidate_texts"][candidate_id]))]
                 for candidate_id in case["candidate_ids"]
             }
             if case["task_id"] == "image_to_catalog_text":
                 image_path = resolve_media_path(media_root, case["query_image_path"])
                 query_vector = adapter.encode_images([image_path], batch_size=1)[0]
             else:
-                query_text = (TEXT_QUERY_PREFIX + " ".join(case["query_text"].split()))[:1000]
+                query_text = build_text_query(case["query_text"])
                 query_vector = adapter.encode_texts([query_text], batch_size=1)[0]
             ordered, scores = rank_candidates(query_vector, candidate_vectors)
             rankings[case["query_id"]] = ordered
             score_maps[case["query_id"]] = {key: round(value, 8) for key, value in scores.items()}
+            query_latency_ms.append((time.perf_counter() - query_started) * 1000.0)
+        total_run_seconds = time.perf_counter() - run_started
         metadata = {
             "repo_id": spec["repo_id"],
             "revision": revision,
@@ -455,6 +502,25 @@ def run_model(
             },
             "embedding_dimension": len(next(iter(candidate_text_vectors.values()))),
             "device": device,
+            "timings_seconds": {
+                "snapshot_download": round(snapshot_download_seconds, 3),
+                "artifact_hashing": round(artifact_hash_seconds, 3),
+                "model_load": round(model_load_seconds, 3),
+                "candidate_text_embedding": round(candidate_embedding_seconds, 3),
+                "total_run": round(total_run_seconds, 3),
+            },
+            "query_to_topk_latency_ms": {
+                "count": len(query_latency_ms),
+                "mean": round(statistics.mean(query_latency_ms), 3) if query_latency_ms else None,
+                "p50": _percentile(query_latency_ms, 0.50),
+                "p95": _percentile(query_latency_ms, 0.95),
+            },
+            "cuda_peak_memory_allocated_bytes": (
+                int(torch.cuda.max_memory_allocated()) if device == "cuda" and torch.cuda.is_available() else None
+            ),
+            "cuda_peak_memory_reserved_bytes": (
+                int(torch.cuda.max_memory_reserved()) if device == "cuda" and torch.cuda.is_available() else None
+            ),
         }
         return rankings, score_maps, metadata
     finally:
@@ -500,6 +566,14 @@ def main() -> int:
 
     cases = read_cases(args.input)
     media_root = Path(args.media_root).expanduser().resolve()
+    image_digest_manifest = {}
+    for case in cases:
+        if case["task_id"] == "image_to_catalog_text":
+            image_path = resolve_media_path(media_root, case["query_image_path"])
+            image_digest_manifest[case["query_id"]] = {
+                "sha256": sha256_file(image_path),
+                "size_bytes": image_path.stat().st_size,
+            }
     cache_dir = Path(args.cache_dir).expanduser().resolve()
     cache_dir.mkdir(parents=True, exist_ok=True)
     model_rankings: dict[str, dict[str, list[str]]] = {}
@@ -546,6 +620,8 @@ def main() -> int:
         "candidate_pool_sizes": sorted({len(case["candidate_ids"]) for case in cases}),
         "model_revisions": revisions,
         "models": model_manifest,
+        "query_image_digests": image_digest_manifest,
+        "rankings_output_sha256": sha256_file(output_path),
         "runtime": {
             "python": platform.python_version(),
             "platform": platform.platform(),
