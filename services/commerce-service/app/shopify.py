@@ -175,6 +175,7 @@ class ShopifyConnection(commerce.Base):
     status: Mapped[str] = mapped_column(String(24), nullable=False, default="active")
     webhook_registration: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     products_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    products_cursor: Mapped[str | None] = mapped_column(String(512))
     orders_reconciled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     installed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -210,7 +211,7 @@ class ShopifyProductSnapshot(commerce.Base):
     catalog_product_id: Mapped[str | None] = mapped_column(String(36))
     listing_id: Mapped[str | None] = mapped_column(String(36))
     mapping_state: Mapped[str] = mapped_column(String(24), nullable=False, default="staged")
-    variants_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    variants_complete: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
 
@@ -502,27 +503,24 @@ def _inventory_totals(inventory_item: dict[str, Any]) -> tuple[bool, int | None,
 
 
 PRODUCTS_QUERY = """
-query CirvannaShopifyProducts($first: Int!, $after: String) {
+query CirvannaShopifyVariantCatalog($first: Int!, $after: String) {
   shop { id name myshopifyDomain currencyCode }
-  products(first: $first, after: $after, sortKey: UPDATED_AT) {
+  productVariants(first: $first, after: $after, sortKey: ID) {
     edges {
       cursor
       node {
-        id title handle vendor productType status updatedAt
-        variants(first: 100) {
-          pageInfo { hasNextPage }
-          nodes {
-            id title sku price selectedOptions { name value }
-            inventoryItem {
-              id tracked
-              inventoryLevels(first: 100) {
-                pageInfo { hasNextPage }
-                nodes {
-                  isActive
-                  location { id name isActive }
-                  quantities(names: ["available", "on_hand"]) { name quantity }
-                }
-              }
+        id title sku price selectedOptions
+        product {
+          id title handle vendor productType status updatedAt
+        }
+        inventoryItem {
+          id tracked
+          inventoryLevels(first: 50) {
+            pageInfo { hasNextPage }
+            nodes {
+              isActive
+              location { id name isActive }
+              quantities(names: ["available", "on_hand"]) { name quantity }
             }
           }
         }
@@ -532,6 +530,7 @@ query CirvannaShopifyProducts($first: Int!, $after: String) {
   }
 }
 """
+
 
 
 def _safe_sku(value: str | None, remote_gid: str) -> str:
@@ -603,136 +602,165 @@ def _sync_mapped_variant(
     return None
 
 
-def _sync_products(connection: ShopifyConnection, db: Session, *, max_pages: int = 20) -> dict[str, int]:
+def _sync_products(connection: ShopifyConnection, db: Session, *, max_pages: int = 20) -> dict[str, int | bool]:
     if connection.status != "active":
         raise HTTPException(409, detail={"code": "SHOPIFY_CONNECTION_NOT_ACTIVE"})
-    after: str | None = None
+    after: str | None = connection.products_cursor
     products_seen = variants_seen = inventory_conflicts = pages = 0
+    product_cache = {
+        item.shopify_product_gid: item
+        for item in db.scalars(select(ShopifyProductSnapshot).where(
+            ShopifyProductSnapshot.connection_id == connection.id
+        )).all()
+    }
+    variant_cache = {
+        item.shopify_variant_gid: item
+        for item in db.scalars(select(ShopifyVariantSnapshot).where(
+            ShopifyVariantSnapshot.connection_id == connection.id
+        )).all()
+    }
     while pages < max_pages:
-        data = _graphql(connection, db, PRODUCTS_QUERY, {"first": 50, "after": after})
+        data = _graphql(connection, db, PRODUCTS_QUERY, {"first": 20, "after": after})
         shop = data.get("shop") or {}
         shop_currency = str(shop.get("currencyCode") or "").upper()
         if not CURRENCY_RE.fullmatch(shop_currency):
             raise HTTPException(502, detail={"code": "SHOPIFY_SHOP_CURRENCY_INVALID"})
         if connection.shop_currency and connection.shop_currency != shop_currency:
-            # Store currency changes require an operator review before offers are
-            # rewritten, since seller and buyer money are distinct contracts.
             connection.status = "currency_review_required"
             db.commit()
             raise HTTPException(409, detail={"code": "SHOPIFY_SHOP_CURRENCY_CHANGED"})
         connection.shop_currency = shop_currency
         connection.shop_gid = shop.get("id")
         connection.shop_name = (shop.get("name") or "")[:180] or None
-        product_connection = data.get("products") or {}
-        for edge in product_connection.get("edges") or []:
-            node = edge.get("node") or {}
-            remote_product_gid = node.get("id")
-            if not isinstance(remote_product_gid, str) or not remote_product_gid.startswith("gid://shopify/Product/"):
+        variant_connection = data.get("productVariants") or {}
+        for edge in variant_connection.get("edges") or []:
+            remote_variant = edge.get("node") or {}
+            remote_gid = remote_variant.get("id")
+            product_node = remote_variant.get("product") or {}
+            remote_product_gid = product_node.get("id")
+            if (
+                not isinstance(remote_gid, str)
+                or not remote_gid.startswith("gid://shopify/ProductVariant/")
+                or not isinstance(remote_product_gid, str)
+                or not remote_product_gid.startswith("gid://shopify/Product/")
+            ):
                 continue
-            product = db.scalar(select(ShopifyProductSnapshot).where(
-                ShopifyProductSnapshot.connection_id == connection.id,
-                ShopifyProductSnapshot.shopify_product_gid == remote_product_gid,
-            ))
+            product = product_cache.get(remote_product_gid)
             if product is None:
                 product = ShopifyProductSnapshot(
                     id=str(uuid.uuid4()), connection_id=connection.id,
-                    shopify_product_gid=remote_product_gid, title=str(node.get("title") or "Untitled")[:255],
-                    remote_status=str(node.get("status") or "UNKNOWN").upper(),
+                    shopify_product_gid=remote_product_gid,
+                    title=str(product_node.get("title") or "Untitled")[:255],
+                    remote_status=str(product_node.get("status") or "UNKNOWN").upper(),
                     mapping_state="staged",
+                    variants_complete=False,
                 )
                 db.add(product)
                 db.flush()
-            product.title = str(node.get("title") or "Untitled")[:255]
-            product.handle = str(node.get("handle") or "")[:255] or None
-            product.vendor = str(node.get("vendor") or "")[:180] or None
-            product.product_type = str(node.get("productType") or "")[:120] or None
-            product.remote_status = str(node.get("status") or "UNKNOWN").upper()
-            product.remote_updated_at = node.get("updatedAt")
-            variants = node.get("variants") or {}
-            product.variants_complete = not bool((variants.get("pageInfo") or {}).get("hasNextPage"))
-            products_seen += 1
-            for remote_variant in variants.get("nodes") or []:
-                remote_gid = remote_variant.get("id")
-                if not isinstance(remote_gid, str) or not remote_gid.startswith("gid://shopify/ProductVariant/"):
-                    continue
-                inventory_item = remote_variant.get("inventoryItem") or {}
-                tracked, available, on_hand, inventory_complete = _inventory_totals(inventory_item)
-                sku = _safe_sku(remote_variant.get("sku"), remote_gid)
-                sku_collision = db.scalar(select(ShopifyVariantSnapshot.id).where(
-                    ShopifyVariantSnapshot.product_snapshot_id == product.id,
-                    ShopifyVariantSnapshot.sku == sku,
-                    ShopifyVariantSnapshot.shopify_variant_gid != remote_gid,
-                ))
-                if sku_collision:
-                    suffix = remote_gid.rsplit("/", 1)[-1][-10:]
-                    sku = _safe_sku(sku[:68] + "-" + suffix, remote_gid)
-                try:
-                    price_minor = _minor_units(remote_variant.get("price", "0"), shop_currency)
-                except ValueError as exc:
-                    raise HTTPException(502, detail={"code": "SHOPIFY_VARIANT_PRICE_INVALID"}) from exc
-                options = {
-                    str(option.get("name", ""))[:64]: str(option.get("value", ""))[:120]
-                    for option in remote_variant.get("selectedOptions") or []
-                    if option.get("name")
-                }
-                snapshot = db.scalar(select(ShopifyVariantSnapshot).where(
-                    ShopifyVariantSnapshot.connection_id == connection.id,
-                    ShopifyVariantSnapshot.shopify_variant_gid == remote_gid,
-                ))
-                if snapshot is None:
-                    snapshot = ShopifyVariantSnapshot(
-                        id=str(uuid.uuid4()), connection_id=connection.id,
-                        product_snapshot_id=product.id, shopify_variant_gid=remote_gid,
-                        sku=sku, title=str(remote_variant.get("title") or "")[:255],
-                        options=options, price_minor=price_minor, currency=shop_currency,
-                        tracked=tracked, available_quantity=available, on_hand_quantity=on_hand,
-                        inventory_complete=inventory_complete,
-                    )
-                    db.add(snapshot)
-                    db.flush()
-                else:
-                    snapshot.product_snapshot_id = product.id
-                    snapshot.sku = sku
-                    snapshot.title = str(remote_variant.get("title") or "")[:255]
-                    snapshot.options = options
-                    snapshot.price_minor = price_minor
-                    snapshot.currency = shop_currency
-                    snapshot.tracked = tracked
-                    snapshot.available_quantity = available
-                    snapshot.on_hand_quantity = on_hand
-                    snapshot.inventory_complete = inventory_complete
-                snapshot.shopify_inventory_item_gid = inventory_item.get("id")
-                snapshot.synced_at = utcnow()
-                if snapshot.local_variant_id:
-                    conflict = _sync_mapped_variant(db, connection, snapshot, product)
-                    if conflict:
-                        inventory_conflicts += 1
-                variants_seen += 1
-            db.flush()
+                product_cache[remote_product_gid] = product
+            else:
+                # Any changed variant means this product's variant set must be
+                # considered incomplete until the current full catalogue cycle ends.
+                product.variants_complete = False
+            product.title = str(product_node.get("title") or "Untitled")[:255]
+            product.handle = str(product_node.get("handle") or "")[:255] or None
+            product.vendor = str(product_node.get("vendor") or "")[:180] or None
+            product.product_type = str(product_node.get("productType") or "")[:120] or None
+            product.remote_status = str(product_node.get("status") or "UNKNOWN").upper()
+            product.remote_updated_at = product_node.get("updatedAt")
             product.synced_at = utcnow()
             if product.catalog_product_id:
-                product.mapping_state = "mapped" if all(
-                    variant.local_variant_id for variant in db.scalars(
-                        select(ShopifyVariantSnapshot).where(ShopifyVariantSnapshot.product_snapshot_id == product.id)
-                    ).all()
-                ) else "partial"
-        page_info = product_connection.get("pageInfo") or {}
+                product.mapping_state = "partial"
+            products_seen += 1
+            inventory_item = remote_variant.get("inventoryItem") or {}
+            tracked, available, on_hand, inventory_complete = _inventory_totals(inventory_item)
+            sku = _safe_sku(remote_variant.get("sku"), remote_gid)
+            sku_collision = db.scalar(select(ShopifyVariantSnapshot.id).where(
+                ShopifyVariantSnapshot.product_snapshot_id == product.id,
+                ShopifyVariantSnapshot.sku == sku,
+                ShopifyVariantSnapshot.shopify_variant_gid != remote_gid,
+            ))
+            if sku_collision:
+                suffix = remote_gid.rsplit("/", 1)[-1][-10:]
+                sku = _safe_sku(sku[:68] + "-" + suffix, remote_gid)
+            try:
+                price_minor = _minor_units(remote_variant.get("price", "0"), shop_currency)
+            except ValueError as exc:
+                raise HTTPException(502, detail={"code": "SHOPIFY_VARIANT_PRICE_INVALID"}) from exc
+            options = {
+                str(option.get("name", ""))[:64]: str(option.get("value", ""))[:120]
+                for option in remote_variant.get("selectedOptions") or []
+                if option.get("name")
+            }
+            snapshot = variant_cache.get(remote_gid)
+            if snapshot is None:
+                snapshot = ShopifyVariantSnapshot(
+                    id=str(uuid.uuid4()), connection_id=connection.id,
+                    product_snapshot_id=product.id, shopify_variant_gid=remote_gid,
+                    sku=sku, title=str(remote_variant.get("title") or "")[:255],
+                    options=options, price_minor=price_minor, currency=shop_currency,
+                    tracked=tracked, available_quantity=available, on_hand_quantity=on_hand,
+                    inventory_complete=inventory_complete, mapping_state="staged",
+                )
+                db.add(snapshot)
+                db.flush()
+                variant_cache[remote_gid] = snapshot
+            else:
+                snapshot.product_snapshot_id = product.id
+                snapshot.sku = sku
+                snapshot.title = str(remote_variant.get("title") or "")[:255]
+                snapshot.options = options
+                snapshot.price_minor = price_minor
+                snapshot.currency = shop_currency
+                snapshot.tracked = tracked
+                snapshot.available_quantity = available
+                snapshot.on_hand_quantity = on_hand
+                snapshot.inventory_complete = inventory_complete
+            snapshot.shopify_inventory_item_gid = inventory_item.get("id")
+            snapshot.synced_at = utcnow()
+            if snapshot.local_variant_id:
+                conflict = _sync_mapped_variant(db, connection, snapshot, product)
+                if conflict:
+                    inventory_conflicts += 1
+            variants_seen += 1
+            db.flush()
+        page_info = variant_connection.get("pageInfo") or {}
         if not page_info.get("hasNextPage"):
+            after = None
             break
         after = page_info.get("endCursor")
         if not after:
-            raise HTTPException(502, detail={"code": "SHOPIFY_PRODUCT_CURSOR_MISSING"})
+            raise HTTPException(502, detail={"code": "SHOPIFY_VARIANT_CURSOR_MISSING"})
         pages += 1
+    # Persist the cursor so repeated sync invocations progress through large stores.
+    connection.products_cursor = after
     connection.products_synced_at = utcnow()
     connection.updated_at = utcnow()
+    db.flush()
+    if after is None:
+        all_products = list(db.scalars(select(ShopifyProductSnapshot).where(
+            ShopifyProductSnapshot.connection_id == connection.id
+        )).all())
+        for product in all_products:
+            product_variants = list(db.scalars(select(ShopifyVariantSnapshot).where(
+                ShopifyVariantSnapshot.product_snapshot_id == product.id
+            )).all())
+            product.variants_complete = bool(product_variants)
+            if product.catalog_product_id:
+                product.mapping_state = (
+                    "mapped" if product_variants and all(item.local_variant_id for item in product_variants)
+                    else "partial"
+                )
     db.commit()
     return {
-        "products_seen": products_seen,
+        "products_seen": len({item.product_snapshot_id for item in variant_cache.values()
+                              if item.connection_id == connection.id}),
         "variants_seen": variants_seen,
         "inventory_conflicts": inventory_conflicts,
-        "pages_processed": min(pages + 1, max_pages),
-        "has_more": bool((page_info if 'page_info' in locals() else {}).get("hasNextPage")),
+        "pages_processed": pages + 1,
+        "has_more": connection.products_cursor is not None,
     }
+
 
 
 @router.get("/integrations/shopify/install")
