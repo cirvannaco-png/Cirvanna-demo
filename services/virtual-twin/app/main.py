@@ -328,6 +328,7 @@ async def capabilities() -> dict[str, object]:
     dermalsight_ready = await _dermalsight_ready()
     vision_ready = await _vision_worker_ready()
     consent_configured = _internal_config("CONSENT_API_URL", "CONSENT_API_TOKEN") is not None
+    privacy_policy_configured = policy_registry_configured()
     twin_registry_configured = _internal_config("TWIN_REGISTRY_API_URL", "TWIN_REGISTRY_API_TOKEN") is not None
     return {
         "service": SERVICE_NAME,
