@@ -40,6 +40,10 @@ def test_catalog_product_rejects_malformed_optional_brand_and_description():
     assert empty_brand.brand is None
     with pytest.raises(ValueError, match="brand"):
         CatalogProduct.from_mapping({**base, "brand": "b" * 101})
+    with pytest.raises(ValueError, match="finite JSON-compatible"):
+        CatalogProduct.from_mapping({**base, "attributes": {"weight": float("nan")}})
+    with pytest.raises(ValueError, match="finite JSON-compatible"):
+        CatalogProduct.from_mapping({**base, "attributes": {"unsupported": object()}})
 
 
 def test_catalog_attributes_and_appearance_constraints_are_immutable():
