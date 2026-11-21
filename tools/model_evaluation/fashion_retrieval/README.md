@@ -31,7 +31,9 @@ The model registry in `run_retrieval.py` defines four model identities:
 
 Each model is downloaded at a full 40-character commit SHA. The baseline SHA is frozen to the exact revision in Cirvanna's current Vision Intelligence implementation. Challenger SHA values are explicit command-line inputs; a moving `main` reference and short SHA are rejected.
 
-Marqo's model cards recommend OpenCLIP and their example Transformers loaders require `trust_remote_code=True`. The runner instead uses OpenCLIP's `local-dir:` loader with the pinned snapshot and does not execute remote model-repository Python. ZooClaw and the baseline are also loaded with `trust_remote_code=False`.
+Marqo's model cards recommend OpenCLIP and their example Transformers loaders require `trust_remote_code=True`. The runner instead uses OpenCLIP's `local-dir:` loader with the pinned snapshot and does not execute remote model-repository Python. For FashionSigLIP, whose OpenCLIP config points to an external tokenizer repository, the runner redirects the tokenizer to the tokenizer files inside that same pinned model snapshot. It does not download an unpinned tokenizer from a second repository. ZooClaw and the baseline are also loaded with `trust_remote_code=False`.
+
+The Hub snapshot download uses an explicit file allow-list for each model, avoiding duplicate PyTorch/Transformers/OpenCLIP copies of the same large checkpoint. The allow-list includes the model weight, model configuration, processor/tokenizer assets and README/licence notices where present.
 
 Every downloaded snapshot file is SHA-256 hashed. The private run manifest records all model revisions, file sizes/hashes, runtime package versions, device, input JSONL digest and query/task counts.
 
