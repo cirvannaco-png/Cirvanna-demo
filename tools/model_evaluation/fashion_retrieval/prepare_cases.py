@@ -91,6 +91,13 @@ def _validate_query(row: dict[str, Any], line: int, catalog_ids: set[str]) -> di
         raise ValueError(f"query line {line}: excluded_product_ids must be a unique string array")
     if not set(excluded).issubset(set(candidate_ids)):
         raise ValueError(f"query line {line}: exclusions must be in candidate_ids")
+    human_violations = row.get("human_exclusion_violation_ids", [])
+    if (not isinstance(human_violations, list)
+            or any(not isinstance(x, str) or not x.strip() for x in human_violations)
+            or len(human_violations) != len(set(human_violations))):
+        raise ValueError(f"query line {line}: human_exclusion_violation_ids must be unique candidate IDs")
+    if not set(human_violations).issubset(set(candidate_ids)):
+        raise ValueError(f"query line {line}: human exclusion violations must be in candidate_ids")
     subgroups = row.get("subgroups", {})
     if not isinstance(subgroups, dict) or any(
         not isinstance(k, str) or not isinstance(v, str) or not k.strip() or not v.strip()
@@ -131,6 +138,7 @@ def prepare(catalog_rows: list[dict[str, Any]], query_rows: list[dict[str, Any]]
             "candidate_texts": {variant_id: catalog[variant_id] for variant_id in query["candidate_ids"]},
             "qrels": query["qrels"],
             "excluded_product_ids": query.get("excluded_product_ids", []),
+            "human_exclusion_violation_ids": query.get("human_exclusion_violation_ids", []),
             "subgroups": query.get("subgroups", {}),
         }
         if query["task_id"] == "image_to_catalog_text":
