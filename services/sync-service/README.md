@@ -59,3 +59,8 @@ The worker consumes two Commerce outbox event types:
 
 A refund snapshot is financial state only. It never archives, deletes, or de-owns garment records and must explicitly declare `physical_return_confirmed=false`. Partial refunds and full refunds are not proof of a physical return. Returns, chargebacks, item-level refund allocation and inventory restocking remain separate verified workflows. Unknown or malformed event types are never acknowledged as successful.
 
+
+
+## Operations manual-review delivery
+
+The Sync worker consumes Commerce manual-review events for Shopify compensation and Stripe refund cases only when both `COMMERCE_OPERATIONS_WEBHOOK_URL` and `COMMERCE_OPERATIONS_WEBHOOK_SECRET` are configured. The destination must be HTTPS; the secret must contain at least 32 bytes. Requests contain a bounded, non-customer operational projection, an `Idempotency-Key`, and `X-Cirvanna-Signature: sha256=<hex>` computed over the exact canonical JSON body. The receiver must verify the HMAC in constant time, persist idempotently by event ID, alert an assigned operator, and return 2xx only after durable acceptance. If the sink is missing or unavailable, Sync does not acknowledge the Commerce outbox event; it retries and eventually dead-letters according to the outbox policy. This webhook contract is not evidence that an actual alert route or on-call recipient has been provisioned.
