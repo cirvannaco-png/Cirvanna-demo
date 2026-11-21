@@ -19,6 +19,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from functools import lru_cache
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Iterator, Literal
+from threading import BoundedSemaphore
 
 import httpx
 import jwt as pyjwt
@@ -56,6 +57,9 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 
 SERVICE = "cirvanna-commerce-service"
 EXPECTED_SCHEMA_REVISION = "20261121_0016"
+READINESS_PROBE_CAPACITY = 6
+_READINESS_PROBE_EXECUTOR = ThreadPoolExecutor(max_workers=READINESS_PROBE_CAPACITY, thread_name_prefix="commerce-readiness")
+_READINESS_PROBE_SLOTS = BoundedSemaphore(READINESS_PROBE_CAPACITY)
 MAX_QTY = 50
 RESERVATION_MINUTES = 60
 SKU_RE = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,79}$")
@@ -1452,6 +1456,20 @@ def _market_payment_capability(
     return None
 
 
+def _submit_readiness_probe(futures: dict[str, Any], name: str, probe, *args) -> bool:
+    """Submit only while a global slot is available; timed-out work retains its slot."""
+    if not _READINESS_PROBE_SLOTS.acquire(blocking=False):
+        return False
+    try:
+        future = _READINESS_PROBE_EXECUTOR.submit(probe, *args)
+    except Exception:
+        _READINESS_PROBE_SLOTS.release()
+        raise
+    future.add_done_callback(lambda _future: _READINESS_PROBE_SLOTS.release())
+    futures[name] = future
+    return True
+
+
 def _market_is_active(db: Session, merchant_id: str, market_country_code: str) -> MerchantOperatingMarket | None:
     market = db.scalar(select(MerchantOperatingMarket).where(
         MerchantOperatingMarket.merchant_id == merchant_id,
@@ -2081,10 +2099,27 @@ if cors:
         max_age=600)
 
 
+def _ensure_local_fulfillment_precision_column(bind=engine) -> None:
+    """Upgrade this additive field for existing local create_all databases."""
+    table_name = "commerce_offer_fulfillment_quotes"
+    with bind.begin() as connection:
+        inspector = inspect(connection)
+        if table_name not in set(inspector.get_table_names()):
+            return
+        columns = {column["name"] for column in inspector.get_columns(table_name)}
+        if "distance_precision_verified_at" in columns:
+            return
+        column_type = DateTime(timezone=True).compile(dialect=connection.dialect)
+        connection.execute(text(
+            f"ALTER TABLE {table_name} ADD COLUMN distance_precision_verified_at {column_type}"
+        ))
+
+
 @app.on_event("startup")
 def startup() -> None:
     if os.getenv("COMMERCE_AUTO_CREATE_SCHEMA", "true").lower() == "true":
         Base.metadata.create_all(bind=engine)
+        _ensure_local_fulfillment_precision_column(engine)
 
 
 @app.get("/me", tags=["identity"])
@@ -2138,36 +2173,35 @@ def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
         "MERCHANT_VERIFICATION_ADAPTER", "FULFILLMENT_ADAPTER", "FX_ADAPTER",
         "TAX_ADAPTER", "PAYMENT_CAPABILITY_ADAPTER",
     )
-    # CAL and all required provider probes share one deadline. A CAL probe that
-    # consumes its own timeout must not be added serially to five adapter probes.
-    probe_executor = ThreadPoolExecutor(max_workers=1 + (len(adapter_prefixes) if provider_required else 0))
-    probe_futures = {}
-    try:
-        if cal_gateway_configured:
-            probe_futures["cal"] = probe_executor.submit(_cal_gateway_probe, cal_base, cal_token)
-        if provider_required:
-            for prefix in adapter_prefixes:
-                probe_futures[prefix] = probe_executor.submit(adapter_ready, prefix)
-        completed, _pending = wait(tuple(probe_futures.values()), timeout=3.5)
-        probe_results = {}
-        for name, future in probe_futures.items():
-            if future not in completed:
-                probe_results[name] = False
-                continue
-            try:
-                probe_results[name] = bool(future.result())
-            except Exception:
-                probe_results[name] = False
-        cal_gateway_ready = probe_results.get("cal", False)
-        merchant_provider_ready = probe_results.get("MERCHANT_VERIFICATION_ADAPTER", False)
-        fulfillment_provider_ready = probe_results.get("FULFILLMENT_ADAPTER", False)
-        fx_provider_ready = probe_results.get("FX_ADAPTER", False)
-        tax_provider_ready = probe_results.get("TAX_ADAPTER", False)
-        payment_capability_provider_ready = probe_results.get("PAYMENT_CAPABILITY_ADAPTER", False)
-    finally:
-        # Do not hold the HTTP request open waiting for a slow dependency. Each
-        # underlying HTTP probe has its own finite connect/read timeout.
-        probe_executor.shutdown(wait=False, cancel_futures=True)
+    # One shared deadline bounds this request. A process-wide worker pool and
+    # semaphore cap outstanding probes across requests: timed-out work keeps its
+    # slot until it actually exits, so slow trickling endpoints cannot spawn an
+    # unbounded number of threads or sockets.
+    probe_futures: dict[str, Any] = {}
+    probe_results: dict[str, bool] = {}
+    if cal_gateway_configured and not _submit_readiness_probe(
+        probe_futures, "cal", _cal_gateway_probe, cal_base, cal_token
+    ):
+        probe_results["cal"] = False
+    if provider_required:
+        for prefix in adapter_prefixes:
+            if not _submit_readiness_probe(probe_futures, prefix, adapter_ready, prefix):
+                probe_results[prefix] = False
+    completed, _pending = wait(tuple(probe_futures.values()), timeout=3.5)
+    for name, future in probe_futures.items():
+        if future not in completed:
+            probe_results[name] = False
+            continue
+        try:
+            probe_results[name] = bool(future.result())
+        except Exception:
+            probe_results[name] = False
+    cal_gateway_ready = probe_results.get("cal", False)
+    merchant_provider_ready = probe_results.get("MERCHANT_VERIFICATION_ADAPTER", False)
+    fulfillment_provider_ready = probe_results.get("FULFILLMENT_ADAPTER", False)
+    fx_provider_ready = probe_results.get("FX_ADAPTER", False)
+    tax_provider_ready = probe_results.get("TAX_ADAPTER", False)
+    payment_capability_provider_ready = probe_results.get("PAYMENT_CAPABILITY_ADAPTER", False)
     provider_dependencies_ready = (
         not provider_required
         or all([
@@ -2859,6 +2893,7 @@ def compare_offers(
             OfferFulfillmentQuote.destination_country_code == payload.destination_country_code,
             OfferFulfillmentQuote.destination_key == payload.destination_key,
             OfferFulfillmentQuote.fulfillment_mode == payload.fulfillment_mode,
+            OfferFulfillmentQuote.distance_precision_verified_at.is_not(None),
         ).order_by(OfferFulfillmentQuote.observed_at.desc(), OfferFulfillmentQuote.id.desc()).limit(10)).all())
         fulfillment = next((q for q in fulfillment_rows if quote_is_current(q.observed_at, q.expires_at)), None)
         if fulfillment is None:
