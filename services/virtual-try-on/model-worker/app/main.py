@@ -203,6 +203,8 @@ def _decode_image(data: bytes, content_type: str) -> Image.Image:
 def _render(
     person: Image.Image, garment: Image.Image, category: str, garment_photo_type: str
 ) -> bytes:
+    if garment_photo_type != "flat-lay":
+        raise ValueError("Only flat-lay garment images are supported by the maskless parser mode.")
     generated_images: list[Image.Image] | tuple[Image.Image, ...] | None = None
     try:
         result = _pipeline()(
@@ -295,7 +297,7 @@ async def render(
     ],
     person_image: Annotated[UploadFile, File()],
     garment_image: Annotated[UploadFile, File()],
-    garment_photo_type: Annotated[str, Form()] = "flat-lay",
+    garment_photo_type: Annotated[str, Form()],
 ) -> Response:
     # Consent is verified by the authenticated orchestrator before this private
     # worker is called. Browser-supplied booleans are not consent evidence.
