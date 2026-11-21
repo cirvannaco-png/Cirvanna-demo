@@ -1356,7 +1356,7 @@ async def receive_shopify_webhook(
             connection.updated_at = utcnow()
             db.commit()
         return {"received": True, "revoked": bool(connection)}
-    if connection is None:
+    if connection is None or (connection.status != "active" and topic != "shop/redact"):
         return {"received": True, "ignored": True}
     if topic not in {
         "products/create", "products/update", "products/delete", "inventory_levels/update",
