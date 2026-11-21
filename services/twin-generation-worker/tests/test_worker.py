@@ -173,7 +173,7 @@ def test_reconstruction_response_is_never_claimed_calibrated_or_registry_eligibl
         lambda _image: (b"glTF-fixture", 12000, 22000),
     )
     monkeypatch.setenv("TWIN_GENERATION_WORKER_TOKEN", "t" * 48)
-    monkeypatch.setattr(main, "_ESTIMATOR", None)
+    monkeypatch.setattr(main, "_ESTIMATOR", object())
     client = TestClient(main.app)
     response = client.post(
         "/internal/v1/reconstruct",
