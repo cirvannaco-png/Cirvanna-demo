@@ -68,7 +68,7 @@ Image paths must be relative to `--media-root` and remain inside that directory.
 
 ## Install dependencies
 
-Use a locked Python 3.11+ research environment. At minimum, the runtime needs PyTorch, Transformers, Hugging Face Hub, Safetensors, Pillow, NumPy, and OpenCLIP with support for the `local-dir:` schema. `requirements-research.txt` declares the runtime families, but its ranges are **not** a reproducibility lock. Generate and retain an exact lockfile with hashes before any official comparison, and attach its digest to the experiment record.
+Use a locked Python 3.11+ research environment. The Marqo adapters require `open_clip_torch==4.2.2`, which supports the `local-dir:` loader used to load pinned snapshots without remote code. That OpenCLIP release requires PyTorch 2.6 or newer; the research environment is deliberately separate from the Vision service's production requirements. The runner fails fast if a different OpenCLIP version is installed. The runtime also needs Transformers, Hugging Face Hub, Safetensors, Pillow, NumPy, timm, and OpenCLIP's tokenizer dependencies. `requirements-research.txt` pins the OpenCLIP API version and sets compatible ranges for the other packages, but it is **not** a complete reproducibility lock. Generate and retain an exact transitive lock with hashes before any official comparison, and attach its digest to the experiment record.
 
 ## Generate rankings
 
