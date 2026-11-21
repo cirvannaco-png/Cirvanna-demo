@@ -166,12 +166,12 @@
     const data = await api("/integrations/shopify/connection");
     state.shopify = data;
     $("shopifyStatus").textContent = data.connected ? (data.status || "connected") : "not connected";
-    $("shopifyMeta").textContent = data.connected
-      ? [data.shop_name || data.shop_domain, data.shop_currency, data.webhooks_complete ? "webhooks registered" : "webhook setup incomplete", data.products_synced_at ? "last sync " + new Date(data.products_synced_at).toLocaleString() : "not synced"].filter(Boolean).join(" · ")
+    $("shopifyMeta").textContent = data.configured
+      ? [data.shop_name || data.shop_domain, data.shop_currency, data.status, data.webhooks_complete ? "webhooks registered" : "webhook setup incomplete", data.products_synced_at ? "last sync " + new Date(data.products_synced_at).toLocaleString() : "not synced"].filter(Boolean).join(" · ")
       : "No Shopify store connected. OAuth and webhook configuration must be enabled by Cirvanna operations.";
     $("shopifySync").disabled = !data.connected;
     $("shopifyReload").disabled = !data.connected;
-    $("shopifyDisconnect").disabled = !data.connected;
+    $("shopifyDisconnect").disabled = data.configured !== true;
     if (data.connected) await loadShopifyStaged();
     else {
       state.staged = [];
