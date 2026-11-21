@@ -103,6 +103,28 @@ The runner ranks the full supplied candidate pool and applies no calibrated no-m
 
 Tests cover the schema, fixed candidate metadata, strict revision pins, deterministic ranking, invalid vectors and media path traversal. CI compiles the runners and runs these offline unit tests; CI does not download model weights or claim model inference executed.
 
+## Create qrels from blinded human reviews
+
+Do not hand-author incomplete qrels. Create a private query-case JSONL with the full fixed candidate IDs for each query. For each query-candidate pair, collect exactly two independent blinded review records:
+
+    {"query_id":"query-000001","candidate_id":"variant-a","reviewer_key":"reviewer-a","relevance":4,"exclusion_violation":false}
+
+The relevance grade is 0–4. The separate exclusion flag is boolean. Every candidate must be reviewed, including candidates reviewers consider non-relevant. When either relevance or the exclusion flag differs between the two reviewers, provide an independent adjudication:
+
+    {"query_id":"query-000001","candidate_id":"variant-a","adjudicator_key":"adjudicator-c","relevance":3,"exclusion_violation":false}
+
+Run the aggregator:
+
+    python tools/model_evaluation/fashion_retrieval/build_qrels.py \
+      --queries /secure/evaluation/query-cases.jsonl \
+      --reviews /secure/evaluation/blinded-reviews.jsonl \
+      --adjudications /secure/evaluation/adjudications.jsonl \
+      --output /secure/evaluation/reviewed-query-cases.jsonl
+
+Omit `--adjudications` only when no candidate pair has reviewer disagreement. The script rejects missing/duplicate reviewers, missing candidate reviews, unresolved disagreements, and adjudicators who are not independent of both reviewers. It writes complete qrels and the adjudicated `human_exclusion_violation_ids`, but not reviewer keys or raw reviewer records. Keep source reviews, adjudications, output, and manifests encrypted and restricted; they must never be committed to GitHub.
+
+Then join those qrels to the exact frozen eligible Commerce/Catalog offer text with `prepare_cases.py` as described below. Human violation IDs remain a hard evaluation gate even when no user exclusion ID was supplied.
+
 ## Prepare matched input from frozen snapshots
 
 The runner input is assembled from two private JSONL files. The first is a fixed, eligible Commerce/Catalog snapshot captured from the same release of the service, after the existing active-product / purchasable-offer rules have been applied. Each row must contain:
