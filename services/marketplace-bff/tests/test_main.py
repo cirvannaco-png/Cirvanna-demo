@@ -2372,6 +2372,34 @@ def test_shopify_oauth_callback_relay_forwards_same_origin_state_cookie(client, 
     ]
 
 
+def test_shopify_install_proxy_preserves_redirect_and_oauth_cookie(client, monkeypatch):
+    configure_upstreams(monkeypatch)
+    calls = []
+    def fake_request(method, url, **kwargs):
+        calls.append((method, url, kwargs))
+        return FakeResponse(
+            {},
+            status_code=302,
+            content=b"",
+            headers={
+                "location": "https://northwind.myshopify.com/admin/oauth/authorize?client_id=app-key",
+                "set-cookie": "cirvanna_shopify_oauth_state=opaque-state; Max-Age=600; Path=/integrations/shopify/callback; HttpOnly; SameSite=lax",
+            },
+        )
+    monkeypatch.setattr(main.httpx, "request", fake_request)
+    response = client.get(
+        "/api/commerce/integrations/shopify/install?shop=northwind.myshopify.com",
+        headers={"Authorization": "Bearer merchant-session"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    assert response.headers["location"].startswith("https://northwind.myshopify.com/admin/oauth/authorize?")
+    assert "HttpOnly" in response.headers["set-cookie"]
+    assert calls[0][0] == "GET"
+    assert calls[0][1] == "https://commerce.example.test/integrations/shopify/install"
+    assert calls[0][2]["headers"]["Authorization"] == "Bearer merchant-session"
+
+
 def test_shopify_oauth_callback_relay_requires_state_cookie(client, monkeypatch):
     configure_upstreams(monkeypatch)
     response = client.get(
