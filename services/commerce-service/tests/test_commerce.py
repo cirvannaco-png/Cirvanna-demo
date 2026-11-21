@@ -2252,12 +2252,14 @@ def test_shopify_token_encryption_is_authenticated_and_round_trips(monkeypatch):
 
 
 def test_shopify_token_encryption_fails_closed_without_a_valid_key(monkeypatch):
+    from types import SimpleNamespace
     from fastapi import HTTPException
     from app.shopify import _seal
 
     monkeypatch.delenv("COMMERCE_SHOPIFY_TOKEN_ENCRYPTION_KEY", raising=False)
+    connection = SimpleNamespace(id="connection-a", merchant_id="merchant-a", shop_domain="northwind.myshopify.com")
     with pytest.raises(HTTPException) as error:
-        _seal("token")
+        _seal("token", connection, "access")
     assert error.value.status_code == 503
 
 
