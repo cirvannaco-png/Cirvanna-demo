@@ -214,7 +214,7 @@ Stop and mark BLOCKED when provenance, commercial rights, dataset rights, model 
 The repository now includes four connected data/evaluation stages:
 
 1. `tools/model_evaluation/fashion_retrieval/build_qrels.py` validates two independent blinded reviews for every query-candidate pair and requires independent adjudication on disagreement.
-2. `services/vision-intelligence/app/retrieval_snapshot_export.py` calls the Vision service's actual `_live_offers()` implementation and exports only variant ID plus exact offer search text, preserving Commerce order. It must be run inside the trusted Vision service environment; it is not a public endpoint.
+2. `services/vision-intelligence/app/retrieval_snapshot_export.py` calls the Vision service's actual `_live_offers()` implementation and exports only variant ID plus exact offer search text, preserving Commerce order. It must be run from an isolated build of this reviewed branch inside a trusted Vision service environment; it is not a public endpoint and does not require deploying the research branch to production.
 3. `tools/model_evaluation/fashion_retrieval/prepare_cases.py` joins complete reviewed qrels to the exact frozen, eligible Catalog/Commerce offer text and candidate order.
 4. `tools/model_evaluation/fashion_retrieval/run_retrieval.py` loads pinned model snapshots and generates rankings over the common query/candidate JSONL set.
 4. `tools/model_evaluation/fashion_retrieval/evaluate_retrieval.py` scores those rankings on the same full qrels and applies both declared-exclusion and human-adjudicated hard gates.
