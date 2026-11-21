@@ -331,7 +331,11 @@ def record_purchase_refund_status(payload: PurchaseRefundSnapshotIn) -> dict[str
                 int(line.purchase_unit_price_minor or 0) * int(line.purchase_quantity or 0)
                 for line in lines
             )
-            if currencies != {payload.currency} or calculated_total != payload.order_total_minor:
+            # Commerce order totals may include tax and fulfilment charges that
+            # are intentionally absent from Wardrobe's item-level ownership rows.
+            # Require every purchase line to reconcile within the authoritative
+            # order total; do not mistake the merchandise subtotal for that total.
+            if currencies != {payload.currency} or calculated_total > payload.order_total_minor:
                 raise HTTPException(409, detail={"code": "PURCHASE_ORDER_SNAPSHOT_MISMATCH"})
 
             key = (owner, payload.order_id)
