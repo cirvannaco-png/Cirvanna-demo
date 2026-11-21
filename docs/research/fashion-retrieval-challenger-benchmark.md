@@ -200,33 +200,33 @@ A logic transfer may be marked VALIDATED_FOR_SCOPED_PILOT only when it beats the
 
 Stop and mark BLOCKED when provenance, commercial rights, dataset rights, model weights, compute, ground truth, human-review capacity, privacy approval or exact baseline reproducibility is missing. Do not interpret a blocked run as a failed model or a successful model.
 
-## 10. Executable ranking evaluator
+## 10. Executable inference runner and ranking evaluator
 
-The repository now includes a standard-library ranking evaluator at
-`tools/model_evaluation/fashion_retrieval/evaluate_retrieval.py`, with its
-input contract and run instructions in the adjacent README and tests under
-`tests/model_evaluation`.
+The repository now includes two connected tools:
 
-The evaluator consumes precomputed rankings and independently reviewed graded
-qrels for the same query IDs and candidate universe. It computes Recall@k,
-Precision@k, MRR@k, nDCG@k, top-1 hit rate, no-result rate, top-k fill,
-candidate coverage, hard-exclusion violations, paired challenger-minus-baseline
-deltas, cluster-bootstrap 95% intervals, and task-grounded subgroup reports.
-It rejects mixed tasks, inconsistent model sets, out-of-pool results, invalid
-grades, and malformed exclusions.
+1. `tools/model_evaluation/fashion_retrieval/run_retrieval.py` loads pinned model snapshots and generates rankings over a common query/candidate JSONL set.
+2. `tools/model_evaluation/fashion_retrieval/evaluate_retrieval.py` scores those rankings against the same graded relevance judgments.
 
-This is an evaluation component, not a model runner. It does not download model
-weights, fetch images, create human labels, verify licences, or claim that any
-model inference has run. The next implementation step is to build pinned
-inference adapters that produce the same JSONL contract, then run them against
-a rights-cleared frozen catalogue and human-reviewed qrels. Its CI workflow
-compiles the evaluator, runs the unit suite, and checks the CLI.
+The inference runner supports the current Cirvanna FashionCLIP baseline, Marqo FashionCLIP, Marqo FashionSigLIP and ZooClaw-FashionSigLIP2. Model snapshots are loaded sequentially. The baseline uses the same Transformers CLIP class as the production-intended Vision service. Marqo models use OpenCLIP from the pinned local snapshot; ZooClaw uses standard Transformers/SigLIP. All loaders disable remote model-repository code execution.
+
+Every challenger requires a full 40-character immutable commit SHA. The runner rejects short hashes and moving branch names, and it freezes Cirvanna's FashionCLIP baseline to the existing production-reviewed pin. It hashes every file in each downloaded model snapshot and writes a private manifest with file digests, model revisions, runtime versions, hardware/device, input digest, query count and task identity.
+
+Input media is read from a caller-supplied local directory, with path traversal rejected. Source images are not uploaded or included in the rankings/manifest. Only opaque candidate IDs, rankings, cosine similarity diagnostics, qrels and task-grounded subgroup metadata are written. Similarity remains a ranking score, never a probability.
+
+The evaluator computes Recall@k, Precision@k, MRR@k, nDCG@k, top-1 hit rate, no-result rate, top-k fill, candidate coverage, hard-exclusion violations, paired challenger-minus-baseline deltas, cluster-bootstrap 95% intervals and subgroup reports. It rejects mixed tasks, inconsistent model sets, out-of-pool results, invalid grades and malformed exclusions.
+
+The runner deliberately supports only image-to-Catalog-text and text-to-Catalog-text in this first increment. True image-to-image retrieval remains a separate future track. Since the runner ranks every supplied candidate and applies no calibrated no-match threshold, its no-result rate is not a meaningful quality signal yet.
+
+The runner, evaluator, README, dependency-family declaration, unit tests and GitHub Actions workflow are in this PR. CI compiles both scripts, runs the offline contract tests and validates both CLIs. CI does not download model weights or prove any real inference has run.
 
 ## 11. Current status
 
-- Cirvanna baseline and route semantics have been inspected in services/vision-intelligence/app/main.py.
-- The current FashionCLIP pin is recorded above; the model is not production-validated.
-- Marqo FashionCLIP, Marqo FashionSigLIP and ZooClaw-FashionSigLIP2 are challengers only.
-- No matched inference benchmark, human relevance evaluation, compute comparison or logic-transfer implementation has been run.
-- A previous Hugging Face CPU job attempt returned HTTP 402 before job creation. No paid job was started. Execution remains pending an approved compute path.
-- The private Cirvanna catalogue and dataset rights-cleared query corpus remain required for a product-level decision.
+- Cirvanna baseline and route semantics have been inspected in `services/vision-intelligence/app/main.py`.
+- The exact Cirvanna FashionCLIP revision is pinned to `afacf5e5851d5979ab030e228eab60e2c95a912c`; the service's model quality and live weight/GPU operation remain unvalidated.
+- Marqo FashionCLIP, Marqo FashionSigLIP and ZooClaw-FashionSigLIP2 remain challengers, not selected replacements.
+- **Challenger full commit pins are still missing.** Current Hub repository inspection returns model metadata and abbreviated commit-history IDs, but not the full 40-character commit SHA required by the runner. Do not substitute a short SHA or `main`. Capture the full SHA from a trusted Hub API/repository metadata path before the run.
+- The runner's dependency ranges are not an environment lock. Generate a complete lock with hashes and retain its digest before official evaluation.
+- No matched inference benchmark, human relevance evaluation, GPU/CPU comparison, or logic-transfer result has been run.
+- A previous Hugging Face CPU job attempt returned HTTP 402 before job creation. No paid job was started. Do not retry paid compute without approved credits/payment.
+- LookBench image-level rights/provenance and the ZooClaw evaluation dataset's non-commercial restriction remain explicit gates. The Fashion200K pooled qrels are supplementary and model-assisted, not human ground truth.
+- The private Cirvanna catalogue snapshot, rights-cleared query corpus, independent human qrels and approved compute path are still required for a product-level decision.
