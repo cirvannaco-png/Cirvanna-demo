@@ -111,6 +111,14 @@ def _artifact_manifest() -> tuple[dict[str, Any] | None, str | None]:
         if not hmac.compare_digest(_sha256_file(path), expected.lower()):
             return None, "artifact_file_digest_mismatch"
 
+    actual_files = {
+        path.relative_to(artifact_dir).as_posix()
+        for path in artifact_dir.rglob("*")
+        if path.is_file() and path.name != "manifest.json"
+    }
+    if actual_files != set(files.keys()):
+        return None, "unmanifested_model_artifact_present"
+
     computed_release = _release_digest(
         model_id, model_revision, PINNED_SAM3D_BODY_SOURCE_COMMIT, files
     )
