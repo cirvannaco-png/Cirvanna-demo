@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from urllib.parse import urlsplit
 
 import httpx
-from fastapi import Body, FastAPI, HTTPException, Query, Request
+from fastapi import Body, FastAPI, Header, HTTPException, Query, Request
 from starlette.datastructures import UploadFile as StarletteUploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
