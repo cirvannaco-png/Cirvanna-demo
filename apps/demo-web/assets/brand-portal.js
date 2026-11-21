@@ -202,7 +202,9 @@
         esc(product.product_type || "Uncategorized") + ' · ' + esc(product.remote_status) + '</div></div>' +
         statusPill(product.mapping_state) + '</div><p class="sub">' + (ready ? "Variant set complete. Map to an existing Catalog product and exact variants." : "Mapping disabled until an active, complete variant set is synchronized.") + '</p>' +
         '<label class="wide">Canonical Catalog product UUID<input data-canonical-product placeholder="Existing Catalog product UUID"></label>' +
-        '<div class="grid">' + variants + '</div><button type="button" data-shopify-map ' + (ready ? "" : "disabled") + '>Map variants to Catalog</button></article>';
+        '<div class="grid">' + variants + '</div><button type="button" data-shopify-map ' + (ready ? "" : "disabled") + '>Map variants to Catalog</button>' +
+        (ready && product.mapping_state === "mapped" ? '<button type="button" class="secondary" data-shopify-reactivate>Confirm / reactivate mapped listing</button>' : '') +
+        '</article>';
     }).join("");
   }
   async function startShopifyOAuth(event) {
@@ -237,6 +239,13 @@
     await api("/integrations/shopify/disconnect", { method: "POST" });
     await loadShopifyConnection();
     notify("Shopify connection revoked. Reconnect through OAuth to resume synchronization.", "success");
+  }
+  async function reactivateShopifyProduct(article) {
+    const snapshotId = article.dataset.shopifySnapshot;
+    if (!window.confirm("Reactivate this mapped Commerce listing and its verified Shopify variants? CAL will still decide whether shoppers may see it.")) return;
+    const result = await api("/integrations/shopify/products/" + encodeURIComponent(snapshotId) + "/reactivate", { method: "POST" });
+    await loadDashboard();
+    notify("Listing reactivated for " + Number(result.variant_count || 0) + " mapped variants. Shopper display still requires CAL SHOW.", "success");
   }
   async function mapShopifyProduct(article) {
     const snapshotId = article.dataset.shopifySnapshot;
@@ -346,7 +355,9 @@
   $("shopifyDisconnect").addEventListener("click", () => run(disconnectShopify));
   $("shopifyStaged").addEventListener("click", event => {
     const button = event.target.closest("[data-shopify-map]");
+    const reactivate = event.target.closest("[data-shopify-reactivate]");
     if (button) run(() => mapShopifyProduct(button.closest("[data-shopify-snapshot]")));
+    if (reactivate) run(() => reactivateShopifyProduct(reactivate.closest("[data-shopify-snapshot]")));
   });
   $("listingForm").addEventListener("submit", event => run(() => linkProduct(event)));
   $("variantForm").addEventListener("submit", event => run(() => addVariant(event)));
