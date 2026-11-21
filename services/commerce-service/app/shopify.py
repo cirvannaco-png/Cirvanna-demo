@@ -401,7 +401,7 @@ def _refresh_access_token(connection: ShopifyConnection, db: Session) -> str:
             db.commit()
             raise HTTPException(403, detail={"code": "SHOPIFY_REQUIRED_SCOPES_MISSING"})
         db.commit()
-        return _unseal(locked.access_token_ciphertext or "")
+        return _unseal(locked.access_token_ciphertext or "", locked, "access")
     except (ValueError, TypeError) as exc:
         db.rollback()
         raise HTTPException(502, detail={"code": "SHOPIFY_TOKEN_REFRESH_RESPONSE_INVALID"}) from exc
