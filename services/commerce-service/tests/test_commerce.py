@@ -4509,7 +4509,7 @@ def test_shopify_inventory_pagination_stops_when_catalog_sync_lease_is_reclaimed
     db.close()
 
 
-def test_shopify_reconciliation_reports_targeted_non_active_store_as_ineligible(client, monkeypatch):
+def test_shopify_reconciliation_rejects_targeted_non_active_store(client, monkeypatch):
     from app import shopify
     token = "shopify-sync-token-with-more-than-32-bytes"
     monkeypatch.setenv("COMMERCE_SHOPIFY_SYNC_TOKEN", token)
@@ -4525,10 +4525,7 @@ def test_shopify_reconciliation_reports_targeted_non_active_store_as_ineligible(
         f"/internal/shopify/reconcile?connection_id={connection.id}",
         headers={"X-Commerce-Shopify-Sync-Token": token},
     )
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["stores_checked"] == 1
-    assert body["failed_connection_ids"] == [connection.id]
-    assert body["ineligible_connection_ids"] == [connection.id]
-    assert body["stores_with_errors"] == 1
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "SHOPIFY_CONNECTION_NOT_ACTIVE"
+    assert response.json()["detail"]["connection_status"] == "revoked"
     db.close()
