@@ -28,7 +28,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import (
     Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, and_, or_,
-    UniqueConstraint, select,
+    UniqueConstraint, select, update,
 )
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Mapped, Session, mapped_column
@@ -2173,6 +2173,50 @@ def _verify_compensation_inventory_restock(connection: ShopifyConnection, db: Se
     ) and set(after) == set(case.inventory_before_json) == set(expected)
 
 
+def _persist_compensation_cancel_intent(db: Session, case: ShopifyCompensationCase) -> None:
+    """Atomically fence the worker and extend its lease before orderCancel."""
+    owner = case.lease_owner
+    if not owner:
+        raise HTTPException(409, detail={"code": "SHOPIFY_COMPENSATION_LEASE_LOST"})
+    now_value = utcnow()
+    result = db.execute(update(ShopifyCompensationCase).where(
+        ShopifyCompensationCase.id == case.id,
+        ShopifyCompensationCase.lease_owner == owner,
+        ShopifyCompensationCase.state.in_(["pending", "cancel_pending", "cancel_requesting"]),
+    ).values(
+        state="cancel_requesting",
+        last_error="SHOPIFY_ORDER_CANCEL_REQUEST_STARTED",
+        updated_at=now_value,
+        lease_until=now_value + timedelta(seconds=90),
+    ).execution_options(synchronize_session=False))
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(409, detail={"code": "SHOPIFY_COMPENSATION_LEASE_LOST"})
+    db.commit()
+    db.refresh(case)
+
+
+def _renew_compensation_cancel_lease(db: Session, case: ShopifyCompensationCase) -> None:
+    """Fence the response write too; a stale worker cannot overwrite a reclaimed case."""
+    owner = case.lease_owner
+    if not owner:
+        raise HTTPException(409, detail={"code": "SHOPIFY_COMPENSATION_LEASE_LOST"})
+    now_value = utcnow()
+    result = db.execute(update(ShopifyCompensationCase).where(
+        ShopifyCompensationCase.id == case.id,
+        ShopifyCompensationCase.lease_owner == owner,
+        ShopifyCompensationCase.state == "cancel_requesting",
+    ).values(
+        lease_until=now_value + timedelta(seconds=90),
+        updated_at=now_value,
+    ).execution_options(synchronize_session=False))
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(409, detail={"code": "SHOPIFY_COMPENSATION_LEASE_LOST"})
+    db.commit()
+    db.refresh(case)
+
+
 def _process_shopify_compensation_case(db: Session, case: ShopifyCompensationCase,
                                        order: commerce.CommerceOrder) -> str:
     connection = db.get(ShopifyConnection, case.connection_id)
@@ -2287,12 +2331,9 @@ def _process_shopify_compensation_case(db: Session, case: ShopifyCompensationCas
             return case.state
         case.inventory_before_json = inventory_before
         case.inventory_expected_restore_json = inventory_expected
-        # Persist the irreversible-action intent before calling Shopify. If the
-        # network outcome is ambiguous, the next worker reconciles but never repeats.
-        case.state = "cancel_requesting"
-        case.last_error = "SHOPIFY_ORDER_CANCEL_REQUEST_STARTED"
-        case.updated_at = utcnow()
-        db.commit()
+        # Atomically fence the lease owner and persist intent immediately before
+        # the irreversible provider mutation. A reclaimed worker cannot cancel.
+        _persist_compensation_cancel_intent(db, case)
         try:
             cancelled = _graphql(connection, db, """
           mutation CirvannaCancelCompensatedOrder($orderId: ID!, $notifyCustomer: Boolean, $refundMethod: OrderCancelRefundMethodInput!, $restock: Boolean!, $reason: OrderCancelReason!, $staffNote: String) {
@@ -2305,6 +2346,7 @@ def _process_shopify_compensation_case(db: Session, case: ShopifyCompensationCas
             """, {"orderId": remote_order["id"], "notifyCustomer": False,
                 "refundMethod": {"originalPaymentMethodsRefund": False}, "restock": True,
                 "reason": "INVENTORY", "staffNote": "Cirvanna checkout compensation; Stripe refund is managed by Cirvanna."})
+            _renew_compensation_cancel_lease(db, case)
         except Exception:
             case.state = "cancel_requesting"
             case.last_error = "SHOPIFY_ORDER_CANCEL_OUTCOME_AMBIGUOUS"
