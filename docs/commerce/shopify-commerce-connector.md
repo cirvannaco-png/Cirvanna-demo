@@ -29,7 +29,8 @@ Required secret-manager settings:
 |---|---|
 | SHOPIFY_API_KEY | Shopify app client ID |
 | SHOPIFY_API_SECRET | OAuth and webhook HMAC secret |
-| SHOPIFY_APP_BASE_URL | Trusted HTTPS Marketplace BFF origin used to build OAuth callback URLs |\n| SHOPIFY_WEBHOOK_BASE_URL | Trusted HTTPS Commerce API origin used to register provider webhooks |
+| SHOPIFY_APP_BASE_URL | Trusted HTTPS Marketplace BFF origin used to build OAuth callback URLs |
+| SHOPIFY_WEBHOOK_BASE_URL | Trusted HTTPS Commerce API origin used to register provider webhooks |
 | SHOPIFY_ADMIN_API_VERSION | Must be 2026-10; code intentionally pins this stable version |
 | COMMERCE_SHOPIFY_TOKEN_ENCRYPTION_KEY | Base64url-encoded 32-byte AES-GCM key |
 | COMMERCE_SHOPIFY_SYNC_TOKEN | At least 32 random bytes for internal sync/export/reconciliation jobs |
@@ -43,9 +44,12 @@ Requested scopes:
 - read_inventory
 - read_locations
 - read_orders
-- write_orders
+- read_draft_orders
+- write_draft_orders
 
-No customer-data scope is requested. Customer names, emails, addresses and Shopify customer objects are not synchronized. Shopify order creation deliberately excludes buyer PII.
+The connector no longer uses orderCreate; draftOrderCreate/draftOrderComplete/draftOrderDelete require draft-order permissions. The read scope is used only to reconcile the deterministic draft reservation by ID/tag; the connector does not request or persist draft customer, address, or contact fields.
+
+No customer profile scope is requested. The order/draft-order read scopes can expose customer-associated fields, but connector GraphQL projections deliberately exclude customer, email, phone, billing and shipping fields; none of those values are synchronized or persisted. Shopify order creation deliberately excludes buyer PII.
 
 ## Implemented API surface
 
@@ -94,7 +98,11 @@ Only a Commerce order already in paid state can be exported. The worker creates 
 
 The connector refuses export if merchant source currency does not equal the connected shop currency, if any line lacks a mapped Shopify variant, or if fulfilment/tax/other non-item charges have not been allocated to the merchant sub-order. This avoids creating a Shopify record whose money silently disagrees with the immutable Cirvanna order. Multi-merchant orders generate separate seller-side Shopify order records. A durable link row is written before the remote create; if the API times out, the worker searches for the stable link tag before retrying to avoid duplicate orders.
 
-The Shopify order is created with inventoryBehaviour=DECREMENT_OBEYING_POLICY, so Shopify claims/decrements its own inventory under the merchant's configured inventory policy; receipts are disabled because Cirvanna owns buyer communications. This is an after-payment stock claim, not an atomic pre-payment reservation. A Shopify sale between Cirvanna's last stock observation and the completed Cirvanna payment can still cause a post-payment stock-claim conflict. Until a checkout-time cross-provider reservation saga and reliable compensation/refund handling are implemented and tested, this is a production blocker for merchants selling the same stock through both channels.
+Before Stripe Checkout Session creation, Commerce creates one Shopify draft order per connected seller sub-order with a deterministic Cirvanna reservation tag and reserveInventoryUntil equal to the Commerce checkout expiry. Each draft uses the immutable seller source price snapshot as a Shopify priceOverride in the shop currency, so a merchant price edit between catalog sync and checkout cannot silently change the seller-side order value. Shopify's draft-order reservation is the provider-side stock hold; local Commerce reservations alone never count as proof. Ambiguous create outcomes are reconciled by the stable tag and remain fail-closed if they cannot be resolved. If any seller reservation fails, known remote drafts are deleted, local reservations are released and no Stripe session is created. For any checkout containing a Shopify-backed seller, Stripe Checkout is restricted to card payments; delayed-settlement methods are disabled because the provider inventory hold expires with the checkout and must not lapse before payment confirmation. Non-Shopify checkouts retain the existing Stripe payment-method configuration.
+
+After a verified Stripe payment, the paid-order worker completes the reserved Shopify draft. Draft completion commits the held Shopify inventory exactly once; the connector no longer uses orderCreate with DECREMENT_OBEYING_POLICY, avoiding a second decrement. On confirmed Stripe expiry or asynchronous payment failure, draft reservations are deleted idempotently; Shopify's reserveInventoryUntil remains the expiry safety net if the release call cannot be confirmed. A paid order whose draft completion is ambiguous remains in completion_pending and must not be treated as seller-fulfilment-ready until reconciliation confirms the Shopify order.
+
+This is a distributed saga, not a cross-provider atomic transaction. Provider timeouts, webhook ordering, draft expiry and partial multi-seller reservation failures still require live Shopify/Stripe staging tests and an operational compensation/refund procedure before production. The connector must remain staging-only until those tests pass.
 
 Shopify order webhook/reconciliation status updates only the Shopify link's financial and fulfilment status. It cannot mark a Cirvanna order paid, refund it, release its inventory, or alter the buyer's order state. Only Cirvanna's existing verified payment webhook and reconciliation logic may do that.
 
@@ -106,15 +114,16 @@ Webhook delivery order is not guaranteed, and delivery itself is not a complete 
 
 ## Required staging acceptance before production
 
-1. Run alembic upgrade head against an isolated PostgreSQL database and prove a backup restore. Confirm alembic_version=20261121_0012 and that all six connector tables exist.
+1. Run alembic upgrade head against an isolated PostgreSQL database and prove a backup restore. Confirm alembic_version=20261121_0013 and that all seven connector tables exist.
 2. Register the Shopify app scopes, callback and webhook URLs. Install against a development store and verify state mismatch/replay, HMAC mismatch, wrong shop domain, OAuth exchange failure, missing scopes, token refresh/rotation and expiry recovery.
 3. Confirm both access and refresh token ciphertext are encrypted at rest and absent from logs, HTTP responses, error bodies and frontend assets. Verify uninstall removes token material.
 4. Sync a product with multiple variants and multiple inventory locations. Test duplicate/empty SKUs, inactive locations, untracked inventory, incomplete pagination, zero stock, stock decrement/increment, and Cirvanna reservations concurrent with Shopify stock changes.
 5. Map a product to an existing Catalog identity. Test wrong product/variant mapping, cross-merchant snapshot access, duplicate canonical variants, unapproved merchant, archived/deleted product and partial mapping. Prove no unmapped Shopify product can reach a shopper.
 6. Verify regional contextual price observations preserve currency and are never treated as landed prices without fresh FX, tax, fulfilment and payment evidence.
-7. Use a real Stripe test-paid Cirvanna order to verify seller-side Shopify order creation; verify currency mismatch, unallocated shipping/tax, unmapped variants and failed/ambiguous Shopify mutation paths remain held. Confirm no duplicate remote order on retry and no double charge.
-8. Replay, duplicate and reorder webhook deliveries; test worker restart, dead-letter, uninstall, shop redact and scheduled full reconciliation.
-9. Verify every shopping surface still requires fresh Decision Gateway/CAL SHOW and every cart/checkout action still requires its own candidate-bound purchase authorization. Do not enable a public Shopify browse endpoint.
-10. Attach exact-commit CI, database migration/restore, provider sandbox and end-to-end evidence to the release record. Live deployment, Shopify Partner configuration, real store authorization, real webhook delivery, actual inventory reconciliation and order export remain unproven until these checks are performed.
+7. Verify checkout creates a Shopify draft-order reservation for every connected seller before Stripe session creation. Test stale stock, final-unit contention, multi-seller partial failure, duplicate retry, ambiguous draft-create timeout and release on Stripe expiry/payment failure. Prove no Stripe session is created unless all required Shopify reservations are confirmed.
+8. Use a real Stripe test-paid Cirvanna order to verify each reserved draft is completed exactly once and the Shopify inventory decrement is not repeated. Test completion timeout/reconciliation, expired holds, currency mismatch, unallocated shipping/tax and unmapped variants. Confirm no duplicate remote order and no second buyer charge.
+9. Replay, duplicate and reorder webhook deliveries; test worker restart, dead-letter, uninstall, shop redact and scheduled full reconciliation.
+10. Verify every shopping surface still requires fresh Decision Gateway/CAL SHOW and every cart/checkout action still requires its own candidate-bound purchase authorization. Do not enable a public Shopify browse endpoint.
+11. Attach exact-commit CI, database migration/restore, provider sandbox and end-to-end evidence to the release record. Live deployment, Shopify Partner configuration, real store authorization, real webhook delivery, actual inventory reconciliation and order export remain unproven until these checks are performed.
 
 The connector is not production-ready merely because its routes or migration exist. Provider credentials, app distribution policy, operational scheduler, live environment, monitoring, rollback and independently reviewed release evidence remain deployment gates.
