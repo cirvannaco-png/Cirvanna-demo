@@ -2528,3 +2528,60 @@ def test_shopify_required_scopes_cover_draft_reservation_without_order_write_sco
 
     assert {"read_draft_orders", "write_draft_orders", "read_orders"} <= REQUIRED_SCOPES
     assert "write_orders" not in REQUIRED_SCOPES
+
+
+def test_shopify_existing_connection_without_draft_scopes_requires_reauthorization(monkeypatch):
+    from app import shopify
+    from fastapi import HTTPException
+
+    seeded = seed_offer(stock=2)
+    db = TEST_SESSION()
+    connection = shopify.ShopifyConnection(
+        id=str(uuid.uuid4()), merchant_id=seeded["merchant_id"],
+        shop_domain="legacy.myshopify.com", shop_currency="KES",
+        granted_scopes=["read_products", "read_inventory", "read_locations", "read_orders"],
+        status="active", webhook_registration={}, installed_at=main.now(), updated_at=main.now(),
+    )
+    db.add(connection)
+    db.commit()
+    monkeypatch.setattr(shopify, "_oauth_config", lambda: ("api-key", "x" * 32, "https://commerce.example"))
+    with pytest.raises(HTTPException) as error:
+        shopify._refresh_access_token(connection, db)
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "SHOPIFY_REAUTH_REQUIRED"
+    db.refresh(connection)
+    assert connection.status == "reauthorization_required"
+    db.close()
+
+
+def test_shopify_backed_stripe_checkout_disables_delayed_payment_methods(monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_cirvanna")
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_cirvanna")
+    monkeypatch.setenv("COMMERCE_CHECKOUT_SUCCESS_URL", "https://cirvanna.example/success")
+    monkeypatch.setenv("COMMERCE_CHECKOUT_CANCEL_URL", "https://cirvanna.example/cancel")
+    monkeypatch.setenv("COMMERCE_SHIPPING_COUNTRIES", "KE")
+    captured = {}
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"id": "cs_test_card_only", "url": "https://checkout.stripe.com/test", "status": "open"}
+
+    def fake_post(url, *, data, **kwargs):
+        captured.update(data)
+        return Response()
+
+    monkeypatch.setattr(main.httpx, "post", fake_post)
+    order = SimpleNamespace(
+        id="order-shopify-card-only", order_number="CV-CARD-ONLY",
+        expires_at=main.now() + main.timedelta(minutes=30),
+        destination_country_code=None, currency="KES",
+    )
+    result = main.StripeGateway().create_session(order, [], [], None, card_only=True)
+    assert result["id"] == "cs_test_card_only"
+    assert captured["payment_method_types[0]"] == "card"
+    assert not any(key.startswith("payment_method_types[") and key != "payment_method_types[0]" for key in captured)
