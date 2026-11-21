@@ -3378,6 +3378,7 @@ def test_shopify_inventory_levels_are_fully_paginated_before_stock_is_marked_com
     }
     connection.products_sync_lease_owner = "catalog-sync-worker"
     connection.products_sync_lease_until = main.now() + main.timedelta(seconds=30)
+    shopify.Base.metadata.create_all(bind=db.get_bind())
     db.add(connection)
     db.commit()
     calls = []
@@ -3917,7 +3918,7 @@ def test_shopify_compensation_refuses_cancel_after_lease_is_reclaimed(client, mo
                 }}}
         if "CirvannaReadCompensationInventory" in query:
             session.query(shopify.ShopifyCompensationCase).filter_by(id=case.id).update(
-                {"lease_owner": "replacement-worker"}
+                {"lease_owner": "replacement-worker"}, synchronize_session=False
             )
             session.commit()
             return {"inventoryItem": {"id": variables["id"], "inventoryLevels": {
@@ -3946,6 +3947,7 @@ def test_shopify_inventory_pagination_stops_when_catalog_sync_lease_is_reclaimed
     from app import shopify
     from fastapi import HTTPException
     db = TEST_SESSION()
+    shopify.Base.metadata.create_all(bind=db.get_bind())
     connection = shopify.ShopifyConnection(
         id=str(uuid.uuid4()), merchant_id=str(uuid.uuid4()), shop_domain="inventory-lease-loss.myshopify.com",
         shop_currency="KES", granted_scopes=["read_inventory", "read_locations"], status="active",
@@ -3964,7 +3966,7 @@ def test_shopify_inventory_pagination_stops_when_catalog_sync_lease_is_reclaimed
     def fake_graphql(conn, session, query, variables=None):
         calls.append(variables)
         session.query(shopify.ShopifyConnection).filter_by(id=connection.id).update(
-            {"products_sync_lease_owner": "replacement-worker"}
+            {"products_sync_lease_owner": "replacement-worker"}, synchronize_session=False
         )
         session.commit()
         return {"inventoryItem": {"id": first["id"], "inventoryLevels": {
