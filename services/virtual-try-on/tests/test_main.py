@@ -178,6 +178,16 @@ def test_capabilities_never_claim_live_rendering_without_dependencies(client, mo
     assert data["consent_verifier_configured"] is False
     assert data["asset_service_configured"] is False
     assert data["output_persistence"] is False
+    assert data["supported_garment_photo_types"] == ["flat-lay"]
+
+
+def test_orchestrator_rejects_model_worn_garment_images(client):
+    response = client.post(
+        "/v1/try-ons",
+        json=payload(garment_photo_type="model"),
+        headers=headers(),
+    )
+    assert response.status_code == 422
 
 
 def test_try_on_requires_authentication(client):
