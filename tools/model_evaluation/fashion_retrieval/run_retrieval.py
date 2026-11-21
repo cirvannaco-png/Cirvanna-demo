@@ -329,6 +329,12 @@ class EmbeddingAdapter:
         spec = MODEL_SPECS[model_id]
         snapshot = str(Path(snapshot_dir).resolve())
         if spec["loader"] == "open_clip":
+            installed_open_clip = importlib.metadata.version("open_clip_torch")
+            if installed_open_clip != "4.2.2":
+                raise RuntimeError(
+                    "Marqo adapters require open_clip_torch==4.2.2 for the pinned local-dir loader; "
+                    f"found {installed_open_clip}"
+                )
             try:
                 import open_clip
             except ImportError as exc:
