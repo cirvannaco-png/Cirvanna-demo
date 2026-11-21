@@ -1160,6 +1160,55 @@ def map_shopify_product(
     }
 
 
+@router.post("/integrations/shopify/products/{snapshot_id}/reactivate")
+def reactivate_shopify_product(
+    snapshot_id: uuid.UUID,
+    actor: Annotated[commerce.Actor, Depends(commerce.require_actor)],
+    db: Annotated[Session, Depends(commerce.get_db)],
+):
+    merchant = _approved_merchant(actor, db)
+    connection = _connection_for_merchant(db, merchant.id)
+    product = db.get(ShopifyProductSnapshot, str(snapshot_id))
+    if product is None or product.connection_id != connection.id:
+        raise HTTPException(404, detail={"code": "SHOPIFY_PRODUCT_SNAPSHOT_NOT_FOUND"})
+    if product.remote_status != "ACTIVE" or not product.variants_complete or product.mapping_state != "mapped":
+        raise HTTPException(409, detail={"code": "SHOPIFY_PRODUCT_NOT_READY_FOR_REACTIVATION"})
+    listing = db.get(commerce.Listing, product.listing_id) if product.listing_id else None
+    if listing is None or listing.merchant_id != merchant.id or listing.catalog_product_id != product.catalog_product_id:
+        raise HTTPException(409, detail={"code": "SHOPIFY_CANONICAL_LISTING_MAPPING_INVALID"})
+    variants = list(db.scalars(select(ShopifyVariantSnapshot).where(
+        ShopifyVariantSnapshot.product_snapshot_id == product.id,
+        ShopifyVariantSnapshot.mapping_state != "remote_deleted",
+    )).all())
+    if not variants or any(
+        not item.local_variant_id or item.mapping_state != "mapped"
+        or not item.tracked or not item.inventory_complete
+        or item.available_quantity is None
+        for item in variants
+    ):
+        raise HTTPException(409, detail={"code": "SHOPIFY_VARIANT_INVENTORY_NOT_READY"})
+    local_variants = []
+    for snapshot in variants:
+        variant = db.get(commerce.Variant, snapshot.local_variant_id)
+        if variant is None or variant.listing_id != listing.id:
+            raise HTTPException(409, detail={"code": "SHOPIFY_LOCAL_VARIANT_MAPPING_INVALID"})
+        if snapshot.currency != connection.shop_currency or variant.currency != connection.shop_currency:
+            raise HTTPException(409, detail={"code": "SHOPIFY_VARIANT_CURRENCY_MISMATCH"})
+        local_variants.append(variant)
+    listing.state = "active"
+    for variant in local_variants:
+        variant.state = "active"
+        variant.observed_at = utcnow()
+    db.commit()
+    return {
+        "reactivated": True,
+        "listing_id": listing.id,
+        "variant_count": len(local_variants),
+        "display_authorization": "not_granted_by_reactivation",
+        "note": "Shopper display still requires market eligibility and a fresh CAL SHOW decision.",
+    }
+
+
 @router.post("/integrations/shopify/markets/{country_code}/sync-pricing")
 def sync_shopify_contextual_pricing(
     country_code: str,
