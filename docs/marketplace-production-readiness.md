@@ -134,7 +134,7 @@ Do not merge/deploy to production until all of the following are recorded as pas
 - [ ] Paid production infrastructure budget/region and service ownership are approved and resources are provisioned.
 - [ ] Catalog/Commerce migrations, backup/restore and database-backed readiness are verified against managed PostgreSQL.
 - [ ] Real OIDC identity provider and browser sign-in/session flow are integrated; production HS256 is not used.
-- [ ] Commerce migration `20261112_0011` and database-enforced CAL audit immutability (UPDATE/DELETE and PostgreSQL TRUNCATE rejection) are verified on managed PostgreSQL; the staging BFF gate is proven fail-closed by default and only enabled after Decision Gateway readiness/signature checks.
+- [ ] Commerce migration `20261121_0012` and database-enforced CAL audit immutability (UPDATE/DELETE and PostgreSQL TRUNCATE rejection) are verified on managed PostgreSQL; the staging BFF gate is proven fail-closed by default and only enabled after Decision Gateway readiness/signature checks.
 - [ ] Candidate-bound cart read/add/update/checkout receipts and durable audits pass against real staging Commerce + Decision Gateway; offer mutation and gateway failure cases reject without order or reservation.
 - [ ] Stripe test-mode checkout/webhook/reconciliation and stock-expiry job pass; production keys are configured through secret storage.
 - [ ] Approved merchant applications, real catalog data and inventory are present and independently reviewed.
