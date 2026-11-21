@@ -178,6 +178,108 @@ class AppearanceComplement(StrictModel):
     evidence: EvidenceRef
 
 
+class GarmentPatternDimensions(StrictModel):
+    """Finished-garment dimensions in millimetres; never body measurements."""
+
+    chest_mm: float | None = Field(default=None, gt=0, le=5000, allow_inf_nan=False)
+    waist_mm: float | None = Field(default=None, gt=0, le=5000, allow_inf_nan=False)
+    hip_mm: float | None = Field(default=None, gt=0, le=5000, allow_inf_nan=False)
+    shoulder_width_mm: float | None = Field(default=None, gt=0, le=2500, allow_inf_nan=False)
+    sleeve_length_mm: float | None = Field(default=None, gt=0, le=2500, allow_inf_nan=False)
+    garment_length_mm: float | None = Field(default=None, gt=0, le=5000, allow_inf_nan=False)
+    inseam_mm: float | None = Field(default=None, gt=0, le=2500, allow_inf_nan=False)
+
+
+class GarmentEaseAllowance(StrictModel):
+    """Declared finished-garment ease relative to a body measurement, in mm."""
+
+    chest_mm: float = Field(default=0, ge=-500, le=1000, allow_inf_nan=False)
+    waist_mm: float = Field(default=0, ge=-500, le=1000, allow_inf_nan=False)
+    hip_mm: float = Field(default=0, ge=-500, le=1000, allow_inf_nan=False)
+
+
+class GarmentSizeFitSpec(StrictModel):
+    """Evidence-backed specification for one active canonical size variant."""
+
+    variant_id: str = Field(min_length=36, max_length=36)
+    size_label: str = Field(min_length=1, max_length=32)
+    category: Literal["top", "bottom", "outerwear"]
+    pattern_dimensions_mm: GarmentPatternDimensions
+    stretch_ratio: float = Field(ge=0, le=2, allow_inf_nan=False)
+    fit_class: Literal["slim", "regular", "relaxed", "oversized"]
+    fabric_weight: Literal["light", "medium", "heavy"]
+    structure: Literal["flowy", "semi_structured", "rigid"]
+    ease_allowance_mm: GarmentEaseAllowance = Field(default_factory=GarmentEaseAllowance)
+    evidence: EvidenceRef
+
+    @field_validator("variant_id")
+    @classmethod
+    def validate_variant_id(cls, value: str) -> str:
+        import uuid
+
+        normalized = value.strip().lower()
+        try:
+            parsed = uuid.UUID(normalized)
+        except (ValueError, AttributeError) as exc:
+            raise ValueError("variant_id must be a canonical UUID issued by Catalog") from exc
+        if str(parsed) != normalized:
+            raise ValueError("variant_id must use canonical UUID formatting")
+        return normalized
+
+    @field_validator("size_label")
+    @classmethod
+    def normalize_size_label(cls, value: str) -> str:
+        normalized = " ".join(value.strip().split()).casefold()
+        if not normalized:
+            raise ValueError("size_label must not be blank")
+        return normalized
+
+    @model_validator(mode="after")
+    def require_category_dimensions_and_product_evidence(self) -> "GarmentSizeFitSpec":
+        required = {
+            "top": ("chest_mm", "waist_mm", "shoulder_width_mm", "sleeve_length_mm", "garment_length_mm"),
+            "outerwear": ("chest_mm", "waist_mm", "shoulder_width_mm", "sleeve_length_mm", "garment_length_mm"),
+            "bottom": ("waist_mm", "hip_mm", "inseam_mm", "garment_length_mm"),
+        }[self.category]
+        missing = [
+            name for name in required
+            if getattr(self.pattern_dimensions_mm, name) is None
+        ]
+        if missing:
+            raise ValueError(
+                f"{self.category} requires pattern_dimensions_mm: {', '.join(missing)}"
+            )
+        evidence = self.evidence
+        if len(evidence.reference) > 120:
+            raise ValueError("garment fit evidence.reference must be the exact CIL evidence ID (max 120 characters)")
+        if (
+            evidence.source_id is None
+            or evidence.scope != "finished_product"
+            or evidence.evidence_grade not in {"E1", "E2", "E4"}
+            or evidence.source_type not in {
+                "manufacturer_declared",
+                "merchant_catalogued",
+                "independent_product_test",
+                "licensed_provider_api",
+            }
+        ):
+            raise ValueError(
+                "garment fit specs require product-specific E1, E2, or E4 manufacturer, merchant, or independent-product evidence"
+            )
+        return self
+
+
+class GarmentFitMetadata(StrictModel):
+    size_specs: list[GarmentSizeFitSpec] = Field(min_length=1, max_length=100)
+
+    @model_validator(mode="after")
+    def require_unique_variant_specs(self) -> "GarmentFitMetadata":
+        variant_ids = [item.variant_id for item in self.size_specs]
+        if len(variant_ids) != len(set(variant_ids)):
+            raise ValueError("garment fit metadata may contain only one specification per canonical variant")
+        return self
+
+
 class ObservedOutcome(StrictModel):
     metric: Literal["positive_review_share", "repurchase_share", "reported_satisfaction"]
     value: float = Field(ge=0.0, le=1.0)
@@ -200,6 +302,7 @@ class ProductIntelligence(StrictModel):
     cultural_usage: CulturalUsage | None = None
     skin_response: SkinResponseMetadata | None = None
     appearance_complement: AppearanceComplement | None = None
+    garment_fit: GarmentFitMetadata | None = None
     observed_outcomes: ObservedOutcome | None = None
     ingredient_declarations: list[IngredientDeclaration] = Field(default_factory=list, max_length=250)
     claims: list[ProductClaim] = Field(default_factory=list, max_length=50)

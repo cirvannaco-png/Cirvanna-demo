@@ -490,7 +490,7 @@ if _cors_origins:
 
 
 async def _cil_gate_node(node: Any, client: httpx.AsyncClient, gateway: str, token: str) -> None:
-    """Fail closed for CIL metadata on every Catalog GET representation."""
+    """Fail closed for all CIL-governed product intelligence on every Catalog GET."""
     if isinstance(node, list):
         await __import__("asyncio").gather(*[
             _cil_gate_node(item, client, gateway, token) for item in node if isinstance(item, (dict, list))
@@ -503,7 +503,9 @@ async def _cil_gate_node(node: Any, client: httpx.AsyncClient, gateway: str, tok
     if isinstance(intelligence, dict):
         claims = intelligence.get("claims", [])
         ingredients = intelligence.get("ingredient_declarations", [])
-        if not gateway or not token or not (claims or ingredients):
+        garment_fit = intelligence.get("garment_fit") or {}
+        garment_specs = garment_fit.get("size_specs", []) if isinstance(garment_fit, dict) else []
+        if not gateway or not token or not (claims or ingredients or garment_specs):
             attributes.pop("product_intelligence", None)
         else:
             def bind_evidence(item: dict[str, Any]) -> dict[str, Any]:
@@ -518,6 +520,7 @@ async def _cil_gate_node(node: Any, client: httpx.AsyncClient, gateway: str, tok
                 "catalog_version": int(node.get("catalog_version") or 1),
                 "claims": [bind_evidence(item) for item in claims],
                 "ingredient_declarations": [bind_evidence(item) for item in ingredients],
+                "garment_fit_specs": [bind_evidence(item) for item in garment_specs],
             }
             try:
                 response = await client.post(
@@ -527,17 +530,18 @@ async def _cil_gate_node(node: Any, client: httpx.AsyncClient, gateway: str, tok
                 )
                 response.raise_for_status()
                 assessment = response.json()
-                expected_count = len(claims) + len(ingredients)
-                decisions = assessment.get("decisions", [])
                 expected_items = [
                     (item, "claim", item.get("claim_id")) for item in claims
                 ] + [
                     (item, "ingredient", item.get("inci_name")) for item in ingredients
+                ] + [
+                    (item, "garment_fit", item.get("variant_id")) for item in garment_specs
                 ]
+                decisions = assessment.get("decisions", [])
                 if (
                     assessment.get("product_id") != request_payload["product_id"]
                     or assessment.get("catalog_version") != request_payload["catalog_version"]
-                    or len(decisions) != expected_count
+                    or len(decisions) != len(expected_items)
                     or any(
                         decision.get("item_id") != expected_id
                         or decision.get("kind") != expected_kind
@@ -547,10 +551,10 @@ async def _cil_gate_node(node: Any, client: httpx.AsyncClient, gateway: str, tok
                 ):
                     attributes.pop("product_intelligence", None)
                 else:
-                    # Filter item-by-item; pending claims never pass, while independently
-                    # evidenced ingredients may still be served with required attribution.
+                    # Filter item-by-item; unknown, revoked, unlicensed or mismatched evidence never serves.
                     approved_claims = []
                     approved_ingredients = []
+                    approved_garment_specs = []
                     for decision, (item, kind, _) in zip(decisions, expected_items):
                         if not decision.get("eligible"):
                             continue
@@ -559,15 +563,23 @@ async def _cil_gate_node(node: Any, client: httpx.AsyncClient, gateway: str, tok
                             evidence["attribution"] = decision.get("attribution_text")
                             evidence["source_owner"] = decision.get("source_owner")
                         item["evidence"] = evidence
-                        (approved_claims if kind == "claim" else approved_ingredients).append(item)
-                    if not approved_claims and not approved_ingredients:
+                        if kind == "claim":
+                            approved_claims.append(item)
+                        elif kind == "ingredient":
+                            approved_ingredients.append(item)
+                        else:
+                            approved_garment_specs.append(item)
+                    if not approved_claims and not approved_ingredients and not approved_garment_specs:
                         attributes.pop("product_intelligence", None)
                     else:
-                        attributes["product_intelligence"] = {
+                        served_intelligence = {
                             "schema_version": intelligence.get("schema_version", "1.0"),
                             "claims": approved_claims,
                             "ingredient_declarations": approved_ingredients,
                         }
+                        if approved_garment_specs:
+                            served_intelligence["garment_fit"] = {"size_specs": approved_garment_specs}
+                        attributes["product_intelligence"] = served_intelligence
             except (httpx.HTTPError, ValueError, TypeError, KeyError, AttributeError):
                 attributes.pop("product_intelligence", None)
     await __import__("asyncio").gather(*[
@@ -685,8 +697,10 @@ def capabilities() -> dict[str, Any]:
     tags=["products"],
 )
 def create_product(payload: ProductCreate, db: Annotated[Session, Depends(get_db)]) -> Product:
+    product_id = str(uuid.uuid4())
+    _validate_garment_fit_variant_links(db, product_id, payload.attributes)
     product = Product(
-        id=str(uuid.uuid4()),
+        id=product_id,
         sku=payload.sku,
         name=payload.name,
         description=payload.description,
@@ -770,6 +784,48 @@ def get_products_batch(
     return ProductBatchOut(items=ordered)
 
 
+def _validate_garment_fit_variant_links(
+    db: Session,
+    product_id: str,
+    attributes: dict[str, Any],
+) -> None:
+    """Bind every submitted garment size spec to an active size variant of this product."""
+    intelligence = attributes.get("product_intelligence")
+    garment_fit = intelligence.get("garment_fit") if isinstance(intelligence, dict) else None
+    specs = garment_fit.get("size_specs", []) if isinstance(garment_fit, dict) else []
+    if not specs:
+        return
+
+    variant_ids = [item.get("variant_id") for item in specs if isinstance(item, dict)]
+    if len(variant_ids) != len(specs):
+        raise HTTPException(422, detail={"code": "GARMENT_FIT_VARIANT_BINDING_INVALID"})
+    variants = list(db.scalars(
+        select(ProductVariant).where(
+            ProductVariant.product_id == product_id,
+            ProductVariant.id.in_(variant_ids),
+            ProductVariant.status == "active",
+        )
+    ).all())
+    by_id = {item.id: item for item in variants}
+    for spec in specs:
+        variant = by_id.get(spec["variant_id"])
+        if variant is None:
+            raise HTTPException(422, detail={"code": "GARMENT_FIT_VARIANT_NOT_ACTIVE"})
+        canonical_size = variant.attributes.get("size")
+        if not isinstance(canonical_size, str) or canonical_size != spec["size_label"]:
+            raise HTTPException(422, detail={"code": "GARMENT_FIT_SIZE_LABEL_MISMATCH"})
+
+
+def _garment_fit_references_variant(attributes: dict[str, Any], variant_id: str) -> bool:
+    intelligence = attributes.get("product_intelligence")
+    garment_fit = intelligence.get("garment_fit") if isinstance(intelligence, dict) else None
+    specs = garment_fit.get("size_specs", []) if isinstance(garment_fit, dict) else []
+    return any(
+        isinstance(item, dict) and item.get("variant_id") == variant_id
+        for item in specs
+    )
+
+
 def _get_product(db: Session, product_id: uuid.UUID) -> Product:
     product = db.get(Product, str(product_id))
     if product is None:
@@ -808,6 +864,8 @@ def update_product(
             status_code=status.HTTP_409_CONFLICT,
             detail={"code": "STALE_CATALOG_VERSION", "current_version": product.catalog_version},
         )
+    if "attributes" in changes:
+        _validate_garment_fit_variant_links(db, product.id, changes["attributes"])
     for key, value in changes.items():
         if isinstance(value, str) and key in {"name", "category", "brand"}:
             value = value.strip()
@@ -936,6 +994,9 @@ def archive_canonical_variant(
     variant = db.get(ProductVariant, str(variant_id))
     if variant is None:
         raise HTTPException(status_code=404, detail={"code": "CANONICAL_VARIANT_NOT_FOUND"})
+    product = db.get(Product, variant.product_id)
+    if product is not None and _garment_fit_references_variant(product.attributes, variant.id):
+        raise HTTPException(status_code=409, detail={"code": "GARMENT_FIT_SPEC_MUST_BE_REMOVED_FIRST"})
     if variant.status != "archived":
         variant.status = "archived"
         variant.variant_version += 1

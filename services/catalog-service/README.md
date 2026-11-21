@@ -68,6 +68,20 @@ The `attributes.product_intelligence` schema now accepts structured `ingredient_
 
 Claims are limited to `pending_review` or `rejected`. Catalog deliberately does not accept an `approved` status in this phase. The CIL claim assessor is a contract-only package and is not yet connected to the Catalog serving path. Existing Catalog product-version snapshots continue to preserve the metadata; no new Catalog table or migration is introduced.
 
+## Evidence-backed garment size specifications
+
+The optional `attributes.product_intelligence.garment_fit.size_specs` contract selectively adapts the archive's garment construction fields to Catalog's existing versioned product metadata. It supports tops, bottoms and outerwear in this phase. It records finished-garment dimensions in **millimetres**, plus declared stretch ratio, fit class, fabric weight, structure and ease allowance. It does not store body measurements, infer a person's body shape, or predict fit. The source archive's pattern-dimension model does not declare a unit; its example values must not be copied directly. Every integration must explicitly normalize source values to millimetres before writing Catalog metadata.
+
+Every size specification must:
+- reference an existing active canonical Catalog variant UUID belonging to the same product;
+- use a `size_label` that exactly matches that variant's canonical `size` attribute after normalization;
+- provide the required category-specific finished-garment dimensions; and
+- include a CIL source ID and product-specific E1/E2/E4 manufacturer, merchant, independent-product, or licensed-provider evidence. The `evidence.reference` must be the exact registered CIL evidence ID (not merely a source URL or general citation).
+
+Create the product first, create its canonical size variants, then PATCH the product's `attributes.product_intelligence.garment_fit` metadata. Catalog rejects unknown/inactive/cross-product variants and size-label mismatches. A variant cannot be archived while a garment-fit specification references it; remove the specification in a versioned product update first. The data is preserved by existing Catalog product-version snapshots and requires no new table or migration.
+
+The archive's CAD payload, color/L*a*b* values, subjective style vectors and numeric fit score were not imported: they lack the required evidence/ownership boundary or overlap existing product appearance metadata. This contract is descriptive garment evidence only. It does **not** enable FCI, sizing advice, Try-On, or fit guarantees; downstream consumers must apply their own validation and decision gates.
+
 ## Canonical product variants
 
 Catalog is the canonical owner of purchasable variant identity. Create a variant with the write-scoped credential:
@@ -85,4 +99,4 @@ Variant-defining attributes are immutable. A materially different option set is 
 
 ## CIL serving gate
 
-Catalog GET representations for products, variants and version snapshots pass through the CIL serving gate. Set `CIL_GATEWAY_URL` and `CIL_CATALOG_SERVICE_TOKEN` to the internal Intelligence Service. If either is missing, the gateway is unavailable, the product/version does not match, or any claim/ingredient evidence is ineligible, Catalog strips `attributes.product_intelligence` from the response. Catalog never trusts client-supplied evidence as a display authorization. The Intelligence Service must contain the referenced CIL evidence ID (Catalog's `evidence.reference` is used as that ID) and source-rights record. The gate is fail-closed and does not change canonical Catalog persistence.
+Catalog GET representations for products, variants and version snapshots pass through the CIL serving gate. Set `CIL_GATEWAY_URL` and `CIL_CATALOG_SERVICE_TOKEN` to the internal Intelligence Service. If either is missing, the gateway is unavailable, the product/version does not match, or any CIL assessment response is malformed, Catalog strips `attributes.product_intelligence`. Claims, ingredient declarations, and garment size specifications are filtered item-by-item; only registered source/evidence records with current commercial rights, correct scope/grade, and required attribution are returned. Catalog never trusts client-supplied evidence as a display authorization. The Intelligence Service must contain the referenced CIL evidence ID (Catalog's `evidence.reference` is used as that ID) and source-rights record. The gate is fail-closed and does not change canonical Catalog persistence.
