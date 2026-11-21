@@ -2793,13 +2793,13 @@ def _seed_shopify_compensation_case(db, seeded, *, fulfillment_status="UNFULFILL
 
 
 def test_shopify_compensation_cancellation_job_must_finish_before_case_is_compensated(client, monkeypatch):
-    case.lease_owner = "test-compensation-worker"
-    case.lease_until = main.now() + main.timedelta(seconds=90)
-    db.commit()
     from app import shopify
     seeded = seed_offer(stock=4)
     db = TEST_SESSION()
     order, connection, reservation, case = _seed_shopify_compensation_case(db, seeded, include_link=True)
+    case.lease_owner = "test-compensation-worker"
+    case.lease_until = main.now() + main.timedelta(seconds=90)
+    db.commit()
     calls = []
     inventory_reads = 0
     remote_order = {
@@ -2883,14 +2883,14 @@ def test_shopify_compensation_blocks_orders_with_active_fulfillment(client, monk
 
 
 def test_shopify_compensation_refuses_cancel_after_lease_is_reclaimed(client, monkeypatch):
-    case.lease_owner = "test-compensation-worker"
-    case.lease_until = main.now() + main.timedelta(seconds=90)
-    db.commit()
     from app import shopify
     from fastapi import HTTPException
     seeded = seed_offer(stock=4)
     db = TEST_SESSION()
     order, connection, reservation, case = _seed_shopify_compensation_case(db, seeded)
+    case.lease_owner = "test-compensation-worker"
+    case.lease_until = main.now() + main.timedelta(seconds=90)
+    db.commit()
     mutation_calls = []
 
     def fake_graphql(conn, session, query, variables=None):
@@ -3030,14 +3030,14 @@ def test_stripe_compensation_refund_uses_stable_idempotency_key_and_no_checkout_
 
 
 def test_ambiguous_shopify_order_cancel_is_never_reissued(client, monkeypatch):
-    case.lease_owner = "test-compensation-worker"
-    case.lease_until = main.now() + main.timedelta(seconds=90)
-    db.commit()
     from app import shopify
     from fastapi import HTTPException
     seeded = seed_offer(stock=4)
     db = TEST_SESSION()
     order, connection, reservation, case = _seed_shopify_compensation_case(db, seeded)
+    case.lease_owner = "test-compensation-worker"
+    case.lease_until = main.now() + main.timedelta(seconds=90)
+    db.commit()
     mutation_calls = []
 
     def ambiguous_graphql(conn, session, query, variables=None):
@@ -3357,13 +3357,13 @@ def test_shopify_compensation_refuses_cancellation_when_any_inventory_location_i
 
 
 def test_shopify_successful_cancel_without_inventory_restock_delta_is_manual_review(client, monkeypatch):
-    case.lease_owner = "test-compensation-worker"
-    case.lease_until = main.now() + main.timedelta(seconds=90)
-    db.commit()
     from app import shopify
     seeded = seed_offer(stock=4)
     db = TEST_SESSION()
     order, connection, reservation, case = _seed_shopify_compensation_case(db, seeded)
+    case.lease_owner = "test-compensation-worker"
+    case.lease_until = main.now() + main.timedelta(seconds=90)
+    db.commit()
     inventory_reads = 0
 
     def fake_graphql(conn, session, query, variables=None):
