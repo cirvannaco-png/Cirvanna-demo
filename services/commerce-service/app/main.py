@@ -52,7 +52,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 
 
 SERVICE = "cirvanna-commerce-service"
-EXPECTED_SCHEMA_REVISION = "20261121_0012"
+EXPECTED_SCHEMA_REVISION = "20261121_0013"
 MAX_QTY = 50
 RESERVATION_MINUTES = 60
 SKU_RE = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,79}$")
@@ -3415,6 +3415,10 @@ def checkout(
         )
         if not authorization_matches_snapshot:
             raise HTTPException(409, detail={"code": "EXISTING_ORDER_CAL_AUTHORIZATION_MISSING"})
+        from app.shopify import prepare_checkout_inventory_reservations
+        prepare_checkout_inventory_reservations(
+            db, existing, allow_create=existing.payment_session_id is None,
+        )
         return persist_stripe_session(db, existing.id, actor.email, gateway)
 
     cart = ensure_cart(db, actor.user_id)
@@ -3755,8 +3759,16 @@ def checkout(
                 raise HTTPException(409, detail={"code": "IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_PERSONALIZATION_CONSENT"})
             if existing.checkout_context_hash != context_hash:
                 raise HTTPException(409, detail={"code": "IDEMPOTENCY_KEY_REUSED_WITH_DIFFERENT_CHECKOUT_CONTEXT"})
+            from app.shopify import prepare_checkout_inventory_reservations
+            prepare_checkout_inventory_reservations(
+                db, existing, allow_create=existing.payment_session_id is None,
+            )
             return persist_stripe_session(db, existing.id, actor.email, gateway)
         raise HTTPException(409, detail={"code": "ORDER_CONFLICT_RETRY_SAME_IDEMPOTENCY_KEY"}) from exc
+    # Shopify-backed seller stock must be reserved remotely before Stripe can
+    # create a payable session. Local Commerce reservations alone are insufficient.
+    from app.shopify import prepare_checkout_inventory_reservations
+    prepare_checkout_inventory_reservations(db, order)
     return persist_stripe_session(db, order.id, actor.email, gateway)
 
 
@@ -3897,8 +3909,12 @@ async def stripe_webhook(request: Request, db: Annotated[Session, Depends(get_db
                 )
         elif event_type == "checkout.session.expired" and order.state == "pending_payment":
             release_reservations(db, order, "expired")
+            from app.shopify import release_shopify_checkout_reservations
+            release_shopify_checkout_reservations(db, order)
         elif event_type == "checkout.session.async_payment_failed" and order.state == "pending_payment":
             release_reservations(db, order, "payment_failed")
+            from app.shopify import release_shopify_checkout_reservations
+            release_shopify_checkout_reservations(db, order)
     db.add(PaymentWebhookEvent(event_id=event_id, event_type=event_type))
     try:
         db.commit()
@@ -3928,6 +3944,8 @@ def expire_reservations(db: Annotated[Session, Depends(get_db)],
             if order and order.state == "pending_payment":
                 release_reservations(db, order, "expired")
                 db.commit()
+                from app.shopify import release_shopify_checkout_reservations
+                release_shopify_checkout_reservations(db, order)
                 expired += 1
     return {"expired_reservations": expired, "examined_orders": len(orders)}
 
