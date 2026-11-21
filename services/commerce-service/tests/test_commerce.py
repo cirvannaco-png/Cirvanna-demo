@@ -2778,6 +2778,8 @@ def _seed_shopify_compensation_case(db, seeded, *, fulfillment_status="UNFULFILL
         id=str(uuid.uuid4()), commerce_order_id=order_id, merchant_id=seeded["merchant_id"],
         connection_id=connection.id, reservation_id=reservation.id,
         state="pending", last_error="SHOPIFY_DRAFT_COMPLETION_PENDING",
+        lease_owner="test-compensation-worker",
+        lease_until=main.now() + main.timedelta(seconds=90),
     )
     rows = [order, item, connection, product_snapshot, variant_snapshot, reservation, case]
     if include_link:
@@ -2876,6 +2878,47 @@ def test_shopify_compensation_blocks_orders_with_active_fulfillment(client, monk
         main.CommerceOutboxEvent.aggregate_id == case.id,
     ))
     assert alert is not None and alert.payload["fulfillment_blocked"] is True
+    db.close()
+
+
+def test_shopify_compensation_refuses_cancel_after_lease_is_reclaimed(client, monkeypatch):
+    from app import shopify
+    from fastapi import HTTPException
+    seeded = seed_offer(stock=4)
+    db = TEST_SESSION()
+    order, connection, reservation, case = _seed_shopify_compensation_case(db, seeded)
+    mutation_calls = []
+
+    def fake_graphql(conn, session, query, variables=None):
+        if "CirvannaReadCompensationDraft" in query:
+            return {"draftOrder": {"id": reservation.draft_order_gid, "status": "COMPLETED",
+                "tags": [reservation.reservation_key], "order": {
+                    "id": "gid://shopify/Order/lease-fence", "cancelledAt": None,
+                    "displayFulfillmentStatus": "UNFULFILLED", "fulfillmentOrders": {"nodes": []},
+                }}}
+        if "CirvannaReadCompensationInventory" in query:
+            session.query(shopify.ShopifyCompensationCase).filter_by(id=case.id).update(
+                {"lease_owner": "replacement-worker"}
+            )
+            session.commit()
+            return {"inventoryItem": {"id": variables["id"], "inventoryLevels": {
+                "nodes": [{"id": "gid://shopify/InventoryLevel/lease-fence",
+                    "location": {"id": "gid://shopify/Location/lease-fence", "isActive": True},
+                    "quantities": [{"name": "available", "quantity": 8},
+                        {"name": "on_hand", "quantity": 8}]}],
+                "pageInfo": {"hasNextPage": False, "endCursor": None},
+            }}}
+        if "CirvannaCancelCompensatedOrder" in query:
+            mutation_calls.append(variables["orderId"])
+            raise AssertionError("A worker with a reclaimed lease must not cancel")
+        raise AssertionError("Unexpected Shopify GraphQL query")
+
+    monkeypatch.setattr(shopify, "_graphql", fake_graphql)
+    with pytest.raises(HTTPException) as error:
+        shopify._process_shopify_compensation_case(db, case, order)
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "SHOPIFY_COMPENSATION_LEASE_LOST"
+    assert mutation_calls == []
     db.close()
 
 
