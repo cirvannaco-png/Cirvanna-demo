@@ -30,6 +30,7 @@ def upgrade() -> None:
         sa.Column("status", sa.String(24), nullable=False),
         sa.Column("webhook_registration", sa.JSON(), nullable=False),
         sa.Column("products_synced_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("products_cursor", sa.String(512), nullable=True),
         sa.Column("orders_reconciled_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("installed_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
