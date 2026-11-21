@@ -7,6 +7,8 @@ from tools.model_evaluation.fashion_retrieval.run_retrieval import (
     MODEL_SPECS,
     parse_revisions,
     rank_candidates,
+    build_text_query,
+    candidate_text_for_embedding,
     prepare_open_clip_local_dir,
     resolve_media_path,
     validate_case,
@@ -35,6 +37,11 @@ class RetrievalRunnerTests(unittest.TestCase):
         self.assertEqual(MODEL_SPECS["marqo-fashionclip"]["loader"], "open_clip")
         self.assertEqual(MODEL_SPECS["marqo-fashionsiglip"]["loader"], "open_clip")
         self.assertEqual(MODEL_SPECS["zooclaw-fashionsiglip2"]["loader"], "transformers_auto")
+        self.assertEqual(MODEL_SPECS["marqo-fashionclip"]["default_revision"],
+                         "44f4c655124ed71e90cbf528d82f508d69d8a81b")
+        self.assertEqual(MODEL_SPECS["marqo-fashionsiglip"]["default_revision"],
+                         "c56244cc94f92419e8369fa71efdaf403b124ce8")
+        self.assertIsNone(MODEL_SPECS["zooclaw-fashionsiglip2"]["default_revision"])
 
     def test_revision_pin_requires_full_commit_sha(self):
         with self.assertRaisesRegex(ValueError, "40-character"):
@@ -50,6 +57,23 @@ class RetrievalRunnerTests(unittest.TestCase):
         self.assertEqual(ranking, ["p1", "p3", "p2"])
         self.assertAlmostEqual(scores["p1"], 1.0)
         self.assertAlmostEqual(scores["p3"], 0.8)
+
+    def test_ranker_preserves_frozen_candidate_order_for_exact_ties(self):
+        ranking, scores = rank_candidates(
+            [1.0, 0.0],
+            {"variant-z": [1.0, 0.0], "variant-a": [1.0, 0.0], "variant-m": [0.0, 1.0]},
+        )
+        self.assertEqual(ranking, ["variant-z", "variant-a", "variant-m"])
+        self.assertEqual(scores["variant-z"], scores["variant-a"])
+
+    def test_text_and_candidate_preprocessing_match_the_vision_service_contract(self):
+        self.assertEqual(
+            build_text_query("  blue   cotton shirt  "),
+            "A marketplace product matching this description: blue cotton shirt",
+        )
+        self.assertEqual(len(build_text_query("x" * 1100)), 1000)
+        long_offer = "Fashion or beauty marketplace product. " + ("description " * 150)
+        self.assertEqual(candidate_text_for_embedding(long_offer), long_offer[:1000])
 
     def test_ranker_rejects_dimension_and_non_finite_errors(self):
         with self.assertRaisesRegex(ValueError, "dimension mismatch"):
