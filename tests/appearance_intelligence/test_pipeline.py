@@ -42,6 +42,23 @@ def test_catalog_product_rejects_malformed_optional_brand_and_description():
         CatalogProduct.from_mapping({**base, "brand": "b" * 101})
 
 
+def test_catalog_attributes_and_appearance_constraints_are_immutable():
+    item = catalog_product("immutable-product", "makeup", attributes={"color": ["navy"]})
+    with pytest.raises(TypeError):
+        item.attributes["color"] = "red"
+    assert item.attributes["color"] == ("navy",)
+
+    context = AppearanceContext(
+        "immutable-context", "user-1",
+        hard_constraints={"material": "cotton"},
+        preferred_attributes={"style": "minimal"},
+    )
+    with pytest.raises(TypeError):
+        context.hard_constraints["material"] = "polyester"
+    with pytest.raises(TypeError):
+        context.preferred_attributes["style"] = "bold"
+
+
 def test_catalog_snapshot_rejects_boolean_freshness_window():
     item = catalog_product("freshness-window", "makeup")
     current = snapshot(item)
