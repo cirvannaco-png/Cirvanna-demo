@@ -55,7 +55,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 
 
 SERVICE = "cirvanna-commerce-service"
-EXPECTED_SCHEMA_REVISION = "20261121_0014"
+EXPECTED_SCHEMA_REVISION = "20261121_0015"
 MAX_QTY = 50
 RESERVATION_MINUTES = 60
 SKU_RE = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,79}$")
@@ -4254,6 +4254,8 @@ def acknowledge_operations_alert(
         db.commit()
     return {"status": "acknowledged", "event_id": event.event_id,
         "acknowledged_by": actor.user_id, "case_resolved": False}
+
+
 
 
 @app.post("/internal/outbox/claim", dependencies=[Depends(require_sync_token)], tags=["internal event delivery"])
