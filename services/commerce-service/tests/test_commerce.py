@@ -2621,3 +2621,108 @@ def test_shopify_backed_stripe_checkout_disables_delayed_payment_methods(monkeyp
     assert result["id"] == "cs_test_card_only"
     assert captured["payment_method_types[0]"] == "card"
     assert not any(key.startswith("payment_method_types[") and key != "payment_method_types[0]" for key in captured)
+def _seed_pending_market_with_payment_capability(seeded, market_code="UG"):
+    db = TEST_SESSION()
+    observed = main.now()
+    db.add(main.MerchantOperatingMarket(
+        id=str(uuid.uuid4()), merchant_id=seeded["merchant_id"],
+        market_country_code=market_code, state="pending",
+        display_currency="UGX", locale="en-UG",
+    ))
+    db.add(main.MarketPaymentCapability(
+        id=str(uuid.uuid4()), merchant_id=seeded["merchant_id"],
+        market_country_code=market_code, provider="stripe", state="active",
+        transaction_currencies=["UGX"], settlement_currencies=["KES"],
+        payment_methods=["card"], provider_reference="acct-market-ug",
+        observed_at=observed, expires_at=observed + main.timedelta(hours=1),
+    ))
+    db.commit()
+    db.close()
+
+
+def _market_activation_payload():
+    observed = main.now()
+    return {
+        "state": "active", "display_currency": "UGX", "locale": "en-UG",
+        "tax_provider": "tax-provider", "tax_provider_reference": "tax-market-ug",
+        "tax_capability_observed_at": observed.isoformat(),
+        "tax_capability_expires_at": (observed + main.timedelta(hours=1)).isoformat(),
+        "fulfillment_provider": "carrier-provider",
+        "fulfillment_provider_reference": "carrier-market-ug",
+        "fulfillment_capability_observed_at": observed.isoformat(),
+        "fulfillment_capability_expires_at": (observed + main.timedelta(hours=1)).isoformat(),
+    }
+
+
+def test_market_activation_rechecks_merchant_verification_for_new_market(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_MARKET_PROVIDER_VERIFICATION_REQUIRED", "true")
+    seeded = seed_offer()
+    _seed_pending_market_with_payment_capability(seeded, "UG")
+    observed = {}
+    def reject_stale_kyb(merchant, reference, *, operating_markets):
+        observed["reference"] = reference
+        observed["markets"] = sorted(operating_markets)
+        raise main.HTTPException(403, detail={"code": "MERCHANT_PROVIDER_EVIDENCE_STALE"})
+    monkeypatch.setattr(main, "verify_merchant_approval", reject_stale_kyb)
+
+    response = client.put(
+        f"/admin/merchants/{seeded['merchant_id']}/markets/UG",
+        headers=auth("market-admin", "admin"),
+        json=_market_activation_payload(),
+    )
+
+    assert response.status_code == 403
+    assert observed["markets"] == ["UG"]
+    assert observed["reference"] == "verified-by-admin-123"
+    db = TEST_SESSION()
+    market = db.query(main.MerchantOperatingMarket).filter_by(
+        merchant_id=seeded["merchant_id"], market_country_code="UG"
+    ).one()
+    assert market.state == "pending"
+    db.close()
+
+
+def test_market_activation_fails_closed_when_tax_adapter_rejects_market(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_MARKET_PROVIDER_VERIFICATION_REQUIRED", "true")
+    seeded = seed_offer()
+    _seed_pending_market_with_payment_capability(seeded, "UG")
+    monkeypatch.setattr(main, "verify_merchant_approval", lambda *_args, **_kwargs: {
+        "verification_reference": "kyb-provider:case-001", "audit_note": "fresh",
+    })
+    def reject_tax(**_kwargs):
+        raise main.HTTPException(409, detail={"code": "TAX_MARKET_PROVIDER_EVIDENCE_MISMATCH"})
+    monkeypatch.setattr(main, "verify_tax_market_capability", reject_tax)
+
+    response = client.put(
+        f"/admin/merchants/{seeded['merchant_id']}/markets/UG",
+        headers=auth("market-admin", "admin"),
+        json=_market_activation_payload(),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "TAX_MARKET_PROVIDER_EVIDENCE_MISMATCH"
+    db = TEST_SESSION()
+    market = db.query(main.MerchantOperatingMarket).filter_by(
+        merchant_id=seeded["merchant_id"], market_country_code="UG"
+    ).one()
+    assert market.state == "pending"
+    db.close()
+
+
+def test_fulfillment_quote_api_rejects_distance_that_would_round_inside_radius(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_MARKET_CONTEXT_TOKEN", "market-context-token-long-enough-for-tests")
+    seeded = seed_offer()
+    observed = main.now()
+    response = client.post(
+        f"/internal/market-context/variants/{seeded['variant_id']}/fulfillment-quotes",
+        headers={"X-Commerce-Market-Context-Token": "market-context-token-long-enough-for-tests"},
+        json={
+            "provider": "carrier-001", "provider_quote_id": "quote-precision-001",
+            "destination_country_code": "KE", "destination_key": "Nairobi/Westlands",
+            "fulfillment_mode": "courier_delivery", "charge_basis": "per_quote",
+            "amount_minor": 250, "currency": "KES", "status": "confirmed",
+            "distance_km": "30.004", "observed_at": observed.isoformat(),
+            "expires_at": (observed + main.timedelta(hours=1)).isoformat(),
+        },
+    )
+    assert response.status_code == 422

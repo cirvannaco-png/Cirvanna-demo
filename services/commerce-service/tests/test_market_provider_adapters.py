@@ -299,3 +299,117 @@ def test_provider_adapter_error_code_prefix_is_normalized():
     assert adapters._adapter_error_prefix("MERCHANT_VERIFICATION_ADAPTER") == "MERCHANT_VERIFICATION"
     assert adapters._adapter_error_prefix("FULFILLMENT_ADAPTER") == "FULFILLMENT"
     assert adapters._adapter_error_prefix("FX_ADAPTER") == "FX"
+
+
+def test_new_market_activation_requires_current_merchant_market_verification(monkeypatch):
+    monkeypatch.setenv("COMMERCE_ENVIRONMENT", "production")
+    monkeypatch.setenv("MERCHANT_VERIFICATION_ADAPTER_URL", "https://merchant-adapter.example.test")
+    monkeypatch.setenv("MERCHANT_VERIFICATION_ADAPTER_TOKEN", MERCHANT_TOKEN)
+    observed = datetime.now(timezone.utc)
+    expires = observed + timedelta(hours=2)
+    captured = {}
+    def fake_post(_prefix, _path, payload):
+        captured.update(payload)
+        return {
+            "verification_status": "verified",
+            "merchant_id": merchant().id,
+            "legal_country_code": "KE",
+            "operating_markets": ["KE", "UG"],
+            "provider_reference": "kyb-case-001",
+            "all_required_checks_complete": True,
+            "policy_version": "kyb-policy-v2",
+            "provider_id": "kyb-provider",
+            "observed_at": observed.isoformat(),
+            "expires_at": expires.isoformat(),
+            "evidence_sha256": DIGEST,
+        }
+    monkeypatch.setattr(adapters, "_adapter_post", fake_post)
+    adapters.verify_merchant_approval(merchant(), "kyb-case-001", ["KE", "UG"])
+    assert captured["operating_markets"] == ["KE", "UG"]
+
+
+def test_expired_merchant_verification_is_rejected_before_market_activation(monkeypatch):
+    monkeypatch.setenv("COMMERCE_ENVIRONMENT", "production")
+    monkeypatch.setenv("MERCHANT_VERIFICATION_ADAPTER_URL", "https://merchant-adapter.example.test")
+    monkeypatch.setenv("MERCHANT_VERIFICATION_ADAPTER_TOKEN", MERCHANT_TOKEN)
+    observed = datetime.now(timezone.utc) - timedelta(days=2)
+    monkeypatch.setattr(adapters, "_adapter_post", lambda *_args, **_kwargs: {
+        "verification_status": "verified",
+        "merchant_id": merchant().id,
+        "legal_country_code": "KE",
+        "operating_markets": ["KE", "UG"],
+        "provider_reference": "kyb-case-001",
+        "all_required_checks_complete": True,
+        "policy_version": "kyb-policy-v2",
+        "provider_id": "kyb-provider",
+        "observed_at": observed.isoformat(),
+        "expires_at": (observed + timedelta(hours=1)).isoformat(),
+        "evidence_sha256": DIGEST,
+    })
+    with pytest.raises(HTTPException) as error:
+        adapters.verify_merchant_approval(merchant(), "kyb-case-001", ["KE", "UG"])
+    assert error.value.status_code == 403
+    assert error.value.detail["code"] == "MERCHANT_PROVIDER_EVIDENCE_STALE"
+
+
+def test_tax_market_capability_requires_exact_provider_attestation(monkeypatch):
+    monkeypatch.setenv("COMMERCE_ENVIRONMENT", "staging")
+    monkeypatch.setenv("TAX_ADAPTER_URL", "https://tax-adapter.example.test")
+    monkeypatch.setenv("TAX_ADAPTER_TOKEN", FULFILLMENT_TOKEN)
+    observed = datetime.now(timezone.utc)
+    expires = observed + timedelta(hours=1)
+    monkeypatch.setattr(adapters, "_adapter_post", lambda *_args, **_kwargs: {
+        "status": "verified", "merchant_id": "merchant-001", "market_country_code": "UG",
+        "provider": "tax-provider", "provider_reference": "tax-ref-ug",
+        "tax_capability_confirmed": True, "observed_at": observed.isoformat(),
+        "expires_at": expires.isoformat(), "evidence_sha256": DIGEST,
+    })
+    adapters.verify_tax_market_capability(
+        merchant_id="merchant-001", market_country_code="UG", provider="tax-provider",
+        provider_reference="tax-ref-ug", observed_at=observed, expires_at=expires,
+    )
+    with pytest.raises(HTTPException) as error:
+        adapters.verify_tax_market_capability(
+            merchant_id="merchant-002", market_country_code="UG", provider="tax-provider",
+            provider_reference="tax-ref-ug", observed_at=observed, expires_at=expires,
+        )
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "TAX_MARKET_PROVIDER_EVIDENCE_MISMATCH"
+
+
+def test_fulfillment_distance_rejects_values_not_representable_at_storage_scale(monkeypatch):
+    monkeypatch.setenv("COMMERCE_ENVIRONMENT", "staging")
+    quote = {"distance_km": "30.004"}
+    with pytest.raises(HTTPException) as error:
+        adapters.verify_fulfillment_quote("variant-001", quote)
+    assert error.value.status_code == 422
+    assert error.value.detail["code"] == "FULFILLMENT_DISTANCE_PRECISION_INVALID"
+
+
+def test_fulfillment_distance_accepts_exact_two_decimal_values(monkeypatch):
+    monkeypatch.setenv("COMMERCE_ENVIRONMENT", "staging")
+    monkeypatch.setenv("FULFILLMENT_ADAPTER_URL", "https://fulfilment-adapter.example.test")
+    monkeypatch.setenv("FULFILLMENT_ADAPTER_TOKEN", FULFILLMENT_TOKEN)
+    quote = {"distance_km": "30.00"}
+    monkeypatch.setattr(adapters, "_adapter_post", lambda *_args, **_kwargs: {
+        "verification_status": "verified", "variant_id": "variant-001",
+        "quote": {"distance_km": "30.00"}, "evidence_sha256": DIGEST,
+    })
+    adapters.verify_fulfillment_quote("variant-001", quote)
+
+
+def test_fulfillment_distance_rejects_non_finite_or_unbounded_provider_values():
+    for value in ("NaN", "Infinity", "1e999999", "100000.01", "-0.01"):
+        with pytest.raises(HTTPException) as error:
+            adapters.verify_fulfillment_quote("variant-001", {"distance_km": value})
+        assert error.value.status_code == 422
+        assert error.value.detail["code"] == "FULFILLMENT_DISTANCE_INVALID"
+
+
+def test_fulfillment_distance_precision_handles_extreme_decimal_scales():
+    from decimal import Decimal
+
+    assert adapters.fulfillment_distance_has_centikilometre_precision(Decimal("30.000"))
+    assert adapters.fulfillment_distance_has_centikilometre_precision(Decimal("1." + "0" * 1000))
+    assert not adapters.fulfillment_distance_has_centikilometre_precision(Decimal("30.004"))
+    assert not adapters.fulfillment_distance_has_centikilometre_precision(Decimal("1." + "0" * 1000 + "1"))

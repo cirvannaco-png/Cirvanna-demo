@@ -34,6 +34,16 @@ Commerce should persist opaque provider references, status, timestamps, verifica
 
 The admin approval action must require a current, subject- and merchant-bound provider result. Human review may add a separate control but may not override a provider's hard rejection or a required legal prohibition without a documented, authorized appeal path.
 
+### Market activation must revalidate all evidence
+
+Initial merchant approval is not a permanent authorization for markets added later. Immediately before activating a market, Commerce re-runs merchant verification against the merchant's complete current operating-market set. The adapter response must bind the merchant ID, legal country, exact sorted market set, provider reference, completed checks, policy version, observation/expiry window and evidence digest. Expired, unknown or out-of-scope results leave the market inactive.
+
+Market activation also calls the configured tax adapter's `POST /v1/market-capabilities/verify`. The request binds `merchant_id`, `market_country_code`, `provider`, `provider_reference`, `observed_at` and `expires_at`. A successful response must return `status=verified`, `tax_capability_confirmed=true`, the same merchant, market, provider and reference, identical validity timestamps, and a valid SHA-256 evidence digest. A timestamp-only admin declaration is not tax-provider verification.
+
+Fulfilment distance is persisted as `Numeric(9, 2)`. Input must therefore be exactly representable at 0.01 km precision before provider verification. Values such as 30.004 km are rejected; they must never be rounded to 30.00 km and admitted by a 30 km radius filter. The same invariant is enforced at the API model and adapter boundary.
+
+Commerce readiness probes the five provider adapters concurrently. This reduces sequential timeout accumulation but does not replace a bounded end-to-end readiness deadline or provider health monitoring.
+
 ## 3. Fulfilment integration
 
 A complete fulfilment adapter is more than a quote API. It must support an operation lifecycle:

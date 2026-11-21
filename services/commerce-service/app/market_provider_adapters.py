@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+from decimal import Decimal, InvalidOperation
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlsplit
 from typing import Any
@@ -194,8 +195,29 @@ def verify_fulfillment_market(
         raise HTTPException(409, detail={"code": "FULFILLMENT_MARKET_PROVIDER_EVIDENCE_MISMATCH"})
 
 
+def fulfillment_distance_has_centikilometre_precision(distance: Decimal) -> bool:
+    """Return whether a finite Decimal is exactly representable to 0.01 km."""
+    if not distance.is_finite():
+        return False
+    parts = distance.as_tuple()
+    if parts.exponent >= -2:
+        return True
+    extra_places = -parts.exponent - 2
+    return not any(parts.digits[-extra_places:])
+
+
 def verify_fulfillment_quote(variant_id: str, quote: dict[str, Any]) -> None:
     """Verify every ingested live fulfilment quote against its source adapter."""
+    raw_distance = quote.get("distance_km")
+    if raw_distance is not None:
+        try:
+            distance = Decimal(str(raw_distance))
+            if not distance.is_finite() or distance < 0 or distance > Decimal("100000"):
+                raise HTTPException(422, detail={"code": "FULFILLMENT_DISTANCE_INVALID"})
+        except (InvalidOperation, ValueError, TypeError):
+            raise HTTPException(422, detail={"code": "FULFILLMENT_DISTANCE_INVALID"})
+        if not fulfillment_distance_has_centikilometre_precision(distance):
+            raise HTTPException(422, detail={"code": "FULFILLMENT_DISTANCE_PRECISION_INVALID"})
     if not provider_verification_required():
         return
     result = _adapter_post("FULFILLMENT_ADAPTER", "/v1/fulfillment-quotes/verify", {
@@ -275,6 +297,43 @@ def verify_fx_quote(variant_id: str, quote: dict[str, Any]) -> None:
         or not exact
     ):
         raise HTTPException(409, detail={"code": "FX_QUOTE_PROVIDER_EVIDENCE_MISMATCH"})
+
+
+def verify_tax_market_capability(
+    *,
+    merchant_id: str,
+    market_country_code: str,
+    provider: str,
+    provider_reference: str,
+    observed_at: datetime,
+    expires_at: datetime,
+) -> None:
+    """Require provider-attested tax capability for this exact merchant market."""
+    if not provider_verification_required():
+        return
+    result = _adapter_post("TAX_ADAPTER", "/v1/market-capabilities/verify", {
+        "merchant_id": merchant_id,
+        "market_country_code": market_country_code,
+        "provider": provider,
+        "provider_reference": provider_reference,
+        "observed_at": observed_at.isoformat(),
+        "expires_at": expires_at.isoformat(),
+    })
+    _validate_evidence_digest(result.get("evidence_sha256"), "TAX_MARKET_CAPABILITY_DIGEST_INVALID")
+    result_observed = _parse_aware(result.get("observed_at"), "TAX_MARKET_CAPABILITY_TIMESTAMP_INVALID")
+    result_expires = _parse_aware(result.get("expires_at"), "TAX_MARKET_CAPABILITY_TIMESTAMP_INVALID")
+    if not (
+        result.get("status") == "verified"
+        and result.get("merchant_id") == merchant_id
+        and result.get("market_country_code") == market_country_code
+        and result.get("provider") == provider
+        and result.get("provider_reference") == provider_reference
+        and result.get("tax_capability_confirmed") is True
+        and result_observed == observed_at.astimezone(timezone.utc)
+        and result_expires == expires_at.astimezone(timezone.utc)
+        and result_expires > datetime.now(timezone.utc)
+    ):
+        raise HTTPException(409, detail={"code": "TAX_MARKET_PROVIDER_EVIDENCE_MISMATCH"})
 
 
 def verify_tax_quote(variant_id: str, quote: dict[str, Any]) -> None:
