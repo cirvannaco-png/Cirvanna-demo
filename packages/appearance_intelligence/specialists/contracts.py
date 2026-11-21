@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from types import MappingProxyType
 from typing import Any, Mapping
 from catacaci import ArbitrationResult, DecisionSignal, SignalState
 from npl import NPLDecision
@@ -15,6 +16,17 @@ def normalize_text(value: str) -> str:
 
 def normalize_category(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", value.strip().casefold()).strip("_")
+
+
+def _freeze_value(value: Any) -> Any:
+    """Recursively freeze JSON-shaped catalog/context mappings after validation."""
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze_value(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_value(item) for item in value)
+    if isinstance(value, set):
+        return frozenset(_freeze_value(item) for item in value)
+    return value
 
 class SpecialistId(str, Enum):
     HAIR = "hair"
@@ -61,6 +73,8 @@ class CatalogProduct:
             raise ValueError("catalog_version must be a positive integer")
         if not isinstance(self.attributes, Mapping):
             raise ValueError("attributes must be a mapping")
+        if any(not isinstance(key, str) or not key.strip() for key in self.attributes):
+            raise ValueError("attribute keys must be non-empty strings")
         if self.brand is not None and (
             not isinstance(self.brand, str) or len(self.brand) > 100
         ):
@@ -74,7 +88,7 @@ class CatalogProduct:
         if self.description is not None:
             object.__setattr__(self, "description", self.description.strip() or None)
         object.__setattr__(self, "currency", self.currency.strip().upper())
-        object.__setattr__(self, "attributes", dict(self.attributes))
+        object.__setattr__(self, "attributes", _freeze_value(self.attributes))
 
     @classmethod
     def from_mapping(cls, record: Mapping[str, Any]) -> "CatalogProduct":
@@ -175,7 +189,7 @@ class AppearanceContext:
                 raise ValueError(f"{name} must be a mapping")
             if any(not isinstance(k, str) or not k.strip() or not isinstance(v, str) or not v.strip() for k, v in values.items()):
                 raise ValueError(f"{name} keys and values must be non-empty strings")
-            object.__setattr__(self, name, dict(values))
+            object.__setattr__(self, name, MappingProxyType(dict(values)))
         if not isinstance(self.cultural_requirements, tuple) or any(not isinstance(v, str) or not v.strip() for v in self.cultural_requirements):
             raise ValueError("cultural_requirements must be a tuple of non-empty strings")
 
