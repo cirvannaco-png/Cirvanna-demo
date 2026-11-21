@@ -225,3 +225,31 @@ def test_gateway_complementer_capability_is_optional_and_explicit(monkeypatch):
     assert capabilities["complementer_product_retrieval"] is False
     assert capabilities["complementer_display_authority"] is False
     assert capabilities["durable_complementer_memory"] is False
+
+
+def test_gateway_complementer_requires_verified_end_user_session(monkeypatch):
+    configure_complementer(monkeypatch)
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/v1/complementer/recommend",
+            headers={"Authorization": f"Bearer {GATEWAY_TOKEN}"},
+            json=advisory_request(),
+        )
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "END_USER_BEARER_REQUIRED"
+
+
+def test_gateway_complementer_rejects_payload_subject_mismatch(monkeypatch):
+    configure_complementer(monkeypatch)
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda _header: "verified-user-other")
+    with TestClient(main.app) as client:
+        response = client.post(
+            "/v1/complementer/recommend",
+            headers={
+                "Authorization": f"Bearer {GATEWAY_TOKEN}",
+                "X-End-User-Authorization": "Bearer verified-customer-token",
+            },
+            json=advisory_request(),
+        )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "REQUEST_SUBJECT_MISMATCH"

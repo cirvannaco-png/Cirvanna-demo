@@ -2,6 +2,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from pydantic import ValidationError
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
@@ -3865,3 +3866,51 @@ def test_cart_and_checkout_remain_blocked_when_live_cal_readiness_is_incomplete(
         "https://commerce.example.test/me",
         "https://commerce.example.test/ready",
     ]
+def test_pnelly_conversational_discovery_delegates_to_wardrobe_cal_pipeline(client, monkeypatch):
+    seen = {}
+
+    async def fake_wardrobe_recommendations(request, payload):
+        seen["path"] = request.url.path
+        seen["query"] = payload.query
+        seen["occasion"] = payload.occasion
+        seen["climate"] = payload.climate
+        return main.JSONResponse(
+            content={
+                "display_authority": "CaTaCaCi/CAL",
+                "displayable_products": [],
+                "withheld_candidate_count": 2,
+                "wardrobe_context": {"used": True},
+            },
+            headers={"Cache-Control": "no-store, private"},
+        )
+
+    monkeypatch.setattr(main, "wardrobe_recommendations", fake_wardrobe_recommendations)
+    response = client.post(
+        "/api/vision/conversational-discovery",
+        headers={"Authorization": "Bearer signed-user-session"},
+        json={
+            "query": "a light layer that works with my blue shirt",
+            "occasion": "work",
+            "climate": "hot_humid",
+            "limit": 10,
+            "exclude_owned_products": True,
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["display_authority"] == "CaTaCaCi/CAL"
+    assert response.json()["wardrobe_context"]["used"] is True
+    assert seen == {
+        "path": "/api/vision/conversational-discovery",
+        "query": "a light layer that works with my blue shirt",
+        "occasion": "work",
+        "climate": "hot_humid",
+    }
+
+
+def test_complementer_request_id_is_a_controlled_nonblank_identifier():
+    valid = main.ComplementerRequestIn(request_id="pnelly-request-001")
+    assert valid.request_id == "pnelly-request-001"
+
+    for invalid in ("        ", "short", "request id with spaces", "x" * 129):
+        with pytest.raises(ValidationError):
+            main.ComplementerRequestIn(request_id=invalid)
