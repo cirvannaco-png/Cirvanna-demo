@@ -11,7 +11,10 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from validate_preregistration import validate_registration
+try:
+    from .validate_preregistration import validate_registration
+except ImportError:  # direct script execution from this directory
+    from validate_preregistration import validate_registration
 
 METRICS = ("recall_at_k", "precision_at_k", "mrr_at_k", "ndcg_at_k",
            "top1_hit_rate", "no_result_rate", "top_k_fill_rate",
