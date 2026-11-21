@@ -115,7 +115,7 @@ Pre-register the primary metric before opening final-test results:
 
 Metrics include Recall@k, Precision@k, MRR@k, nDCG@k, top-1 hit rate, no-result rate, top-k fill, candidate coverage and hard-exclusion violations. Reports include paired challenger-minus-baseline deltas, 95% cluster-bootstrap intervals and subgroup slices. Fewer than two independent clusters yields no confidence interval rather than a degenerate interval.
 
-The runner ranks the full supplied candidate pool and applies no calibrated no-match threshold. Therefore its no-result rate is not a meaningful quality signal in this initial version. Similarity outputs are ranking scores, never probabilities or calibrated confidence.
+The evaluator refuses final `--split test` scoring unless `--preregistration` is supplied. It checks the locked metric, k, bootstrap settings, task, baseline/challenger model set, minimum query/cluster counts and candidate-pool sizes before computing final-test metrics. Use a non-final split such as `pilot` for diagnostic runs without a final preregistration. The runner ranks the full supplied candidate pool and applies no calibrated no-match threshold. Therefore its no-result rate is not a meaningful quality signal in this initial version. Similarity outputs are ranking scores, never probabilities or calibrated confidence.
 
 ## Tests
 
