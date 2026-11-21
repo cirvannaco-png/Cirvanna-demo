@@ -2,6 +2,7 @@
 """Score matched fashion retrieval rankings against graded human relevance labels."""
 from __future__ import annotations
 import argparse
+import hashlib
 import json
 import math
 import random
@@ -236,6 +237,34 @@ def evaluate(cases: list[dict[str, Any]], *, baseline_model_id: str, k: int = 10
     }
 
 
+def sha256_file(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def validate_run_manifest(
+    manifest: dict[str, Any], registration: dict[str, Any], rankings_path: str | Path,
+) -> None:
+    """Bind final rankings to the exact runner output and immutable model revisions."""
+    if not isinstance(manifest, dict) or manifest.get("schema_version") != "1.0":
+        raise ValueError("run manifest must be a schema_version 1.0 object")
+    expected_models = {
+        registration["baseline"]["model_id"]: registration["baseline"]["revision"],
+        **registration["challengers"],
+    }
+    if manifest.get("model_revisions") != expected_models:
+        raise ValueError("run manifest model revisions differ from the locked preregistration")
+    if manifest.get("rankings_output_sha256") != sha256_file(rankings_path):
+        raise ValueError("rankings input SHA-256 does not match the runner manifest")
+    if manifest.get("split") != "test":
+        raise ValueError("runner manifest split must be test for final evaluation")
+    if manifest.get("task_id") != registration["task_id"]:
+        raise ValueError("runner manifest task_id differs from the locked preregistration")
+
+
 def validate_final_test_registration(
     cases: list[dict[str, Any]], registration: dict[str, Any], *,
     baseline_model_id: str, k: int, primary_metric: str,
@@ -282,11 +311,14 @@ def main() -> int:
     parser.add_argument("--bootstrap-samples", type=int, default=2000)
     parser.add_argument("--seed", type=int, default=20261120)
     parser.add_argument("--preregistration", help="Required for final split=test; private locked registration JSON")
+    parser.add_argument("--run-manifest", help="Required for final split=test; runner manifest paired with rankings input")
     args = parser.parse_args()
     cases = read_cases(args.input, args.split)
     if args.split == "test":
         if not args.preregistration:
             raise ValueError("--preregistration is required for final split=test evaluation")
+        if not args.run_manifest:
+            raise ValueError("--run-manifest is required for final split=test evaluation")
         registration = json.loads(Path(args.preregistration).read_text(encoding="utf-8"))
         validate_final_test_registration(
             cases, registration, baseline_model_id=args.baseline_model_id, k=args.k,
@@ -296,6 +328,25 @@ def main() -> int:
     report = evaluate(cases, baseline_model_id=args.baseline_model_id, k=args.k,
                       primary_metric=args.primary_metric, bootstrap_samples=args.bootstrap_samples,
                       seed=args.seed)
+    if args.split == "test":
+        manifest = json.loads(Path(args.run_manifest).read_text(encoding="utf-8"))
+        validate_run_manifest(manifest, registration, args.input)
+        gates = {}
+        for model_id, paired in report["paired_vs_baseline"].items():
+            delta = paired["delta_vs_baseline"]["ndcg_at_k"]
+            lower_ci = paired["delta_confidence_intervals_95"]["ndcg_at_k"][0]
+            hard_gate = report["hard_exclusion_gate_passed"][model_id]
+            threshold = registration["minimum_practically_important_delta"]
+            gates[model_id] = {
+                "hard_exclusion_gate_passed": hard_gate,
+                "minimum_practically_important_delta": threshold,
+                "observed_primary_metric_delta": delta,
+                "primary_metric_ci95_lower": lower_ci,
+                "practical_improvement_gate_passed": delta >= threshold and lower_ci > 0,
+                "overall_passed": hard_gate and delta >= threshold and lower_ci > 0,
+            }
+        report["preregistered_challenger_gates"] = gates
+        report["status"] = "final_test_scored_gates_evaluated"
     Path(args.output).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps({"status": report["status"], "queries": report["query_count"],
                       "primary_metric": report["primary_metric"]}, sort_keys=True))
