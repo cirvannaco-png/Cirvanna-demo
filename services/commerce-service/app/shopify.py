@@ -1753,7 +1753,7 @@ def prepare_checkout_inventory_reservations(db: Session, order: commerce.Commerc
             raise
         for reservation in prepared:
             connection = db.get(ShopifyConnection, reservation.connection_id)
-            if connection and reservation.state in {"reserved", "unknown", "release_pending"}:
+            if connection and reservation.state in {"reserved", "failed", "unknown", "release_pending"}:
                 try:
                     release_one_shopify_reservation(connection, db, reservation)
                 except HTTPException:
@@ -1768,7 +1768,7 @@ def prepare_checkout_inventory_reservations(db: Session, order: commerce.Commerc
     except Exception:
         for reservation in prepared:
             connection = db.get(ShopifyConnection, reservation.connection_id)
-            if connection and reservation.state in {"reserved", "unknown", "release_pending"}:
+            if connection and reservation.state in {"reserved", "failed", "unknown", "release_pending"}:
                 try:
                     release_one_shopify_reservation(connection, db, reservation)
                 except HTTPException:
@@ -1815,7 +1815,7 @@ def release_one_shopify_reservation(connection: ShopifyConnection, db: Session,
 def release_shopify_checkout_reservations(db: Session, order: commerce.CommerceOrder) -> int:
     rows = list(db.scalars(select(ShopifyInventoryReservation).where(
         ShopifyInventoryReservation.commerce_order_id == order.id,
-        ShopifyInventoryReservation.state.in_(["creating", "reserved", "unknown", "release_pending"]),
+        ShopifyInventoryReservation.state.in_(["creating", "reserved", "failed", "unknown", "release_pending"]),
     )).all())
     released = 0
     for reservation in rows:

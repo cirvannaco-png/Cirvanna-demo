@@ -2450,7 +2450,8 @@ def test_shopify_reservation_key_is_stable_and_merchant_scoped():
     assert first.startswith("cirvanna-reserve-")
 
 
-def test_shopify_reservation_rejection_releases_local_stock_before_payment(monkeypatch, client):
+@pytest.mark.parametrize("partial_draft", [False, True])
+def test_shopify_reservation_rejection_releases_local_stock_before_payment(monkeypatch, client, partial_draft):
     from datetime import timedelta
     from app import shopify
 
@@ -2497,14 +2498,22 @@ def test_shopify_reservation_rejection_releases_local_stock_before_payment(monke
     db.add_all([connection, product, snapshot])
     db.commit()
 
+    deleted_drafts = []
+
     def reject_reservation(conn, session, query, variables=None):
         if "CirvannaFindInventoryReservation" in query:
             return {"draftOrders": {"nodes": []}}
         if "CirvannaReserveInventory" in query:
             return {"draftOrderCreate": {
-                "draftOrder": None,
+                "draftOrder": (
+                    {"id": "gid://shopify/DraftOrder/902", "status": "OPEN", "ready": False}
+                    if partial_draft else None
+                ),
                 "userErrors": [{"field": ["input", "lineItems"], "message": "Insufficient inventory"}],
             }}
+        if "CirvannaReleaseInventoryReservation" in query:
+            deleted_drafts.append(variables["id"])
+            return {"draftOrderDelete": {"deletedId": variables["id"], "userErrors": []}}
         raise AssertionError("Unexpected Shopify GraphQL operation")
 
     monkeypatch.setattr(shopify, "_graphql", reject_reservation)
@@ -2520,6 +2529,15 @@ def test_shopify_reservation_rejection_releases_local_stock_before_payment(monke
     assert local.state == "released"
     assert variant.reserved_qty == 0
     assert order.payment_session_id is None
+    reservation = db.scalar(select(shopify.ShopifyInventoryReservation).where(
+        shopify.ShopifyInventoryReservation.commerce_order_id == order.id
+    ))
+    if partial_draft:
+        assert deleted_drafts == ["gid://shopify/DraftOrder/902"]
+        assert reservation.state == "released"
+    else:
+        assert deleted_drafts == []
+        assert reservation.state == "release_pending"
     db.close()
 
 
