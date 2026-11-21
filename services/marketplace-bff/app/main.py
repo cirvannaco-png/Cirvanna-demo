@@ -3229,15 +3229,19 @@ async def marketplace_look_it(request: Request) -> Response:
                 operation_error = HTTPException(503, detail={"code": "LOOK_IT_OPERATION_UNAVAILABLE"})
             finally:
                 if consent_receipt_ids and subject and identity_base and identity_token:
-                    try:
-                        revoked = await client.post(
-                            identity_base + f"/v1/tal/consents/{consent_receipt_ids[0]}/revoke",
-                            params={"subject_id": subject},
-                            headers={"Authorization": "Bearer " + identity_token, "Accept": "application/json"},
-                        )
-                        revoke_failed = revoked.status_code != 200
-                    except (httpx.TimeoutException, httpx.HTTPError):
-                        revoke_failed = True
+                    # Revoke every receipt in the request-scoped bundle. Revoking only
+                    # the first receipt left the look_it grant active until expiry.
+                    for receipt_id in consent_receipt_ids:
+                        try:
+                            revoked = await client.post(
+                                identity_base + f"/v1/tal/consents/{receipt_id}/revoke",
+                                params={"subject_id": subject},
+                                headers={"Authorization": "Bearer " + identity_token, "Accept": "application/json"},
+                            )
+                            if revoked.status_code != 200:
+                                revoke_failed = True
+                        except (httpx.TimeoutException, httpx.HTTPError):
+                            revoke_failed = True
     finally:
         if form is not None:
             await form.close()
