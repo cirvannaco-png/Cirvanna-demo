@@ -2,7 +2,7 @@
 
 **Status:** authenticated API and SQLAlchemy persistence contract implemented; production database and object-storage deletion worker still require deployment and validation.
 
-The service owns user wardrobe item records and saved outfit compositions. Item records include lifecycle, catalog-product references, user-authorized opaque image asset IDs, explicit photo-storage consent, optimistic version checks and a durable asset-deletion outbox. Saved outfits contain references to active, owner-scoped wardrobe items; they do not copy Catalog facts or make unpurchased marketplace products owned. The PostgreSQL schema is applied through ordered migrations `0001_initial.sql`, `0002_wardrobe_learning_events.sql`, `0003_saved_outfits.sql`, `0004_rotation_state.sql`, `0005_verified_purchase_ownership.sql`, `0006_outfit_wear_history.sql` and `0007_purchase_refund_snapshots.sql`. The application does not automatically create the production schema. SQLite is test-only.
+The service owns user wardrobe item records and saved outfit compositions. Item records include lifecycle, catalog-product references, user-authorized opaque image asset IDs, explicit photo-storage consent, optimistic version checks and a durable asset-deletion outbox. Saved outfits contain references to active, owner-scoped wardrobe items; they do not copy Catalog facts or make unpurchased marketplace products owned. The PostgreSQL schema is applied through ordered migrations `0001_initial.sql`, `0002_wardrobe_learning_events.sql`, `0003_saved_outfits.sql`, `0004_rotation_state.sql`, `0005_verified_purchase_ownership.sql`, `0006_outfit_wear_history.sql` and `0007_purchase_refund_snapshots.sql` and `0008_refund_provider_identity.sql`. The application does not automatically create the production schema. SQLite is test-only.
 
 ## Configuration
 
@@ -74,3 +74,8 @@ Apply migrations in order: `0001_initial.sql`, `0002_wardrobe_learning_events.sq
 - `GET /v1/wear-history` is owner scoped. `DELETE /v1/wear-history` erases only that owner's event records.
 - Marketplace BFF derives the user from Commerce `/me`; the public “Mark this look worn” action creates a stable outfit ID and then submits a user-confirmed wear event. Recommendation exposure does not update wear history.
 - User export includes rotation and factual wear-history data; user erasure removes both.
+
+
+### Refund provider identity and landed order totals
+
+Refund snapshots accept either a verified `charge.refunded` authority with a Stripe charge ID or a verified refund-object authority with a Stripe refund ID. These identifiers are stored in distinct nullable columns; a refund ID is never misrepresented as a charge ID. The snapshot's `order_total_minor` remains the full amount charged/refunded, while `merchandise_subtotal_minor` is independently checked against immutable Wardrobe purchase-line snapshots. This supports orders whose total includes tax or fulfilment without weakening amount/state validation.
