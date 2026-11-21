@@ -125,6 +125,19 @@ Omit `--adjudications` only when no candidate pair has reviewer disagreement. Th
 
 Then join those qrels to the exact frozen eligible Commerce/Catalog offer text with `prepare_cases.py` as described below. Human violation IDs remain a hard evaluation gate even when no user exclusion ID was supplied.
 
+## Export the exact active Vision catalogue text
+
+The first parity track needs a frozen candidate snapshot of the exact offer text the current Vision service ranks. Do not reconstruct `_offer_description()` in a separate script. The service now contains a restricted CLI that invokes its own `_live_offers()` implementation and writes only `variant_id` plus the exact `search_text` value.
+
+Run this **inside the trusted Vision Intelligence container** (working directory `/app`) where its existing Commerce/Catalog read environment is configured. Mount a restricted evaluation volume and use an unused destination:
+
+    python -m app.retrieval_snapshot_export \
+      --output /restricted-evaluation/catalog-offers.jsonl
+
+It emits a sibling `.manifest.json` and records the snapshot SHA-256, model pin, candidate count, whether the service's 1,000-offer ceiling truncated the Commerce offer list, and that this was a sequential point-in-time Commerce/Catalog read (not a cross-service transaction). Both files are created with mode `0600`; existing files are refused unless `--overwrite` is explicitly supplied.
+
+The exporter excludes product image URLs, raw Commerce/Catalog payloads, names as separate fields, service URLs, and credentials. It preserves the Commerce offer order and refuses duplicate/invalid variant IDs. The text is commercial catalogue information, so the resulting file and manifest must remain in the restricted evaluation workspace and must not be committed, attached to the PR, or sent to unapproved model endpoints.
+
 ## Prepare matched input from frozen snapshots
 
 The runner input is assembled from two private JSONL files. The first is a fixed, eligible Commerce/Catalog snapshot captured from the same release of the service, after the existing active-product / purchasable-offer rules have been applied. Each row must contain:
