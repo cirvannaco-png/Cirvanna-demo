@@ -27,7 +27,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import (
-    Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, or_,
+    Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, and_, or_,
     UniqueConstraint, select,
 )
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
