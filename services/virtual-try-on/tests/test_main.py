@@ -50,7 +50,7 @@ def payload(**overrides):
         "product_id": "product-test-001",
         "person_image_asset_id": PERSON_ASSET,
         "garment_image_asset_id": GARMENT_ASSET,
-        "garment_asset_purpose": "catalog_garment_image",
+        "garment_asset_purpose": "catalog_garment_flat_lay",
         "garment_category": "upper_body",
         "garment_photo_type": "flat-lay",
         "consent": {
@@ -98,7 +98,7 @@ def install_providers(monkeypatch, *, twin_asset=PERSON_ASSET):
         if purpose in {"twin_source_image", "try_on_output"}:
             assert parent_id == "twin-test-001"
             return png_bytes(), "image/png"
-        assert purpose == "catalog_garment_image"
+        assert purpose == "catalog_garment_flat_lay"
         assert parent_id == "product-test-001"
         return png_bytes((180, 20, 40)), "image/png"
 
@@ -218,7 +218,7 @@ def test_external_urls_paths_and_non_opaque_asset_ids_are_rejected(client, asset
 
 
 def test_wardrobe_asset_requires_exact_parent_binding(client):
-    body = payload(garment_asset_purpose="wardrobe_garment_image")
+    body = payload(garment_asset_purpose="wardrobe_garment_flat_lay")
     response = client.post("/v1/try-ons", json=body, headers=headers())
     assert response.status_code == 422
 
