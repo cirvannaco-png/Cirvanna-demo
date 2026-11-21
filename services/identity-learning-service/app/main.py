@@ -50,6 +50,19 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def _cil_contributor_token(subject_id: str) -> str:
+    """Derive a stable keyed pseudonym without exposing the canonical subject to CIL."""
+    secret = os.getenv("CIL_CONTRIBUTOR_TOKEN_HMAC_SECRET", "").encode("utf-8")
+    if len(secret) < 32:
+        raise HTTPException(503, detail={"code": "CIL_CONTRIBUTOR_TOKEN_KEY_NOT_CONFIGURED"})
+    digest = hmac.new(
+        secret,
+        ("cirvanna:cil:contributor:v1:" + subject_id).encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return "hmac-sha256:" + digest
+
+
 def parse_time(value: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
@@ -117,6 +130,7 @@ class ConsentReceipt(Base):
     granted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    provider_contributor_token: Mapped[str | None] = mapped_column(String(80))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
 
@@ -231,6 +245,29 @@ class ConsentRevocationOutbox(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
+class CILProviderConsentRevocationOutbox(Base):
+    """Durable consent-to-CIL provider cleanup handoff; stores only a keyed pseudonym."""
+    __tablename__ = "identity_cil_provider_consent_revocation_outbox"
+    __table_args__ = (
+        Index("ix_identity_cil_provider_revocation_status_created", "status", "created_at"),
+        Index("ix_identity_cil_provider_revocation_receipt", "revocation_receipt_id"),
+    )
+    command_id: Mapped[str] = mapped_column(String(160), primary_key=True)
+    revocation_receipt_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    consent_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    resource_id: Mapped[str | None] = mapped_column(String(160))
+    receipt_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    contributor_token: Mapped[str | None] = mapped_column(String(80))
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error_code: Mapped[str | None] = mapped_column(String(80))
+    matched_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    deleted_tasks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    waiting_for_terminal: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
 class PnellyConversation(Base):
     """Short-lived, structured discovery context; raw chat transcript is never stored."""
     __tablename__ = "identity_pnelly_conversations"
@@ -254,6 +291,27 @@ class PnellyConversation(Base):
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class SkinAnalysisProviderReceiptIn(StrictModel):
+    receipt_id: str = Field(min_length=8, max_length=128)
+    image_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    verified_subject_age_years: int = Field(ge=18, le=120)
+
+    @field_validator("verified_subject_age_years", mode="before")
+    @classmethod
+    def strict_adult_age(cls, value):
+        if type(value) is not int:
+            raise ValueError("verified_subject_age_years must be an integer")
+        return value
+
+
+class SkinAnalysisProviderConsentVerifyIn(StrictModel):
+    receipt_id: str = Field(min_length=8, max_length=128)
+    consent_id: str = Field(min_length=8, max_length=128)
+    resource_id: str = Field(min_length=3, max_length=160)
+    contributor_token: str = Field(pattern=r"^hmac-sha256:[0-9a-f]{64}$")
+    image_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
 class PreferenceIn(StrictModel):
@@ -579,6 +637,28 @@ def require_internal_token(
 
 
 
+def require_cil_consent_issuer(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+) -> None:
+    """Dedicated credential held only by the trusted adult-eligibility assertion service."""
+    expected = os.getenv("IDENTITY_CIL_CONSENT_ISSUER_TOKEN", "").strip()
+    if len(expected.encode("utf-8")) < 32:
+        raise HTTPException(503, detail={"code": "IDENTITY_CIL_CONSENT_ISSUER_TOKEN_NOT_CONFIGURED"})
+    if credentials is None or not hmac.compare_digest(credentials.credentials, expected):
+        raise HTTPException(401, detail={"code": "CIL_CONSENT_ISSUER_AUTH_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
+
+
+def require_cil_consent_verifier(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
+) -> None:
+    """Dedicated credential held only by the CIL server, never by browsers."""
+    expected = os.getenv("IDENTITY_CIL_CONSENT_VERIFIER_TOKEN", "").strip()
+    if len(expected.encode("utf-8")) < 32:
+        raise HTTPException(503, detail={"code": "IDENTITY_CIL_CONSENT_VERIFIER_TOKEN_NOT_CONFIGURED"})
+    if credentials is None or not hmac.compare_digest(credentials.credentials, expected):
+        raise HTTPException(401, detail={"code": "CIL_CONSENT_VERIFIER_AUTH_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
+
+
 def require_dsi_capture_service(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
 ) -> None:
@@ -731,6 +811,7 @@ def readiness(db: Annotated[Session, Depends(get_db)]):
         db.execute(select(TALEvent.event_id).limit(1))
         db.execute(select(PnellyConversation.conversation_id).limit(1))
         db.execute(select(ConsentRevocationOutbox.command_id).limit(1))
+        db.execute(select(CILProviderConsentRevocationOutbox.command_id).limit(1))
         db.execute(select(DSICaptureChallengeRow.challenge_id).limit(1))
         db.execute(select(DSICaptureVerificationReceiptRow.receipt_id).limit(1))
         return {
@@ -741,6 +822,7 @@ def readiness(db: Annotated[Session, Depends(get_db)]):
             "durable_tal": True,
             "pnelly_conversation_context": True,
             "twin_consent_cleanup_outbox": True,
+            "cil_provider_consent_cleanup_outbox": True,
             "dsi_capture_challenge_state": True,
             "dsi_capture_verification_receipts": True,
             "ready": True,
@@ -904,16 +986,58 @@ async def put_consent(subject_id: str = Query(min_length=1, max_length=128), pay
             or normalize_utc(existing.expires_at) != normalize_utc(payload.expires_at)
         ):
             raise HTTPException(409, detail={"code": "CONSENT_RECEIPT_IMMUTABLE"})
+        existing_twin_commands = list(db.scalars(select(
+            ConsentRevocationOutbox.command_id
+        ).where(
+            ConsentRevocationOutbox.subject_id == existing.subject_id,
+            ConsentRevocationOutbox.consent_id == existing.consent_id,
+            ConsentRevocationOutbox.resource_id == existing.resource_id,
+        )).all())
+        twin_result = await _dispatch_twin_consent_revocations_batched(
+            db, existing_twin_commands,
+        ) if existing_twin_commands else _empty_cleanup_dispatch_result()
+        existing_cil_commands = list(db.scalars(select(
+            CILProviderConsentRevocationOutbox.command_id
+        ).where(
+            CILProviderConsentRevocationOutbox.revocation_receipt_id == existing.receipt_id,
+        )).all())
+        cil_result = await _dispatch_cil_provider_consent_revocations_batched(
+            db, existing_cil_commands,
+        ) if existing_cil_commands else _empty_cleanup_dispatch_result()
         return {
             "receipt_id": existing.receipt_id, "consent_id": existing.consent_id,
             "resource_id": existing.resource_id, "expires_at": existing.expires_at.isoformat() if existing.expires_at else None, "status": "replayed", "granted": existing.granted,
+            "twin_cleanup_status": (
+                "pending" if twin_result["pending"] or twin_result["failed"]
+                else "delivered" if twin_result["delivered"]
+                else "not_applicable"
+            ),
+            "cil_provider_cleanup_status": (
+                "pending" if cil_result["pending"] or cil_result["failed"]
+                else "delivered" if cil_result["delivered"]
+                else "not_applicable"
+            ),
         }
 
     now = utcnow()
+    provider_contributor_token = None
+    if payload.granted and payload.scope == "skin_analysis":
+        if payload.resource_id is None or payload.expires_at is None:
+            raise HTTPException(422, detail={"code": "SKIN_ANALYSIS_CONSENT_MUST_BE_RESOURCE_BOUND_AND_EXPIRE"})
+        existing_bundle = db.scalar(select(ConsentReceipt.receipt_id).where(
+            ConsentReceipt.scope == "skin_analysis",
+            ConsentReceipt.granted.is_(True),
+            ConsentReceipt.consent_id == consent_id,
+        ).limit(1))
+        if existing_bundle is not None:
+            raise HTTPException(409, detail={"code": "SKIN_ANALYSIS_CONSENT_ID_MUST_BE_UNIQUE"})
+        provider_contributor_token = _cil_contributor_token(subject)
+
+    affected_receipts: list[ConsentReceipt] = []
     if not payload.granted:
-        # A denial withdraws the specific resource bundle when one is supplied.
-        # Legacy/global withdrawals retain their scope-wide behavior.
-        statement = update(ConsentReceipt).where(
+        # Snapshot every active receipt being withdrawn so provider cleanup commands
+        # are committed in the same transaction as the canonical revocation.
+        statement = select(ConsentReceipt).where(
             ConsentReceipt.subject_id == subject,
             ConsentReceipt.granted.is_(True),
             ConsentReceipt.revoked_at.is_(None),
@@ -925,18 +1049,33 @@ async def put_consent(subject_id: str = Query(min_length=1, max_length=128), pay
             )
         else:
             statement = statement.where(ConsentReceipt.scope == payload.scope)
-        db.execute(statement.values(revoked_at=now))
+        affected_receipts = list(db.scalars(statement).all())
+        if affected_receipts:
+            ids = [item.receipt_id for item in affected_receipts]
+            db.execute(update(ConsentReceipt).where(
+                ConsentReceipt.receipt_id.in_(ids),
+            ).values(revoked_at=now))
         _delete_inactive_pnelly_conversations(db, subject)
-    twin_cleanup = None
+
+    twin_cleanup_ids: set[str] = set()
+    cil_cleanup_ids: set[str] = set()
     if not payload.granted:
-        twin_cleanup = _queue_twin_consent_cleanup(
-            db,
-            subject_id=subject,
-            consent_id=consent_id,
-            resource_id=payload.resource_id,
-            receipt_id=payload.receipt_id,
-            scope=payload.scope,
-        )
+        for affected in affected_receipts:
+            twin_cleanup = _queue_twin_consent_cleanup(
+                db,
+                subject_id=subject,
+                consent_id=affected.consent_id,
+                resource_id=affected.resource_id,
+                receipt_id=affected.receipt_id,
+                scope=affected.scope,
+            )
+            if twin_cleanup is not None:
+                twin_cleanup_ids.add(twin_cleanup.command_id)
+            for cleanup in _queue_cil_provider_consent_cleanup(
+                db, affected, revocation_receipt_id=payload.receipt_id
+            ):
+                cil_cleanup_ids.add(cleanup.command_id)
+
     row = ConsentReceipt(
         receipt_id=payload.receipt_id, subject_id=subject, consent_id=consent_id,
         resource_id=payload.resource_id, scope=payload.scope,
@@ -944,19 +1083,119 @@ async def put_consent(subject_id: str = Query(min_length=1, max_length=128), pay
         granted_at=now if payload.granted else None,
         revoked_at=None if payload.granted else now,
         expires_at=payload.expires_at if payload.granted else None,
+        provider_contributor_token=provider_contributor_token,
     )
     db.add(row)
     db.commit()
-    if twin_cleanup is not None:
-        await _dispatch_twin_consent_revocations(
-            db, limit=1, command_ids=[twin_cleanup.command_id]
-        )
-        db.refresh(twin_cleanup)
+
+    twin_result = await _dispatch_twin_consent_revocations_batched(
+        db, sorted(twin_cleanup_ids),
+    ) if twin_cleanup_ids else _empty_cleanup_dispatch_result()
+    cil_result = await _dispatch_cil_provider_consent_revocations_batched(
+        db, sorted(cil_cleanup_ids),
+    ) if cil_cleanup_ids else _empty_cleanup_dispatch_result()
     return {
         "receipt_id": row.receipt_id, "consent_id": row.consent_id,
         "resource_id": row.resource_id, "expires_at": row.expires_at.isoformat() if row.expires_at else None,
         "status": "recorded", "granted": row.granted,
-        "twin_cleanup_status": twin_cleanup.status if twin_cleanup is not None else "not_applicable",
+        "twin_cleanup_status": "pending" if twin_result["pending"] or twin_result["failed"] else ("delivered" if twin_result.get("delivered", twin_result["completed"]) else "not_applicable"),
+        "cil_provider_cleanup_status": "pending" if cil_result["pending"] or cil_result["failed"] else ("delivered" if cil_result["delivered"] else "not_applicable"),
+    }
+
+
+@app.post("/internal/v1/consents/skin-analysis-provider-receipts", dependencies=[Depends(require_cil_consent_issuer)])
+def issue_skin_analysis_provider_consent_receipt(
+    subject_id: str = Query(min_length=1, max_length=128),
+    payload: SkinAnalysisProviderReceiptIn = None,
+    db: Session = Depends(get_db),
+):
+    """Issue a short-lived, image-digest-bound CIL receipt from canonical active consent."""
+    subject = subject_or_404(subject_id)
+    if payload is None:
+        raise HTTPException(422, detail={"code": "SKIN_ANALYSIS_PROVIDER_RECEIPT_REQUIRED"})
+    consent = db.get(ConsentReceipt, payload.receipt_id)
+    if (
+        consent is None or consent.subject_id != subject
+        or consent.scope != "skin_analysis"
+        or not consent_is_active(consent)
+        or consent.provider_contributor_token is None
+        or consent.resource_id is None
+    ):
+        raise HTTPException(403, detail={"code": "ACTIVE_RESOURCE_BOUND_SKIN_ANALYSIS_CONSENT_REQUIRED"})
+    consent_expiry = normalize_utc(consent.expires_at)
+    if consent_expiry is None:
+        raise HTTPException(403, detail={"code": "EXPIRING_SKIN_ANALYSIS_CONSENT_REQUIRED"})
+    key = os.getenv("CIL_SKIN_ANALYSIS_CONSENT_KEY", "").encode("utf-8")
+    if len(key) < 32:
+        raise HTTPException(503, detail={"code": "CIL_SKIN_ANALYSIS_CONSENT_KEY_NOT_CONFIGURED"})
+    try:
+        ttl_seconds = int(os.getenv("CIL_SKIN_ANALYSIS_RECEIPT_TTL_SECONDS", "600"))
+    except ValueError as exc:
+        raise HTTPException(503, detail={"code": "CIL_SKIN_ANALYSIS_RECEIPT_TTL_INVALID"}) from exc
+    if not 60 <= ttl_seconds <= 900:
+        raise HTTPException(503, detail={"code": "CIL_SKIN_ANALYSIS_RECEIPT_TTL_INVALID"})
+    receipt_expiry = min(consent_expiry, utcnow() + timedelta(seconds=ttl_seconds))
+    if receipt_expiry <= utcnow():
+        raise HTTPException(403, detail={"code": "SKIN_ANALYSIS_CONSENT_EXPIRED"})
+    signed_payload = {
+        "type": "consent",
+        "purpose": "perfectcorp_skin_analysis",
+        "provider": "perfectcorp",
+        "subject_token": consent.provider_contributor_token,
+        "consent_id": consent.consent_id,
+        "consent_receipt_id": consent.receipt_id,
+        "resource_id": consent.resource_id,
+        "consent_expires_at": int(consent_expiry.timestamp()),
+        "image_sha256": payload.image_sha256,
+        "single_subject": True,
+        "subject_age_years": payload.verified_subject_age_years,
+        "expires_at": int(receipt_expiry.timestamp()),
+    }
+    encoded = base64.urlsafe_b64encode(
+        json.dumps(signed_payload, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    ).decode("ascii").rstrip("=")
+    signature = hmac.new(key, encoded.encode("ascii"), hashlib.sha256).hexdigest()
+    return {
+        "status": "issued",
+        "consent_id": consent.consent_id,
+        "resource_id": consent.resource_id,
+        "consent_expires_at": consent_expiry.isoformat(),
+        "expires_at": receipt_expiry.isoformat(),
+        "receipt": encoded + "." + signature,
+    }
+
+
+@app.post(
+    "/internal/v1/consents/skin-analysis-provider-receipts/verify",
+    dependencies=[Depends(require_cil_consent_verifier)],
+)
+def verify_skin_analysis_provider_consent(
+    payload: SkinAnalysisProviderConsentVerifyIn,
+    db: Session = Depends(get_db),
+):
+    """Live revocation/expiry check for CIL immediately before use and before result release."""
+    consent = db.get(ConsentReceipt, payload.receipt_id)
+    if (
+        consent is None
+        or consent.scope != "skin_analysis"
+        or consent.consent_id != payload.consent_id
+        or consent.resource_id != payload.resource_id
+        or consent.provider_contributor_token is None
+        or not hmac.compare_digest(consent.provider_contributor_token, payload.contributor_token)
+        or not consent_is_active(consent)
+    ):
+        raise HTTPException(403, detail={"code": "SKIN_ANALYSIS_CONSENT_INACTIVE_OR_MISMATCHED"})
+    expiry = normalize_utc(consent.expires_at)
+    if expiry is None or expiry <= utcnow():
+        raise HTTPException(403, detail={"code": "SKIN_ANALYSIS_CONSENT_EXPIRED"})
+    return {
+        "status": "active",
+        "consent_receipt_id": consent.receipt_id,
+        "consent_id": consent.consent_id,
+        "resource_id": consent.resource_id,
+        "contributor_token": consent.provider_contributor_token,
+        "image_sha256": payload.image_sha256,
+        "consent_expires_at": int(expiry.timestamp()),
     }
 
 
@@ -970,48 +1209,89 @@ async def revoke_consent(
     receipt = db.get(ConsentReceipt, receipt_id)
     if receipt is None or receipt.subject_id != subject:
         raise HTTPException(404, detail={"code": "CONSENT_RECEIPT_NOT_FOUND"})
-    if receipt.granted and receipt.revoked_at is None:
-        revoked_at = utcnow()
-        statement = update(ConsentReceipt).where(
+
+    selected_receipt_is_active = receipt.granted and receipt.revoked_at is None
+    affected_receipts: list[ConsentReceipt] = []
+    if selected_receipt_is_active:
+        statement = select(ConsentReceipt).where(
             ConsentReceipt.subject_id == subject,
             ConsentReceipt.granted.is_(True),
             ConsentReceipt.revoked_at.is_(None),
         )
         if receipt.resource_id is not None:
-            # Resource-bound withdrawal revokes every scope in this exact bundle
-            # for this one resource, but never another Twin/resource.
+            # Resource-bound withdrawal revokes all active scopes in this exact bundle/resource.
             statement = statement.where(
                 ConsentReceipt.consent_id == receipt.consent_id,
                 ConsentReceipt.resource_id == receipt.resource_id,
             )
         else:
-            # A legacy/global scope withdrawal also revokes resource-bound grants
-            # for this scope; it cannot leave a parallel grant active.
+            # Legacy/global withdrawal remains scope-wide and never crosses to another scope.
             statement = statement.where(ConsentReceipt.scope == receipt.scope)
-        db.execute(statement.values(revoked_at=revoked_at))
+        affected_receipts = list(db.scalars(statement).all())
+
+    revoked_at = utcnow()
+    affected_ids = [item.receipt_id for item in affected_receipts]
+    if affected_ids:
+        db.execute(update(ConsentReceipt).where(
+            ConsentReceipt.receipt_id.in_(affected_ids),
+            ConsentReceipt.revoked_at.is_(None),
+        ).values(revoked_at=revoked_at))
         _delete_inactive_pnelly_conversations(db, subject)
-    twin_cleanup = _queue_twin_consent_cleanup(
-        db,
-        subject_id=subject,
-        consent_id=receipt.consent_id,
-        resource_id=receipt.resource_id,
-        receipt_id=receipt.receipt_id,
-        scope=receipt.scope,
-    )
-    db.commit()
-    if twin_cleanup is not None:
-        await _dispatch_twin_consent_revocations(
-            db, limit=1, command_ids=[twin_cleanup.command_id]
+
+    twin_cleanup_ids: set[str] = set()
+    cil_cleanup_ids: set[str] = set()
+    if selected_receipt_is_active:
+        # Preserve the receipt the user actually withdrew in the outbox. The helper
+        # checks the full exact bundle for Twin scopes, so a sibling-scope revocation
+        # still triggers cleanup without substituting an unrelated receipt ID.
+        twin_cleanup = _queue_twin_consent_cleanup(
+            db,
+            subject_id=subject,
+            consent_id=receipt.consent_id,
+            resource_id=receipt.resource_id,
+            receipt_id=receipt.receipt_id,
+            scope=receipt.scope,
         )
-        db.refresh(twin_cleanup)
-        db.refresh(receipt)
+        if twin_cleanup is not None:
+            twin_cleanup_ids.add(twin_cleanup.command_id)
+        for affected in affected_receipts:
+            for cleanup in _queue_cil_provider_consent_cleanup(
+                db, affected, revocation_receipt_id=receipt.receipt_id
+            ):
+                cil_cleanup_ids.add(cleanup.command_id)
+    else:
+        # A stale retry may re-dispatch the original cleanup command, but it must
+        # never withdraw a later active grant for the same subject/scope.
+        existing_twin = select(ConsentRevocationOutbox.command_id).where(
+            ConsentRevocationOutbox.subject_id == subject,
+            ConsentRevocationOutbox.consent_id == receipt.consent_id,
+            ConsentRevocationOutbox.resource_id == receipt.resource_id,
+        )
+        twin_cleanup_ids.update(db.scalars(existing_twin).all())
+        existing_cil = select(CILProviderConsentRevocationOutbox.command_id).where(
+            CILProviderConsentRevocationOutbox.revocation_receipt_id == receipt.receipt_id,
+        )
+        cil_cleanup_ids.update(db.scalars(existing_cil).all())
+
+    db.commit()
+    twin_result = await _dispatch_twin_consent_revocations_batched(
+        db, sorted(twin_cleanup_ids),
+    ) if twin_cleanup_ids else _empty_cleanup_dispatch_result()
+    cil_result = await _dispatch_cil_provider_consent_revocations_batched(
+        db, sorted(cil_cleanup_ids),
+    ) if cil_cleanup_ids else _empty_cleanup_dispatch_result()
+    db.refresh(receipt)
     return {
         "receipt_id": receipt_id,
         "consent_id": receipt.consent_id,
         "resource_id": receipt.resource_id,
-        "status": "revoked" if receipt.granted and receipt.revoked_at is not None else "already_denied",
+        "status": (
+            "revoked" if selected_receipt_is_active
+            else ("already_revoked" if receipt.revoked_at is not None else "already_denied")
+        ),
         "revoked_at": receipt.revoked_at.isoformat() if receipt.revoked_at else None,
-        "twin_cleanup_status": twin_cleanup.status if twin_cleanup is not None else "not_applicable",
+        "twin_cleanup_status": "pending" if twin_result["pending"] or twin_result["failed"] else ("delivered" if twin_result.get("delivered", twin_result["completed"]) else "not_applicable"),
+        "cil_provider_cleanup_status": "pending" if cil_result["pending"] or cil_result["failed"] else ("delivered" if cil_result["delivered"] else "not_applicable"),
     }
 
 
@@ -1021,6 +1301,14 @@ async def dispatch_twin_consent_revocations(
     db: Session = Depends(get_db),
 ):
     return await _dispatch_twin_consent_revocations(db, limit=limit)
+
+
+@app.post("/internal/v1/cil/provider-consent-revocations/dispatch", dependencies=[Depends(require_internal_token)])
+async def dispatch_cil_provider_consent_revocations(
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+):
+    return await _dispatch_cil_provider_consent_revocations(db, limit=limit)
 
 
 
@@ -1300,7 +1588,199 @@ def _delete_inactive_pnelly_conversations(db: Session, subject_id: str | None = 
     return deleted
 
 
-TWIN_CONSENT_SCOPES = {"image_processing", "body_measurements", "virtual_twin_storage"}
+def _queue_cil_provider_consent_cleanup(
+    db: Session,
+    consent: ConsentReceipt,
+    *,
+    revocation_receipt_id: str | None = None,
+) -> list[CILProviderConsentRevocationOutbox]:
+    """Queue provider cleanup for the exact skin-analysis consent bundle being withdrawn."""
+    if consent.resource_id is not None:
+        skin_receipts = list(db.scalars(select(ConsentReceipt).where(
+            ConsentReceipt.subject_id == consent.subject_id,
+            ConsentReceipt.consent_id == consent.consent_id,
+            ConsentReceipt.resource_id == consent.resource_id,
+            ConsentReceipt.scope == "skin_analysis",
+            ConsentReceipt.granted.is_(True),
+        )).all())
+    elif consent.scope == "skin_analysis":
+        skin_receipts = [consent]
+    else:
+        return []
+
+    queued: list[CILProviderConsentRevocationOutbox] = []
+    for skin_receipt in skin_receipts:
+        event_receipt_id = revocation_receipt_id or consent.receipt_id
+        # Canonical JSON framing prevents delimiter collisions between valid IDs.
+        digest_source = json.dumps({
+            "version": 2,
+            "revocation_receipt_id": event_receipt_id,
+            "consent_receipt_id": skin_receipt.receipt_id,
+            "consent_id": skin_receipt.consent_id,
+            "resource_id": skin_receipt.resource_id,
+            "contributor_token": skin_receipt.provider_contributor_token,
+        }, sort_keys=True, separators=(",", ":"))
+        digest = hashlib.sha256(digest_source.encode("utf-8")).hexdigest()
+        command_id = "cil-provider-consent-revocation:" + digest
+        pending = next(
+            (item for item in db.new
+             if isinstance(item, CILProviderConsentRevocationOutbox) and item.command_id == command_id),
+            None,
+        )
+        if pending is not None:
+            queued.append(pending)
+            continue
+        existing = db.get(CILProviderConsentRevocationOutbox, command_id)
+        if existing is not None:
+            queued.append(existing)
+            continue
+        row = CILProviderConsentRevocationOutbox(
+            command_id=command_id,
+            revocation_receipt_id=event_receipt_id,
+            consent_id=skin_receipt.consent_id,
+            resource_id=skin_receipt.resource_id,
+            receipt_id=skin_receipt.receipt_id,
+            contributor_token=skin_receipt.provider_contributor_token,
+            status="pending",
+            attempts=0,
+        )
+        db.add(row)
+        queued.append(row)
+    return queued
+
+
+def _cil_provider_config() -> tuple[str, str] | None:
+    base = os.getenv("CIL_SERVICE_URL", "").strip().rstrip("/")
+    token = os.getenv("CIL_SERVICE_TOKEN", "").strip()
+    if not base or len(token.encode("utf-8")) < 32:
+        return None
+    try:
+        parsed = urlsplit(base)
+        host = (parsed.hostname or "").lower()
+        local = host in {"localhost", "127.0.0.1", "::1"}
+        if (
+            not host or parsed.username is not None or parsed.password is not None
+            or parsed.query or parsed.fragment
+            or (parsed.scheme != "https" and not (parsed.scheme == "http" and local))
+        ):
+            return None
+    except ValueError:
+        return None
+    return base, token
+
+
+async def _notify_cil_provider_of_consent_revocation(
+    item: CILProviderConsentRevocationOutbox,
+) -> dict:
+    config = _cil_provider_config()
+    if config is None:
+        raise RuntimeError("CIL_PROVIDER_REVOCATION_NOT_CONFIGURED")
+    base, token = config
+    payload = {
+        "consent_id": item.consent_id,
+        "revocation_reference": item.command_id,
+    }
+    if item.contributor_token is not None:
+        payload["contributor_token"] = item.contributor_token
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(8.0, connect=2.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            response = await client.post(
+                base + "/providers/perfectcorp/revoke-consent",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json=payload,
+            )
+    except httpx.TimeoutException as exc:
+        raise RuntimeError("CIL_PROVIDER_REVOCATION_TIMEOUT") from exc
+    except httpx.HTTPError as exc:
+        raise RuntimeError("CIL_PROVIDER_REVOCATION_UNAVAILABLE") from exc
+    if response.status_code != 200:
+        raise RuntimeError("CIL_PROVIDER_REVOCATION_REJECTED")
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise RuntimeError("CIL_PROVIDER_REVOCATION_INVALID_RESPONSE") from exc
+    counts = ("matched_tasks", "deleted_tasks", "waiting_for_terminal")
+    if (
+        not isinstance(result, dict)
+        or result.get("revoked") is not True
+        or result.get("consent_id") != item.consent_id
+        or result.get("revocation_reference") != item.command_id
+        or any(type(result.get(name)) is not int or result[name] < 0 for name in counts)
+    ):
+        raise RuntimeError("CIL_PROVIDER_REVOCATION_INVALID_RESPONSE")
+    return result
+
+
+async def _dispatch_cil_provider_consent_revocations(
+    db: Session,
+    limit: int = 20,
+    command_ids: list[str] | None = None,
+) -> dict:
+    if limit < 1 or limit > 100:
+        raise HTTPException(422, detail={"code": "INVALID_CIL_PROVIDER_REVOCATION_BATCH_SIZE"})
+    if command_ids is not None and (
+        not command_ids or len(command_ids) > 100 or len(command_ids) != len(set(command_ids))
+    ):
+        raise HTTPException(422, detail={"code": "INVALID_CIL_PROVIDER_REVOCATION_COMMAND_SET"})
+    statement = select(CILProviderConsentRevocationOutbox).where(
+        CILProviderConsentRevocationOutbox.status == "pending"
+    )
+    if command_ids is not None:
+        statement = statement.where(CILProviderConsentRevocationOutbox.command_id.in_(command_ids))
+    pending_rows = db.scalars(
+        statement.order_by(CILProviderConsentRevocationOutbox.created_at).limit(limit)
+    ).all()
+    completed = failed = 0
+    for item in pending_rows:
+        try:
+            result = await _notify_cil_provider_of_consent_revocation(item)
+            item.matched_tasks = result["matched_tasks"]
+            item.deleted_tasks = result["deleted_tasks"]
+            item.waiting_for_terminal = result["waiting_for_terminal"]
+            item.status = "delivered"
+            item.last_error_code = None
+            item.completed_at = utcnow()
+            completed += 1
+        except RuntimeError as exc:
+            item.attempts += 1
+            item.last_error_code = str(exc)[:80]
+            failed += 1
+        except Exception:
+            item.attempts += 1
+            item.last_error_code = "CIL_PROVIDER_REVOCATION_FAILED"
+            failed += 1
+    db.commit()
+    remaining_statement = select(CILProviderConsentRevocationOutbox.command_id).where(
+        CILProviderConsentRevocationOutbox.status == "pending"
+    )
+    if command_ids is not None:
+        remaining_statement = remaining_statement.where(
+            CILProviderConsentRevocationOutbox.command_id.in_(command_ids)
+        )
+    remaining = db.scalar(remaining_statement.limit(1))
+    already_delivered = 0
+    if command_ids is not None:
+        delivered_rows = db.scalars(select(CILProviderConsentRevocationOutbox).where(
+            CILProviderConsentRevocationOutbox.command_id.in_(command_ids),
+            CILProviderConsentRevocationOutbox.status == "delivered",
+        )).all()
+        already_delivered = max(0, len(delivered_rows) - completed)
+    return {
+        "processed": len(pending_rows),
+        "completed": completed,
+        "already_delivered": already_delivered,
+        "delivered": completed + already_delivered,
+        "failed": failed,
+        "pending": remaining is not None,
+    }
+
+
+TWIN_CONSENT_SCOPES = {"body_measurements", "virtual_twin_storage"}
+TWIN_CONSENT_EXPIRY_SCOPES = TWIN_CONSENT_SCOPES | {"image_processing"}
 
 
 def _queue_twin_consent_cleanup(
@@ -1460,12 +1940,58 @@ async def _dispatch_twin_consent_revocations(
             ConsentRevocationOutbox.command_id.in_(command_ids)
         )
     remaining = db.scalar(remaining_statement.limit(1))
+    already_delivered = 0
+    if command_ids is not None:
+        delivered_rows = db.scalars(select(ConsentRevocationOutbox).where(
+            ConsentRevocationOutbox.command_id.in_(command_ids),
+            ConsentRevocationOutbox.status == "delivered",
+        )).all()
+        already_delivered = max(0, len(delivered_rows) - completed)
     return {
         "processed": len(pending),
         "completed": completed,
+        "already_delivered": already_delivered,
+        "delivered": completed + already_delivered,
         "failed": failed,
         "pending": remaining is not None,
     }
+
+
+def _empty_cleanup_dispatch_result() -> dict[str, int | bool]:
+    return {
+        "processed": 0, "completed": 0, "already_delivered": 0,
+        "delivered": 0, "failed": 0, "pending": False,
+    }
+
+
+async def _dispatch_cil_provider_consent_revocations_batched(
+    db: Session, command_ids: list[str],
+) -> dict:
+    """Dispatch arbitrarily large deletion/revocation sets in provider-safe batches."""
+    ids = sorted(set(command_ids))
+    total = _empty_cleanup_dispatch_result()
+    for offset in range(0, len(ids), 100):
+        batch = ids[offset:offset + 100]
+        result = await _dispatch_cil_provider_consent_revocations(db, limit=len(batch), command_ids=batch)
+        for key in ("processed", "completed", "already_delivered", "delivered", "failed"):
+            total[key] += result[key]
+        total["pending"] = bool(total["pending"] or result["pending"])
+    return total
+
+
+async def _dispatch_twin_consent_revocations_batched(
+    db: Session, command_ids: list[str],
+) -> dict:
+    """Dispatch Twin cleanup in the same bounded batches as CIL provider cleanup."""
+    ids = sorted(set(command_ids))
+    total = _empty_cleanup_dispatch_result()
+    for offset in range(0, len(ids), 100):
+        batch = ids[offset:offset + 100]
+        result = await _dispatch_twin_consent_revocations(db, limit=len(batch), command_ids=batch)
+        for key in ("processed", "completed", "already_delivered", "delivered", "failed"):
+            total[key] += result[key]
+        total["pending"] = bool(total["pending"] or result["pending"])
+    return total
 
 
 def _pnelly_conversation_json(row: PnellyConversation) -> dict:
@@ -1700,6 +2226,8 @@ async def delete_user_data(subject_id: str, db: Annotated[Session, Depends(get_d
         .order_by(ConsentReceipt.created_at, ConsentReceipt.receipt_id)
     ).all())
     twin_cleanup_command_ids: set[str] = set()
+    cil_cleanup_command_ids: set[str] = set()
+    cil_cleanup_bundles: set[tuple[str, str | None]] = set()
     for consent in consents:
         cleanup = _queue_twin_consent_cleanup(
             db,
@@ -1711,7 +2239,15 @@ async def delete_user_data(subject_id: str, db: Annotated[Session, Depends(get_d
         )
         if cleanup is not None:
             twin_cleanup_command_ids.add(cleanup.command_id)
+        bundle_key = (consent.consent_id, consent.resource_id)
+        if bundle_key not in cil_cleanup_bundles:
+            cil_cleanup_bundles.add(bundle_key)
+            for cil_cleanup in _queue_cil_provider_consent_cleanup(
+                db, consent, revocation_receipt_id=consent.receipt_id
+            ):
+                cil_cleanup_command_ids.add(cil_cleanup.command_id)
     twin_cleanup_commands = len(twin_cleanup_command_ids)
+    cil_cleanup_commands = len(cil_cleanup_command_ids)
     profile = db.get(USIProfileRow, subject)
     # DSI capture receipts bind images and measurements to consent. User deletion
     # removes these short-lived verification records before removing consent rows.
@@ -1731,12 +2267,12 @@ async def delete_user_data(subject_id: str, db: Annotated[Session, Depends(get_d
     )
     db.add(receipt)
     db.commit()
-    cleanup_result = await _dispatch_twin_consent_revocations(
-        db, limit=min(100, max(1, twin_cleanup_commands)),
-        command_ids=sorted(twin_cleanup_command_ids),
-    ) if twin_cleanup_commands else {
-        "processed": 0, "completed": 0, "failed": 0, "pending": False
-    }
+    cleanup_result = await _dispatch_twin_consent_revocations_batched(
+        db, sorted(twin_cleanup_command_ids),
+    ) if twin_cleanup_commands else _empty_cleanup_dispatch_result()
+    cil_cleanup_result = await _dispatch_cil_provider_consent_revocations_batched(
+        db, sorted(cil_cleanup_command_ids),
+    ) if cil_cleanup_commands else _empty_cleanup_dispatch_result()
     return {
         "status": "deleted",
         "deleted_events": len(event_ids),
@@ -1749,6 +2285,11 @@ async def delete_user_data(subject_id: str, db: Annotated[Session, Depends(get_d
         "twin_cleanup_delivered": cleanup_result["completed"],
         "twin_cleanup_failed": cleanup_result["failed"],
         "twin_cleanup_pending": cleanup_result["pending"] or cleanup_result["failed"] > 0,
+        "cil_provider_cleanup_commands": cil_cleanup_commands,
+        "cil_provider_cleanup_processed": cil_cleanup_result["processed"],
+        "cil_provider_cleanup_delivered": cil_cleanup_result["completed"],
+        "cil_provider_cleanup_failed": cil_cleanup_result["failed"],
+        "cil_provider_cleanup_pending": cil_cleanup_result["pending"] or cil_cleanup_result["failed"] > 0,
     }
 
 
@@ -1758,8 +2299,8 @@ async def purge_expired(db: Annotated[Session, Depends(get_db)], cron_token: Ann
     if len(expected.encode()) < 32 or not cron_token or not hmac.compare_digest(expected, cron_token):
         raise HTTPException(401, detail={"code": "RETENTION_CRON_AUTH_FAILED"})
     now = utcnow()
-    expired_twin_consents = list(db.scalars(select(ConsentReceipt).where(
-        ConsentReceipt.scope.in_(TWIN_CONSENT_SCOPES),
+    expired_resource_consents = list(db.scalars(select(ConsentReceipt).where(
+        ConsentReceipt.scope.in_(TWIN_CONSENT_EXPIRY_SCOPES | {"skin_analysis"}),
         ConsentReceipt.resource_id.is_not(None),
         ConsentReceipt.granted.is_(True),
         ConsentReceipt.revoked_at.is_(None),
@@ -1767,18 +2308,49 @@ async def purge_expired(db: Annotated[Session, Depends(get_db)], cron_token: Ann
         ConsentReceipt.expires_at <= now,
     )).all())
     twin_cleanup_command_ids: set[str] = set()
-    for consent in expired_twin_consents:
-        cleanup = _queue_twin_consent_cleanup(
-            db,
-            subject_id=consent.subject_id,
-            consent_id=consent.consent_id,
-            resource_id=consent.resource_id,
-            receipt_id=consent.receipt_id,
-            scope=consent.scope,
-        )
-        if cleanup is not None:
-            twin_cleanup_command_ids.add(cleanup.command_id)
+    cil_cleanup_command_ids: set[str] = set()
+    expired_bundle_keys: set[tuple[str, str, str]] = set()
+    expired_receipt_ids: set[str] = set()
+
+    for seed in expired_resource_consents:
+        bundle_key = (seed.subject_id, seed.consent_id, seed.resource_id)
+        if bundle_key in expired_bundle_keys:
+            continue
+        expired_bundle_keys.add(bundle_key)
+        # Expiry is equivalent to withdrawal: once one resource-bound scope in
+        # the bundle expires, revoke every active scope for this exact subject,
+        # consent ID and resource in the same transaction.
+        bundle_receipts = list(db.scalars(select(ConsentReceipt).where(
+            ConsentReceipt.subject_id == seed.subject_id,
+            ConsentReceipt.consent_id == seed.consent_id,
+            ConsentReceipt.resource_id == seed.resource_id,
+            ConsentReceipt.granted.is_(True),
+            ConsentReceipt.revoked_at.is_(None),
+        )).all())
+        for affected in bundle_receipts:
+            expired_receipt_ids.add(affected.receipt_id)
+            twin_cleanup = _queue_twin_consent_cleanup(
+                db,
+                subject_id=affected.subject_id,
+                consent_id=affected.consent_id,
+                resource_id=affected.resource_id,
+                receipt_id=affected.receipt_id,
+                scope=affected.scope,
+            )
+            if twin_cleanup is not None:
+                twin_cleanup_command_ids.add(twin_cleanup.command_id)
+            for cleanup in _queue_cil_provider_consent_cleanup(
+                db, affected, revocation_receipt_id=seed.receipt_id
+            ):
+                cil_cleanup_command_ids.add(cleanup.command_id)
+
+    if expired_receipt_ids:
+        db.execute(update(ConsentReceipt).where(
+            ConsentReceipt.receipt_id.in_(sorted(expired_receipt_ids)),
+            ConsentReceipt.revoked_at.is_(None),
+        ).values(revoked_at=now))
     twin_cleanup_commands = len(twin_cleanup_command_ids)
+    cil_cleanup_commands = len(cil_cleanup_command_ids)
     result = db.execute(delete(TALEvent).where(TALEvent.expires_at.is_not(None), TALEvent.expires_at <= now))
     expired_receipts = db.execute(
         delete(DSICaptureVerificationReceiptRow).where(DSICaptureVerificationReceiptRow.expires_at <= now)
@@ -1791,6 +2363,7 @@ async def purge_expired(db: Annotated[Session, Depends(get_db)], cron_token: Ann
     # Every scheduled retention run also retries older durable cleanup commands
     # whose first notification failed; retries must not depend on another consent event.
     cleanup_result = await _dispatch_twin_consent_revocations(db, limit=100)
+    cil_cleanup_result = await _dispatch_cil_provider_consent_revocations(db, limit=100)
     return {
         "status": "complete",
         "purged_events": result.rowcount or 0,
@@ -1802,6 +2375,11 @@ async def purge_expired(db: Annotated[Session, Depends(get_db)], cron_token: Ann
         "twin_cleanup_delivered": cleanup_result["completed"],
         "twin_cleanup_failed": cleanup_result["failed"],
         "twin_cleanup_pending": cleanup_result["pending"] or cleanup_result["failed"] > 0,
+        "cil_provider_cleanup_commands": cil_cleanup_commands,
+        "cil_provider_cleanup_processed": cil_cleanup_result["processed"],
+        "cil_provider_cleanup_delivered": cil_cleanup_result["completed"],
+        "cil_provider_cleanup_failed": cil_cleanup_result["failed"],
+        "cil_provider_cleanup_pending": cil_cleanup_result["pending"] or cil_cleanup_result["failed"] > 0,
     }
 
 
