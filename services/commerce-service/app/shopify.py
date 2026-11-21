@@ -818,6 +818,9 @@ def _sync_products(connection: ShopifyConnection, db: Session, *, max_pages: int
                 ShopifyVariantSnapshot.mapping_state != "remote_deleted",
             )).all())
             product.variants_complete = bool(product_variants)
+            if not product_variants:
+                product.remote_status = "NOT_PRESENT"
+                _deactivate_product_listing(db, connection, product)
             if product.catalog_product_id:
                 product.mapping_state = (
                     "mapped" if product_variants and all(item.local_variant_id for item in product_variants)
