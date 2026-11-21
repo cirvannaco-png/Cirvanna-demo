@@ -223,8 +223,9 @@ The runner, evaluator, README, dependency-family declaration, unit tests and Git
 
 - Cirvanna baseline and route semantics have been inspected in `services/vision-intelligence/app/main.py`.
 - The exact Cirvanna FashionCLIP revision is pinned to `afacf5e5851d5979ab030e228eab60e2c95a912c`; the service's model quality and live weight/GPU operation remain unvalidated.
-- Marqo FashionCLIP, Marqo FashionSigLIP and ZooClaw-FashionSigLIP2 remain challengers, not selected replacements.
-- **Challenger full commit pins are still missing.** Current Hub repository inspection returns model metadata and abbreviated commit-history IDs, but not the full 40-character commit SHA required by the runner. Do not substitute a short SHA or `main`. Capture the full SHA from a trusted Hub API/repository metadata path before the run.
+- Marqo FashionCLIP and Marqo FashionSigLIP are the first pinned challengers, not selected replacements. ZooClaw-FashionSigLIP2 remains a later challenger pending its full immutable SHA.
+- **Two challengers are now immutably pinned and Hub-verified:** Marqo FashionCLIP `44f4c655124ed71e90cbf528d82f508d69d8a81b` and Marqo FashionSigLIP `c56244cc94f92419e8369fa71efdaf403b124ce8`. The exact revision trees and OpenCLIP checkpoint files were verified through revision-qualified Hub paths; those pins are frozen in `run_retrieval.py`. ZooClaw-FashionSigLIP2 remains unpinned and is excluded from the first run until its 40-character SHA is verified.
+- The runner records per-model download/hash/load time, candidate-text embedding time, query-to-top-k P50/P95, and CUDA peak memory when available. The run manifest also stores query-image SHA-256 digests without storing image bytes.
 - The runner's dependency ranges are not an environment lock. Generate a complete lock with hashes and retain its digest before official evaluation.
 - No matched inference benchmark, human relevance evaluation, GPU/CPU comparison, or logic-transfer result has been run.
 - A previous Hugging Face CPU job attempt returned HTTP 402 before job creation. No paid job was started. Do not retry paid compute without approved credits/payment.
