@@ -57,6 +57,24 @@ class BuildQrelsTests(unittest.TestCase):
         self.assertNotIn("human_reviews", rows[0])
         self.assertEqual(rows[0]["query_text"], "navy shirt")
 
+    def test_image_query_export_requires_relative_path_and_drops_unknown_metadata(self):
+        query = queries()[0]
+        query["task_id"] = "image_to_catalog_text"
+        query["query_image_path"] = "queries/query-0001.jpg"
+        query["owner_name"] = "should-not-be-exported"
+        rows, _ = aggregate([query], reviews(), [{
+            "query_id": "query-0001", "candidate_id": "variant-b", "adjudicator_key": "reviewer-c",
+            "relevance": 1, "exclusion_violation": True,
+        }])
+        self.assertEqual(rows[0]["query_image_path"], "queries/query-0001.jpg")
+        self.assertNotIn("owner_name", rows[0])
+        query["query_image_path"] = "/private/query.jpg"
+        with self.assertRaisesRegex(ValueError, "relative path"):
+            aggregate([query], reviews(), [{
+                "query_id": "query-0001", "candidate_id": "variant-b", "adjudicator_key": "reviewer-c",
+                "relevance": 1, "exclusion_violation": True,
+            }])
+
     def test_requires_two_distinct_reviews_for_every_candidate(self):
         with self.assertRaisesRegex(ValueError, "exactly two distinct independent reviewer records"):
             aggregate(queries(), reviews()[:-1], [])
