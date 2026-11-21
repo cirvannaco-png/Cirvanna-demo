@@ -48,8 +48,8 @@ def _catalog_map(rows: list[dict[str, Any]]) -> dict[str, str]:
     for index, row in enumerate(rows, 1):
         variant_id = row.get("variant_id")
         search_text = row.get("search_text")
-        if not isinstance(variant_id, str) or not variant_id.strip():
-            raise ValueError(f"catalog line {index}: variant_id must be a non-empty string")
+        if not isinstance(variant_id, str) or not variant_id.strip() or variant_id != variant_id.strip():
+            raise ValueError(f"catalog line {index}: variant_id must be a trimmed, non-empty string")
         if variant_id in result:
             raise ValueError(f"catalog line {index}: duplicate variant_id {variant_id!r}")
         if not isinstance(search_text, str) or not search_text.strip():
@@ -70,16 +70,16 @@ def _validate_query(row: dict[str, Any], line: int, catalog_ids: set[str]) -> di
         raise ValueError(f"query line {line}: unsupported task_id {row['task_id']!r}")
     candidate_ids = row.get("candidate_ids")
     if (not isinstance(candidate_ids, list) or not candidate_ids
-            or any(not isinstance(x, str) or not x.strip() for x in candidate_ids)):
-        raise ValueError(f"query line {line}: candidate_ids must be a non-empty string array")
+            or any(not isinstance(x, str) or not x.strip() or x != x.strip() for x in candidate_ids)):
+        raise ValueError(f"query line {line}: candidate_ids must be a non-empty trimmed string array")
     if len(candidate_ids) != len(set(candidate_ids)):
         raise ValueError(f"query line {line}: candidate_ids must be unique")
     unknown = set(candidate_ids) - catalog_ids
     if unknown:
         raise ValueError(f"query line {line}: candidates are not in the frozen eligible offer snapshot: {sorted(unknown)[:5]}")
     qrels = row.get("qrels")
-    if not isinstance(qrels, dict) or not qrels or not set(qrels).issubset(set(candidate_ids)):
-        raise ValueError(f"query line {line}: qrels must map known candidate IDs to relevance grades")
+    if not isinstance(qrels, dict) or set(qrels) != set(candidate_ids):
+        raise ValueError(f"query line {line}: qrels must contain an explicit grade for every candidate ID")
     if not any(isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in qrels.values()):
         raise ValueError(f"query line {line}: at least one positive relevance grade is required")
     for variant_id, grade in qrels.items():
@@ -108,10 +108,16 @@ def _validate_query(row: dict[str, Any], line: int, catalog_ids: set[str]) -> di
 
 def prepare(catalog_rows: list[dict[str, Any]], query_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     catalog = _catalog_map(catalog_rows)
+    catalog_positions = {variant_id: index for index, variant_id in enumerate(catalog)}
     result = []
     seen_queries: set[str] = set()
     for line, query in enumerate(query_rows, 1):
         query = _validate_query(query, line, set(catalog))
+        positions = [catalog_positions[variant_id] for variant_id in query["candidate_ids"]]
+        if positions != sorted(positions):
+            raise ValueError(
+                f"query line {line}: candidate_ids must preserve their frozen Commerce offer order"
+            )
         if query["query_id"] in seen_queries:
             raise ValueError(f"duplicate query_id {query['query_id']!r}")
         seen_queries.add(query["query_id"])
