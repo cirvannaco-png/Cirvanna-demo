@@ -113,7 +113,7 @@ Pre-register the primary metric before opening final-test results:
       --baseline-model-id cirvanna-fashion-clip \
       --split test --k 10 --primary-metric ndcg_at_k \
       --bootstrap-samples 2000 --seed 20261121 \
-      --preregistration /secure/evaluation/final-preregistration.json \\
+      --preregistration /secure/evaluation/final-preregistration.json \
       --run-manifest /secure/evaluation/fashion-retrieval-rankings.jsonl.manifest.json
 
 Metrics include Recall@k, Precision@k, MRR@k, nDCG@k, top-1 hit rate, no-result rate, top-k fill, candidate coverage and hard-exclusion violations. Reports include paired challenger-minus-baseline deltas, 95% cluster-bootstrap intervals and subgroup slices. Fewer than two independent clusters yields no confidence interval rather than a degenerate interval.
