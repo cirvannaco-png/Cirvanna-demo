@@ -1,6 +1,7 @@
 """Versioned contracts for catalog-backed appearance decisions."""
 from __future__ import annotations
 import re
+from math import isfinite
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -19,14 +20,20 @@ def normalize_category(value: str) -> str:
 
 
 def _freeze_value(value: Any) -> Any:
-    """Recursively freeze JSON-shaped catalog/context mappings after validation."""
+    """Validate and recursively freeze JSON-shaped catalog attributes."""
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if not isfinite(value):
+            raise ValueError("catalog attributes must not contain non-finite numbers")
+        return value
     if isinstance(value, Mapping):
+        if any(not isinstance(key, str) or not key.strip() for key in value):
+            raise ValueError("nested catalog attribute keys must be non-empty strings")
         return MappingProxyType({key: _freeze_value(item) for key, item in value.items()})
     if isinstance(value, (list, tuple)):
         return tuple(_freeze_value(item) for item in value)
-    if isinstance(value, set):
-        return frozenset(_freeze_value(item) for item in value)
-    return value
+    raise ValueError("catalog attributes must contain only finite JSON-compatible values")
 
 class SpecialistId(str, Enum):
     HAIR = "hair"
