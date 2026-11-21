@@ -27,7 +27,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import (
-    Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text,
+    Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, or_,
     UniqueConstraint, select,
 )
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -333,7 +333,7 @@ def _save_token_response(connection: ShopifyConnection, data: dict[str, Any]) ->
         or not isinstance(refresh_expires, int) or refresh_expires <= 0
     ):
         raise HTTPException(502, detail={"code": "SHOPIFY_EXPIRING_TOKEN_RESPONSE_INVALID"})
-    scopes = data.get("scope", "")
+    scopes = data.get("scope", connection.granted_scopes or [])
     if isinstance(scopes, str):
         scope_list = [value.strip() for value in scopes.split(",") if value.strip()]
     elif isinstance(scopes, list):
@@ -356,11 +356,11 @@ def _refresh_access_token(connection: ShopifyConnection, db: Session) -> str:
     )
     if locked is None or locked.status != "active":
         raise HTTPException(409, detail={"code": "SHOPIFY_REAUTH_REQUIRED"})
-    if locked.access_expires_at and locked.access_expires_at > utcnow() + timedelta(minutes=5):
+    if locked.access_expires_at and commerce._aware_utc(locked.access_expires_at) > utcnow() + timedelta(minutes=5):
         return _unseal(locked.access_token_ciphertext or "")
     if (
         not locked.refresh_token_ciphertext or not locked.refresh_expires_at
-        or locked.refresh_expires_at <= utcnow()
+        or commerce._aware_utc(locked.refresh_expires_at) <= utcnow()
     ):
         locked.status = "reauthorization_required"
         db.commit()
@@ -434,6 +434,19 @@ def _graphql(connection: ShopifyConnection, db: Session, query: str, variables: 
 
 def _register_webhooks(connection: ShopifyConnection, db: Session, callback_url: str) -> dict[str, str]:
     results: dict[str, str] = {}
+    existing_topics: set[str] = set()
+    try:
+        existing_data = _graphql(connection, db, """
+        query CirvannaExistingWebhooks {
+          webhookSubscriptions(first: 100) { nodes { topic uri } }
+        }
+        """)
+        existing_topics = {
+            str(item.get("topic")) for item in (existing_data.get("webhookSubscriptions") or {}).get("nodes") or []
+            if item.get("uri") == callback_url
+        }
+    except HTTPException:
+        existing_topics = set()
     query = """
     mutation RegisterShopifyWebhook($topic: WebhookSubscriptionTopic!, $input: WebhookSubscriptionInput!) {
       webhookSubscriptionCreate(topic: $topic, webhookSubscription: $input) {
@@ -443,6 +456,9 @@ def _register_webhooks(connection: ShopifyConnection, db: Session, callback_url:
     }
     """
     for topic in WEBHOOK_TOPICS:
+        if topic in existing_topics:
+            results[topic] = "registered"
+            continue
         try:
             result = _graphql(connection, db, query, {
                 "topic": topic,
@@ -576,6 +592,8 @@ def _sync_mapped_variant(
     changed = variant.price_minor != snapshot.price_minor or variant.currency != snapshot.currency
     if changed:
         variant.price_minor = snapshot.price_minor
+        variant.source_price_minor = snapshot.price_minor
+        variant.source_currency = snapshot.currency
     if changed or old_on_hand != variant.on_hand:
         variant.version += 1
         variant.updated_at = utcnow()
@@ -662,6 +680,7 @@ def _sync_products(connection: ShopifyConnection, db: Session, *, max_pages: int
                         inventory_complete=inventory_complete,
                     )
                     db.add(snapshot)
+                    db.flush()
                 else:
                     snapshot.product_snapshot_id = product.id
                     snapshot.sku = sku
@@ -680,6 +699,7 @@ def _sync_products(connection: ShopifyConnection, db: Session, *, max_pages: int
                     if conflict:
                         inventory_conflicts += 1
                 variants_seen += 1
+            db.flush()
             product.synced_at = utcnow()
             if product.catalog_product_id:
                 product.mapping_state = "mapped" if all(
@@ -765,10 +785,13 @@ def shopify_oauth_callback(
         ShopifyOAuthState.shop_domain == shop_domain,
         ShopifyOAuthState.consumed_at.is_(None),
     ).with_for_update())
-    if state_row is None or state_row.expires_at <= utcnow():
+    if state_row is None or commerce._aware_utc(state_row.expires_at) <= utcnow():
         raise HTTPException(401, detail={"code": "SHOPIFY_OAUTH_STATE_INVALID_OR_EXPIRED"})
     state_row.consumed_at = utcnow()
     merchant_id = state_row.merchant_id
+    merchant = db.get(commerce.Merchant, merchant_id)
+    if merchant is None or merchant.state != "approved":
+        raise HTTPException(403, detail={"code": "MERCHANT_NOT_APPROVED"})
     db.commit()
     try:
         response = httpx.post(
@@ -1328,6 +1351,10 @@ def _create_paid_order(connection: ShopifyConnection, db: Session, commerce_orde
                 },
             },
         })
+    if (commerce_order.fulfillment_total_minor or 0) != 0 or (commerce_order.tax_total_minor or 0) != 0:
+        raise HTTPException(409, detail={"code": "SHOPIFY_ORDER_CHARGES_NOT_ALLOCATED_PER_MERCHANT"})
+    if commerce_order.total_minor is not None and commerce_order.total_minor != commerce_order.subtotal_minor:
+        raise HTTPException(409, detail={"code": "SHOPIFY_ORDER_TOTAL_REQUIRES_MERCHANT_ALLOCATION"})
     # Shopify imports one sub-order per merchant. Source shop money must match
     # the seller's immutable offer snapshots; presentment money remains buyer
     # checkout currency. No customer identity or delivery address is exported.
