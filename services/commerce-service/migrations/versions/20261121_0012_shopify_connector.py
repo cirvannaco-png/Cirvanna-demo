@@ -122,6 +122,7 @@ def upgrade() -> None:
         sa.Column("attempts", sa.Integer(), nullable=False),
         sa.Column("last_error", sa.String(300), nullable=True),
         sa.Column("received_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("last_attempt_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("processed_at", sa.DateTime(timezone=True), nullable=True),
         sa.UniqueConstraint("shop_domain", "delivery_id", name="uq_shopify_webhook_delivery"),
     )
