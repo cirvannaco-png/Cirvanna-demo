@@ -2199,6 +2199,7 @@ def _persist_compensation_cancel_intent(
     verify the worker still owns an unexpired lease, then persist intent while
     holding that lock. A stale worker must never issue orderCancel.
     """
+    expected_lease_owner = case.lease_owner
     current = db.scalar(
         select(ShopifyCompensationCase)
         .where(ShopifyCompensationCase.id == case.id)
@@ -2211,8 +2212,8 @@ def _persist_compensation_cancel_intent(
     now_value = utcnow()
     if (
         current is None
-        or not case.lease_owner
-        or current.lease_owner != case.lease_owner
+        or not expected_lease_owner
+        or current.lease_owner != expected_lease_owner
         or lease_until is None
         or lease_until <= now_value
         or current.state != "pending"
