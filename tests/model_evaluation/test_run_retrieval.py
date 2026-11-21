@@ -1,9 +1,13 @@
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from tools.model_evaluation.fashion_retrieval.run_retrieval import (
     MODEL_SPECS,
     parse_revisions,
     rank_candidates,
+    prepare_open_clip_local_dir,
     resolve_media_path,
     validate_case,
 )
@@ -69,6 +73,24 @@ class RetrievalRunnerTests(unittest.TestCase):
         row.pop("query_image_path")
         with self.assertRaisesRegex(ValueError, "query_image_path"):
             validate_case(row, 1)
+
+    def test_openclip_tokenizer_is_repointed_to_the_pinned_snapshot(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            snapshot = root / "snapshot"
+            overlay = root / "overlay"
+            snapshot.mkdir()
+            (snapshot / "open_clip_config.json").write_text(json.dumps({
+                "model_cfg": {"text_cfg": {"hf_tokenizer_name": "timm/ViT-B-16-SigLIP"}}
+            }), encoding="utf-8")
+            (snapshot / "tokenizer.json").write_text("{}", encoding="utf-8")
+            (snapshot / "tokenizer_config.json").write_text("{}", encoding="utf-8")
+            uri, overrides = prepare_open_clip_local_dir(snapshot, overlay)
+            patched = json.loads((overlay / "open_clip_config.json").read_text(encoding="utf-8"))
+            self.assertTrue(uri.startswith("local-dir:"))
+            self.assertEqual(patched["model_cfg"]["text_cfg"]["hf_tokenizer_name"], str(snapshot.resolve()))
+            self.assertEqual(overrides["hf_tokenizer_name"], "local files from the exact model snapshot")
+            self.assertTrue((overlay / "tokenizer.json").is_symlink())
 
     def test_media_path_cannot_escape_root(self):
         with self.assertRaisesRegex(ValueError, "inside --media-root"):
