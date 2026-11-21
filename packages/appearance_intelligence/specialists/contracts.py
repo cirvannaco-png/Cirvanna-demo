@@ -62,13 +62,17 @@ class CatalogProduct:
         if not isinstance(self.attributes, Mapping):
             raise ValueError("attributes must be a mapping")
         if self.brand is not None and (
-            not isinstance(self.brand, str) or not self.brand.strip() or len(self.brand) > 100
+            not isinstance(self.brand, str) or len(self.brand) > 100
         ):
-            raise ValueError("brand must be None or a non-empty string up to 100 characters")
+            raise ValueError("brand must be None or a string up to 100 characters")
         if self.description is not None and (
             not isinstance(self.description, str) or len(self.description) > 10000
         ):
             raise ValueError("description must be None or a string up to 10000 characters")
+        if self.brand is not None:
+            object.__setattr__(self, "brand", self.brand.strip() or None)
+        if self.description is not None:
+            object.__setattr__(self, "description", self.description.strip() or None)
         object.__setattr__(self, "currency", self.currency.strip().upper())
         object.__setattr__(self, "attributes", dict(self.attributes))
 
