@@ -44,7 +44,10 @@ Requested scopes:
 - read_inventory
 - read_locations
 - read_orders
-- write_orders
+- read_draft_orders
+- write_draft_orders
+
+The connector no longer uses orderCreate; draftOrderCreate/draftOrderComplete/draftOrderDelete require draft-order permissions. The read scope is used only to reconcile the deterministic draft reservation by ID/tag; the connector does not request or persist draft customer, address, or contact fields.
 
 No customer-data scope is requested. Customer names, emails, addresses and Shopify customer objects are not synchronized. Shopify order creation deliberately excludes buyer PII.
 

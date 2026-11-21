@@ -43,7 +43,8 @@ SHOP_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.myshopify\.com$")
 GID_RE = re.compile(r"^gid://shopify/(Product|ProductVariant|Order|InventoryItem|InventoryLevel)/[0-9]+$")
 CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 REQUIRED_SCOPES = {
-    "read_products", "read_inventory", "read_locations", "read_orders", "write_orders"
+    "read_products", "read_inventory", "read_locations", "read_orders",
+    "read_draft_orders", "write_draft_orders",
 }
 WEBHOOK_TOPICS = (
     "PRODUCTS_CREATE", "PRODUCTS_UPDATE", "PRODUCTS_DELETE",
