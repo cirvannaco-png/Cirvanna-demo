@@ -36,8 +36,10 @@ def test_catalog_product_rejects_malformed_optional_brand_and_description():
         CatalogProduct.from_mapping({**base, "brand": 42})
     with pytest.raises(ValueError, match="description"):
         CatalogProduct.from_mapping({**base, "description": ["not", "text"]})
+    empty_brand = CatalogProduct.from_mapping({**base, "brand": " "})
+    assert empty_brand.brand is None
     with pytest.raises(ValueError, match="brand"):
-        CatalogProduct.from_mapping({**base, "brand": " "})
+        CatalogProduct.from_mapping({**base, "brand": "b" * 101})
 
 
 def test_catalog_snapshot_rejects_boolean_freshness_window():
