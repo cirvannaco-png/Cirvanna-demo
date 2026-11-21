@@ -88,6 +88,12 @@ class RetrievalRunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "every candidate_id exactly once"):
             validate_case(row, 1)
 
+    def test_case_contract_requires_complete_human_qrels(self):
+        row = make_case()
+        row["qrels"].pop("p2")
+        with self.assertRaisesRegex(ValueError, "explicit grade for every candidate"):
+            validate_case(row, 1)
+
     def test_image_task_requires_query_image_path(self):
         row = make_case()
         row["task_id"] = "image_to_catalog_text"
