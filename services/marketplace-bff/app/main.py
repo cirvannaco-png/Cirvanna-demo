@@ -4383,11 +4383,27 @@ async def create_click_it_consent(payload: ClickItConsentGrant, request: Request
         receipt = upstream.json()
     except ValueError as exc:
         raise HTTPException(502, detail={"code": "CONSENT_CREATION_INVALID_RESPONSE"}) from exc
+    declaration_scope = {
+        "no_people": "photographed_no_people_attestation",
+        "adults_only": "photographed_people_adult_attestation",
+        "contains_minor": "photographed_people_minor_attestation",
+    }[payload.photographed_people_status]
+    required_scopes = {"image_processing", "click_it", declaration_scope}
+    if payload.photographed_people_status == "contains_minor":
+        required_scopes.add("guardian_authorized")
     if not (
         isinstance(receipt, dict)
         and isinstance(receipt.get("consent_id"), str)
+        and bool(receipt["consent_id"].strip())
         and receipt.get("active") is True
         and isinstance(receipt.get("granted_scopes"), list)
+        and required_scopes.issubset(set(receipt["granted_scopes"]))
+        and receipt.get("photographed_people_status") == payload.photographed_people_status
+        and receipt.get("consent_version") == payload.consent_version
+        and (
+            payload.photographed_people_status != "contains_minor"
+            or receipt.get("guardian_authority_verified") is True
+        )
     ):
         raise HTTPException(502, detail={"code": "CONSENT_CREATION_INVALID_RESPONSE"})
     safe = {
@@ -4444,6 +4460,17 @@ async def revoke_click_it_consent(consent_id: str, payload: ClickItConsentRevoke
         raise HTTPException(404, detail={"code": "CONSENT_NOT_FOUND"})
     if upstream.status_code != 200:
         raise HTTPException(503, detail={"code": "CONSENT_REVOCATION_UNAVAILABLE"})
+    try:
+        revoked = upstream.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "CONSENT_REVOCATION_RESPONSE_INVALID"}) from exc
+    if not (
+        isinstance(revoked, dict)
+        and revoked.get("consent_id") == consent_id
+        and revoked.get("active") is False
+        and revoked.get("revoked") is True
+    ):
+        raise HTTPException(502, detail={"code": "CONSENT_REVOCATION_RESPONSE_INVALID"})
     return JSONResponse(content={"consent_id": consent_id, "active": False, "revoked": True}, headers={"Cache-Control": "no-store, private"})
 
 
