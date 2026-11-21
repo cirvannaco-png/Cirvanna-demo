@@ -2,6 +2,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+from pathlib import Path
 import sys
 import threading
 from types import SimpleNamespace
@@ -83,6 +84,7 @@ def test_worker_returns_validated_png_from_mock_pipeline(client,monkeypatch):
         def __call__(self,**kwargs):
             assert kwargs["category"]=="tops"
             assert kwargs["garment_photo_type"]=="flat-lay"
+            assert kwargs["segmentation_free"] is True
             assert isinstance(kwargs["person_image"],Image.Image)
             assert isinstance(kwargs["garment_image"],Image.Image)
             return FakeResult()
@@ -225,6 +227,13 @@ def _configured_worker(monkeypatch, tmp_path, *, vram=8 * 1024**3, providers=("C
     monkeypatch.setitem(sys.modules, "torch", fake_torch)
     monkeypatch.setitem(sys.modules, "onnxruntime", fake_onnxruntime)
     return source, weights
+
+
+def test_worker_image_excludes_restricted_human_parser_dependency():
+    dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text(encoding="utf-8")
+    assert "sed -i '/fashn-human-parser/d'" in dockerfile
+    assert "python3 -m pip show fashn-human-parser" in dockerfile
+    assert "PYTHONPATH=/app/vendor:/opt/fashn-vton/src" in dockerfile
 
 
 def test_source_checkout_must_match_reviewed_commit(monkeypatch, tmp_path):
