@@ -37,6 +37,7 @@ Set these in a secret manager; never commit real secrets.
 - COMMERCE_DATABASE_URL: PostgreSQL for shared/production use. SQLite is local-development only.
 - COMMERCE_AUTO_CREATE_SCHEMA: defaults true locally; set false in deployments and apply Alembic migrations.
 - COMMERCE_ENVIRONMENT: set to production in deployed environments; production requires OIDC/JWKS.
+- SHOPIFY_INVENTORY_RESERVATION_PRODUCTION_ENABLED: defaults false; Shopify-backed checkout is blocked in production (and when the environment is unclassified) until live provider, PostgreSQL restore and compensation/refund acceptance is complete. Keep false in production until those gates are signed off.
 - COMMERCE_AUTH_MODE: set to oidc_jwks in production. The hs256 mode is for local development and tests only.
 - COMMERCE_JWT_JWKS_URL: trusted HTTPS JWKS endpoint from the chosen identity provider.
 - COMMERCE_JWT_ISSUER: exact issuer identifier configured by the identity provider (required for OIDC mode).
