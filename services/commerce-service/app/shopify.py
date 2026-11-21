@@ -1640,16 +1640,19 @@ def _create_inventory_draft(connection: ShopifyConnection, db: Session,
         raise HTTPException(503, detail={"code": "SHOPIFY_RESERVATION_OUTCOME_UNKNOWN"}) from exc
     result = data.get("draftOrderCreate") or {}
     errors, draft = result.get("userErrors") or [], result.get("draftOrder")
+    if isinstance(draft, dict) and draft.get("id"):
+        # Persist a returned draft ID even alongside userErrors: if Shopify
+        # partially created the draft, compensation must still be able to delete it.
+        reservation.draft_order_gid = draft["id"]
+        reservation.state = "reserved"
+        reservation.last_error = None
+        db.commit()
     if errors or not isinstance(draft, dict) or not draft.get("id"):
         reservation.state = "failed"
         reservation.last_error = json.dumps(errors[:3], ensure_ascii=True)[:300] or "SHOPIFY_DRAFT_RESERVATION_FAILED"
         db.commit()
         raise HTTPException(409, detail={"code": "SHOPIFY_INVENTORY_RESERVATION_REJECTED"})
     if draft.get("ready") is False:
-        # A draft exists but Shopify has not confirmed readiness. Persist its ID
-        # so compensation can delete it rather than leaving an orphaned hold.
-        reservation.draft_order_gid = draft["id"]
-        reservation.state = "reserved"
         reservation.last_error = "SHOPIFY_DRAFT_RESERVATION_NOT_READY"
         db.commit()
         raise HTTPException(409, detail={"code": "SHOPIFY_INVENTORY_RESERVATION_NOT_READY"})
@@ -1825,7 +1828,7 @@ def _complete_shopify_inventory_reservation(connection: ShopifyConnection, db: S
             raise HTTPException(409, detail={"code": "SHOPIFY_RESERVED_DRAFT_NOT_COMPLETABLE"})
         completed = _graphql(connection, db, """
           mutation CirvannaCompleteReservedDraft($id: ID!) {
-            draftOrderComplete(id: $id, paymentPending: false, sourceName: "Cirvanna") {
+            draftOrderComplete(id: $id) {
               draftOrder { id status order { id name displayFinancialStatus displayFulfillmentStatus } }
               userErrors { field message }
             }
