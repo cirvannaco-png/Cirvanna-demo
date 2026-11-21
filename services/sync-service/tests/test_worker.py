@@ -425,3 +425,18 @@ def test_worker_does_not_ack_manual_review_without_configured_operator_sink():
     result = CommerceWardrobeWorker(settings(), client).process_batch()
     assert result == {"claimed": 1, "processed": 0, "retried": 1, "dead_lettered": 0}
     assert not any(path.endswith("/ack") for path in calls)
+
+
+def test_refund_payload_accepts_verified_refund_object_without_charge_id():
+    from app.worker import _refund_payload
+    event = refund_event()
+    event["payload"]["ownership_authority"] = "verified_stripe_refund_event"
+    event["payload"]["refund_id"] = "re_refund_0001"
+    event["payload"]["order_total_minor"] = 500000
+    event["payload"]["merchandise_subtotal_minor"] = 450000
+    event["payload"].pop("charge_id")
+    result = _refund_payload(event)
+    assert result["ownership_authority"] == "verified_stripe_refund_event"
+    assert result["refund_id"] == "re_refund_0001"
+    assert result["charge_id"] is None
+    assert result["merchandise_subtotal_minor"] == 450000
