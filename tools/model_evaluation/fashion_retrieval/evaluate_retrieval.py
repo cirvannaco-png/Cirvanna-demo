@@ -63,6 +63,11 @@ def _validate_record(row: Any, line: int) -> dict[str, Any]:
     excluded = _strings(row.get("excluded_product_ids", []), "excluded_product_ids")
     if not set(excluded).issubset(candidate_set):
         raise ValueError(f"{prefix}: excluded_product_ids must be part of candidate_ids")
+    human_violations = _strings(
+        row.get("human_exclusion_violation_ids", []), "human_exclusion_violation_ids"
+    )
+    if not set(human_violations).issubset(candidate_set):
+        raise ValueError(f"{prefix}: human_exclusion_violation_ids must be part of candidate_ids")
     subgroups = row.get("subgroups", {})
     if not isinstance(subgroups, dict) or any(
         not isinstance(k, str) or not k.strip() or not isinstance(v, str) or not v.strip()
