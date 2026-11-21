@@ -3378,7 +3378,7 @@ def test_shopify_inventory_levels_are_fully_paginated_before_stock_is_marked_com
     }
     connection.products_sync_lease_owner = "catalog-sync-worker"
     connection.products_sync_lease_until = main.now() + main.timedelta(seconds=30)
-    shopify.Base.metadata.create_all(bind=db.get_bind())
+    main.Base.metadata.create_all(bind=db.get_bind())
     db.add(connection)
     db.commit()
     calls = []
