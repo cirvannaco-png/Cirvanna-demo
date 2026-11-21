@@ -53,7 +53,7 @@ class TryOnRequest(BaseModel):
     product_id: str = Field(min_length=3, max_length=128)
     person_image_asset_id: str = Field(min_length=36, max_length=36)
     garment_image_asset_id: str = Field(min_length=36, max_length=36)
-    garment_asset_purpose: Literal["catalog_garment_image", "wardrobe_garment_image"] = "catalog_garment_image"
+    garment_asset_purpose: Literal["catalog_garment_flat_lay", "wardrobe_garment_flat_lay"]
     garment_asset_parent_id: str | None = Field(default=None, min_length=3, max_length=160)
     garment_category: Literal["upper_body", "lower_body", "dress", "outerwear", "full_outfit"]
     garment_photo_type: Literal["flat-lay"] = "flat-lay"
@@ -80,7 +80,7 @@ class TryOnRequest(BaseModel):
 
     @model_validator(mode="after")
     def consistent_look_version(self):
-        if self.garment_asset_purpose == "catalog_garment_image":
+        if self.garment_asset_purpose == "catalog_garment_flat_lay":
             if self.garment_asset_parent_id and self.garment_asset_parent_id != self.product_id:
                 raise ValueError("Catalog garment asset parent must match product_id.")
         elif not self.garment_asset_parent_id:
