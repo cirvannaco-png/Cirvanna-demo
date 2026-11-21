@@ -59,10 +59,7 @@ REQUIRED_SCOPES = {
     "read_draft_orders", "write_draft_orders",
 }
 COMPENSATION_SCOPES = {"write_orders"}
-# One product page contains at most 20 variants. Each tracked variant can require
-# at most 20 additional inventory-level requests, each with a 12s HTTP timeout:
-# 20 * 20 * 12s = 80 minutes worst case. Keep the lease above that bounded page
-# duration so another worker cannot reclaim the store while nested pagination runs.
+# Bounded worst case: 20 variants × 20 inventory pages × 12s per request = 80 minutes.
 CATALOG_SYNC_LEASE_MINUTES = 120
 WEBHOOK_TOPICS = (
     "PRODUCTS_CREATE", "PRODUCTS_UPDATE", "PRODUCTS_DELETE",
@@ -636,8 +633,25 @@ def _inventory_totals(inventory_item: dict[str, Any]) -> tuple[bool, int | None,
     return True, available, on_hand, True
 
 
+def _renew_products_sync_lease(db: Session, connection_id: str, lease_owner: str) -> None:
+    """Extend only the current active catalog-sync owner's lease."""
+    now_value = utcnow()
+    result = db.execute(update(ShopifyConnection).where(
+        ShopifyConnection.id == connection_id,
+        ShopifyConnection.status == "active",
+        ShopifyConnection.products_sync_lease_owner == lease_owner,
+    ).values(
+        products_sync_lease_until=now_value + timedelta(minutes=CATALOG_SYNC_LEASE_MINUTES),
+    ).execution_options(synchronize_session=False))
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(409, detail={"code": "SHOPIFY_CATALOG_SYNC_LEASE_LOST"})
+    db.commit()
+
+
 def _complete_inventory_levels(connection: ShopifyConnection, db: Session,
-                               inventory_item: dict[str, Any], *, max_pages: int = 20) -> dict[str, Any]:
+                               inventory_item: dict[str, Any], *, max_pages: int = 20,
+                               lease_owner: str | None = None) -> dict[str, Any]:
     """Hydrate every location for a tracked item; incomplete pagination stays unsellable."""
     if inventory_item.get("tracked") is not True:
         return inventory_item
@@ -663,6 +677,8 @@ def _complete_inventory_levels(connection: ShopifyConnection, db: Session,
     while page_info.get("hasNextPage") is True and pages < max_pages:
         if not isinstance(after, str) or not after:
             break
+        if lease_owner:
+            _renew_products_sync_lease(db, connection.id, lease_owner)
         data = _graphql(connection, db, """
           query CirvannaShopifyInventoryLevels($id: ID!, $after: String) {
             inventoryItem(id: $id) {
@@ -999,7 +1015,7 @@ def _sync_products_locked(connection: ShopifyConnection, db: Session, *, max_pag
             _deactivate_product_listing(db, connection, product)
             products_seen_ids.add(product.id)
             inventory_item = _complete_inventory_levels(
-                connection, db, remote_variant.get("inventoryItem") or {}
+                connection, db, remote_variant.get("inventoryItem") or {}, lease_owner=lease_owner
             )
             tracked, available, on_hand, inventory_complete = _inventory_totals(inventory_item)
             sku = _safe_sku(remote_variant.get("sku"), remote_gid)
@@ -2490,37 +2506,48 @@ def _verify_compensation_inventory_restock(connection: ShopifyConnection, db: Se
     ) and set(after) == set(case.inventory_before_json) == set(expected)
 
 
-def _claim_shopify_cancellation_intent(db: Session, case: ShopifyCompensationCase) -> bool:
-    """Fence the irreversible orderCancel call with an atomic, owner-checked lease renewal."""
-    current = utcnow()
-    owner = case.lease_owner or uuid.uuid4().hex
-    claim = db.execute(update(ShopifyCompensationCase).where(
+def _persist_compensation_cancel_intent(db: Session, case: ShopifyCompensationCase) -> None:
+    """Atomically fence the worker and extend its lease before orderCancel."""
+    owner = case.lease_owner
+    if not owner:
+        raise HTTPException(409, detail={"code": "SHOPIFY_COMPENSATION_LEASE_LOST"})
+    now_value = utcnow()
+    result = db.execute(update(ShopifyCompensationCase).where(
         ShopifyCompensationCase.id == case.id,
-        ShopifyCompensationCase.state.in_(["pending", "cancel_pending"]),
-        or_(
-            ShopifyCompensationCase.lease_until.is_(None),
-            ShopifyCompensationCase.lease_until < current,
-            and_(ShopifyCompensationCase.lease_owner == owner, ShopifyCompensationCase.lease_until >= current),
-        ),
-        or_(ShopifyCompensationCase.lease_owner.is_(None),
-            ShopifyCompensationCase.lease_owner == owner,
-            ShopifyCompensationCase.lease_until < current),
+        ShopifyCompensationCase.lease_owner == owner,
+        ShopifyCompensationCase.state.in_(["pending", "cancel_pending", "cancel_requesting"]),
     ).values(
         state="cancel_requesting",
-        lease_owner=owner,
-        lease_until=current + timedelta(seconds=90),
         last_error="SHOPIFY_ORDER_CANCEL_REQUEST_STARTED",
-        updated_at=current,
+        updated_at=now_value,
+        lease_until=now_value + timedelta(seconds=90),
     ).execution_options(synchronize_session=False))
-    if claim.rowcount != 1:
+    if result.rowcount != 1:
         db.rollback()
-        db.refresh(case)
-        return False
+        raise HTTPException(409, detail={"code": "SHOPIFY_COMPENSATION_LEASE_LOST"})
     db.commit()
     db.refresh(case)
-    return case.lease_owner == owner and case.state == "cancel_requesting"
 
 
+def _renew_compensation_cancel_lease(db: Session, case: ShopifyCompensationCase) -> None:
+    """Fence the response write too; a stale worker cannot overwrite a reclaimed case."""
+    owner = case.lease_owner
+    if not owner:
+        raise HTTPException(409, detail={"code": "SHOPIFY_COMPENSATION_LEASE_LOST"})
+    now_value = utcnow()
+    result = db.execute(update(ShopifyCompensationCase).where(
+        ShopifyCompensationCase.id == case.id,
+        ShopifyCompensationCase.lease_owner == owner,
+        ShopifyCompensationCase.state == "cancel_requesting",
+    ).values(
+        lease_until=now_value + timedelta(seconds=90),
+        updated_at=now_value,
+    ).execution_options(synchronize_session=False))
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(409, detail={"code": "SHOPIFY_COMPENSATION_LEASE_LOST"})
+    db.commit()
+    db.refresh(case)
 
 
 def _process_shopify_compensation_case(db: Session, case: ShopifyCompensationCase,
@@ -2637,12 +2664,8 @@ def _process_shopify_compensation_case(db: Session, case: ShopifyCompensationCas
             return case.state
         case.inventory_before_json = inventory_before
         case.inventory_expected_restore_json = inventory_expected
-        # Persist and renew the irreversible-action intent with a conditional
-        # lease-owner compare-and-swap immediately before calling Shopify. Long
-        # inventory reads cannot let a second worker inherit this mutation.
-        if not _claim_shopify_cancellation_intent(db, case):
-            return case.state
-        cancellation_lease_owner = case.lease_owner
+        # Atomically fence the lease owner immediately before the irreversible mutation.
+        _persist_compensation_cancel_intent(db, case)
         try:
             cancelled = _graphql(connection, db, """
           mutation CirvannaCancelCompensatedOrder($orderId: ID!, $notifyCustomer: Boolean, $refundMethod: OrderCancelRefundMethodInput!, $restock: Boolean!, $reason: OrderCancelReason!, $staffNote: String) {
@@ -2655,19 +2678,15 @@ def _process_shopify_compensation_case(db: Session, case: ShopifyCompensationCas
             """, {"orderId": remote_order["id"], "notifyCustomer": False,
                 "refundMethod": {"originalPaymentMethodsRefund": False}, "restock": True,
                 "reason": "INVENTORY", "staffNote": "Cirvanna checkout compensation; Stripe refund is managed by Cirvanna."})
+            _renew_compensation_cancel_lease(db, case)
         except Exception:
-            db.rollback()
-            current_case = db.get(ShopifyCompensationCase, case.id)
-            if current_case and current_case.lease_owner == cancellation_lease_owner and current_case.state == "cancel_requesting":
-                current_case.last_error = "SHOPIFY_ORDER_CANCEL_OUTCOME_AMBIGUOUS"
-                current_case.lease_owner = None
-                current_case.lease_until = None
-                current_case.updated_at = utcnow()
-                db.commit()
+            case.state = "cancel_requesting"
+            case.last_error = "SHOPIFY_ORDER_CANCEL_OUTCOME_AMBIGUOUS"
+            case.lease_owner = None
+            case.lease_until = None
+            case.updated_at = utcnow()
+            db.commit()
             raise
-        db.refresh(case)
-        if case.lease_owner != cancellation_lease_owner or case.state != "cancel_requesting":
-            return case.state
         result = cancelled.get("orderCancel") or {}
         errors = result.get("orderCancelUserErrors") or []
         if errors:
