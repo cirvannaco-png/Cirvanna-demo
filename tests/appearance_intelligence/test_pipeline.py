@@ -50,14 +50,14 @@ def test_makeup_candidate_can_show_only_with_trusted_required_gates():
     assert result.status is EvaluationStatus.COMPLETED
     assert len(result.candidates) == 1
     assert result.candidates[0].arbitration.verdict is DecisionVerdict.SHOW
-    assert result.candidates[0].may_display
+    assert result.candidates[0].cal_preflight_show
 
 def test_missing_safety_or_legal_evidence_fails_closed_to_review():
     context = AppearanceContext("req-2", "user-1", "KES", 2000)
     item = catalog_product("makeup-2", "makeup", attributes={"finish": "matte"})
     candidate = run_specialist(context, SpecialistId.MAKEUP, snapshot(item)).candidates[0]
     assert candidate.arbitration.verdict is DecisionVerdict.REVIEW
-    assert not candidate.may_display
+    assert not candidate.cal_preflight_show
     assert {"SAFETY_EVIDENCE_MISSING", "LEGAL_EVIDENCE_MISSING"}.issubset(set(candidate.reason_codes))
 
 def test_missing_npl_state_reviews_but_verified_empty_state_can_show():
@@ -71,7 +71,7 @@ def test_missing_npl_state_reviews_but_verified_empty_state_can_show():
     ).candidates[0]
     assert unavailable.arbitration.verdict is DecisionVerdict.REVIEW
     assert "NPL_EVIDENCE_UNAVAILABLE" in unavailable.reason_codes
-    assert not unavailable.may_display
+    assert not unavailable.cal_preflight_show
 
     verified_empty = run_specialist(
         context, SpecialistId.MAKEUP, snapshot(item), (),
@@ -98,7 +98,7 @@ def test_npl_hard_negative_blocks_before_missing_gates():
     candidate = run_specialist(context, SpecialistId.MAKEUP, snapshot(item), (negative,)).candidates[0]
     assert candidate.npl_decision.blocked
     assert candidate.arbitration.verdict is DecisionVerdict.BLOCK
-    assert not candidate.may_display
+    assert not candidate.cal_preflight_show
 
 def test_footwear_requires_fit_evidence_but_makeup_does_not():
     context = AppearanceContext("req-4", "user-1", "KES", 4000)
@@ -134,7 +134,7 @@ def test_look_plus_makeup_composes_only_after_component_and_bundle_show():
     result = build_look(context, snapshot(apparel, makeup), (), evidence, bundle_signals=bundle_gates())
     assert result.status is EvaluationStatus.COMPLETED
     assert len(result.options) == 1
-    assert result.options[0].may_display
+    assert result.options[0].cal_preflight_show
     assert result.options[0].total_price_minor == 5800
     assert result.options[0].product_ids == ("look-top", "makeup-3")
 
@@ -159,7 +159,7 @@ def test_look_composition_does_not_authorize_display_when_npl_snapshot_is_missin
     assert result.status is EvaluationStatus.NEEDS_REVIEW
     assert result.options == ()
     assert all(
-        not candidate.may_display
+        not candidate.cal_preflight_show
         for component in result.components.values()
         for candidate in component.candidates
     )
@@ -322,7 +322,7 @@ def test_orchestrator_wires_canonical_preference_state_into_npl_and_cal():
         {item.product_id: product_gates(item.product_id)},
     )
     assert result.candidates[0].arbitration.verdict is DecisionVerdict.BLOCK
-    assert not result.candidates[0].may_display
+    assert not result.candidates[0].cal_preflight_show
 
 
 def test_orchestrator_returns_review_when_canonical_npl_service_is_unavailable():
