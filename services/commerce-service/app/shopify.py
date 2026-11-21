@@ -1552,6 +1552,20 @@ def process_shopify_events(
                     ShopifyConnection.shop_domain == event.shop_domain
                 ))
                 if connection:
+                    # Shopify redaction cascades provider-owned rows. Before that
+                    # deletion, preserve a minimal durable manual-review event for
+                    # every paid order whose compensation is not complete. The
+                    # event contains no Shopify customer/contact/address payload.
+                    unresolved_cases = list(db.scalars(select(ShopifyCompensationCase).where(
+                        ShopifyCompensationCase.connection_id == connection.id,
+                        ShopifyCompensationCase.state.in_(["pending", "cancel_pending", "cancel_requesting"]),
+                    ).with_for_update()).all())
+                    for case in unresolved_cases:
+                        order = db.get(commerce.CommerceOrder, case.commerce_order_id)
+                        if order is not None:
+                            _case_manual_review(
+                                db, case, order, "SHOPIFY_SHOP_REDACTED_DURING_COMPENSATION"
+                            )
                     _quarantine_connection_listings(db, connection)
                     db.execute(ShopifyWebhookEvent.__table__.delete().where(
                         ShopifyWebhookEvent.shop_domain == event.shop_domain,
