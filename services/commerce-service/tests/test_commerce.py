@@ -3451,10 +3451,10 @@ def test_shop_redaction_preserves_unresolved_compensation_manual_review_event(cl
     assert response.status_code == 200, response.text
     db.refresh(order)
     assert order.fulfillment_state == "manual_review"
-    review = db.scalar(select(main.CommerceOutboxEvent).where(
+    reviews = list(db.scalars(select(main.CommerceOutboxEvent).where(
         main.CommerceOutboxEvent.event_type == "commerce.shopify.compensation.manual_review",
-        main.CommerceOutboxEvent.payload["order_id"].as_string() == order.id,
-    ))
+    )).all())
+    review = next((row for row in reviews if row.payload.get("order_id") == order.id), None)
     assert review is not None
     assert review.payload["reason_code"] == "SHOPIFY_SHOP_REDACTED_DURING_COMPENSATION"
     assert "shop_domain" not in review.payload
