@@ -986,23 +986,32 @@ async def put_consent(subject_id: str = Query(min_length=1, max_length=128), pay
             or normalize_utc(existing.expires_at) != normalize_utc(payload.expires_at)
         ):
             raise HTTPException(409, detail={"code": "CONSENT_RECEIPT_IMMUTABLE"})
+        existing_twin_commands = list(db.scalars(select(
+            ConsentRevocationOutbox.command_id
+        ).where(
+            ConsentRevocationOutbox.subject_id == existing.subject_id,
+            ConsentRevocationOutbox.consent_id == existing.consent_id,
+            ConsentRevocationOutbox.resource_id == existing.resource_id,
+        )).all())
+        twin_result = await _dispatch_twin_consent_revocations_batched(
+            db, existing_twin_commands,
+        ) if existing_twin_commands else _empty_cleanup_dispatch_result()
         existing_cil_commands = list(db.scalars(select(
             CILProviderConsentRevocationOutbox.command_id
         ).where(
             CILProviderConsentRevocationOutbox.revocation_receipt_id == existing.receipt_id,
         )).all())
-        cil_result = await _dispatch_cil_provider_consent_revocations(
-            db,
-            limit=min(100, max(1, len(existing_cil_commands))),
-            command_ids=sorted(existing_cil_commands),
-        ) if existing_cil_commands else {
-            "processed": 0, "completed": 0, "already_delivered": 0,
-            "delivered": 0, "failed": 0, "pending": False,
-        }
+        cil_result = await _dispatch_cil_provider_consent_revocations_batched(
+            db, existing_cil_commands,
+        ) if existing_cil_commands else _empty_cleanup_dispatch_result()
         return {
             "receipt_id": existing.receipt_id, "consent_id": existing.consent_id,
             "resource_id": existing.resource_id, "expires_at": existing.expires_at.isoformat() if existing.expires_at else None, "status": "replayed", "granted": existing.granted,
-            "twin_cleanup_status": "not_applicable",
+            "twin_cleanup_status": (
+                "pending" if twin_result["pending"] or twin_result["failed"]
+                else "delivered" if twin_result["delivered"]
+                else "not_applicable"
+            ),
             "cil_provider_cleanup_status": (
                 "pending" if cil_result["pending"] or cil_result["failed"]
                 else "delivered" if cil_result["delivered"]
@@ -1079,12 +1088,12 @@ async def put_consent(subject_id: str = Query(min_length=1, max_length=128), pay
     db.add(row)
     db.commit()
 
-    twin_result = await _dispatch_twin_consent_revocations(
-        db, limit=min(100, max(1, len(twin_cleanup_ids))), command_ids=sorted(twin_cleanup_ids)
-    ) if twin_cleanup_ids else {"processed": 0, "completed": 0, "already_delivered": 0, "delivered": 0, "failed": 0, "pending": False}
-    cil_result = await _dispatch_cil_provider_consent_revocations(
-        db, limit=min(100, max(1, len(cil_cleanup_ids))), command_ids=sorted(cil_cleanup_ids)
-    ) if cil_cleanup_ids else {"processed": 0, "completed": 0, "already_delivered": 0, "delivered": 0, "failed": 0, "pending": False}
+    twin_result = await _dispatch_twin_consent_revocations_batched(
+        db, sorted(twin_cleanup_ids),
+    ) if twin_cleanup_ids else _empty_cleanup_dispatch_result()
+    cil_result = await _dispatch_cil_provider_consent_revocations_batched(
+        db, sorted(cil_cleanup_ids),
+    ) if cil_cleanup_ids else _empty_cleanup_dispatch_result()
     return {
         "receipt_id": row.receipt_id, "consent_id": row.consent_id,
         "resource_id": row.resource_id, "expires_at": row.expires_at.isoformat() if row.expires_at else None,
@@ -1265,12 +1274,12 @@ async def revoke_consent(
         cil_cleanup_ids.update(db.scalars(existing_cil).all())
 
     db.commit()
-    twin_result = await _dispatch_twin_consent_revocations(
-        db, limit=min(100, max(1, len(twin_cleanup_ids))), command_ids=sorted(twin_cleanup_ids)
-    ) if twin_cleanup_ids else {"processed": 0, "completed": 0, "failed": 0, "pending": False}
-    cil_result = await _dispatch_cil_provider_consent_revocations(
-        db, limit=min(100, max(1, len(cil_cleanup_ids))), command_ids=sorted(cil_cleanup_ids)
-    ) if cil_cleanup_ids else {"processed": 0, "completed": 0, "already_delivered": 0, "delivered": 0, "failed": 0, "pending": False}
+    twin_result = await _dispatch_twin_consent_revocations_batched(
+        db, sorted(twin_cleanup_ids),
+    ) if twin_cleanup_ids else _empty_cleanup_dispatch_result()
+    cil_result = await _dispatch_cil_provider_consent_revocations_batched(
+        db, sorted(cil_cleanup_ids),
+    ) if cil_cleanup_ids else _empty_cleanup_dispatch_result()
     db.refresh(receipt)
     return {
         "receipt_id": receipt_id,
@@ -1948,6 +1957,43 @@ async def _dispatch_twin_consent_revocations(
     }
 
 
+def _empty_cleanup_dispatch_result() -> dict[str, int | bool]:
+    return {
+        "processed": 0, "completed": 0, "already_delivered": 0,
+        "delivered": 0, "failed": 0, "pending": False,
+    }
+
+
+async def _dispatch_cil_provider_consent_revocations_batched(
+    db: Session, command_ids: list[str],
+) -> dict:
+    """Dispatch arbitrarily large deletion/revocation sets in provider-safe batches."""
+    ids = sorted(set(command_ids))
+    total = _empty_cleanup_dispatch_result()
+    for offset in range(0, len(ids), 100):
+        batch = ids[offset:offset + 100]
+        result = await _dispatch_cil_provider_consent_revocations(db, limit=len(batch), command_ids=batch)
+        for key in ("processed", "completed", "already_delivered", "delivered", "failed"):
+            total[key] += result[key]
+        total["pending"] = bool(total["pending"] or result["pending"])
+    return total
+
+
+async def _dispatch_twin_consent_revocations_batched(
+    db: Session, command_ids: list[str],
+) -> dict:
+    """Dispatch Twin cleanup in the same bounded batches as CIL provider cleanup."""
+    ids = sorted(set(command_ids))
+    total = _empty_cleanup_dispatch_result()
+    for offset in range(0, len(ids), 100):
+        batch = ids[offset:offset + 100]
+        result = await _dispatch_twin_consent_revocations(db, limit=len(batch), command_ids=batch)
+        for key in ("processed", "completed", "already_delivered", "delivered", "failed"):
+            total[key] += result[key]
+        total["pending"] = bool(total["pending"] or result["pending"])
+    return total
+
+
 def _pnelly_conversation_json(row: PnellyConversation) -> dict:
     return {
         "conversation_id": row.conversation_id,
@@ -2221,18 +2267,12 @@ async def delete_user_data(subject_id: str, db: Annotated[Session, Depends(get_d
     )
     db.add(receipt)
     db.commit()
-    cleanup_result = await _dispatch_twin_consent_revocations(
-        db, limit=min(100, max(1, twin_cleanup_commands)),
-        command_ids=sorted(twin_cleanup_command_ids),
-    ) if twin_cleanup_commands else {
-        "processed": 0, "completed": 0, "failed": 0, "pending": False
-    }
-    cil_cleanup_result = await _dispatch_cil_provider_consent_revocations(
-        db, limit=min(100, max(1, cil_cleanup_commands)),
-        command_ids=sorted(cil_cleanup_command_ids),
-    ) if cil_cleanup_commands else {
-        "processed": 0, "completed": 0, "failed": 0, "pending": False
-    }
+    cleanup_result = await _dispatch_twin_consent_revocations_batched(
+        db, sorted(twin_cleanup_command_ids),
+    ) if twin_cleanup_commands else _empty_cleanup_dispatch_result()
+    cil_cleanup_result = await _dispatch_cil_provider_consent_revocations_batched(
+        db, sorted(cil_cleanup_command_ids),
+    ) if cil_cleanup_commands else _empty_cleanup_dispatch_result()
     return {
         "status": "deleted",
         "deleted_events": len(event_ids),
