@@ -10,7 +10,7 @@ def make_case(query_id, cluster_id, baseline, challenger):
         "schema_version": "1.0", "query_id": query_id, "cluster_id": cluster_id,
         "task_id": "image_to_catalog_text", "split": "test",
         "candidate_ids": ["p1", "p2", "p3", "p4"],
-        "qrels": {"p1": 4, "p2": 2, "p3": 0},
+        "qrels": {"p1": 4, "p2": 2, "p3": 0, "p4": 0},
         "rankings": {"cirvanna-fashion-clip": baseline, "challenger": challenger},
         "excluded_product_ids": ["p4"],
         "subgroups": {"source_type": "street", "query_type": "image"},
@@ -59,6 +59,12 @@ class RetrievalEvaluationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "same model IDs"):
                 read_cases(path)
 
+    def test_rejects_incomplete_qrels_instead_of_marking_unjudged_candidates_irrelevant(self):
+        row = make_case("query-001", "cluster-001", ["p1"], ["p2"])
+        row["qrels"] = {"p1": 4, "p2": 0, "p3": 0}
+        with self.assertRaisesRegex(ValueError, "explicit grade for every candidate"):
+            _validate_record(row, 1)
+
     def test_rejects_non_list_rankings_and_normalized_model_id_collisions(self):
         row = make_case("query-001", "cluster-001", ["p1"], ["p2"])
         row["rankings"]["challenger"] = "p1"
@@ -77,7 +83,7 @@ class RetrievalEvaluationTests(unittest.TestCase):
 
     def test_requires_positive_human_relevance_and_valid_exclusion_ids(self):
         row = make_case("query-001", "cluster-001", ["p1"], ["p2"])
-        row["qrels"] = {"p3": 0}
+        row["qrels"] = {"p1": 0, "p2": 0, "p3": 0, "p4": 0}
         with self.assertRaisesRegex(ValueError, "positive relevance"):
             _validate_record(row, 1)
         row = make_case("query-001", "cluster-001", ["p1"], ["p2"])
