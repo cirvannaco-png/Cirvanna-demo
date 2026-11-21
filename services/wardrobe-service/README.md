@@ -2,7 +2,7 @@
 
 **Status:** authenticated API and SQLAlchemy persistence contract implemented; production database and object-storage deletion worker still require deployment and validation.
 
-The service owns user wardrobe item records and saved outfit compositions. Item records include lifecycle, catalog-product references, user-authorized opaque image asset IDs, explicit photo-storage consent, optimistic version checks and a durable asset-deletion outbox. Saved outfits contain references to active, owner-scoped wardrobe items; they do not copy Catalog facts or make unpurchased marketplace products owned. The PostgreSQL schema is applied through ordered migrations `0001_initial.sql`, `0002_wardrobe_learning_events.sql`, `0003_saved_outfits.sql`, `0004_rotation_state.sql`, `0005_verified_purchase_ownership.sql`, `0006_outfit_wear_history.sql` and `0007_purchase_refund_snapshots.sql`. The application does not automatically create the production schema. SQLite is test-only.
+The service owns user wardrobe item records and saved outfit compositions. Item records include lifecycle, catalog-product references, user-authorized opaque image asset IDs, explicit photo-storage consent, optimistic version checks and a durable asset-deletion outbox. Saved outfits contain references to active, owner-scoped wardrobe items; they do not copy Catalog facts or make unpurchased marketplace products owned. The PostgreSQL schema is applied through ordered migrations `0001_initial.sql`, `0002_wardrobe_learning_events.sql`, `0003_saved_outfits.sql`, `0004_rotation_state.sql`, `0005_verified_purchase_ownership.sql`, `0006_outfit_wear_history.sql` and `0007_purchase_refund_snapshots.sql` and `0008_refund_provider_identity.sql`. The application does not automatically create the production schema. SQLite is test-only.
 
 ## Configuration
 
@@ -17,7 +17,7 @@ The service owns user wardrobe item records and saved outfit compositions. Item 
 - `GET /v1/items/{item_id}?owner_user_id=...` gets an owner-scoped item.
 - `POST /v1/items/{item_id}/transition` applies a version-checked lifecycle command.
 - `PATCH /v1/items/{item_id}` edits only one owned item with optimistic concurrency and command replay protection.
-- `POST /v1/purchases/refund-status` records an authenticated, verified Stripe order-level refund snapshot. The full Commerce order total (which may include shipping/tax) is distinct from the merchandise-line subtotal independently checked against immutable Wardrobe purchase rows. It does not archive/delete garments or assert a physical return; snapshots are monotonic and owner/order scoped.
+- `POST /v1/purchases/refund-status` records an authenticated, verified Stripe order-level refund snapshot. It does not archive/delete garments or assert a physical return; snapshots are monotonic and owner/order scoped.
 - `GET /v1/purchases/refund-status?owner_user_id=...&order_id=...` reads that owner's order refund snapshot.
 - `POST /v1/outfits` creates a saved outfit from active items owned by the same user.
 - `GET /v1/outfits?owner_user_id=...` lists that user's saved outfits and hydrates each piece from its current wardrobe item record.
@@ -74,3 +74,8 @@ Apply migrations in order: `0001_initial.sql`, `0002_wardrobe_learning_events.sq
 - `GET /v1/wear-history` is owner scoped. `DELETE /v1/wear-history` erases only that owner's event records.
 - Marketplace BFF derives the user from Commerce `/me`; the public “Mark this look worn” action creates a stable outfit ID and then submits a user-confirmed wear event. Recommendation exposure does not update wear history.
 - User export includes rotation and factual wear-history data; user erasure removes both.
+
+
+### Refund provider identity and landed order totals
+
+Refund snapshots accept either a verified `charge.refunded` authority with a Stripe charge ID or a verified refund-object authority with a Stripe refund ID. These identifiers are stored in distinct nullable columns; a refund ID is never misrepresented as a charge ID. The snapshot's `order_total_minor` remains the full amount charged/refunded, while `merchandise_subtotal_minor` is independently checked against immutable Wardrobe purchase-line snapshots. This supports orders whose total includes tax or fulfilment without weakening amount/state validation.

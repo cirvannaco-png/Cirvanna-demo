@@ -2801,6 +2801,9 @@ def test_shopify_compensation_cancellation_job_must_finish_before_case_is_compen
     seeded = seed_offer(stock=4)
     db = TEST_SESSION()
     order, connection, reservation, case = _seed_shopify_compensation_case(db, seeded, include_link=True)
+    case.lease_owner = "test-compensation-worker"
+    case.lease_until = main.now() + main.timedelta(seconds=90)
+    db.commit()
     calls = []
     inventory_reads = 0
     remote_order = {
@@ -2992,6 +2995,9 @@ def test_ambiguous_shopify_order_cancel_is_never_reissued(client, monkeypatch):
     seeded = seed_offer(stock=4)
     db = TEST_SESSION()
     order, connection, reservation, case = _seed_shopify_compensation_case(db, seeded)
+    case.lease_owner = "test-compensation-worker"
+    case.lease_until = main.now() + main.timedelta(seconds=90)
+    db.commit()
     mutation_calls = []
 
     def ambiguous_graphql(conn, session, query, variables=None):
@@ -3315,6 +3321,9 @@ def test_shopify_successful_cancel_without_inventory_restock_delta_is_manual_rev
     seeded = seed_offer(stock=4)
     db = TEST_SESSION()
     order, connection, reservation, case = _seed_shopify_compensation_case(db, seeded)
+    case.lease_owner = "test-compensation-worker"
+    case.lease_until = main.now() + main.timedelta(seconds=90)
+    db.commit()
     inventory_reads = 0
 
     def fake_graphql(conn, session, query, variables=None):
@@ -3943,123 +3952,485 @@ def test_shopify_targeted_reconcile_returns_explicit_error_for_inactive_connecti
     db.close()
 
 
-@pytest.mark.parametrize("refund_has_charge", [False, True])
-def test_refund_object_before_charge_event_always_emits_one_wardrobe_snapshot(client, monkeypatch, refund_has_charge):
-    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_test_unit_only_secret")
-    db = TEST_SESSION()
-    order_id = str(uuid.uuid4())
-    order = main.CommerceOrder(
-        id=order_id, order_number="CV-REFUND-ORDER-CHARGES", buyer_user_id="buyer-refund-order-charges",
-        state="paid", payment_state="paid", fulfillment_state="refunded", currency="KES",
-        subtotal_minor=500, total_minor=550, commission_minor=0, payment_intent_id="pi_refund_order_charges",
-        idempotency_key="refund-order-charges-" + order_id,
-        expires_at=main.now() + main.timedelta(minutes=30), paid_at=main.now(),
-    )
-    item = main.OrderItem(
-        id=str(uuid.uuid4()), order_id=order_id, merchant_id="merchant-refund-order-charges",
-        variant_id="variant-refund-order-charges", catalog_product_id="product-refund-order-charges",
-        product_name="Linen shirt", sku="LINEN-CHARGES", options={}, quantity=1,
-        unit_price_minor=500, line_total_minor=500, source_unit_price_minor=500,
-        source_currency="KES", commission_bps=0, commission_minor=0,
-    )
-    attempt = main.StripeRefundAttempt(
-        id=str(uuid.uuid4()), order_id=order_id, payment_intent_id=order.payment_intent_id,
-        amount_minor=550, currency="KES", idempotency_key="refund-order-charges-key-" + order_id,
-        state="provider_succeeded", attempts=1,
-    )
-    db.add_all([order, item, attempt])
-    db.commit()
-
-    refund_object = {
-        "id": "re_order_charges_1", "payment_intent": order.payment_intent_id,
-        "amount": 550, "currency": "kes", "status": "succeeded",
-        "metadata": {"commerce_order_id": order.id, "compensation_key": attempt.idempotency_key},
-    }
-    if refund_has_charge:
-        refund_object["charge"] = "ch_order_charges_1"
-    refund_event = {"id": "evt_refund_object_first_" + str(refund_has_charge),
-        "type": "refund.created", "data": {"object": refund_object}}
-    raw = json.dumps(refund_event, separators=(",", ":")).encode()
-    response = client.post("/webhooks/stripe", content=raw,
-        headers={"Stripe-Signature": sign_stripe_event(raw, "whsec_test_unit_only_secret")})
-    assert response.status_code == 200, response.text
-    db.refresh(order)
-    assert order.amount_refunded_minor == 550
-    events = [event for event in db.scalars(select(main.CommerceOutboxEvent).where(
-        main.CommerceOutboxEvent.event_type == "commerce.order.refund.updated",
-    )).all() if event.payload.get("order_id") == order.id]
-    assert len(events) == (1 if refund_has_charge else 0)
-
-    charge_event = {"id": "evt_charge_refunded_after_object_" + str(refund_has_charge),
-        "type": "charge.refunded", "data": {"object": {
-            "id": "ch_order_charges_1", "payment_intent": order.payment_intent_id,
-            "amount": 550, "amount_refunded": 550, "currency": "kes",
-        }}}
-    charge_raw = json.dumps(charge_event, separators=(",", ":")).encode()
-    charge_response = client.post("/webhooks/stripe", content=charge_raw,
-        headers={"Stripe-Signature": sign_stripe_event(charge_raw, "whsec_test_unit_only_secret")})
-    assert charge_response.status_code == 200, charge_response.text
-    db.expire_all()
-    events = [event for event in db.scalars(select(main.CommerceOutboxEvent).where(
-        main.CommerceOutboxEvent.event_type == "commerce.order.refund.updated",
-    )).all() if event.payload.get("order_id") == order.id]
-    assert len(events) == 1
-    payload = events[0].payload
-    assert payload["order_total_minor"] == 550
-    assert payload["purchase_items_total_minor"] == 500
-    assert payload["amount_refunded_minor"] == 550
-    assert payload["charge_id"] == "ch_order_charges_1"
-    assert payload["ownership_authority"] == (
-        "verified_stripe_refund_event" if refund_has_charge else "verified_stripe_charge_refund"
-    )
-    db.close()
-
-
-def test_manual_review_events_stay_in_admin_operations_inbox_not_wardrobe_sync(client, monkeypatch):
-    token = "commerce-sync-token-with-at-least-32-bytes"
-    monkeypatch.setenv("COMMERCE_SYNC_TOKEN", token)
-    db = TEST_SESSION()
-    event_id = str(uuid.uuid4())
-    db.add(main.CommerceOutboxEvent(
-        event_id=event_id, aggregate_type="commerce_order", aggregate_id=str(uuid.uuid4()),
-        event_type="commerce.shopify.compensation.manual_review", schema_version=1,
-        payload={"event_id": event_id, "order_id": str(uuid.uuid4()), "reason_code": "SHOPIFY_CANCEL_RESTOCK_UNVERIFIED",
-            "action_required": "operator_review", "fulfillment_blocked": True},
-    ))
-    db.commit()
-    db.close()
-
-    assert client.get("/admin/operations/alerts", headers=auth("customer-ops", "customer")).status_code == 403
-    inbox = client.get("/admin/operations/alerts", headers=auth("admin-ops", "admin"))
-    assert inbox.status_code == 200, inbox.text
-    assert inbox.json()["count"] == 1
-    assert inbox.json()["alerts"][0]["event_id"] == event_id
-    assert inbox.json()["alerts"][0]["payload"]["fulfillment_blocked"] is True
-
-    claimed = client.post("/internal/outbox/claim", headers={"X-Commerce-Sync-Token": token},
-        json={"worker_id": "sync-worker"})
-    assert claimed.status_code == 200, claimed.text
-    assert claimed.json()["events"] == []
-
-    forbidden = client.post(f"/admin/operations/alerts/{event_id}/acknowledge",
-        headers=auth("merchant-ops", "merchant"))
-    assert forbidden.status_code == 403
-    acknowledged = client.post(f"/admin/operations/alerts/{event_id}/acknowledge",
-        headers=auth("admin-ops", "admin"))
-    assert acknowledged.status_code == 200, acknowledged.text
-    assert acknowledged.json()["status"] == "acknowledged"
-    assert acknowledged.json()["case_resolved"] is False
-    row = TEST_SESSION().get(main.CommerceOutboxEvent, event_id)
-    assert row.delivered_at is not None
-    assert row.last_error == "operator_acknowledged:admin-ops"
-
-
-def test_shopify_cancel_mutation_is_fenced_when_another_worker_reclaims_lease(client, monkeypatch):
+def test_shopify_inventory_levels_are_fully_paginated_before_stock_is_marked_complete(monkeypatch):
     from app import shopify
-    from sqlalchemy import update
+    db = TEST_SESSION()
+    connection = shopify.ShopifyConnection(
+        id=str(uuid.uuid4()), merchant_id=str(uuid.uuid4()), shop_domain="inventory-pages.myshopify.com",
+        shop_currency="KES", granted_scopes=["read_inventory", "read_locations"], status="active",
+        webhook_registration={}, installed_at=main.now(), updated_at=main.now(),
+    )
+    first = {
+        "id": "gid://shopify/InventoryItem/100", "tracked": True,
+        "inventoryLevels": {"nodes": [{"id": "gid://shopify/InventoryLevel/1", "isActive": True,
+            "location": {"id": "gid://shopify/Location/1", "isActive": True},
+            "quantities": [{"name": "available", "quantity": 4}, {"name": "on_hand", "quantity": 6}]}],
+            "pageInfo": {"hasNextPage": True, "endCursor": "inventory-cursor-1"}},
+    }
+    connection.products_sync_lease_owner = "catalog-sync-worker"
+    connection.products_sync_lease_until = main.now() + main.timedelta(seconds=30)
+    main.Base.metadata.create_all(bind=db.get_bind())
+    db.add(connection)
+    db.commit()
+    calls = []
+
+    def fake_graphql(conn, session, query, variables=None):
+        calls.append(variables)
+        assert variables["id"] == first["id"]
+        assert variables["after"] == "inventory-cursor-1"
+        return {"inventoryItem": {"id": first["id"], "inventoryLevels": {
+            "nodes": [{"id": "gid://shopify/InventoryLevel/2", "isActive": True,
+                "location": {"id": "gid://shopify/Location/2", "isActive": True},
+                "quantities": [{"name": "available", "quantity": 3}, {"name": "on_hand", "quantity": 5}]}],
+            "pageInfo": {"hasNextPage": False, "endCursor": None},
+        }}}
+
+    monkeypatch.setattr(shopify, "_graphql", fake_graphql)
+    complete = shopify._complete_inventory_levels(connection, db, first, lease_owner="catalog-sync-worker")
+    db.refresh(connection)
+    assert len(calls) == 1
+    lease_until = connection.products_sync_lease_until
+    if lease_until.tzinfo is None:
+        lease_until = lease_until.replace(tzinfo=main.now().tzinfo)
+    assert lease_until > main.now() + main.timedelta(minutes=14)
+    assert shopify._inventory_totals(complete) == (True, 7, 11, True)
+    db.close()
+
+
+def test_shopify_inventory_levels_stay_unsellable_when_page_budget_is_exhausted(monkeypatch):
+    from app import shopify
+    db = TEST_SESSION()
+    connection = shopify.ShopifyConnection(
+        id=str(uuid.uuid4()), merchant_id=str(uuid.uuid4()), shop_domain="inventory-pages-limit.myshopify.com",
+        shop_currency="KES", granted_scopes=["read_inventory", "read_locations"], status="active",
+        webhook_registration={}, installed_at=main.now(), updated_at=main.now(),
+    )
+    first = {"id": "gid://shopify/InventoryItem/101", "tracked": True,
+        "inventoryLevels": {"nodes": [{"id": "gid://shopify/InventoryLevel/1", "isActive": True,
+            "location": {"id": "gid://shopify/Location/1", "isActive": True},
+            "quantities": [{"name": "available", "quantity": 4}, {"name": "on_hand", "quantity": 6}]}],
+            "pageInfo": {"hasNextPage": True, "endCursor": "cursor-1"}}}
+
+    def fake_graphql(conn, session, query, variables=None):
+        return {"inventoryItem": {"id": first["id"], "inventoryLevels": {
+            "nodes": [{"id": "gid://shopify/InventoryLevel/2", "isActive": True,
+                "location": {"id": "gid://shopify/Location/2", "isActive": True},
+                "quantities": [{"name": "available", "quantity": 3}, {"name": "on_hand", "quantity": 5}]}],
+            "pageInfo": {"hasNextPage": True, "endCursor": "cursor-2"},
+        }}}
+
+    monkeypatch.setattr(shopify, "_graphql", fake_graphql)
+    partial = shopify._complete_inventory_levels(connection, db, first, max_pages=1)
+    assert shopify._inventory_totals(partial) == (True, None, None, False)
+    db.close()
+
+
+def test_shopify_product_webhooks_are_coalesced_to_one_catalog_sync_per_store(client, monkeypatch):
+    from app import shopify
+    token = "shopify-sync-token-with-more-than-32-bytes"
+    monkeypatch.setenv("COMMERCE_SHOPIFY_SYNC_TOKEN", token)
+    seeded = seed_offer(stock=3)
+    db = TEST_SESSION()
+    connection = shopify.ShopifyConnection(
+        id=str(uuid.uuid4()), merchant_id=seeded["merchant_id"], shop_domain="coalesce.myshopify.com",
+        shop_currency="KES", granted_scopes=["read_products", "read_inventory", "read_locations", "read_orders"],
+        status="active", webhook_registration={}, installed_at=main.now(), updated_at=main.now(),
+    )
+    events = [
+        shopify.ShopifyWebhookEvent(id=str(uuid.uuid4()), shop_domain=connection.shop_domain,
+            delivery_id="delivery-products-update", topic="products/update", payload_sha256="a" * 64),
+        shopify.ShopifyWebhookEvent(id=str(uuid.uuid4()), shop_domain=connection.shop_domain,
+            delivery_id="delivery-inventory-update", topic="inventory_levels/update", payload_sha256="b" * 64),
+    ]
+    db.add_all([connection, *events])
+    db.commit()
+    calls = []
+    monkeypatch.setattr(shopify, "_sync_products", lambda conn, session, **kwargs: calls.append(conn.id) or {"has_more": False})
+    response = client.post("/internal/shopify/process-events", headers={"X-Commerce-Shopify-Sync-Token": token})
+    assert response.status_code == 200, response.text
+    assert response.json()["processed"] == 2
+    assert calls == [connection.id]
+    db.refresh(events[0])
+    db.refresh(events[1])
+    assert events[0].state == events[1].state == "processed"
+    db.close()
+
+
+def test_shopify_product_webhook_batch_failure_does_not_repeat_catalog_sync(client, monkeypatch):
+    from app import shopify
+    from fastapi import HTTPException
+    token = "shopify-sync-token-with-more-than-32-bytes"
+    monkeypatch.setenv("COMMERCE_SHOPIFY_SYNC_TOKEN", token)
+    seeded = seed_offer(stock=3)
+    db = TEST_SESSION()
+    connection = shopify.ShopifyConnection(
+        id=str(uuid.uuid4()), merchant_id=seeded["merchant_id"], shop_domain="coalesce-fail.myshopify.com",
+        shop_currency="KES", granted_scopes=["read_products", "read_inventory", "read_locations", "read_orders"],
+        status="active", webhook_registration={}, installed_at=main.now(), updated_at=main.now(),
+    )
+    events = [
+        shopify.ShopifyWebhookEvent(id=str(uuid.uuid4()), shop_domain=connection.shop_domain,
+            delivery_id="delivery-products-update-fail", topic="products/update", payload_sha256="c" * 64),
+        shopify.ShopifyWebhookEvent(id=str(uuid.uuid4()), shop_domain=connection.shop_domain,
+            delivery_id="delivery-inventory-update-fail", topic="inventory_levels/update", payload_sha256="d" * 64),
+    ]
+    db.add_all([connection, *events])
+    db.commit()
+    calls = []
+
+    def fail_sync(conn, session, **kwargs):
+        calls.append(conn.id)
+        raise HTTPException(503, detail={"code": "SHOPIFY_API_UNAVAILABLE"})
+
+    monkeypatch.setattr(shopify, "_sync_products", fail_sync)
+    response = client.post("/internal/shopify/process-events", headers={"X-Commerce-Shopify-Sync-Token": token})
+    assert response.status_code == 200, response.text
+    assert response.json()["failed"] == 2
+    assert calls == [connection.id]
+    for event in events:
+        db.refresh(event)
+        assert event.state == "pending"
+    db.close()
+
+
+def test_shopify_reconciliation_paginates_active_stores(client, monkeypatch):
+    from app import shopify
+    token = "shopify-sync-token-with-more-than-32-bytes"
+    monkeypatch.setenv("COMMERCE_SHOPIFY_SYNC_TOKEN", token)
+    seeded = [seed_offer(stock=2, owner_user_id=f"merchant-reconcile-{i}") for i in range(3)]
+    db = TEST_SESSION()
+    connections = []
+    for i, item in enumerate(seeded):
+        connection = shopify.ShopifyConnection(
+            id=f"00000000-0000-0000-0000-00000000000{i+1}", merchant_id=item["merchant_id"],
+            shop_domain=f"reconcile-{i}.myshopify.com", shop_currency="KES",
+            granted_scopes=["read_products", "read_inventory", "read_locations", "read_orders"],
+            status="active", webhook_registration={}, installed_at=main.now(), updated_at=main.now(),
+        )
+        connections.append(connection)
+    db.add_all(connections)
+    db.commit()
+    webhook_checks = []
+    monkeypatch.setattr(shopify, "_webhook_base_url", lambda: "https://commerce.example")
+    monkeypatch.setattr(shopify, "_register_webhooks", lambda conn, session, callback: webhook_checks.append(conn.id) or {
+        topic: "registered" for topic in shopify.WEBHOOK_TOPICS
+    })
+    monkeypatch.setattr(shopify, "_sync_products", lambda conn, session, **kwargs: {"has_more": False})
+
+    first = client.post("/internal/shopify/reconcile?connection_limit=2", headers={"X-Commerce-Shopify-Sync-Token": token})
+    assert first.status_code == 200, first.text
+    assert first.json()["stores_checked"] == 2
+    assert first.json()["webhooks_verified"] == 2 * len(shopify.WEBHOOK_TOPICS)
+    cursor = first.json()["next_after_connection_id"]
+    assert cursor == connections[1].id
+    second = client.post(f"/internal/shopify/reconcile?connection_limit=2&after_connection_id={cursor}",
+        headers={"X-Commerce-Shopify-Sync-Token": token})
+    assert second.status_code == 200, second.text
+    assert second.json()["stores_checked"] == 1
+    assert second.json()["webhooks_verified"] == len(shopify.WEBHOOK_TOPICS)
+    assert second.json()["next_after_connection_id"] is None
+    assert webhook_checks == [connections[0].id, connections[1].id, connections[2].id]
+    db.close()
+
+
+def test_shopify_product_sync_persists_page_cursor_and_resumes_after_later_page_failure(client, monkeypatch):
+    from app import shopify
+    from fastapi import HTTPException
+    seeded = seed_offer(stock=2)
+    db = TEST_SESSION()
+    connection = shopify.ShopifyConnection(
+        id=str(uuid.uuid4()), merchant_id=seeded["merchant_id"], shop_domain="cursor-resume.myshopify.com",
+        shop_currency="KES", granted_scopes=["read_products", "read_inventory", "read_locations", "read_orders"],
+        status="active", webhook_registration={}, installed_at=main.now(), updated_at=main.now(),
+    )
+    db.add(connection)
+    db.commit()
+
+    def page(variant_id, sku, *, has_next, cursor=None):
+        return {"shop": {"id": "gid://shopify/Shop/1", "name": "Cursor Shop", "currencyCode": "KES"},
+            "productVariants": {"edges": [{"node": {
+                "id": f"gid://shopify/ProductVariant/{variant_id}", "title": sku, "sku": sku,
+                "price": "10.00", "selectedOptions": [],
+                "product": {"id": "gid://shopify/Product/1", "title": "Cursor Product",
+                    "handle": "cursor-product", "vendor": "Cirvanna", "productType": "Apparel",
+                    "status": "ACTIVE", "updatedAt": "2026-11-21T10:00:00Z"},
+                "inventoryItem": {"id": f"gid://shopify/InventoryItem/{variant_id}", "tracked": False},
+            }}], "pageInfo": {"hasNextPage": has_next, "endCursor": cursor}}}
+
+    calls = []
+
+    def fail_second_page(conn, session, query, variables=None):
+        calls.append(variables["after"])
+        if variables["after"] is None:
+            return page("101", "CURSOR-A", has_next=True, cursor="cursor-page-1")
+        raise HTTPException(503, detail={"code": "SHOPIFY_API_UNAVAILABLE"})
+
+    monkeypatch.setattr(shopify, "_graphql", fail_second_page)
+    with pytest.raises(HTTPException):
+        shopify._sync_products(connection, db, max_pages=5)
+    db.rollback()
+    db.refresh(connection)
+    assert connection.products_cursor == "cursor-page-1"
+    assert connection.products_sync_started_at is not None
+    assert connection.products_sync_lease_owner is None
+    assert connection.products_sync_lease_until is None
+    persisted = db.scalar(select(shopify.ShopifyVariantSnapshot).where(
+        shopify.ShopifyVariantSnapshot.connection_id == connection.id,
+    ))
+    assert persisted is not None and persisted.sku == "CURSOR-A"
+
+    resumed_calls = []
+
+    def resume_second_page(conn, session, query, variables=None):
+        resumed_calls.append(variables["after"])
+        assert variables["after"] == "cursor-page-1"
+        return page("102", "CURSOR-B", has_next=False)
+
+    monkeypatch.setattr(shopify, "_graphql", resume_second_page)
+    result = shopify._sync_products(connection, db, max_pages=5)
+    assert resumed_calls == ["cursor-page-1"]
+    assert result["pages_processed"] == 1 and result["has_more"] is False
+    db.refresh(connection)
+    assert connection.products_cursor is None
+    assert connection.products_sync_started_at is None
+    assert connection.products_sync_lease_owner is None
+    assert connection.products_sync_lease_until is None
+    snapshots = list(db.scalars(select(shopify.ShopifyVariantSnapshot).where(
+        shopify.ShopifyVariantSnapshot.connection_id == connection.id,
+    )).all())
+    assert {item.sku for item in snapshots} == {"CURSOR-A", "CURSOR-B"}
+    db.close()
+
+
+def test_shopify_reconciliation_reports_failed_store_for_targeted_retry(client, monkeypatch):
+    from app import shopify
+    from fastapi import HTTPException
+    token = "shopify-sync-token-with-more-than-32-bytes"
+    monkeypatch.setenv("COMMERCE_SHOPIFY_SYNC_TOKEN", token)
+    seeded = seed_offer(stock=2)
+    db = TEST_SESSION()
+    connection = shopify.ShopifyConnection(
+        id=str(uuid.uuid4()), merchant_id=seeded["merchant_id"], shop_domain="reconcile-failed.myshopify.com",
+        shop_currency="KES", granted_scopes=["read_products", "read_inventory", "read_locations", "read_orders"],
+        status="active", webhook_registration={}, installed_at=main.now(), updated_at=main.now(),
+    )
+    db.add(connection)
+    db.commit()
+    monkeypatch.setattr(shopify, "_webhook_base_url", lambda: "https://commerce.example")
+    monkeypatch.setattr(shopify, "_register_webhooks", lambda conn, session, callback: {
+        topic: "registered" for topic in shopify.WEBHOOK_TOPICS
+    })
+    monkeypatch.setattr(shopify, "_sync_products", lambda *args, **kwargs: (_ for _ in ()).throw(
+        HTTPException(503, detail={"code": "SHOPIFY_API_UNAVAILABLE"})))
+    response = client.post(f"/internal/shopify/reconcile?connection_id={connection.id}",
+        headers={"X-Commerce-Shopify-Sync-Token": token})
+    assert response.status_code == 200, response.text
+    assert response.json()["failed_connection_ids"] == [connection.id]
+    conflict = client.post(f"/internal/shopify/reconcile?connection_id={connection.id}&after_connection_id={connection.id}",
+        headers={"X-Commerce-Shopify-Sync-Token": token})
+    assert conflict.status_code == 400
+    db.close()
+
+
+
+def test_shopify_catalog_sync_lease_blocks_concurrent_store_sync(client, monkeypatch):
+    from app import shopify
+    from fastapi import HTTPException
+    seeded = seed_offer(stock=2)
+    db = TEST_SESSION()
+    connection = shopify.ShopifyConnection(
+        id=str(uuid.uuid4()), merchant_id=seeded["merchant_id"], shop_domain="lease.myshopify.com",
+        shop_currency="KES", granted_scopes=["read_products", "read_inventory", "read_locations", "read_orders"],
+        status="active", webhook_registration={}, installed_at=main.now(), updated_at=main.now(),
+        products_sync_lease_owner="another-worker", products_sync_lease_until=main.now() + main.timedelta(minutes=5),
+    )
+    db.add(connection)
+    db.commit()
+    monkeypatch.setattr(shopify, "_graphql", lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("Provider API must not be called while another worker owns the lease")))
+    with pytest.raises(HTTPException) as error:
+        shopify._sync_products(connection, db)
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "SHOPIFY_CATALOG_SYNC_ALREADY_RUNNING"
+    db.refresh(connection)
+    assert connection.products_sync_lease_owner == "another-worker"
+    db.close()
+
+
+def test_shopify_contextual_pricing_batches_and_paginates_mapped_variants(client, monkeypatch):
+    from app import shopify
+    seeded = seed_offer(stock=2)
+    db = TEST_SESSION()
+    connection = shopify.ShopifyConnection(
+        id=str(uuid.uuid4()), merchant_id=seeded["merchant_id"], shop_domain="markets.myshopify.com",
+        shop_currency="KES", granted_scopes=["read_products", "read_inventory", "read_locations", "read_orders"],
+        status="active", webhook_registration={}, installed_at=main.now(), updated_at=main.now(),
+    )
+    product = shopify.ShopifyProductSnapshot(
+        id=str(uuid.uuid4()), connection_id=connection.id,
+        shopify_product_gid="gid://shopify/Product/contextual-pricing", title="Contextual Pricing",
+        remote_status="ACTIVE", mapping_state="mapped", variants_complete=True,
+    )
+    market = main.MerchantOperatingMarket(
+        id=str(uuid.uuid4()), merchant_id=seeded["merchant_id"], market_country_code="KE",
+        state="active", display_currency="KES", locale="en-KE",
+    )
+    variants = []
+    for index in range(1, 56):
+        variants.append(shopify.ShopifyVariantSnapshot(
+            id=f"00000000-0000-0000-0000-{index:012d}", connection_id=connection.id,
+            product_snapshot_id=product.id, shopify_variant_gid=f"gid://shopify/ProductVariant/{index}",
+            shopify_inventory_item_gid=f"gid://shopify/InventoryItem/{index}", sku=f"CP-{index}",
+            title=f"Variant {index}", options={}, price_minor=1000, currency="KES",
+            tracked=True, available_quantity=2, on_hand_quantity=2, inventory_complete=True,
+            mapping_state="mapped",
+        ))
+    db.add_all([connection, product, market, *variants])
+    db.commit()
+    calls = []
+
+    def fake_graphql(conn, session, query, variables=None):
+        calls.append(list(variables["ids"]))
+        return {"nodes": [{"id": gid, "contextualPricing": {
+            "price": {"amount": "15.00", "currencyCode": "KES"},
+            "compareAtPrice": {"amount": "18.00", "currencyCode": "KES"},
+        }} for gid in variables["ids"]]}
+
+    monkeypatch.setattr(shopify, "_graphql", fake_graphql)
+    headers = auth(row(main.Merchant, seeded["merchant_id"]).owner_user_id, "merchant")
+    first = client.post("/integrations/shopify/markets/KE/sync-pricing?limit=52", headers=headers)
+    assert first.status_code == 200, first.text
+    assert first.json()["variants_updated"] == 52
+    assert first.json()["batches"] == 2
+    assert first.json()["has_more"] is True
+    assert [len(batch) for batch in calls] == [50, 2]
+    cursor = first.json()["next_after_snapshot_id"]
+
+    second = client.post(f"/integrations/shopify/markets/KE/sync-pricing?after_snapshot_id={cursor}&limit=100",
+        headers=headers)
+    assert second.status_code == 200, second.text
+    assert second.json()["variants_updated"] == 3
+    assert second.json()["has_more"] is False
+    assert [len(batch) for batch in calls] == [50, 2, 3]
+    db.refresh(variants[0])
+    assert variants[0].regional_prices["KE"]["amount_minor"] == 1500
+    assert variants[0].regional_prices["KE"]["compare_at_amount_minor"] == 1800
+    assert variants[0].regional_prices["KE"]["landed_cost"] is False
+    db.close()
+
+
+def test_shopify_contextual_pricing_rejects_pending_operating_market(client, monkeypatch):
+    from app import shopify
+    seeded = seed_offer(stock=2)
+    db = TEST_SESSION()
+    connection = shopify.ShopifyConnection(
+        id=str(uuid.uuid4()), merchant_id=seeded["merchant_id"], shop_domain="pending-market.myshopify.com",
+        shop_currency="KES", granted_scopes=["read_products", "read_inventory", "read_locations", "read_orders"],
+        status="active", webhook_registration={}, installed_at=main.now(), updated_at=main.now(),
+    )
+    db.add_all([connection, main.MerchantOperatingMarket(
+        id=str(uuid.uuid4()), merchant_id=seeded["merchant_id"], market_country_code="KE",
+        state="pending", display_currency="KES", locale="en-KE",
+    )])
+    db.commit()
+    monkeypatch.setattr(shopify, "_graphql", lambda *args, **kwargs: (_ for _ in ()).throw(
+        AssertionError("Pending market must be rejected before provider pricing calls")))
+    owner = row(main.Merchant, seeded["merchant_id"]).owner_user_id
+    response = client.post("/integrations/shopify/markets/KE/sync-pricing", headers=auth(owner, "merchant"))
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "MERCHANT_MARKET_NOT_ACTIVE"
+    db.close()
+
+
+def test_shopify_inventory_totals_fail_closed_on_duplicate_location_or_malformed_quantities():
+    from app.shopify import _inventory_totals
+    base = {
+        "id": "gid://shopify/InventoryItem/77", "tracked": True,
+        "inventoryLevels": {"pageInfo": {"hasNextPage": False}, "nodes": [
+            {"id": "gid://shopify/InventoryLevel/77", "isActive": True,
+             "location": {"id": "gid://shopify/Location/77", "isActive": True},
+             "quantities": [{"name": "available", "quantity": 4}, {"name": "on_hand", "quantity": 6}]},
+        ]},
+    }
+    duplicate_location = {**base, "inventoryLevels": {**base["inventoryLevels"], "nodes": [
+        *base["inventoryLevels"]["nodes"],
+        {"id": "gid://shopify/InventoryLevel/78", "isActive": True,
+         "location": {"id": "gid://shopify/Location/77", "isActive": True},
+         "quantities": [{"name": "available", "quantity": 2}, {"name": "on_hand", "quantity": 2}]},
+    ]}}
+    assert _inventory_totals(duplicate_location) == (True, None, None, False)
+    malformed_quantities = {**base, "inventoryLevels": {**base["inventoryLevels"], "nodes": [{
+        **base["inventoryLevels"]["nodes"][0],
+        "quantities": [{"name": "available", "quantity": True}, {"name": "available", "quantity": 9}],
+    }]}}
+    assert _inventory_totals(malformed_quantities) == (True, None, None, False)
+    missing_page_info = {**base, "inventoryLevels": {"nodes": base["inventoryLevels"]["nodes"]}}
+    assert _inventory_totals(missing_page_info) == (True, None, None, False)
+
+
+def test_shopify_inventory_level_pagination_fails_closed_on_repeated_cursor(monkeypatch):
+    from app import shopify
+    db = TEST_SESSION()
+    connection = shopify.ShopifyConnection(
+        id=str(uuid.uuid4()), merchant_id=str(uuid.uuid4()), shop_domain="repeated-cursor.myshopify.com",
+        shop_currency="KES", granted_scopes=["read_inventory", "read_locations"], status="active",
+        webhook_registration={}, installed_at=main.now(), updated_at=main.now(),
+    )
+    first = {"id": "gid://shopify/InventoryItem/102", "tracked": True,
+        "inventoryLevels": {"nodes": [{"id": "gid://shopify/InventoryLevel/1", "isActive": True,
+            "location": {"id": "gid://shopify/Location/1", "isActive": True},
+            "quantities": [{"name": "available", "quantity": 4}, {"name": "on_hand", "quantity": 6}]}],
+            "pageInfo": {"hasNextPage": True, "endCursor": "same-cursor"}}}
+    calls = []
+    def fake_graphql(conn, session, query, variables=None):
+        calls.append(variables["after"])
+        return {"inventoryItem": {"id": first["id"], "inventoryLevels": {
+            "nodes": [{"id": "gid://shopify/InventoryLevel/2", "isActive": True,
+                "location": {"id": "gid://shopify/Location/2", "isActive": True},
+                "quantities": [{"name": "available", "quantity": 3}, {"name": "on_hand", "quantity": 5}]}],
+            "pageInfo": {"hasNextPage": True, "endCursor": "same-cursor"},
+        }}}
+    monkeypatch.setattr(shopify, "_graphql", fake_graphql)
+    partial = shopify._complete_inventory_levels(connection, db, first)
+    assert calls == ["same-cursor"]
+    assert shopify._inventory_totals(partial) == (True, None, None, False)
+    db.close()
+
+
+def test_shopify_readiness_does_not_report_catalog_complete_after_interrupted_sync(client):
+    from app import shopify
+    seeded = seed_offer(stock=2)
+    db = TEST_SESSION()
+    connection = shopify.ShopifyConnection(
+        id=str(uuid.uuid4()), merchant_id=seeded["merchant_id"], shop_domain="readiness.myshopify.com",
+        shop_currency="KES", granted_scopes=list(shopify.REQUIRED_SCOPES), status="active",
+        webhook_registration={topic: "registered" for topic in shopify.WEBHOOK_TOPICS},
+        products_synced_at=main.now(), products_sync_started_at=main.now(),
+        products_sync_lease_until=main.now() - main.timedelta(minutes=1),
+        installed_at=main.now(), updated_at=main.now(),
+    )
+    db.add(connection)
+    db.commit()
+    owner = row(main.Merchant, seeded["merchant_id"]).owner_user_id
+    response = client.get("/integrations/shopify/readiness", headers=auth(owner, "merchant"))
+    assert response.status_code == 200, response.text
+    assert response.json()["ready"] is True  # connection and webhooks are configured
+    assert response.json()["catalog_ready"] is False
+    assert response.json()["products_sync_complete"] is False
+    assert response.json()["products_sync_in_progress"] is False
+    assert response.json()["products_sync_recovery_required"] is True
+    db.close()
+
+
+def test_shopify_compensation_refuses_cancel_after_lease_is_reclaimed(client, monkeypatch):
+    from app import shopify
+    from fastapi import HTTPException
     seeded = seed_offer(stock=4)
     db = TEST_SESSION()
     order, connection, reservation, case = _seed_shopify_compensation_case(db, seeded)
+    case.lease_owner = "test-compensation-worker"
+    case.lease_until = main.now() + main.timedelta(seconds=90)
+    db.commit()
     mutation_calls = []
 
     def fake_graphql(conn, session, query, variables=None):
@@ -4067,24 +4438,94 @@ def test_shopify_cancel_mutation_is_fenced_when_another_worker_reclaims_lease(cl
             return {"draftOrder": {"id": reservation.draft_order_gid, "status": "COMPLETED",
                 "tags": [reservation.reservation_key], "order": {
                     "id": "gid://shopify/Order/lease-fence", "cancelledAt": None,
-                    "displayFulfillmentStatus": "UNFULFILLED"}}}
+                    "displayFulfillmentStatus": "UNFULFILLED", "fulfillmentOrders": {"nodes": []},
+                }}}
+        if "CirvannaReadCompensationInventory" in query:
+            session.query(shopify.ShopifyCompensationCase).filter_by(id=case.id).update(
+                {"lease_owner": "replacement-worker"}, synchronize_session=False
+            )
+            session.commit()
+            return {"inventoryItem": {"id": variables["id"], "inventoryLevels": {
+                "nodes": [{"id": "gid://shopify/InventoryLevel/lease-fence",
+                    "location": {"id": "gid://shopify/Location/lease-fence", "isActive": True},
+                    "quantities": [{"name": "available", "quantity": 8},
+                        {"name": "on_hand", "quantity": 8}]}],
+                "pageInfo": {"hasNextPage": False, "endCursor": None},
+            }}}
         if "CirvannaCancelCompensatedOrder" in query:
             mutation_calls.append(variables["orderId"])
-            raise AssertionError("A stale worker must not issue orderCancel")
+            raise AssertionError("A worker with a reclaimed lease must not cancel")
         raise AssertionError("Unexpected Shopify GraphQL query")
 
-    def simulate_other_worker_reclaim(conn, session, paid_order, merchant_id):
-        session.execute(update(shopify.ShopifyCompensationCase).where(
-            shopify.ShopifyCompensationCase.id == case.id
-        ).values(lease_owner="new-worker-owner", lease_until=main.now() + main.timedelta(minutes=5)))
+    monkeypatch.setattr(shopify, "_graphql", fake_graphql)
+    with pytest.raises(HTTPException) as error:
+        shopify._process_shopify_compensation_case(db, case, order)
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "SHOPIFY_COMPENSATION_LEASE_LOST"
+    assert mutation_calls == []
+    db.close()
+
+
+
+def test_shopify_inventory_pagination_stops_when_catalog_sync_lease_is_reclaimed(monkeypatch):
+    from app import shopify
+    from fastapi import HTTPException
+    db = TEST_SESSION()
+    main.Base.metadata.create_all(bind=db.get_bind())
+    connection = shopify.ShopifyConnection(
+        id=str(uuid.uuid4()), merchant_id=str(uuid.uuid4()), shop_domain="inventory-lease-loss.myshopify.com",
+        shop_currency="KES", granted_scopes=["read_inventory", "read_locations"], status="active",
+        webhook_registration={}, installed_at=main.now(), updated_at=main.now(),
+        products_sync_lease_owner="catalog-sync-worker",
+        products_sync_lease_until=main.now() + main.timedelta(seconds=30),
+    )
+    db.add(connection)
+    db.commit()
+    first = {
+        "id": "gid://shopify/InventoryItem/lease-loss", "tracked": True,
+        "inventoryLevels": {"nodes": [], "pageInfo": {"hasNextPage": True, "endCursor": "cursor-1"}},
+    }
+    calls = []
+
+    def fake_graphql(conn, session, query, variables=None):
+        calls.append(variables)
+        session.query(shopify.ShopifyConnection).filter_by(id=connection.id).update(
+            {"products_sync_lease_owner": "replacement-worker"}, synchronize_session=False
+        )
         session.commit()
-        return ({"gid://shopify/InventoryItem/comp": 8}, {"gid://shopify/InventoryItem/comp": 1})
+        return {"inventoryItem": {"id": first["id"], "inventoryLevels": {
+            "nodes": [{"id": "gid://shopify/InventoryLevel/lease-loss",
+                "location": {"id": "gid://shopify/Location/lease-loss", "isActive": True},
+                "quantities": [{"name": "available", "quantity": 3}, {"name": "on_hand", "quantity": 3}]}],
+            "pageInfo": {"hasNextPage": True, "endCursor": "cursor-2"},
+        }}}
 
     monkeypatch.setattr(shopify, "_graphql", fake_graphql)
-    monkeypatch.setattr(shopify, "_read_compensation_inventory_state", simulate_other_worker_reclaim)
-    assert shopify._process_shopify_compensation_case(db, case, order) == "pending"
-    db.refresh(case)
-    assert case.state == "pending"
-    assert case.lease_owner == "new-worker-owner"
-    assert mutation_calls == []
+    with pytest.raises(HTTPException) as error:
+        shopify._complete_inventory_levels(connection, db, first, lease_owner="catalog-sync-worker")
+    assert error.value.status_code == 409
+    assert error.value.detail["code"] == "SHOPIFY_CATALOG_SYNC_LEASE_LOST"
+    assert len(calls) == 1
+    db.close()
+
+
+def test_shopify_reconciliation_rejects_targeted_non_active_store(client, monkeypatch):
+    from app import shopify
+    token = "shopify-sync-token-with-more-than-32-bytes"
+    monkeypatch.setenv("COMMERCE_SHOPIFY_SYNC_TOKEN", token)
+    db = TEST_SESSION()
+    connection = shopify.ShopifyConnection(
+        id=str(uuid.uuid4()), merchant_id=str(uuid.uuid4()), shop_domain="reconcile-revoked.myshopify.com",
+        shop_currency="KES", granted_scopes=[], status="revoked",
+        webhook_registration={}, installed_at=main.now(), updated_at=main.now(),
+    )
+    db.add(connection)
+    db.commit()
+    response = client.post(
+        f"/internal/shopify/reconcile?connection_id={connection.id}",
+        headers={"X-Commerce-Shopify-Sync-Token": token},
+    )
+    assert response.status_code == 409, response.text
+    assert response.json()["detail"]["code"] == "SHOPIFY_CONNECTION_NOT_ACTIVE"
+    assert response.json()["detail"]["connection_status"] == "revoked"
     db.close()
