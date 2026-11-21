@@ -111,7 +111,8 @@ def query_metrics(case: dict[str, Any], model_id: str, k: int) -> dict[str, floa
     first = next((i for i, pid in enumerate(top, 1) if qrels.get(pid, 0) > 0), None)
     ideal_dcg = _dcg(sorted(qrels.values(), reverse=True), k)
     ndcg = _dcg([qrels.get(pid, 0) for pid in top], k) / ideal_dcg if ideal_dcg else 0.0
-    hard_violations = set(case["excluded_product_ids"]) | set(case["human_exclusion_violation_ids"])\n    violation = bool(hard_violations.intersection(top))
+    hard_violations = set(case["excluded_product_ids"]) | set(case["human_exclusion_violation_ids"])
+    violation = bool(hard_violations.intersection(top))
     return {
         "recall_at_k": hits / len(relevant),
         "precision_at_k": hits / k,
