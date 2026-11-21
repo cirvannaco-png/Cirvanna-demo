@@ -2173,6 +2173,47 @@ def _verify_compensation_inventory_restock(connection: ShopifyConnection, db: Se
     ) and set(after) == set(case.inventory_before_json) == set(expected)
 
 
+def _persist_compensation_cancel_intent(
+    db: Session,
+    case: ShopifyCompensationCase,
+    inventory_before: dict[str, int],
+    inventory_expected: dict[str, int],
+) -> None:
+    """Fence the irreversible Shopify cancellation with the current database lease.
+
+    Inventory reads may outlive the original lease. Re-read and lock the case,
+    verify the worker still owns an unexpired lease, then persist intent while
+    holding that lock. A stale worker must never issue orderCancel.
+    """
+    current = db.scalar(
+        select(ShopifyCompensationCase)
+        .where(ShopifyCompensationCase.id == case.id)
+        .execution_options(populate_existing=True)
+        .with_for_update()
+    )
+    lease_until = current.lease_until if current is not None else None
+    if lease_until is not None and lease_until.tzinfo is None:
+        lease_until = lease_until.replace(tzinfo=timezone.utc)
+    now_value = utcnow()
+    if (
+        current is None
+        or not case.lease_owner
+        or current.lease_owner != case.lease_owner
+        or lease_until is None
+        or lease_until <= now_value
+        or current.state != "pending"
+    ):
+        raise HTTPException(409, detail={"code": "SHOPIFY_COMPENSATION_LEASE_LOST"})
+    current.inventory_before_json = inventory_before
+    current.inventory_expected_restore_json = inventory_expected
+    current.state = "cancel_requesting"
+    current.last_error = "SHOPIFY_ORDER_CANCEL_REQUEST_STARTED"
+    current.lease_until = now_value + timedelta(seconds=90)
+    current.updated_at = now_value
+    db.commit()
+    db.refresh(case)
+
+
 def _process_shopify_compensation_case(db: Session, case: ShopifyCompensationCase,
                                        order: commerce.CommerceOrder) -> str:
     connection = db.get(ShopifyConnection, case.connection_id)
@@ -2285,14 +2326,10 @@ def _process_shopify_compensation_case(db: Session, case: ShopifyCompensationCas
         except HTTPException as exc:
             _case_manual_review(db, case, order, str((exc.detail or {}).get("code", "SHOPIFY_COMPENSATION_INVENTORY_UNVERIFIED")))
             return case.state
-        case.inventory_before_json = inventory_before
-        case.inventory_expected_restore_json = inventory_expected
-        # Persist the irreversible-action intent before calling Shopify. If the
-        # network outcome is ambiguous, the next worker reconciles but never repeats.
-        case.state = "cancel_requesting"
-        case.last_error = "SHOPIFY_ORDER_CANCEL_REQUEST_STARTED"
-        case.updated_at = utcnow()
-        db.commit()
+        # The inventory snapshot may have taken longer than the initial lease.
+        # Fence the irreversible action against the current row immediately before
+        # calling Shopify; a worker that lost ownership cannot cancel the order.
+        _persist_compensation_cancel_intent(db, case, inventory_before, inventory_expected)
         try:
             cancelled = _graphql(connection, db, """
           mutation CirvannaCancelCompensatedOrder($orderId: ID!, $notifyCustomer: Boolean, $refundMethod: OrderCancelRefundMethodInput!, $restock: Boolean!, $reason: OrderCancelReason!, $staffNote: String) {
@@ -2491,12 +2528,13 @@ def compensate_paid_shopify_orders(
         except HTTPException as exc:
             db.rollback()
             current = db.get(ShopifyCompensationCase, case.id)
-            if current:
+            code = str((exc.detail or {}).get("code", "SHOPIFY_COMPENSATION_ERROR"))
+            if current and code != "SHOPIFY_COMPENSATION_LEASE_LOST":
                 # Once orderCancel intent is persisted, never reset to pending:
                 # a timeout may hide a successful irreversible provider action.
                 if current.state != "cancel_requesting":
                     current.state = "manual_review" if exc.status_code in {400, 401, 403, 404, 409} else "pending"
-                current.last_error = str((exc.detail or {}).get("code", "SHOPIFY_COMPENSATION_ERROR"))[:300]
+                current.last_error = code[:300]
                 current.lease_owner = None
                 current.lease_until = None
                 db.commit()
