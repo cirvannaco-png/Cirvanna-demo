@@ -32,9 +32,11 @@ jobs:
         run: |
           python -m py_compile tools/model_evaluation/fashion_retrieval/evaluate_retrieval.py
           python -m py_compile tools/model_evaluation/fashion_retrieval/run_retrieval.py
+          python -m py_compile tools/model_evaluation/fashion_retrieval/prepare_cases.py
       - name: Run evaluator and runner contract tests
         run: python -m unittest discover -s tests/model_evaluation -v
       - name: Validate evaluator and runner CLIs
         run: |
           python tools/model_evaluation/fashion_retrieval/evaluate_retrieval.py --help
           python tools/model_evaluation/fashion_retrieval/run_retrieval.py --help
+          python tools/model_evaluation/fashion_retrieval/prepare_cases.py --help
