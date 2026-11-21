@@ -2340,6 +2340,48 @@ def test_commerce_proxy_allowlist_routes_role_based_operations():
         assert not main._authorized_commerce_path(method, route), (method, route)
 
 
+def test_shopify_oauth_callback_relay_forwards_same_origin_state_cookie(client, monkeypatch):
+    configure_upstreams(monkeypatch)
+    fake = FakeAsyncClient([FakeResponse(
+        {"status": "redirect"},
+        status_code=303,
+        content=b"",
+        headers={
+            "content-type": "text/plain; charset=utf-8",
+            "location": "https://cirvanna.example.test/brand-portal.html?shopify=connected",
+            "set-cookie": "cirvanna_shopify_oauth_state=; Max-Age=0; Path=/integrations/shopify/callback; HttpOnly; SameSite=lax",
+        },
+    )])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get(
+        "/integrations/shopify/callback?code=oauth-code&shop=northwind.myshopify.com&state=one-time-state-value",
+        cookies={"cirvanna_shopify_oauth_state": "one-time-state-value"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "https://cirvanna.example.test/brand-portal.html?shopify=connected"
+    assert "Max-Age=0" in response.headers["set-cookie"]
+    method, url, kwargs = fake.calls[0]
+    assert method == "GET"
+    assert url == "https://commerce.example.test/integrations/shopify/callback"
+    assert kwargs["headers"]["Cookie"] == "cirvanna_shopify_oauth_state=one-time-state-value"
+    assert kwargs["params"] == [
+        ("code", "oauth-code"),
+        ("shop", "northwind.myshopify.com"),
+        ("state", "one-time-state-value"),
+    ]
+
+
+def test_shopify_oauth_callback_relay_requires_state_cookie(client, monkeypatch):
+    configure_upstreams(monkeypatch)
+    response = client.get(
+        "/integrations/shopify/callback?code=oauth-code&shop=northwind.myshopify.com&state=one-time-state-value",
+        follow_redirects=False,
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "SHOPIFY_OAUTH_STATE_COOKIE_MISSING"
+
+
 def test_marketplace_comparison_route_is_registered_once():
     matching = [
         route for route in main.app.routes
