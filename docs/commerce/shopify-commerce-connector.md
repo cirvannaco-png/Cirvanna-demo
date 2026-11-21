@@ -127,3 +127,5 @@ Webhook delivery order is not guaranteed, and delivery itself is not a complete 
 11. Attach exact-commit CI, database migration/restore, provider sandbox and end-to-end evidence to the release record. Live deployment, Shopify Partner configuration, real store authorization, real webhook delivery, actual inventory reconciliation and order export remain unproven until these checks are performed.
 
 The connector is not production-ready merely because its routes or migration exist. Provider credentials, app distribution policy, operational scheduler, live environment, monitoring, rollback and independently reviewed release evidence remain deployment gates.
+
+Shopify draft-order permissions are explicitly required: read_draft_orders for reservation lookup and write_draft_orders for hold creation, completion and deletion. Cirvanna remains the sole buyer-payment authority; Shopify draft completion records the externally paid seller order and commits the reserved stock.
