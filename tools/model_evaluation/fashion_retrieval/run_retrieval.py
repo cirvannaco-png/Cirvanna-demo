@@ -135,7 +135,9 @@ def rank_candidates(
         if not math.isfinite(score):
             raise ValueError(f"non-finite similarity for candidate {candidate_id!r}")
         scores[candidate_id] = score
-    ordered = sorted(scores, key=lambda item: (-scores[item], item))
+    # Python's stable sort preserves the frozen Commerce offer order for exact score ties,
+    # matching _rank_offers(), whose sort key is score only.
+    ordered = sorted(scores, key=lambda item: -scores[item])
     if top_k is not None:
         ordered = ordered[:top_k]
     return ordered, scores
