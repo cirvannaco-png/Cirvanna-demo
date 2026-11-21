@@ -46,8 +46,8 @@ CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
 
 def _shopify_inventory_reservation_enabled() -> bool:
     """Keep the new provider reservation saga staging-only by default."""
-    environment = os.getenv("COMMERCE_ENVIRONMENT", "development").strip().lower()
-    if environment != "production":
+    environment = os.getenv("COMMERCE_ENVIRONMENT", "production").strip().lower()
+    if environment in {"development", "dev", "test", "testing", "staging"}:
         return True
     return os.getenv("SHOPIFY_INVENTORY_RESERVATION_PRODUCTION_ENABLED", "false").strip().lower() in {
         "1", "true", "yes",

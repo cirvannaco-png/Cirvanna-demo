@@ -96,7 +96,7 @@ def client(monkeypatch):
     monkeypatch.setenv("COMMERCE_MARKETPLACE_READ_TOKEN", MARKETPLACE_READ_TOKEN)
     monkeypatch.setenv("COMMERCE_JWT_ISSUER", "cirvanna-auth")
     monkeypatch.setenv("COMMERCE_JWT_AUDIENCE", "cirvanna-commerce")
-    monkeypatch.delenv("COMMERCE_ENVIRONMENT", raising=False)
+    monkeypatch.setenv("COMMERCE_ENVIRONMENT", "development")
     monkeypatch.delenv("COMMERCE_MARKET_PROVIDER_VERIFICATION_REQUIRED", raising=False)
     monkeypatch.delenv("COMMERCE_AUTH_MODE", raising=False)
     monkeypatch.delenv("COMMERCE_JWT_JWKS_URL", raising=False)
@@ -2544,8 +2544,11 @@ def test_shopify_reservation_rejection_releases_local_stock_before_payment(monke
 def test_shopify_inventory_reservation_is_staging_only_in_production_by_default(monkeypatch):
     from app.shopify import _shopify_inventory_reservation_enabled
 
-    monkeypatch.setenv("COMMERCE_ENVIRONMENT", "production")
+    monkeypatch.delenv("COMMERCE_ENVIRONMENT", raising=False)
     monkeypatch.delenv("SHOPIFY_INVENTORY_RESERVATION_PRODUCTION_ENABLED", raising=False)
+    assert _shopify_inventory_reservation_enabled() is False
+
+    monkeypatch.setenv("COMMERCE_ENVIRONMENT", "production")
     assert _shopify_inventory_reservation_enabled() is False
 
     monkeypatch.setenv("SHOPIFY_INVENTORY_RESERVATION_PRODUCTION_ENABLED", "true")
