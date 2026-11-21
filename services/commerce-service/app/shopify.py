@@ -259,6 +259,7 @@ class ShopifyWebhookEvent(commerce.Base):
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_error: Mapped[str | None] = mapped_column(String(300))
     received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
@@ -657,6 +658,14 @@ def _sync_products(connection: ShopifyConnection, db: Session, *, max_pages: int
                 inventory_item = remote_variant.get("inventoryItem") or {}
                 tracked, available, on_hand, inventory_complete = _inventory_totals(inventory_item)
                 sku = _safe_sku(remote_variant.get("sku"), remote_gid)
+                sku_collision = db.scalar(select(ShopifyVariantSnapshot.id).where(
+                    ShopifyVariantSnapshot.product_snapshot_id == product.id,
+                    ShopifyVariantSnapshot.sku == sku,
+                    ShopifyVariantSnapshot.shopify_variant_gid != remote_gid,
+                ))
+                if sku_collision:
+                    suffix = remote_gid.rsplit("/", 1)[-1][-10:]
+                    sku = _safe_sku(sku[:68] + "-" + suffix, remote_gid)
                 try:
                     price_minor = _minor_units(remote_variant.get("price", "0"), shop_currency)
                 except ValueError as exc:
@@ -714,7 +723,6 @@ def _sync_products(connection: ShopifyConnection, db: Session, *, max_pages: int
         if not after:
             raise HTTPException(502, detail={"code": "SHOPIFY_PRODUCT_CURSOR_MISSING"})
         pages += 1
-        pages += 0
     connection.products_synced_at = utcnow()
     connection.updated_at = utcnow()
     db.commit()
@@ -722,7 +730,7 @@ def _sync_products(connection: ShopifyConnection, db: Session, *, max_pages: int
         "products_seen": products_seen,
         "variants_seen": variants_seen,
         "inventory_conflicts": inventory_conflicts,
-        "pages_processed": pages + 1,
+        "pages_processed": min(pages + 1, max_pages),
         "has_more": bool((page_info if 'page_info' in locals() else {}).get("hasNextPage")),
     }
 
@@ -1254,12 +1262,15 @@ def _claim_events(db: Session, limit: int) -> list[ShopifyWebhookEvent]:
     rows = list(db.scalars(select(ShopifyWebhookEvent).where(
         or_(
             ShopifyWebhookEvent.state == "pending",
-            (ShopifyWebhookEvent.state == "processing") & (ShopifyWebhookEvent.received_at <= stale_processing_before),
+            (ShopifyWebhookEvent.state == "processing")
+            & (ShopifyWebhookEvent.last_attempt_at.is_not(None))
+            & (ShopifyWebhookEvent.last_attempt_at <= stale_processing_before),
         )
     ).order_by(ShopifyWebhookEvent.received_at).limit(limit).with_for_update()).all())
     for event in rows:
         event.state = "processing"
         event.attempts += 1
+        event.last_attempt_at = utcnow()
     db.commit()
     return rows
 
@@ -1422,8 +1433,8 @@ def _create_paid_order(connection: ShopifyConnection, db: Session, commerce_orde
         remote = existing[0]
     else:
         mutation = """
-        mutation CirvannaImportPaidOrder($order: OrderCreateOrderInput!) {
-          orderCreate(order: $order) {
+        mutation CirvannaImportPaidOrder($order: OrderCreateOrderInput!, $options: OrderCreateOptionsInput) {
+          orderCreate(order: $order, options: $options) {
             order { id name displayFinancialStatus displayFulfillmentStatus updatedAt }
             userErrors { field message }
           }
@@ -1443,7 +1454,14 @@ def _create_paid_order(connection: ShopifyConnection, db: Session, commerce_orde
             ],
             "lineItems": line_items,
         }}
-        data = _graphql(connection, db, mutation, variables)
+        data = _graphql(connection, db, mutation, {
+            "order": variables["order"],
+            "options": {
+                "inventoryBehaviour": "DECREMENT_OBEYING_POLICY",
+                "sendReceipt": False,
+                "sendFulfillmentReceipt": False,
+            },
+        })
         result = data.get("orderCreate") or {}
         errors = result.get("userErrors") or []
         remote = result.get("order")
@@ -1472,40 +1490,50 @@ def export_paid_orders_to_shopify(
     expected = os.getenv("COMMERCE_SHOPIFY_SYNC_TOKEN", "").strip()
     if len(expected.encode()) < 32 or not token or not hmac.compare_digest(token, expected):
         raise HTTPException(401, detail={"code": "SHOPIFY_SYNC_AUTH_FAILED"})
-    orders = list(db.scalars(select(commerce.CommerceOrder).where(
-        commerce.CommerceOrder.state == "paid",
-    ).order_by(commerce.CommerceOrder.paid_at).limit(limit)).all())
+    pairs = db.execute(
+        select(commerce.CommerceOrder, commerce.OrderItem.merchant_id)
+        .join(commerce.OrderItem, commerce.OrderItem.order_id == commerce.CommerceOrder.id)
+        .join(ShopifyConnection, ShopifyConnection.merchant_id == commerce.OrderItem.merchant_id)
+        .outerjoin(ShopifyOrderLink, and_(
+            ShopifyOrderLink.commerce_order_id == commerce.CommerceOrder.id,
+            ShopifyOrderLink.merchant_id == commerce.OrderItem.merchant_id,
+        ))
+        .where(
+            commerce.CommerceOrder.state == "paid",
+            ShopifyConnection.status == "active",
+            or_(ShopifyOrderLink.id.is_(None), ShopifyOrderLink.link_state != "synced"),
+        )
+        .order_by(commerce.CommerceOrder.paid_at)
+        .limit(limit)
+    ).all()
+    pending_pairs = {(order.id, merchant_id): (order, merchant_id) for order, merchant_id in pairs}
     exported = skipped = failed = 0
     errors = []
-    for order in orders:
-        merchant_ids = set(db.scalars(select(commerce.OrderItem.merchant_id).where(
-            commerce.OrderItem.order_id == order.id
-        )).all())
-        for merchant_id in merchant_ids:
-            link = db.scalar(select(ShopifyOrderLink).where(
-                ShopifyOrderLink.commerce_order_id == order.id,
-                ShopifyOrderLink.merchant_id == merchant_id,
-            ))
-            if link and link.link_state == "synced":
-                skipped += 1
-                continue
-            connection = db.scalar(select(ShopifyConnection).where(
-                ShopifyConnection.merchant_id == merchant_id,
-                ShopifyConnection.status == "active",
-            ))
-            if connection is None:
-                skipped += 1
-                continue
-            try:
-                _create_paid_order(connection, db, order, merchant_id)
-                exported += 1
-            except HTTPException as exc:
-                failed += 1
-                errors.append({"order_id": order.id, "merchant_id": merchant_id, "code": (exc.detail or {}).get("code", "SHOPIFY_EXPORT_FAILED")})
-            except SQLAlchemyError as exc:
-                db.rollback()
-                failed += 1
-                errors.append({"order_id": order.id, "merchant_id": merchant_id, "code": "SHOPIFY_DATABASE_ERROR"})
+    for order, merchant_id in pending_pairs.values():
+        link = db.scalar(select(ShopifyOrderLink).where(
+            ShopifyOrderLink.commerce_order_id == order.id,
+            ShopifyOrderLink.merchant_id == merchant_id,
+        ))
+        if link and link.link_state == "synced":
+            skipped += 1
+            continue
+        connection = db.scalar(select(ShopifyConnection).where(
+            ShopifyConnection.merchant_id == merchant_id,
+            ShopifyConnection.status == "active",
+        ))
+        if connection is None:
+            skipped += 1
+            continue
+        try:
+            _create_paid_order(connection, db, order, merchant_id)
+            exported += 1
+        except HTTPException as exc:
+            failed += 1
+            errors.append({"order_id": order.id, "merchant_id": merchant_id, "code": (exc.detail or {}).get("code", "SHOPIFY_EXPORT_FAILED")})
+        except SQLAlchemyError:
+            db.rollback()
+            failed += 1
+            errors.append({"order_id": order.id, "merchant_id": merchant_id, "code": "SHOPIFY_DATABASE_ERROR"})
     return {"exported": exported, "skipped": skipped, "failed": failed, "errors": errors[:20]}
 
 
