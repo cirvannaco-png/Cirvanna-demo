@@ -55,7 +55,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 
 
 SERVICE = "cirvanna-commerce-service"
-EXPECTED_SCHEMA_REVISION = "20261121_0013"
+EXPECTED_SCHEMA_REVISION = "20261121_0015"
 MAX_QTY = 50
 RESERVATION_MINUTES = 60
 SKU_RE = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,79}$")
@@ -342,6 +342,7 @@ class CommerceOrder(Base):
     buyer_user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     state: Mapped[str] = mapped_column(String(24), nullable=False, default="pending_payment", index=True)
     payment_state: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
+    fulfillment_state: Mapped[str] = mapped_column(String(32), nullable=False, default="ready")
     refund_state: Mapped[str] = mapped_column(String(16), nullable=False, default="none")
     amount_refunded_minor: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     payment_intent_id: Mapped[str | None] = mapped_column(String(180))
@@ -529,6 +530,33 @@ class PaymentWebhookEvent(Base):
     event_id: Mapped[str] = mapped_column(String(180), primary_key=True)
     event_type: Mapped[str] = mapped_column(String(120), nullable=False)
     processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+
+
+class StripeRefundAttempt(Base):
+    """Durable, single-attempt record for a compensation refund against Stripe."""
+    __tablename__ = "commerce_stripe_refund_attempts"
+    __table_args__ = (
+        UniqueConstraint("order_id", name="uq_commerce_stripe_refund_order"),
+        UniqueConstraint("idempotency_key", name="uq_commerce_stripe_refund_idempotency"),
+        UniqueConstraint("provider_refund_id", name="uq_commerce_stripe_refund_provider_id"),
+        Index("ix_commerce_stripe_refund_state_lease", "state", "lease_until"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    order_id: Mapped[str] = mapped_column(ForeignKey("commerce_orders.id", ondelete="CASCADE"), nullable=False)
+    payment_intent_id: Mapped[str] = mapped_column(String(180), nullable=False)
+    amount_minor: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(180), nullable=False)
+    provider_refund_id: Mapped[str | None] = mapped_column(String(180))
+    state: Mapped[str] = mapped_column(String(24), nullable=False, default="prepared")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    lease_owner: Mapped[str | None] = mapped_column(String(64))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error: Mapped[str | None] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=now, onupdate=now)
 
 
 class Actor(BaseModel):
@@ -792,6 +820,65 @@ class StripeGateway:
         if not data.get("id") or not data.get("url") or data.get("status") != "open":
             raise RuntimeError("Incomplete Stripe session response")
         return {"id": data["id"], "url": data["url"]}
+
+    def create_compensation_refund(self, attempt: StripeRefundAttempt) -> dict[str, Any]:
+        if not self.secret.startswith(("sk_test_", "sk_live_")) or not attempt.payment_intent_id:
+            raise RuntimeError("Stripe refund provider not configured")
+        params = {
+            "payment_intent": attempt.payment_intent_id,
+            "amount": str(attempt.amount_minor),
+            "metadata[commerce_order_id]": attempt.order_id,
+            "metadata[compensation_key]": attempt.idempotency_key,
+        }
+        try:
+            response = httpx.post(
+                "https://api.stripe.com/v1/refunds", data=params,
+                auth=(self.secret, ""),
+                headers={"Idempotency-Key": attempt.idempotency_key}, timeout=12.0,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except (httpx.HTTPError, ValueError) as exc:
+            raise RuntimeError("Stripe refund request failed or outcome is ambiguous") from exc
+        try:
+            response_amount = int(payload.get("amount", -1)) if isinstance(payload, dict) else -1
+        except (TypeError, ValueError):
+            response_amount = -1
+        if (not isinstance(payload, dict) or not payload.get("id")
+            or payload.get("payment_intent") != attempt.payment_intent_id
+            or response_amount != attempt.amount_minor
+            or str(payload.get("currency", "")).upper() != attempt.currency):
+            raise RuntimeError("Stripe refund response does not match the durable refund attempt")
+        return payload
+
+    def retrieve_compensation_refund(self, attempt: StripeRefundAttempt) -> dict[str, Any] | None:
+        if not self.secret.startswith(("sk_test_", "sk_live_")) or not attempt.payment_intent_id:
+            raise RuntimeError("Stripe refund provider not configured")
+        params: dict[str, Any] = {"payment_intent": attempt.payment_intent_id, "limit": 100}
+        matches: list[dict[str, Any]] = []
+        for _ in range(10):
+            try:
+                response = httpx.get(
+                    "https://api.stripe.com/v1/refunds", params=params,
+                    auth=(self.secret, ""), timeout=12.0,
+                )
+                response.raise_for_status()
+                payload = response.json()
+            except (httpx.HTTPError, ValueError) as exc:
+                raise RuntimeError("Stripe refund reconciliation failed") from exc
+            rows = payload.get("data") if isinstance(payload, dict) else None
+            if not isinstance(rows, list):
+                raise RuntimeError("Stripe refund reconciliation response is invalid")
+            matches.extend(row for row in rows if isinstance(row, dict)
+                and (row.get("metadata") or {}).get("compensation_key") == attempt.idempotency_key)
+            if len(matches) > 1:
+                raise RuntimeError("Multiple Stripe refunds match one compensation key")
+            if not payload.get("has_more"):
+                return matches[0] if matches else None
+            if not rows or not isinstance(rows[-1], dict) or not rows[-1].get("id"):
+                raise RuntimeError("Stripe refund pagination cursor is missing")
+            params["starting_after"] = rows[-1]["id"]
+        raise RuntimeError("Stripe refund reconciliation exceeded the bounded page limit")
 
     def expire_session(self, session_id: str) -> bool:
         if not self.ready:
@@ -1801,7 +1888,8 @@ def order_json(db: Session, order: CommerceOrder, include_url: bool = False) -> 
     charges = list(db.scalars(select(OrderCharge).where(OrderCharge.order_id == order.id)).all())
     result = {
         "order_id": order.id, "order_number": order.order_number, "status": order.state,
-        "payment_status": order.payment_state, "refund_status": order.refund_state, "amount_refunded_minor": order.amount_refunded_minor, "currency": order.currency,
+        "payment_status": order.payment_state, "refund_status": order.refund_state, "amount_refunded_minor": order.amount_refunded_minor,
+        "fulfillment_state": order.fulfillment_state, "fulfillment_ready": order.fulfillment_state == "ready" and order.state == "paid" and order.refund_state == "none", "currency": order.currency,
         "subtotal_minor": order.subtotal_minor,
         "fulfillment_total_minor": order.fulfillment_total_minor or 0,
         "tax_total_minor": order.tax_total_minor or 0,
@@ -1906,7 +1994,14 @@ def settle_paid(
         r.state = "consumed"
         db.add(InventoryMovement(id=str(uuid.uuid4()), variant_id=r.variant_id,
             actor_user_id="system:payment-webhook", delta=-r.quantity, reason=f"sale:{order.order_number}"))
+    from app.shopify import ShopifyInventoryReservation
+    has_shopify_reservations = db.scalar(select(ShopifyInventoryReservation.id).where(
+        ShopifyInventoryReservation.commerce_order_id == order.id
+    ).limit(1)) is not None
     order.state, order.payment_state, order.paid_at, order.updated_at = "paid", "paid", now(), now()
+    # A prior provider uninstall/redaction/manual safety hold must survive payment.
+    if order.fulfillment_state != "manual_review":
+        order.fulfillment_state = "provider_pending" if has_shopify_reservations else "ready"
     # Insert the ownership-intent event in the SAME transaction as settlement.
     # A stable event ID and unique aggregate/type constraint make webhook replay safe.
     lines = list(db.scalars(select(OrderItem).where(OrderItem.order_id == order.id).order_by(OrderItem.id)).all())
@@ -1931,6 +2026,8 @@ def settle_paid(
                 "currency": order.currency,
             } for item in lines],
             "ownership_authority": "verified_payment",
+            "fulfillment_ready": order.fulfillment_state == "ready",
+            "fulfillment_state": order.fulfillment_state,
         },
     ))
     cart = db.scalar(select(Cart).where(Cart.user_id == order.buyer_user_id))
@@ -3852,6 +3949,7 @@ def merchant_orders(actor: Annotated[Actor, Depends(require_actor)], db: Annotat
         snapshot["subtotal_minor"] = sum(item["line_total_minor"] for item in merchant_items)
         snapshot["commission_minor"] = sum(item["commission_minor"] for item in merchant_items)
         snapshot["merchant_scope"] = True
+        snapshot["fulfillment_ready"] = order.fulfillment_state == "ready" and order.state == "paid" and order.refund_state == "none"
         result.append(snapshot)
     return {"items": result, "offset": offset, "limit": limit}
 
@@ -3872,6 +3970,87 @@ async def stripe_webhook(request: Request, db: Annotated[Session, Depends(get_db
         raise HTTPException(400, detail={"code": "INVALID_PAYMENT_EVENT"})
     if db.get(PaymentWebhookEvent, event_id) is not None:
         return {"received": True, "duplicate": True}
+    if event_type in {"refund.created", "refund.updated"}:
+        metadata = obj.get("metadata") or {}
+        compensation_key = metadata.get("compensation_key")
+        provider_refund_id = obj.get("id")
+        payment_intent = obj.get("payment_intent")
+        if isinstance(payment_intent, dict):
+            payment_intent = payment_intent.get("id")
+        if compensation_key:
+            attempt = db.scalar(select(StripeRefundAttempt).where(
+                StripeRefundAttempt.idempotency_key == str(compensation_key),
+            ).with_for_update())
+            if (attempt is None or payment_intent != attempt.payment_intent_id or not provider_refund_id
+                or str(metadata.get("commerce_order_id", "")) != (attempt.order_id if attempt else "")):
+                raise HTTPException(409, detail={"code": "REFUND_ATTEMPT_MISMATCH"})
+            try:
+                refund_amount = int(obj.get("amount", -1))
+            except (TypeError, ValueError) as exc:
+                raise HTTPException(400, detail={"code": "INVALID_REFUND_AMOUNT"}) from exc
+            if refund_amount != attempt.amount_minor or str(obj.get("currency", "")).upper() != attempt.currency:
+                raise HTTPException(400, detail={"code": "REFUND_ATTEMPT_AMOUNT_MISMATCH"})
+            attempt.provider_refund_id = str(provider_refund_id)
+            status = str(obj.get("status", "")).lower()
+            if status == "succeeded":
+                if attempt.state != "confirmed":
+                    attempt.state = "confirmed"
+                    attempt.confirmed_at = now()
+                    attempt.last_error = None
+                    order = db.get(CommerceOrder, attempt.order_id)
+                    if order is None:
+                        raise HTTPException(409, detail={"code": "REFUND_ORDER_NOT_FOUND"})
+                    order.amount_refunded_minor = max(order.amount_refunded_minor, attempt.amount_minor)
+                    order.refund_state = "refunded"
+                    order.payment_state = "refunded"
+                    order.fulfillment_state = "refunded"
+                    order.updated_at = now()
+                    refund_event_id = str(uuid.uuid5(uuid.NAMESPACE_URL,
+                        f"cirvanna:order-refund:{order.id}:{attempt.amount_minor}"))
+                    if db.get(CommerceOutboxEvent, refund_event_id) is None:
+                        db.add(CommerceOutboxEvent(
+                            event_id=refund_event_id, aggregate_type="stripe_event", aggregate_id=refund_event_id,
+                            event_type="commerce.order.refund.updated", schema_version=1,
+                            payload={
+                                "event_id": refund_event_id, "provider_event_id": event_id,
+                                "event_type": "commerce.order.refund.updated", "schema_version": 1,
+                                "ownership_authority": "verified_stripe_refund_event",
+                                "order_id": order.id, "buyer_user_id": order.buyer_user_id,
+                                "payment_intent_id": attempt.payment_intent_id,
+                                "refund_id": str(provider_refund_id), "currency": order.currency,
+                                "order_total_minor": attempt.amount_minor,
+                                "merchandise_subtotal_minor": order.subtotal_minor,
+                                "amount_refunded_minor": attempt.amount_minor, "refund_state": "refunded",
+                                "refunded_at": now().isoformat(), "physical_return_confirmed": False,
+                                "ownership_effect": "financial_status_only",
+                            },
+                        ))
+            elif status in {"failed", "canceled"} and attempt.state != "confirmed":
+                attempt.state = "failed"
+                attempt.last_error = (str(obj.get("failure_reason") or status))[:300]
+                order = db.get(CommerceOrder, attempt.order_id)
+                if order:
+                    order.fulfillment_state = "manual_review"
+                    order.updated_at = now()
+                    alert_type = "commerce.payment.refund.manual_review"
+                    alert_exists = db.scalar(select(CommerceOutboxEvent.event_id).where(
+                        CommerceOutboxEvent.aggregate_type == "stripe_refund_attempt",
+                        CommerceOutboxEvent.aggregate_id == attempt.id,
+                        CommerceOutboxEvent.event_type == alert_type,
+                    ))
+                    if not alert_exists:
+                        alert_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cirvanna:{alert_type}:{attempt.id}"))
+                        db.add(CommerceOutboxEvent(
+                            event_id=alert_id, aggregate_type="stripe_refund_attempt", aggregate_id=attempt.id,
+                            event_type=alert_type, schema_version=1,
+                            payload={"event_id": alert_id, "event_type": alert_type, "schema_version": 1,
+                                "order_id": order.id, "refund_attempt_id": attempt.id,
+                                "reason_code": "STRIPE_REFUND_FAILED", "action_required": "operator_review",
+                                "fulfillment_blocked": True},
+                        ))
+            elif attempt.state not in {"confirmed", "failed", "manual_review"}:
+                attempt.state = "provider_pending"
+            attempt.updated_at = now()
     if event_type == "charge.refunded":
         payment_intent = obj.get("payment_intent")
         if isinstance(payment_intent, dict):
@@ -3908,32 +4087,35 @@ async def stripe_webhook(request: Request, db: Annotated[Session, Depends(get_db
             order.refund_state = refund_state
             order.payment_state = refund_state
             order.updated_at = now()
-            refund_event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cirvanna:stripe-refund:{event_id}"))
-            db.add(CommerceOutboxEvent(
-                event_id=refund_event_id,
-                aggregate_type="stripe_event",
-                aggregate_id=refund_event_id,
-                event_type="commerce.order.refund.updated",
-                schema_version=1,
-                payload={
-                    "event_id": refund_event_id,
-                    "provider_event_id": event_id,
-                    "event_type": "commerce.order.refund.updated",
-                    "schema_version": 1,
-                    "ownership_authority": "verified_stripe_charge_refund",
-                    "order_id": order.id,
-                    "buyer_user_id": order.buyer_user_id,
-                    "payment_intent_id": payment_intent,
-                    "charge_id": str(obj["id"]),
-                    "currency": order.currency,
-                    "order_total_minor": expected_charge_minor,
-                    "amount_refunded_minor": amount_refunded,
-                    "refund_state": refund_state,
-                    "refunded_at": now().isoformat(),
-                    "physical_return_confirmed": False,
-                    "ownership_effect": "financial_status_only",
-                },
-            ))
+            refund_event_id = str(uuid.uuid5(uuid.NAMESPACE_URL,
+                f"cirvanna:order-refund:{order.id}:{amount_refunded}"))
+            if db.get(CommerceOutboxEvent, refund_event_id) is None:
+                db.add(CommerceOutboxEvent(
+                    event_id=refund_event_id,
+                    aggregate_type="stripe_event",
+                    aggregate_id=refund_event_id,
+                    event_type="commerce.order.refund.updated",
+                    schema_version=1,
+                    payload={
+                        "event_id": refund_event_id,
+                        "provider_event_id": event_id,
+                        "event_type": "commerce.order.refund.updated",
+                        "schema_version": 1,
+                        "ownership_authority": "verified_stripe_charge_refund",
+                        "order_id": order.id,
+                        "buyer_user_id": order.buyer_user_id,
+                        "payment_intent_id": payment_intent,
+                        "charge_id": str(obj["id"]),
+                        "currency": order.currency,
+                        "order_total_minor": expected_charge_minor,
+                        "merchandise_subtotal_minor": order.subtotal_minor,
+                        "amount_refunded_minor": amount_refunded,
+                        "refund_state": refund_state,
+                        "refunded_at": now().isoformat(),
+                        "physical_return_confirmed": False,
+                        "ownership_effect": "financial_status_only",
+                    },
+                ))
     handled = {"checkout.session.completed", "checkout.session.async_payment_succeeded",
         "checkout.session.expired", "checkout.session.async_payment_failed"}
     if event_type in handled:
