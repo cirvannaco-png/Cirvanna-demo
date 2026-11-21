@@ -3357,6 +3357,9 @@ def test_shopify_compensation_refuses_cancellation_when_any_inventory_location_i
 
 
 def test_shopify_successful_cancel_without_inventory_restock_delta_is_manual_review(client, monkeypatch):
+    case.lease_owner = "test-compensation-worker"
+    case.lease_until = main.now() + main.timedelta(seconds=90)
+    db.commit()
     from app import shopify
     seeded = seed_offer(stock=4)
     db = TEST_SESSION()
