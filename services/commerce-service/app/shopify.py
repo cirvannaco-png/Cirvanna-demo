@@ -402,6 +402,12 @@ def _refresh_access_token(connection: ShopifyConnection, db: Session) -> str:
     )
     if locked is None or locked.status != "active":
         raise HTTPException(409, detail={"code": "SHOPIFY_REAUTH_REQUIRED"})
+    if not REQUIRED_SCOPES.issubset(_required_scopes(locked.granted_scopes or [])):
+        # Stores connected before draft-order permissions were added must explicitly
+        # reauthorize; never discover missing scopes only after a buyer starts checkout.
+        locked.status = "reauthorization_required"
+        db.commit()
+        raise HTTPException(409, detail={"code": "SHOPIFY_REAUTH_REQUIRED"})
     if locked.access_expires_at and commerce._aware_utc(locked.access_expires_at) > utcnow() + timedelta(minutes=5):
         return _unseal(locked.access_token_ciphertext or "", locked, "access")
     if (
