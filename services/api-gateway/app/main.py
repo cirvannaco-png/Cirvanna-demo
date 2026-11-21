@@ -23,7 +23,7 @@ from typing import Any, Literal
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ROOT = Path(__file__).resolve().parents[3]
 for package_path in (
@@ -263,6 +263,24 @@ class ConsentReceiptInput(BaseModel):
     granted: bool
     consent_id: str | None = Field(default=None, min_length=8, max_length=128)
     resource_id: str | None = Field(default=None, min_length=3, max_length=160)
+    expires_at: datetime | None = None
+
+    @field_validator("expires_at")
+    @classmethod
+    def timezone_aware_expiry(cls, value):
+        if value is not None:
+            if value.tzinfo is None or value.utcoffset() is None:
+                raise ValueError("consent expiry must include a timezone")
+            if value <= datetime.now(timezone.utc):
+                raise ValueError("consent expiry must be in the future")
+        return value
+
+    @model_validator(mode="after")
+    def require_expiring_resource_scope_for_skin_analysis(self):
+        if self.scope == "skin_analysis":
+            if self.granted and (self.resource_id is None or self.expires_at is None):
+                raise ValueError("skin-analysis consent must be resource-bound and expiring")
+        return self
 
 
 class TALObservationInput(BaseModel):

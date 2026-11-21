@@ -14,9 +14,11 @@ import json
 import os
 import re
 import uuid
+from urllib.parse import urlsplit
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
+import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import DateTime, Float, Index, Integer, JSON, String, Text, UniqueConstraint, create_engine, inspect, or_, select, text
@@ -35,7 +37,7 @@ from app.perfectcorp import (
 )
 
 SERVICE = "cirvanna-intelligence-service"
-EXPECTED_SCHEMA_REVISION = "20261112_0005"
+EXPECTED_SCHEMA_REVISION = "20261120_0006"
 ALLOWED_FEEDBACK_REASONS = {"poor_match", "price", "availability", "shade_mismatch", "texture", "fragrance", "delivery", "other"}
 PURPOSES = {"research", "model_evaluation", "product_enrichment", "commercial_recommendation",
             "recommendation_outcome_learning", "training"}
@@ -139,6 +141,20 @@ class ProviderTask(Base):
     terminal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consent_receipt_id: Mapped[str | None] = mapped_column(String(128))
+    resource_id: Mapped[str | None] = mapped_column(String(160))
+
+
+class ProviderConsentRevocation(Base):
+    """Durable tombstone for consent revocation, including callbacks arriving before task persistence."""
+    __tablename__ = "cil_provider_consent_revocations"
+    __table_args__ = (
+        Index("ix_cil_provider_revocations_consent_token", "consent_id", "contributor_token"),
+    )
+    revocation_reference: Mapped[str] = mapped_column(String(240), primary_key=True)
+    consent_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    contributor_token: Mapped[str | None] = mapped_column(String(80))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now, nullable=False)
 
 
 class CALReview(Base):
@@ -303,13 +319,13 @@ class CALFeedbackDecisionLookupIn(StrictModel):
 
 class ProviderConsentRevocationIn(StrictModel):
     consent_id: str = Field(min_length=8, max_length=128)
-    contributor_token: str
+    contributor_token: str | None = None
     revocation_reference: str = Field(min_length=8, max_length=240)
 
     @field_validator("contributor_token")
     @classmethod
     def valid_revocation_contributor(cls, value):
-        if not TOKEN_RE.fullmatch(value):
+        if value is not None and not TOKEN_RE.fullmatch(value):
             raise ValueError("contributor_token must be a keyed HMAC-SHA256 pseudonym")
         return value
 
@@ -477,7 +493,8 @@ def _verify_perfectcorp_consent(receipt: str, contributor_token: str, image_dige
         payload = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
         if not isinstance(payload, dict):
             raise ValueError("receipt must be a JSON object")
-        expiry = int(payload.get("expires_at", 0))
+        receipt_expiry = int(payload.get("expires_at", 0))
+        consent_expiry = int(payload.get("consent_expires_at", 0))
     except Exception as exc:
         raise HTTPException(422, "Malformed image-processing consent receipt") from exc
     expected = hmac.new(key, encoded.encode(), hashlib.sha256).hexdigest()
@@ -485,8 +502,13 @@ def _verify_perfectcorp_consent(receipt: str, contributor_token: str, image_dige
         raise HTTPException(403, "Invalid image-processing consent signature")
     subject_age = payload.get("subject_age_years")
     consent_id = payload.get("consent_id")
+    receipt_id = payload.get("consent_receipt_id")
+    resource_id = payload.get("resource_id")
+    timestamp = int(now().timestamp())
     if (
         not isinstance(consent_id, str) or len(consent_id) < 8 or len(consent_id) > 128
+        or not isinstance(receipt_id, str) or len(receipt_id) < 8 or len(receipt_id) > 128
+        or not isinstance(resource_id, str) or len(resource_id) < 3 or len(resource_id) > 160
         or payload.get("type") != "consent"
         or payload.get("purpose") != "perfectcorp_skin_analysis"
         or payload.get("provider") != "perfectcorp"
@@ -494,10 +516,118 @@ def _verify_perfectcorp_consent(receipt: str, contributor_token: str, image_dige
         or payload.get("image_sha256") != image_digest
         or payload.get("single_subject") is not True
         or type(subject_age) is not int or subject_age < 18
-        or expiry <= int(now().timestamp())
+        or receipt_expiry <= timestamp
+        or consent_expiry <= timestamp
+        or receipt_expiry > consent_expiry
     ):
         raise HTTPException(403, "Image consent is missing, expired, mismatched or not adult-scoped")
     return payload
+
+
+def _identity_consent_verifier_config() -> tuple[str, str] | None:
+    base = os.getenv("IDENTITY_SERVICE_URL", "").strip().rstrip("/")
+    token = os.getenv("IDENTITY_CIL_CONSENT_VERIFIER_TOKEN", "").strip()
+    if not base or len(token.encode("utf-8")) < 32:
+        return None
+    try:
+        parsed = urlsplit(base)
+        host = (parsed.hostname or "").lower()
+        local = host in {"localhost", "127.0.0.1", "::1"}
+        if (
+            not host or parsed.username is not None or parsed.password is not None
+            or parsed.query or parsed.fragment
+            or (parsed.scheme != "https" and not (parsed.scheme == "http" and local))
+        ):
+            return None
+    except ValueError:
+        return None
+    return base, token
+
+
+def _verify_canonical_skin_analysis_consent(consent: dict) -> dict:
+    """Recheck the live Identity Learning consent authority; signed receipt TTL is not grant TTL."""
+    config = _identity_consent_verifier_config()
+    if config is None:
+        raise HTTPException(503, "Canonical Identity consent verifier is not configured")
+    base, token = config
+    request_body = {
+        "receipt_id": consent["consent_receipt_id"],
+        "consent_id": consent["consent_id"],
+        "resource_id": consent["resource_id"],
+        "contributor_token": consent["subject_token"],
+        "image_sha256": consent["image_sha256"],
+    }
+    try:
+        with httpx.Client(
+            timeout=httpx.Timeout(5.0, connect=1.5),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            response = client.post(
+                base + "/internal/v1/consents/skin-analysis-provider-receipts/verify",
+                headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json=request_body,
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(503, "Canonical Identity consent verification timed out") from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, "Canonical Identity consent verification is unavailable") from exc
+    if response.status_code in {401, 403, 404, 410}:
+        raise HTTPException(403, "Canonical skin-analysis consent is inactive or revoked")
+    if response.status_code != 200:
+        raise HTTPException(503, "Canonical Identity consent verification failed")
+    try:
+        result = response.json()
+    except ValueError as exc:
+        raise HTTPException(503, "Canonical Identity consent verifier returned invalid JSON") from exc
+    expected_expiry = result.get("consent_expires_at") if isinstance(result, dict) else None
+    if (
+        not isinstance(result, dict)
+        or result.get("status") != "active"
+        or result.get("consent_receipt_id") != consent["consent_receipt_id"]
+        or result.get("consent_id") != consent["consent_id"]
+        or result.get("resource_id") != consent["resource_id"]
+        or result.get("contributor_token") != consent["subject_token"]
+        or result.get("image_sha256") != consent["image_sha256"]
+        or type(expected_expiry) is not int
+        or expected_expiry <= int(now().timestamp())
+        or expected_expiry != consent["consent_expires_at"]
+    ):
+        raise HTTPException(403, "Canonical Identity consent binding changed or is no longer active")
+    return result
+
+
+def _provider_consent_revoked(
+    db: Session, *, consent_id: str, contributor_token: str,
+) -> bool:
+    return db.scalar(select(ProviderConsentRevocation.revocation_reference).where(
+        ProviderConsentRevocation.consent_id == consent_id,
+        or_(
+            ProviderConsentRevocation.contributor_token == contributor_token,
+            ProviderConsentRevocation.contributor_token.is_(None),
+        ),
+    ).limit(1)) is not None
+
+
+def _mark_provider_task_revoked(db: Session, task_row: ProviderTask, *, reason: str) -> None:
+    """Persist revocation before best-effort terminal cleanup; result release is always blocked."""
+    task_row.revoked_at = task_row.revoked_at or now()
+    task_row.status = "consent_revoked"
+    db.commit()
+    if task_row.deleted_at is not None:
+        task_row.status = "consent_revoked_deleted"
+        db.commit()
+        return
+    try:
+        deleted, provider_status = _delete_perfectcorp_task_when_terminal(task_row.provider_task_id)
+        if deleted:
+            task_row.deleted_at = now()
+            task_row.status = "consent_revoked_deleted"
+        else:
+            task_row.status = f"consent_revoked_waiting_{provider_status}"[:24]
+    except Exception:
+        task_row.status = "consent_revoked_cleanup_retry"
+    db.commit()
 
 
 def _detect_visible_face_boxes(image_bytes: bytes) -> list[tuple[int, int, int, int]]:
@@ -664,21 +794,67 @@ def register_source(payload: SourceIn, db: Session = Depends(get_db)):
 
 @app.post("/providers/perfectcorp/revoke-consent", dependencies=[Depends(_service)])
 def revoke_perfectcorp_consent(payload: ProviderConsentRevocationIn, db: Session = Depends(get_db)):
-    """Apply an upstream consent-revocation event to all active provider tasks."""
-    rows = list(db.scalars(select(ProviderTask).where(
-        ProviderTask.contributor_token == payload.contributor_token,
+    """Persist a revocation tombstone before cleanup, including when no task exists yet."""
+    contributor_token = payload.contributor_token
+    if contributor_token is None:
+        # Legacy fallback is safe only if this consent ID maps to one contributor.
+        contributor_tokens = set(db.scalars(
+            select(ProviderTask.contributor_token).where(
+                ProviderTask.provider == "perfectcorp",
+                ProviderTask.consent_id == payload.consent_id,
+            ).distinct()
+        ).all())
+        if len(contributor_tokens) > 1:
+            raise HTTPException(409, {
+                "code": "PROVIDER_CONSENT_CONTRIBUTOR_AMBIGUOUS",
+                "revocation_reference": payload.revocation_reference,
+            })
+        if contributor_tokens:
+            contributor_token = next(iter(contributor_tokens))
+
+    existing_revocation = db.get(ProviderConsentRevocation, payload.revocation_reference)
+    if existing_revocation is not None:
+        if (
+            existing_revocation.consent_id != payload.consent_id
+            or (
+                existing_revocation.contributor_token is not None
+                and contributor_token is not None
+                and existing_revocation.contributor_token != contributor_token
+            )
+        ):
+            raise HTTPException(409, {"code": "PROVIDER_REVOCATION_REFERENCE_CONFLICT"})
+        # A previously broad tombstone remains broad on retry.
+        contributor_token = existing_revocation.contributor_token
+    else:
+        db.add(ProviderConsentRevocation(
+            revocation_reference=payload.revocation_reference,
+            consent_id=payload.consent_id,
+            contributor_token=contributor_token,
+            created_at=now(),
+        ))
+        # Commit the tombstone first so a concurrent task start sees it even if
+        # the provider callback arrives before ProviderTask is persisted.
+        db.commit()
+
+    task_query = select(ProviderTask).where(
+        ProviderTask.provider == "perfectcorp",
         ProviderTask.consent_id == payload.consent_id,
-        ProviderTask.deleted_at.is_(None),
-    )).all())
+    )
+    if contributor_token is not None:
+        task_query = task_query.where(ProviderTask.contributor_token == contributor_token)
+    rows = list(db.scalars(task_query).all())
     revoked_at = now()
     for row in rows:
-        row.revoked_at = revoked_at
-        row.status = "consent_revoked"
+        if row.deleted_at is None:
+            row.revoked_at = row.revoked_at or revoked_at
+            row.status = "consent_revoked"
     db.commit()
-    deleted = 0
-    pending = 0
-    failed = 0
+
+    deleted = sum(1 for row in rows if row.deleted_at is not None)
+    pending = failed = 0
     for row in rows:
+        if row.deleted_at is not None:
+            continue
         try:
             is_deleted, provider_status = _delete_perfectcorp_task_when_terminal(row.provider_task_id)
             if is_deleted:
@@ -762,7 +938,7 @@ def reap_abandoned_perfectcorp_tasks(db: Session = Depends(get_db)):
 
 @app.post("/providers/perfectcorp/skin-analysis", dependencies=[Depends(_service)], status_code=202)
 def start_perfectcorp_skin_analysis(payload: PerfectCorpSkinAnalysisIn):
-    """Start opt-in adult skin analysis; raw image bytes are memory-only and never persisted."""
+    """Start adult skin analysis only while canonical consent remains active."""
     if os.getenv("CIL_PERFECTCORP_ENABLED", "false").lower() != "true":
         raise HTTPException(503, "Perfect Corp skin analysis is disabled")
     try:
@@ -773,22 +949,43 @@ def start_perfectcorp_skin_analysis(payload: PerfectCorpSkinAnalysisIn):
     consent = _verify_perfectcorp_consent(payload.consent_receipt, payload.contributor_token, image_digest)
     normalized = _normalize_skin_image(raw, payload.content_type, payload.mode)
     _require_single_visible_face(normalized)
+
+    # Live canonical recheck and a durable local tombstone check happen immediately
+    # before the provider side effect. A callback delivered before task persistence
+    # blocks this request even when it matched zero existing tasks.
+    canonical = _verify_canonical_skin_analysis_consent(consent)
+    with SessionLocal() as db:
+        if _provider_consent_revoked(
+            db, consent_id=consent["consent_id"], contributor_token=payload.contributor_token
+        ):
+            raise HTTPException(410, "Provider consent was revoked; no task was started")
+
     try:
         task = perfectcorp_start_skin_analysis(
             image=normalized, file_name="cirvanna-skin-analysis.jpg",
             content_type="image/jpeg", actions=list(payload.actions), mode=payload.mode,
         )
         provider_task_id = task["task_id"]
+        row = ProviderTask(
+            task_id=str(uuid.uuid4()),
+            provider_task_id=provider_task_id,
+            provider="perfectcorp",
+            contributor_token=payload.contributor_token,
+            consent_id=consent["consent_id"],
+            consent_receipt_id=consent["consent_receipt_id"],
+            resource_id=consent["resource_id"],
+            image_digest=image_digest,
+            # Persist the canonical grant expiry, not the 60–900 second receipt TTL.
+            consent_expires_at=datetime.fromtimestamp(
+                int(canonical["consent_expires_at"]), timezone.utc
+            ),
+            status="running",
+        )
         try:
             with SessionLocal() as db:
-                db.add(ProviderTask(
-                    task_id=str(uuid.uuid4()), provider_task_id=provider_task_id, provider="perfectcorp",
-                    contributor_token=payload.contributor_token, consent_id=consent["consent_id"],
-                    image_digest=image_digest,
-                    consent_expires_at=datetime.fromtimestamp(int(consent["expires_at"]), timezone.utc),
-                    status="running",
-                ))
+                db.add(row)
                 db.commit()
+                db.refresh(row)
         except Exception as exc:
             # If durable ownership/audit persistence fails, do not leave an untracked provider task.
             try:
@@ -796,14 +993,43 @@ def start_perfectcorp_skin_analysis(payload: PerfectCorpSkinAnalysisIn):
             except Exception:
                 pass
             raise HTTPException(503, "Provider task ownership could not be persisted; task deletion was attempted") from exc
+
+        # Close the race where Identity revokes consent after the preflight but
+        # before the provider task is committed. Persist/clean the task as revoked;
+        # never return a handle that could be polled for results.
+        try:
+            _verify_canonical_skin_analysis_consent(consent)
+            with SessionLocal() as db:
+                persisted = db.get(ProviderTask, row.task_id)
+                if persisted is None:
+                    raise HTTPException(503, "Provider task ledger entry is missing")
+                if _provider_consent_revoked(
+                    db, consent_id=consent["consent_id"], contributor_token=payload.contributor_token
+                ):
+                    _mark_provider_task_revoked(db, persisted, reason="local_revocation_tombstone")
+                    raise HTTPException(410, "Provider consent was revoked during task creation")
+        except HTTPException as exc:
+            if exc.status_code == 403:
+                with SessionLocal() as db:
+                    persisted = db.get(ProviderTask, row.task_id)
+                    if persisted is not None:
+                        _mark_provider_task_revoked(db, persisted, reason="canonical_consent_revoked")
+                raise HTTPException(410, "Canonical consent was withdrawn during task creation") from exc
+            if exc.status_code == 410:
+                raise
+            # A verifier outage after provider start is fail-closed. Mark the task
+            # revoked and hand it to the terminal-state deletion reaper.
+            with SessionLocal() as db:
+                persisted = db.get(ProviderTask, row.task_id)
+                if persisted is not None:
+                    _mark_provider_task_revoked(db, persisted, reason="canonical_verifier_unavailable")
+            raise HTTPException(503, "Canonical consent could not be rechecked; provider task was withheld") from exc
+
         task.pop("task_id", None)
-        # The public handle is an opaque UUID stored in the task ledger, not the provider task ID.
-        with SessionLocal() as db:
-            stored = db.scalar(select(ProviderTask).where(ProviderTask.provider_task_id == provider_task_id))
-            if stored is None:
-                raise HTTPException(503, "Provider task ledger entry is missing")
-            task["task_id"] = stored.task_id
+        task["task_id"] = row.task_id
         return task
+    except HTTPException:
+        raise
     except PerfectCorpNotConfigured as exc:
         raise HTTPException(503, str(exc)) from exc
     except ValueError as exc:
@@ -824,6 +1050,40 @@ def poll_perfectcorp_skin_analysis(
     _task_subject(contributor_token, task_row.contributor_token)
     if task_row.deleted_at is not None:
         raise HTTPException(410, "Provider task files have already been deleted")
+    if task_row.revoked_at is None:
+        # Every poll rechecks the canonical consent authority. This prevents result
+        # release even when the asynchronous revocation callback is delayed/unavailable.
+        if not task_row.consent_receipt_id or not task_row.resource_id:
+            _mark_provider_task_revoked(db, task_row, reason="legacy_task_without_canonical_consent_binding")
+            raise HTTPException(410, "Legacy task has no canonical consent binding; no result will be released")
+        live_consent = {
+            "consent_receipt_id": task_row.consent_receipt_id,
+            "consent_id": task_row.consent_id,
+            "resource_id": task_row.resource_id,
+            "subject_token": task_row.contributor_token,
+            "image_sha256": task_row.image_digest,
+            "consent_expires_at": int(
+                (task_row.consent_expires_at.replace(tzinfo=timezone.utc)
+                 if task_row.consent_expires_at.tzinfo is None
+                 else task_row.consent_expires_at).timestamp()
+            ),
+        }
+        try:
+            current_consent = _verify_canonical_skin_analysis_consent(live_consent)
+            task_row.consent_expires_at = datetime.fromtimestamp(
+                int(current_consent["consent_expires_at"]), timezone.utc
+            )
+        except HTTPException as exc:
+            if exc.status_code == 403:
+                _mark_provider_task_revoked(db, task_row, reason="canonical_consent_inactive")
+                raise HTTPException(410, "Canonical provider consent is inactive or revoked; no result will be released") from exc
+            # A missing/unavailable verifier never permits a result to escape.
+            raise HTTPException(503, "Canonical consent could not be verified; result withheld") from exc
+        if _provider_consent_revoked(
+            db, consent_id=task_row.consent_id, contributor_token=task_row.contributor_token
+        ):
+            _mark_provider_task_revoked(db, task_row, reason="local_revocation_tombstone")
+            raise HTTPException(410, "Provider consent was revoked; no further result will be released")
     if task_row.revoked_at is not None:
         try:
             deleted, provider_status = _delete_perfectcorp_task_when_terminal(task_row.provider_task_id)
@@ -879,9 +1139,28 @@ def poll_perfectcorp_skin_analysis(
             task_row.deleted_at = now()
             db.commit()
             result["provider_task_deleted"] = True
+        # Revocation can race the provider status request. Recheck after the
+        # external call, immediately before returning any progress or result data.
+        try:
+            _verify_canonical_skin_analysis_consent(live_consent)
+        except HTTPException as exc:
+            if exc.status_code == 403:
+                _mark_provider_task_revoked(db, task_row, reason="canonical_consent_revoked_during_poll")
+                raise HTTPException(410, "Canonical provider consent was withdrawn; result withheld") from exc
+            raise HTTPException(503, "Canonical consent could not be rechecked; result withheld") from exc
+        if _provider_consent_revoked(
+            db, consent_id=task_row.consent_id, contributor_token=task_row.contributor_token
+        ):
+            _mark_provider_task_revoked(db, task_row, reason="local_revocation_during_poll")
+            raise HTTPException(410, "Provider consent was revoked; result withheld")
+
         result.pop("task_id", None)
         result["task_id"] = task_row.task_id
         return result
+    except HTTPException:
+        # Consent withdrawal and verifier unavailability are policy outcomes,
+        # not provider transport failures; preserve their status codes.
+        raise
     except PerfectCorpNotConfigured as exc:
         raise HTTPException(503, str(exc)) from exc
     except ValueError as exc:

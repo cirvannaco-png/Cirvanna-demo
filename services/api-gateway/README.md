@@ -155,3 +155,8 @@ The Decision Gateway workflow runs gateway HTTP/integration tests, container bui
 - Production marketplace offer API security and end-to-end display verification.
 
 Do not claim production readiness from unit tests, signed test fixtures, a passing container build, or a configured URL alone.
+
+
+## Consent scope expiry
+
+The `/v1/me/consents` request accepts an optional timezone-aware `expires_at`. For `skin_analysis`, the Gateway requires both a resource-bound `resource_id` and a future `expires_at`; it forwards them to Identity Learning. The browser cannot provide a CIL pseudonym, provider credential, signed provider receipt or adult-verification assertion. Those are issued only by trusted server-side services.

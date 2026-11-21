@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import Base, Outcome, ProviderTask, SessionLocal, app, engine
+from app.main import Base, Outcome, ProviderConsentRevocation, ProviderTask, SessionLocal, app, engine
 from app.provider import ProviderNotConfigured, fetch_licensed_research
 
 
@@ -451,25 +451,50 @@ def make_skin_image() -> bytes:
     return buffer.getvalue()
 
 
-def sign_skin_consent(*, contributor_token: str, image_bytes: bytes, age: int = 25):
+def sign_skin_consent(
+    *,
+    contributor_token: str,
+    image_bytes: bytes,
+    age: int = 25,
+    consent_id: str = "skin-consent-test-001",
+    consent_receipt_id: str = "skin-receipt-test-001",
+    resource_id: str = "skin-resource-test-001",
+    receipt_ttl_seconds: int = 600,
+    grant_ttl_seconds: int = 7200,
+):
+    current = datetime.now(timezone.utc)
     payload = {
         "type": "consent",
         "purpose": "perfectcorp_skin_analysis",
         "provider": "perfectcorp",
-        "consent_id": "skin-consent-test-001",
+        "consent_id": consent_id,
+        "consent_receipt_id": consent_receipt_id,
+        "resource_id": resource_id,
         "subject_token": contributor_token,
         "image_sha256": hashlib.sha256(image_bytes).hexdigest(),
         "single_subject": True,
         "subject_age_years": age,
-        "expires_at": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()),
+        "expires_at": int((current + timedelta(seconds=receipt_ttl_seconds)).timestamp()),
+        "consent_expires_at": int((current + timedelta(seconds=grant_ttl_seconds)).timestamp()),
     }
     return receipt(payload)
+
+
+def allow_live_identity_consent(monkeypatch):
+    from app import main as cil_main
+
+    def verify(consent):
+        return {"status": "active", "consent_expires_at": consent["consent_expires_at"]}
+
+    monkeypatch.setattr(cil_main, "_verify_canonical_skin_analysis_consent", verify)
+
 
 
 def test_perfectcorp_skin_analysis_requires_signed_adult_image_consent(client, monkeypatch):
     import base64
     from app import main as cil_main
 
+    allow_live_identity_consent(monkeypatch)
     monkeypatch.setenv("CIL_PERFECTCORP_ENABLED", "true")
     monkeypatch.setenv("CIL_PERFECTCORP_DPA_APPROVED", "true")
     monkeypatch.setattr(cil_main, "_detect_visible_face_boxes", lambda _: [(100, 80, 180, 180)])
@@ -492,6 +517,19 @@ def test_perfectcorp_skin_analysis_requires_signed_adult_image_consent(client, m
     import uuid
     uuid.UUID(response.json()["task_id"])
     assert "provider_task_id" not in response.json()
+    db = SessionLocal()
+    try:
+        task_row = db.query(ProviderTask).filter(
+            ProviderTask.provider_task_id == "perfectcorp-vendor-task-001"
+        ).one()
+        assert task_row.consent_receipt_id == "skin-receipt-test-001"
+        assert task_row.resource_id == "skin-resource-test-001"
+        stored_consent_expiry = task_row.consent_expires_at
+        if stored_consent_expiry.tzinfo is None:
+            stored_consent_expiry = stored_consent_expiry.replace(tzinfo=timezone.utc)
+        assert stored_consent_expiry > datetime.now(timezone.utc) + timedelta(hours=1)
+    finally:
+        db.close()
 
 
 def test_perfectcorp_skin_analysis_rejects_child_consent(client, monkeypatch):
@@ -536,6 +574,7 @@ def test_perfectcorp_skin_analysis_rejects_receipt_for_different_image(client, m
 def test_perfectcorp_terminal_result_is_deleted_before_result_is_released(client, monkeypatch):
     from app import main as cil_main
 
+    allow_live_identity_consent(monkeypatch)
     monkeypatch.setenv("CIL_PERFECTCORP_ENABLED", "true")
     monkeypatch.setenv("CIL_PERFECTCORP_DPA_APPROVED", "true")
     calls = []
@@ -549,7 +588,10 @@ def test_perfectcorp_terminal_result_is_deleted_before_result_is_released(client
     try:
         db.add(ProviderTask(
             task_id="task-2", provider_task_id="vendor-task-2", provider="perfectcorp", contributor_token=contributor,
-            consent_id="skin-consent-task-2", image_digest="a" * 64,
+            consent_id="skin-consent-task-2",
+            consent_receipt_id="skin-receipt-task-2",
+            resource_id="skin-resource-task-2",
+            image_digest="a" * 64,
             consent_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
             status="running",
         ))
@@ -568,6 +610,7 @@ def test_perfectcorp_terminal_result_is_deleted_before_result_is_released(client
 def test_perfectcorp_terminal_result_is_not_released_when_deletion_fails(client, monkeypatch):
     from app import main as cil_main
 
+    allow_live_identity_consent(monkeypatch)
     monkeypatch.setenv("CIL_PERFECTCORP_ENABLED", "true")
     monkeypatch.setenv("CIL_PERFECTCORP_DPA_APPROVED", "true")
     monkeypatch.setattr(cil_main, "perfectcorp_get_skin_analysis_status", lambda **kwargs: {
@@ -579,7 +622,10 @@ def test_perfectcorp_terminal_result_is_not_released_when_deletion_fails(client,
     try:
         db.add(ProviderTask(
             task_id="task-3", provider_task_id="vendor-task-3", provider="perfectcorp", contributor_token=contributor,
-            consent_id="skin-consent-task-3", image_digest="b" * 64,
+            consent_id="skin-consent-task-3",
+            consent_receipt_id="skin-receipt-task-3",
+            resource_id="skin-resource-task-3",
+            image_digest="b" * 64,
             consent_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
             status="running",
         ))
@@ -850,3 +896,317 @@ def test_reaper_keeps_revoked_running_task_pending_until_provider_terminal_state
     assert response.status_code == 200
     assert response.json()["waiting_for_terminal"] == 1
     assert response.json()["deleted"] == 0
+
+
+def test_perfectcorp_legacy_revocation_without_token_requires_one_contributor_mapping(client, monkeypatch):
+    from app import main as cil_main
+    contributor = "hmac-sha256:" + "c" * 64
+    db = SessionLocal()
+    try:
+        for handle, vendor_id in (
+            ("legacy-revoke-1", "vendor-legacy-1"),
+            ("legacy-revoke-2", "vendor-legacy-2"),
+        ):
+            db.add(ProviderTask(
+                task_id=handle, provider_task_id=vendor_id, provider="perfectcorp",
+                contributor_token=contributor, consent_id="legacy-unique-consent",
+                image_digest="c" * 64,
+                consent_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                status="running",
+            ))
+        db.commit()
+    finally:
+        db.close()
+
+    deleted_vendor_ids = []
+    monkeypatch.setattr(
+        cil_main, "perfectcorp_get_skin_analysis_status",
+        lambda **kwargs: {"task_id": kwargs["task_id"], "status": "success"},
+    )
+    monkeypatch.setattr(
+        cil_main, "perfectcorp_delete_task",
+        lambda **kwargs: deleted_vendor_ids.append(kwargs["task_id"]) or True,
+    )
+    response = client.post(
+        "/providers/perfectcorp/revoke-consent",
+        headers=auth("service-test"),
+        json={
+            "consent_id": "legacy-unique-consent",
+            "revocation_reference": "identity-legacy-revocation-0001",
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["matched_tasks"] == 2
+    assert response.json()["deleted_tasks"] == 2
+    assert set(deleted_vendor_ids) == {"vendor-legacy-1", "vendor-legacy-2"}
+
+
+def test_perfectcorp_legacy_revocation_rejects_ambiguous_contributor_mapping(client):
+    contributors = ["hmac-sha256:" + "d" * 64, "hmac-sha256:" + "e" * 64]
+    db = SessionLocal()
+    try:
+        for index, contributor in enumerate(contributors):
+            db.add(ProviderTask(
+                task_id=f"ambiguous-revoke-{index}",
+                provider_task_id=f"vendor-ambiguous-{index}",
+                provider="perfectcorp",
+                contributor_token=contributor,
+                consent_id="legacy-ambiguous-consent",
+                image_digest="d" * 64,
+                consent_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+                status="running",
+            ))
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(
+        "/providers/perfectcorp/revoke-consent",
+        headers=auth("service-test"),
+        json={
+            "consent_id": "legacy-ambiguous-consent",
+            "revocation_reference": "identity-legacy-revocation-0002",
+        },
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "PROVIDER_CONSENT_CONTRIBUTOR_AMBIGUOUS"
+
+    db = SessionLocal()
+    try:
+        rows = list(db.query(ProviderTask).filter(
+            ProviderTask.consent_id == "legacy-ambiguous-consent"
+        ).all())
+        assert len(rows) == 2
+        assert all(row.revoked_at is None and row.deleted_at is None for row in rows)
+    finally:
+        db.close()
+
+
+def test_zero_task_revocation_tombstone_blocks_later_provider_start(client, monkeypatch):
+    from app import main as cil_main
+    import base64
+
+    contributor = "hmac-sha256:" + "8" * 64
+    consent_id = "skin-consent-zero-task"
+    receipt_id = "skin-receipt-zero-task"
+    resource_id = "skin-resource-zero-task"
+    callback = client.post(
+        "/providers/perfectcorp/revoke-consent",
+        headers=auth("service-test"),
+        json={
+            "consent_id": consent_id,
+            "contributor_token": contributor,
+            "revocation_reference": "identity-revocation-zero-task-0001",
+        },
+    )
+    assert callback.status_code == 200, callback.text
+    assert callback.json()["matched_tasks"] == 0
+
+    db = SessionLocal()
+    try:
+        tombstone = db.get(ProviderConsentRevocation, "identity-revocation-zero-task-0001")
+        assert tombstone is not None
+        assert tombstone.consent_id == consent_id
+        assert tombstone.contributor_token == contributor
+    finally:
+        db.close()
+
+    allow_live_identity_consent(monkeypatch)
+    monkeypatch.setenv("CIL_PERFECTCORP_ENABLED", "true")
+    monkeypatch.setenv("CIL_PERFECTCORP_DPA_APPROVED", "true")
+    monkeypatch.setattr(cil_main, "_detect_visible_face_boxes", lambda _: [(100, 80, 180, 180)])
+    monkeypatch.setattr(
+        cil_main,
+        "perfectcorp_start_skin_analysis",
+        lambda **kwargs: pytest.fail("revoked consent must not start a provider task"),
+    )
+    image_bytes = make_skin_image()
+    response = client.post(
+        "/providers/perfectcorp/skin-analysis",
+        headers=auth("service-test"),
+        json={
+            "image_base64": base64.b64encode(image_bytes).decode(),
+            "content_type": "image/png",
+            "mode": "sd",
+            "actions": ["pore"],
+            "contributor_token": contributor,
+            "consent_receipt": sign_skin_consent(
+                contributor_token=contributor,
+                image_bytes=image_bytes,
+                consent_id=consent_id,
+                consent_receipt_id=receipt_id,
+                resource_id=resource_id,
+            ),
+        },
+    )
+    assert response.status_code == 410
+
+
+def test_revocation_during_provider_start_marks_racing_task_revoked(client, monkeypatch):
+    from app import main as cil_main
+    import base64
+
+    contributor = "hmac-sha256:" + "9" * 64
+    consent_id = "skin-consent-start-race"
+    receipt_id = "skin-receipt-start-race"
+    resource_id = "skin-resource-start-race"
+    allow_live_identity_consent(monkeypatch)
+    monkeypatch.setenv("CIL_PERFECTCORP_ENABLED", "true")
+    monkeypatch.setenv("CIL_PERFECTCORP_DPA_APPROVED", "true")
+    monkeypatch.setattr(cil_main, "_detect_visible_face_boxes", lambda _: [(100, 80, 180, 180)])
+
+    def provider_start(**kwargs):
+        # Model the callback winning the race after the provider accepts the task
+        # but before CIL persists the returned provider task ID.
+        with SessionLocal() as db:
+            db.add(ProviderConsentRevocation(
+                revocation_reference="identity-revocation-start-race-0001",
+                consent_id=consent_id,
+                contributor_token=contributor,
+            ))
+            db.commit()
+        return {"task_id": "vendor-start-race", "status": "running"}
+
+    monkeypatch.setattr(cil_main, "perfectcorp_start_skin_analysis", provider_start)
+    monkeypatch.setattr(
+        cil_main,
+        "perfectcorp_get_skin_analysis_status",
+        lambda **kwargs: {"task_id": kwargs["task_id"], "status": "running"},
+    )
+    monkeypatch.setattr(
+        cil_main,
+        "perfectcorp_delete_task",
+        lambda **kwargs: pytest.fail("in-flight vendor task must wait for terminal state"),
+    )
+
+    image_bytes = make_skin_image()
+    response = client.post(
+        "/providers/perfectcorp/skin-analysis",
+        headers=auth("service-test"),
+        json={
+            "image_base64": base64.b64encode(image_bytes).decode(),
+            "content_type": "image/png",
+            "mode": "sd",
+            "actions": ["pore"],
+            "contributor_token": contributor,
+            "consent_receipt": sign_skin_consent(
+                contributor_token=contributor,
+                image_bytes=image_bytes,
+                consent_id=consent_id,
+                consent_receipt_id=receipt_id,
+                resource_id=resource_id,
+            ),
+        },
+    )
+    assert response.status_code == 410
+    db = SessionLocal()
+    try:
+        task_row = db.query(ProviderTask).filter(
+            ProviderTask.provider_task_id == "vendor-start-race"
+        ).one()
+        assert task_row.revoked_at is not None
+        assert task_row.deleted_at is None
+        assert task_row.status.startswith("consent_revoked_waiting")
+    finally:
+        db.close()
+
+
+def test_poll_preserves_canonical_consent_verifier_unavailable_status(client, monkeypatch):
+    from fastapi import HTTPException
+    from app import main as cil_main
+
+    contributor = "hmac-sha256:" + "d" * 64
+    monkeypatch.setenv("CIL_PERFECTCORP_ENABLED", "true")
+    monkeypatch.setenv("CIL_PERFECTCORP_DPA_APPROVED", "true")
+    db = SessionLocal()
+    try:
+        db.add(ProviderTask(
+            task_id="identity-verifier-unavailable-poll",
+            provider_task_id="vendor-verifier-unavailable-poll",
+            provider="perfectcorp",
+            contributor_token=contributor,
+            consent_id="identity-verifier-unavailable-consent",
+            consent_receipt_id="identity-verifier-unavailable-receipt",
+            resource_id="identity-verifier-unavailable-resource",
+            image_digest="d" * 64,
+            consent_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            status="running",
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    verification_calls = 0
+    def verify(_consent):
+        nonlocal verification_calls
+        verification_calls += 1
+        if verification_calls == 1:
+            return {"status": "active", "consent_expires_at": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp())}
+        raise HTTPException(503, "canonical consent verifier unavailable")
+
+    monkeypatch.setattr(cil_main, "_verify_canonical_skin_analysis_consent", verify)
+    monkeypatch.setattr(
+        cil_main,
+        "perfectcorp_get_skin_analysis_status",
+        lambda **kwargs: {"task_id": kwargs["task_id"], "status": "running", "metrics": [{"ui_score": 99}]},
+    )
+    response = client.get(
+        "/providers/perfectcorp/skin-analysis/identity-verifier-unavailable-poll",
+        headers={**auth("service-test"), "X-CIL-Contributor-Token": contributor},
+    )
+    assert response.status_code == 503
+    assert "metrics" not in response.text
+    assert verification_calls == 2
+
+
+def test_poll_rechecks_canonical_consent_and_withholds_result_after_revocation(client, monkeypatch):
+    from app import main as cil_main
+    contributor = "hmac-sha256:" + "b" * 64
+    db = SessionLocal()
+    try:
+        db.add(ProviderTask(
+            task_id="identity-revoked-poll",
+            provider_task_id="vendor-identity-revoked-poll",
+            provider="perfectcorp",
+            contributor_token=contributor,
+            consent_id="identity-revoked-poll-consent",
+            consent_receipt_id="identity-revoked-poll-receipt",
+            resource_id="identity-revoked-poll-resource",
+            image_digest="b" * 64,
+            consent_expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            status="running",
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    def revoked(_consent):
+        from fastapi import HTTPException
+        raise HTTPException(403, "canonical consent was revoked")
+
+    monkeypatch.setattr(cil_main, "_verify_canonical_skin_analysis_consent", revoked)
+    monkeypatch.setattr(
+        cil_main,
+        "perfectcorp_get_skin_analysis_status",
+        lambda **kwargs: {"task_id": kwargs["task_id"], "status": "running", "metrics": [{"ui_score": 99}]},
+    )
+    monkeypatch.setattr(
+        cil_main,
+        "perfectcorp_delete_task",
+        lambda **kwargs: pytest.fail("provider task is not terminal"),
+    )
+    response = client.get(
+        "/providers/perfectcorp/skin-analysis/identity-revoked-poll",
+        headers={**auth("service-test"), "X-CIL-Contributor-Token": contributor},
+    )
+    assert response.status_code == 410
+    assert "metrics" not in response.text
+
+    db = SessionLocal()
+    try:
+        row = db.get(ProviderTask, "identity-revoked-poll")
+        assert row.revoked_at is not None
+        assert row.deleted_at is None
+        assert row.status.startswith("consent_revoked_waiting")
+    finally:
+        db.close()
