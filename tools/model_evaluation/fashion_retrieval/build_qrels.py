@@ -146,11 +146,33 @@ def aggregate(
             if violation:
                 human_violations.append(candidate_id)
 
+        # Emit only the approved benchmark schema. Never copy unknown input
+        # fields into the runner dataset (they may contain names, account IDs,
+        # reviewer notes, or other unintended personal data).
         output_row = {
-            **query,
+            "schema_version": query["schema_version"],
+            "query_id": query_id,
+            "cluster_id": query["cluster_id"],
+            "task_id": query["task_id"],
+            "split": query["split"],
+            "candidate_ids": list(query["candidate_ids"]),
+            "excluded_product_ids": list(query.get("excluded_product_ids", [])),
+            "subgroups": dict(query.get("subgroups", {})),
             "qrels": qrels,
             "human_exclusion_violation_ids": human_violations,
         }
+        if query["task_id"] == "image_to_catalog_text":
+            image_path = query.get("query_image_path")
+            if not isinstance(image_path, str) or not image_path.strip() or Path(image_path).is_absolute():
+                raise ValueError(f"{query_id}: query_image_path must be a relative path under the media root")
+            output_row["query_image_path"] = image_path
+        elif query["task_id"] == "text_to_catalog_text":
+            query_text = query.get("query_text")
+            if not isinstance(query_text, str) or not query_text.strip():
+                raise ValueError(f"{query_id}: text query must be non-empty")
+            output_row["query_text"] = " ".join(query_text.split())[:1000]
+        else:
+            raise ValueError(f"{query_id}: unsupported query task {query['task_id']!r}")
         output.append(output_row)
 
     extra_review_keys = set(reviews_by_pair) - {
