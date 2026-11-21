@@ -25,6 +25,20 @@ jobs:
   asset-service:
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cirvanna_test
+          POSTGRES_PASSWORD: cirvanna_test
+          POSTGRES_DB: cirvanna_assets
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cirvanna_test -d cirvanna_assets"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,6 +54,37 @@ jobs:
       - name: Run private asset API and lifecycle tests
         working-directory: services/asset-service
         run: python -m pytest tests -q
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Apply asset migrations to PostgreSQL and verify fail-closed defaults
+        working-directory: services/asset-service
+        env:
+          PGPASSWORD: cirvanna_test
+        run: |
+          psql -h localhost -U cirvanna_test -d cirvanna_assets -v ON_ERROR_STOP=1 -f migrations/0001_asset_objects.sql
+          psql -h localhost -U cirvanna_test -d cirvanna_assets -v ON_ERROR_STOP=1 -c "INSERT INTO asset_objects (asset_id, owner_user_id, purpose, parent_id, object_key, content_type, byte_size, sha256, status) VALUES ('00000000-0000-4000-8000-000000000001','subject-001','appearance_source_image','look-001','private/test/source.png','image/png',128,'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','active')"
+          psql -h localhost -U cirvanna_test -d cirvanna_assets -v ON_ERROR_STOP=1 -c "INSERT INTO asset_objects (asset_id, owner_user_id, purpose, parent_id, object_key, content_type, byte_size, sha256, status) VALUES ('00000000-0000-4000-8000-000000000002','subject-001','twin_representation','twin-001','private/test/twin.glb','model/gltf-binary',256,'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb','active')"
+          psql -h localhost -U cirvanna_test -d cirvanna_assets -v ON_ERROR_STOP=1 -f migrations/0002_asset_lifecycle_provenance.sql
+          psql -h localhost -U cirvanna_test -d cirvanna_assets -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM asset_objects WHERE asset_id='00000000-0000-4000-8000-000000000001' AND asset_role='unclassified' AND publication_scope='private_only' AND publication_state='private_only') THEN RAISE EXCEPTION 'legacy asset did not receive fail-closed defaults'; END IF; END \$\$;"
+          if psql -h localhost -U cirvanna_test -d cirvanna_assets -v ON_ERROR_STOP=1 -c "UPDATE asset_objects SET publication_scope='approved_public', publication_state='approved' WHERE asset_id='00000000-0000-4000-8000-000000000001'"; then
+            echo "ERROR: personal media was approved without consent and masking evidence"
+            exit 1
+          else
+            echo "Expected rejection: personal media cannot be approved without consent and masking evidence"
+          fi
+          if psql -h localhost -U cirvanna_test -d cirvanna_assets -v ON_ERROR_STOP=1 -c "UPDATE asset_objects SET consent_receipt_id='consent-test-001', consent_version='click-it-v1', masking_attestation_id='masking-test-001', masking_model_sha256='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', human_privacy_review_receipt_id='human-review-test-001', human_privacy_reviewer_ref='reviewer-ref-001', human_privacy_reviewed_at=now(), publication_scope='approved_public', publication_state='approved' WHERE asset_id='00000000-0000-4000-8000-000000000001'"; then
+            echo "ERROR: publication was approved without a destination surface"
+            exit 1
+          else
+            echo "Expected rejection: approved publication requires an exact destination surface"
+          fi
+          if psql -h localhost -U cirvanna_test -d cirvanna_assets -v ON_ERROR_STOP=1 -c "UPDATE asset_objects SET consent_receipt_id='consent-mesh-001', consent_version='click-it-v1', masking_attestation_id='masking-mesh-001', masking_model_sha256='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', human_privacy_review_receipt_id='human-review-mesh-001', human_privacy_reviewer_ref='reviewer-ref-mesh', human_privacy_reviewed_at=now(), publication_scope='approved_public', publication_state='approved', publication_surface='shared_link' WHERE asset_id='00000000-0000-4000-8000-000000000002'"; then
+            echo "ERROR: Twin mesh representation was approved for public publication"
+            exit 1
+          else
+            echo "Expected rejection: Twin mesh representations remain private"
+          fi
+          psql -h localhost -U cirvanna_test -d cirvanna_assets -v ON_ERROR_STOP=1 -c "UPDATE asset_objects SET consent_receipt_id='consent-test-001', consent_version='click-it-v1', masking_attestation_id='masking-test-001', masking_model_sha256='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', human_privacy_review_receipt_id='human-review-test-001', human_privacy_reviewer_ref='reviewer-ref-001', human_privacy_reviewed_at=now(), publication_scope='approved_public', publication_state='approved', publication_surface='shared_link' WHERE asset_id='00000000-0000-4000-8000-000000000001'"
       - name: Build private asset service container
         run: docker build -f services/asset-service/Dockerfile -t cirvanna-asset-service:ci .
 

@@ -5,6 +5,7 @@ import hmac
 import io
 import json
 import os
+import re
 import struct
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -12,12 +13,14 @@ from functools import lru_cache
 from typing import Annotated, Iterator, Literal
 
 import boto3
+import httpx
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from PIL import Image, ImageOps, UnidentifiedImageError
-from sqlalchemy import DateTime, Index, Integer, String, create_engine, select
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import CheckConstraint, DateTime, Index, Integer, String, create_engine, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -41,11 +44,34 @@ class Base(DeclarativeBase):
     pass
 
 
+class StrictInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class PublicationApprovalIn(StrictInput):
+    subject_id: str = Field(min_length=3, max_length=128)
+    consent_id: str = Field(min_length=8, max_length=160)
+    masking_attestation_id: str = Field(min_length=12, max_length=160)
+    target_surface: Literal["public_profile", "community_feed", "marketplace", "merchant_surface", "shared_link"]
+
+
+class PublicationRevocationIn(StrictInput):
+    subject_id: str = Field(min_length=3, max_length=128)
+    reason_code: Literal["consent_revoked", "user_request", "policy_changed", "rights_request", "admin_action"]
+
+
 class AssetRow(Base):
     __tablename__ = "asset_objects"
     __table_args__ = (
         Index("ix_asset_owner_parent_status", "owner_user_id", "parent_id", "status"),
         Index("ix_asset_expiry_status", "retention_until", "status"),
+        Index("ix_asset_publication_state", "publication_scope", "publication_state", "status"),
+        CheckConstraint("asset_role IN ('unclassified','source','derivative','representation')", name="ck_asset_role"),
+        CheckConstraint("publication_scope IN ('private_only','approved_public')", name="ck_asset_publication_scope"),
+        CheckConstraint("publication_state IN ('private_only','pending_review','approved','published','revoked')", name="ck_asset_publication_state"),
+        CheckConstraint("(publication_state = 'revoked') = (revoked_at IS NOT NULL)", name="ck_asset_publication_revocation"),
+        CheckConstraint("publication_state NOT IN ('approved','published') OR (content_type = 'image/png' AND publication_scope = 'approved_public' AND publication_surface IS NOT NULL AND consent_receipt_id IS NOT NULL AND consent_version IS NOT NULL AND masking_attestation_id IS NOT NULL AND masking_model_sha256 IS NOT NULL AND length(masking_model_sha256) = 64 AND human_privacy_review_receipt_id IS NOT NULL AND human_privacy_reviewer_ref IS NOT NULL AND human_privacy_reviewed_at IS NOT NULL)", name="ck_asset_publication_evidence"),
+        CheckConstraint("publication_surface IS NULL OR publication_surface IN ('public_profile','community_feed','marketplace','merchant_surface','shared_link')", name="ck_asset_publication_surface"),
     )
     asset_id: Mapped[str] = mapped_column(String(36), primary_key=True)
     owner_user_id: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
@@ -55,6 +81,23 @@ class AssetRow(Base):
     content_type: Mapped[str] = mapped_column(String(40), nullable=False)
     byte_size: Mapped[int] = mapped_column(Integer, nullable=False)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Lifecycle provenance is fail-closed for pre-migration rows.
+    asset_role: Mapped[str] = mapped_column(String(20), nullable=False, default="unclassified")
+    source_asset_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    source_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    transformation_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    transformation_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    consent_receipt_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    consent_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    masking_attestation_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    masking_model_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    human_privacy_review_receipt_id: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    human_privacy_reviewer_ref: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    human_privacy_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    publication_scope: Mapped[str] = mapped_column(String(32), nullable=False, default="private_only")
+    publication_state: Mapped[str] = mapped_column(String(24), nullable=False, default="private_only")
+    publication_surface: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
     retention_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -331,6 +374,89 @@ def _validate_glb(data: bytes, content_type: str) -> bytes:
     return data
 
 
+def _asset_role(purpose: str) -> str:
+    if purpose in {"twin_source_image", "twin_person_image", "catalog_garment_image", "wardrobe_garment_image", "appearance_source_image"}:
+        return "source"
+    if purpose == "twin_representation":
+        return "representation"
+    if purpose in {"try_on_output", "appearance_render_output"}:
+        return "derivative"
+    return "unclassified"
+
+
+def _lifecycle_metadata(row: AssetRow) -> dict:
+    return {
+        "asset_role": row.asset_role,
+        "source_asset_id": row.source_asset_id,
+        "source_sha256": row.source_sha256,
+        "transformation_name": row.transformation_name,
+        "transformation_version": row.transformation_version,
+        "consent_receipt_id": row.consent_receipt_id,
+        "consent_version": row.consent_version,
+        "masking_attestation_id": row.masking_attestation_id,
+        "masking_model_sha256": row.masking_model_sha256,
+        "human_privacy_review_receipt_id": row.human_privacy_review_receipt_id,
+        "human_privacy_reviewer_ref": row.human_privacy_reviewer_ref,
+        "human_privacy_reviewed_at": row.human_privacy_reviewed_at.isoformat() if row.human_privacy_reviewed_at else None,
+        "publication_scope": row.publication_scope,
+        "publication_state": row.publication_state,
+        "publication_surface": row.publication_surface,
+        "revoked_at": (
+            row.revoked_at.replace(tzinfo=timezone.utc)
+            if row.revoked_at and row.revoked_at.tzinfo is None else row.revoked_at
+        ).isoformat() if row.revoked_at else None,
+    }
+
+
+def _mark_publication_revoked(row: AssetRow, at: datetime) -> None:
+    if row.publication_state != "revoked":
+        row.publication_scope = "private_only"
+        row.publication_state = "revoked"
+        row.revoked_at = at
+
+
+def _privacy_governance_config() -> tuple[str, str]:
+    raw = os.getenv("PRIVACY_GOVERNANCE_API_URL", "").strip().rstrip("/")
+    token = os.getenv("PRIVACY_GOVERNANCE_API_TOKEN", "").strip()
+    from urllib.parse import urlsplit
+    parts = urlsplit(raw)
+    host = (parts.hostname or "").lower()
+    local = host in {"localhost", "127.0.0.1", "::1"}
+    if (
+        not raw or len(token.encode("utf-8")) < 32 or not host
+        or parts.username or parts.password or parts.query or parts.fragment
+        or (parts.scheme != "https" and not (parts.scheme == "http" and local))
+    ):
+        raise HTTPException(503, detail={"code": "PRIVACY_GOVERNANCE_PROVIDER_NOT_CONFIGURED"})
+    return raw, token
+
+
+async def _evaluate_publication_with_privacy_governance(payload: dict) -> dict:
+    base, token = _privacy_governance_config()
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(10.0, connect=3.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            response = await client.post(
+                base + "/internal/v1/privacy/assets/publication/evaluate",
+                json=payload,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        if response.status_code != 200:
+            raise HTTPException(403 if response.status_code in (400, 401, 403, 404, 422) else 503,
+                                detail={"code": "PUBLICATION_PRIVACY_GATE_REJECTED"})
+        body = response.json()
+        if not isinstance(body, dict):
+            raise HTTPException(503, detail={"code": "PUBLICATION_PRIVACY_GATE_INVALID_RESPONSE"})
+        return body
+    except HTTPException:
+        raise
+    except (httpx.HTTPError, ValueError, TypeError) as exc:
+        raise HTTPException(503, detail={"code": "PUBLICATION_PRIVACY_GATE_UNAVAILABLE"}) from exc
+
+
 def _owned_asset(db: Session, asset_id: str, owner: str, purpose: str, parent_id: str) -> AssetRow:
     row = db.get(AssetRow, asset_id)
     if (
@@ -410,6 +536,7 @@ async def upload_asset(
     asset_id = str(uuid.uuid4())
     object_key = f"private/{asset_id[:2]}/{asset_id}.png"
     digest = hashlib.sha256(normalized).hexdigest()
+    source_digest = hashlib.sha256(raw).hexdigest() if _asset_role(purpose) == "source" else None
     now = datetime.now(timezone.utc)
     retention_until = now + timedelta(days=retention_days) if retention_days else None
     client, bucket = _object_store()
@@ -423,7 +550,9 @@ async def upload_asset(
     row = AssetRow(
         asset_id=asset_id, owner_user_id=owner, purpose=purpose, parent_id=parent,
         object_key=object_key, content_type="image/png", byte_size=len(normalized),
-        sha256=digest, status="active", created_at=now, retention_until=retention_until,
+        sha256=digest, source_sha256=source_digest, asset_role=_asset_role(purpose),
+        publication_scope="private_only", publication_state="private_only",
+        status="active", created_at=now, retention_until=retention_until,
     )
     try:
         db.add(row)
@@ -439,6 +568,8 @@ async def upload_asset(
         "asset_id": asset_id, "owner_user_id": owner, "purpose": purpose,
         "parent_id": parent, "content_type": row.content_type,
         "byte_size": row.byte_size, "sha256": row.sha256,
+        "asset_role": row.asset_role, "source_sha256": row.source_sha256,
+        "publication_scope": row.publication_scope, "publication_state": row.publication_state,
         "status": row.status, "retention_until": retention_until.isoformat() if retention_until else None,
     }
 
@@ -476,7 +607,9 @@ async def upload_twin_mesh(
     row = AssetRow(
         asset_id=asset_id, owner_user_id=owner, purpose="twin_representation", parent_id=parent,
         object_key=object_key, content_type=GLB_CONTENT_TYPE, byte_size=len(validated),
-        sha256=digest, status="active", created_at=now, retention_until=None,
+        sha256=digest, asset_role="representation",
+        publication_scope="private_only", publication_state="private_only",
+        status="active", created_at=now, retention_until=None,
     )
     try:
         db.add(row)
@@ -492,8 +625,111 @@ async def upload_twin_mesh(
         "asset_id": asset_id, "owner_user_id": owner, "purpose": row.purpose,
         "parent_id": parent, "content_type": row.content_type,
         "byte_size": row.byte_size, "sha256": row.sha256,
+        "asset_role": row.asset_role, "source_sha256": row.source_sha256,
+        "publication_scope": row.publication_scope, "publication_state": row.publication_state,
         "status": row.status, "retention_until": None,
     }
+
+
+@app.post("/internal/v1/assets/{asset_id}/publication/approve", dependencies=[Depends(require_internal_token)])
+async def approve_asset_publication(
+    asset_id: str,
+    payload: PublicationApprovalIn,
+    db: Session = Depends(get_db),
+) -> dict:
+    owner = payload.subject_id.strip()
+    consent_id = payload.consent_id
+    attestation_id = payload.masking_attestation_id
+    surface = payload.target_surface
+    row = db.execute(
+        select(AssetRow).where(AssetRow.asset_id == asset_id).with_for_update()
+    ).scalar_one_or_none()
+    now = datetime.now(timezone.utc)
+    retention_until = row.retention_until if row is not None else None
+    if retention_until is not None and retention_until.tzinfo is None:
+        retention_until = retention_until.replace(tzinfo=timezone.utc)
+    if (
+        row is None or row.owner_user_id != owner
+        or row.status != "active" or row.content_type != "image/png"
+        or (retention_until is not None and retention_until <= now)
+    ):
+        raise HTTPException(404, detail={"code": "ASSET_NOT_FOUND"})
+    if row.publication_state == "revoked":
+        raise HTTPException(409, detail={"code": "ASSET_PUBLICATION_REVOKED"})
+    decision = await _evaluate_publication_with_privacy_governance({
+        "asset_id": row.asset_id,
+        "asset_sha256": row.sha256,
+        "subject_id": owner,
+        "consent_id": consent_id,
+        "masking_attestation_id": attestation_id,
+        "target_surface": surface,
+    })
+    reviewed_at_value = decision.get("human_privacy_reviewed_at")
+    try:
+        reviewed_at = datetime.fromisoformat(str(reviewed_at_value).replace("Z", "+00:00"))
+        reviewed_at_valid = reviewed_at.tzinfo is not None and reviewed_at <= datetime.now(timezone.utc)
+    except (TypeError, ValueError):
+        reviewed_at_valid = False
+        reviewed_at = None
+    consent_version = decision.get("consent_version")
+    model_digest = decision.get("masking_model_sha256")
+    review_receipt_id = decision.get("human_privacy_review_receipt_id")
+    reviewer_ref = decision.get("human_privacy_reviewer_ref")
+    if not (
+        decision.get("decision") == "PASS"
+        and decision.get("asset_id") == row.asset_id
+        and decision.get("asset_sha256") == row.sha256
+        and decision.get("subject_id") == owner
+        and decision.get("consent_id") == consent_id
+        and decision.get("consent_resource_id") == row.asset_id
+        and decision.get("photographed_people_status") in {"no_people", "adults_only"}
+        and decision.get("masking_attestation_id") == attestation_id
+        and decision.get("target_surface") == surface
+        and decision.get("human_privacy_review_passed") is True
+        and isinstance(consent_version, str) and 1 <= len(consent_version) <= 80
+        and isinstance(model_digest, str) and re.fullmatch(r"[0-9a-f]{64}", model_digest)
+        and isinstance(review_receipt_id, str) and 12 <= len(review_receipt_id) <= 160
+        and isinstance(reviewer_ref, str) and 8 <= len(reviewer_ref) <= 160
+        and reviewed_at_valid
+    ):
+        raise HTTPException(403, detail={"code": "PUBLICATION_PRIVACY_DECISION_MISMATCH"})
+    row.consent_receipt_id = consent_id
+    row.consent_version = consent_version
+    row.masking_attestation_id = attestation_id
+    row.masking_model_sha256 = model_digest
+    row.human_privacy_review_receipt_id = review_receipt_id
+    row.human_privacy_reviewer_ref = reviewer_ref
+    row.human_privacy_reviewed_at = reviewed_at
+    row.publication_scope = "approved_public"
+    row.publication_state = "approved"
+    row.publication_surface = surface
+    try:
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(503, detail={"code": "ASSET_PUBLICATION_METADATA_COMMIT_FAILED"}) from exc
+    return {"asset_id": row.asset_id, "decision": "APPROVED", **_lifecycle_metadata(row)}
+
+
+@app.post("/internal/v1/assets/{asset_id}/publication/revoke", dependencies=[Depends(require_internal_token)])
+def revoke_asset_publication(asset_id: str, payload: PublicationRevocationIn, db: Session = Depends(get_db)) -> dict:
+    owner = payload.subject_id.strip()
+    reason = payload.reason_code
+    row = db.execute(
+        select(AssetRow).where(AssetRow.asset_id == asset_id).with_for_update()
+    ).scalar_one_or_none()
+    if row is None or row.owner_user_id != owner:
+        raise HTTPException(404, detail={"code": "ASSET_NOT_FOUND"})
+    if row.publication_state != "revoked":
+        row.publication_scope = "private_only"
+        row.publication_state = "revoked"
+        row.revoked_at = datetime.now(timezone.utc)
+        try:
+            db.commit()
+        except SQLAlchemyError as exc:
+            db.rollback()
+            raise HTTPException(503, detail={"code": "ASSET_PUBLICATION_REVOCATION_COMMIT_FAILED"}) from exc
+    return {"asset_id": row.asset_id, "decision": "REVOKED", "reason_code": reason, **_lifecycle_metadata(row)}
 
 
 @app.post("/internal/v1/assets/authorize", dependencies=[Depends(require_internal_token)])
@@ -544,6 +780,10 @@ def authorize_asset(
         return {
             "authorized": True, "subject_id": owner.strip(),
             "authorized_asset_ids": sorted(row.asset_id for row in rows),
+            "assets": [
+                {"asset_id": row.asset_id, **_lifecycle_metadata(row)}
+                for row in sorted(rows, key=lambda item: item.asset_id)
+            ],
             "parent_id": next(iter(parents)), "purpose": purpose,
         }
 
@@ -556,6 +796,7 @@ def authorize_asset(
         "authorized": True, "active": True, "subject_id": owner.strip(),
         "asset_id": row.asset_id, "purpose": row.purpose, "parent_id": row.parent_id,
         "content_type": row.content_type, "byte_size": row.byte_size, "sha256": row.sha256,
+        **_lifecycle_metadata(row),
     }
 
 
@@ -599,8 +840,10 @@ def delete_asset(
         client.delete_object(Bucket=bucket, Key=row.object_key)
     except (BotoCoreError, ClientError) as exc:
         raise HTTPException(503, detail={"code": "ASSET_OBJECT_DELETE_FAILED"}) from exc
+    now = datetime.now(timezone.utc)
     row.status = "deleted"
-    row.deleted_at = datetime.now(timezone.utc)
+    row.deleted_at = now
+    _mark_publication_revoked(row, now)
     db.commit()
     return Response(status_code=204)
 
@@ -661,6 +904,7 @@ def delete_assets(
             continue
         row.status = "deleted"
         row.deleted_at = now
+        _mark_publication_revoked(row, now)
         deleted_ids.append(row.asset_id)
     db.commit()
     if failed_ids or not set(requested).issubset(set(deleted_ids)):
@@ -700,6 +944,7 @@ def delete_parent_assets(
             continue
         row.status = "deleted"
         row.deleted_at = now
+        _mark_publication_revoked(row, now)
         deleted += 1
     db.commit()
     if deleted != len(rows):
@@ -738,6 +983,7 @@ def purge_expired_assets(
             client.delete_object(Bucket=bucket, Key=row.object_key)
             row.status = "deleted"
             row.deleted_at = now
+            _mark_publication_revoked(row, now)
             purged += 1
         except (BotoCoreError, ClientError):
             failed += 1

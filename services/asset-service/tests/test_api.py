@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
+from sqlalchemy.exc import IntegrityError
 
 from app import main
 
@@ -189,6 +190,9 @@ def test_twin_mesh_upload_stores_a_private_glb_without_image_normalization(clien
     assert metadata["content_type"] == "model/gltf-binary"
     assert metadata["byte_size"] == len(raw)
     assert metadata["sha256"] == __import__("hashlib").sha256(raw).hexdigest()
+    assert metadata["asset_role"] == "representation"
+    assert metadata["publication_scope"] == "private_only"
+    assert metadata["publication_state"] == "private_only"
     assert "object_key" not in metadata
     stored = next(iter(fake.objects.values()))
     assert stored == raw
@@ -272,6 +276,10 @@ def test_authorization_requires_exact_subject_purpose_and_parent(client):
         "purpose": "try_on_output", "parent_id": "twin-001",
     })
     assert allowed.status_code == 200
+    assert allowed.json()["asset_role"] == "source"
+    assert allowed.json()["publication_scope"] == "private_only"
+    assert allowed.json()["publication_state"] == "private_only"
+    assert allowed.json()["consent_receipt_id"] is None
     assert cross_user.status_code == 404
     assert wrong_parent.status_code == 404
     assert wrong_purpose.status_code == 404
@@ -311,6 +319,7 @@ def test_bulk_twin_authorization_requires_exact_owner_parent_and_asset_purposes(
     })
     assert allowed.status_code == 200
     assert allowed.json()["authorized_asset_ids"] == sorted([source, mesh])
+    assert all(asset["publication_state"] == "private_only" for asset in allowed.json()["assets"])
     assert wrong_parent.status_code == 404
     assert wrong_owner.status_code == 404
 
@@ -465,3 +474,394 @@ def test_internal_authentication_is_required(client):
               "purpose": "twin_source_image", "parent_id": "twin-001"},
     )
     assert result.status_code == 401
+
+
+
+def test_asset_lifecycle_metadata_classifies_assets_and_defaults_to_private_only(client):
+    response, _ = client
+    source_result = upload(response)
+    derivative_result = upload(
+        response, purpose="try_on_output", parent_id="try-on-001", retention_days="2"
+    )
+    assert source_result.status_code == 201
+    assert derivative_result.status_code == 201
+    source = source_result.json()
+    derivative = derivative_result.json()
+
+    assert source["asset_role"] == "source"
+    assert len(source["source_sha256"]) == 64
+    assert source["publication_scope"] == "private_only"
+    assert source["publication_state"] == "private_only"
+
+    assert derivative["asset_role"] == "derivative"
+    assert derivative["source_sha256"] is None
+    assert derivative["publication_scope"] == "private_only"
+    assert derivative["publication_state"] == "private_only"
+
+    database_url = response.app.state.asset_test_database_url
+    with main._sessions(database_url)() as db:
+        stored = db.get(main.AssetRow, derivative["asset_id"])
+        assert stored.source_asset_id is None
+        assert stored.transformation_name is None
+        assert stored.transformation_version is None
+        assert stored.consent_receipt_id is None
+        assert stored.masking_attestation_id is None
+        assert stored.revoked_at is None
+
+
+def test_personal_media_cannot_be_marked_public_without_consent_and_masking_evidence(client):
+    response, _ = client
+    created = upload(response, purpose="appearance_source_image", parent_id="look-private-001")
+    assert created.status_code == 201
+    asset_id = created.json()["asset_id"]
+    database_url = response.app.state.asset_test_database_url
+
+    with main._sessions(database_url)() as db:
+        row = db.get(main.AssetRow, asset_id)
+        row.publication_scope = "approved_public"
+        row.publication_state = "approved"
+        with pytest.raises(IntegrityError):
+            db.commit()
+        db.rollback()
+
+    with main._sessions(database_url)() as db:
+        unchanged = db.get(main.AssetRow, asset_id)
+        assert unchanged.publication_scope == "private_only"
+        assert unchanged.publication_state == "private_only"
+
+
+def test_revocation_state_requires_revocation_timestamp(client):
+    response, _ = client
+    created = upload(response)
+    asset_id = created.json()["asset_id"]
+    database_url = response.app.state.asset_test_database_url
+
+    with main._sessions(database_url)() as db:
+        row = db.get(main.AssetRow, asset_id)
+        row.publication_state = "revoked"
+        with pytest.raises(IntegrityError):
+            db.commit()
+        db.rollback()
+
+
+
+def test_publication_approval_requires_exact_asset_consent_attestation_and_surface(client, monkeypatch):
+    response, _ = client
+    created = upload(response, purpose="appearance_source_image", parent_id="look-public-001")
+    assert created.status_code == 201
+    asset = created.json()
+    calls = []
+
+    async def approve(payload):
+        calls.append(payload)
+        return {
+            "decision": "PASS",
+            "asset_id": asset["asset_id"],
+            "asset_sha256": asset["sha256"],
+            "subject_id": "subject-001",
+            "consent_id": "consent-public-001",
+            "consent_resource_id": asset["asset_id"],
+            "photographed_people_status": "no_people",
+            "consent_version": "click-it-privacy-v1",
+            "human_privacy_review_passed": True,
+            "masking_model_sha256": "a" * 64,
+            "human_privacy_review_receipt_id": "human-review-receipt-001",
+            "human_privacy_reviewer_ref": "reviewer-ref-001",
+            "human_privacy_reviewed_at": datetime.now(timezone.utc).isoformat(),
+            "masking_attestation_id": "masking-attestation-001",
+            "target_surface": "shared_link",
+        }
+
+    monkeypatch.setattr(main, "_evaluate_publication_with_privacy_governance", approve)
+    approved = response.post(
+        f"/internal/v1/assets/{asset['asset_id']}/publication/approve",
+        headers=auth(),
+        json={
+            "subject_id": "subject-001",
+            "consent_id": "consent-public-001",
+            "masking_attestation_id": "masking-attestation-001",
+            "target_surface": "shared_link",
+        },
+    )
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["decision"] == "APPROVED"
+    assert approved.json()["publication_state"] == "approved"
+    assert approved.json()["publication_surface"] == "shared_link"
+    assert approved.json()["consent_receipt_id"] == "consent-public-001"
+    assert approved.json()["masking_attestation_id"] == "masking-attestation-001"
+    assert approved.json()["consent_version"] == "click-it-privacy-v1"
+    assert approved.json()["masking_model_sha256"] == "a" * 64
+    assert approved.json()["human_privacy_review_receipt_id"] == "human-review-receipt-001"
+    assert approved.json()["human_privacy_reviewer_ref"] == "reviewer-ref-001"
+    assert approved.json()["human_privacy_reviewed_at"] is not None
+    assert calls[0]["asset_sha256"] == asset["sha256"]
+
+    database_url = response.app.state.asset_test_database_url
+    with main._sessions(database_url)() as db:
+        stored = db.get(main.AssetRow, asset["asset_id"])
+        assert stored.publication_surface == "shared_link"
+        assert stored.publication_state == "approved"
+
+
+def test_publication_approval_rejects_a_mismatched_privacy_gate_decision(client, monkeypatch):
+    response, _ = client
+    asset = upload(response, purpose="appearance_source_image", parent_id="look-public-002").json()
+
+    async def mismatched(_payload):
+        return {
+            "decision": "PASS",
+            "asset_id": asset["asset_id"],
+            "asset_sha256": "0" * 64,
+            "subject_id": "subject-001",
+            "consent_id": "consent-public-002",
+            "consent_resource_id": asset["asset_id"],
+            "photographed_people_status": "no_people",
+            "consent_version": "click-it-privacy-v1",
+            "human_privacy_review_passed": True,
+            "masking_model_sha256": "a" * 64,
+            "human_privacy_review_receipt_id": "human-review-receipt-001",
+            "human_privacy_reviewer_ref": "reviewer-ref-001",
+            "human_privacy_reviewed_at": datetime.now(timezone.utc).isoformat(),
+            "masking_attestation_id": "masking-attestation-002",
+            "target_surface": "marketplace",
+        }
+
+    monkeypatch.setattr(main, "_evaluate_publication_with_privacy_governance", mismatched)
+    result = response.post(
+        f"/internal/v1/assets/{asset['asset_id']}/publication/approve",
+        headers=auth(),
+        json={
+            "subject_id": "subject-001",
+            "consent_id": "consent-public-002",
+            "masking_attestation_id": "masking-attestation-002",
+            "target_surface": "marketplace",
+        },
+    )
+    assert result.status_code == 403
+    assert result.json()["detail"]["code"] == "PUBLICATION_PRIVACY_DECISION_MISMATCH"
+
+
+def test_publication_revocation_is_idempotent_and_removes_public_scope(client, monkeypatch):
+    response, _ = client
+    asset = upload(response, purpose="appearance_source_image", parent_id="look-public-003").json()
+
+    async def approve(payload):
+        return {
+            "decision": "PASS",
+            "asset_id": asset["asset_id"],
+            "asset_sha256": asset["sha256"],
+            "subject_id": "subject-001",
+            "consent_id": "consent-public-003",
+            "consent_resource_id": asset["asset_id"],
+            "photographed_people_status": "no_people",
+            "consent_version": "click-it-privacy-v1",
+            "human_privacy_review_passed": True,
+            "masking_model_sha256": "a" * 64,
+            "human_privacy_review_receipt_id": "human-review-receipt-001",
+            "human_privacy_reviewer_ref": "reviewer-ref-001",
+            "human_privacy_reviewed_at": datetime.now(timezone.utc).isoformat(),
+            "masking_attestation_id": "masking-attestation-003",
+            "target_surface": "public_profile",
+        }
+
+    monkeypatch.setattr(main, "_evaluate_publication_with_privacy_governance", approve)
+    approved = response.post(
+        f"/internal/v1/assets/{asset['asset_id']}/publication/approve",
+        headers=auth(),
+        json={
+            "subject_id": "subject-001",
+            "consent_id": "consent-public-003",
+            "masking_attestation_id": "masking-attestation-003",
+            "target_surface": "public_profile",
+        },
+    )
+    assert approved.status_code == 200
+    revoke = response.post(
+        f"/internal/v1/assets/{asset['asset_id']}/publication/revoke",
+        headers=auth(),
+        json={"subject_id": "subject-001", "reason_code": "consent_revoked"},
+    )
+    again = response.post(
+        f"/internal/v1/assets/{asset['asset_id']}/publication/revoke",
+        headers=auth(),
+        json={"subject_id": "subject-001", "reason_code": "consent_revoked"},
+    )
+    assert revoke.status_code == 200
+    assert revoke.json()["publication_scope"] == "private_only"
+    assert revoke.json()["publication_state"] == "revoked"
+    assert revoke.json()["revoked_at"] is not None
+    assert again.status_code == 200
+    assert again.json()["revoked_at"] == revoke.json()["revoked_at"]
+
+
+
+def test_expired_asset_cannot_enter_publication_approval(client, monkeypatch):
+    response, _ = client
+    asset = upload(
+        response, purpose="appearance_source_image",
+        parent_id="look-expired-001", retention_days="1",
+    ).json()
+    database_url = response.app.state.asset_test_database_url
+    with main._sessions(database_url)() as db:
+        row = db.get(main.AssetRow, asset["asset_id"])
+        row.retention_until = datetime.now(timezone.utc) - timedelta(minutes=1)
+        db.commit()
+
+    async def must_not_call(_payload):
+        raise AssertionError("expired asset must be rejected before privacy gate invocation")
+
+    monkeypatch.setattr(main, "_evaluate_publication_with_privacy_governance", must_not_call)
+    result = response.post(
+        f"/internal/v1/assets/{asset['asset_id']}/publication/approve",
+        headers=auth(),
+        json={
+            "subject_id": "subject-001",
+            "consent_id": "consent-expired-001",
+            "masking_attestation_id": "masking-attestation-expired",
+            "target_surface": "shared_link",
+        },
+    )
+    assert result.status_code == 404
+    assert result.json()["detail"]["code"] == "ASSET_NOT_FOUND"
+
+
+
+def test_deleting_approved_asset_revokes_publication_metadata(client, monkeypatch):
+    response, _ = client
+    asset = upload(response, purpose="appearance_source_image", parent_id="look-delete-published-001").json()
+
+    async def approve(_payload):
+        return {
+            "decision": "PASS",
+            "asset_id": asset["asset_id"],
+            "asset_sha256": asset["sha256"],
+            "subject_id": "subject-001",
+            "consent_id": "consent-delete-published-001",
+            "consent_resource_id": asset["asset_id"],
+            "photographed_people_status": "no_people",
+            "consent_version": "click-it-privacy-v1",
+            "human_privacy_review_passed": True,
+            "masking_model_sha256": "a" * 64,
+            "human_privacy_review_receipt_id": "human-review-receipt-001",
+            "human_privacy_reviewer_ref": "reviewer-ref-001",
+            "human_privacy_reviewed_at": datetime.now(timezone.utc).isoformat(),
+            "masking_attestation_id": "masking-delete-published-001",
+            "target_surface": "shared_link",
+        }
+
+    monkeypatch.setattr(main, "_evaluate_publication_with_privacy_governance", approve)
+    approved = response.post(
+        f"/internal/v1/assets/{asset['asset_id']}/publication/approve",
+        headers=auth(),
+        json={
+            "subject_id": "subject-001",
+            "consent_id": "consent-delete-published-001",
+            "masking_attestation_id": "masking-delete-published-001",
+            "target_surface": "shared_link",
+        },
+    )
+    assert approved.status_code == 200
+    deleted = response.delete(
+        f"/v1/assets/{asset['asset_id']}",
+        headers={
+            **auth(),
+            "X-Asset-Owner-ID": "subject-001",
+            "Idempotency-Key": "delete-published-001",
+        },
+    )
+    assert deleted.status_code == 204
+    database_url = response.app.state.asset_test_database_url
+    with main._sessions(database_url)() as db:
+        stored = db.get(main.AssetRow, asset["asset_id"])
+        assert stored.status == "deleted"
+        assert stored.publication_scope == "private_only"
+        assert stored.publication_state == "revoked"
+        assert stored.revoked_at is not None
+
+
+
+def test_twin_mesh_representation_can_never_be_approved_for_publication(client):
+    response, _ = client
+    mesh = upload_mesh(response).json()
+    database_url = response.app.state.asset_test_database_url
+    with main._sessions(database_url)() as db:
+        row = db.get(main.AssetRow, mesh["asset_id"])
+        row.publication_scope = "approved_public"
+        row.publication_state = "approved"
+        row.publication_surface = "public_profile"
+        row.consent_receipt_id = "consent-mesh-public-001"
+        row.consent_version = "click-it-privacy-v1"
+        row.masking_attestation_id = "masking-mesh-public-001"
+        row.masking_model_sha256 = "a" * 64
+        row.human_privacy_review_receipt_id = "human-review-mesh-001"
+        row.human_privacy_reviewer_ref = "reviewer-mesh-001"
+        row.human_privacy_reviewed_at = datetime.now(timezone.utc)
+        with pytest.raises(IntegrityError):
+            db.commit()
+        db.rollback()
+
+
+
+def test_publication_approval_uses_authenticated_nonredirecting_privacy_service_call(client, monkeypatch):
+    response, _ = client
+    asset = upload(response, purpose="appearance_source_image", parent_id="look-http-gate-001").json()
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_URL", "https://privacy-governance.internal")
+    monkeypatch.setenv("PRIVACY_GOVERNANCE_API_TOKEN", "privacy-governance-token-with-more-than-32-bytes")
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "decision": "PASS",
+                "asset_id": asset["asset_id"],
+                "asset_sha256": asset["sha256"],
+                "subject_id": "subject-001",
+                "consent_id": "consent-http-gate-001",
+                "consent_resource_id": asset["asset_id"],
+                "photographed_people_status": "no_people",
+                "consent_version": "click-it-privacy-v1",
+                "human_privacy_review_passed": True,
+                "masking_model_sha256": "a" * 64,
+                "human_privacy_review_receipt_id": "human-review-http-001",
+                "human_privacy_reviewer_ref": "reviewer-http-001",
+                "human_privacy_reviewed_at": datetime.now(timezone.utc).isoformat(),
+                "masking_attestation_id": "masking-http-gate-001",
+                "target_surface": "marketplace",
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, **kwargs):
+            assert kwargs["trust_env"] is False
+            assert kwargs["follow_redirects"] is False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def post(self, url, **kwargs):
+            calls.append((url, kwargs))
+            return FakeResponse()
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", FakeAsyncClient)
+    result = response.post(
+        f"/internal/v1/assets/{asset['asset_id']}/publication/approve",
+        headers=auth(),
+        json={
+            "subject_id": "subject-001",
+            "consent_id": "consent-http-gate-001",
+            "masking_attestation_id": "masking-http-gate-001",
+            "target_surface": "marketplace",
+        },
+    )
+    assert result.status_code == 200, result.text
+    assert len(calls) == 1
+    url, kwargs = calls[0]
+    assert url == "https://privacy-governance.internal/internal/v1/privacy/assets/publication/evaluate"
+    assert kwargs["headers"]["Authorization"] == "Bearer privacy-governance-token-with-more-than-32-bytes"
+    assert kwargs["json"]["asset_id"] == asset["asset_id"]
+    assert kwargs["json"]["asset_sha256"] == asset["sha256"]
+    assert kwargs["json"]["consent_id"] == "consent-http-gate-001"

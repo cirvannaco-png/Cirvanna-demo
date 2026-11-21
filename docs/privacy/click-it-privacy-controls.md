@@ -69,9 +69,13 @@ The policy registry must be maintained through legal review. A new jurisdiction 
 
 ## 4A. Public media publication safety gate
 
-The Privacy Governance Service exposes `POST /internal/v1/privacy/assets/publication/evaluate`. Public profiles, community feeds, Marketplace media, merchant surfaces and shared links must call this gate before every publish, restore, syndication or share activation. The gate accepts only opaque asset and masking-attestation references; it never accepts an image.
+The Privacy Governance Service exposes `POST /internal/v1/privacy/assets/publication/evaluate`. It accepts no image bytes. The current Asset Service approval transition calls it over authenticated HTTPS and persists only a decision bound to the exact asset digest, subject, consent receipt, masking-attestation receipt and destination surface.
 
-It requires a trusted Vision attestation tied to the exact asset and target surface. The attestation must confirm that all detected faces were masked before publication, zero unmasked faces remain, every detected face region was processed, and no face recognition, face embeddings or age estimation occurred. Missing, stale, mismatched or incomplete evidence blocks publication.
+Public-media consent is a distinct opt-in (`public_media_publication`); Click It consent alone is not public-sharing consent. Consent must be active and resource-bound to the exact asset. Revoked, mismatched or scope-incomplete consent is rejected. Declared-minor media is ineligible for public publication.
+
+The trusted Vision attestation must confirm that all detected faces were masked before publication, zero unmasked faces remain, every detected face region was processed, and no face recognition, face embeddings or age estimation occurred. It must be bound to the exact stored asset digest and destination surface and include independent human-review receipt, reviewer reference and timestamp. The approved masking-model digest is pinned. Missing, stale, mismatched or incomplete evidence blocks approval.
+
+**Release limitation:** jurisdiction-specific legal authorization for public sharing is not yet integrated into this transition. No public-serving media endpoint is enabled. Do not expose an asset merely because its storage row says `approved`; every publisher, restore, share-link, CDN and cache path must independently enforce current authorization and exact-surface/digest binding. Consent revocation must propagate to unpublishing and cache/CDN invalidation before public media can be enabled.
 
 This deliberately masks all detected faces on public assets rather than trying to distinguish children from adults by appearance. It does not identify people or estimate age. This policy is more conservative than a child-only gate and must be disclosed in the product's media-publication terms. The repository contains the gate contract; every actual public publishing path still needs to integrate it and pass end-to-end tests before the platform can claim global protection.
 

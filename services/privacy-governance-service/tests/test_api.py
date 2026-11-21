@@ -64,6 +64,14 @@ def grant_payload(status="adults_only", guardian_reference=None):
         payload["guardian_verification_reference"] = guardian_reference
     return payload
 
+def grant_publication_consent(client, asset_id, status="no_people"):
+    payload = grant_payload(status)
+    payload["consent_publication"] = True
+    payload["resource_id"] = asset_id
+    response = client.post("/internal/v1/consents/grant", headers=internal(), json=payload)
+    assert response.status_code == 200, response.text
+    return {"subject_id": "customer-123", "consent_id": response.json()["consent_id"]}
+
 
 def policy_bundle(signer, jurisdiction, **overrides):
     now = datetime.now(timezone.utc)
@@ -275,11 +283,13 @@ def test_publication_gate_requires_exact_digest_and_independent_human_review(cli
         }
 
     monkeypatch.setattr(main, "post_trusted", verify)
+    consent = grant_publication_consent(client, "asset-public-001")
     response = client.post(
         "/internal/v1/privacy/assets/publication/evaluate",
         headers=internal(),
         json={
             "asset_id": "asset-public-001",
+            **consent,
             "asset_sha256": asset_digest,
             "masking_attestation_id": "mask-attestation-000001",
             "target_surface": "community_feed",
@@ -320,11 +330,13 @@ def test_publication_gate_blocks_any_unmasked_face_or_identity_or_age_processing
         }
 
     monkeypatch.setattr(main, "post_trusted", verify)
+    consent = grant_publication_consent(client, "asset-public-002")
     response = client.post(
         "/internal/v1/privacy/assets/publication/evaluate",
         headers=internal(),
         json={
             "asset_id": "asset-public-002",
+            **consent,
             "asset_sha256": "d" * 64,
             "masking_attestation_id": "mask-attestation-000002",
             "target_surface": "shared_link",
@@ -337,11 +349,13 @@ def test_publication_gate_blocks_any_unmasked_face_or_identity_or_age_processing
 def test_publication_gate_fails_closed_when_vision_attestation_provider_is_missing(client, monkeypatch):
     monkeypatch.delenv("VISION_PRIVACY_ATTESTATION_API_URL", raising=False)
     monkeypatch.delenv("VISION_PRIVACY_ATTESTATION_API_TOKEN", raising=False)
+    consent = grant_publication_consent(client, "asset-public-003")
     response = client.post(
         "/internal/v1/privacy/assets/publication/evaluate",
         headers=internal(),
         json={
             "asset_id": "asset-public-003",
+            **consent,
             "asset_sha256": "e" * 64,
             "masking_attestation_id": "mask-attestation-000003",
             "target_surface": "public_profile",
@@ -879,11 +893,13 @@ def test_publication_gate_fails_closed_without_approved_masking_model_pin(client
         raise AssertionError("attestation provider must not be called without an approved model pin")
 
     monkeypatch.setattr(main, "post_trusted", must_not_call)
+    consent = grant_publication_consent(client, "asset-public-no-pin")
     response = client.post(
         "/internal/v1/privacy/assets/publication/evaluate",
         headers=internal(),
         json={
             "asset_id": "asset-public-no-pin",
+            **consent,
             "asset_sha256": "f" * 64,
             "masking_attestation_id": "mask-attestation-no-pin",
             "target_surface": "marketplace",
@@ -917,11 +933,13 @@ def test_publication_gate_rejects_attestation_for_different_asset_bytes(client, 
         }
 
     monkeypatch.setattr(main, "post_trusted", verify)
+    consent = grant_publication_consent(client, "asset-public-digest-mismatch")
     response = client.post(
         "/internal/v1/privacy/assets/publication/evaluate",
         headers=internal(),
         json={
             "asset_id": "asset-public-digest-mismatch",
+            **consent,
             "asset_sha256": "1" * 64,
             "masking_attestation_id": "mask-attestation-digest-mismatch",
             "target_surface": "marketplace",
@@ -955,11 +973,13 @@ def test_publication_gate_rejects_missing_independent_human_review_provenance(cl
         }
 
     monkeypatch.setattr(main, "post_trusted", verify)
+    consent = grant_publication_consent(client, "asset-public-review-missing")
     response = client.post(
         "/internal/v1/privacy/assets/publication/evaluate",
         headers=internal(),
         json={
             "asset_id": "asset-public-review-missing",
+            **consent,
             "asset_sha256": "2" * 64,
             "masking_attestation_id": "mask-attestation-review-missing",
             "target_surface": "shared_link",
@@ -975,6 +995,8 @@ def test_publication_gate_requires_asset_digest(client):
         headers=internal(),
         json={
             "asset_id": "asset-public-no-digest",
+            "subject_id": "customer-123",
+            "consent_id": "consent-public-no-digest",
             "masking_attestation_id": "mask-attestation-no-digest",
             "target_surface": "public_profile",
         },
@@ -999,3 +1021,143 @@ def test_readiness_fails_without_valid_approved_masking_model_pin(client, monkey
     assert response.status_code == 503
     assert response.json()["ready"] is False
     assert response.json()["approved_masking_model_pin_configured"] is False
+
+
+def test_publication_gate_requires_current_asset_scoped_consent_before_masking_provider(client, monkeypatch):
+    asset_id = "asset-public-consent-revoked"
+    consent = grant_publication_consent(client, asset_id)
+    revoked = client.post(
+        f"/internal/v1/consents/{consent['consent_id']}/revoke",
+        headers=internal(),
+        json={"subject_id": "customer-123", "reason_code": "user_request"},
+    )
+    assert revoked.status_code == 200
+
+    async def must_not_call(*_args, **_kwargs):
+        raise AssertionError("masking provider must not be called after consent revocation")
+
+    monkeypatch.setattr(main, "post_trusted", must_not_call)
+    response = client.post(
+        "/internal/v1/privacy/assets/publication/evaluate",
+        headers=internal(),
+        json={
+            "asset_id": asset_id,
+            "asset_sha256": "3" * 64,
+            **consent,
+            "masking_attestation_id": "mask-attestation-revoked",
+            "target_surface": "shared_link",
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "PUBLICATION_CONSENT_NOT_VALID"
+
+
+def test_publication_gate_rejects_minor_media_even_with_guardian_consent(client, monkeypatch):
+    asset_id = "asset-public-minor-001"
+    with main._session_factory(main.database_url())() as db:
+        db.add(main.ConsentRecord(
+            consent_id="consent-minor-public-001",
+            subject_id="customer-123",
+            resource_id=asset_id,
+            granted_scopes=["image_processing", "click_it", "public_media_publication", "photographed_people_minor_attestation"],
+            photographed_people_status="contains_minor",
+            consent_version="click-it-privacy-v1",
+            active=True,
+            guardian_authority_verified=True,
+        ))
+        db.commit()
+
+    async def must_not_call(*_args, **_kwargs):
+        raise AssertionError("minor media must be rejected before masking provider invocation")
+
+    monkeypatch.setattr(main, "post_trusted", must_not_call)
+    response = client.post(
+        "/internal/v1/privacy/assets/publication/evaluate",
+        headers=internal(),
+        json={
+            "asset_id": asset_id,
+            "asset_sha256": "4" * 64,
+            "subject_id": "customer-123",
+            "consent_id": "consent-minor-public-001",
+            "masking_attestation_id": "mask-attestation-minor-001",
+            "target_surface": "community_feed",
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "MINOR_MEDIA_PUBLICATION_PROHIBITED"
+
+
+def test_publication_gate_success_returns_exact_active_consent_and_masking_provenance(client, monkeypatch):
+    asset_id = "asset-public-success-001"
+    consent = grant_publication_consent(client, asset_id, status="adults_only")
+    model_digest = "a" * 64
+
+    async def verify(_name, _path, _payload):
+        return {
+            "verified": True,
+            "active": True,
+            "asset_id": asset_id,
+            "asset_sha256": "5" * 64,
+            "human_privacy_review_passed": True,
+            "human_reviewed_asset_sha256": "5" * 64,
+            "human_privacy_review_receipt_id": "human-review-receipt-005",
+            "human_privacy_reviewer_ref": "reviewer-ref-005",
+            "human_privacy_reviewed_at": datetime.now(timezone.utc).isoformat(),
+            "attestation_id": "mask-attestation-success-005",
+            "all_detected_faces_masked": True,
+            "unmasked_face_count": 0,
+            "masking_applied_before_publication": True,
+            "face_recognition_performed": False,
+            "face_embeddings_created": False,
+            "age_estimation_performed": False,
+            "all_face_regions_processed": True,
+            "masking_model_sha256": model_digest,
+        }
+
+    monkeypatch.setattr(main, "post_trusted", verify)
+    response = client.post(
+        "/internal/v1/privacy/assets/publication/evaluate",
+        headers=internal(),
+        json={
+            "asset_id": asset_id,
+            "asset_sha256": "5" * 64,
+            **consent,
+            "masking_attestation_id": "mask-attestation-success-005",
+            "target_surface": "merchant_surface",
+        },
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["decision"] == "PASS"
+    assert body["consent_id"] == consent["consent_id"]
+    assert body["consent_resource_id"] == asset_id
+    assert body["subject_id"] == "customer-123"
+    assert body["target_surface"] == "merchant_surface"
+
+
+
+def test_click_it_consent_does_not_imply_publication_consent(client, monkeypatch):
+    asset_id = "asset-public-no-public-consent"
+    payload = grant_payload("no_people")
+    payload["resource_id"] = asset_id
+    granted = client.post("/internal/v1/consents/grant", headers=internal(), json=payload)
+    assert granted.status_code == 200
+
+    async def must_not_call(*_args, **_kwargs):
+        raise AssertionError("masking provider must not be called without explicit publication consent")
+
+    monkeypatch.setattr(main, "post_trusted", must_not_call)
+    response = client.post(
+        "/internal/v1/privacy/assets/publication/evaluate",
+        headers=internal(),
+        json={
+            "asset_id": asset_id,
+            "asset_sha256": "6" * 64,
+            "subject_id": "customer-123",
+            "consent_id": granted.json()["consent_id"],
+            "masking_attestation_id": "mask-attestation-no-public-consent",
+            "target_surface": "shared_link",
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "PUBLICATION_CONSENT_SCOPE_MISMATCH"
