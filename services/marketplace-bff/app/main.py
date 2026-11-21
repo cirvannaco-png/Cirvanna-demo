@@ -3539,6 +3539,23 @@ def _authorized_commerce_path(method: str, path: str) -> bool:
         return method == "GET"
     if len(parts) == 5 and parts[:2] == ["admin", "merchants"] and UUID_RE.fullmatch(parts[2]) and parts[3] == "markets" and re.fullmatch(r"[A-Za-z]{2}", parts[4]):
         return method == "PUT"
+    # Shopify merchant operations are forwarded only through the signed-in
+    # Commerce identity. The OAuth callback and webhook receiver remain direct
+    # provider-to-Commerce endpoints and are intentionally not exposed here.
+    if parts == ["integrations", "shopify", "install"]:
+        return method == "GET"
+    if parts == ["integrations", "shopify", "connection"] or parts == ["integrations", "shopify", "readiness"]:
+        return method == "GET"
+    if parts == ["integrations", "shopify", "disconnect"] or parts == ["integrations", "shopify", "sync", "products"]:
+        return method == "POST"
+    if parts == ["integrations", "shopify", "staged-products"]:
+        return method == "GET"
+    if len(parts) == 4 and parts[:2] == ["integrations", "shopify"] and parts[2] == "products" and UUID_RE.fullmatch(parts[3]):
+        return method == "POST" and False
+    if len(parts) == 5 and parts[:2] == ["integrations", "shopify"] and parts[2] == "products" and UUID_RE.fullmatch(parts[3]) and parts[4] == "map":
+        return method == "POST"
+    if len(parts) == 5 and parts[:2] == ["integrations", "shopify"] and parts[2] == "markets" and re.fullmatch(r"[A-Za-z]{2}", parts[3]) and parts[4] == "sync-pricing":
+        return method == "POST"
     return False
 
 
