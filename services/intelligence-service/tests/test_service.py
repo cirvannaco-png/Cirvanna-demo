@@ -276,6 +276,65 @@ def test_feedback_aggregate_opens_cal_review_and_records_final_cal_decision(clie
     assert decision.json()["verdict"] == "BLOCK"
     assert decision.json()["status"] == "decided"
 
+    lookup = client.post(
+        "/cal/feedback-decisions",
+        headers=auth("cal-test"),
+        json={"product_ids": ["product-review"], "context_key": "humid-daily"},
+    )
+    assert lookup.status_code == 200
+    assert lookup.json()["decisions"][0]["verdict"] == "BLOCK"
+    assert lookup.json()["decisions"][0]["decision_reference"] == "CAL-REVIEW-0001"
+
+    # Once that review is finalized, a new cohort window may open another
+    # review for the same product/context; the original decision remains auditable.
+    for index in range(30, 60):
+        contributor = "hmac-sha256:" + f"{index:064x}"
+        common = {
+            "product_id": "product-review",
+            "expires_at": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()),
+        }
+        consent = receipt({
+            **common, "type": "consent", "purpose": "recommendation_outcome_learning",
+            "subject_token": contributor,
+        })
+        cal_receipt = receipt({
+            **common, "type": "cal", "verdict": "SHOW",
+            "candidate_id": "candidate-review", "decision_id": f"second-decision-{index}",
+        })
+        outcome = {
+            "event_id": f"review-show-event-{index}", "product_id": "product-review",
+            "context_key": "humid-daily", "contributor_token": contributor,
+            "action": "saved", "suitability": "suitable", "suitability_reported": True,
+            "candidate_id": "candidate-review", "observed_at": datetime.now(timezone.utc).isoformat(),
+            "consent_receipt": consent, "cal_decision_receipt": cal_receipt,
+        }
+        result = client.post("/outcomes", json=outcome, headers=auth("service-test"))
+        assert result.status_code == 201, result.text
+
+    second_aggregate = client.get(
+        "/outcomes/aggregate",
+        params={"product_id": "product-review", "context_key": "humid-daily"},
+        headers=auth("service-test"),
+    )
+    assert second_aggregate.status_code == 200
+    second_review_id = second_aggregate.json()["cal_review_id"]
+    assert second_review_id != review_id
+    show_decision = client.post(
+        f"/cal/review-queue/{second_review_id}/decision",
+        headers=auth("cal-test"),
+        json={"verdict": "SHOW", "decision_reference": "CAL-REVIEW-0002",
+              "rationale": "The latest independent review found the prior issue resolved."},
+    )
+    assert show_decision.status_code == 200
+    latest = client.post(
+        "/cal/feedback-decisions",
+        headers=auth("cal-test"),
+        json={"product_ids": ["product-review"], "context_key": "humid-daily"},
+    )
+    assert latest.status_code == 200
+    assert latest.json()["decisions"][0]["verdict"] == "SHOW"
+    assert latest.json()["decisions"][0]["decision_reference"] == "CAL-REVIEW-0002"
+
 
 def test_provider_research_ingestion_requires_licence_and_persists_provenance(client, monkeypatch):
     from app import main as cil_main
@@ -451,8 +510,9 @@ def make_skin_image() -> bytes:
     return buffer.getvalue()
 
 
-def sign_skin_consent(*, contributor_token: str, image_bytes: bytes, age: int = 25):
+def sign_skin_consent(*, contributor_token: str, image_bytes: bytes, age: int = 25, consent_id: str = "skin-consent-001"):
     payload = {
+        "consent_id": consent_id,
         "type": "consent",
         "purpose": "perfectcorp_skin_analysis",
         "provider": "perfectcorp",
