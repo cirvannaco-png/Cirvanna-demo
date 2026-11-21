@@ -36,7 +36,7 @@ MODEL_SPECS = {
     "marqo-fashionclip": {
         "repo_id": "Marqo/marqo-fashionCLIP",
         "loader": "open_clip",
-        "default_revision": None,
+        "default_revision": "44f4c655124ed71e90cbf528d82f508d69d8a81b",
         "allow_patterns": ["README.md", "open_clip_config.json", "open_clip_model.safetensors",
                            "preprocessor_config.json", "tokenizer.json", "tokenizer_config.json",
                            "special_tokens_map.json", "vocab.json", "merges.txt"],
@@ -44,7 +44,7 @@ MODEL_SPECS = {
     "marqo-fashionsiglip": {
         "repo_id": "Marqo/marqo-fashionSigLIP",
         "loader": "open_clip",
-        "default_revision": None,
+        "default_revision": "c56244cc94f92419e8369fa71efdaf403b124ce8",
         "allow_patterns": ["open_clip_config.json", "open_clip_model.safetensors",
                            "preprocessor_config.json", "tokenizer.json", "tokenizer_config.json",
                            "special_tokens_map.json", "spiece.model", "config.json"],
@@ -438,7 +438,7 @@ def run_model(
                 image_path = resolve_media_path(media_root, case["query_image_path"])
                 query_vector = adapter.encode_images([image_path], batch_size=1)[0]
             else:
-                query_text = TEXT_QUERY_PREFIX + " ".join(case["query_text"].split())
+                query_text = (TEXT_QUERY_PREFIX + " ".join(case["query_text"].split()))[:1000]
                 query_vector = adapter.encode_texts([query_text], batch_size=1)[0]
             ordered, scores = rank_candidates(query_vector, candidate_vectors)
             rankings[case["query_id"]] = ordered
