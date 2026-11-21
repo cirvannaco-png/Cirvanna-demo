@@ -82,8 +82,7 @@ def refund_event():
             "payment_intent_id": "pi_test_0001",
             "charge_id": "ch_test_0001",
             "currency": "KES",
-            "order_total_minor": 550000,
-            "purchase_items_total_minor": 500000,
+            "order_total_minor": 500000,
             "amount_refunded_minor": 250000,
             "refund_state": "partial_refund",
             "refunded_at": "2026-11-07T12:00:00+00:00",
@@ -103,8 +102,6 @@ def test_worker_delivers_refund_snapshot_before_acknowledging():
         if request.url.path == "/v1/purchases/refund-status":
             body = __import__("json").loads(request.content)
             assert body["ownership_authority"] == "verified_stripe_charge_refund"
-            assert body["purchase_items_total_minor"] == 500000
-            assert body["order_total_minor"] == 550000
             assert body["order_id"] == "123e4567-e89b-42d3-a456-426614174001"
             assert body["physical_return_confirmed"] is False
             return httpx.Response(200, json={"status": "recorded", "wardrobe_items_unchanged": True})
@@ -351,26 +348,95 @@ def test_worker_does_not_ack_checkout_selection_without_consent_receipt():
     assert not any(path.endswith("/ack") for path in calls)
 
 
+def manual_review_event():
+    event_id = "323e4567-e89b-42d3-a456-426614174000"
+    return {
+        "event_id": event_id,
+        "event_type": "commerce.shopify.compensation.manual_review",
+        "schema_version": 1,
+        "payload": {
+            "event_id": event_id,
+            "event_type": "commerce.shopify.compensation.manual_review",
+            "schema_version": 1,
+            "order_id": "123e4567-e89b-42d3-a456-426614174001",
+            "merchant_id": "merchant-1",
+            "case_id": "case-1",
+            "reason_code": "SHOPIFY_CANCELLATION_OUTCOME_AMBIGUOUS",
+            "action_required": "operator_review",
+            "fulfillment_blocked": True,
+        },
+    }
 
-def test_worker_delivers_verified_refund_object_event_when_charge_id_is_present():
-    event = refund_event()
-    event["payload"]["ownership_authority"] = "verified_stripe_refund_event"
-    event["payload"]["refund_id"] = "re_test_0001"
+
+def test_worker_delivers_signed_manual_review_to_operator_sink_before_acknowledging():
+    import hashlib
+    import hmac
+    import json
+
+    secret = "o" * 40
+    ops_settings = Settings(
+        commerce_url="https://commerce.internal",
+        commerce_token="c" * 40,
+        wardrobe_url="https://wardrobe.internal",
+        wardrobe_token="w" * 40,
+        worker_id="sync-test",
+        operations_webhook_url="https://operations.internal/events",
+        operations_webhook_secret=secret,
+    )
     calls = []
+
+    def handler(request: httpx.Request):
+        calls.append(request.url.path)
+        if request.url.path == "/internal/outbox/claim":
+            return httpx.Response(200, json={"events": [manual_review_event()]})
+        if request.url.path == "/events":
+            body = json.loads(request.content)
+            canonical = json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+            expected = "sha256=" + hmac.new(secret.encode(), canonical, hashlib.sha256).hexdigest()
+            assert request.headers["X-Cirvanna-Signature"] == expected
+            assert request.headers["Idempotency-Key"] == body["event_id"]
+            assert body["fulfillment_blocked"] is True
+            assert body["action_required"] == "operator_review"
+            assert "customer_email" not in body
+            return httpx.Response(202, json={"accepted": True})
+        if request.url.path.endswith("/ack"):
+            return httpx.Response(200, json={"status": "delivered"})
+        raise AssertionError(request.url.path)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    result = CommerceWardrobeWorker(ops_settings, client).process_batch()
+    assert result == {"claimed": 1, "processed": 1, "retried": 0, "dead_lettered": 0}
+    assert calls.index("/events") < calls.index("/internal/outbox/" + manual_review_event()["event_id"] + "/ack")
+
+
+def test_worker_does_not_ack_manual_review_without_configured_operator_sink():
+    event = manual_review_event()
+    calls = []
+
     def handler(request: httpx.Request):
         calls.append(request.url.path)
         if request.url.path == "/internal/outbox/claim":
             return httpx.Response(200, json={"events": [event]})
-        if request.url.path == "/v1/purchases/refund-status":
-            body = __import__("json").loads(request.content)
-            assert body["ownership_authority"] == "verified_stripe_refund_event"
-            assert body["refund_id"] == "re_test_0001"
-            assert body["charge_id"] == "ch_test_0001"
-            return httpx.Response(200, json={"status": "recorded"})
-        if request.url.path.endswith("/ack"):
-            return httpx.Response(200, json={"status": "delivered"})
-        raise AssertionError(request.url.path)
+        if request.url.path.endswith("/fail"):
+            return httpx.Response(200, json={"status": "retry_scheduled"})
+        raise AssertionError("manual review must not be acknowledged without an operator sink")
+
     client = httpx.Client(transport=httpx.MockTransport(handler))
     result = CommerceWardrobeWorker(settings(), client).process_batch()
-    assert result == {"claimed": 1, "processed": 1, "retried": 0, "dead_lettered": 0}
-    assert calls[-1].endswith("/ack")
+    assert result == {"claimed": 1, "processed": 0, "retried": 1, "dead_lettered": 0}
+    assert not any(path.endswith("/ack") for path in calls)
+
+
+def test_refund_payload_accepts_verified_refund_object_without_charge_id():
+    from app.worker import _refund_payload
+    event = refund_event()
+    event["payload"]["ownership_authority"] = "verified_stripe_refund_event"
+    event["payload"]["refund_id"] = "re_refund_0001"
+    event["payload"]["order_total_minor"] = 500000
+    event["payload"]["merchandise_subtotal_minor"] = 450000
+    event["payload"].pop("charge_id")
+    result = _refund_payload(event)
+    assert result["ownership_authority"] == "verified_stripe_refund_event"
+    assert result["refund_id"] == "re_refund_0001"
+    assert result["charge_id"] is None
+    assert result["merchandise_subtotal_minor"] == 450000
