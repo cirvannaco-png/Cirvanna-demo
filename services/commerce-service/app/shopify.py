@@ -1484,6 +1484,7 @@ def process_shopify_events(
                     ShopifyConnection.shop_domain == event.shop_domain
                 ))
                 if connection:
+                    _quarantine_connection_listings(db, connection)
                     db.execute(ShopifyWebhookEvent.__table__.delete().where(
                         ShopifyWebhookEvent.shop_domain == event.shop_domain,
                         ShopifyWebhookEvent.id != event.id,
