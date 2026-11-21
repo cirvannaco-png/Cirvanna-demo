@@ -210,6 +210,8 @@ class ShopifyConnection(commerce.Base):
     products_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     products_cursor: Mapped[str | None] = mapped_column(String(512))
     products_sync_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    products_sync_lease_owner: Mapped[str | None] = mapped_column(String(64))
+    products_sync_lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     orders_reconciled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     installed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -568,19 +570,58 @@ def _inventory_totals(inventory_item: dict[str, Any]) -> tuple[bool, int | None,
     tracked = inventory_item.get("tracked") is True
     if not tracked:
         return False, None, None, False
-    connection = inventory_item.get("inventoryLevels") or {}
-    nodes = connection.get("nodes") or []
-    complete = not bool((connection.get("pageInfo") or {}).get("hasNextPage"))
+    if not isinstance(inventory_item.get("id"), str) or not inventory_item["id"].startswith("gid://shopify/InventoryItem/"):
+        return True, None, None, False
+    levels_connection = inventory_item.get("inventoryLevels") or {}
+    nodes = levels_connection.get("nodes") or []
+    page_info = levels_connection.get("pageInfo")
+    complete = isinstance(nodes, list) and isinstance(page_info, dict) and page_info.get("hasNextPage") is False
+    if not isinstance(nodes, list):
+        return True, None, None, False
     available = 0
     on_hand = 0
+    seen_level_ids: set[str] = set()
+    seen_location_ids: set[str] = set()
     for level in nodes:
-        if level.get("isActive") is False:
+        if not isinstance(level, dict):
+            complete = False
+            continue
+        level_id = level.get("id")
+        if not isinstance(level_id, str) or not level_id.startswith("gid://shopify/InventoryLevel/") or level_id in seen_level_ids:
+            complete = False
+            continue
+        seen_level_ids.add(level_id)
+        level_active = level.get("isActive")
+        if level_active is False:
+            continue
+        if level_active is not True:
+            complete = False
             continue
         location = level.get("location") or {}
-        if location.get("isActive") is False:
+        location_id = location.get("id") if isinstance(location, dict) else None
+        if not isinstance(location_id, str) or not location_id.startswith("gid://shopify/Location/") or location_id in seen_location_ids:
+            complete = False
             continue
-        values = {item.get("name"): item.get("quantity") for item in level.get("quantities") or []}
-        if not isinstance(values.get("available"), int) or not isinstance(values.get("on_hand"), int):
+        seen_location_ids.add(location_id)
+        if location.get("isActive") is not True:
+            complete = False
+            continue
+        quantities = level.get("quantities")
+        if not isinstance(quantities, list):
+            complete = False
+            continue
+        values: dict[str, int] = {}
+        malformed = False
+        for item in quantities:
+            if not isinstance(item, dict) or item.get("name") not in {"available", "on_hand"} or item.get("name") in values:
+                malformed = True
+                continue
+            quantity = item.get("quantity")
+            if isinstance(quantity, bool) or not isinstance(quantity, int):
+                malformed = True
+                continue
+            values[item["name"]] = quantity
+        if malformed or set(values) != {"available", "on_hand"}:
             complete = False
             continue
         available += values["available"]
@@ -588,6 +629,106 @@ def _inventory_totals(inventory_item: dict[str, Any]) -> tuple[bool, int | None,
     if not complete or not nodes:
         return True, None, None, False
     return True, available, on_hand, True
+
+
+def _renew_products_sync_lease(db: Session, connection_id: str, lease_owner: str) -> None:
+    """Extend only the current active catalog-sync owner's lease."""
+    now_value = utcnow()
+    result = db.execute(update(ShopifyConnection).where(
+        ShopifyConnection.id == connection_id,
+        ShopifyConnection.status == "active",
+        ShopifyConnection.products_sync_lease_owner == lease_owner,
+    ).values(
+        products_sync_lease_until=now_value + timedelta(minutes=15),
+    ).execution_options(synchronize_session=False))
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(409, detail={"code": "SHOPIFY_CATALOG_SYNC_LEASE_LOST"})
+    db.commit()
+
+
+def _complete_inventory_levels(connection: ShopifyConnection, db: Session,
+                               inventory_item: dict[str, Any], *, max_pages: int = 20,
+                               lease_owner: str | None = None) -> dict[str, Any]:
+    """Hydrate every location for a tracked item; incomplete pagination stays unsellable."""
+    if inventory_item.get("tracked") is not True:
+        return inventory_item
+    inventory_item_gid = inventory_item.get("id")
+    if not isinstance(inventory_item_gid, str) or not inventory_item_gid.startswith("gid://shopify/InventoryItem/"):
+        levels = inventory_item.get("inventoryLevels") or {}
+        return {**inventory_item, "inventoryLevels": {**levels,
+            "pageInfo": {"hasNextPage": True, "endCursor": None}}}
+    levels_connection = inventory_item.get("inventoryLevels") or {}
+    raw_nodes = levels_connection.get("nodes")
+    page_info = levels_connection.get("pageInfo")
+    if not isinstance(raw_nodes, list) or not isinstance(page_info, dict):
+        return {**inventory_item, "inventoryLevels": {"nodes": [], "pageInfo": {"hasNextPage": True, "endCursor": None}}}
+    nodes = list(raw_nodes)
+    after = page_info.get("endCursor")
+    pages = 0
+    seen = {node.get("id") for node in nodes if isinstance(node, dict) and node.get("id")}
+    seen_cursors: set[str] = set()
+    if isinstance(after, str):
+        seen_cursors.add(after)
+    if page_info.get("hasNextPage") not in {True, False}:
+        page_info = {**page_info, "hasNextPage": True}
+    while page_info.get("hasNextPage") is True and pages < max_pages:
+        if not isinstance(after, str) or not after:
+            break
+        if lease_owner:
+            _renew_products_sync_lease(db, connection.id, lease_owner)
+        data = _graphql(connection, db, """
+          query CirvannaShopifyInventoryLevels($id: ID!, $after: String) {
+            inventoryItem(id: $id) {
+              id
+              inventoryLevels(first: 100, after: $after) {
+                pageInfo { hasNextPage endCursor }
+                nodes {
+                  id isActive
+                  location { id name isActive }
+                  quantities(names: ["available", "on_hand"]) { name quantity }
+                }
+              }
+            }
+          }
+        """, {"id": inventory_item.get("id"), "after": after})
+        item = data.get("inventoryItem")
+        if not isinstance(item, dict) or item.get("id") != inventory_item.get("id"):
+            raise HTTPException(502, detail={"code": "SHOPIFY_INVENTORY_ITEM_PAGE_MISMATCH"})
+        next_connection = item.get("inventoryLevels")
+        if not isinstance(next_connection, dict) or not isinstance(next_connection.get("nodes"), list) or not isinstance(next_connection.get("pageInfo"), dict):
+            page_info = {"hasNextPage": True, "endCursor": None}
+            break
+        next_nodes = next_connection["nodes"]
+        malformed_page = False
+        for node in next_nodes:
+            if not isinstance(node, dict):
+                malformed_page = True
+                continue
+            node_id = node.get("id")
+            if node_id and node_id in seen:
+                raise HTTPException(502, detail={"code": "SHOPIFY_INVENTORY_LEVEL_DUPLICATE"})
+            if node_id:
+                seen.add(node_id)
+            nodes.append(node)
+        page_info = next_connection["pageInfo"]
+        if malformed_page:
+            page_info = {"hasNextPage": True, "endCursor": None}
+            break
+        next_cursor = page_info.get("endCursor")
+        if page_info.get("hasNextPage") is True and (not isinstance(next_cursor, str) or not next_cursor or next_cursor in seen_cursors):
+            page_info = {**page_info, "hasNextPage": True, "endCursor": None}
+            break
+        if isinstance(next_cursor, str):
+            seen_cursors.add(next_cursor)
+        after = next_cursor
+        pages += 1
+    # If the bounded page budget was exhausted, preserve hasNextPage=true so
+    # _inventory_totals rejects the aggregate rather than selling partial stock.
+    return {**inventory_item, "inventoryLevels": {
+        **levels_connection, "nodes": nodes,
+        "pageInfo": {"hasNextPage": page_info.get("hasNextPage") is not False, "endCursor": after},
+    }}
 
 
 PRODUCTS_QUERY = """
@@ -604,9 +745,9 @@ query CirvannaShopifyVariantCatalog($first: Int!, $after: String) {
         inventoryItem {
           id tracked
           inventoryLevels(first: 50) {
-            pageInfo { hasNextPage }
+            pageInfo { hasNextPage endCursor }
             nodes {
-              isActive
+              id isActive
               location { id name isActive }
               quantities(names: ["available", "on_hand"]) { name quantity }
             }
@@ -745,14 +886,65 @@ def _deactivate_product_listing(db: Session, connection: ShopifyConnection, prod
                 variant.observed_at = utcnow() - timedelta(days=30)
 
 
+def _assert_products_sync_lease(db: Session, connection_id: str, lease_owner: str) -> None:
+    row = db.execute(select(
+        ShopifyConnection.products_sync_lease_owner, ShopifyConnection.status
+    ).where(ShopifyConnection.id == connection_id)).first()
+    if row is None or row[0] != lease_owner:
+        raise HTTPException(409, detail={"code": "SHOPIFY_CATALOG_SYNC_LEASE_LOST"})
+    if row[1] != "active":
+        raise HTTPException(409, detail={"code": "SHOPIFY_CONNECTION_NOT_ACTIVE"})
+
+
 def _sync_products(connection: ShopifyConnection, db: Session, *, max_pages: int = 20) -> dict[str, int | bool]:
     if connection.status != "active":
         raise HTTPException(409, detail={"code": "SHOPIFY_CONNECTION_NOT_ACTIVE"})
+    if max_pages < 1 or max_pages > 100:
+        raise HTTPException(400, detail={"code": "SHOPIFY_SYNC_PAGE_LIMIT_INVALID"})
+    lease_owner = uuid.uuid4().hex
+    now_value = utcnow()
+    claim = db.execute(update(ShopifyConnection).where(
+        ShopifyConnection.id == connection.id,
+        ShopifyConnection.status == "active",
+        or_(ShopifyConnection.products_sync_lease_until.is_(None),
+            ShopifyConnection.products_sync_lease_until < now_value),
+    ).values(
+        products_sync_lease_owner=lease_owner,
+        products_sync_lease_until=now_value + timedelta(minutes=15),
+    ).execution_options(synchronize_session=False))
+    if claim.rowcount != 1:
+        db.rollback()
+        raise HTTPException(409, detail={"code": "SHOPIFY_CATALOG_SYNC_ALREADY_RUNNING"})
+    db.commit()
+    db.refresh(connection)
+    try:
+        return _sync_products_locked(connection, db, max_pages=max_pages, lease_owner=lease_owner)
+    finally:
+        # Release only our lease. A crashed worker is recovered by lease expiry;
+        # a late worker must never clear a newer worker's lease.
+        try:
+            db.rollback()
+            db.execute(update(ShopifyConnection).where(
+                ShopifyConnection.id == connection.id,
+                ShopifyConnection.products_sync_lease_owner == lease_owner,
+            ).values(products_sync_lease_owner=None, products_sync_lease_until=None))
+            db.commit()
+        except Exception:
+            db.rollback()
+
+
+def _sync_products_locked(connection: ShopifyConnection, db: Session, *, max_pages: int,
+                          lease_owner: str) -> dict[str, int | bool]:
+    if connection.status != "active":
+        raise HTTPException(409, detail={"code": "SHOPIFY_CONNECTION_NOT_ACTIVE"})
     after: str | None = connection.products_cursor
-    if after is None:
+    if after is None or connection.products_sync_started_at is None:
+        _assert_products_sync_lease(db, connection.id, lease_owner)
         connection.products_sync_started_at = utcnow()
-    sync_started_at = commerce._aware_utc(connection.products_sync_started_at) if connection.products_sync_started_at else utcnow()
-    variants_seen = inventory_conflicts = pages = 0
+        connection.products_sync_lease_until = utcnow() + timedelta(minutes=15)
+        db.commit()
+    sync_started_at = commerce._aware_utc(connection.products_sync_started_at)
+    variants_seen = inventory_conflicts = pages_processed = 0
     products_seen_ids: set[str] = set()
     product_cache = {
         item.shopify_product_gid: item
@@ -766,7 +958,7 @@ def _sync_products(connection: ShopifyConnection, db: Session, *, max_pages: int
             ShopifyVariantSnapshot.connection_id == connection.id
         )).all()
     }
-    while pages < max_pages:
+    while pages_processed < max_pages:
         data = _graphql(connection, db, PRODUCTS_QUERY, {"first": 20, "after": after})
         shop = data.get("shop") or {}
         shop_currency = str(shop.get("currencyCode") or "").upper()
@@ -820,7 +1012,9 @@ def _sync_products(connection: ShopifyConnection, db: Session, *, max_pages: int
                 product.mapping_state = "partial"
             _deactivate_product_listing(db, connection, product)
             products_seen_ids.add(product.id)
-            inventory_item = remote_variant.get("inventoryItem") or {}
+            inventory_item = _complete_inventory_levels(
+                connection, db, remote_variant.get("inventoryItem") or {}, lease_owner=lease_owner
+            )
             tracked, available, on_hand, inventory_complete = _inventory_totals(inventory_item)
             sku = _safe_sku(remote_variant.get("sku"), remote_gid)
             sku_collision = db.scalar(select(ShopifyVariantSnapshot.id).where(
@@ -873,18 +1067,25 @@ def _sync_products(connection: ShopifyConnection, db: Session, *, max_pages: int
             variants_seen += 1
             db.flush()
         page_info = variant_connection.get("pageInfo") or {}
+        pages_processed += 1
         if not page_info.get("hasNextPage"):
             after = None
+            connection.products_cursor = None
+            connection.products_synced_at = utcnow()
+            connection.updated_at = utcnow()
+            db.flush()
             break
         after = page_info.get("endCursor")
         if not after:
             raise HTTPException(502, detail={"code": "SHOPIFY_VARIANT_CURSOR_MISSING"})
-        pages += 1
-    # Persist the cursor so repeated sync invocations progress through large stores.
-    connection.products_cursor = after
-    connection.products_synced_at = utcnow()
-    connection.updated_at = utcnow()
-    db.flush()
+        # Commit each complete page with its continuation cursor. A later page
+        # failure resumes here rather than replaying the whole merchant catalogue.
+        _assert_products_sync_lease(db, connection.id, lease_owner)
+        connection.products_cursor = after
+        connection.products_synced_at = utcnow()
+        connection.products_sync_lease_until = utcnow() + timedelta(minutes=15)
+        connection.updated_at = utcnow()
+        db.commit()
     if after is None:
         # A complete cursor cycle is the only safe point to infer that a remote
         # variant disappeared. Hold old local offers before they can be sold.
@@ -918,12 +1119,14 @@ def _sync_products(connection: ShopifyConnection, db: Session, *, max_pages: int
                     else "partial"
                 )
         connection.products_sync_started_at = None
+    _assert_products_sync_lease(db, connection.id, lease_owner)
+    connection.products_sync_lease_until = utcnow() + timedelta(minutes=15)
     db.commit()
     return {
         "products_seen": len(products_seen_ids),
         "variants_seen": variants_seen,
         "inventory_conflicts": inventory_conflicts,
-        "pages_processed": min(pages + 1, max_pages),
+        "pages_processed": pages_processed,
         "has_more": connection.products_cursor is not None,
     }
 
@@ -1118,6 +1321,7 @@ def list_staged_shopify_products(
     products = []
     for row in rows:
         variants = list(db.scalars(select(ShopifyVariantSnapshot).where(
+            ShopifyVariantSnapshot.connection_id == connection.id,
             ShopifyVariantSnapshot.product_snapshot_id == row.id
         ).order_by(ShopifyVariantSnapshot.sku)).all())
         products.append({
@@ -1181,6 +1385,7 @@ def map_shopify_product(
     if len(requested) != len(payload.variants):
         raise HTTPException(422, detail={"code": "DUPLICATE_SHOPIFY_VARIANT_MAPPING"})
     snapshots = list(db.scalars(select(ShopifyVariantSnapshot).where(
+        ShopifyVariantSnapshot.connection_id == connection.id,
         ShopifyVariantSnapshot.product_snapshot_id == product_snapshot.id,
         ShopifyVariantSnapshot.mapping_state != "remote_deleted",
     )).all())
@@ -1195,13 +1400,14 @@ def map_shopify_product(
         raise HTTPException(409, detail={"code": "CANONICAL_VARIANT_ALREADY_MAPPED"})
     for remote_gid in requested:
         target = by_gid[remote_gid]
-        sku_collision = db.scalar(select(commerce.Variant.id).where(
-            commerce.Variant.listing_id == listing.id,
-            commerce.Variant.sku == target.sku,
-            commerce.Variant.id != (target.local_variant_id or ""),
-        ))
-        if sku_collision:
-            raise HTTPException(409, detail={"code": "SHOPIFY_SKU_CONFLICT_WITH_EXISTING_LISTING"})
+        if target.sku:
+            sku_collision = db.scalar(select(commerce.Variant.id).where(
+                commerce.Variant.listing_id == listing.id,
+                commerce.Variant.sku == target.sku,
+                commerce.Variant.id != (target.local_variant_id or ""),
+            ))
+            if sku_collision:
+                raise HTTPException(409, detail={"code": "SHOPIFY_SKU_CONFLICT_WITH_EXISTING_LISTING"})
     results = []
     for remote_gid, canonical_variant_id in requested.items():
         snapshot = by_gid[remote_gid]
@@ -1272,6 +1478,7 @@ def reactivate_shopify_product(
     if listing is None or listing.merchant_id != merchant.id or listing.catalog_product_id != product.catalog_product_id:
         raise HTTPException(409, detail={"code": "SHOPIFY_CANONICAL_LISTING_MAPPING_INVALID"})
     variants = list(db.scalars(select(ShopifyVariantSnapshot).where(
+        ShopifyVariantSnapshot.connection_id == connection.id,
         ShopifyVariantSnapshot.product_snapshot_id == product.id,
         ShopifyVariantSnapshot.mapping_state != "remote_deleted",
     )).all())
@@ -1309,6 +1516,8 @@ def sync_shopify_contextual_pricing(
     country_code: str,
     actor: Annotated[commerce.Actor, Depends(commerce.require_actor)],
     db: Annotated[Session, Depends(commerce.get_db)],
+    after_snapshot_id: str | None = Query(default=None, max_length=36),
+    limit: int = Query(100, ge=1, le=250),
 ):
     merchant = _approved_merchant(actor, db)
     connection = _connection_for_merchant(db, merchant.id)
@@ -1321,9 +1530,11 @@ def sync_shopify_contextual_pricing(
     ))
     if market is None:
         raise HTTPException(409, detail={"code": "MERCHANT_MARKET_NOT_DECLARED"})
+    if market.state != "active":
+        raise HTTPException(409, detail={"code": "MERCHANT_MARKET_NOT_ACTIVE"})
     query = """
-    query CirvannaContextualVariantPrice($id: ID!, $country: CountryCode!) {
-      node(id: $id) {
+    query CirvannaContextualVariantPrices($ids: [ID!]!, $country: CountryCode!) {
+      nodes(ids: $ids) {
         ... on ProductVariant {
           id
           contextualPricing(context: {country: $country}) {
@@ -1334,38 +1545,85 @@ def sync_shopify_contextual_pricing(
       }
     }
     """
-    snapshots = list(db.scalars(select(ShopifyVariantSnapshot).join(
+    snapshot_query = select(ShopifyVariantSnapshot).join(
         ShopifyProductSnapshot, ShopifyProductSnapshot.id == ShopifyVariantSnapshot.product_snapshot_id
     ).where(
         ShopifyVariantSnapshot.connection_id == connection.id,
-        ShopifyProductSnapshot.mapping_state.in_(["mapped", "partial"]),
-    )).limit(250).all())
-    updated = 0
-    for snapshot in snapshots:
-        data = _graphql(connection, db, query, {"id": snapshot.shopify_variant_gid, "country": country})
-        node = data.get("node") or {}
-        contextual = node.get("contextualPricing") or {}
-        price = contextual.get("price")
-        if not price or not price.get("currencyCode") or price.get("amount") is None:
-            continue
-        currency = str(price["currencyCode"]).upper()
-        amount_minor = _minor_units(price["amount"], currency)
-        snapshot.regional_prices = {
-            **(snapshot.regional_prices or {}),
-            country: {
-                "amount_minor": amount_minor,
-                "currency": currency,
-                "observed_at": utcnow().isoformat(),
-                "source": "shopify_markets_contextual_pricing",
-                "landed_cost": False,
-                "fx_quote": False,
-                "tax_and_fulfillment_included": False,
-            },
-        }
-        updated += 1
-    db.commit()
+        ShopifyProductSnapshot.connection_id == connection.id,
+        ShopifyVariantSnapshot.mapping_state == "mapped",
+        ShopifyProductSnapshot.mapping_state == "mapped",
+        ShopifyProductSnapshot.remote_status == "ACTIVE",
+        ShopifyProductSnapshot.variants_complete.is_(True),
+    )
+    if after_snapshot_id:
+        snapshot_query = snapshot_query.where(ShopifyVariantSnapshot.id > after_snapshot_id)
+    snapshots = list(db.scalars(snapshot_query.order_by(ShopifyVariantSnapshot.id).limit(limit + 1)).all())
+    has_more = len(snapshots) > limit
+    snapshots = snapshots[:limit]
+    by_gid = {snapshot.shopify_variant_gid: snapshot for snapshot in snapshots}
+    if len(by_gid) != len(snapshots):
+        raise HTTPException(409, detail={"code": "SHOPIFY_VARIANT_GID_MAPPING_DUPLICATE"})
+    updated = skipped = batches = 0
+    gids = list(by_gid)
+    for offset in range(0, len(gids), 50):
+        batch = gids[offset:offset + 50]
+        data = _graphql(connection, db, query, {"ids": batch, "country": country})
+        nodes = data.get("nodes")
+        if not isinstance(nodes, list):
+            raise HTTPException(502, detail={"code": "SHOPIFY_CONTEXTUAL_PRICING_RESPONSE_INVALID"})
+        returned: set[str] = set()
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            node_id = node.get("id")
+            if node_id not in batch or node_id in returned:
+                raise HTTPException(502, detail={"code": "SHOPIFY_CONTEXTUAL_PRICING_VARIANT_MISMATCH"})
+            returned.add(node_id)
+            contextual = node.get("contextualPricing") or {}
+            price = contextual.get("price")
+            currency = str((price or {}).get("currencyCode") or "").upper()
+            if not price or not re.fullmatch(r"[A-Z]{3}", currency) or price.get("amount") is None:
+                skipped += 1
+                continue
+            try:
+                amount_minor = _minor_units(price["amount"], currency)
+            except (TypeError, ValueError):
+                skipped += 1
+                continue
+            compare = contextual.get("compareAtPrice")
+            compare_minor = None
+            if compare and compare.get("amount") is not None and str(compare.get("currencyCode") or "").upper() == currency:
+                try:
+                    compare_minor = _minor_units(compare["amount"], currency)
+                except (TypeError, ValueError):
+                    compare_minor = None
+            snapshot = by_gid[node_id]
+            snapshot.regional_prices = {
+                **(snapshot.regional_prices or {}),
+                country: {
+                    "amount_minor": amount_minor,
+                    "currency": currency,
+                    "compare_at_amount_minor": compare_minor,
+                    "compare_at_currency": currency if compare_minor is not None else None,
+                    "observed_at": utcnow().isoformat(),
+                    "source": "shopify_markets_contextual_pricing",
+                    "landed_cost": False,
+                    "fx_quote": False,
+                    "tax_and_fulfillment_included": False,
+                },
+            }
+            updated += 1
+        skipped += len(batch) - len(returned)
+        batches += 1
+        db.commit()
     return {
-        "country_code": country, "variants_updated": updated,
+        "country_code": country,
+        "variants_scanned": len(snapshots),
+        "variants_updated": updated,
+        "variants_skipped": skipped,
+        "batches": batches,
+        "has_more": has_more,
+        "next_after_snapshot_id": snapshots[-1].id if has_more and snapshots else None,
         "price_semantics": "merchant contextual item price only; not a landed price or Commerce FX/tax/fulfillment quote",
     }
 
@@ -1435,6 +1693,7 @@ def _flag_connection_orders_manual_review(db: Session, connection: ShopifyConnec
             flagged += 1
     db.commit()
     return flagged
+
 
 @router.post("/webhooks/shopify")
 async def receive_shopify_webhook(
@@ -1595,6 +1854,7 @@ def process_shopify_events(
         raise HTTPException(401, detail={"code": "SHOPIFY_SYNC_AUTH_FAILED"})
     events = _claim_events(db, limit)
     processed = failed = ignored = 0
+    catalog_sync_results: dict[str, bool] = {}
     for event in events:
         try:
             if event.topic == "shop/redact":
@@ -1652,7 +1912,16 @@ def process_shopify_events(
                     ShopifyConnection.shop_domain == event.shop_domain
                 ))
                 if connection:
-                    _sync_products(connection, db)
+                    previous_result = catalog_sync_results.get(connection.id)
+                    if previous_result is None:
+                        try:
+                            _sync_products(connection, db)
+                            catalog_sync_results[connection.id] = True
+                        except Exception:
+                            catalog_sync_results[connection.id] = False
+                            raise
+                    elif previous_result is False:
+                        raise HTTPException(503, detail={"code": "SHOPIFY_CATALOG_SYNC_BATCH_FAILED"})
             event.state = "processed"
             event.processed_at = utcnow()
             event.last_error = None
@@ -2235,35 +2504,48 @@ def _verify_compensation_inventory_restock(connection: ShopifyConnection, db: Se
     ) and set(after) == set(case.inventory_before_json) == set(expected)
 
 
-def _claim_shopify_cancellation_intent(db: Session, case: ShopifyCompensationCase) -> bool:
-    """Fence the irreversible orderCancel call with an atomic, owner-checked lease renewal."""
-    current = utcnow()
-    owner = case.lease_owner or uuid.uuid4().hex
-    claim = db.execute(update(ShopifyCompensationCase).where(
+def _persist_compensation_cancel_intent(db: Session, case: ShopifyCompensationCase) -> None:
+    """Atomically fence the worker and extend its lease before orderCancel."""
+    owner = case.lease_owner
+    if not owner:
+        raise HTTPException(409, detail={"code": "SHOPIFY_COMPENSATION_LEASE_LOST"})
+    now_value = utcnow()
+    result = db.execute(update(ShopifyCompensationCase).where(
         ShopifyCompensationCase.id == case.id,
-        ShopifyCompensationCase.state.in_(["pending", "cancel_pending"]),
-        or_(
-            ShopifyCompensationCase.lease_until.is_(None),
-            ShopifyCompensationCase.lease_until < current,
-            and_(ShopifyCompensationCase.lease_owner == owner, ShopifyCompensationCase.lease_until >= current),
-        ),
-        or_(ShopifyCompensationCase.lease_owner.is_(None),
-            ShopifyCompensationCase.lease_owner == owner,
-            ShopifyCompensationCase.lease_until < current),
+        ShopifyCompensationCase.lease_owner == owner,
+        ShopifyCompensationCase.state.in_(["pending", "cancel_pending", "cancel_requesting"]),
     ).values(
         state="cancel_requesting",
-        lease_owner=owner,
-        lease_until=current + timedelta(seconds=90),
         last_error="SHOPIFY_ORDER_CANCEL_REQUEST_STARTED",
-        updated_at=current,
+        updated_at=now_value,
+        lease_until=now_value + timedelta(seconds=90),
     ).execution_options(synchronize_session=False))
-    if claim.rowcount != 1:
+    if result.rowcount != 1:
         db.rollback()
-        db.refresh(case)
-        return False
+        raise HTTPException(409, detail={"code": "SHOPIFY_COMPENSATION_LEASE_LOST"})
     db.commit()
     db.refresh(case)
-    return case.lease_owner == owner and case.state == "cancel_requesting"
+
+
+def _renew_compensation_cancel_lease(db: Session, case: ShopifyCompensationCase) -> None:
+    """Fence the response write too; a stale worker cannot overwrite a reclaimed case."""
+    owner = case.lease_owner
+    if not owner:
+        raise HTTPException(409, detail={"code": "SHOPIFY_COMPENSATION_LEASE_LOST"})
+    now_value = utcnow()
+    result = db.execute(update(ShopifyCompensationCase).where(
+        ShopifyCompensationCase.id == case.id,
+        ShopifyCompensationCase.lease_owner == owner,
+        ShopifyCompensationCase.state == "cancel_requesting",
+    ).values(
+        lease_until=now_value + timedelta(seconds=90),
+        updated_at=now_value,
+    ).execution_options(synchronize_session=False))
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(409, detail={"code": "SHOPIFY_COMPENSATION_LEASE_LOST"})
+    db.commit()
+    db.refresh(case)
 
 
 def _process_shopify_compensation_case(db: Session, case: ShopifyCompensationCase,
@@ -2380,12 +2662,8 @@ def _process_shopify_compensation_case(db: Session, case: ShopifyCompensationCas
             return case.state
         case.inventory_before_json = inventory_before
         case.inventory_expected_restore_json = inventory_expected
-        # Persist and renew the irreversible-action intent with a conditional
-        # lease-owner compare-and-swap immediately before calling Shopify. Long
-        # inventory reads cannot let a second worker inherit this mutation.
-        if not _claim_shopify_cancellation_intent(db, case):
-            return case.state
-        cancellation_lease_owner = case.lease_owner
+        # Atomically fence the lease owner immediately before the irreversible mutation.
+        _persist_compensation_cancel_intent(db, case)
         try:
             cancelled = _graphql(connection, db, """
           mutation CirvannaCancelCompensatedOrder($orderId: ID!, $notifyCustomer: Boolean, $refundMethod: OrderCancelRefundMethodInput!, $restock: Boolean!, $reason: OrderCancelReason!, $staffNote: String) {
@@ -2398,19 +2676,15 @@ def _process_shopify_compensation_case(db: Session, case: ShopifyCompensationCas
             """, {"orderId": remote_order["id"], "notifyCustomer": False,
                 "refundMethod": {"originalPaymentMethodsRefund": False}, "restock": True,
                 "reason": "INVENTORY", "staffNote": "Cirvanna checkout compensation; Stripe refund is managed by Cirvanna."})
+            _renew_compensation_cancel_lease(db, case)
         except Exception:
-            db.rollback()
-            current_case = db.get(ShopifyCompensationCase, case.id)
-            if current_case and current_case.lease_owner == cancellation_lease_owner and current_case.state == "cancel_requesting":
-                current_case.last_error = "SHOPIFY_ORDER_CANCEL_OUTCOME_AMBIGUOUS"
-                current_case.lease_owner = None
-                current_case.lease_until = None
-                current_case.updated_at = utcnow()
-                db.commit()
+            case.state = "cancel_requesting"
+            case.last_error = "SHOPIFY_ORDER_CANCEL_OUTCOME_AMBIGUOUS"
+            case.lease_owner = None
+            case.lease_until = None
+            case.updated_at = utcnow()
+            db.commit()
             raise
-        db.refresh(case)
-        if case.lease_owner != cancellation_lease_owner or case.state != "cancel_requesting":
-            return case.state
         result = cancelled.get("orderCancel") or {}
         errors = result.get("orderCancelUserErrors") or []
         if errors:
@@ -2579,7 +2853,6 @@ def compensate_paid_shopify_orders(
         case.lease_until = utcnow() + timedelta(seconds=90)
         case.attempts += 1
         db.commit()
-        worker_lease_owner = case.lease_owner
         try:
             state = _process_shopify_compensation_case(db, case, order)
             processed += 1
@@ -2590,7 +2863,7 @@ def compensate_paid_shopify_orders(
         except HTTPException as exc:
             db.rollback()
             current = db.get(ShopifyCompensationCase, case.id)
-            if current and current.lease_owner == worker_lease_owner:
+            if current:
                 # Once orderCancel intent is persisted, never reset to pending:
                 # a timeout may hide a successful irreversible provider action.
                 if current.state != "cancel_requesting":
@@ -2603,7 +2876,7 @@ def compensate_paid_shopify_orders(
         except Exception:
             db.rollback()
             current = db.get(ShopifyCompensationCase, case.id)
-            if current and current.lease_owner == worker_lease_owner:
+            if current:
                 if current.state != "cancel_requesting":
                     current.state = "pending"
                 current.last_error = "SHOPIFY_COMPENSATION_RETRY_REQUIRED"
@@ -2739,16 +3012,41 @@ def reconcile_shopify(
     db: Annotated[Session, Depends(commerce.get_db)],
     token: str | None = Header(default=None, alias="X-Commerce-Shopify-Sync-Token"),
     limit: int = Query(100, ge=1, le=500),
+    connection_limit: int = Query(50, ge=1, le=100),
+    after_connection_id: str | None = Query(default=None, max_length=36),
+    connection_id: str | None = Query(default=None, max_length=36),
 ):
     expected = os.getenv("COMMERCE_SHOPIFY_SYNC_TOKEN", "").strip()
     if len(expected.encode()) < 32 or not token or not hmac.compare_digest(token, expected):
         raise HTTPException(401, detail={"code": "SHOPIFY_SYNC_AUTH_FAILED"})
-    connections = list(db.scalars(select(ShopifyConnection).where(
-        ShopifyConnection.status == "active"
-    ).limit(50)).all())
-    products = orders = errors = 0
+    if connection_id and after_connection_id:
+        raise HTTPException(400, detail={"code": "SHOPIFY_RECONCILE_CURSOR_AND_CONNECTION_ID_CONFLICT"})
+    connection_query = select(ShopifyConnection)
+    if connection_id:
+        connection_query = connection_query.where(ShopifyConnection.id == connection_id)
+    else:
+        connection_query = connection_query.where(ShopifyConnection.status == "active")
+        if after_connection_id:
+            connection_query = connection_query.where(ShopifyConnection.id > after_connection_id)
+    connections = list(db.scalars(connection_query.order_by(ShopifyConnection.id).limit(1 if connection_id else connection_limit)).all())
+    products = orders = errors = webhooks_verified = 0
+    failed_connection_ids: list[str] = []
+    ineligible_connection_ids: list[str] = []
     for connection in connections:
+        if connection.status != "active":
+            errors += 1
+            failed_connection_ids.append(connection.id)
+            ineligible_connection_ids.append(connection.id)
+            continue
         try:
+            callback_url = _webhook_base_url() + "/webhooks/shopify"
+        except RuntimeError as exc:
+            raise HTTPException(503, detail={"code": "SHOPIFY_WEBHOOK_BASE_URL_NOT_CONFIGURED"}) from exc
+        try:
+            registrations = _register_webhooks(connection, db, callback_url)
+            if any(status != "registered" for status in registrations.values()):
+                raise HTTPException(503, detail={"code": "SHOPIFY_WEBHOOK_REGISTRATION_INCOMPLETE"})
+            webhooks_verified += len(registrations)
             _sync_products(connection, db, max_pages=5)
             products += 1
             links = list(db.scalars(select(ShopifyOrderLink).where(
@@ -2762,8 +3060,14 @@ def reconcile_shopify(
             db.commit()
         except HTTPException:
             errors += 1
+            failed_connection_ids.append(connection.id)
             db.rollback()
-    return {"stores_checked": len(connections), "product_syncs": products, "order_statuses_reconciled": orders, "stores_with_errors": errors}
+    next_connection_id = connections[-1].id if not connection_id and len(connections) == connection_limit else None
+    return {"stores_checked": len(connections), "webhooks_verified": webhooks_verified,
+        "product_syncs": products, "order_statuses_reconciled": orders, "stores_with_errors": errors,
+        "failed_connection_ids": failed_connection_ids,
+        "ineligible_connection_ids": ineligible_connection_ids,
+        "next_after_connection_id": next_connection_id}
 
 
 @router.get("/integrations/shopify/readiness")
@@ -2777,12 +3081,22 @@ def shopify_readiness(
         return {"configured": False, "ready": False, "reason": "SHOPIFY_NOT_CONNECTED"}
     required_ready = connection.status == "active" and REQUIRED_SCOPES.issubset(_required_scopes(connection.granted_scopes))
     hooks_ready = all(connection.webhook_registration.get(topic) == "registered" for topic in WEBHOOK_TOPICS)
+    sync_lease_active = bool(connection.products_sync_lease_until and
+        commerce._aware_utc(connection.products_sync_lease_until) > utcnow())
+    sync_recovery_required = connection.products_sync_started_at is not None and not sync_lease_active
+    sync_complete = (connection.products_synced_at is not None and connection.products_cursor is None
+        and connection.products_sync_started_at is None and not sync_lease_active)
     return {
         "configured": True, "ready": required_ready and hooks_ready,
         "connection_status": connection.status,
         "required_scopes_granted": required_ready,
         "webhooks_registered": hooks_ready,
         "products_synced": connection.products_synced_at is not None,
+        "products_sync_complete": sync_complete,
+        "products_sync_has_more": connection.products_cursor is not None,
+        "products_sync_in_progress": sync_lease_active,
+        "products_sync_recovery_required": sync_recovery_required,
+        "catalog_ready": sync_complete,
         "shop_currency": connection.shop_currency,
         "shopify_is_commerce_provider_only": True,
         "cal_display_authorization_required": True,
