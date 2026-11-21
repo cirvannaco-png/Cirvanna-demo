@@ -104,7 +104,7 @@ class AppearanceArchitectureSmokeTests(unittest.TestCase):
             {item.product_id: trusted_gates(item.product_id)},
         )
         self.assertEqual(result.candidates[0].arbitration.verdict, DecisionVerdict.REVIEW)
-        self.assertFalse(result.candidates[0].may_display)
+        self.assertFalse(result.candidates[0].cal_preflight_show)
         self.assertIn("NPL_EVIDENCE_UNAVAILABLE", result.candidates[0].reason_codes)
 
     def test_explicit_npl_negative_blocks_candidate_despite_positive_provider_evidence(self):
@@ -136,7 +136,7 @@ class AppearanceArchitectureSmokeTests(unittest.TestCase):
             {item.product_id: trusted_gates(item.product_id)},
         )
         self.assertEqual(result.candidates[0].arbitration.verdict, DecisionVerdict.REVIEW)
-        self.assertFalse(result.candidates[0].may_display)
+        self.assertFalse(result.candidates[0].cal_preflight_show)
 
 
 if __name__ == "__main__":
