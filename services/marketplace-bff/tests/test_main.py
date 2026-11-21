@@ -69,6 +69,55 @@ def test_marketplace_pnelly_search_uses_wardrobe_cil_path_and_complementer_advis
     assert "No photo is requested or sent from this page" in response.text
 
 
+def test_marketplace_offers_rejects_unbound_or_cil_ineligible_cal_decisions(client, monkeypatch):
+    invalid_decisions = [
+        {"product_id": "other-product", "catalog_version": 7, "verdict": "show",
+         "may_display": True, "cil_serving_status": "eligible"},
+        {"product_id": "product-1", "catalog_version": 8, "verdict": "show",
+         "may_display": True, "cil_serving_status": "eligible"},
+        {"product_id": "product-1", "catalog_version": 7, "verdict": "show",
+         "may_display": True, "cil_serving_status": "review"},
+        {"product_id": "product-1", "catalog_version": 7, "verdict": "show",
+         "may_display": True, "cil_serving_status": "not_assessed",
+         "policy_version": "policy-1", "arbitration_contract_version": "1",
+         "decision_pipeline_contract_version": "1"},
+        {"product_id": "product-1", "catalog_version": 7, "verdict": "show",
+         "may_display": True, "cil_serving_status": "eligible",
+         "policy_version": "", "arbitration_contract_version": "1",
+         "decision_pipeline_contract_version": "1"},
+        {"product_id": "product-1", "catalog_version": 7, "verdict": "show",
+         "may_display": True, "cil_serving_status": "eligible",
+         "policy_version": "policy-1", "arbitration_contract_version": "1",
+         "decision_pipeline_contract_version": ""},
+    ]
+    for decision in invalid_decisions:
+        configure_upstreams(monkeypatch)
+        monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+        monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+        fake = FakeAsyncClient([
+            FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+            FakeResponse({
+                "request_id": "req-marketplace-invalid",
+                "ranked_candidate_count": 1,
+                "displayable_products": [{
+                    "product": {"product_id": "product-1", "catalog_version": 7,
+                                "name": "Linen shirt", "image_urls": []},
+                    "offer": {"catalog_product_id": "product-1", "variant_id": "variant-1",
+                              "price_minor": 2500, "currency": "KES"},
+                    "decision": decision,
+                }],
+                "withheld_candidate_ids": [],
+            }),
+        ])
+        monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+        response = client.get(
+            "/api/commerce/marketplace/offers?q=linen",
+            headers={"Authorization": "Bearer signed-session"},
+        )
+        assert response.status_code == 502
+        assert response.json()["detail"]["code"] == "CAL_MARKETPLACE_CANDIDATE_AUTHORIZATION_INVALID"
+
+
 def test_page_bootstraps_same_origin_live_offers_not_demo_data(client, monkeypatch):
     monkeypatch.delenv("MARKETPLACE_ENABLE_DEVELOPER_TOKEN_INPUT", raising=False)
     monkeypatch.delenv("MARKETPLACE_ENVIRONMENT", raising=False)
@@ -94,7 +143,8 @@ def test_marketplace_offers_use_authenticated_gateway_cal_show_only(client, monk
             "ranked_candidate_count": 2,
             "displayable_products": [{
                 "product": {
-                    "product_id": "product-1", "name": "Linen shirt", "brand": "Cirvanna",
+                    "product_id": "product-1", "catalog_version": 7,
+                    "name": "Linen shirt", "brand": "Cirvanna",
                     "category": "Fashion", "description": "A linen shirt",
                     "attributes": {"material": "linen"},
                     "image_urls": ["https://cdn.example.test/unverified-product.jpg"],
@@ -107,7 +157,7 @@ def test_marketplace_offers_use_authenticated_gateway_cal_show_only(client, monk
                     "available_stock": 3, "image_urls": ["https://cdn.example.test/unverified-offer.jpg"],
                     "product": {"image_urls": ["https://cdn.example.test/nested.jpg"]},
                 },
-                "decision": {"verdict": "show", "may_display": True, "policy_version": "policy-1"},
+                "decision": {"product_id": "product-1", "catalog_version": 7, "verdict": "show", "may_display": True, "cil_serving_status": "eligible", "policy_version": "policy-1", "arbitration_contract_version": "1", "decision_pipeline_contract_version": "1"},
             }],
             "withheld_candidate_ids": [{"product_id": "blocked-product-secret", "decision": "review"}],
             "display_authority": "CaTaCaCi/CAL",
