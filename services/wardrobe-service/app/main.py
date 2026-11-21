@@ -57,13 +57,15 @@ class PurchaseRefundSnapshotIn(StrictModel):
     provider_event_id: str = Field(min_length=8, max_length=180)
     event_type: Literal["commerce.order.refund.updated"]
     schema_version: Literal[1]
-    ownership_authority: Literal["verified_stripe_charge_refund"]
+    ownership_authority: Literal["verified_stripe_charge_refund", "verified_stripe_refund_event"]
     owner_user_id: str = Field(min_length=1, max_length=128)
     order_id: str = Field(min_length=36, max_length=36)
     payment_intent_id: str = Field(min_length=4, max_length=180)
-    charge_id: str = Field(min_length=4, max_length=180)
+    charge_id: str | None = Field(default=None, min_length=4, max_length=180)
+    refund_id: str | None = Field(default=None, min_length=4, max_length=180)
     currency: str = Field(min_length=3, max_length=3)
     order_total_minor: int = Field(gt=0)
+    merchandise_subtotal_minor: int | None = Field(default=None, gt=0)
     amount_refunded_minor: int = Field(gt=0)
     refund_state: Literal["partial_refund", "refunded"]
     refunded_at: str = Field(min_length=20, max_length=64)
@@ -300,7 +302,16 @@ def record_purchase_refund_status(payload: PurchaseRefundSnapshotIn) -> dict[str
     owner = payload.owner_user_id.strip()
     if payload.currency != payload.currency.upper() or not payload.currency.isalpha():
         raise HTTPException(422, detail={"code": "INVALID_REFUND_CURRENCY"})
-    if not payload.payment_intent_id.startswith("pi_") or not payload.charge_id.startswith("ch_"):
+    if not payload.payment_intent_id.startswith("pi_"):
+        raise HTTPException(422, detail={"code": "INVALID_STRIPE_REFUND_REFERENCES"})
+    if payload.ownership_authority == "verified_stripe_charge_refund":
+        if not payload.charge_id or not payload.charge_id.startswith("ch_"):
+            raise HTTPException(422, detail={"code": "INVALID_STRIPE_REFUND_REFERENCES"})
+    elif not payload.refund_id or not payload.refund_id.startswith("re_"):
+        raise HTTPException(422, detail={"code": "INVALID_STRIPE_REFUND_REFERENCES"})
+    if payload.charge_id is not None and not payload.charge_id.startswith("ch_"):
+        raise HTTPException(422, detail={"code": "INVALID_STRIPE_REFUND_REFERENCES"})
+    if payload.refund_id is not None and not payload.refund_id.startswith("re_"):
         raise HTTPException(422, detail={"code": "INVALID_STRIPE_REFUND_REFERENCES"})
     if payload.amount_refunded_minor > payload.order_total_minor:
         raise HTTPException(422, detail={"code": "REFUND_EXCEEDS_ORDER_TOTAL"})
@@ -331,7 +342,12 @@ def record_purchase_refund_status(payload: PurchaseRefundSnapshotIn) -> dict[str
                 int(line.purchase_unit_price_minor or 0) * int(line.purchase_quantity or 0)
                 for line in lines
             )
-            if currencies != {payload.currency} or calculated_total != payload.order_total_minor:
+            merchandise_subtotal = payload.merchandise_subtotal_minor or payload.order_total_minor
+            if (
+                currencies != {payload.currency}
+                or calculated_total != merchandise_subtotal
+                or merchandise_subtotal > payload.order_total_minor
+            ):
                 raise HTTPException(409, detail={"code": "PURCHASE_ORDER_SNAPSHOT_MISMATCH"})
 
             key = (owner, payload.order_id)
@@ -367,6 +383,7 @@ def record_purchase_refund_status(payload: PurchaseRefundSnapshotIn) -> dict[str
                 existing.event_id = payload.event_id
                 existing.provider_event_id = payload.provider_event_id
                 existing.charge_id = payload.charge_id
+                existing.refund_id = payload.refund_id
                 existing.amount_refunded_minor = payload.amount_refunded_minor
                 existing.refund_state = payload.refund_state
                 existing.payload_hash = payload_hash
@@ -381,6 +398,7 @@ def record_purchase_refund_status(payload: PurchaseRefundSnapshotIn) -> dict[str
                     provider_event_id=payload.provider_event_id,
                     payment_intent_id=payload.payment_intent_id,
                     charge_id=payload.charge_id,
+                    refund_id=payload.refund_id,
                     currency=payload.currency,
                     order_total_minor=payload.order_total_minor,
                     amount_refunded_minor=payload.amount_refunded_minor,
