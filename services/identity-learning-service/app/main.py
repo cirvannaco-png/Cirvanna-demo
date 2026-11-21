@@ -1210,7 +1210,7 @@ async def revoke_consent(
     if receipt is None or receipt.subject_id != subject:
         raise HTTPException(404, detail={"code": "CONSENT_RECEIPT_NOT_FOUND"})
 
-    selected_receipt_is_active = receipt.granted and receipt.revoked_at is None
+    selected_receipt_is_active = consent_is_active(receipt)
     affected_receipts: list[ConsentReceipt] = []
     if selected_receipt_is_active:
         statement = select(ConsentReceipt).where(
@@ -1287,7 +1287,11 @@ async def revoke_consent(
         "resource_id": receipt.resource_id,
         "status": (
             "revoked" if selected_receipt_is_active
-            else ("already_revoked" if receipt.revoked_at is not None else "already_denied")
+            else (
+                "already_revoked" if receipt.revoked_at is not None
+                else "already_denied" if not receipt.granted
+                else "already_expired"
+            )
         ),
         "revoked_at": receipt.revoked_at.isoformat() if receipt.revoked_at else None,
         "twin_cleanup_status": "pending" if twin_result["pending"] or twin_result["failed"] else ("delivered" if twin_result.get("delivered", twin_result["completed"]) else "not_applicable"),
