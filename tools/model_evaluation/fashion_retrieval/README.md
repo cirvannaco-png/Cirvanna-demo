@@ -103,3 +103,29 @@ The runner ranks the full supplied candidate pool and applies no calibrated no-m
     python -m unittest discover -s tests/model_evaluation -v
 
 Tests cover the schema, fixed candidate metadata, strict revision pins, deterministic ranking, invalid vectors and media path traversal. CI compiles the runners and runs these offline unit tests; CI does not download model weights or claim model inference executed.
+
+## Prepare matched input from frozen snapshots
+
+The runner input is assembled from two private JSONL files. The first is a fixed, eligible Commerce/Catalog snapshot captured from the same release of the service, after the existing active-product / purchasable-offer rules have been applied. Each row must contain:
+
+    {"variant_id":"variant-a","search_text":"Fashion or beauty marketplace product. ...exact _offer_description() output..."}
+
+The `search_text` must be the exact output of the Vision service's `_offer_description(offer, product)`. Do not rebuild it with a different template. The runner/evaluator use the variant ID because the production `_rank_offers()` keys results by `variant_id`.
+
+
+The second file contains one record per query with query metadata, candidate variant IDs, human-reviewed qrels, any declared excluded variant IDs, and task-grounded subgroup values:
+
+    {"schema_version":"1.0","query_id":"query-000001","cluster_id":"source-cluster-001","task_id":"image_to_catalog_text","split":"test","query_image_path":"queries/query-000001.jpg","candidate_ids":["variant-a","variant-b"],"qrels":{"variant-a":4,"variant-b":0},"excluded_product_ids":[],"subgroups":{"source_type":"studio"}}
+
+For text queries use `task_id=text_to_catalog_text` and provide `query_text`. The script verifies every candidate belongs to the frozen snapshot, rejects duplicate IDs, empty/invalid qrels, unsupported tasks and missing query data, then writes the runner input plus a digest manifest:
+
+    python tools/model_evaluation/fashion_retrieval/prepare_cases.py \
+      --catalog-snapshot /secure/evaluation/catalog-offers.jsonl \
+      --queries /secure/evaluation/query-qrels.jsonl \
+      --output /secure/evaluation/fashion-retrieval-test.jsonl
+
+The 1,000 candidate bound matches the current Vision worker cap. Prepare one task and one split per run. Use exact eligible variant IDs, not product names or generated row numbers. The source snapshot, query/qrel input, prepared JSONL and manifests are private research records and must remain outside GitHub. Human qrels must be prepared by the independent review process before a final test run.
+
+## End-to-end local tests
+
+    python -m unittest discover -s tests/model_evaluation -v
