@@ -2339,8 +2339,9 @@ def test_shopify_checkout_reservation_uses_deterministic_provider_draft(monkeypa
     db = TEST_SESSION()
     connection = shopify.ShopifyConnection(
         id=str(uuid.uuid4()), merchant_id=seeded["merchant_id"],
-        shop_domain="northwind.myshopify.com", granted_scopes=["read_products", "read_inventory"],
-        status="active", webhook_registration={}, installed_at=main.now(), updated_at=main.now(),
+        shop_domain="northwind.myshopify.com", shop_currency="KES",
+        granted_scopes=["read_products", "read_inventory"], status="active",
+        webhook_registration={}, installed_at=main.now(), updated_at=main.now(),
     )
     product = shopify.ShopifyProductSnapshot(
         id=str(uuid.uuid4()), connection_id=connection.id,
@@ -2408,7 +2409,9 @@ def test_shopify_checkout_reservation_uses_deterministic_provider_draft(monkeypa
     draft_input = create_call[1]["input"]
     assert draft_input["lineItems"] == [{
         "variantId": "gid://shopify/ProductVariant/200", "quantity": 1,
+        "priceOverride": {"amount": "2.50", "currencyCode": "KES"},
     }]
+    assert draft_input["presentmentCurrencyCode"] == "KES"
     assert draft_input["reserveInventoryUntil"].endswith("Z")
     assert reservation.reservation_key in draft_input["tags"]
 
@@ -2474,8 +2477,9 @@ def test_shopify_reservation_rejection_releases_local_stock_before_payment(monke
     )])
     connection = shopify.ShopifyConnection(
         id=str(uuid.uuid4()), merchant_id=seeded["merchant_id"],
-        shop_domain="northwind.myshopify.com", granted_scopes=["read_products", "read_inventory"],
-        status="active", webhook_registration={}, installed_at=main.now(), updated_at=main.now(),
+        shop_domain="northwind.myshopify.com", shop_currency="KES",
+        granted_scopes=["read_products", "read_inventory"], status="active",
+        webhook_registration={}, installed_at=main.now(), updated_at=main.now(),
     )
     product = shopify.ShopifyProductSnapshot(
         id=str(uuid.uuid4()), connection_id=connection.id,

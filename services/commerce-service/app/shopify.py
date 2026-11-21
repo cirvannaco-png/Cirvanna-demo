@@ -1602,12 +1602,28 @@ def _create_inventory_draft(connection: ShopifyConnection, db: Session,
         ShopifyVariantSnapshot.connection_id == connection.id,
         ShopifyVariantSnapshot.local_variant_id.is_not(None),
     )).all()}
+    order = db.get(commerce.CommerceOrder, reservation.commerce_order_id)
+    buyer_currency = (order.currency if order else '').upper()
     line_items = []
     for item in items:
         snap = snapshots.get(item.variant_id)
         if not snap or snap.mapping_state != "mapped" or not snap.tracked or not snap.inventory_complete:
             raise HTTPException(409, detail={"code": "SHOPIFY_INVENTORY_MAPPING_OR_FRESHNESS_REQUIRED"})
-        line_items.append({"variantId": snap.shopify_variant_gid, "quantity": item.quantity})
+        source_currency = (item.source_currency or buyer_currency).upper()
+        source_minor = item.source_unit_price_minor if item.source_unit_price_minor is not None else item.unit_price_minor
+        if (
+            not connection.shop_currency or source_currency != connection.shop_currency
+            or snap.currency != connection.shop_currency or source_minor is None
+        ):
+            raise HTTPException(409, detail={"code": "SHOPIFY_RESERVATION_PRICE_CURRENCY_MISMATCH"})
+        line_items.append({
+            "variantId": snap.shopify_variant_gid,
+            "quantity": item.quantity,
+            "priceOverride": {
+                "amount": _major_units(source_minor, connection.shop_currency),
+                "currencyCode": connection.shop_currency,
+            },
+        })
     mutation = """
       mutation CirvannaReserveInventory($input: DraftOrderInput!) {
         draftOrderCreate(input: $input) {
@@ -1620,6 +1636,7 @@ def _create_inventory_draft(connection: ShopifyConnection, db: Session,
     try:
         data = _graphql(connection, db, mutation, {"input": {
             "lineItems": line_items,
+            "presentmentCurrencyCode": connection.shop_currency,
             "tags": ["Cirvanna", "Cirvanna-Inventory-Reservation", reservation.reservation_key],
             "note": "Temporary inventory reservation for a Cirvanna checkout. Do not collect payment in Shopify.",
             "reserveInventoryUntil": expiry,
