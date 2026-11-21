@@ -2124,7 +2124,7 @@ def recommend_complementary_look(
     payload: ComplementerAdvisoryRequest,
     end_user_authorization: str | None = Header(default=None, alias="X-End-User-Authorization"),
 ) -> dict[str, Any]:
-    """Return styling guidance only, bound to a Commerce-verified customer subject."""
+    """Return stateless styling guidance bound to the verified Commerce subject."""
     subject = _resolve_verified_subject(end_user_authorization)
     if not hmac.compare_digest(subject, payload.user_id):
         raise HTTPException(403, detail={"code": "REQUEST_SUBJECT_MISMATCH"})

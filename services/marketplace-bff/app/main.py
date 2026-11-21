@@ -12,7 +12,7 @@ import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from urllib.parse import urlsplit
 
@@ -180,6 +180,21 @@ def _pnelly_internal_service() -> tuple[str, str]:
     return base, token
 
 
+class ComplementerRequestIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: str = Field(min_length=8, max_length=128)
+    preferences: dict[str, Any] = Field(default_factory=dict, max_length=32)
+    look: dict[str, Any] = Field(default_factory=dict, max_length=32)
+
+    @field_validator("request_id")
+    @classmethod
+    def valid_request_id(cls, value: str) -> str:
+        normalized = value.strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{7,127}", normalized):
+            raise ValueError("request_id must be a controlled opaque identifier")
+        return normalized
+
+
 class MarketplaceSearchIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     query: str = Field(min_length=3, max_length=1000)
@@ -189,13 +204,6 @@ class MarketplaceSearchIn(BaseModel):
     @property
     def normalized_query(self) -> str:
         return " ".join(self.query.split()).strip()
-
-
-class ComplementerRequestIn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    request_id: str = Field(min_length=8, max_length=128)
-    preferences: dict = Field(default_factory=dict, max_length=64)
-    look: dict = Field(default_factory=dict, max_length=32)
 
 
 class ComplementerFeedbackIn(BaseModel):
@@ -4241,6 +4249,16 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
         } if conversation_update else None),
     }
     return _private_json_response(safe_payload)
+
+
+@app.post("/api/vision/conversational-discovery")
+async def pnelly_conversational_discovery(
+    request: Request,
+    payload: WardrobeRecommendationIn,
+) -> Response:
+    """PNELLY discovery alias: verified subject, active wardrobe, feedback and CAL."""
+    return await wardrobe_recommendations(request, payload)
+
 
 def _read_portal_page(path: Path, code: str) -> str:
     try:
