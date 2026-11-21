@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -2310,3 +2311,36 @@ def test_image_processing_expiry_in_twin_bundle_queues_twin_asset_cleanup(client
         bundle="bundle-twin-image-expiry",
         resource="twin-image-expiry",
     ).status_code == 403
+
+
+def test_cil_and_twin_cleanup_dispatch_batch_more_than_one_hundred_commands(monkeypatch):
+    cil_batches = []
+    twin_batches = []
+
+    async def fake_cil(_db, *, limit, command_ids):
+        cil_batches.append((limit, len(command_ids)))
+        return {
+            "processed": len(command_ids), "completed": len(command_ids),
+            "already_delivered": 0, "delivered": len(command_ids),
+            "failed": 0, "pending": False,
+        }
+
+    async def fake_twin(_db, *, limit, command_ids):
+        twin_batches.append((limit, len(command_ids)))
+        return {
+            "processed": len(command_ids), "completed": len(command_ids),
+            "already_delivered": 0, "delivered": len(command_ids),
+            "failed": 0, "pending": False,
+        }
+
+    monkeypatch.setattr(main, "_dispatch_cil_provider_consent_revocations", fake_cil)
+    monkeypatch.setattr(main, "_dispatch_twin_consent_revocations", fake_twin)
+    command_ids = [f"cleanup-command-{index:03d}" for index in range(205)]
+
+    cil = asyncio.run(main._dispatch_cil_provider_consent_revocations_batched(None, command_ids))
+    twin = asyncio.run(main._dispatch_twin_consent_revocations_batched(None, command_ids))
+
+    assert cil_batches == [(100, 100), (100, 100), (5, 5)]
+    assert twin_batches == [(100, 100), (100, 100), (5, 5)]
+    assert cil["delivered"] == 205 and cil["failed"] == 0 and cil["pending"] is False
+    assert twin["delivered"] == 205 and twin["failed"] == 0 and twin["pending"] is False
