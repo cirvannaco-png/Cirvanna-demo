@@ -3402,3 +3402,60 @@ def test_sync_outbox_does_not_claim_manual_review_events(client, monkeypatch):
     assert all(item["event_id"] != event_id for item in claimed.json()["events"])
     row = TEST_SESSION().get(main.CommerceOutboxEvent, event_id)
     assert row is not None and row.delivered_at is None and row.dead_letter_at is None
+
+
+def test_admin_manual_review_queue_exposes_compensation_cases_without_sync_delivery(client):
+    event_id = str(uuid.uuid4())
+    order_id = str(uuid.uuid4())
+    db = TEST_SESSION()
+    db.add(main.CommerceOutboxEvent(
+        event_id=event_id, aggregate_type="shopify_compensation_case",
+        aggregate_id=str(uuid.uuid4()),
+        event_type="commerce.shopify.compensation.manual_review", schema_version=1,
+        payload={"event_id": event_id, "order_id": order_id, "merchant_id": "merchant-1",
+                 "case_id": "case-1", "reason_code": "SHOPIFY_CANCEL_UNCERTAIN",
+                 "action_required": "operator_review", "fulfillment_blocked": True},
+    ))
+    db.commit()
+    db.close()
+    denied = client.get("/admin/operations/manual-review", headers=auth("customer-1"))
+    assert denied.status_code == 403
+    response = client.get("/admin/operations/manual-review", headers=auth("ops-admin", "admin"))
+    assert response.status_code == 200, response.text
+    assert response.json()["requires_operator_action"] is True
+    item = next(row for row in response.json()["items"] if row["event_id"] == event_id)
+    assert item["order_id"] == order_id
+    assert item["reason_code"] == "SHOPIFY_CANCEL_UNCERTAIN"
+    assert item["fulfillment_blocked"] is True
+
+
+def test_shop_redaction_preserves_unresolved_compensation_manual_review_event(client, monkeypatch):
+    from app import shopify
+    token = "shopify-sync-token-with-more-than-32-bytes"
+    monkeypatch.setenv("COMMERCE_SHOPIFY_SYNC_TOKEN", token)
+    seeded = seed_offer(stock=4)
+    db = TEST_SESSION()
+    order, connection, reservation, case = _seed_shopify_compensation_case(db, seeded)
+    event = shopify.ShopifyWebhookEvent(
+        id=str(uuid.uuid4()), shop_domain=connection.shop_domain,
+        delivery_id="shop-redact-delivery-1", event_id="shop-redact-event-1",
+        topic="shop/redact", resource_gid=None, payload_sha256="a" * 64,
+        state="pending",
+    )
+    db.add(event)
+    db.commit()
+    response = client.post(
+        "/internal/shopify/process-events",
+        headers={"X-Commerce-Shopify-Sync-Token": token},
+    )
+    assert response.status_code == 200, response.text
+    db.refresh(order)
+    assert order.fulfillment_state == "manual_review"
+    review = db.scalar(select(main.CommerceOutboxEvent).where(
+        main.CommerceOutboxEvent.event_type == "commerce.shopify.compensation.manual_review",
+        main.CommerceOutboxEvent.payload["order_id"].as_string() == order.id,
+    ))
+    assert review is not None
+    assert review.payload["reason_code"] == "SHOPIFY_SHOP_REDACTED_DURING_COMPENSATION"
+    assert "shop_domain" not in review.payload
+    db.close()
