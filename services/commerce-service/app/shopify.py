@@ -937,6 +937,7 @@ def get_shopify_connection(
     if connection is None:
         return {"connected": False, "provider": "shopify"}
     return {
+        "configured": True,
         "connected": connection.status == "active",
         "provider": "shopify",
         "shop_domain": connection.shop_domain,
