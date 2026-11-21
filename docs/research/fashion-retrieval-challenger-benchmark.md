@@ -64,7 +64,7 @@ A hosted Marqo FashionSigLIP 2 offering mentioned by the FashionSigLIP model car
 2. **Fashion200K pooled evaluation** — https://huggingface.co/datasets/srpone/fashion200k-pooled-eval  
    Supplementary retrieval benchmark only. Its graded judgments are model-generated/LLM-assisted rather than a fully human ground-truth set; report it separately and never use it as the sole basis for selection. Audit the referenced corpus-image rights independently; the pooled qrels do not themselves grant rights to the original images.
 
-3. **Cirvanna controlled catalogue benchmark** — primary product-relevance gate for a Cirvanna decision. Build from approved Catalog/Commerce snapshots with exact product/variant IDs, legally usable product images, approved metadata and documented source rights. Use opaque identifiers in evaluation exports. Candidate generation must be offline against a fixed snapshot, not a live marketplace whose inventory or offers change between runs.
+3. **Cirvanna controlled catalogue benchmark** — primary product-relevance gate for a Cirvanna decision. For the first parity track, build from an approved frozen Commerce/Catalog snapshot containing exact variant IDs, the exact `_offer_description()` text consumed by Vision Intelligence, current eligibility state, and documented rights to the text/metadata source. Product images are **not required** for the current image-query-to-Catalog-text comparison. A rights-cleared product-image corpus is required only for the separate future image-to-image track. Use opaque identifiers in evaluation exports. Candidate generation must be offline against a fixed snapshot, not a live marketplace whose inventory or offers change between runs.
 
 4. **Human-reviewed query set** — create a consented, rights-cleared set of realistic product/outfit queries. Include short keyword queries, detailed natural-language descriptions, attribute combinations, image queries, and multi-item outfit queries. Every candidate in each fixed query pool must receive an explicit 0–4 relevance grade from two independent blinded reviewers, including zero-grade items. Reviewers separately flag an explicit exclusion/constraint violation. A third independent adjudicator must resolve any disagreement in either field. Use `tools/model_evaluation/fashion_retrieval/build_qrels.py` to aggregate the review records; do not generate human labels with an LLM and present them as human ground truth. The output carries complete qrels and human-adjudicated violation IDs without reviewer keys or raw annotations.
 
@@ -79,6 +79,15 @@ A hosted Marqo FashionSigLIP 2 offering mentioned by the FashionSigLIP model car
 Freeze a dataset manifest containing every source revision and file digest. Split by product identity and near-duplicate image cluster—not random rows alone. Where source structure allows, also hold out brands and a later time window. Keep all variants, crops, alternate views and duplicate images for the same product in one split. Keep validation data available for prompt/template or threshold selection; do not tune on final test labels.
 
 Report every split's query count, unique product count, category composition, source composition, image type, query type, language and known limitations. If the dataset cannot support a reliable slice, mark the slice underpowered rather than extrapolating.
+
+### 4.4 First benchmark phasing
+
+Use two distinct phases:
+
+- **Engineering pilot:** validate the fixed candidate snapshot, query/image decoding, model loading, processor outputs, artifact manifests, failure handling, annotation quality and latency/resource collection on a rights-cleared development split. Pilot metrics are diagnostic; do not select a winner from this stage.
+- **Final matched evaluation:** freeze an untouched query/product-cluster holdout. Before exposing final qrels, declare `nDCG@10` as the primary ranking metric, record the minimum practically important effect, and retain MRR@10, Recall@10, Precision@10, top-1 hit rate and hard-constraint violations as secondary measures/gates. Use query/source-clustered paired bootstrap intervals. The practical effect threshold must be defined from the product decision before unblinding final-test results, not chosen after seeing which model wins.
+
+For an initial pilot, size the human-reviewed sample and candidate pool using reviewer capacity and the available rights-cleared catalogue, and document the resulting limitations. Do not extrapolate underpowered subgroup slices to the full market.
 
 ## 5. Matched experiment design
 
