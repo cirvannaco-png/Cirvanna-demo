@@ -2530,7 +2530,7 @@ def test_shopify_required_scopes_cover_draft_reservation_without_order_write_sco
     assert "write_orders" not in REQUIRED_SCOPES
 
 
-def test_shopify_existing_connection_without_draft_scopes_requires_reauthorization(monkeypatch):
+def test_shopify_existing_connection_without_draft_scopes_requires_reauthorization(monkeypatch, client):
     from app import shopify
     from fastapi import HTTPException
 
