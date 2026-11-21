@@ -7,12 +7,16 @@ on:
     paths:
       - "tools/model_evaluation/fashion_retrieval/**"
       - "tests/model_evaluation/**"
+      - "services/vision-intelligence/app/retrieval_snapshot_export.py"
+      - "services/vision-intelligence/README.md"
       - ".github/workflows/fashion-retrieval-evaluation.yml"
   push:
     branches: [main, "research/**"]
     paths:
       - "tools/model_evaluation/fashion_retrieval/**"
       - "tests/model_evaluation/**"
+      - "services/vision-intelligence/app/retrieval_snapshot_export.py"
+      - "services/vision-intelligence/README.md"
       - ".github/workflows/fashion-retrieval-evaluation.yml"
 
 permissions:
