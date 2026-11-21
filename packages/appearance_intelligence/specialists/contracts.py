@@ -147,8 +147,8 @@ class CatalogSnapshot:
     def __post_init__(self) -> None:
         if not isinstance(self.products, tuple) or any(not isinstance(p, CatalogProduct) for p in self.products):
             raise ValueError("products must be a tuple of validated CatalogProduct records")
-        if self.fetched_at.tzinfo is None or self.fetched_at.utcoffset() is None:
-            raise ValueError("fetched_at must be timezone-aware")
+        if not isinstance(self.fetched_at, datetime) or self.fetched_at.tzinfo is None or self.fetched_at.utcoffset() is None:
+            raise ValueError("fetched_at must be a timezone-aware datetime")
         if not isinstance(self.complete, bool):
             raise ValueError("complete must be a boolean")
         if not isinstance(self.source, str) or not self.source.strip():
