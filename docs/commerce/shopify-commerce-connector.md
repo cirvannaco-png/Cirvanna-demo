@@ -35,6 +35,7 @@ Required secret-manager settings:
 | COMMERCE_SHOPIFY_TOKEN_ENCRYPTION_KEY | Base64url-encoded 32-byte AES-GCM key |
 | COMMERCE_SHOPIFY_SYNC_TOKEN | At least 32 random bytes for internal sync/export/reconciliation jobs |
 | COMMERCE_ENVIRONMENT | Set to production in production so OAuth state cookie is Secure |
+| SHOPIFY_INVENTORY_RESERVATION_PRODUCTION_ENABLED | Default false; set true only after live Shopify/Stripe staging acceptance, PostgreSQL restore validation, and operational compensation/refund procedures are signed off. Until then, Shopify-backed checkout is staging-only. |
 
 Do not commit secrets or put the encryption key in the app frontend. Rotate the token encryption key only with a planned re-encryption migration; changing it directly makes existing token ciphertext unreadable and requires merchants to re-authorize.
 

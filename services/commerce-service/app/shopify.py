@@ -42,6 +42,18 @@ API_VERSION = os.getenv("SHOPIFY_ADMIN_API_VERSION", "2026-10").strip()
 SHOP_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.myshopify\.com$")
 GID_RE = re.compile(r"^gid://shopify/(Product|ProductVariant|Order|InventoryItem|InventoryLevel)/[0-9]+$")
 CURRENCY_RE = re.compile(r"^[A-Z]{3}$")
+
+
+def _shopify_inventory_reservation_enabled() -> bool:
+    """Keep the new provider reservation saga staging-only by default."""
+    environment = os.getenv("COMMERCE_ENVIRONMENT", "development").strip().lower()
+    if environment != "production":
+        return True
+    return os.getenv("SHOPIFY_INVENTORY_RESERVATION_PRODUCTION_ENABLED", "false").strip().lower() in {
+        "1", "true", "yes",
+    }
+
+
 REQUIRED_SCOPES = {
     "read_products", "read_inventory", "read_locations", "read_orders",
     "read_draft_orders", "write_draft_orders",
@@ -1702,6 +1714,10 @@ def prepare_checkout_inventory_reservations(db: Session, order: commerce.Commerc
             connection = db.scalar(select(ShopifyConnection).where(ShopifyConnection.merchant_id == merchant_id))
             if connection is None:
                 continue
+            if not _shopify_inventory_reservation_enabled():
+                raise HTTPException(503, detail={
+                    "code": "SHOPIFY_INVENTORY_RESERVATION_STAGING_ONLY",
+                })
             if connection.status != "active":
                 raise HTTPException(409, detail={"code": "SHOPIFY_CONNECTION_NOT_READY"})
             reservation = db.scalar(select(ShopifyInventoryReservation).where(

@@ -2541,6 +2541,21 @@ def test_shopify_reservation_rejection_releases_local_stock_before_payment(monke
     db.close()
 
 
+def test_shopify_inventory_reservation_is_staging_only_in_production_by_default(monkeypatch):
+    from app.shopify import _shopify_inventory_reservation_enabled
+
+    monkeypatch.setenv("COMMERCE_ENVIRONMENT", "production")
+    monkeypatch.delenv("SHOPIFY_INVENTORY_RESERVATION_PRODUCTION_ENABLED", raising=False)
+    assert _shopify_inventory_reservation_enabled() is False
+
+    monkeypatch.setenv("SHOPIFY_INVENTORY_RESERVATION_PRODUCTION_ENABLED", "true")
+    assert _shopify_inventory_reservation_enabled() is True
+
+    monkeypatch.setenv("COMMERCE_ENVIRONMENT", "staging")
+    monkeypatch.delenv("SHOPIFY_INVENTORY_RESERVATION_PRODUCTION_ENABLED", raising=False)
+    assert _shopify_inventory_reservation_enabled() is True
+
+
 def test_shopify_required_scopes_cover_draft_reservation_without_order_write_scope():
     from app.shopify import REQUIRED_SCOPES
 
