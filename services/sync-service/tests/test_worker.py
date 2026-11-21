@@ -82,7 +82,8 @@ def refund_event():
             "payment_intent_id": "pi_test_0001",
             "charge_id": "ch_test_0001",
             "currency": "KES",
-            "order_total_minor": 500000,
+            "order_total_minor": 550000,
+            "purchase_items_total_minor": 500000,
             "amount_refunded_minor": 250000,
             "refund_state": "partial_refund",
             "refunded_at": "2026-11-07T12:00:00+00:00",
@@ -102,6 +103,8 @@ def test_worker_delivers_refund_snapshot_before_acknowledging():
         if request.url.path == "/v1/purchases/refund-status":
             body = __import__("json").loads(request.content)
             assert body["ownership_authority"] == "verified_stripe_charge_refund"
+            assert body["purchase_items_total_minor"] == 500000
+            assert body["order_total_minor"] == 550000
             assert body["order_id"] == "123e4567-e89b-42d3-a456-426614174001"
             assert body["physical_return_confirmed"] is False
             return httpx.Response(200, json={"status": "recorded", "wardrobe_items_unchanged": True})
@@ -346,3 +349,28 @@ def test_worker_does_not_ack_checkout_selection_without_consent_receipt():
     assert result == {"claimed": 1, "processed": 0, "retried": 1, "dead_lettered": 0}
     assert "/v1/tal/events" not in calls
     assert not any(path.endswith("/ack") for path in calls)
+
+
+
+def test_worker_delivers_verified_refund_object_event_when_charge_id_is_present():
+    event = refund_event()
+    event["payload"]["ownership_authority"] = "verified_stripe_refund_event"
+    event["payload"]["refund_id"] = "re_test_0001"
+    calls = []
+    def handler(request: httpx.Request):
+        calls.append(request.url.path)
+        if request.url.path == "/internal/outbox/claim":
+            return httpx.Response(200, json={"events": [event]})
+        if request.url.path == "/v1/purchases/refund-status":
+            body = __import__("json").loads(request.content)
+            assert body["ownership_authority"] == "verified_stripe_refund_event"
+            assert body["refund_id"] == "re_test_0001"
+            assert body["charge_id"] == "ch_test_0001"
+            return httpx.Response(200, json={"status": "recorded"})
+        if request.url.path.endswith("/ack"):
+            return httpx.Response(200, json={"status": "delivered"})
+        raise AssertionError(request.url.path)
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    result = CommerceWardrobeWorker(settings(), client).process_batch()
+    assert result == {"claimed": 1, "processed": 1, "retried": 0, "dead_lettered": 0}
+    assert calls[-1].endswith("/ack")

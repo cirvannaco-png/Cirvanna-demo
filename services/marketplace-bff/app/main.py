@@ -3541,6 +3541,10 @@ def _authorized_commerce_path(method: str, path: str) -> bool:
         return method == "POST"
     if len(parts) == 4 and parts[:2] == ["merchant", "variants"] and UUID_RE.fullmatch(parts[2]) and parts[3] == "inventory-adjustments":
         return method == "POST"
+    if parts == ["admin", "operations", "alerts"]:
+        return method == "GET"
+    if len(parts) == 5 and parts[:3] == ["admin", "operations", "alerts"] and UUID_RE.fullmatch(parts[3]) and parts[4] == "acknowledge":
+        return method == "POST"
     if len(parts) == 4 and parts[:2] == ["admin", "merchants"] and UUID_RE.fullmatch(parts[2]) and parts[3] == "decision":
         return method == "POST"
     if len(parts) == 4 and parts[:2] == ["admin", "merchants"] and UUID_RE.fullmatch(parts[2]) and parts[3] == "markets":

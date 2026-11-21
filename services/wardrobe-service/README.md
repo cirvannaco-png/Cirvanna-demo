@@ -17,7 +17,7 @@ The service owns user wardrobe item records and saved outfit compositions. Item 
 - `GET /v1/items/{item_id}?owner_user_id=...` gets an owner-scoped item.
 - `POST /v1/items/{item_id}/transition` applies a version-checked lifecycle command.
 - `PATCH /v1/items/{item_id}` edits only one owned item with optimistic concurrency and command replay protection.
-- `POST /v1/purchases/refund-status` records an authenticated, verified Stripe order-level refund snapshot. It does not archive/delete garments or assert a physical return; snapshots are monotonic and owner/order scoped.
+- `POST /v1/purchases/refund-status` records an authenticated, verified Stripe order-level refund snapshot. The full Commerce order total (which may include shipping/tax) is distinct from the merchandise-line subtotal independently checked against immutable Wardrobe purchase rows. It does not archive/delete garments or assert a physical return; snapshots are monotonic and owner/order scoped.
 - `GET /v1/purchases/refund-status?owner_user_id=...&order_id=...` reads that owner's order refund snapshot.
 - `POST /v1/outfits` creates a saved outfit from active items owned by the same user.
 - `GET /v1/outfits?owner_user_id=...` lists that user's saved outfits and hydrates each piece from its current wardrobe item record.

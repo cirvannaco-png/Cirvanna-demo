@@ -2322,6 +2322,8 @@ def test_commerce_proxy_allowlist_routes_role_based_operations():
         ("POST", "merchant/listings/123e4567-e89b-12d3-a456-426614174000/variants"),
         ("POST", "merchant/variants/123e4567-e89b-12d3-a456-426614174000/inventory-adjustments"),
         ("GET", "admin/merchants"), ("GET", "admin/merchant-decisions"),
+        ("GET", "admin/operations/alerts"),
+        ("POST", "admin/operations/alerts/123e4567-e89b-12d3-a456-426614174000/acknowledge"),
         ("POST", "admin/merchants/123e4567-e89b-12d3-a456-426614174000/decision"),
         ("GET", "admin/merchants/123e4567-e89b-12d3-a456-426614174000/markets"),
         ("PUT", "admin/merchants/123e4567-e89b-12d3-a456-426614174000/markets/KE"),
@@ -2339,6 +2341,7 @@ def test_commerce_proxy_allowlist_routes_role_based_operations():
         assert main._authorized_commerce_path(method, route), (method, route)
     blocked = [
         ("POST", "admin/merchants"), ("POST", "webhooks/stripe"),
+        ("POST", "admin/operations/alerts/not-a-uuid/acknowledge"),
         ("POST", "internal/expire-reservations"),
         ("POST", "merchant/listings/not-a-uuid/variants"),
         ("DELETE", "admin/merchant-decisions"),
