@@ -229,8 +229,23 @@ def _refund_payload(event: dict[str, Any]) -> dict[str, Any]:
         raise SyncContractError("unsupported_refund_event_type")
     if event.get("schema_version") != 1 or payload.get("schema_version") != 1:
         raise SyncContractError("unsupported_refund_event_schema")
-    if payload.get("ownership_authority") != "verified_stripe_charge_refund":
+    authority = payload.get("ownership_authority")
+    if authority not in {"verified_stripe_charge_refund", "verified_stripe_refund_event"}:
         raise SyncContractError("unverified_refund_authority")
+    charge_id = payload.get("charge_id")
+    refund_id = payload.get("refund_id")
+    if authority == "verified_stripe_charge_refund":
+        charge_id = _required_string(charge_id, "charge_id", 180)
+        if not charge_id.startswith("ch_"):
+            raise SyncContractError("invalid_charge_id")
+    else:
+        refund_id = _required_string(refund_id, "refund_id", 180)
+        if not refund_id.startswith("re_"):
+            raise SyncContractError("invalid_refund_id")
+    if charge_id is not None and (not isinstance(charge_id, str) or not charge_id.startswith("ch_")):
+        raise SyncContractError("invalid_charge_id")
+    if refund_id is not None and (not isinstance(refund_id, str) or not refund_id.startswith("re_")):
+        raise SyncContractError("invalid_refund_id")
     if payload.get("physical_return_confirmed") is not False or payload.get("ownership_effect") != "financial_status_only":
         raise SyncContractError("refund_must_not_imply_physical_return")
     order_total = payload.get("order_total_minor")
@@ -241,6 +256,12 @@ def _refund_payload(event: dict[str, Any]) -> dict[str, Any]:
         or refunded > order_total
     ):
         raise SyncContractError("invalid_refund_amount")
+    merchandise_subtotal = payload.get("merchandise_subtotal_minor", order_total)
+    if (
+        not isinstance(merchandise_subtotal, int) or isinstance(merchandise_subtotal, bool)
+        or merchandise_subtotal <= 0 or merchandise_subtotal > order_total
+    ):
+        raise SyncContractError("invalid_merchandise_subtotal")
     expected_state = "refunded" if refunded == order_total else "partial_refund"
     if payload.get("refund_state") != expected_state:
         raise SyncContractError("refund_state_amount_mismatch")
@@ -252,13 +273,15 @@ def _refund_payload(event: dict[str, Any]) -> dict[str, Any]:
         "provider_event_id": _required_string(payload.get("provider_event_id"), "provider_event_id", 180),
         "event_type": "commerce.order.refund.updated",
         "schema_version": 1,
-        "ownership_authority": "verified_stripe_charge_refund",
+        "ownership_authority": authority,
         "owner_user_id": _required_string(payload.get("buyer_user_id"), "buyer_user_id", 128),
         "order_id": _required_string(payload.get("order_id"), "order_id", 36),
         "payment_intent_id": _required_string(payload.get("payment_intent_id"), "payment_intent_id", 180),
-        "charge_id": _required_string(payload.get("charge_id"), "charge_id", 180),
+        "charge_id": charge_id,
+        "refund_id": refund_id,
         "currency": currency,
         "order_total_minor": order_total,
+        "merchandise_subtotal_minor": merchandise_subtotal,
         "amount_refunded_minor": refunded,
         "refund_state": expected_state,
         "refunded_at": _required_string(payload.get("refunded_at"), "refunded_at", 64),
