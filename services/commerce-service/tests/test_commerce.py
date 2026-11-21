@@ -3359,11 +3359,14 @@ def test_shopify_compensation_cancel_intent_rejects_stale_lease_owner(client):
     case.lease_owner = "stale-worker"
     case.lease_until = main.now() + main.timedelta(seconds=90)
     db.commit()
-    # A second worker has reclaimed the case after the original worker's
-    # inventory reads. The stale worker must not persist intent or call Shopify.
-    case.lease_owner = "current-worker"
-    case.lease_until = main.now() + main.timedelta(seconds=90)
-    db.commit()
+    # A second DB session reclaims the case after the original worker's reads.
+    # The first session retains its stale lease token.
+    other = TEST_SESSION()
+    current = other.get(shopify.ShopifyCompensationCase, case.id)
+    current.lease_owner = "current-worker"
+    current.lease_until = main.now() + main.timedelta(seconds=90)
+    other.commit()
+    other.close()
     with pytest.raises(HTTPException) as raised:
         shopify._persist_compensation_cancel_intent(
             db, case, {"gid://shopify/InventoryItem/1": 8},
