@@ -270,24 +270,27 @@ class EmbeddingAdapter:
             )
         model.to(device)
         model.eval()
-        return cls(model=model, processor=processor, device=device, loader="transformers")
+        return cls(model=model, processor=processor, device=device, loader=spec["loader"])
 
-    def encode_texts(self, texts: list[str]) -> list[list[float]]:
+    def encode_texts(self, texts: list[str], batch_size: int = 32) -> list[list[float]]:
         import torch
         outputs: list[list[float]] = []
-        for batch in chunks(texts, 32):
+        for batch in chunks(texts, batch_size):
             if self.loader == "open_clip":
                 tokens = self.tokenizer(batch).to(self.device)
                 with torch.inference_mode():
                     features = self.model.encode_text(tokens)
             else:
-                inputs = self.processor(
-                    text=batch, return_tensors="pt", padding=True, truncation=True,
-                    **({"max_length": 77} if self.loader == "transformers" and
-                       MODEL_SPECS[next(k for k, v in MODEL_SPECS.items()
-                                        if v["loader"] == "transformers_clip")]["loader"] == "transformers_clip"
-                       and self.model.__class__.__name__ == "CLIPModel" else {})
-                )
+                options = {
+                    "text": batch,
+                    "return_tensors": "pt",
+                    "padding": True,
+                    "truncation": True,
+                }
+                # Match Cirvanna's current CLIP text path, which truncates at 77 tokens.
+                if self.loader == "transformers_clip":
+                    options["max_length"] = 77
+                inputs = self.processor(**options)
                 inputs = _to_device(inputs, self.device)
                 with torch.inference_mode():
                     features = self.model.get_text_features(**inputs)
@@ -365,7 +368,7 @@ def run_model(
         })
         candidate_text_vectors: dict[str, list[float]] = {}
         for batch in chunks(all_texts, batch_size):
-            vectors = adapter.encode_texts(batch)
+            vectors = adapter.encode_texts(batch, batch_size=batch_size)
             if len(vectors) != len(batch):
                 raise RuntimeError("text encoder returned an unexpected number of embeddings")
             candidate_text_vectors.update(zip(batch, vectors))
@@ -382,7 +385,7 @@ def run_model(
                 query_vector = adapter.encode_images([image_path], batch_size=1)[0]
             else:
                 query_text = TEXT_QUERY_PREFIX + " ".join(case["query_text"].split())
-                query_vector = adapter.encode_texts([query_text])[0]
+                query_vector = adapter.encode_texts([query_text], batch_size=1)[0]
             ordered, scores = rank_candidates(query_vector, candidate_vectors)
             rankings[case["query_id"]] = ordered
             score_maps[case["query_id"]] = {key: round(value, 8) for key, value in scores.items()}
@@ -424,6 +427,8 @@ def main() -> int:
     if len(args.models) != len(set(args.models)):
         raise ValueError("--models must not contain duplicates")
     revisions = parse_revisions(args.revision)
+    if "cirvanna-fashion-clip" in revisions and revisions["cirvanna-fashion-clip"] != BASELINE_REVISION:
+        raise ValueError("the Cirvanna FashionCLIP baseline revision is frozen to the production-reviewed pin")
     for model_id in args.models:
         revision = revisions.get(model_id) or MODEL_SPECS[model_id]["default_revision"]
         if not revision:
