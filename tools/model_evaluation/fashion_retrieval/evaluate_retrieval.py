@@ -369,13 +369,13 @@ def main() -> int:
             primary_metric=args.primary_metric, bootstrap_samples=args.bootstrap_samples,
             seed=args.seed,
         )
+        artifacts = validate_private_artifact_manifests(registration)
+        manifest = json.loads(Path(args.run_manifest).read_text(encoding="utf-8"))
+        validate_run_manifest(manifest, registration, args.input, artifacts["data"])
     report = evaluate(cases, baseline_model_id=args.baseline_model_id, k=args.k,
                       primary_metric=args.primary_metric, bootstrap_samples=args.bootstrap_samples,
                       seed=args.seed)
     if args.split == "test":
-        artifacts = validate_private_artifact_manifests(registration)
-        manifest = json.loads(Path(args.run_manifest).read_text(encoding="utf-8"))
-        validate_run_manifest(manifest, registration, args.input, artifacts["data"])
         report["preregistered_challenger_gates"] = evaluate_preregistered_challenger_gates(report, registration)
         report["status"] = "final_test_scored_gates_evaluated"
     Path(args.output).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
