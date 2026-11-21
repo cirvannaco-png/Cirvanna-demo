@@ -25,17 +25,17 @@ The model registry in `run_retrieval.py` defines four model identities:
 | Model ID | Hugging Face repository | Loader |
 |---|---|---|
 | `cirvanna-fashion-clip` | `patrickjohncyh/fashion-clip` | Transformers CLIP, matching the Vision service class |
-| `marqo-fashionclip` | `Marqo/marqo-fashionCLIP` | OpenCLIP from a pinned local snapshot |
-| `marqo-fashionsiglip` | `Marqo/marqo-fashionSigLIP` | OpenCLIP from a pinned local snapshot |
-| `zooclaw-fashionsiglip2` | `srpone/zooclaw-fashionsiglip2` | Standard Transformers/SigLIP model |
+| `marqo-fashionclip` | `Marqo/marqo-fashionCLIP` | OpenCLIP from a pinned local snapshot | `44f4c655124ed71e90cbf528d82f508d69d8a81b` |
+| `marqo-fashionsiglip` | `Marqo/marqo-fashionSigLIP` | OpenCLIP from a pinned local snapshot | `c56244cc94f92419e8369fa71efdaf403b124ce8` |
+| `zooclaw-fashionsiglip2` | `srpone/zooclaw-fashionsiglip2` | Standard Transformers/SigLIP model | **Unpinned; excluded from first run** |
 
-Each model is downloaded at a full 40-character commit SHA. The baseline SHA is frozen to the exact revision in Cirvanna's current Vision Intelligence implementation. Challenger SHA values are explicit command-line inputs; a moving `main` reference and short SHA are rejected.
+Each model is downloaded at a full 40-character commit SHA. The baseline SHA is frozen to the exact revision in Cirvanna's current Vision Intelligence implementation. The two Marqo revisions above are defaults in the model registry and were verified against revision-qualified Hub repository/file paths. ZooClaw requires an explicit, independently verified full SHA before it may be added. A moving `main` reference and short SHA are rejected.
 
 Marqo's model cards recommend OpenCLIP and their example Transformers loaders require `trust_remote_code=True`. The runner instead uses OpenCLIP's `local-dir:` loader with the pinned snapshot and does not execute remote model-repository Python. For FashionSigLIP, whose OpenCLIP config points to an external tokenizer repository, the runner redirects the tokenizer to the tokenizer files inside that same pinned model snapshot. It does not download an unpinned tokenizer from a second repository. ZooClaw and the baseline are also loaded with `trust_remote_code=False`.
 
 The Hub snapshot download uses an explicit file allow-list for each model, avoiding duplicate PyTorch/Transformers/OpenCLIP copies of the same large checkpoint. The allow-list includes the model weight, model configuration, processor/tokenizer assets and README/licence notices where present.
 
-Every downloaded snapshot file is SHA-256 hashed. The private run manifest records all model revisions, file sizes/hashes, runtime package versions, device, input JSONL digest and query/task counts.
+Every downloaded snapshot file is SHA-256 hashed. The private run manifest records all model revisions, file sizes/hashes, runtime package versions, device, input JSONL digest, query/task counts, and per-query source-image SHA-256 digests (no image bytes or absolute paths). It also records model download/hash/load time, candidate-text encoding time, query-to-top-k P50/P95 and CUDA peak allocated/reserved memory where available.
 
 ## Input JSONL
 
@@ -62,7 +62,7 @@ For `text_to_catalog_text`, provide `query_text` instead of `query_image_path`.
 
 Candidate text must come from the same frozen Catalog/Commerce snapshot. For parity with current code, its content should match the Vision service's `_offer_description()` and be truncated to 1,000 characters before tokenization. The text query path uses the same prefix as the current production-intended description-search route.
 
-The input contract requires the same candidate IDs and qrels for every model. Use human-reviewed graded labels; do not describe LLM-generated labels as human ground truth. Split and deduplicate by product/source/near-duplicate clusters before the run. Do not tune on final-test qrels.
+The input contract requires the same candidate IDs and qrels for every model. Preserve the frozen Commerce offer order in each `candidate_ids` array; the production ranker uses a stable score-only sort, so the runner preserves that order for exact-score ties. Use human-reviewed graded labels; do not describe LLM-generated labels as human ground truth. Split and deduplicate by product/source/near-duplicate clusters before the run. Do not tune on final-test qrels.
 
 Image paths must be relative to `--media-root` and remain inside that directory. The runner rejects path traversal. The source images are read locally and are not written into the ranking output, manifest, or GitHub.
 
@@ -78,11 +78,10 @@ The baseline alone is not a comparison. Include the baseline and at least one ch
       --input /secure/evaluation/fashion-retrieval-test.jsonl \
       --media-root /secure/evaluation/media \
       --output /secure/evaluation/fashion-retrieval-rankings.jsonl \
-      --models cirvanna-fashion-clip zooclaw-fashionsiglip2 \
-      --revision zooclaw-fashionsiglip2=<FULL_40_CHAR_COMMIT_SHA> \
+      --models cirvanna-fashion-clip marqo-fashionclip marqo-fashionsiglip \
       --device auto --batch-size 16
 
-Add the Marqo model IDs and their full immutable revision arguments when those SHAs have been independently recorded. Models are loaded sequentially to reduce peak memory. If using CPU, measure runtime and memory; do not treat a CPU smoke run as production throughput evidence.
+This first run uses the two frozen Marqo revisions from the model registry. Add ZooClaw only after its full commit SHA has been verified, using `--revision zooclaw-fashionsiglip2=<FULL_40_CHAR_COMMIT_SHA>`. Models are loaded sequentially to reduce peak memory. If using CPU, measure runtime and memory; do not treat a CPU smoke run as production throughput evidence.
 
 ## Score rankings
 
