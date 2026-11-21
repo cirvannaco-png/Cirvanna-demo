@@ -562,7 +562,7 @@ async def click_it(
         if _internal_config("VISION_INTELLIGENCE_API_URL", "VISION_INTELLIGENCE_API_TOKEN") is None:
             raise HTTPException(503, detail={"code": "VISION_INFERENCE_NOT_CONFIGURED"})
         declaration_scope = {
-            "no_people": "photographed_people_no_people_attestation",
+            "no_people": "photographed_no_people_attestation",
             "adults_only": "photographed_people_adult_attestation",
             "contains_minor": "photographed_people_minor_attestation",
         }[photographed_people_status]
