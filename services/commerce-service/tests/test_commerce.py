@@ -2232,15 +2232,23 @@ def test_shopify_currency_minor_unit_normalization():
 
 def test_shopify_token_encryption_is_authenticated_and_round_trips(monkeypatch):
     import base64
+    from types import SimpleNamespace
+    from fastapi import HTTPException
     from app.shopify import _seal, _unseal
 
     monkeypatch.setenv(
         "COMMERCE_SHOPIFY_TOKEN_ENCRYPTION_KEY",
         base64.urlsafe_b64encode(b"0123456789abcdef0123456789abcdef").decode(),
     )
-    encrypted = _seal("shpat_private-token-value")
+    connection = SimpleNamespace(id="connection-a", merchant_id="merchant-a", shop_domain="northwind.myshopify.com")
+    other_store = SimpleNamespace(id="connection-b", merchant_id="merchant-b", shop_domain="other.myshopify.com")
+    encrypted = _seal("shpat_private-token-value", connection, "access")
     assert "shpat_private-token-value" not in encrypted
-    assert _unseal(encrypted) == "shpat_private-token-value"
+    assert _unseal(encrypted, connection, "access") == "shpat_private-token-value"
+    with pytest.raises(HTTPException):
+        _unseal(encrypted, other_store, "access")
+    with pytest.raises(HTTPException):
+        _unseal(encrypted, connection, "refresh")
 
 
 def test_shopify_token_encryption_fails_closed_without_a_valid_key(monkeypatch):
