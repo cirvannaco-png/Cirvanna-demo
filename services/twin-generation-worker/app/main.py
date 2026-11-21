@@ -308,8 +308,8 @@ def capabilities() -> dict[str, Any]:
     }
 
 
-@app.get("/ready")
-def ready() -> JSONResponse | dict[str, Any]:
+@app.get("/ready", response_model=None)
+def ready() -> Any:
     configured, reason = _configured()
     if not configured:
         return JSONResponse(status_code=503, content={"status": "not_ready", "reason": reason})
