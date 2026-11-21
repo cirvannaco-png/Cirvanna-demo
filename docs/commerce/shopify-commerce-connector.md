@@ -16,8 +16,10 @@ A Shopify product first lands in private commerce_shopify_product_snapshots and 
 
 Register a Shopify app and configure these URLs exactly:
 
-- OAuth callback: https://<commerce-public-host>/integrations/shopify/callback
+- OAuth callback: https://<marketplace-bff-public-host>/integrations/shopify/callback
 - Webhook receiver: https://<commerce-public-host>/webhooks/shopify
+
+The BFF relays the OAuth callback to Commerce and forwards only the short-lived, HttpOnly state cookie over its private upstream connection. This keeps the OAuth browser cookie on the same public origin as the merchant portal. Set SHOPIFY_APP_BASE_URL to the public Marketplace BFF origin and SHOPIFY_WEBHOOK_BASE_URL to the public Commerce API origin.
 
 The app requests offline access and expiring=1; the implementation stores both access and rotating refresh tokens encrypted with AES-256-GCM. The raw tokens are never returned by an API or written into logs. The encryption key is a separate 32-byte key, base64url-encoded; it is not the Shopify app secret, a JWT secret, a webhook secret, or a CAL signing key.
 
@@ -27,7 +29,7 @@ Required secret-manager settings:
 |---|---|
 | SHOPIFY_API_KEY | Shopify app client ID |
 | SHOPIFY_API_SECRET | OAuth and webhook HMAC secret |
-| SHOPIFY_APP_BASE_URL | Trusted HTTPS Commerce origin used to build callback URLs |
+| SHOPIFY_APP_BASE_URL | Trusted HTTPS Marketplace BFF origin used to build OAuth callback URLs |\n| SHOPIFY_WEBHOOK_BASE_URL | Trusted HTTPS Commerce API origin used to register provider webhooks |
 | SHOPIFY_ADMIN_API_VERSION | Must be 2026-10; code intentionally pins this stable version |
 | COMMERCE_SHOPIFY_TOKEN_ENCRYPTION_KEY | Base64url-encoded 32-byte AES-GCM key |
 | COMMERCE_SHOPIFY_SYNC_TOKEN | At least 32 random bytes for internal sync/export/reconciliation jobs |
