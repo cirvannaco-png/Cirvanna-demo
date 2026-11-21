@@ -2579,7 +2579,9 @@ def test_look_it_records_verifies_and_revokes_request_scoped_consent(client, mon
     assert len({row["resource_id"] for row in fake.receipts}) == 1
     assert all(row["expires_at"] for row in fake.receipts)
     assert any(url.endswith("/internal/v1/consents/verify") for _method, url, _kwargs in fake.calls)
-    assert any(url.endswith("/revoke") for _method, url, _kwargs in fake.calls)
+    revoke_urls = [url for _method, url, _kwargs in fake.calls if url.endswith("/revoke")]
+    assert len(revoke_urls) == 2
+    assert {url.rsplit("/", 2)[-2] for url in revoke_urls} == {row["receipt_id"] for row in fake.receipts}
     for forbidden in ("variant_id", "product_name", "price_minor", "merchant_id", "image_urls"):
         assert forbidden not in response.text
 
