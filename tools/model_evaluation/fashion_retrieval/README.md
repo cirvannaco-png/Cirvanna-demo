@@ -1,47 +1,103 @@
-# Fashion retrieval evaluation harness
+# Fashion retrieval benchmark and execution tools
 
-This evaluator compares rankings from different encoders on the same query cases and fixed candidate universe. It deliberately does not download data or load models. Model-specific inference adapters must write rankings using the JSONL contract below; all systems are then scored on the same human-reviewed qrels.
+This directory contains two distinct tools:
 
-## JSONL input
+1. `run_retrieval.py` — loads pinned model snapshots and generates matched rankings from a private, fixed query/candidate dataset.
+2. `evaluate_retrieval.py` — evaluates supplied rankings against the same graded human relevance labels.
+
+The runner does not upload source images. The evaluator does not download models. Keep both the input dataset and run outputs in an approved restricted evaluation workspace.
+
+## Current Cirvanna task
+
+The existing Vision Intelligence path uses the pinned FashionCLIP model to create query-image embeddings and compare them with text representations built from live Commerce/Catalog offers. Its current candidate path does **not** embed the Catalog product images.
+
+That is why the first benchmark supports:
+
+- `image_to_catalog_text`: query image → frozen Catalog offer text.
+- `text_to_catalog_text`: text query → frozen Catalog offer text.
+
+Do not combine these with a future `image_to_catalog_image` benchmark. That will be a separate task with licensed catalogue images and a separate comparison report.
+
+## Safe, pinned model loading
+
+The model registry in `run_retrieval.py` defines four model identities:
+
+| Model ID | Hugging Face repository | Loader |
+|---|---|---|
+| `cirvanna-fashion-clip` | `patrickjohncyh/fashion-clip` | Transformers CLIP, matching the Vision service class |
+| `marqo-fashionclip` | `Marqo/marqo-fashionCLIP` | OpenCLIP from a pinned local snapshot |
+| `marqo-fashionsiglip` | `Marqo/marqo-fashionSigLIP` | OpenCLIP from a pinned local snapshot |
+| `zooclaw-fashionsiglip2` | `srpone/zooclaw-fashionsiglip2` | Standard Transformers/SigLIP model |
+
+Each model is downloaded at a full 40-character commit SHA. The baseline SHA is frozen to the exact revision in Cirvanna's current Vision Intelligence implementation. Challenger SHA values are explicit command-line inputs; a moving `main` reference and short SHA are rejected.
+
+Marqo's model cards recommend OpenCLIP and their example Transformers loaders require `trust_remote_code=True`. The runner instead uses OpenCLIP's `local-dir:` loader with the pinned snapshot and does not execute remote model-repository Python. ZooClaw and the baseline are also loaded with `trust_remote_code=False`.
+
+Every downloaded snapshot file is SHA-256 hashed. The private run manifest records all model revisions, file sizes/hashes, runtime package versions, device, input JSONL digest and query/task counts.
+
+## Input JSONL
 
 One record per query:
 
     {
       "schema_version": "1.0",
       "query_id": "query-000001",
-      "cluster_id": "independent-source-cluster-01",
+      "cluster_id": "product-source-cluster-01",
       "task_id": "image_to_catalog_text",
       "split": "test",
-      "candidate_ids": ["product-a", "product-b", "product-c"],
-      "qrels": {"product-a": 4, "product-b": 2, "product-c": 0},
-      "rankings": {
-        "cirvanna-fashion-clip": ["product-b", "product-a", "product-c"],
-        "marqo-fashionsiglip": ["product-a", "product-b", "product-c"]
+      "query_image_path": "queries/query-000001.jpg",
+      "candidate_ids": ["variant-a", "variant-b"],
+      "candidate_texts": {
+        "variant-a": "Fashion or beauty marketplace product. Navy cotton shirt ...",
+        "variant-b": "Fashion or beauty marketplace product. Red wool coat ..."
       },
+      "qrels": {"variant-a": 4, "variant-b": 0},
       "excluded_product_ids": [],
       "subgroups": {"source_type": "studio", "query_type": "image"}
     }
 
-- Qrels are human-reviewed grades from 0 to 4. Do not treat LLM labels as human ground truth.
-- Candidate IDs define the same eligible candidate universe for every model on that query.
-- Each ranking is an ordered subset of candidate IDs with no duplicates.
-- Cluster ID must be the highest defensible independent resampling unit; justify it in the run manifest.
-- Do not mix image-to-text, text-to-text, and image-to-image tasks in one run.
-- Excluded product IDs are hard constraints. Any excluded item in the evaluated top-k fails that model's exclusion gate.
-- Subgroups must be task-relevant and non-sensitive.
+For `text_to_catalog_text`, provide `query_text` instead of `query_image_path`.
 
-Do not put images, personal identifiers, account mappings, or user-level traces in this JSONL file or GitHub. Keep private source mappings and review records in a restricted evaluation workspace.
+Candidate text must come from the same frozen Catalog/Commerce snapshot. For parity with current code, its content should match the Vision service's `_offer_description()` and be truncated to 1,000 characters before tokenization. The text query path uses the same prefix as the current production-intended description-search route.
 
-## Run
+The input contract requires the same candidate IDs and qrels for every model. Use human-reviewed graded labels; do not describe LLM-generated labels as human ground truth. Split and deduplicate by product/source/near-duplicate clusters before the run. Do not tune on final-test qrels.
 
-Pre-register the primary metric before evaluating the final test split:
+Image paths must be relative to `--media-root` and remain inside that directory. The runner rejects path traversal. The source images are read locally and are not written into the ranking output, manifest, or GitHub.
 
-    python tools/model_evaluation/fashion_retrieval/evaluate_retrieval.py       --input /secure/evaluation/fashion-retrieval-test.jsonl       --output /secure/evaluation/report.json       --baseline-model-id cirvanna-fashion-clip       --split test --k 10 --primary-metric ndcg_at_k       --bootstrap-samples 2000 --seed 20261120
+## Install dependencies
+
+Use a locked Python 3.11+ research environment. At minimum, the runtime needs PyTorch, Transformers, Hugging Face Hub, Safetensors, Pillow, NumPy, and OpenCLIP with support for the `local-dir:` schema. `requirements-research.txt` declares the runtime families, but its ranges are **not** a reproducibility lock. Generate and retain an exact lockfile with hashes before any official comparison, and attach its digest to the experiment record.
+
+## Generate rankings
+
+The baseline alone is not a comparison. Include the baseline and at least one challenger. Example:
+
+    python tools/model_evaluation/fashion_retrieval/run_retrieval.py \
+      --input /secure/evaluation/fashion-retrieval-test.jsonl \
+      --media-root /secure/evaluation/media \
+      --output /secure/evaluation/fashion-retrieval-rankings.jsonl \
+      --models cirvanna-fashion-clip zooclaw-fashionsiglip2 \
+      --revision zooclaw-fashionsiglip2=<FULL_40_CHAR_COMMIT_SHA> \
+      --device auto --batch-size 16
+
+Add the Marqo model IDs and their full immutable revision arguments when those SHAs have been independently recorded. Models are loaded sequentially to reduce peak memory. If using CPU, measure runtime and memory; do not treat a CPU smoke run as production throughput evidence.
+
+## Score rankings
+
+Pre-register the primary metric before opening final-test results:
+
+    python tools/model_evaluation/fashion_retrieval/evaluate_retrieval.py \
+      --input /secure/evaluation/fashion-retrieval-rankings.jsonl \
+      --output /secure/evaluation/fashion-retrieval-report.json \
+      --baseline-model-id cirvanna-fashion-clip \
+      --split test --k 10 --primary-metric ndcg_at_k
 
 Metrics include Recall@k, Precision@k, MRR@k, nDCG@k, top-1 hit rate, no-result rate, top-k fill, candidate coverage and hard-exclusion violations. Reports include paired challenger-minus-baseline deltas, 95% cluster-bootstrap intervals and subgroup slices. Fewer than two independent clusters yields no confidence interval rather than a degenerate interval.
 
-This evaluates supplied rankings only. It does not prove inference ran, verify model/data licences, create labels, or establish production readiness. Pin model revisions, artifact hashes, processors, dependencies, dataset snapshots, inference commands, hardware and rights decisions in a separate run manifest.
+The runner ranks the full supplied candidate pool and applies no calibrated no-match threshold. Therefore its no-result rate is not a meaningful quality signal in this initial version. Similarity outputs are ranking scores, never probabilities or calibrated confidence.
 
 ## Tests
 
     python -m unittest discover -s tests/model_evaluation -v
+
+Tests cover the schema, fixed candidate metadata, strict revision pins, deterministic ranking, invalid vectors and media path traversal. CI compiles the runners and runs these offline unit tests; CI does not download model weights or claim model inference executed.
