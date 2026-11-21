@@ -3539,7 +3539,56 @@ def _authorized_commerce_path(method: str, path: str) -> bool:
         return method == "GET"
     if len(parts) == 5 and parts[:2] == ["admin", "merchants"] and UUID_RE.fullmatch(parts[2]) and parts[3] == "markets" and re.fullmatch(r"[A-Za-z]{2}", parts[4]):
         return method == "PUT"
+    # Shopify merchant operations are forwarded only through the signed-in
+    # Commerce identity. The OAuth callback and webhook receiver remain direct
+    # provider-to-Commerce endpoints and are intentionally not exposed here.
+    if parts == ["integrations", "shopify", "install"]:
+        return method == "GET"
+    if parts == ["integrations", "shopify", "connection"] or parts == ["integrations", "shopify", "readiness"]:
+        return method == "GET"
+    if parts == ["integrations", "shopify", "disconnect"] or parts == ["integrations", "shopify", "sync", "products"]:
+        return method == "POST"
+    if parts == ["integrations", "shopify", "staged-products"]:
+        return method == "GET"
+    if len(parts) == 5 and parts[:2] == ["integrations", "shopify"] and parts[2] == "products" and UUID_RE.fullmatch(parts[3]) and parts[4] == "map":
+        return method == "POST"
+    if len(parts) == 5 and parts[:2] == ["integrations", "shopify"] and parts[2] == "products" and UUID_RE.fullmatch(parts[3]) and parts[4] == "reactivate":
+        return method == "POST"
+    if len(parts) == 5 and parts[:2] == ["integrations", "shopify"] and parts[2] == "markets" and re.fullmatch(r"[A-Za-z]{2}", parts[3]) and parts[4] == "sync-pricing":
+        return method == "POST"
     return False
+
+
+@app.get("/integrations/shopify/callback")
+async def shopify_oauth_callback_relay(request: Request) -> Response:
+    """Relay the browser's Shopify OAuth callback while keeping the state cookie same-origin."""
+    base = _upstream_base("COMMERCE_API_URL")
+    state_cookie = request.cookies.get("cirvanna_shopify_oauth_state", "")
+    if not state_cookie:
+        raise HTTPException(401, detail={"code": "SHOPIFY_OAUTH_STATE_COOKIE_MISSING"})
+    try:
+        async with httpx.AsyncClient(
+            timeout=httpx.Timeout(TIMEOUT_SECONDS, connect=2.0),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            upstream = await client.get(
+                base + "/integrations/shopify/callback",
+                params=list(request.query_params.multi_items()),
+                headers={
+                    "Accept": request.headers.get("accept", "text/html"),
+                    "Cookie": "cirvanna_shopify_oauth_state=" + state_cookie,
+                },
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail={"code": "SHOPIFY_OAUTH_CALLBACK_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=503, detail={"code": "SHOPIFY_OAUTH_CALLBACK_UNAVAILABLE"}) from exc
+    headers = {"Cache-Control": "no-store"}
+    for name in ("content-type", "location", "set-cookie"):
+        if upstream.headers.get(name):
+            headers["Set-Cookie" if name == "set-cookie" else "Location" if name == "location" else "Content-Type"] = upstream.headers[name]
+    return Response(content=upstream.content, status_code=upstream.status_code, headers=headers)
 
 
 @app.api_route("/api/commerce/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
@@ -3621,6 +3670,10 @@ async def commerce_proxy(path: str, request: Request) -> Response:
         response_headers["Content-Type"] = upstream.headers["content-type"]
     if upstream.headers.get("retry-after"):
         response_headers["Retry-After"] = upstream.headers["retry-after"]
+    if upstream.headers.get("location"):
+        response_headers["Location"] = upstream.headers["location"]
+    if upstream.headers.get("set-cookie"):
+        response_headers["Set-Cookie"] = upstream.headers["set-cookie"]
     return Response(content=upstream.content, status_code=upstream.status_code, headers=response_headers)
 
 @app.post("/api/wardrobe/items", status_code=201)

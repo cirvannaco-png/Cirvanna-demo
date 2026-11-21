@@ -2286,6 +2286,18 @@ def test_virtual_twin_capabilities_reject_invalid_boolean_contract(client, monke
     assert response.json()["detail"]["code"] == "VIRTUAL_TWIN_CAPABILITIES_INVALID"
 
 
+def test_brand_portal_exposes_shopify_merchant_controls(client):
+    response = client.get("/brand-portal")
+    script = client.get("/assets/brand-portal.js")
+    assert response.status_code == script.status_code == 200
+    for element in ("shopifyPanel", "shopifyDomain", "shopifyConnectForm", "shopifySync", "shopifyStaged"):
+        assert element in response.text
+    for behavior in ("startShopifyOAuth", "loadShopifyConnection", "loadShopifyStaged", "mapShopifyProduct"):
+        assert behavior in script.text
+    assert "credentials: \"same-origin\"" in script.text
+    assert "redirect: \"manual\"" in script.text
+
+
 def test_brand_and_founder_portals_are_served_same_origin(client):
     brand = client.get("/brand-portal")
     founder = client.get("/founder-console")
@@ -2312,6 +2324,15 @@ def test_commerce_proxy_allowlist_routes_role_based_operations():
         ("POST", "admin/merchants/123e4567-e89b-12d3-a456-426614174000/decision"),
         ("GET", "admin/merchants/123e4567-e89b-12d3-a456-426614174000/markets"),
         ("PUT", "admin/merchants/123e4567-e89b-12d3-a456-426614174000/markets/KE"),
+        ("GET", "integrations/shopify/install"),
+        ("GET", "integrations/shopify/connection"),
+        ("GET", "integrations/shopify/readiness"),
+        ("GET", "integrations/shopify/staged-products"),
+        ("POST", "integrations/shopify/disconnect"),
+        ("POST", "integrations/shopify/sync/products"),
+        ("POST", "integrations/shopify/products/123e4567-e89b-12d3-a456-426614174000/map"),
+        ("POST", "integrations/shopify/products/123e4567-e89b-12d3-a456-426614174000/reactivate"),
+        ("POST", "integrations/shopify/markets/KE/sync-pricing"),
     ]
     for method, route in allowed:
         assert main._authorized_commerce_path(method, route), (method, route)
@@ -2322,9 +2343,85 @@ def test_commerce_proxy_allowlist_routes_role_based_operations():
         ("DELETE", "admin/merchant-decisions"),
         ("PUT", "admin/merchants/123e4567-e89b-12d3-a456-426614174000/markets/not-a-country"),
         ("POST", "admin/merchants/123e4567-e89b-12d3-a456-426614174000/markets"),
+        ("GET", "integrations/shopify/callback"),
+        ("POST", "webhooks/shopify"),
+        ("POST", "internal/shopify/process-events"),
+        ("POST", "integrations/shopify/products/not-a-uuid/map"),
+        ("POST", "integrations/shopify/products/not-a-uuid/reactivate"),
+        ("DELETE", "integrations/shopify/disconnect"),
     ]
     for method, route in blocked:
         assert not main._authorized_commerce_path(method, route), (method, route)
+
+
+def test_shopify_oauth_callback_relay_forwards_same_origin_state_cookie(client, monkeypatch):
+    configure_upstreams(monkeypatch)
+    fake = FakeAsyncClient([FakeResponse(
+        {"status": "redirect"},
+        status_code=303,
+        content=b"",
+        headers={
+            "content-type": "text/plain; charset=utf-8",
+            "location": "https://cirvanna.example.test/brand-portal.html?shopify=connected",
+            "set-cookie": "cirvanna_shopify_oauth_state=; Max-Age=0; Path=/integrations/shopify/callback; HttpOnly; SameSite=lax",
+        },
+    )])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get(
+        "/integrations/shopify/callback?code=oauth-code&shop=northwind.myshopify.com&state=one-time-state-value",
+        cookies={"cirvanna_shopify_oauth_state": "one-time-state-value"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "https://cirvanna.example.test/brand-portal.html?shopify=connected"
+    assert "Max-Age=0" in response.headers["set-cookie"]
+    method, url, kwargs = fake.calls[0]
+    assert method == "GET"
+    assert url == "https://commerce.example.test/integrations/shopify/callback"
+    assert kwargs["headers"]["Cookie"] == "cirvanna_shopify_oauth_state=one-time-state-value"
+    assert kwargs["params"] == [
+        ("code", "oauth-code"),
+        ("shop", "northwind.myshopify.com"),
+        ("state", "one-time-state-value"),
+    ]
+
+
+def test_shopify_install_proxy_preserves_redirect_and_oauth_cookie(client, monkeypatch):
+    configure_upstreams(monkeypatch)
+    calls = []
+    def fake_request(method, url, **kwargs):
+        calls.append((method, url, kwargs))
+        return FakeResponse(
+            {},
+            status_code=302,
+            content=b"",
+            headers={
+                "location": "https://northwind.myshopify.com/admin/oauth/authorize?client_id=app-key",
+                "set-cookie": "cirvanna_shopify_oauth_state=opaque-state; Max-Age=600; Path=/integrations/shopify/callback; HttpOnly; SameSite=lax",
+            },
+        )
+    monkeypatch.setattr(main.httpx, "request", fake_request)
+    response = client.get(
+        "/api/commerce/integrations/shopify/install?shop=northwind.myshopify.com",
+        headers={"Authorization": "Bearer merchant-session"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    assert response.headers["location"].startswith("https://northwind.myshopify.com/admin/oauth/authorize?")
+    assert "HttpOnly" in response.headers["set-cookie"]
+    assert calls[0][0] == "GET"
+    assert calls[0][1] == "https://commerce.example.test/integrations/shopify/install"
+    assert calls[0][2]["headers"]["Authorization"] == "Bearer merchant-session"
+
+
+def test_shopify_oauth_callback_relay_requires_state_cookie(client, monkeypatch):
+    configure_upstreams(monkeypatch)
+    response = client.get(
+        "/integrations/shopify/callback?code=oauth-code&shop=northwind.myshopify.com&state=one-time-state-value",
+        follow_redirects=False,
+    )
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "SHOPIFY_OAUTH_STATE_COOKIE_MISSING"
 
 
 def test_marketplace_comparison_route_is_registered_once():

@@ -329,7 +329,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
         ))
         connection.execute(
             text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
-            {"revision": "20261112_0011"},
+            {"revision": "20261121_0012"},
         )
 
     ready = client.get("/ready")
@@ -342,7 +342,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
     assert payload["payment_configured"] is True
     assert payload["migrations_required"] is True
     assert payload["migrations_applied"] is True
-    assert payload["schema_revision"] == "20261112_0011"
+    assert payload["schema_revision"] == "20261121_0012"
     assert payload["ready"] is True
 
 
@@ -2218,3 +2218,114 @@ def test_production_fx_tax_and_payment_ingestion_fail_closed_without_provider_ad
     )
     assert capability.status_code == 503
     assert capability.json()["detail"]["code"] == "PAYMENT_CAPABILITY_ADAPTER_NOT_TRUSTED"
+
+
+def test_shopify_currency_minor_unit_normalization():
+    from app.shopify import _minor_units, _major_units
+
+    assert _minor_units("123.45", "KES") == 12345
+    assert _minor_units("123", "JPY") == 123
+    assert _minor_units("12.345", "BHD") == 12345
+    assert _major_units(12345, "KES") == "123.45"
+    assert _major_units(123, "JPY") == "123"
+
+
+def test_shopify_token_encryption_is_authenticated_and_round_trips(monkeypatch):
+    import base64
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from app.shopify import _seal, _unseal
+
+    monkeypatch.setenv(
+        "COMMERCE_SHOPIFY_TOKEN_ENCRYPTION_KEY",
+        base64.urlsafe_b64encode(b"0123456789abcdef0123456789abcdef").decode(),
+    )
+    connection = SimpleNamespace(id="connection-a", merchant_id="merchant-a", shop_domain="northwind.myshopify.com")
+    other_store = SimpleNamespace(id="connection-b", merchant_id="merchant-b", shop_domain="other.myshopify.com")
+    encrypted = _seal("shpat_private-token-value", connection, "access")
+    assert "shpat_private-token-value" not in encrypted
+    assert _unseal(encrypted, connection, "access") == "shpat_private-token-value"
+    with pytest.raises(HTTPException):
+        _unseal(encrypted, other_store, "access")
+    with pytest.raises(HTTPException):
+        _unseal(encrypted, connection, "refresh")
+
+
+def test_shopify_token_encryption_fails_closed_without_a_valid_key(monkeypatch):
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from app.shopify import _seal
+
+    monkeypatch.delenv("COMMERCE_SHOPIFY_TOKEN_ENCRYPTION_KEY", raising=False)
+    connection = SimpleNamespace(id="connection-a", merchant_id="merchant-a", shop_domain="northwind.myshopify.com")
+    with pytest.raises(HTTPException) as error:
+        _seal("token", connection, "access")
+    assert error.value.status_code == 503
+
+
+def test_shopify_webhook_hmac_uses_base64_sha256():
+    import base64
+    import hashlib
+    import hmac
+    from app.shopify import _webhook_hmac_valid
+
+    body = b'{"id":123,"title":"test"}'
+    secret = "shopify-app-secret"
+    signature = base64.b64encode(hmac.new(secret.encode(), body, hashlib.sha256).digest()).decode()
+    assert _webhook_hmac_valid(body, signature, secret) is True
+    assert _webhook_hmac_valid(body + b" ", signature, secret) is False
+    assert _webhook_hmac_valid(body, None, secret) is False
+
+
+def test_shopify_oauth_shop_domain_validation_rejects_arbitrary_hosts():
+    from fastapi import HTTPException
+    from app.shopify import _shop_domain
+
+    assert _shop_domain("northwind-store.myshopify.com") == "northwind-store.myshopify.com"
+    for value in ("example.com", "northwind-store.myshopify.com.evil.test", "https://northwind-store.myshopify.com"):
+        with pytest.raises(HTTPException):
+            _shop_domain(value)
+
+
+def test_shopify_inventory_snapshot_requires_complete_tracked_stock():
+    from app.shopify import _inventory_totals
+
+    complete = {
+        "tracked": True,
+        "inventoryLevels": {
+            "pageInfo": {"hasNextPage": False},
+            "nodes": [{
+                "isActive": True,
+                "location": {"isActive": True},
+                "quantities": [
+                    {"name": "available", "quantity": 4},
+                    {"name": "on_hand", "quantity": 6},
+                ],
+            }],
+        },
+    }
+    assert _inventory_totals(complete) == (True, 4, 6, True)
+    incomplete = {
+        "tracked": True,
+        "inventoryLevels": {
+            "pageInfo": {"hasNextPage": True},
+            "nodes": [{
+                "isActive": True,
+                "location": {"isActive": True},
+                "quantities": [
+                    {"name": "available", "quantity": 4},
+                    {"name": "on_hand", "quantity": 6},
+                ],
+            }],
+        },
+    }
+    assert _inventory_totals(incomplete) == (True, None, None, False)
+    assert _inventory_totals({"tracked": False}) == (False, None, None, False)
+
+
+def test_shopify_product_delete_maps_to_canonical_product_gid():
+    from app.shopify import _resource_gid
+
+    assert _resource_gid("products/delete", {"id": 1234}) == "gid://shopify/Product/1234"
+    assert _resource_gid("orders/updated", {"id": 456}) == "gid://shopify/Order/456"
+
