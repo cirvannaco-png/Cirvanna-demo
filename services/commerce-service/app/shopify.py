@@ -84,6 +84,17 @@ def _oauth_config() -> tuple[str, str, str]:
     return api_key, api_secret, base_url
 
 
+def _webhook_base_url() -> str:
+    value = os.getenv("SHOPIFY_WEBHOOK_BASE_URL", "").strip().rstrip("/")
+    parsed = urlsplit(value)
+    if (
+        parsed.scheme != "https" or not parsed.hostname
+        or parsed.username or parsed.password or parsed.query or parsed.fragment
+    ):
+        raise HTTPException(503, detail={"code": "SHOPIFY_WEBHOOK_BASE_URL_NOT_CONFIGURED"})
+    return value
+
+
 def _encryption_key() -> bytes:
     raw = os.getenv("COMMERCE_SHOPIFY_TOKEN_ENCRYPTION_KEY", "").strip()
     if not raw:
@@ -905,7 +916,7 @@ def shopify_oauth_callback(
     db.commit()
     if connection.status == "scope_mismatch":
         raise HTTPException(403, detail={"code": "SHOPIFY_REQUIRED_SCOPES_MISSING"})
-    callback_url = base_url + "/webhooks/shopify"
+    callback_url = _webhook_base_url() + "/webhooks/shopify"
     registrations = _register_webhooks(connection, db, callback_url)
     response = RedirectResponse(
         base_url + "/brand-portal.html?shopify=connected",
