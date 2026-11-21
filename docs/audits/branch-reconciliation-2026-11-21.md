@@ -20,7 +20,7 @@
 
 The two ahead-only refs at this snapshot are:
 - `security/twin-click-it-policy-current-main-2026-11-21`: 8 commits ahead, 0 behind; open PR #260.
-- `docs/branch-reconciliation-current-main-2026-11-21`: this audit branch, created from the pinned main; its report commit is the only new ahead commit.
+- `docs/branch-reconciliation-current-main-2026-11-21`: this audit branch, created from the pinned main; its only ahead content is this report.
 
 ## Canonical workstream dispositions
 
