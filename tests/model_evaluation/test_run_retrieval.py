@@ -94,6 +94,15 @@ class RetrievalRunnerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "explicit grade for every candidate"):
             validate_case(row, 1)
 
+    def test_case_contract_normalizes_human_violation_ids(self):
+        row = make_case()
+        row["human_exclusion_violation_ids"] = ["p2"]
+        validated = validate_case(row, 1)
+        self.assertEqual(validated["human_exclusion_violation_ids"], ["p2"])
+        row.pop("human_exclusion_violation_ids")
+        validated = validate_case(row, 1)
+        self.assertEqual(validated["human_exclusion_violation_ids"], [])
+
     def test_image_task_requires_query_image_path(self):
         row = make_case()
         row["task_id"] = "image_to_catalog_text"
