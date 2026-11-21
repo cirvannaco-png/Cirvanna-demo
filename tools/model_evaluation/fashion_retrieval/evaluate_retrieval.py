@@ -319,6 +319,27 @@ def validate_final_test_registration(
         raise ValueError("candidate pool sizes differ from the locked preregistration")
 
 
+def evaluate_preregistered_challenger_gates(
+    report: dict[str, Any], registration: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Apply the preregistered practical-effect, uncertainty and hard-exclusion gates."""
+    gates = {}
+    threshold = registration["minimum_practically_important_delta"]
+    for model_id, paired in report["paired_vs_baseline"].items():
+        delta = paired["delta_vs_baseline"]["ndcg_at_k"]
+        lower_ci = paired["delta_confidence_intervals_95"]["ndcg_at_k"][0]
+        hard_gate = report["hard_exclusion_gate_passed"][model_id]
+        gates[model_id] = {
+            "hard_exclusion_gate_passed": hard_gate,
+            "minimum_practically_important_delta": threshold,
+            "observed_primary_metric_delta": delta,
+            "primary_metric_ci95_lower": lower_ci,
+            "practical_improvement_gate_passed": delta >= threshold and lower_ci > 0,
+            "overall_passed": hard_gate and delta >= threshold and lower_ci > 0,
+        }
+    return gates
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", required=True)
@@ -351,21 +372,7 @@ def main() -> int:
         artifacts = validate_private_artifact_manifests(registration)
         manifest = json.loads(Path(args.run_manifest).read_text(encoding="utf-8"))
         validate_run_manifest(manifest, registration, args.input, artifacts["data"])
-        gates = {}
-        for model_id, paired in report["paired_vs_baseline"].items():
-            delta = paired["delta_vs_baseline"]["ndcg_at_k"]
-            lower_ci = paired["delta_confidence_intervals_95"]["ndcg_at_k"][0]
-            hard_gate = report["hard_exclusion_gate_passed"][model_id]
-            threshold = registration["minimum_practically_important_delta"]
-            gates[model_id] = {
-                "hard_exclusion_gate_passed": hard_gate,
-                "minimum_practically_important_delta": threshold,
-                "observed_primary_metric_delta": delta,
-                "primary_metric_ci95_lower": lower_ci,
-                "practical_improvement_gate_passed": delta >= threshold and lower_ci > 0,
-                "overall_passed": hard_gate and delta >= threshold and lower_ci > 0,
-            }
-        report["preregistered_challenger_gates"] = gates
+        report["preregistered_challenger_gates"] = evaluate_preregistered_challenger_gates(report, registration)
         report["status"] = "final_test_scored_gates_evaluated"
     Path(args.output).write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps({"status": report["status"], "queries": report["query_count"],
