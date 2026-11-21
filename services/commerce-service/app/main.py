@@ -55,7 +55,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 
 
 SERVICE = "cirvanna-commerce-service"
-EXPECTED_SCHEMA_REVISION = "20261121_0014"
+EXPECTED_SCHEMA_REVISION = "20261121_0015"
 MAX_QTY = 50
 RESERVATION_MINUTES = 60
 SKU_RE = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,79}$")
@@ -1999,7 +1999,9 @@ def settle_paid(
         ShopifyInventoryReservation.commerce_order_id == order.id
     ).limit(1)) is not None
     order.state, order.payment_state, order.paid_at, order.updated_at = "paid", "paid", now(), now()
-    order.fulfillment_state = "provider_pending" if has_shopify_reservations else "ready"
+    # A prior provider uninstall/redaction/manual safety hold must survive payment.
+    if order.fulfillment_state != "manual_review":
+        order.fulfillment_state = "provider_pending" if has_shopify_reservations else "ready"
     # Insert the ownership-intent event in the SAME transaction as settlement.
     # A stable event ID and unique aggregate/type constraint make webhook replay safe.
     lines = list(db.scalars(select(OrderItem).where(OrderItem.order_id == order.id).order_by(OrderItem.id)).all())
@@ -2024,7 +2026,7 @@ def settle_paid(
                 "currency": order.currency,
             } for item in lines],
             "ownership_authority": "verified_payment",
-            "fulfillment_ready": not has_shopify_reservations,
+            "fulfillment_ready": order.fulfillment_state == "ready",
             "fulfillment_state": order.fulfillment_state,
         },
     ))
