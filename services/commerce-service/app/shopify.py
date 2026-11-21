@@ -1200,6 +1200,33 @@ query CirvannaOrderStatus($id: ID!) {
 """
 
 
+def _retire_deleted_product(connection: ShopifyConnection, db: Session, remote_gid: str | None) -> bool:
+    if not remote_gid or not remote_gid.startswith("gid://shopify/Product/"):
+        return False
+    product = db.scalar(select(ShopifyProductSnapshot).where(
+        ShopifyProductSnapshot.connection_id == connection.id,
+        ShopifyProductSnapshot.shopify_product_gid == remote_gid,
+    ))
+    if product is None:
+        return False
+    product.remote_status = "DELETED"
+    product.mapping_state = "retired"
+    listing = db.get(commerce.Listing, product.listing_id) if product.listing_id else None
+    if listing is not None and listing.merchant_id == connection.merchant_id:
+        listing.state = "inactive"
+    snapshots = list(db.scalars(select(ShopifyVariantSnapshot).where(
+        ShopifyVariantSnapshot.product_snapshot_id == product.id
+    )).all())
+    for snapshot in snapshots:
+        snapshot.mapping_state = "retired"
+        if snapshot.local_variant_id:
+            variant = db.get(commerce.Variant, snapshot.local_variant_id)
+            if variant is not None:
+                variant.state = "inactive"
+                variant.observed_at = utcnow() - timedelta(days=30)
+    return True
+
+
 def _sync_order_status(connection: ShopifyConnection, db: Session, remote_gid: str | None) -> bool:
     if not remote_gid or not remote_gid.startswith("gid://shopify/Order/"):
         return False
@@ -1223,8 +1250,12 @@ def _sync_order_status(connection: ShopifyConnection, db: Session, remote_gid: s
 
 
 def _claim_events(db: Session, limit: int) -> list[ShopifyWebhookEvent]:
+    stale_processing_before = utcnow() - timedelta(minutes=5)
     rows = list(db.scalars(select(ShopifyWebhookEvent).where(
-        ShopifyWebhookEvent.state == "pending"
+        or_(
+            ShopifyWebhookEvent.state == "pending",
+            (ShopifyWebhookEvent.state == "processing") & (ShopifyWebhookEvent.received_at <= stale_processing_before),
+        )
     ).order_by(ShopifyWebhookEvent.received_at).limit(limit).with_for_update()).all())
     for event in rows:
         event.state = "processing"
@@ -1277,7 +1308,13 @@ def process_shopify_events(
                 ))
                 if connection:
                     _sync_order_status(connection, db, event.resource_gid)
-            elif event.topic in {"products/create", "products/update", "products/delete", "inventory_levels/update"}:
+            elif event.topic == "products/delete":
+                connection = db.scalar(select(ShopifyConnection).where(
+                    ShopifyConnection.shop_domain == event.shop_domain
+                ))
+                if connection:
+                    _retire_deleted_product(connection, db, event.resource_gid)
+            elif event.topic in {"products/create", "products/update", "inventory_levels/update"}:
                 connection = db.scalar(select(ShopifyConnection).where(
                     ShopifyConnection.shop_domain == event.shop_domain
                 ))
