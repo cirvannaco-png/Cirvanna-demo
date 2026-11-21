@@ -180,6 +180,7 @@ class ConsentGrantIn(StrictModel):
     subject_id: str = Field(min_length=1, max_length=128)
     consent_image_processing: bool
     consent_click_it: bool
+    consent_publication: bool = False
     photographed_people_status: Literal["no_people", "adults_only", "contains_minor"]
     photographed_people_consent_confirmed: bool = False
     consent_version: str = Field(min_length=1, max_length=80)
@@ -269,6 +270,8 @@ class RightsReviewIn(StrictModel):
 class AssetPublicationGateIn(StrictModel):
     asset_id: str = Field(min_length=3, max_length=160)
     asset_sha256: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
+    subject_id: str = Field(min_length=1, max_length=128)
+    consent_id: str = Field(min_length=8, max_length=160)
     masking_attestation_id: str = Field(min_length=12, max_length=160)
     target_surface: Literal["public_profile", "community_feed", "marketplace", "merchant_surface", "shared_link"]
 
@@ -535,6 +538,8 @@ async def grant_consent(payload: ConsentGrantIn, db: Session = Depends(session_f
     if payload.photographed_people_status != "no_people" and not payload.photographed_people_consent_confirmed:
         raise HTTPException(403, detail={"code": "PHOTOGRAPHED_PEOPLE_CONSENT_REQUIRED"})
     scopes = ["image_processing", "click_it", DECLARATION_SCOPES[payload.photographed_people_status]]
+    if payload.consent_publication:
+        scopes.append("public_media_publication")
     guardian_verified = False
     verification_digest = None
     if payload.photographed_people_status == "contains_minor":
@@ -953,10 +958,24 @@ async def resolve_asset_reference(asset_reference: str) -> dict:
 
 
 @app.post("/internal/v1/privacy/assets/publication/evaluate", dependencies=[Depends(require_internal)])
-async def evaluate_asset_publication(payload: AssetPublicationGateIn) -> dict:
-    """Block public exposure unless exact bytes have a trusted, human-reviewed masking receipt."""
+async def evaluate_asset_publication(
+    payload: AssetPublicationGateIn,
+    db: Session = Depends(session_for_request),
+) -> dict:
+    """Require resource-bound active consent and exact-byte, human-reviewed masking evidence."""
     if not ASSET_ID_RE.fullmatch(payload.asset_id):
         raise HTTPException(422, detail={"code": "INVALID_ASSET_ID"})
+    consent = db.get(ConsentRecord, payload.consent_id)
+    if consent is None or consent.active is not True or consent.subject_id != payload.subject_id or consent.resource_id != payload.asset_id:
+        raise HTTPException(403, detail={"code": "PUBLICATION_CONSENT_NOT_VALID"})
+    if consent.photographed_people_status == "contains_minor":
+        raise HTTPException(403, detail={"code": "MINOR_MEDIA_PUBLICATION_PROHIBITED"})
+    required_consent_scopes = {
+        "image_processing", "click_it", "public_media_publication",
+        DECLARATION_SCOPES.get(consent.photographed_people_status, ""),
+    }
+    if not isinstance(consent.granted_scopes, list) or not required_consent_scopes.issubset(set(consent.granted_scopes)):
+        raise HTTPException(403, detail={"code": "PUBLICATION_CONSENT_SCOPE_MISMATCH"})
     expected_masking_model_sha256 = os.getenv("PRIVACY_APPROVED_MASKING_MODEL_SHA256", "").strip().lower()
     if not re.fullmatch(r"[0-9a-f]{64}", expected_masking_model_sha256):
         raise HTTPException(503, detail={"code": "APPROVED_MASKING_MODEL_PIN_NOT_CONFIGURED"})
@@ -1023,9 +1042,16 @@ async def evaluate_asset_publication(payload: AssetPublicationGateIn) -> dict:
         "decision": "PASS",
         "asset_id": payload.asset_id,
         "asset_sha256": payload.asset_sha256,
+        "subject_id": payload.subject_id,
+        "consent_id": consent.consent_id,
+        "consent_resource_id": consent.resource_id,
+        "consent_version": consent.consent_version,
+        "photographed_people_status": consent.photographed_people_status,
+        "masking_attestation_id": payload.masking_attestation_id,
         "target_surface": payload.target_surface,
         "human_privacy_review_passed": True,
         "human_privacy_review_receipt_id": review_id,
+        "human_privacy_reviewer_ref": reviewer_ref,
         "human_privacy_reviewed_at": review_timestamp.isoformat(),
         "all_detected_faces_masked": True,
         "unmasked_face_count": 0,

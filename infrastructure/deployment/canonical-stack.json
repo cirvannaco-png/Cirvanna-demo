@@ -210,9 +210,7 @@
       "required_for_marketplace": false,
       "production_enabled": false,
       "readiness_path": "/ready",
-      "depends_on_services": [
-        "asset-service"
-      ],
+      "depends_on_services": [],
       "depends_on_providers": [
         "jurisdiction_resolver",
         "content_lifecycle_provider",
@@ -240,7 +238,9 @@
       "required_for_marketplace": false,
       "production_enabled": false,
       "readiness_path": "/ready",
-      "depends_on_services": [],
+      "depends_on_services": [
+        "privacy-governance-service"
+      ],
       "depends_on_providers": [
         "private_object_storage"
       ],
