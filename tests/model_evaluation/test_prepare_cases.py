@@ -52,6 +52,12 @@ class PrepareCasesTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "explicit grade for every candidate"):
             prepare(catalog(), [row])
 
+    def test_preserves_human_adjudicated_violation_ids(self):
+        row = query()
+        row["human_exclusion_violation_ids"] = ["variant-b"]
+        prepared = prepare(catalog(), [row])
+        self.assertEqual(prepared[0]["human_exclusion_violation_ids"], ["variant-b"])
+
     def test_rejects_qrels_with_no_positive_relevance(self):
         row = query()
         row["qrels"] = {"variant-a": 0, "variant-b": 0}
