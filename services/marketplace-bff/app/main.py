@@ -3514,6 +3514,12 @@ async def public_offers(
             or decision.get("product_id") != product_id
             or decision.get("catalog_version") != catalog_version
             or decision.get("cil_serving_status") != "eligible"
+            or not isinstance(decision.get("policy_version"), str)
+            or not decision.get("policy_version").strip()
+            or not isinstance(decision.get("arbitration_contract_version"), str)
+            or not decision.get("arbitration_contract_version").strip()
+            or not isinstance(decision.get("decision_pipeline_contract_version"), str)
+            or not decision.get("decision_pipeline_contract_version").strip()
             or not isinstance(product_id, str)
             or isinstance(catalog_version, bool)
             or not isinstance(catalog_version, int)
