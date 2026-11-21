@@ -2778,8 +2778,6 @@ def _seed_shopify_compensation_case(db, seeded, *, fulfillment_status="UNFULFILL
         id=str(uuid.uuid4()), commerce_order_id=order_id, merchant_id=seeded["merchant_id"],
         connection_id=connection.id, reservation_id=reservation.id,
         state="pending", last_error="SHOPIFY_DRAFT_COMPLETION_PENDING",
-        lease_owner="test-compensation-worker",
-        lease_until=main.now() + main.timedelta(seconds=90),
     )
     rows = [order, item, connection, product_snapshot, variant_snapshot, reservation, case]
     if include_link:
@@ -2795,6 +2793,9 @@ def _seed_shopify_compensation_case(db, seeded, *, fulfillment_status="UNFULFILL
 
 
 def test_shopify_compensation_cancellation_job_must_finish_before_case_is_compensated(client, monkeypatch):
+    case.lease_owner = "test-compensation-worker"
+    case.lease_until = main.now() + main.timedelta(seconds=90)
+    db.commit()
     from app import shopify
     seeded = seed_offer(stock=4)
     db = TEST_SESSION()
@@ -2882,6 +2883,9 @@ def test_shopify_compensation_blocks_orders_with_active_fulfillment(client, monk
 
 
 def test_shopify_compensation_refuses_cancel_after_lease_is_reclaimed(client, monkeypatch):
+    case.lease_owner = "test-compensation-worker"
+    case.lease_until = main.now() + main.timedelta(seconds=90)
+    db.commit()
     from app import shopify
     from fastapi import HTTPException
     seeded = seed_offer(stock=4)
@@ -3026,6 +3030,9 @@ def test_stripe_compensation_refund_uses_stable_idempotency_key_and_no_checkout_
 
 
 def test_ambiguous_shopify_order_cancel_is_never_reissued(client, monkeypatch):
+    case.lease_owner = "test-compensation-worker"
+    case.lease_until = main.now() + main.timedelta(seconds=90)
+    db.commit()
     from app import shopify
     from fastapi import HTTPException
     seeded = seed_offer(stock=4)
