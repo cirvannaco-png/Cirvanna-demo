@@ -122,6 +122,8 @@ class FinalTestGateTests(unittest.TestCase):
                 },
                 "rankings_output_sha256": hashlib.sha256(rankings.read_bytes()).hexdigest(),
                 "input_sha256": "b" * 64,
+                "query_count": 100,
+                "candidate_pool_sizes": [100],
                 "split": "test",
                 "task_id": "image_to_catalog_text",
             }
