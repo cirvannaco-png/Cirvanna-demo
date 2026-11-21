@@ -1,7 +1,7 @@
 # Cirvanna specialist capability audit
 
 - Repository: `cirvannaco-png/Cirvanna-demo`
-- Baseline: default branch `main`, commit `90b4aa6dc1f4c1174c9970255273f0bf7f9fe91b`
+- Baseline: default branch `main` before the appearance-specialist PR; see the merged PR's base SHA for the exact integration point
 - Candidate: `integration/appearance-specialist-current-main`
 - Status: implementation candidate; no production/storefront certification implied
 
@@ -38,7 +38,7 @@ The baseline includes a shared appearance-transformation contract and a consent-
 4. Safety and legal/eligibility evidence default to UNKNOWN. Trusted server-side providers must explicitly supply PASS.
 5. The CAL product-only profile may omit physical-fit confidence for non-fit-sensitive catalog decisions. It does not invent confidence or waive other required gates. CAL's default remains fit-strict.
 6. Apparel and footwear require fit-confidence signals. A complete look needs component SHOW, bundle-level safety/legal/fit evidence, a same-currency budget check, NPL evaluation, and shared catalog-declared look compatibility metadata.
-7. Only CAL SHOW produces a displayable option. BLOCK and REVIEW are not display authorization.
+7. Only CAL SHOW produces a positive local preflight. BLOCK and REVIEW are non-displayable. A local preflight is not a durable display or purchase receipt; every user-visible product/offer requires a fresh exact-candidate, market/offer-bound Decision Gateway receipt.
 
 ## Release blockers
 
@@ -46,4 +46,6 @@ The baseline includes a shared appearance-transformation contract and a consent-
 - Integrate trusted safety/legal providers, calibrated fit evidence, and curated compatibility metadata. Missing evidence correctly yields REVIEW.
 - Add audit receipt persistence, rate limits, observability, privacy/consent controls, checkout revalidation, and gateway integration before endpoint exposure.
 - No real ONNX model, image provider, production preference store, or checkout workflow was added by this increment.
-- Exact PR-head CI evidence is required before calling automated tests passing. On candidate head `0cb7ce3f2181116ae80f56930658fc277a445e4a`, GitHub Actions runs `40160406979` (specialist contracts), `40160406973` (decision API/virtual try-on), `40160406984` (decision tests), and `40160406986` (architecture) all concluded `failure` with `runner_id: 0` and `steps: []`; a rerun of the specialist job also failed before any step was created. This is not evidence that the test assertions failed: the hosted runner did not execute them, and the runner/Actions availability issue must be resolved before a genuine result can be recorded. Unit fixtures are not production readiness evidence.
+- Candidate-branch validation completed on PR #267: 69 focused appearance/CAL tests, 200 architecture tests, Python compilation and eight exact-head GitHub Actions workflows passed. This is code-contract evidence only; it does not establish live providers, production deployment, visual inference, or independent accuracy.
+- The catalog adapter does not have a point-in-time snapshot token; moving totals and duplicate/malformed pages fail closed, but page contents can still change without a total change. NPL list reads use trusted internal bearer authentication but no signed response envelope. Keep both adapters on trusted internal ingress.
+- The specialist's `cal_preflight_show` is only a local deterministic preflight. It is not permission to expose a product or offer. The host must verify a fresh durable Decision Gateway receipt bound to the exact candidate, product/catalog version, market/offer snapshot and user action before any user-visible display, then revalidate at checkout.
