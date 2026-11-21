@@ -33,7 +33,8 @@ MAX_IMAGE_PIXELS = 25_000_000
 ASSET_ID_PATTERN = r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
 AssetPurpose = Literal[
     "twin_source_image", "twin_person_image", "twin_representation",
-    "catalog_garment_image", "wardrobe_garment_image", "try_on_output",
+    "catalog_garment_image", "wardrobe_garment_image",
+    "catalog_garment_flat_lay", "wardrobe_garment_flat_lay", "try_on_output",
     "appearance_source_image", "appearance_render_output",
 ]
 bearer = HTTPBearer(auto_error=False)
@@ -375,7 +376,7 @@ def _validate_glb(data: bytes, content_type: str) -> bytes:
 
 
 def _asset_role(purpose: str) -> str:
-    if purpose in {"twin_source_image", "twin_person_image", "catalog_garment_image", "wardrobe_garment_image", "appearance_source_image"}:
+    if purpose in {"twin_source_image", "twin_person_image", "catalog_garment_image", "wardrobe_garment_image", "catalog_garment_flat_lay", "wardrobe_garment_flat_lay", "appearance_source_image"}:
         return "source"
     if purpose == "twin_representation":
         return "representation"

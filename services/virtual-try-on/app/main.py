@@ -53,9 +53,10 @@ class TryOnRequest(BaseModel):
     product_id: str = Field(min_length=3, max_length=128)
     person_image_asset_id: str = Field(min_length=36, max_length=36)
     garment_image_asset_id: str = Field(min_length=36, max_length=36)
-    garment_asset_purpose: Literal["catalog_garment_image", "wardrobe_garment_image"] = "catalog_garment_image"
+    garment_asset_purpose: Literal["catalog_garment_flat_lay", "wardrobe_garment_flat_lay"]
     garment_asset_parent_id: str | None = Field(default=None, min_length=3, max_length=160)
     garment_category: Literal["upper_body", "lower_body", "dress", "outerwear", "full_outfit"]
+    garment_photo_type: Literal["flat-lay"]
     look_id: str | None = Field(default=None, min_length=3, max_length=128)
     look_version: int | None = Field(default=None, ge=1)
     wardrobe_snapshot_version: int | None = Field(default=None, ge=1)
@@ -79,7 +80,7 @@ class TryOnRequest(BaseModel):
 
     @model_validator(mode="after")
     def consistent_look_version(self):
-        if self.garment_asset_purpose == "catalog_garment_image":
+        if self.garment_asset_purpose == "catalog_garment_flat_lay":
             if self.garment_asset_parent_id and self.garment_asset_parent_id != self.product_id:
                 raise ValueError("Catalog garment asset parent must match product_id.")
         elif not self.garment_asset_parent_id:
@@ -117,6 +118,7 @@ class CapabilityResponse(BaseModel):
     twin_service_configured: bool
     database_ready: bool
     supported_categories: list[str]
+    supported_garment_photo_types: list[str]
     raw_image_upload: bool
     arbitrary_remote_urls: bool
     output_persistence: bool
@@ -349,6 +351,7 @@ async def _render_with_worker(payload: TryOnRequest, person: tuple[bytes, str], 
                     "consent_image_processing": "true",
                     "consent_virtual_try_on": "true",
                     "category": payload.garment_category,
+                    "garment_photo_type": payload.garment_photo_type,
                 },
                 files={
                     "person_image": ("person.png", person[0], person[1]),
@@ -508,6 +511,7 @@ async def capabilities() -> CapabilityResponse:
         asset_service_configured=asset_ready, twin_service_configured=twin_ready,
         database_ready=database_ready,
         supported_categories=["upper_body", "lower_body", "dress", "outerwear", "full_outfit"],
+        supported_garment_photo_types=["flat-lay"],
         raw_image_upload=False, arbitrary_remote_urls=False,
         output_persistence=asset_ready,
         reason=None if configured else "postgres_consent_twin_asset_or_pinned_gpu_renderer_not_ready",

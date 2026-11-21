@@ -50,8 +50,9 @@ def payload(**overrides):
         "product_id": "product-test-001",
         "person_image_asset_id": PERSON_ASSET,
         "garment_image_asset_id": GARMENT_ASSET,
-        "garment_asset_purpose": "catalog_garment_image",
+        "garment_asset_purpose": "catalog_garment_flat_lay",
         "garment_category": "upper_body",
+        "garment_photo_type": "flat-lay",
         "consent": {
             "consent_id": "consent-test-0001",
             "image_processing": True,
@@ -97,7 +98,7 @@ def install_providers(monkeypatch, *, twin_asset=PERSON_ASSET):
         if purpose in {"twin_source_image", "try_on_output"}:
             assert parent_id == "twin-test-001"
             return png_bytes(), "image/png"
-        assert purpose == "catalog_garment_image"
+        assert purpose == "catalog_garment_flat_lay"
         assert parent_id == "product-test-001"
         return png_bytes((180, 20, 40)), "image/png"
 
@@ -177,6 +178,16 @@ def test_capabilities_never_claim_live_rendering_without_dependencies(client, mo
     assert data["consent_verifier_configured"] is False
     assert data["asset_service_configured"] is False
     assert data["output_persistence"] is False
+    assert data["supported_garment_photo_types"] == ["flat-lay"]
+
+
+def test_orchestrator_rejects_model_worn_garment_images(client):
+    response = client.post(
+        "/v1/try-ons",
+        json=payload(garment_photo_type="model"),
+        headers=headers(),
+    )
+    assert response.status_code == 422
 
 
 def test_try_on_requires_authentication(client):
@@ -207,7 +218,7 @@ def test_external_urls_paths_and_non_opaque_asset_ids_are_rejected(client, asset
 
 
 def test_wardrobe_asset_requires_exact_parent_binding(client):
-    body = payload(garment_asset_purpose="wardrobe_garment_image")
+    body = payload(garment_asset_purpose="wardrobe_garment_flat_lay")
     response = client.post("/v1/try-ons", json=body, headers=headers())
     assert response.status_code == 422
 
@@ -295,7 +306,7 @@ def test_look_render_binds_versions_and_wardrobe_asset_owner(client, monkeypatch
     async def read_asset(*, subject_id, asset_id, purpose, parent_id):
         if purpose == "twin_source_image":
             assert parent_id == "twin-test-001"
-        elif purpose == "wardrobe_garment_image":
+        elif purpose == "wardrobe_garment_flat_lay":
             assert parent_id == "wardrobe-item-001"
         elif purpose == "try_on_output":
             assert parent_id == "twin-test-001"
@@ -305,7 +316,7 @@ def test_look_render_binds_versions_and_wardrobe_asset_owner(client, monkeypatch
 
     monkeypatch.setattr(main, "_read_authorized_asset", read_asset)
     body = payload(
-        garment_asset_purpose="wardrobe_garment_image",
+        garment_asset_purpose="wardrobe_garment_flat_lay",
         garment_asset_parent_id="wardrobe-item-001",
         look_id="pnelly-look-001",
         look_version=2,

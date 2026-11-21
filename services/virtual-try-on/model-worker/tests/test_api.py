@@ -2,6 +2,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+from pathlib import Path
 import sys
 import threading
 from types import SimpleNamespace
@@ -56,6 +57,8 @@ def test_worker_does_not_require_or_trust_browser_consent_booleans(client,monkey
     class FakePipeline:
         def __call__(self,**kwargs):
             assert kwargs["category"]=="tops"
+            assert kwargs["garment_photo_type"]=="flat-lay"
+            assert kwargs["segmentation_free"] is True
             return FakeResult()
     monkeypatch.setattr(main,"_PIPELINE",FakePipeline())
     response=post(client)
@@ -81,6 +84,7 @@ def test_worker_returns_validated_png_from_mock_pipeline(client,monkeypatch):
         def __call__(self,**kwargs):
             assert kwargs["category"]=="tops"
             assert kwargs["garment_photo_type"]=="flat-lay"
+            assert kwargs["segmentation_free"] is True
             assert isinstance(kwargs["person_image"],Image.Image)
             assert isinstance(kwargs["garment_image"],Image.Image)
             return FakeResult()
@@ -161,16 +165,21 @@ def test_readiness_requires_model_pipeline_to_load(monkeypatch):
     assert response.json()["detail"]["reason"] == "model_load_failed"
 
 
-def test_production_readiness_is_blocked_without_parser_commercial_rights(monkeypatch):
-    monkeypatch.setenv("VTON_WORKER_TOKEN", TOKEN)
-    monkeypatch.setenv("FASHN_VTON_SOURCE_REF", main.PINNED_FASHN_VTON_COMMIT)
-    monkeypatch.setenv("FASHN_VTON_BUILT_SOURCE_REF", main.PINNED_FASHN_VTON_COMMIT)
+def test_production_readiness_allows_maskless_flat_lay_without_restricted_parser(monkeypatch, tmp_path):
+    _configured_worker(monkeypatch, tmp_path)
     monkeypatch.setenv("CIRVANNA_DEPLOYMENT_MODE", "production")
+    monkeypatch.setenv("FASHN_VTON_PARSER_MODE", "maskless_flat_lay")
     monkeypatch.delenv("FASHN_HUMAN_PARSER_COMMERCIAL_LICENSE_APPROVED", raising=False)
-    monkeypatch.setattr(main, "_source_checkout_matches", lambda: True)
-    ready, reason = main._configured()
-    assert ready is False
-    assert reason == "human_parser_commercial_license_not_cleared"
+    assert main._configured() == (True, "ready")
+
+
+def test_worker_rejects_model_worn_garment_photo_type(client, monkeypatch):
+    def forbidden_pipeline():
+        raise AssertionError("Model-worn garment mode must not load the restricted parser.")
+    monkeypatch.setattr(main, "_pipeline", forbidden_pipeline)
+    response = post(client, garment_photo_type="model")
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "UNSUPPORTED_GARMENT_PHOTO_TYPE"
 
 
 def test_runtime_source_must_match_built_image_source(monkeypatch):
@@ -220,6 +229,13 @@ def _configured_worker(monkeypatch, tmp_path, *, vram=8 * 1024**3, providers=("C
     return source, weights
 
 
+def test_worker_image_excludes_restricted_human_parser_dependency():
+    dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text(encoding="utf-8")
+    assert "sed -i '/fashn-human-parser/d'" in dockerfile
+    assert "python3 -m pip show fashn-human-parser" in dockerfile
+    assert "PYTHONPATH=/app/vendor:/opt/fashn-vton/src" in dockerfile
+
+
 def test_source_checkout_must_match_reviewed_commit(monkeypatch, tmp_path):
     _configured_worker(monkeypatch, tmp_path, checkout="f" * 40)
     assert main._source_checkout_matches() is False
@@ -236,16 +252,6 @@ def test_configured_requires_gpu_vram_and_onnx_cuda_provider(monkeypatch, tmp_pa
     assert main._configured() == (False, "onnx_cuda_provider_unavailable")
 
 
-def test_render_identifies_model_worn_garment_photo_type(client, monkeypatch):
-    class FakeResult:
-        images=[Image.new("RGB",(128,160),(20,200,80))]
-    class FakePipeline:
-        def __call__(self,**kwargs):
-            assert kwargs["garment_photo_type"]=="model"
-            return FakeResult()
-    monkeypatch.setattr(main,"_PIPELINE",FakePipeline())
-    response=post(client,garment_photo_type="model")
-    assert response.status_code==200
 
 
 def test_gpu_worker_returns_retryable_429_when_render_slot_is_busy(client, monkeypatch):

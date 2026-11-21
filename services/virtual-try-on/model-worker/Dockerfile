@@ -10,6 +10,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     FASHN_VTON_BUILT_SOURCE_REF=${FASHN_VTON_GIT_REF} \
     FASHN_VTON_SOURCE_DIR=/opt/fashn-vton \
     FASHN_VTON_WEIGHTS_DIR=/models/fashn-vton-1.5 \
+    FASHN_VTON_PARSER_MODE=maskless_flat_lay \
+    PYTHONPATH=/app/vendor:/opt/fashn-vton/src \
     HF_HOME=/models/hf-cache \
     HF_HUB_OFFLINE=1 \
     TRANSFORMERS_OFFLINE=1
@@ -23,7 +25,10 @@ RUN python3 -m pip install --upgrade pip \
     && git clone https://github.com/fashn-AI/fashn-vton-1.5.git "$FASHN_VTON_SOURCE_DIR" \
     && git -C "$FASHN_VTON_SOURCE_DIR" checkout --detach "$FASHN_VTON_GIT_REF" \
     && test "$(git -C "$FASHN_VTON_SOURCE_DIR" rev-parse HEAD)" = "$FASHN_VTON_GIT_REF" \
-    && python3 -m pip install -e "$FASHN_VTON_SOURCE_DIR"
+    && sed -i '/fashn-human-parser/d' "$FASHN_VTON_SOURCE_DIR/pyproject.toml" \
+    && python3 -m pip install -e "$FASHN_VTON_SOURCE_DIR" \
+    && ! python3 -m pip show fashn-human-parser
+COPY services/virtual-try-on/model-worker/vendor /app/vendor
 COPY services/virtual-try-on/model-worker/app /app/app
 COPY services/virtual-try-on/model-worker/scripts /app/scripts
 RUN useradd --system --uid 10003 --create-home vton \

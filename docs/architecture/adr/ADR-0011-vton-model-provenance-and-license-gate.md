@@ -32,3 +32,10 @@ An Apache-2.0 top-level model does not make the complete inference stack commerc
 - FASHN VTON 1.5 repository: https://github.com/fashn-AI/fashn-vton-1.5
 - FASHN Human Parser repository: https://github.com/fashn-AI/fashn-human-parser
 - NVIDIA SegFormer repository and license notice: https://github.com/NVlabs/SegFormer\n- Candidate SCHP parser: https://huggingface.co/pirocheto/schp-atr-18\n- SCHP wrapper repository: https://github.com/pirocheto/schp-human-parsing
+
+
+## 2026-11-21 decision update — maskless flat-lay production path
+
+The FASHN VTON 1.5 pipeline's documented `segmentation_free=True` plus `garment_photo_type="flat-lay"` path passes the source images through without parser masks. Cirvanna now uses that path as the only supported inference mode, removes the restricted `fashn-human-parser` dependency from the worker image, and provides a local no-op interface shim. The worker forces both settings server-side and rejects model-worn garment photos.
+
+This does **not** clear the Human Parser for use. It avoids installing or invoking it for the flat-lay-only path. On-model garment imagery remains disabled until an alternative parser's code, checkpoint, training-data provenance, redistribution terms and commercial rights are independently approved. Real GPU inference, weights, output quality and deployment remain unverified until a pinned-artifact smoke test and human-reviewed evaluation pass.

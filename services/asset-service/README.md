@@ -55,3 +55,8 @@ python -m pytest -q
 ```
 
 CI fakes the S3 client. Production promotion requires a real object-store bucket, a least-privilege key, Postgres migration/backup verification, private network policy, deletion/reconciliation tests and a live staging smoke test.
+
+
+### Flat-lay-only Virtual Try-On source purposes
+
+Two additional source purposes are available for the first maskless VTON mode: `catalog_garment_flat_lay` and `wardrobe_garment_flat_lay`. They remain private source assets. Only trusted catalog/wardrobe ingestion paths may assign these purposes after the image has been reviewed/classified as a flat-lay garment image. Generic `catalog_garment_image` and `wardrobe_garment_image` assets are not eligible for the parser-free renderer.

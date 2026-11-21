@@ -1,6 +1,6 @@
 # Cirvanna Virtual Try-On
 
-**Status:** persistent orchestration contract with private asset and Twin-registry integration. It remains unavailable until production consent, registry, PostgreSQL, private storage and a licensed GPU renderer are independently configured and verified.
+**Status:** persistent orchestration contract with private asset and Twin-registry integration. The first real-inference mode is restricted to flat-lay garment images and maskless person preprocessing. It remains unavailable until production consent, registry, PostgreSQL, private storage, pinned model artifacts and a GPU worker are independently configured and verified.
 
 ## Ownership
 
@@ -25,12 +25,12 @@
 1. Verify current consent and canonical Twin ownership.
 2. Atomically reserve the subject/request idempotency key in PostgreSQL.
 3. Authorize and resolve person and garment assets from private storage.
-4. Invoke the pinned private worker with bounded timeout and validated image inputs.
+4. Invoke the pinned private worker with bounded timeout and validated image inputs; only `garment_photo_type=flat-lay` is accepted.
 5. Re-check consent, Twin ownership and source asset authorization after inference.
 6. Persist output privately, then re-check consent/Twin and authorize the stored output before marking complete.
 7. On failure, delete any new output and mark the reservation failed; never report a placeholder as complete.
 
-The visual result is not a fit guarantee. A real renderer, model weights, human-parser cache, commercial licensing and representative quality evaluation remain mandatory. The inherited parser licensing restriction must be cleared in writing or replaced with a commercially licensed alternative before customer inference.
+The visual result is not a fit guarantee. The pinned FASHN VTON 1.5 worker uses `segmentation_free=True` and a flat-lay garment image, so the separately licensed Human Parser package is not installed or invoked. Model-worn garment images are rejected until a replacement parser's code, weights and training-data provenance are cleared for commercial use. Real GPU inference, model-weight checksums, deployment and representative quality evaluation remain mandatory.
 
 ## Configuration
 
@@ -46,3 +46,13 @@ Apply `migrations/0001_virtual_try_on_jobs.sql` through approved migrations. Do 
 ## Validation
 
 The dedicated workflow runs API tests and builds the container. Tests use fakes and do not prove live providers, GPU inference, image realism, fit accuracy, deployment security, commercial rights or Android acceptance.
+
+
+## 2026-11-21: first real inference mode
+
+The orchestration API now accepts and forwards only `garment_photo_type="flat-lay"`. The private worker uses the pinned FASHN VTON 1.5 pipeline with `segmentation_free=True`, and its image build excludes the separately licensed Human Parser dependency. Model-worn garment photos are rejected. This is a genuine model-inference path once the pinned weights and GPU worker are provisioned; current CI uses a mock pipeline and does not prove GPU readiness or visual quality.
+
+
+### Supported inference mode
+
+The orchestration API and worker advertise `supported_garment_photo_types=["flat-lay"]`. The API rejects `model` garment photos. The worker forces `segmentation_free=True` and `garment_photo_type="flat-lay"` server-side, so client input cannot switch the pipeline into parser-dependent masking. CI uses mock inference and does not establish visual quality or a live GPU deployment.

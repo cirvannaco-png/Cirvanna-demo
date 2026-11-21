@@ -2088,7 +2088,8 @@ def test_wardrobe_try_on_derives_subject_and_uses_exact_owned_private_garment(cl
     assert forwarded["subject_id"] == "signed-user-42"
     assert forwarded["product_id"] == "wardrobe:closet-item-1"
     assert forwarded["garment_image_asset_id"] == garment_asset
-    assert forwarded["garment_asset_purpose"] == "wardrobe_garment_image"
+    assert forwarded["garment_asset_purpose"] == "wardrobe_garment_flat_lay"
+    assert forwarded["garment_photo_type"] == "flat-lay"
     assert forwarded["garment_asset_parent_id"] == "closet-item-1"
     assert forwarded["garment_category"] == "dress"
     assert forwarded["consent"]["retention_policy"] == "ephemeral"
