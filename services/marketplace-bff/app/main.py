@@ -3552,6 +3552,8 @@ def _authorized_commerce_path(method: str, path: str) -> bool:
         return method == "GET"
     if len(parts) == 5 and parts[:2] == ["integrations", "shopify"] and parts[2] == "products" and UUID_RE.fullmatch(parts[3]) and parts[4] == "map":
         return method == "POST"
+    if len(parts) == 5 and parts[:2] == ["integrations", "shopify"] and parts[2] == "products" and UUID_RE.fullmatch(parts[3]) and parts[4] == "reactivate":
+        return method == "POST"
     if len(parts) == 5 and parts[:2] == ["integrations", "shopify"] and parts[2] == "markets" and re.fullmatch(r"[A-Za-z]{2}", parts[3]) and parts[4] == "sync-pricing":
         return method == "POST"
     return False
