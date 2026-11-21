@@ -56,7 +56,7 @@ class TryOnRequest(BaseModel):
     garment_asset_purpose: Literal["catalog_garment_flat_lay", "wardrobe_garment_flat_lay"]
     garment_asset_parent_id: str | None = Field(default=None, min_length=3, max_length=160)
     garment_category: Literal["upper_body", "lower_body", "dress", "outerwear", "full_outfit"]
-    garment_photo_type: Literal["flat-lay"] = "flat-lay"
+    garment_photo_type: Literal["flat-lay"]
     look_id: str | None = Field(default=None, min_length=3, max_length=128)
     look_version: int | None = Field(default=None, ge=1)
     wardrobe_snapshot_version: int | None = Field(default=None, ge=1)
