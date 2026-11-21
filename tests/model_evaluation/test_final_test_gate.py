@@ -100,7 +100,7 @@ class FinalTestGateTests(unittest.TestCase):
             data = root / "data.json"
             qrels = root / "qrels.json"
             lock = root / "requirements.lock"
-            data.write_text(json.dumps({"output_sha256": "b" * 64}), encoding="utf-8")
+            data.write_text(json.dumps({"output_sha256": "b" * 64, "query_count": 100, "candidate_pool_sizes": [100]}), encoding="utf-8")
             qrels.write_text("human-reviewed-qrels-manifest", encoding="utf-8")
             lock.write_text("fully-pinned-dependencies", encoding="utf-8")
             registration.update({
