@@ -14,7 +14,7 @@ preference ledger, write catalog data, or own checkout/payments.
 - Internal application methods that wire catalog + NPL reads into specialist evaluation and Look + Makeup composition.
 - Seven registered domains: Hair, Face, Skin analysis, Look, Footwear, Makeup, and Skincare.
 - Canonical NPL hard-negative enforcement and CaTaCaCi/CAL arbitration.
-- `SHOW` is the only display authorization. `BLOCK` and `REVIEW` remain non-displayable.
+- `SHOW` is the only positive local CAL preflight. `BLOCK` and `REVIEW` remain non-displayable. A preflight result is not a durable display or purchase receipt.
 - Look + Makeup composition uses catalog-declared compatibility metadata and re-arbitrates the bundle total and bundle-level evidence.
 
 ## Internal library usage
@@ -32,10 +32,10 @@ result = orchestrator.run_specialist(
     trusted_signals_by_product=trusted_server_evidence,
 )
 # Present only candidates whose CAL result explicitly returns SHOW.
-displayable = [candidate for candidate in result.candidates if candidate.may_display]
+preflight_show = [candidate for candidate in result.candidates if candidate.cal_preflight_show]
 ```
 
-The variables `authenticated_context` and `trusted_server_evidence` must be created by the host's trusted authentication/evidence boundary, not copied from request JSON.
+The variables `authenticated_context` and `trusted_server_evidence` must be created by the host's trusted authentication/evidence boundary, not copied from request JSON. `preflight_show` is not permission to render a product card: before any user-visible product/offer detail is released, the host must obtain and verify a fresh, exact-candidate, market/offer-bound durable receipt from the canonical Decision Gateway, then revalidate at checkout.
 
 ## Limits
 
@@ -44,7 +44,7 @@ The variables `authenticated_context` and `trusted_server_evidence` must be crea
 - Skincare does catalog metadata matching only; it does not diagnose, prescribe treatment, or guarantee ingredient safety.
 - Safety/legal/fit signals must come from trusted server-side providers. They must never be client-supplied. The orchestrator loads NPL rows using the internal bearer-authenticated NPL API; only a successful response whose user scope matches the authenticated context is accepted. An unavailable read returns REVIEW and no candidates. The lower-level evaluator's omitted NPL snapshot remains UNKNOWN; an explicit empty tuple is valid only after a successful canonical read. Cross-user rows are rejected.
 - The current NPLClient reads the NPL Service over the authenticated internal channel; it does not verify an HMAC response envelope for the list endpoint. Keep this API on trusted internal ingress. For lower-trust service crossings or signed candidate-bound evidence, use the canonical NPL `/v1/evaluate` envelope and verify its HMAC as the decision service does.
-- There is intentionally no public endpoint until authenticated identity binding, production NPL datastore/configuration, trusted evidence provenance, rate limiting, durable audit receipts, and checkout revalidation are wired through the gateway.
+- There is intentionally no public endpoint until authenticated identity binding, production NPL datastore/configuration, trusted evidence provenance, rate limiting, durable audit receipts, canonical Decision Gateway receipt verification, and checkout revalidation are wired through the gateway.
 
 ## Configuration
 
