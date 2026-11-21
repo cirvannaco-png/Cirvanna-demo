@@ -51,7 +51,7 @@ Set these in a secret manager; never commit real secrets.
 - COMMERCE_CHECKOUT_SUCCESS_URL and COMMERCE_CHECKOUT_CANCEL_URL: trusted HTTPS destinations.
 - COMMERCE_SHIPPING_COUNTRIES: comma-separated two-letter country codes.
 - COMMERCE_CRON_TOKEN: strong secret used by the stock-reservation expiry job.
-- COMMERCE_SHOPIFY_SYNC_TOKEN: at least 32 random bytes for Shopify sync, export, reconciliation and compensation workers; schedule `POST /internal/shopify/compensate-paid-orders` separately from webhook delivery.
+- COMMERCE_SHOPIFY_SYNC_TOKEN: at least 32 random bytes for Shopify sync, export, reconciliation and compensation workers; schedule `/internal/shopify/process-events`, `/internal/shopify/reconcile` and `/internal/shopify/compensate-paid-orders` separately from provider webhook delivery. Reconciliation returns a store cursor; continue with `after_connection_id` and retry any `failed_connection_ids` by `connection_id`.
 - COMMERCE_MARKETPLACE_READ_TOKEN: dedicated 32-byte minimum service credential, shared only with the Decision Gateway and sent as X-Commerce-Marketplace-Read-Token. Do not reuse sync, quote-ingestion, user JWT, or CAL signing secrets.
 
 Local run from this directory:
@@ -61,7 +61,7 @@ Local run from this directory:
     pip install -r requirements.txt
     uvicorn app.main:app --host 127.0.0.1 --port 8081
 
-Historical migration ordering: `20261107_0004` introduced the verified-purchase outbox and `20261107_0005` added refund snapshots. The current Commerce schema head is `20261121_0014`; always apply the full Alembic chain with `alembic upgrade head`:
+Historical migration ordering: `20261107_0004` introduced the verified-purchase outbox and `20261107_0005` added refund snapshots. The current Commerce schema head is `20261121_0015`; always apply the full Alembic chain with `alembic upgrade head`:
 
     export COMMERCE_DATABASE_URL='postgresql+psycopg://...'
     export COMMERCE_AUTO_CREATE_SCHEMA=false
@@ -156,4 +156,4 @@ Merchant applications, admin decisions and owner-scoped listings are implemented
 
 ## Shopify merchant-provider connector
 
-The optional Shopify adapter is documented in [the Shopify Commerce connector contract](../../docs/commerce/shopify-commerce-connector.md). It uses expiring offline tokens encrypted at rest, stages provider products privately, requires explicit Catalog product/variant mapping, reconciles location stock without consuming Commerce reservations, and exports only already-paid Cirvanna orders. Shopify product import does not grant shopper display access: all Marketplace product display continues through the Decision Gateway/CAL SHOW path, and all cart/checkout actions retain the separate candidate-bound purchase authorization. Set the Shopify secrets in the secret manager only; live Shopify credentials, store grants, webhook delivery, inventory reconciliation, order export and production readiness remain unverified until staging acceptance passes.
+The optional Shopify adapter is documented in [the Shopify Commerce connector contract](../../docs/commerce/shopify-commerce-connector.md). It uses expiring offline tokens encrypted at rest, stages provider products privately, requires explicit Catalog product/variant mapping, and reconciles complete location-scoped stock under a durable per-store sync lease. Readiness distinguishes connected/webhook-ready from catalogue-ready and exposes interrupted sync recovery rather than reporting stale catalogue data as complete. For Shopify-backed checkout it reserves provider inventory with expiring draft orders before Stripe session creation, then completes those exact drafts only after verified payment; post-payment failures enter the seller-compensation/Stripe-refund saga and fulfilment stays blocked until every seller is reconciled. Shopify product import does not grant shopper display access: all Marketplace product display continues through the Decision Gateway/CAL SHOW path, and all cart/checkout actions retain the separate candidate-bound purchase authorization. Set the Shopify secrets in the secret manager only; live Shopify credentials, store grants, webhook delivery, inventory reconciliation, payment/compensation lifecycle and production readiness remain unverified until staging acceptance passes.
