@@ -47,7 +47,7 @@ MODEL_SPECS = {
         "repo_id": "Marqo/marqo-fashionSigLIP",
         "loader": "open_clip",
         "default_revision": "c56244cc94f92419e8369fa71efdaf403b124ce8",
-        "allow_patterns": ["open_clip_config.json", "open_clip_model.safetensors",
+        "allow_patterns": ["README.md", "open_clip_config.json", "open_clip_model.safetensors",
                            "preprocessor_config.json", "tokenizer.json", "tokenizer_config.json",
                            "special_tokens_map.json", "spiece.model", "config.json"],
     },
