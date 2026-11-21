@@ -61,6 +61,14 @@ class CatalogProduct:
             raise ValueError("catalog_version must be a positive integer")
         if not isinstance(self.attributes, Mapping):
             raise ValueError("attributes must be a mapping")
+        if self.brand is not None and (
+            not isinstance(self.brand, str) or not self.brand.strip() or len(self.brand) > 100
+        ):
+            raise ValueError("brand must be None or a non-empty string up to 100 characters")
+        if self.description is not None and (
+            not isinstance(self.description, str) or len(self.description) > 10000
+        ):
+            raise ValueError("description must be None or a string up to 10000 characters")
         object.__setattr__(self, "currency", self.currency.strip().upper())
         object.__setattr__(self, "attributes", dict(self.attributes))
 
@@ -125,9 +133,9 @@ class CatalogSnapshot:
             raise ValueError("catalog snapshot contains duplicate product IDs")
 
     def is_fresh(self, now: datetime, max_age_seconds: int = 120) -> bool:
-        if now.tzinfo is None or now.utcoffset() is None:
-            raise ValueError("now must be timezone-aware")
-        if not isinstance(max_age_seconds, int) or max_age_seconds < 1:
+        if not isinstance(now, datetime) or now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError("now must be a timezone-aware datetime")
+        if isinstance(max_age_seconds, bool) or not isinstance(max_age_seconds, int) or max_age_seconds < 1:
             raise ValueError("max_age_seconds must be positive")
         age = (now - self.fetched_at).total_seconds()
         return self.complete and 0 <= age <= max_age_seconds
@@ -175,7 +183,8 @@ class CandidateEvaluation:
     signals: tuple[DecisionSignal, ...] = ()
 
     @property
-    def may_display(self) -> bool:
+    def cal_preflight_show(self) -> bool:
+        """Local CAL preflight only; never a durable display/purchase authorization receipt."""
         return bool(self.arbitration.may_display)
 
     @property
