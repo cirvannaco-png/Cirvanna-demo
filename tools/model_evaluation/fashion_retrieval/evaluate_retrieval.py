@@ -75,7 +75,8 @@ def _validate_record(row: Any, line: int) -> dict[str, Any]:
     ):
         raise ValueError(f"{prefix}: subgroups must map non-empty string keys to values")
     return {**row, "candidate_ids": candidates, "qrels": qrels, "rankings": normalized,
-            "excluded_product_ids": excluded, "subgroups": subgroups}
+            "excluded_product_ids": excluded,
+            "human_exclusion_violation_ids": human_violations, "subgroups": subgroups}
 
 
 def read_cases(path: str | Path, split: str = "test") -> list[dict[str, Any]]:
