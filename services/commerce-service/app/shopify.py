@@ -625,6 +625,23 @@ def _sync_mapped_variant(
     return None
 
 
+def _deactivate_product_listing(db: Session, connection: ShopifyConnection, product: ShopifyProductSnapshot) -> None:
+    if product.remote_status == "ACTIVE":
+        return
+    if product.listing_id:
+        listing = db.get(commerce.Listing, product.listing_id)
+        if listing is not None and listing.merchant_id == connection.merchant_id:
+            listing.state = "inactive"
+    for snapshot in db.scalars(select(ShopifyVariantSnapshot).where(
+        ShopifyVariantSnapshot.product_snapshot_id == product.id
+    )).all():
+        if snapshot.local_variant_id:
+            variant = db.get(commerce.Variant, snapshot.local_variant_id)
+            if variant is not None:
+                variant.state = "inactive"
+                variant.observed_at = utcnow() - timedelta(days=30)
+
+
 def _sync_products(connection: ShopifyConnection, db: Session, *, max_pages: int = 20) -> dict[str, int | bool]:
     if connection.status != "active":
         raise HTTPException(409, detail={"code": "SHOPIFY_CONNECTION_NOT_ACTIVE"})
@@ -695,6 +712,7 @@ def _sync_products(connection: ShopifyConnection, db: Session, *, max_pages: int
             product.synced_at = utcnow()
             if product.catalog_product_id:
                 product.mapping_state = "partial"
+            _deactivate_product_listing(db, connection, product)
             products_seen_ids.add(product.id)
             inventory_item = remote_variant.get("inventoryItem") or {}
             tracked, available, on_hand, inventory_complete = _inventory_totals(inventory_item)
@@ -924,6 +942,7 @@ def get_shopify_connection(
         "orders_reconciled_at": connection.orders_reconciled_at.isoformat() if connection.orders_reconciled_at else None,
         "access_token_expires_at": connection.access_expires_at.isoformat() if connection.access_expires_at else None,
         "refresh_token_expires_at": connection.refresh_expires_at.isoformat() if connection.refresh_expires_at else None,
+        "product_sync_in_progress": connection.products_cursor is not None,
     }
 
 
@@ -1046,6 +1065,15 @@ def map_shopify_product(
     }
     if existing_canonical.intersection(requested.values()):
         raise HTTPException(409, detail={"code": "CANONICAL_VARIANT_ALREADY_MAPPED"})
+    for remote_gid in requested:
+        target = by_gid[remote_gid]
+        sku_collision = db.scalar(select(commerce.Variant.id).where(
+            commerce.Variant.listing_id == listing.id,
+            commerce.Variant.sku == target.sku,
+            commerce.Variant.id != (target.local_variant_id or ""),
+        ))
+        if sku_collision:
+            raise HTTPException(409, detail={"code": "SHOPIFY_SKU_CONFLICT_WITH_EXISTING_LISTING"})
     results = []
     for remote_gid, canonical_variant_id in requested.items():
         snapshot = by_gid[remote_gid]
