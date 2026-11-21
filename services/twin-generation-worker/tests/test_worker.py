@@ -13,6 +13,17 @@ from PIL import Image
 from app import main
 
 
+@pytest.fixture(autouse=True)
+def reset_worker_state():
+    main._ESTIMATOR = None
+    main._LOAD_ERROR = None
+    main._configured.cache_clear()
+    yield
+    main._ESTIMATOR = None
+    main._LOAD_ERROR = None
+    main._configured.cache_clear()
+
+
 def _manifested_artifacts(tmp_path: Path, monkeypatch) -> tuple[str, str]:
     model_id = main.DEFAULT_MODEL_ID
     revision = "a" * 40
@@ -162,7 +173,7 @@ def test_reconstruction_response_is_never_claimed_calibrated_or_registry_eligibl
         lambda _image: (b"glTF-fixture", 12000, 22000),
     )
     monkeypatch.setenv("TWIN_GENERATION_WORKER_TOKEN", "t" * 48)
-    main._ESTIMATOR = None
+    monkeypatch.setattr(main, "_ESTIMATOR", None)
     client = TestClient(main.app)
     response = client.post(
         "/internal/v1/reconstruct",
