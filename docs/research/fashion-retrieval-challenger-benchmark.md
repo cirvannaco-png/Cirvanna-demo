@@ -66,7 +66,7 @@ A hosted Marqo FashionSigLIP 2 offering mentioned by the FashionSigLIP model car
 
 3. **Cirvanna controlled catalogue benchmark** — primary product-relevance gate for a Cirvanna decision. Build from approved Catalog/Commerce snapshots with exact product/variant IDs, legally usable product images, approved metadata and documented source rights. Use opaque identifiers in evaluation exports. Candidate generation must be offline against a fixed snapshot, not a live marketplace whose inventory or offers change between runs.
 
-4. **Human-reviewed query set** — create a consented, rights-cleared set of realistic product/outfit queries. Include short keyword queries, detailed natural-language descriptions, attribute combinations, image queries, and multi-item outfit queries. Two independent blinded reviewers label each query-candidate pair; disagreement requires adjudication. Do not generate human labels with an LLM and present them as human ground truth.
+4. **Human-reviewed query set** — create a consented, rights-cleared set of realistic product/outfit queries. Include short keyword queries, detailed natural-language descriptions, attribute combinations, image queries, and multi-item outfit queries. Every candidate in each fixed query pool must receive an explicit 0–4 relevance grade from two independent blinded reviewers, including zero-grade items. Reviewers separately flag an explicit exclusion/constraint violation. A third independent adjudicator must resolve any disagreement in either field. Use `tools/model_evaluation/fashion_retrieval/build_qrels.py` to aggregate the review records; do not generate human labels with an LLM and present them as human ground truth. The output carries complete qrels and human-adjudicated violation IDs without reviewer keys or raw annotations.
 
 ### 4.2 Datasets not approved for commercial development
 
@@ -138,7 +138,7 @@ Do not substitute raw cosine values for retrieval metrics.
 
 Report category correctness and declared attribute agreement for colour, material, silhouette, garment type, occasion and other available Catalog facts. Record confusions such as similar category/different product, correct garment/wrong colour, correct style/wrong material, wrong variant, brand shortcut, background/pose shortcut, and failure on street/occluded/multi-item images.
 
-Explicit NPL exclusions, unsupported products, inactive/out-of-stock offers, ownership, consent and CAL failures are hard gates. A ranker must never bypass these. The evaluation must verify that model changes cannot expose product/merchant details before CAL authorization.
+Explicit NPL exclusions, human-adjudicated constraint violations, unsupported products, inactive/out-of-stock offers, ownership, consent and CAL failures are hard gates. The ranking evaluator fails a model if a returned top-k candidate is flagged either by a declared excluded-product ID or by independent human adjudication. A ranker must never bypass these. The evaluation must verify that model changes cannot expose product/merchant details before CAL authorization.
 
 ### 6.3 Subgroup and robustness analysis
 
@@ -202,10 +202,12 @@ Stop and mark BLOCKED when provenance, commercial rights, dataset rights, model 
 
 ## 10. Executable inference runner and ranking evaluator
 
-The repository now includes two connected tools:
+The repository now includes three connected data/evaluation stages:
 
-1. `tools/model_evaluation/fashion_retrieval/run_retrieval.py` loads pinned model snapshots and generates rankings over a common query/candidate JSONL set.
-2. `tools/model_evaluation/fashion_retrieval/evaluate_retrieval.py` scores those rankings against the same graded relevance judgments.
+1. `tools/model_evaluation/fashion_retrieval/build_qrels.py` validates two independent blinded reviews for every query-candidate pair and requires independent adjudication on disagreement.
+2. `tools/model_evaluation/fashion_retrieval/prepare_cases.py` joins complete reviewed qrels to the exact frozen, eligible Catalog/Commerce offer text and candidate order.
+3. `tools/model_evaluation/fashion_retrieval/run_retrieval.py` loads pinned model snapshots and generates rankings over the common query/candidate JSONL set.
+4. `tools/model_evaluation/fashion_retrieval/evaluate_retrieval.py` scores those rankings on the same full qrels and applies both declared-exclusion and human-adjudicated hard gates.
 
 The inference runner supports the current Cirvanna FashionCLIP baseline, Marqo FashionCLIP, Marqo FashionSigLIP and ZooClaw-FashionSigLIP2. Model snapshots are loaded sequentially. The baseline uses the same Transformers CLIP class as the production-intended Vision service. Marqo models use OpenCLIP from the pinned local snapshot; ZooClaw uses standard Transformers/SigLIP. All loaders disable remote model-repository code execution.
 
@@ -213,7 +215,7 @@ Every challenger requires a full 40-character immutable commit SHA. The runner r
 
 Input media is read from a caller-supplied local directory, with path traversal rejected. Source images are not uploaded or included in the rankings/manifest. Only opaque candidate IDs, rankings, cosine similarity diagnostics, qrels and task-grounded subgroup metadata are written. Similarity remains a ranking score, never a probability.
 
-The evaluator computes Recall@k, Precision@k, MRR@k, nDCG@k, top-1 hit rate, no-result rate, top-k fill, candidate coverage, hard-exclusion violations, paired challenger-minus-baseline deltas, cluster-bootstrap 95% intervals and subgroup reports. It rejects mixed tasks, inconsistent model sets, out-of-pool results, invalid grades and malformed exclusions.
+The evaluator requires one relevance grade per candidate in the fixed pool and computes Recall@k, Precision@k, MRR@k, nDCG@k, top-1 hit rate, no-result rate, top-k fill, candidate coverage, declared-exclusion and human-adjudicated constraint violations, paired challenger-minus-baseline deltas, cluster-bootstrap 95% intervals and subgroup reports. It rejects mixed tasks, inconsistent model sets, out-of-pool results, invalid grades and malformed exclusions.
 
 The runner deliberately supports only image-to-Catalog-text and text-to-Catalog-text in this first increment. True image-to-image retrieval remains a separate future track. Since the runner ranks every supplied candidate and applies no calibrated no-match threshold, its no-result rate is not a meaningful quality signal yet.
 
