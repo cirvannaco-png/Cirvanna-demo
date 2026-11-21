@@ -23,5 +23,8 @@
   },
   "data_manifest_sha256": "REPLACE_WITH_64_CHARACTER_SHA256",
   "qrels_manifest_sha256": "REPLACE_WITH_64_CHARACTER_SHA256",
-  "dependency_lock_sha256": "REPLACE_WITH_64_CHARACTER_SHA256"
+  "dependency_lock_sha256": "REPLACE_WITH_64_CHARACTER_SHA256",
+  "data_manifest_path": "/secure/evaluation/prepared-cases.jsonl.manifest.json",
+  "qrels_manifest_path": "/secure/evaluation/human-qrels.manifest.json",
+  "dependency_lock_path": "/secure/evaluation/requirements-research.lock"
 }
