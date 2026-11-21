@@ -559,6 +559,9 @@ def test_unknown_or_incomplete_jurisdiction_resolution_blocks_click_it(client, m
     assert response.status_code == 200
     assert response.json()["decision"] == "BLOCK"
     assert response.json()["jurisdiction_resolution_complete"] is False
+    assert response.json()["subject_id"] == "customer-123"
+    assert response.json()["service"] == "cirvanna-click-it"
+    assert response.json()["purpose"] == "visual_product_discovery"
 
 
 def test_multi_jurisdiction_uses_stricter_guardian_policy(client, monkeypatch):
@@ -604,6 +607,9 @@ def test_multi_jurisdiction_uses_stricter_guardian_policy(client, monkeypatch):
     assert response.status_code == 200
     result = response.json()
     assert result["decision"] == "PASS"
+    assert result["subject_id"] == "customer-123"
+    assert result["service"] == "cirvanna-click-it"
+    assert result["purpose"] == "visual_product_discovery"
     assert result["applicable_jurisdictions"] == ["JUR-A", "JUR-B"]
     assert result["guardian_consent_required"] is True
     assert result["retention_seconds"] == 0

@@ -16,6 +16,8 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 from starlette.responses import JSONResponse
+
+from app.privacy_policy import authorize_click_it_policy, policy_registry_configured
 from starlette import status
 
 SERVICE_NAME = "cirvanna-virtual-twin"
@@ -50,6 +52,7 @@ class ReadinessResponse(BaseModel):
     service: str
     model_adapter_configured: bool
     consent_verifier_configured: bool
+    privacy_policy_registry_configured: bool
     twin_registry_configured: bool
     ready: bool
     reason: str | None = None
@@ -85,6 +88,7 @@ def health() -> dict[str, str]:
 async def ready() -> ReadinessResponse:
     vision_ready = await _vision_worker_ready()
     consent_configured = _internal_config("CONSENT_API_URL", "CONSENT_API_TOKEN") is not None
+    privacy_policy_configured = policy_registry_configured()
     twin_registry_configured = _internal_config("TWIN_REGISTRY_API_URL", "TWIN_REGISTRY_API_TOKEN") is not None
     api_token_configured = len(os.getenv("VIRTUAL_TWIN_API_TOKEN", "").encode("utf-8")) >= 32
     ready_now = vision_ready and consent_configured and api_token_configured
@@ -100,6 +104,7 @@ async def ready() -> ReadinessResponse:
         service=SERVICE_NAME,
         model_adapter_configured=vision_ready,
         consent_verifier_configured=consent_configured,
+        privacy_policy_registry_configured=privacy_policy_configured,
         twin_registry_configured=twin_registry_configured,
         ready=ready_now,
         reason=reason,
@@ -323,6 +328,7 @@ async def capabilities() -> dict[str, object]:
     dermalsight_ready = await _dermalsight_ready()
     vision_ready = await _vision_worker_ready()
     consent_configured = _internal_config("CONSENT_API_URL", "CONSENT_API_TOKEN") is not None
+    privacy_policy_configured = policy_registry_configured()
     twin_registry_configured = _internal_config("TWIN_REGISTRY_API_URL", "TWIN_REGISTRY_API_TOKEN") is not None
     return {
         "service": SERVICE_NAME,
@@ -339,8 +345,9 @@ async def capabilities() -> dict[str, object]:
         "fit_prediction": False,
         "ar_rendering": False,
         "click_it_product_reconstruction": False,
-        "click_it_marketplace_search": vision_ready and consent_configured,
-        "click_it_twin_personalization": vision_ready and consent_configured and twin_registry_configured,
+        "click_it_marketplace_search": vision_ready and consent_configured and privacy_policy_configured,
+        "click_it_twin_personalization": vision_ready and consent_configured and privacy_policy_configured and twin_registry_configured,
+        "privacy_policy_registry_configured": privacy_policy_configured,
         "decision_governance_connected_to_rendering": False,
         "image_persistence": False,
         "display_authorization": "CAL_required_before_candidates_are_shown_or_used_to_purchase",
@@ -535,6 +542,7 @@ async def click_it(
     twin_id: Annotated[str | None, Form(min_length=3, max_length=128)] = None,
     category: Annotated[str | None, Form(max_length=80)] = None,
     limit: Annotated[int, Form(ge=1, le=25)] = 10,
+    capture_jurisdiction_hint: Annotated[str | None, Form(max_length=100)] = None,
 ):
     """Mask photographed faces before retrieval; keep garment/product pixels.
 
@@ -555,7 +563,7 @@ async def click_it(
         if _internal_config("VISION_INTELLIGENCE_API_URL", "VISION_INTELLIGENCE_API_TOKEN") is None:
             raise HTTPException(503, detail={"code": "VISION_INFERENCE_NOT_CONFIGURED"})
         declaration_scope = {
-            "no_people": "photographed_people_no_people_attestation",
+            "no_people": "photographed_no_people_attestation",
             "adults_only": "photographed_people_adult_attestation",
             "contains_minor": "photographed_people_minor_attestation",
         }[photographed_people_status]
@@ -563,6 +571,13 @@ async def click_it(
             subject_id, consent_id, ["image_processing", "click_it", declaration_scope],
             resource_id=resource_id,
         )
+        privacy_policy = await authorize_click_it_policy(
+            subject_id, photographed_people_status, capture_jurisdiction_hint,
+        )
+        if photographed_people_status == "contains_minor" and privacy_policy["guardian_consent_required"]:
+            await _verify_consent(
+                subject_id, consent_id, ["guardian_authorized"], resource_id=resource_id,
+            )
         if twin_id:
             await _authorize_twin(subject_id, twin_id)
         content = await product_image.read(MAX_IMAGE_BYTES + 1)
@@ -609,6 +624,13 @@ async def click_it(
             "twin_id": twin_id,
             "personalization_available": bool(twin_id) and photographed_people_status != "contains_minor",
             "photographed_people_status": photographed_people_status,
+            "privacy_policy": {
+                "policy_version": privacy_policy["policy_version"],
+                "policy_sha256": privacy_policy["policy_sha256"],
+                "applicable_jurisdictions": privacy_policy["applicable_jurisdictions"],
+                "guardian_consent_required": privacy_policy["guardian_consent_required"],
+                "public_sharing_allowed": False,
+            },
         }, headers={"Cache-Control": "no-store, private"})
     finally:
         await product_image.close()

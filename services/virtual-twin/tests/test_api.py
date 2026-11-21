@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 import pytest
 
-from app import main
+from app import main, privacy_policy
 from app.main import app
 
 client = TestClient(app)
@@ -284,11 +284,23 @@ def test_click_it_success_returns_candidates_but_never_claims_display_authorizat
     monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", TOKEN)
     mock_internal_config(monkeypatch)
 
-    async def verify(*_args, **_kwargs):
+    verify_calls = []
+
+    async def verify(*args, **kwargs):
+        verify_calls.append((args, kwargs))
         return None
 
     async def authorize(*_args, **_kwargs):
         return None
+
+    async def authorize_policy(*_args, **_kwargs):
+        return {
+            "policy_version": "KE@v1",
+            "policy_sha256": "a" * 64,
+            "applicable_jurisdictions": ["KE"],
+            "guardian_consent_required": False,
+            "public_sharing_allowed": False,
+        }
 
     async def run(*_args, **_kwargs):
         return {
@@ -300,6 +312,7 @@ def test_click_it_success_returns_candidates_but_never_claims_display_authorizat
 
     monkeypatch.setattr(main, "_verify_consent", verify)
     monkeypatch.setattr(main, "_authorize_twin", authorize)
+    monkeypatch.setattr(main, "authorize_click_it_policy", authorize_policy)
     monkeypatch.setattr(main, "_run_vision", run)
     response = client.post(
         "/click-it",
@@ -316,3 +329,30 @@ def test_click_it_success_returns_candidates_but_never_claims_display_authorizat
     assert body["decision_status"] == "PENDING_CAL"
     assert body["merchant_comparison"]["status"] == "pending_cal"
     assert body["image_persisted"] is False
+    assert verify_calls[0][0][2] == [
+        "image_processing", "click_it", "photographed_no_people_attestation"
+    ]
+    assert body["privacy_policy"]["public_sharing_allowed"] is False
+
+def test_click_it_policy_block_fails_before_vision_worker(monkeypatch):
+    monkeypatch.setenv("VIRTUAL_TWIN_API_TOKEN", TOKEN)
+    mock_internal_config(monkeypatch)
+
+    async def verify(*_args, **_kwargs):
+        return None
+
+    async def blocked_policy(*_args, **_kwargs):
+        raise main.HTTPException(403, detail={"code": "PRIVACY_POLICY_BLOCKED"})
+
+    monkeypatch.setattr(main, "_verify_consent", verify)
+    monkeypatch.setattr(main, "authorize_click_it_policy", blocked_policy)
+    monkeypatch.setattr(main, "_run_vision", lambda *_args, **_kwargs: pytest.fail("blocked policy must prevent inference"))
+    response = client.post(
+        "/click-it",
+        headers=auth(),
+        data={**identity_fields(), "consent_image_processing": "true", "consent_click_it": "true"},
+        files={"product_image": ("product.jpg", b"photo", "image/jpeg")},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "PRIVACY_POLICY_BLOCKED"
+

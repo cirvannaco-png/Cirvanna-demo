@@ -792,6 +792,9 @@ async def evaluate_click_it_policy(payload: JurisdictionEvaluateIn, db: Session 
     )
     if not resolution_complete:
         return {
+            "subject_id": payload.subject_id,
+            "service": payload.service,
+            "purpose": payload.purpose,
             "decision": "BLOCK",
             "current": False,
             "block_reasons": ["JURISDICTION_RESOLUTION_INCOMPLETE_OR_CONFLICTING"],
@@ -843,6 +846,9 @@ async def evaluate_click_it_policy(payload: JurisdictionEvaluateIn, db: Session 
     deadline = min((row.rights_response_deadline_hours for row in usable), default=None)
     passed = complete and not reasons and resolution_complete
     return {
+        "subject_id": payload.subject_id,
+        "service": payload.service,
+        "purpose": payload.purpose,
         "decision": "PASS" if passed else "BLOCK",
         "current": complete,
         "block_reasons": reasons,
