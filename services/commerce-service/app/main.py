@@ -7,7 +7,7 @@ Stripe-hosted checkout. Only a verified provider webhook can mark an order paid.
 from __future__ import annotations
 
 import base64
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 import hashlib
 import hmac
 import json
@@ -55,7 +55,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 
 
 SERVICE = "cirvanna-commerce-service"
-EXPECTED_SCHEMA_REVISION = "20261121_0015"
+EXPECTED_SCHEMA_REVISION = "20261121_0016"
 MAX_QTY = 50
 RESERVATION_MINUTES = 60
 SKU_RE = re.compile(r"^[A-Z0-9][A-Z0-9._-]{0,79}$")
@@ -247,6 +247,9 @@ class OfferFulfillmentQuote(Base):
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     distance_km: Mapped[Decimal | None] = mapped_column(Numeric(9, 2), nullable=True)
+    # Null means this quote predates the exact-precision ingestion gate; it must
+    # never participate in radius filtering because the original value is lost.
+    distance_precision_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     provider: Mapped[str] = mapped_column(String(100), nullable=False)
     provider_quote_id: Mapped[str] = mapped_column(String(180), nullable=False)
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -1473,15 +1476,25 @@ def _market_is_active(db: Session, merchant_id: str, market_country_code: str) -
 
 
 
-def approved_merchant(db: Session, actor: Actor) -> Merchant:
+def approved_merchant(db: Session, actor: Actor, *, for_update: bool = False) -> Merchant:
     # Ownership alone is not an authorization boundary: the signed token must
     # also carry the merchant role issued by the trusted identity provider.
     if actor.role != "merchant":
         raise HTTPException(403, detail={"code": "MERCHANT_ROLE_REQUIRED"})
-    merchant = db.scalar(select(Merchant).where(Merchant.owner_user_id == actor.user_id))
+    statement = select(Merchant).where(Merchant.owner_user_id == actor.user_id)
+    if for_update:
+        statement = statement.with_for_update()
+    merchant = db.scalar(statement)
     if merchant is None or merchant.state != "approved":
         raise HTTPException(403, detail={"code": "MERCHANT_NOT_APPROVED"})
     return merchant
+
+
+def lock_merchant_by_id(db: Session, merchant_id: str) -> Merchant | None:
+    """Acquire the same parent-row lock used by merchant market declarations."""
+    return db.scalar(
+        select(Merchant).where(Merchant.id == merchant_id).with_for_update()
+    )
 
 
 def ensure_cart(db: Session, user_id: str) -> Cart:
@@ -2114,36 +2127,47 @@ def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
         cal_base, cal_token, cal_signing_key = _cal_gateway_settings()
         cal_gateway_configured = True
         cal_signer_configured = len(cal_signing_key.encode("utf-8")) >= 32
-        cal_gateway_ready = _cal_gateway_probe(cal_base, cal_token)
     except HTTPException:
+        cal_base = cal_token = ""
         cal_gateway_configured = False
         cal_signer_configured = False
-        cal_gateway_ready = False
+
     migrations_applied = schema_revision == EXPECTED_SCHEMA_REVISION
     provider_required = provider_verification_required()
-    if provider_required:
-        # Probe independent adapters concurrently. Sequential 3-second probes can
-        # exceed the Marketplace BFF's 5-second Commerce readiness deadline.
-        adapter_prefixes = (
-            "MERCHANT_VERIFICATION_ADAPTER", "FULFILLMENT_ADAPTER", "FX_ADAPTER",
-            "TAX_ADAPTER", "PAYMENT_CAPABILITY_ADAPTER",
-        )
-        with ThreadPoolExecutor(max_workers=len(adapter_prefixes)) as executor:
-            readiness_results = dict(zip(
-                adapter_prefixes,
-                executor.map(adapter_ready, adapter_prefixes),
-            ))
-        merchant_provider_ready = readiness_results["MERCHANT_VERIFICATION_ADAPTER"]
-        fulfillment_provider_ready = readiness_results["FULFILLMENT_ADAPTER"]
-        fx_provider_ready = readiness_results["FX_ADAPTER"]
-        tax_provider_ready = readiness_results["TAX_ADAPTER"]
-        payment_capability_provider_ready = readiness_results["PAYMENT_CAPABILITY_ADAPTER"]
-    else:
-        merchant_provider_ready = False
-        fulfillment_provider_ready = False
-        fx_provider_ready = False
-        tax_provider_ready = False
-        payment_capability_provider_ready = False
+    adapter_prefixes = (
+        "MERCHANT_VERIFICATION_ADAPTER", "FULFILLMENT_ADAPTER", "FX_ADAPTER",
+        "TAX_ADAPTER", "PAYMENT_CAPABILITY_ADAPTER",
+    )
+    # CAL and all required provider probes share one deadline. A CAL probe that
+    # consumes its own timeout must not be added serially to five adapter probes.
+    probe_executor = ThreadPoolExecutor(max_workers=1 + (len(adapter_prefixes) if provider_required else 0))
+    probe_futures = {}
+    try:
+        if cal_gateway_configured:
+            probe_futures["cal"] = probe_executor.submit(_cal_gateway_probe, cal_base, cal_token)
+        if provider_required:
+            for prefix in adapter_prefixes:
+                probe_futures[prefix] = probe_executor.submit(adapter_ready, prefix)
+        completed, _pending = wait(tuple(probe_futures.values()), timeout=3.5)
+        probe_results = {}
+        for name, future in probe_futures.items():
+            if future not in completed:
+                probe_results[name] = False
+                continue
+            try:
+                probe_results[name] = bool(future.result())
+            except Exception:
+                probe_results[name] = False
+        cal_gateway_ready = probe_results.get("cal", False)
+        merchant_provider_ready = probe_results.get("MERCHANT_VERIFICATION_ADAPTER", False)
+        fulfillment_provider_ready = probe_results.get("FULFILLMENT_ADAPTER", False)
+        fx_provider_ready = probe_results.get("FX_ADAPTER", False)
+        tax_provider_ready = probe_results.get("TAX_ADAPTER", False)
+        payment_capability_provider_ready = probe_results.get("PAYMENT_CAPABILITY_ADAPTER", False)
+    finally:
+        # Do not hold the HTTP request open waiting for a slow dependency. Each
+        # underlying HTTP probe has its own finite connect/read timeout.
+        probe_executor.shutdown(wait=False, cancel_futures=True)
     provider_dependencies_ready = (
         not provider_required
         or all([
@@ -2383,7 +2407,9 @@ def declare_merchant_market(
     actor: Annotated[Actor, Depends(require_actor)],
     db: Annotated[Session, Depends(get_db)],
 ):
-    merchant = approved_merchant(db, actor)
+    # The parent merchant row is the serialization point shared with admin
+    # activation. The lock is held until this declaration commits.
+    merchant = approved_merchant(db, actor, for_update=True)
     row = db.scalar(select(MerchantOperatingMarket).where(
         MerchantOperatingMarket.merchant_id == merchant.id,
         MerchantOperatingMarket.market_country_code == payload.market_country_code,
@@ -2453,7 +2479,9 @@ def set_merchant_market_state(
     if actor.role != "admin":
         raise HTTPException(403, detail={"code": "ADMIN_REQUIRED"})
     market_code = _valid_country(market_country_code)
-    merchant = db.get(Merchant, str(merchant_id))
+    # Lock the same parent row as merchant market declarations before reading
+    # the operating-market set used by the KYB verification request.
+    merchant = lock_merchant_by_id(db, str(merchant_id))
     if merchant is None:
         raise HTTPException(404, detail={"code": "MERCHANT_NOT_FOUND"})
     market = db.scalar(select(MerchantOperatingMarket).where(
@@ -2614,6 +2642,7 @@ def ingest_fulfillment_quote(
         charge_basis=payload.charge_basis, distance_km=payload.distance_km, provider=payload.provider,
         provider_quote_id=payload.provider_quote_id, observed_at=payload.observed_at,
         expires_at=payload.expires_at,
+        distance_precision_verified_at=now() if payload.distance_km is not None else None,
     )
     db.add(row)
     db.commit()
@@ -3024,6 +3053,7 @@ def list_offers(
             OfferFulfillmentQuote.status == "confirmed",
             OfferFulfillmentQuote.amount_minor.is_not(None),
             OfferFulfillmentQuote.distance_km.is_not(None),
+            OfferFulfillmentQuote.distance_precision_verified_at.is_not(None),
             OfferFulfillmentQuote.distance_km <= radius_km,
             OfferFulfillmentQuote.observed_at >= current - timedelta(seconds=offer_max_age_seconds()),
             OfferFulfillmentQuote.observed_at <= current + timedelta(minutes=5),
@@ -3079,6 +3109,7 @@ def list_offers(
                 OfferFulfillmentQuote.status == "confirmed",
                 OfferFulfillmentQuote.amount_minor.is_not(None),
                 OfferFulfillmentQuote.distance_km.is_not(None),
+                OfferFulfillmentQuote.distance_precision_verified_at.is_not(None),
                 OfferFulfillmentQuote.distance_km <= radius_km,
             ).order_by(OfferFulfillmentQuote.observed_at.desc(), OfferFulfillmentQuote.id.desc()).limit(10)).all())
             fulfillment_quote = next((quote for quote in quote_rows if quote_is_current(quote.observed_at, quote.expires_at)), None)
