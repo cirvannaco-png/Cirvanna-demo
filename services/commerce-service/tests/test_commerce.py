@@ -3427,6 +3427,17 @@ def test_admin_manual_review_queue_exposes_compensation_cases_without_sync_deliv
     assert item["order_id"] == order_id
     assert item["reason_code"] == "SHOPIFY_CANCEL_UNCERTAIN"
     assert item["fulfillment_blocked"] is True
+    ack = client.post(
+        f"/admin/operations/manual-review/{event_id}/ack",
+        headers=auth("ops-admin", "admin"),
+        json={"action": "acknowledged", "operator_note": "Case reviewed by operations"},
+    )
+    assert ack.status_code == 200, ack.text
+    assert ack.json()["status"] == "acknowledged"
+    audit = TEST_SESSION().get(main.CommerceOutboxEvent, ack.json()["audit_event_id"])
+    assert audit is not None
+    assert audit.payload["operator_user_id"] == "ops-admin"
+    assert audit.payload["action"] == "acknowledged"
 
 
 def test_shop_redaction_preserves_unresolved_compensation_manual_review_event(client, monkeypatch):
