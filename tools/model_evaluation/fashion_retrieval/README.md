@@ -70,6 +70,26 @@ Image paths must be relative to `--media-root` and remain inside that directory.
 
 Use a locked Python 3.11+ research environment. The Marqo adapters require `open_clip_torch==4.2.2`, which supports the `local-dir:` loader used to load pinned snapshots without remote code. That OpenCLIP release requires PyTorch 2.6 or newer; the research environment is deliberately separate from the Vision service's production requirements. The runner fails fast if a different OpenCLIP version is installed. The runtime also needs Transformers, Hugging Face Hub, Safetensors, Pillow, NumPy, timm, and OpenCLIP's tokenizer dependencies. `requirements-research.txt` pins the OpenCLIP API version and sets compatible ranges for the other packages, but it is **not** a complete reproducibility lock. Generate and retain an exact transitive lock with hashes before any official comparison, and attach its digest to the experiment record.
 
+## Lock the final-test preregistration
+
+Before opening final-test qrels or generating final rankings, complete a private copy of `preregistration.template.json`. The template is intentionally invalid until the owner/research lead replaces every placeholder and approves the minimum practical effect and sample/cluster requirements.
+
+Validate it with:
+
+    python tools/model_evaluation/fashion_retrieval/validate_preregistration.py \\
+      --input /secure/evaluation/final-preregistration.json
+
+The validator requires:
+- `nDCG@10` as the fixed primary metric and `k=10`;
+- a predeclared minimum practically important paired delta;
+- minimum query and independent-cluster counts;
+- fixed candidate-pool sizes including the current 1,000-offer Vision ceiling;
+- a fixed bootstrap count and seed;
+- immutable baseline/challenger revisions; and
+- SHA-256 digests for the data, qrels and complete dependency lock.
+
+The sample values in unit tests are synthetic examples only, not recommended power calculations or a Cirvanna success threshold. Set the effect threshold and minimum sample/cluster counts from the intended product decision, reviewer capacity and a documented power/precision analysis before final-test unblinding. If the final dataset cannot meet the declared minimums, report the study as underpowered; do not silently lower the gates. Keep the completed registration and its source manifests in the restricted evaluation workspace, not GitHub.
+
 ## Generate rankings
 
 The baseline alone is not a comparison. Include the baseline and at least one challenger. Example:
