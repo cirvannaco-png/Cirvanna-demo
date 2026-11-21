@@ -784,3 +784,98 @@ def test_failed_learning_delivery_is_audited_and_same_event_can_retry(client, mo
         row = session.get(WardrobeFeedbackEventRow, ("user-1", "feedback-retry-001"))
         assert row.delivery_state == "delivered"
         assert row.error_code is None
+
+
+def test_refund_object_event_accepts_refund_id_and_separate_merchandise_subtotal(client):
+    order_id = "123e4567-e89b-42d3-a456-426614174001"
+    purchase = client.post("/v1/purchases/verified", headers=auth(), json={
+        "event_id": "123e4567-e89b-42d3-a456-426614174002",
+        "event_type": "commerce.order.paid",
+        "schema_version": 1,
+        "ownership_authority": "verified_payment",
+        "owner_user_id": "buyer-refund-object",
+        "order_id": order_id,
+        "order_item_id": "123e4567-e89b-42d3-a456-426614174003",
+        "catalog_product_id": "catalog-shirt-1",
+        "product_name": "Linen shirt",
+        "quantity": 1,
+        "currency": "KES",
+        "unit_price_minor": 250,
+        "paid_at": "2026-11-21T10:00:00+00:00",
+    })
+    assert purchase.status_code == 201, purchase.text
+
+    refund = client.post("/v1/purchases/refund-status", headers=auth(), json={
+        "event_id": "123e4567-e89b-42d3-a456-426614174004",
+        "provider_event_id": "evt_refund_object_1",
+        "event_type": "commerce.order.refund.updated",
+        "schema_version": 1,
+        "ownership_authority": "verified_stripe_refund_event",
+        "owner_user_id": "buyer-refund-object",
+        "order_id": order_id,
+        "payment_intent_id": "pi_refund_object_1",
+        "refund_id": "re_refund_object_1",
+        "currency": "KES",
+        "order_total_minor": 300,
+        "merchandise_subtotal_minor": 250,
+        "amount_refunded_minor": 300,
+        "refund_state": "refunded",
+        "refunded_at": "2026-11-21T10:05:00+00:00",
+        "physical_return_confirmed": False,
+        "ownership_effect": "financial_status_only",
+    })
+    assert refund.status_code == 200, refund.text
+    assert refund.json()["status"] == "recorded"
+
+    from app.store import WardrobePurchaseRefundSnapshotRow
+    from app.main import store
+    from sqlalchemy import select
+    with store().engine.connect() as conn:
+        row = conn.execute(select(WardrobePurchaseRefundSnapshotRow).where(
+            WardrobePurchaseRefundSnapshotRow.order_id == order_id
+        )).first()
+    assert row is not None
+    assert row.refund_id == "re_refund_object_1"
+    assert row.charge_id is None
+    assert row.order_total_minor == 300
+
+
+def test_refund_rejects_merchandise_subtotal_that_disagrees_with_purchase_lines(client):
+    order_id = "223e4567-e89b-42d3-a456-426614174001"
+    purchase = client.post("/v1/purchases/verified", headers=auth(), json={
+        "event_id": "223e4567-e89b-42d3-a456-426614174002",
+        "event_type": "commerce.order.paid",
+        "schema_version": 1,
+        "ownership_authority": "verified_payment",
+        "owner_user_id": "buyer-refund-mismatch",
+        "order_id": order_id,
+        "order_item_id": "223e4567-e89b-42d3-a456-426614174003",
+        "catalog_product_id": "catalog-shirt-2",
+        "product_name": "Cotton shirt",
+        "quantity": 1,
+        "currency": "KES",
+        "unit_price_minor": 250,
+        "paid_at": "2026-11-21T10:00:00+00:00",
+    })
+    assert purchase.status_code == 201, purchase.text
+    response = client.post("/v1/purchases/refund-status", headers=auth(), json={
+        "event_id": "223e4567-e89b-42d3-a456-426614174004",
+        "provider_event_id": "evt_refund_object_2",
+        "event_type": "commerce.order.refund.updated",
+        "schema_version": 1,
+        "ownership_authority": "verified_stripe_refund_event",
+        "owner_user_id": "buyer-refund-mismatch",
+        "order_id": order_id,
+        "payment_intent_id": "pi_refund_object_2",
+        "refund_id": "re_refund_object_2",
+        "currency": "KES",
+        "order_total_minor": 300,
+        "merchandise_subtotal_minor": 275,
+        "amount_refunded_minor": 300,
+        "refund_state": "refunded",
+        "refunded_at": "2026-11-21T10:05:00+00:00",
+        "physical_return_confirmed": False,
+        "ownership_effect": "financial_status_only",
+    })
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "PURCHASE_ORDER_SNAPSHOT_MISMATCH"
