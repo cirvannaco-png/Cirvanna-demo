@@ -36,6 +36,7 @@ Required secret-manager settings:
 | COMMERCE_SHOPIFY_SYNC_TOKEN | At least 32 random bytes for internal sync/export/reconciliation jobs |
 | COMMERCE_ENVIRONMENT | Set to production in production so OAuth state cookie is Secure |
 | SHOPIFY_INVENTORY_RESERVATION_PRODUCTION_ENABLED | Default false; set true only after live Shopify/Stripe staging acceptance, PostgreSQL restore validation, and operational compensation/refund procedures are signed off. Until then, Shopify-backed checkout is staging-only. |
+| SHOPIFY_COMPENSATION_SCOPE_ENABLED | Default false. When true, new/re-authorized OAuth installs request the additional `write_orders` scope needed for order cancellation. Existing merchants must re-authorize. Keep disabled unless the merchant compensation policy and operator process are approved. |
 
 Do not commit secrets or put the encryption key in the app frontend. Rotate the token encryption key only with a planned re-encryption migration; changing it directly makes existing token ciphertext unreadable and requires merchants to re-authorize.
 
@@ -48,7 +49,11 @@ Requested scopes:
 - read_draft_orders
 - write_draft_orders
 
-The connector no longer uses orderCreate; draftOrderCreate/draftOrderComplete/draftOrderDelete require draft-order permissions. The read scope is used only to reconcile the deterministic draft reservation by ID/tag; the connector does not request or persist draft customer, address, or contact fields.
+Optional compensation scope (requested only when `SHOPIFY_COMPENSATION_SCOPE_ENABLED=true`):
+
+- write_orders
+
+The connector no longer uses orderCreate; draftOrderCreate/draftOrderComplete/draftOrderDelete require draft-order permissions. The optional `write_orders` permission is used only for the irreversible `orderCancel` compensation path. The Shopify staff account/app installation must also be authorized to cancel orders (`cancel_orders` staff permission) for Shopify's structured `OrderCancelJobResult` to be readable. This is a Shopify Admin user permission, not an OAuth API scope that Cirvanna can grant. If either authorization is missing, the case is blocked for operator review; the connector does not silently widen permissions or attempt cancellation. The read scope is used only to reconcile the deterministic draft reservation by ID/tag; the connector does not request or persist draft customer, address, or contact fields.
 
 No customer profile scope is requested. The order/draft-order read scopes can expose customer-associated fields, but connector GraphQL projections deliberately exclude customer, email, phone, billing and shipping fields; none of those values are synchronized or persisted. Shopify order creation deliberately excludes buyer PII.
 
@@ -76,6 +81,7 @@ No customer profile scope is requested. The order/draft-order read scopes can ex
 | POST /internal/shopify/process-events | X-Commerce-Shopify-Sync-Token | Process product, inventory, order-status and compliance events |
 | POST /internal/shopify/export-paid-orders | X-Commerce-Shopify-Sync-Token | Create external Shopify order records only for already-paid Cirvanna orders |
 | POST /internal/shopify/reconcile | X-Commerce-Shopify-Sync-Token | Re-read Shopify product/inventory and linked order status to recover missed/out-of-order webhooks |
+| POST /internal/shopify/compensate-paid-orders | X-Commerce-Shopify-Sync-Token | Reconcile failed paid-order completions, cancel/restock only when safe, and request a Stripe refund only after every seller is compensated |
 
 Configure an external scheduler to call the three internal jobs on a controlled cadence. Keep the sync token server-side; never route these endpoints through a public browser session.
 
@@ -101,11 +107,17 @@ The connector refuses export if merchant source currency does not equal the conn
 
 Before Stripe Checkout Session creation, Commerce creates one Shopify draft order per connected seller sub-order with a deterministic Cirvanna reservation tag and reserveInventoryUntil equal to the Commerce checkout expiry. Each draft uses the immutable seller source price snapshot as a Shopify priceOverride in the shop currency, so a merchant price edit between catalog sync and checkout cannot silently change the seller-side order value. Shopify's draft-order reservation is the provider-side stock hold; local Commerce reservations alone never count as proof. Ambiguous create outcomes are reconciled by the stable tag and remain fail-closed if they cannot be resolved. If any seller reservation fails, known remote drafts are deleted, local reservations are released and no Stripe session is created. For any checkout containing a Shopify-backed seller, Stripe Checkout is restricted to card payments; delayed-settlement methods are disabled because the provider inventory hold expires with the checkout and must not lapse before payment confirmation. Non-Shopify checkouts retain the existing Stripe payment-method configuration.
 
-After a verified Stripe payment, the paid-order worker completes the reserved Shopify draft. Draft completion commits the held Shopify inventory exactly once; the connector no longer uses orderCreate with DECREMENT_OBEYING_POLICY, avoiding a second decrement. On confirmed Stripe expiry or asynchronous payment failure, draft reservations are deleted idempotently; Shopify's reserveInventoryUntil remains the expiry safety net if the release call cannot be confirmed. A paid order whose draft completion is ambiguous remains in completion_pending and must not be treated as seller-fulfilment-ready until reconciliation confirms the Shopify order.
+After a verified Stripe payment, the paid-order worker completes the reserved Shopify draft. Draft completion commits the held Shopify inventory exactly once; the connector no longer uses orderCreate with DECREMENT_OBEYING_POLICY, avoiding a second decrement. On confirmed Stripe expiry or asynchronous payment failure, draft reservations are deleted idempotently; Shopify's reserveInventoryUntil remains the expiry safety net if the release call cannot be confirmed.
 
-This is a distributed saga, not a cross-provider atomic transaction. Provider timeouts, webhook ordering, draft expiry and partial multi-seller reservation failures still require live Shopify/Stripe staging tests and an operational compensation/refund procedure before production. The connector must remain staging-only until those tests pass.
+A paid order with Shopify reservations enters `provider_pending`; the paid ownership event remains valid for Wardrobe but explicitly carries `fulfillment_ready=false`. Merchant order responses also expose `fulfillment_ready=false`. Commerce changes this to `ready` only after every Shopify reservation is completed and every provider order link is synchronized. If a terminal completion failure occurs, the order enters `compensation_pending` and cannot be exported or fulfilled through the Shopify order worker.
 
-Shopify order webhook/reconciliation status updates only the Shopify link's financial and fulfilment status. It cannot mark a Cirvanna order paid, refund it, release its inventory, or alter the buyer's order state. Only Cirvanna's existing verified payment webhook and reconciliation logic may do that.
+The internal `/internal/shopify/compensate-paid-orders` worker first reconciles each exact draft tag/GID. Drafts without a created order are deleted and confirmed released. If Shopify already created an order, the worker checks fulfillment state and—only when the optional `write_orders` scope is granted—calls `orderCancel` with `restock=true` and Shopify-side refund disabled. The structured `OrderCancelJobResult` is polled until `done=true`; the result must report `status=SUCCEEDED`, no errors and an affected order with `cancelledAt`. Before cancellation, Cirvanna records fresh `available` quantities for every mapped inventory item and requires every returned location to be active. After the job succeeds, it re-reads all inventory-level pages and requires the available quantity for each inventory item to increase by at least the ordered quantity. A missing/inactive location, incomplete inventory mapping, pagination gap, or insufficient restock delta goes to `manual_review`; this deliberately prefers a blocked refund over silently losing seller stock. `orderCancel` is irreversible. Shopify can reject cancellation for pending payment authorizations, active returns, outstanding fulfillments that cannot be cancelled, or restocking to a deactivated location. Active/fulfilled work, any provider cancellation error, missing app/staff permission, ambiguous mutation outcomes, and non-Shopify sellers in a multi-seller order go to `manual_review`; no buyer refund is issued automatically in those cases.
+
+Only after every seller in the Commerce order has a confirmed compensated Shopify case does Commerce create one durable full Stripe refund attempt. It uses a stable idempotency key and refund metadata; ambiguous requests are reconciled against Stripe's refund list and are never retried beyond the safe 20-hour idempotency window without operator review. The order is not marked refunded until a verified `refund.created`/`refund.updated` event confirms a succeeded refund with the exact amount/currency. The `charge.refunded` cumulative snapshot remains monotonic. A confirmed refund changes financial/fulfilment state only; it does not imply a physical return or delete Wardrobe ownership.
+
+This is a distributed saga, not a cross-provider atomic transaction. Provider timeouts, webhook ordering, draft expiry and partial multi-seller reservation failures still require live Shopify/Stripe staging tests, PostgreSQL restore evidence and an operational compensation/refund procedure before production. The connector must remain staging-only until those tests pass.
+
+Shopify order webhook/reconciliation status updates only the Shopify link's financial and fulfilment status. It cannot mark a Cirvanna order paid, refund it, release its inventory, or alter the buyer's order state. Only Cirvanna's verified Stripe payment/refund webhooks and the authenticated compensation worker may change the corresponding Commerce financial/fulfilment state.
 
 ## Webhook and privacy handling
 
@@ -115,7 +127,7 @@ Webhook delivery order is not guaranteed, and delivery itself is not a complete 
 
 ## Required staging acceptance before production
 
-1. Run alembic upgrade head against an isolated PostgreSQL database and prove a backup restore. Confirm alembic_version=20261121_0013 and that all seven connector tables exist.
+1. Run alembic upgrade head against an isolated PostgreSQL database and prove a backup restore. Confirm alembic_version=20261121_0014 and that all nine Shopify/compensation tables exist.
 2. Register the Shopify app scopes, callback and webhook URLs. Install against a development store and verify state mismatch/replay, HMAC mismatch, wrong shop domain, OAuth exchange failure, missing scopes, token refresh/rotation and expiry recovery.
 3. Confirm both access and refresh token ciphertext are encrypted at rest and absent from logs, HTTP responses, error bodies and frontend assets. Verify uninstall removes token material.
 4. Sync a product with multiple variants and multiple inventory locations. Test duplicate/empty SKUs, inactive locations, untracked inventory, incomplete pagination, zero stock, stock decrement/increment, and Cirvanna reservations concurrent with Shopify stock changes.

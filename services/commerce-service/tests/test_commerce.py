@@ -329,7 +329,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
         ))
         connection.execute(
             text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
-            {"revision": "20261121_0013"},
+            {"revision": "20261121_0014"},
         )
 
     ready = client.get("/ready")
@@ -342,7 +342,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
     assert payload["payment_configured"] is True
     assert payload["migrations_required"] is True
     assert payload["migrations_applied"] is True
-    assert payload["schema_revision"] == "20261121_0013"
+    assert payload["schema_revision"] == "20261121_0014"
     assert payload["ready"] is True
 
 
@@ -2562,8 +2562,10 @@ def test_shopify_inventory_reservation_is_staging_only_in_production_by_default(
 def test_shopify_required_scopes_cover_draft_reservation_without_order_write_scope():
     from app.shopify import REQUIRED_SCOPES
 
+    from app.shopify import COMPENSATION_SCOPES
     assert {"read_draft_orders", "write_draft_orders", "read_orders"} <= REQUIRED_SCOPES
     assert "write_orders" not in REQUIRED_SCOPES
+    assert COMPENSATION_SCOPES == {"write_orders"}
 
 
 def test_shopify_existing_connection_without_draft_scopes_requires_reauthorization(monkeypatch, client):
@@ -2726,3 +2728,621 @@ def test_fulfillment_quote_api_rejects_distance_that_would_round_inside_radius(c
         },
     )
     assert response.status_code == 422
+
+
+def _seed_shopify_compensation_case(db, seeded, *, fulfillment_status="UNFULFILLED", include_link=False):
+    from app import shopify
+    order_id = str(uuid.uuid4())
+    order = main.CommerceOrder(
+        id=order_id, order_number="CV-COMP-" + order_id[:8], buyer_user_id="buyer-compensation",
+        state="paid", payment_state="paid", fulfillment_state="compensation_pending",
+        currency="KES", subtotal_minor=500, total_minor=500, commission_minor=0,
+        payment_intent_id="pi_compensation_" + order_id[:8],
+        idempotency_key="compensation-order-" + order_id,
+        expires_at=main.now() + main.timedelta(minutes=30), paid_at=main.now(),
+    )
+    item = main.OrderItem(
+        id=str(uuid.uuid4()), order_id=order_id, merchant_id=seeded["merchant_id"],
+        variant_id=seeded["variant_id"], catalog_product_id=seeded["catalog_product_id"],
+        product_name="Linen Shirt", sku="LINEN-S", options={"size": "S"}, quantity=1,
+        unit_price_minor=500, line_total_minor=500, source_unit_price_minor=500,
+        source_currency="KES", commission_bps=300, commission_minor=15,
+    )
+    connection = shopify.ShopifyConnection(
+        id=str(uuid.uuid4()), merchant_id=seeded["merchant_id"],
+        shop_domain="compensation.myshopify.com", shop_currency="KES",
+        granted_scopes=["read_products", "read_inventory", "read_locations", "read_orders",
+            "read_draft_orders", "write_draft_orders", "write_orders"],
+        status="active", webhook_registration={}, installed_at=main.now(), updated_at=main.now(),
+    )
+    product_snapshot = shopify.ShopifyProductSnapshot(
+        id=str(uuid.uuid4()), connection_id=connection.id,
+        shopify_product_gid="gid://shopify/Product/comp-" + order_id[:8],
+        title="Linen Shirt", remote_status="ACTIVE", mapping_state="mapped", variants_complete=True,
+    )
+    variant_snapshot = shopify.ShopifyVariantSnapshot(
+        id=str(uuid.uuid4()), connection_id=connection.id, product_snapshot_id=product_snapshot.id,
+        shopify_variant_gid="gid://shopify/ProductVariant/comp-" + order_id[:8],
+        shopify_inventory_item_gid="gid://shopify/InventoryItem/comp-" + order_id[:8],
+        sku="LINEN-S", title="S", options={"size": "S"}, price_minor=500, currency="KES",
+        tracked=True, available_quantity=4, on_hand_quantity=4, inventory_complete=True,
+        local_variant_id=seeded["variant_id"], mapping_state="mapped",
+    )
+    reservation = shopify.ShopifyInventoryReservation(
+        id=str(uuid.uuid4()), connection_id=connection.id, merchant_id=seeded["merchant_id"],
+        commerce_order_id=order_id, reservation_key="cirvanna-reserve-test-" + order_id[:8],
+        draft_order_gid="gid://shopify/DraftOrder/" + order_id[:8], state="completion_pending",
+        expires_at=main.now() - main.timedelta(minutes=5),
+    )
+    case = shopify.ShopifyCompensationCase(
+        id=str(uuid.uuid4()), commerce_order_id=order_id, merchant_id=seeded["merchant_id"],
+        connection_id=connection.id, reservation_id=reservation.id,
+        state="pending", last_error="SHOPIFY_DRAFT_COMPLETION_PENDING",
+    )
+    rows = [order, item, connection, product_snapshot, variant_snapshot, reservation, case]
+    if include_link:
+        rows.append(shopify.ShopifyOrderLink(
+            id=str(uuid.uuid4()), connection_id=connection.id, merchant_id=seeded["merchant_id"],
+            commerce_order_id=order_id, idempotency_tag="cirvanna-link-" + order_id[:8],
+            shopify_order_gid="gid://shopify/Order/" + order_id[:8],
+            link_state="creating", fulfillment_status=fulfillment_status,
+        ))
+    db.add_all(rows)
+    db.commit()
+    return order, connection, reservation, case
+
+
+def test_shopify_compensation_cancellation_job_must_finish_before_case_is_compensated(client, monkeypatch):
+    from app import shopify
+    seeded = seed_offer(stock=4)
+    db = TEST_SESSION()
+    order, connection, reservation, case = _seed_shopify_compensation_case(db, seeded, include_link=True)
+    calls = []
+    inventory_reads = 0
+    remote_order = {
+        "id": "gid://shopify/Order/comp-1", "name": "#COMP1", "cancelledAt": None,
+        "displayFulfillmentStatus": "UNFULFILLED", "fulfillmentOrders": {"nodes": []},
+    }
+
+    def fake_graphql(conn, session, query, variables=None):
+        nonlocal inventory_reads
+        calls.append(query)
+        if "CirvannaReadCompensationInventory" in query:
+            inventory_reads += 1
+            quantity = 8 if inventory_reads == 1 else 9
+            return {"inventoryItem": {"id": variables["id"], "inventoryLevels": {
+                "nodes": [{"location": {"id": "gid://shopify/Location/comp-1", "isActive": True},
+                    "quantities": [{"name": "available", "quantity": quantity}]}],
+                "pageInfo": {"hasNextPage": False, "endCursor": None},
+            }}}
+        if "CirvannaReadCompensationDraft" in query:
+            return {"draftOrder": {"id": reservation.draft_order_gid, "status": "COMPLETED",
+                "tags": [reservation.reservation_key], "order": remote_order}}
+        if "CirvannaCancelCompensatedOrder" in query:
+            assert variables["refundMethod"] == {"originalPaymentMethodsRefund": False}
+            assert variables["restock"] is True
+            return {"orderCancel": {"job": {"id": "gid://shopify/Job/comp-1", "done": False},
+                "jobResult": {"id": "gid://shopify/OrderCancelJobResult/comp-1", "done": False,
+                    "status": "STARTED", "errors": [], "order": None}, "orderCancelUserErrors": []}}
+        if "CirvannaReadCancellationJobResult" in query:
+            return {"node": {"id": "gid://shopify/OrderCancelJobResult/comp-1", "done": True,
+                "status": "SUCCEEDED", "errors": [], "order": {"id": remote_order["id"],
+                    "cancelledAt": "2026-11-21T10:00:00Z", "displayFulfillmentStatus": "UNFULFILLED"}}}
+        raise AssertionError("Unexpected Shopify GraphQL query")
+
+    monkeypatch.setattr(shopify, "_graphql", fake_graphql)
+    assert shopify._process_shopify_compensation_case(db, case, order) == "cancel_pending"
+    db.refresh(case)
+    assert case.cancellation_job_gid == "gid://shopify/OrderCancelJobResult/comp-1"
+    assert case.state == "cancel_pending"
+    assert shopify._process_shopify_compensation_case(db, case, order) == "compensated"
+    db.refresh(case)
+    db.refresh(reservation)
+    db.refresh(order)
+    link = db.scalar(select(shopify.ShopifyOrderLink).where(shopify.ShopifyOrderLink.commerce_order_id == order.id))
+    assert case.state == "compensated"
+    assert reservation.state == "compensated"
+    assert link.link_state == "cancelled"
+    assert order.fulfillment_state == "compensation_pending"
+    assert any("CirvannaCancelCompensatedOrder" in query for query in calls)
+    db.close()
+
+
+def test_shopify_compensation_blocks_orders_with_active_fulfillment(client, monkeypatch):
+    from app import shopify
+    seeded = seed_offer(stock=4)
+    db = TEST_SESSION()
+    order, connection, reservation, case = _seed_shopify_compensation_case(db, seeded)
+    calls = []
+
+    def fake_graphql(conn, session, query, variables=None):
+        calls.append(query)
+        if "CirvannaReadCompensationDraft" in query:
+            return {"draftOrder": {"id": reservation.draft_order_gid, "status": "COMPLETED",
+                "tags": [reservation.reservation_key], "order": {
+                    "id": "gid://shopify/Order/active-1", "cancelledAt": None,
+                    "displayFulfillmentStatus": "IN_PROGRESS",
+                    "fulfillmentOrders": {"nodes": [{"id": "gid://shopify/FulfillmentOrder/1", "status": "IN_PROGRESS"}]},
+                }}}
+        raise AssertionError("Cancellation must not be attempted for active fulfillment")
+
+    monkeypatch.setattr(shopify, "_graphql", fake_graphql)
+    assert shopify._process_shopify_compensation_case(db, case, order) == "manual_review"
+    db.refresh(order)
+    assert order.fulfillment_state == "manual_review"
+    assert not any("CirvannaCancelCompensatedOrder" in query for query in calls)
+    alert = db.scalar(select(main.CommerceOutboxEvent).where(
+        main.CommerceOutboxEvent.event_type == "commerce.shopify.compensation.manual_review",
+        main.CommerceOutboxEvent.aggregate_id == case.id,
+    ))
+    assert alert is not None and alert.payload["fulfillment_blocked"] is True
+    db.close()
+
+
+def test_shopify_compensation_releases_draft_when_no_order_was_created(client, monkeypatch):
+    from app import shopify
+    seeded = seed_offer(stock=4)
+    db = TEST_SESSION()
+    order, connection, reservation, case = _seed_shopify_compensation_case(db, seeded)
+    deleted = []
+
+    def fake_graphql(conn, session, query, variables=None):
+        if "CirvannaReadCompensationDraft" in query:
+            return {"draftOrder": {"id": reservation.draft_order_gid, "status": "OPEN",
+                "tags": [reservation.reservation_key], "order": None}}
+        if "CirvannaFindReservationOrder" in query:
+            return {"orders": {"nodes": []}}
+        if "CirvannaReleaseInventoryReservation" in query:
+            deleted.append(variables["id"])
+            return {"draftOrderDelete": {"deletedId": variables["id"], "userErrors": []}}
+        raise AssertionError("Unexpected Shopify GraphQL query")
+
+    monkeypatch.setattr(shopify, "_graphql", fake_graphql)
+    assert shopify._process_shopify_compensation_case(db, case, order) == "compensated"
+    db.refresh(reservation)
+    assert reservation.state == "released"
+    assert deleted == [reservation.draft_order_gid]
+    db.close()
+
+
+def test_stripe_refund_updated_webhook_confirms_full_compensation_refund_only(client, monkeypatch):
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_test_unit_only_secret")
+    db = TEST_SESSION()
+    order = main.CommerceOrder(
+        id=str(uuid.uuid4()), order_number="CV-REFUND-CONFIRM", buyer_user_id="buyer-refund-confirm",
+        state="paid", payment_state="paid", fulfillment_state="refund_pending", currency="KES",
+        subtotal_minor=500, total_minor=500, commission_minor=0, payment_intent_id="pi_refund_confirm",
+        idempotency_key="refund-confirm-order", expires_at=main.now() + main.timedelta(minutes=30), paid_at=main.now(),
+    )
+    attempt = main.StripeRefundAttempt(
+        id=str(uuid.uuid4()), order_id=order.id, payment_intent_id="pi_refund_confirm",
+        amount_minor=500, currency="KES", idempotency_key="cirvanna-compensation-refund-confirm",
+        state="provider_succeeded", attempts=1,
+    )
+    db.add_all([order, attempt])
+    db.commit()
+    event = {"id": "evt_refund_compensation_confirm", "type": "refund.updated", "data": {"object": {
+        "id": "re_compensation_1", "payment_intent": "pi_refund_confirm", "amount": 500,
+        "currency": "kes", "status": "succeeded", "metadata": {
+            "commerce_order_id": order.id, "compensation_key": attempt.idempotency_key,
+        },
+    }}}
+    raw = json.dumps(event, separators=(",", ":")).encode()
+    signature = sign_stripe_event(raw, "whsec_test_unit_only_secret")
+    response = client.post("/webhooks/stripe", content=raw, headers={"Stripe-Signature": signature})
+    assert response.status_code == 200, response.text
+    db.refresh(order)
+    db.refresh(attempt)
+    assert order.state == "paid"
+    assert order.payment_state == "refunded"
+    assert order.refund_state == "refunded"
+    assert order.fulfillment_state == "refunded"
+    assert order.amount_refunded_minor == 500
+    assert attempt.state == "confirmed"
+    replay = client.post("/webhooks/stripe", content=raw, headers={"Stripe-Signature": signature})
+    assert replay.status_code == 200 and replay.json()["duplicate"] is True
+    stale_failure = {"id": "evt_refund_compensation_stale_failure", "type": "refund.updated", "data": {"object": {
+        "id": "re_compensation_1", "payment_intent": "pi_refund_confirm", "amount": 500,
+        "currency": "kes", "status": "failed", "failure_reason": "stale event", "metadata": {
+            "commerce_order_id": order.id, "compensation_key": attempt.idempotency_key,
+        },
+    }}}
+    stale_raw = json.dumps(stale_failure, separators=(",", ":")).encode()
+    stale_signature = sign_stripe_event(stale_raw, "whsec_test_unit_only_secret")
+    stale_response = client.post("/webhooks/stripe", content=stale_raw, headers={"Stripe-Signature": stale_signature})
+    assert stale_response.status_code == 200, stale_response.text
+    db.refresh(order)
+    db.refresh(attempt)
+    assert attempt.state == "confirmed"
+    assert order.refund_state == "refunded"
+    assert order.fulfillment_state == "refunded"
+    db.close()
+
+
+def test_stripe_compensation_refund_uses_stable_idempotency_key_and_no_checkout_config(client, monkeypatch):
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_refund_gateway")
+    attempt = main.StripeRefundAttempt(
+        id=str(uuid.uuid4()), order_id="order-refund-gateway", payment_intent_id="pi_refund_gateway",
+        amount_minor=725, currency="KES", idempotency_key="cirvanna-compensation-refund-stable",
+        state="prepared", attempts=0,
+    )
+    captured = {}
+
+    def fake_post(url, **kwargs):
+        captured.update({"url": url, **kwargs})
+        return FakeResponse({"id": "re_refund_gateway", "payment_intent": "pi_refund_gateway",
+            "amount": 725, "currency": "kes", "status": "pending"})
+
+    monkeypatch.setattr(main.httpx, "post", fake_post)
+    response = main.StripeGateway().create_compensation_refund(attempt)
+    assert response["id"] == "re_refund_gateway"
+    assert captured["url"] == "https://api.stripe.com/v1/refunds"
+    assert captured["headers"]["Idempotency-Key"] == attempt.idempotency_key
+    assert captured["data"]["metadata[commerce_order_id]"] == attempt.order_id
+    assert captured["data"]["metadata[compensation_key]"] == attempt.idempotency_key
+
+
+def test_ambiguous_shopify_order_cancel_is_never_reissued(client, monkeypatch):
+    from app import shopify
+    from fastapi import HTTPException
+    seeded = seed_offer(stock=4)
+    db = TEST_SESSION()
+    order, connection, reservation, case = _seed_shopify_compensation_case(db, seeded)
+    mutation_calls = []
+
+    def ambiguous_graphql(conn, session, query, variables=None):
+        if "CirvannaReadCompensationInventory" in query:
+            return {"inventoryItem": {"id": variables["id"], "inventoryLevels": {
+                "nodes": [{"location": {"id": "gid://shopify/Location/comp-1", "isActive": True},
+                    "quantities": [{"name": "available", "quantity": 8}]}],
+                "pageInfo": {"hasNextPage": False, "endCursor": None},
+            }}}
+        if "CirvannaReadCompensationDraft" in query:
+            return {"draftOrder": {"id": reservation.draft_order_gid, "status": "COMPLETED",
+                "tags": [reservation.reservation_key], "order": {
+                    "id": "gid://shopify/Order/ambiguous-cancel", "cancelledAt": None,
+                    "displayFulfillmentStatus": "UNFULFILLED", "fulfillmentOrders": {"nodes": []},
+                }}}
+        if "CirvannaCancelCompensatedOrder" in query:
+            mutation_calls.append(variables["orderId"])
+            raise HTTPException(503, detail={"code": "SHOPIFY_API_UNAVAILABLE"})
+        if "CirvannaReconcileAmbiguousCancellation" in query:
+            return {"order": {"id": variables["id"], "cancelledAt": None,
+                "displayFulfillmentStatus": "UNFULFILLED"}}
+        raise AssertionError("Unexpected Shopify GraphQL query")
+
+    monkeypatch.setattr(shopify, "_graphql", ambiguous_graphql)
+    with pytest.raises(HTTPException):
+        shopify._process_shopify_compensation_case(db, case, order)
+    db.refresh(case)
+    assert case.state == "cancel_requesting"
+    assert shopify._process_shopify_compensation_case(db, case, order) == "manual_review"
+    assert mutation_calls == ["gid://shopify/Order/ambiguous-cancel"]
+    db.close()
+
+
+def test_paid_shopify_order_is_not_fulfillment_ready_until_provider_order_is_linked(client):
+    from app import shopify
+    seeded = seed_offer(stock=3)
+    db = TEST_SESSION()
+    variant = db.get(main.Variant, seeded["variant_id"])
+    variant.reserved_qty = 1
+    order = main.CommerceOrder(
+        id=str(uuid.uuid4()), order_number="CV-PROVIDER-GATE", buyer_user_id="buyer-provider-gate",
+        state="pending_payment", payment_state="pending", fulfillment_state="ready", currency="KES",
+        subtotal_minor=250, total_minor=250, commission_minor=0, idempotency_key="provider-gate-order",
+        expires_at=main.now() + main.timedelta(minutes=30), payment_session_id="cs_provider_gate",
+    )
+    item = main.OrderItem(
+        id=str(uuid.uuid4()), order_id=order.id, merchant_id=seeded["merchant_id"],
+        variant_id=seeded["variant_id"], catalog_product_id=seeded["catalog_product_id"],
+        product_name="Linen Shirt", sku="LINEN-S", options={"size": "S"}, quantity=1,
+        unit_price_minor=250, line_total_minor=250, source_unit_price_minor=250,
+        source_currency="KES", commission_bps=300, commission_minor=7,
+    )
+    connection = shopify.ShopifyConnection(
+        id=str(uuid.uuid4()), merchant_id=seeded["merchant_id"], shop_domain="gate.myshopify.com",
+        shop_currency="KES", granted_scopes=["read_products", "read_inventory", "read_locations", "read_orders",
+            "read_draft_orders", "write_draft_orders"], status="active", webhook_registration={},
+        installed_at=main.now(), updated_at=main.now(),
+    )
+    reservation = shopify.ShopifyInventoryReservation(
+        id=str(uuid.uuid4()), connection_id=connection.id, merchant_id=seeded["merchant_id"],
+        commerce_order_id=order.id, reservation_key="cirvanna-reserve-provider-gate",
+        draft_order_gid="gid://shopify/DraftOrder/700", state="reserved",
+        expires_at=order.expires_at,
+    )
+    db.add_all([order, item, connection, reservation, main.StockReservation(
+        id=str(uuid.uuid4()), order_id=order.id, variant_id=variant.id, quantity=1,
+        state="reserved", expires_at=order.expires_at,
+    )])
+    db.commit()
+    main.settle_paid(db, order, 250, "KES", payment_intent_id="pi_provider_gate")
+    db.flush()
+    assert order.state == "paid"
+    assert order.fulfillment_state == "provider_pending"
+    assert main.order_json(db, order)["fulfillment_ready"] is False
+    event = db.scalar(select(main.CommerceOutboxEvent).where(
+        main.CommerceOutboxEvent.aggregate_id == order.id,
+        main.CommerceOutboxEvent.event_type == "commerce.order.paid",
+    ))
+    assert event.payload["fulfillment_ready"] is False
+    assert event.payload["fulfillment_state"] == "provider_pending"
+    db.close()
+
+
+def test_compensation_does_not_refund_multiseller_order_with_non_shopify_seller(client):
+    from app import shopify
+    seeded = seed_offer(stock=4)
+    second = seed_offer(stock=4, owner_user_id="merchant-2")
+    db = TEST_SESSION()
+    order, connection, reservation, case = _seed_shopify_compensation_case(db, seeded)
+    second_item = main.OrderItem(
+        id=str(uuid.uuid4()), order_id=order.id, merchant_id=second["merchant_id"],
+        variant_id=second["variant_id"], catalog_product_id=second["catalog_product_id"],
+        product_name="Other item", sku="OTHER-S", options={}, quantity=1,
+        unit_price_minor=100, line_total_minor=100, source_unit_price_minor=100,
+        source_currency="KES", commission_bps=300, commission_minor=3,
+    )
+    db.add(second_item)
+    db.commit()
+    shopify.begin_shopify_compensation(db, order, "SHOPIFY_DRAFT_COMPLETION_PENDING")
+    db.refresh(order)
+    cases = list(db.scalars(select(shopify.ShopifyCompensationCase).where(
+        shopify.ShopifyCompensationCase.commerce_order_id == order.id,
+    )).all())
+    assert order.fulfillment_state == "manual_review"
+    assert len(cases) == 1
+    assert not db.scalar(select(main.StripeRefundAttempt).where(main.StripeRefundAttempt.order_id == order.id))
+    db.close()
+
+
+def test_compensation_refund_request_is_durable_and_reconciled_before_retry(client, monkeypatch):
+    from app import shopify
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_compensation_refund")
+    db = TEST_SESSION()
+    order = main.CommerceOrder(
+        id=str(uuid.uuid4()), order_number="CV-REFUND-RECON", buyer_user_id="buyer-refund-recon",
+        state="paid", payment_state="paid", fulfillment_state="refund_pending", currency="KES",
+        subtotal_minor=725, total_minor=725, commission_minor=0, payment_intent_id="pi_refund_recon",
+        idempotency_key="refund-reconciliation-order", expires_at=main.now() + main.timedelta(minutes=30), paid_at=main.now(),
+    )
+    db.add(order)
+    db.commit()
+    posts = []
+
+    def fake_post(url, **kwargs):
+        posts.append(kwargs)
+        return FakeResponse({"id": "re_refund_recon", "payment_intent": "pi_refund_recon",
+            "amount": 725, "currency": "kes", "status": "pending"})
+
+    def fake_get(url, **kwargs):
+        return FakeResponse({"data": [{"id": "re_refund_recon", "payment_intent": "pi_refund_recon",
+            "amount": 725, "currency": "kes", "status": "pending",
+            "metadata": {"compensation_key": posts[0]["headers"]["Idempotency-Key"]}}]})
+
+    monkeypatch.setattr(main.httpx, "post", fake_post)
+    assert shopify._process_compensation_refund(db, order) == "provider_pending"
+    attempt = db.scalar(select(main.StripeRefundAttempt).where(main.StripeRefundAttempt.order_id == order.id))
+    assert attempt is not None and attempt.state == "provider_pending"
+    assert order.refund_state == "none"
+    monkeypatch.setattr(main.httpx, "get", fake_get)
+    assert shopify._process_compensation_refund(db, order) == "provider_pending"
+    assert len(posts) == 1
+    assert posts[0]["headers"]["Idempotency-Key"] == attempt.idempotency_key
+    db.close()
+
+
+def test_ambiguous_stripe_refund_beyond_safe_idempotency_window_requires_manual_review(client, monkeypatch):
+    from app import shopify
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_compensation_refund")
+    db = TEST_SESSION()
+    order = main.CommerceOrder(
+        id=str(uuid.uuid4()), order_number="CV-REFUND-AMBIG", buyer_user_id="buyer-refund-ambig",
+        state="paid", payment_state="paid", fulfillment_state="refund_pending", currency="KES",
+        subtotal_minor=725, total_minor=725, commission_minor=0, payment_intent_id="pi_refund_ambig",
+        idempotency_key="refund-ambiguous-order", expires_at=main.now() + main.timedelta(minutes=30), paid_at=main.now(),
+    )
+    db.add(order)
+    db.commit()
+    posts = []
+
+    def timeout_post(url, **kwargs):
+        posts.append(kwargs)
+        raise main.httpx.TimeoutException("simulated ambiguous timeout")
+
+    monkeypatch.setattr(main.httpx, "post", timeout_post)
+    assert shopify._process_compensation_refund(db, order) == "ambiguous"
+    attempt = db.scalar(select(main.StripeRefundAttempt).where(main.StripeRefundAttempt.order_id == order.id))
+    attempt.requested_at = main.now() - main.timedelta(hours=21)
+    db.commit()
+    monkeypatch.setattr(main.httpx, "get", lambda url, **kwargs: FakeResponse({"data": []}))
+    assert shopify._process_compensation_refund(db, order) == "manual_review"
+    db.refresh(order)
+    db.refresh(attempt)
+    assert len(posts) == 1
+    assert attempt.state == "manual_review"
+    assert order.fulfillment_state == "manual_review"
+    assert order.refund_state == "none"
+    db.close()
+
+
+def test_compensation_worker_requests_stripe_refund_only_after_all_seller_cases_are_compensated(client, monkeypatch):
+    from app import shopify
+    monkeypatch.setenv("COMMERCE_SHOPIFY_SYNC_TOKEN", "shopify-sync-token-with-more-than-32-bytes")
+    monkeypatch.setenv("STRIPE_SECRET_KEY", "sk_test_compensation_worker")
+    seeded = seed_offer(stock=4)
+    db = TEST_SESSION()
+    order, connection, reservation, case = _seed_shopify_compensation_case(db, seeded)
+    case.state = "compensated"
+    reservation.state = "compensated"
+    db.commit()
+    captured = {}
+
+    def fake_post(url, **kwargs):
+        captured.update({"url": url, **kwargs})
+        return FakeResponse({"id": "re_compensation_worker", "payment_intent": order.payment_intent_id,
+            "amount": 500, "currency": "kes", "status": "pending"})
+
+    monkeypatch.setattr(main.httpx, "post", fake_post)
+    response = client.post("/internal/shopify/compensate-paid-orders", headers={
+        "X-Commerce-Shopify-Sync-Token": "shopify-sync-token-with-more-than-32-bytes",
+    })
+    assert response.status_code == 200, response.text
+    assert response.json()["refunds_requested_or_reconciled"] == 1
+    attempt = db.scalar(select(main.StripeRefundAttempt).where(main.StripeRefundAttempt.order_id == order.id))
+    db.refresh(order)
+    assert attempt is not None and attempt.state == "provider_pending"
+    assert order.fulfillment_state == "refund_pending"
+    assert order.refund_state == "none"
+    assert captured["url"] == "https://api.stripe.com/v1/refunds"
+    assert captured["headers"]["Idempotency-Key"] == attempt.idempotency_key
+    db.close()
+
+
+
+def test_shopify_compensation_scope_is_opt_in_for_oauth_install(client, monkeypatch):
+    from urllib.parse import parse_qs, urlsplit
+    monkeypatch.setenv("SHOPIFY_API_KEY", "shopify-api-key")
+    monkeypatch.setenv("SHOPIFY_API_SECRET", "s" * 40)
+    monkeypatch.setenv("SHOPIFY_APP_BASE_URL", "https://marketplace.cirvanna.example")
+    seeded = seed_offer(stock=2)
+    merchant = row(main.Merchant, seeded["merchant_id"])
+    headers = auth(merchant.owner_user_id, "merchant")
+    monkeypatch.delenv("SHOPIFY_COMPENSATION_SCOPE_ENABLED", raising=False)
+    standard = client.get("/integrations/shopify/install?shop=scope-test.myshopify.com", headers=headers, follow_redirects=False)
+    assert standard.status_code == 302
+    standard_scope = set(parse_qs(urlsplit(standard.headers["location"]).query)["scope"][0].split(","))
+    assert "write_orders" not in standard_scope
+
+    monkeypatch.setenv("SHOPIFY_COMPENSATION_SCOPE_ENABLED", "true")
+    expanded = client.get("/integrations/shopify/install?shop=scope-test.myshopify.com", headers=headers, follow_redirects=False)
+    assert expanded.status_code == 302
+    expanded_scope = set(parse_qs(urlsplit(expanded.headers["location"]).query)["scope"][0].split(","))
+    assert "write_orders" in expanded_scope
+    assert {"read_draft_orders", "write_draft_orders"} <= expanded_scope
+
+
+def test_paid_shopify_order_with_disconnected_store_is_blocked_and_sent_to_manual_review(client, monkeypatch):
+    from app import shopify
+    token = "shopify-sync-token-with-more-than-32-bytes"
+    monkeypatch.setenv("COMMERCE_SHOPIFY_SYNC_TOKEN", token)
+    seeded = seed_offer(stock=4)
+    db = TEST_SESSION()
+    order, connection, reservation, case = _seed_shopify_compensation_case(db, seeded)
+    order.fulfillment_state = "provider_pending"
+    connection.status = "uninstalled"
+    reservation.state = "reserved"
+    case.state = "pending"
+    db.commit()
+
+    exported = client.post("/internal/shopify/export-paid-orders", headers={"X-Commerce-Shopify-Sync-Token": token})
+    assert exported.status_code == 200, exported.text
+    db.refresh(order)
+    assert order.fulfillment_state == "compensation_pending"
+
+    compensated = client.post("/internal/shopify/compensate-paid-orders", headers={"X-Commerce-Shopify-Sync-Token": token})
+    assert compensated.status_code == 200, compensated.text
+    db.refresh(order)
+    db.refresh(case)
+    assert case.state == "manual_review"
+    assert order.fulfillment_state == "manual_review"
+    assert not db.scalar(select(main.StripeRefundAttempt).where(main.StripeRefundAttempt.order_id == order.id))
+    db.close()
+
+
+def test_previously_cancelled_shopify_order_requires_restock_evidence(client, monkeypatch):
+    from app import shopify
+    seeded = seed_offer(stock=4)
+    db = TEST_SESSION()
+    order, connection, reservation, case = _seed_shopify_compensation_case(db, seeded)
+    calls = []
+
+    def fake_graphql(conn, session, query, variables=None):
+        calls.append(query)
+        if "CirvannaReadCompensationDraft" in query:
+            return {"draftOrder": {"id": reservation.draft_order_gid, "status": "COMPLETED",
+                "tags": [reservation.reservation_key], "order": {
+                    "id": "gid://shopify/Order/already-cancelled", "cancelledAt": "2026-11-21T09:00:00Z",
+                    "displayFulfillmentStatus": "UNFULFILLED", "fulfillmentOrders": {"nodes": []},
+                }}}
+        raise AssertionError("An already-cancelled order must not be cancelled again")
+
+    monkeypatch.setattr(shopify, "_graphql", fake_graphql)
+    assert shopify._process_shopify_compensation_case(db, case, order) == "manual_review"
+    db.refresh(order)
+    assert order.fulfillment_state == "manual_review"
+    assert not any("CirvannaCancelCompensatedOrder" in query for query in calls)
+    db.close()
+
+
+def test_shopify_compensation_refuses_cancellation_when_any_inventory_location_is_inactive(client, monkeypatch):
+    from app import shopify
+    seeded = seed_offer(stock=4)
+    db = TEST_SESSION()
+    order, connection, reservation, case = _seed_shopify_compensation_case(db, seeded)
+    calls = []
+
+    def fake_graphql(conn, session, query, variables=None):
+        calls.append(query)
+        if "CirvannaReadCompensationDraft" in query:
+            return {"draftOrder": {"id": reservation.draft_order_gid, "status": "COMPLETED",
+                "tags": [reservation.reservation_key], "order": {
+                    "id": "gid://shopify/Order/inactive-location", "cancelledAt": None,
+                    "displayFulfillmentStatus": "UNFULFILLED"}}}
+        if "CirvannaReadCompensationInventory" in query:
+            return {"inventoryItem": {"id": variables["id"], "inventoryLevels": {
+                "nodes": [{"location": {"id": "gid://shopify/Location/inactive", "isActive": False},
+                    "quantities": [{"name": "available", "quantity": 8}]}],
+                "pageInfo": {"hasNextPage": False, "endCursor": None},
+            }}}
+        raise AssertionError("Cancellation must not run with an inactive inventory location")
+
+    monkeypatch.setattr(shopify, "_graphql", fake_graphql)
+    assert shopify._process_shopify_compensation_case(db, case, order) == "manual_review"
+    assert not any("CirvannaCancelCompensatedOrder" in query for query in calls)
+    db.refresh(order)
+    assert order.fulfillment_state == "manual_review"
+    db.close()
+
+
+def test_shopify_successful_cancel_without_inventory_restock_delta_is_manual_review(client, monkeypatch):
+    from app import shopify
+    seeded = seed_offer(stock=4)
+    db = TEST_SESSION()
+    order, connection, reservation, case = _seed_shopify_compensation_case(db, seeded)
+    inventory_reads = 0
+
+    def fake_graphql(conn, session, query, variables=None):
+        nonlocal inventory_reads
+        if "CirvannaReadCompensationInventory" in query:
+            inventory_reads += 1
+            return {"inventoryItem": {"id": variables["id"], "inventoryLevels": {
+                "nodes": [{"location": {"id": "gid://shopify/Location/active", "isActive": True},
+                    "quantities": [{"name": "available", "quantity": 8}]}],
+                "pageInfo": {"hasNextPage": False, "endCursor": None},
+            }}}
+        if "CirvannaReadCompensationDraft" in query:
+            return {"draftOrder": {"id": reservation.draft_order_gid, "status": "COMPLETED",
+                "tags": [reservation.reservation_key], "order": {
+                    "id": "gid://shopify/Order/no-restock", "cancelledAt": None,
+                    "displayFulfillmentStatus": "UNFULFILLED"}}}
+        if "CirvannaCancelCompensatedOrder" in query:
+            return {"orderCancel": {"job": {"id": "gid://shopify/Job/no-restock", "done": False},
+                "jobResult": {"id": "gid://shopify/OrderCancelJobResult/no-restock", "done": False,
+                    "status": "STARTED", "errors": [], "order": None}, "orderCancelUserErrors": []}}
+        if "CirvannaReadCancellationJobResult" in query:
+            return {"node": {"id": "gid://shopify/OrderCancelJobResult/no-restock", "done": True,
+                "status": "SUCCEEDED", "errors": [], "order": {"id": "gid://shopify/Order/no-restock",
+                    "cancelledAt": "2026-11-21T10:00:00Z", "displayFulfillmentStatus": "UNFULFILLED"}}}
+        raise AssertionError("Unexpected Shopify GraphQL query")
+
+    monkeypatch.setattr(shopify, "_graphql", fake_graphql)
+    assert shopify._process_shopify_compensation_case(db, case, order) == "cancel_pending"
+    db.refresh(case)
+    assert shopify._process_shopify_compensation_case(db, case, order) == "manual_review"
+    db.refresh(order)
+    assert inventory_reads == 2
+    assert case.state == "manual_review"
+    assert order.fulfillment_state == "manual_review"
+    db.close()
