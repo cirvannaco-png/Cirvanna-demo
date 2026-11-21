@@ -637,6 +637,29 @@ def _sync_mapped_variant(
     return None
 
 
+def _quarantine_connection_listings(db: Session, connection: ShopifyConnection) -> int:
+    quarantined = 0
+    products = list(db.scalars(select(ShopifyProductSnapshot).where(
+        ShopifyProductSnapshot.connection_id == connection.id
+    )).all())
+    for product in products:
+        if product.listing_id:
+            listing = db.get(commerce.Listing, product.listing_id)
+            if listing is not None and listing.merchant_id == connection.merchant_id:
+                listing.state = "inactive"
+        variants = list(db.scalars(select(ShopifyVariantSnapshot).where(
+            ShopifyVariantSnapshot.product_snapshot_id == product.id,
+            ShopifyVariantSnapshot.local_variant_id.is_not(None),
+        )).all())
+        for snapshot in variants:
+            variant = db.get(commerce.Variant, snapshot.local_variant_id)
+            if variant is not None:
+                variant.state = "inactive"
+                variant.observed_at = utcnow() - timedelta(days=30)
+                quarantined += 1
+    return quarantined
+
+
 def _deactivate_product_listing(db: Session, connection: ShopifyConnection, product: ShopifyProductSnapshot) -> None:
     if product.remote_status == "ACTIVE":
         return
@@ -990,6 +1013,7 @@ def disconnect_shopify(
     connection = db.scalar(select(ShopifyConnection).where(ShopifyConnection.merchant_id == merchant.id))
     if connection is None:
         return {"disconnected": True}
+    _quarantine_connection_listings(db, connection)
     connection.access_token_ciphertext = None
     connection.refresh_token_ciphertext = None
     connection.status = "revoked"
@@ -1324,6 +1348,7 @@ async def receive_shopify_webhook(
     # Shopify may retry app/uninstalled after the connection has already been removed.
     if topic == "app/uninstalled":
         if connection:
+            _quarantine_connection_listings(db, connection)
             connection.status = "revoked"
             connection.access_token_ciphertext = None
             connection.refresh_token_ciphertext = None
