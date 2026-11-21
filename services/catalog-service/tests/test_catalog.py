@@ -608,3 +608,233 @@ def test_cil_gateway_can_serve_validated_ingredient_with_attribution(client, mon
     assert response.status_code == 200
     intelligence = response.json()["attributes"]["product_intelligence"]
     assert intelligence["ingredient_declarations"][0]["evidence"]["attribution"] == "Manufacturer label"
+
+
+
+def garment_size_metadata(variant_id: str, *, size_label: str = "m") -> dict:
+    return {
+        "product_intelligence": {
+            "schema_version": "1.0",
+            "garment_fit": {
+                "size_specs": [{
+                    "variant_id": variant_id,
+                    "size_label": size_label,
+                    "category": "top",
+                    "pattern_dimensions_mm": {
+                        "chest_mm": 1000,
+                        "waist_mm": 780,
+                        "shoulder_width_mm": 460,
+                        "sleeve_length_mm": 610,
+                        "garment_length_mm": 700,
+                    },
+                    "stretch_ratio": 0.35,
+                    "fit_class": "regular",
+                    "fabric_weight": "medium",
+                    "structure": "semi_structured",
+                    "ease_allowance_mm": {"chest_mm": 20},
+                    "evidence": {
+                        "source_type": "manufacturer_declared",
+                        "reference": "manufacturer-size-chart-2026-11",
+                        "reviewed_at": "2026-11-10",
+                        "source_id": "SRC-GARMENT-SIZE-001",
+                        "evidence_grade": "E4",
+                        "scope": "finished_product",
+                    },
+                }]
+            },
+        }
+    }
+
+
+def test_garment_fit_is_bound_to_active_canonical_size_variant_and_versioned(client):
+    product = create_product(client, category="apparel")
+    variant_response = client.post(
+        f"/products/{product['product_id']}/variants",
+        headers=auth_headers(),
+        json={"attributes": {"size": "M", "colour": "blue"}},
+    )
+    assert variant_response.status_code == 201, variant_response.text
+    variant_id = variant_response.json()["variant_id"]
+
+    patch = client.patch(
+        f"/products/{product['product_id']}?expected_version={product['catalog_version']}",
+        headers=auth_headers(),
+        json={"attributes": garment_size_metadata(variant_id)},
+    )
+    assert patch.status_code == 200, patch.text
+    assert patch.json()["catalog_version"] == product["catalog_version"] + 1
+    assert patch.json()["attributes"]["product_intelligence"]["garment_fit"]["size_specs"][0]["variant_id"] == variant_id
+
+    history = client.get(
+        f"/products/{product['product_id']}/versions", headers=auth_headers()
+    )
+    assert history.status_code == 200
+    # The public historical representation remains withheld without a CIL receipt.
+    assert "product_intelligence" not in history.json()[-1]["snapshot"]["attributes"]
+
+    # The authoritative internal snapshot retains the submitted, versioned specification.
+    db = TestSessionLocal()
+    try:
+        version = db.query(ProductVersion).filter_by(product_id=product["product_id"]).order_by(ProductVersion.version.desc()).first()
+        assert version.snapshot["attributes"]["product_intelligence"]["garment_fit"]["size_specs"][0]["size_label"] == "m"
+    finally:
+        db.close()
+
+    # A size variant cannot be archived while its evidence-backed fit spec references it.
+    archived = client.delete(f"/variants/{variant_id}", headers=auth_headers())
+    assert archived.status_code == 409
+    assert archived.json()["detail"]["code"] == "GARMENT_FIT_SPEC_MUST_BE_REMOVED_FIRST"
+
+
+def test_garment_fit_rejects_size_label_mismatch_with_canonical_variant(client):
+    product = create_product(client, category="apparel")
+    variant_response = client.post(
+        f"/products/{product['product_id']}/variants",
+        headers=auth_headers(),
+        json={"attributes": {"size": "M", "colour": "blue"}},
+    )
+    variant_id = variant_response.json()["variant_id"]
+    patch = client.patch(
+        f"/products/{product['product_id']}",
+        headers=auth_headers(),
+        json={"attributes": garment_size_metadata(variant_id, size_label="large")},
+    )
+    assert patch.status_code == 422
+    assert patch.json()["detail"]["code"] == "GARMENT_FIT_SIZE_LABEL_MISMATCH"
+
+
+
+def test_garment_fit_metadata_is_withheld_without_cil_gateway(client, monkeypatch):
+    monkeypatch.delenv("CIL_GATEWAY_URL", raising=False)
+    monkeypatch.delenv("CIL_CATALOG_SERVICE_TOKEN", raising=False)
+    product = create_product(client, category="apparel")
+    variant_response = client.post(
+        f"/products/{product['product_id']}/variants",
+        headers=auth_headers(),
+        json={"attributes": {"size": "M", "colour": "blue"}},
+    )
+    variant_id = variant_response.json()["variant_id"]
+    updated = client.patch(
+        f"/products/{product['product_id']}",
+        headers=auth_headers(),
+        json={"attributes": garment_size_metadata(variant_id)},
+    )
+    assert updated.status_code == 200, updated.text
+    response = client.get(f"/products/{product['product_id']}", headers=auth_headers())
+    assert response.status_code == 200
+    assert "product_intelligence" not in response.json()["attributes"]
+
+
+def test_cil_gateway_serves_only_eligible_garment_fit_variant_metadata(client, monkeypatch):
+    from app import main as catalog_main
+
+    monkeypatch.setenv("CIL_GATEWAY_URL", "https://cil.internal")
+    monkeypatch.setenv("CIL_CATALOG_SERVICE_TOKEN", "catalog-to-cil-token")
+
+    class FakeResponse:
+        def __init__(self, request_payload):
+            self.request_payload = request_payload
+        def raise_for_status(self):
+            return None
+        def json(self):
+            specs = self.request_payload["garment_fit_specs"]
+            return {
+                "product_id": self.request_payload["product_id"],
+                "catalog_version": self.request_payload["catalog_version"],
+                "decisions": [{
+                    "item_id": item["variant_id"],
+                    "kind": "garment_fit",
+                    "eligible": True,
+                    "attribution_required": True,
+                    "attribution_text": "Manufacturer size chart",
+                    "source_owner": "Manufacturer",
+                } for item in specs],
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return None
+        async def post(self, url, json, headers):
+            assert url == "https://cil.internal/serving/assessment"
+            assert headers["Authorization"] == "Bearer catalog-to-cil-token"
+            assert len(json["garment_fit_specs"]) == 1
+            return FakeResponse(json)
+
+    monkeypatch.setattr(catalog_main.httpx, "AsyncClient", FakeAsyncClient)
+    product = create_product(client, category="apparel")
+    variant_response = client.post(
+        f"/products/{product['product_id']}/variants",
+        headers=auth_headers(),
+        json={"attributes": {"size": "M", "colour": "blue"}},
+    )
+    variant_id = variant_response.json()["variant_id"]
+    updated = client.patch(
+        f"/products/{product['product_id']}",
+        headers=auth_headers(),
+        json={"attributes": garment_size_metadata(variant_id)},
+    )
+    assert updated.status_code == 200, updated.text
+
+    response = client.get(f"/products/{product['product_id']}", headers=auth_headers())
+    assert response.status_code == 200
+    spec = response.json()["attributes"]["product_intelligence"]["garment_fit"]["size_specs"][0]
+    assert spec["variant_id"] == variant_id
+    assert spec["evidence"]["attribution"] == "Manufacturer size chart"
+    assert spec["evidence"]["source_owner"] == "Manufacturer"
+
+
+def test_cil_gateway_removes_garment_fit_when_its_evidence_is_ineligible(client, monkeypatch):
+    from app import main as catalog_main
+
+    monkeypatch.setenv("CIL_GATEWAY_URL", "https://cil.internal")
+    monkeypatch.setenv("CIL_CATALOG_SERVICE_TOKEN", "catalog-to-cil-token")
+
+    class FakeResponse:
+        def __init__(self, request_payload):
+            self.request_payload = request_payload
+        def raise_for_status(self):
+            return None
+        def json(self):
+            item = self.request_payload["garment_fit_specs"][0]
+            return {
+                "product_id": self.request_payload["product_id"],
+                "catalog_version": self.request_payload["catalog_version"],
+                "decisions": [{
+                    "item_id": item["variant_id"],
+                    "kind": "garment_fit",
+                    "eligible": False,
+                }],
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, *args):
+            return None
+        async def post(self, url, json, headers):
+            return FakeResponse(json)
+
+    monkeypatch.setattr(catalog_main.httpx, "AsyncClient", FakeAsyncClient)
+    product = create_product(client, category="apparel")
+    variant_response = client.post(
+        f"/products/{product['product_id']}/variants",
+        headers=auth_headers(),
+        json={"attributes": {"size": "M", "colour": "blue"}},
+    )
+    variant_id = variant_response.json()["variant_id"]
+    updated = client.patch(
+        f"/products/{product['product_id']}",
+        headers=auth_headers(),
+        json={"attributes": garment_size_metadata(variant_id)},
+    )
+    assert updated.status_code == 200, updated.text
+
+    response = client.get(f"/products/{product['product_id']}", headers=auth_headers())
+    assert response.status_code == 200
+    assert "product_intelligence" not in response.json()["attributes"]

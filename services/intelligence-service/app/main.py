@@ -174,7 +174,7 @@ class SourceIn(StrictModel):
     source_id: str = Field(min_length=3, max_length=120)
     owner: str = Field(min_length=2, max_length=180)
     kind: Literal["public_research", "licensed_research", "licensed_provider_api",
-                  "manufacturer", "merchant", "regulatory", "customer_aggregate"]
+                  "manufacturer", "merchant", "independent_product_test", "regulatory", "customer_aggregate"]
     locator: str = Field(min_length=8, max_length=2000)
     rights_status: Literal["public_domain", "open_license", "licensed", "api_terms",
                            "research_only", "permission_required", "unknown", "prohibited"]
@@ -250,6 +250,7 @@ class ServingAssessmentIn(StrictModel):
     catalog_version: int = Field(ge=1)
     claims: list[dict[str, Any]] = Field(default_factory=list, max_length=50)
     ingredient_declarations: list[dict[str, Any]] = Field(default_factory=list, max_length=250)
+    garment_fit_specs: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
 
 
 class CALDecisionIn(StrictModel):
@@ -1003,22 +1004,29 @@ def register_evidence(payload: EvidenceIn, db: Session = Depends(get_db)):
 def assess_serving(payload: ServingAssessmentIn, db: Session = Depends(get_db)):
     """Return claim-level eligibility; unknown or unlicensed evidence fails closed."""
     decisions = []
-    for kind, records in (("claim", payload.claims), ("ingredient", payload.ingredient_declarations)):
+    for kind, records in (
+        ("claim", payload.claims),
+        ("ingredient", payload.ingredient_declarations),
+        ("garment_fit", payload.garment_fit_specs),
+    ):
         for item in records:
             evidence = item.get("evidence") or {}
             evidence_id = evidence.get("evidence_id") or evidence.get("id")
             source_id = evidence.get("source_id")
             evidence_row = db.get(Evidence, evidence_id) if isinstance(evidence_id, str) else None
-            if evidence_row is None and source_id:
+            # Garment fit must cite its exact registered evidence record. A source-only
+            # fallback could bind a size chart to a different report under the same owner.
+            if evidence_row is None and source_id and kind != "garment_fit":
                 evidence_row = db.scalar(select(Evidence).where(Evidence.source_id == source_id).limit(1))
             if evidence_row is None:
-                decisions.append({"item_id": item.get("claim_id", item.get("inci_name", "unknown")),
+                item_id = item.get("claim_id", item.get("inci_name", item.get("variant_id", "unknown")))
+                decisions.append({"item_id": item_id,
                                   "kind": kind, "eligible": False, "reason": "EVIDENCE_NOT_REGISTERED"})
                 continue
             allowed, reason = _source_permits(db, evidence_row.source_id, payload.purpose)
             requested_scope = evidence.get("scope")
             claim_type = item.get("claim_type")
-            required_scope = "finished_product" if kind == "ingredient" or claim_type == "finished_product_efficacy" else requested_scope
+            required_scope = "finished_product" if kind in {"ingredient", "garment_fit"} or claim_type == "finished_product_efficacy" else requested_scope
             scope_ok = (not required_scope or required_scope == evidence_row.scope) and (not requested_scope or requested_scope == evidence_row.scope)
             if evidence.get("source_id") and evidence.get("source_id") != evidence_row.source_id:
                 scope_ok = False
@@ -1026,6 +1034,11 @@ def assess_serving(payload: ServingAssessmentIn, db: Session = Depends(get_db)):
             if kind == "ingredient":
                 grade_ok = evidence_row.grade in {"E1", "E2", "E4"}
                 source_kind_ok = source_row is not None and source_row.kind in {"manufacturer", "merchant", "licensed_provider_api"}
+            elif kind == "garment_fit":
+                grade_ok = evidence_row.grade in {"E1", "E2", "E4"}
+                source_kind_ok = source_row is not None and source_row.kind in {
+                    "manufacturer", "merchant", "independent_product_test", "licensed_provider_api"
+                }
             elif claim_type == "finished_product_efficacy":
                 # Manufacturer/merchant declarations and customer feedback are not efficacy proof.
                 grade_ok = evidence_row.grade in {"E1", "E2"}
@@ -1036,7 +1049,8 @@ def assess_serving(payload: ServingAssessmentIn, db: Session = Depends(get_db)):
             attribution_ok = source_row is not None and (not source_row.attribution_required or bool(source_row.attribution_text))
             review_ok = kind != "claim" or item.get("review_status") == "approved"
             eligible = allowed and scope_ok and grade_ok and source_kind_ok and attribution_ok and review_ok
-            decisions.append({"item_id": item.get("claim_id", item.get("inci_name", "unknown")),
+            item_id = item.get("claim_id", item.get("inci_name", item.get("variant_id", "unknown")))
+            decisions.append({"item_id": item_id,
                               "kind": kind, "eligible": eligible,
                               "reason": reason if not allowed else ("CLAIM_NOT_APPROVED" if not review_ok else ("ATTRIBUTION_REQUIRED" if not attribution_ok else ("EVIDENCE_SCOPE_GRADE_OR_SOURCE_MISMATCH" if not (scope_ok and grade_ok and source_kind_ok) else "ELIGIBLE"))),
                               "evidence_id": evidence_row.id,

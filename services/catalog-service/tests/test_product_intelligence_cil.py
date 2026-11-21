@@ -98,3 +98,102 @@ def test_duplicate_inci_labels_are_rejected_case_and_space_insensitively():
                 {"inci_name": " GLYCERIN ", "evidence": evidence(reference="label-2")},
             ],
         })
+
+
+
+def garment_fit_evidence(**overrides):
+    value = evidence(
+        source_type="manufacturer_declared",
+        reference="manufacturer-size-chart-2026-11",
+        source_id="SRC-GARMENT-SIZE-001",
+        evidence_grade="E4",
+        scope="finished_product",
+    )
+    value.update(overrides)
+    return value
+
+
+def garment_size_spec(**overrides):
+    value = {
+        "variant_id": "123e4567-e89b-12d3-a456-426614174000",
+        "size_label": "M",
+        "category": "top",
+        "pattern_dimensions_mm": {
+            "chest_mm": 1000,
+            "waist_mm": 780,
+            "shoulder_width_mm": 460,
+            "sleeve_length_mm": 610,
+            "garment_length_mm": 700,
+        },
+        "stretch_ratio": 0.35,
+        "fit_class": "regular",
+        "fabric_weight": "medium",
+        "structure": "semi_structured",
+        "ease_allowance_mm": {"chest_mm": 20, "waist_mm": 20},
+        "evidence": garment_fit_evidence(),
+    }
+    value.update(overrides)
+    return value
+
+
+def test_garment_fit_metadata_is_strict_evidence_backed_and_variant_bound():
+    metadata = ProductIntelligence.model_validate({
+        "schema_version": "1.0",
+        "garment_fit": {"size_specs": [garment_size_spec()]},
+    })
+    spec = metadata.garment_fit.size_specs[0]
+    assert spec.size_label == "m"
+    assert spec.pattern_dimensions_mm.chest_mm == 1000
+    assert spec.evidence.source_id == "SRC-GARMENT-SIZE-001"
+
+
+def test_garment_fit_metadata_rejects_missing_category_dimensions():
+    spec = garment_size_spec(
+        pattern_dimensions_mm={
+            "chest_mm": 1000,
+            "waist_mm": 780,
+            "shoulder_width_mm": 460,
+            "garment_length_mm": 700,
+        }
+    )
+    with pytest.raises(ValidationError):
+        ProductIntelligence.model_validate({
+            "schema_version": "1.0",
+            "garment_fit": {"size_specs": [spec]},
+        })
+
+
+@pytest.mark.parametrize(
+    "evidence_override",
+    [
+        {"source_id": None},
+        {"scope": "ingredient"},
+        {"evidence_grade": "E6"},
+        {"source_type": "public_research"},
+    ],
+)
+def test_garment_fit_requires_product_specific_measurement_evidence(evidence_override):
+    spec = garment_size_spec(evidence=garment_fit_evidence(**evidence_override))
+    with pytest.raises(ValidationError):
+        ProductIntelligence.model_validate({
+            "schema_version": "1.0",
+            "garment_fit": {"size_specs": [spec]},
+        })
+
+
+def test_garment_fit_rejects_duplicate_variant_specs():
+    first = garment_size_spec()
+    second = garment_size_spec(size_label="large")
+    with pytest.raises(ValidationError):
+        ProductIntelligence.model_validate({
+            "schema_version": "1.0",
+            "garment_fit": {"size_specs": [first, second]},
+        })
+
+
+def test_garment_fit_rejects_noncanonical_variant_ids():
+    with pytest.raises(ValidationError):
+        ProductIntelligence.model_validate({
+            "schema_version": "1.0",
+            "garment_fit": {"size_specs": [garment_size_spec(variant_id="variant-m")]},
+        })

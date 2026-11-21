@@ -850,3 +850,127 @@ def test_reaper_keeps_revoked_running_task_pending_until_provider_terminal_state
     assert response.status_code == 200
     assert response.json()["waiting_for_terminal"] == 1
     assert response.json()["deleted"] == 0
+
+
+
+def test_serving_assessment_allows_registered_manufacturer_garment_size_evidence(client):
+    register_source(
+        client,
+        source_id="source-garment-size",
+        kind="manufacturer",
+        rights_status="licensed",
+        permitted_purposes=["commercial_recommendation"],
+        attribution_required=True,
+        attribution_text="Manufacturer size chart",
+    )
+    register_evidence(
+        client,
+        source_id="source-garment-size",
+        evidence_id="evidence-garment-size",
+        grade="E4",
+        scope="finished_product",
+    )
+    payload = {
+        "purpose": "commercial_recommendation",
+        "product_id": "product-garment-1",
+        "catalog_version": 2,
+        "claims": [],
+        "ingredient_declarations": [],
+        "garment_fit_specs": [{
+            "variant_id": "123e4567-e89b-12d3-a456-426614174000",
+            "size_label": "m",
+            "evidence": {
+                "evidence_id": "evidence-garment-size",
+                "source_id": "source-garment-size",
+                "scope": "finished_product",
+            },
+        }],
+    }
+    result = client.post("/serving/assessment", json=payload, headers=auth("catalog-test"))
+    assert result.status_code == 200, result.text
+    decision = result.json()["decisions"][0]
+    assert decision["kind"] == "garment_fit"
+    assert decision["item_id"] == "123e4567-e89b-12d3-a456-426614174000"
+    assert decision["eligible"] is True
+    assert decision["attribution_required"] is True
+    assert decision["attribution_text"] == "Manufacturer size chart"
+
+
+def test_garment_fit_evidence_rejects_ingredient_scope_or_research_only_source(client):
+    register_source(
+        client,
+        source_id="source-garment-research",
+        kind="public_research",
+        rights_status="public_domain",
+        permitted_purposes=["commercial_recommendation"],
+        attribution_required=False,
+    )
+    register_evidence(
+        client,
+        source_id="source-garment-research",
+        evidence_id="evidence-garment-research",
+        grade="E2",
+        scope="ingredient",
+    )
+    payload = {
+        "purpose": "commercial_recommendation",
+        "product_id": "product-garment-2",
+        "catalog_version": 1,
+        "claims": [],
+        "ingredient_declarations": [],
+        "garment_fit_specs": [{
+            "variant_id": "123e4567-e89b-12d3-a456-426614174001",
+            "size_label": "m",
+            "evidence": {
+                "evidence_id": "evidence-garment-research",
+                "source_id": "source-garment-research",
+                "scope": "ingredient",
+            },
+        }],
+    }
+    result = client.post("/serving/assessment", json=payload, headers=auth("catalog-test"))
+    assert result.status_code == 200
+    decision = result.json()["decisions"][0]
+    assert decision["kind"] == "garment_fit"
+    assert decision["eligible"] is False
+    assert decision["reason"] == "EVIDENCE_SCOPE_GRADE_OR_SOURCE_MISMATCH"
+
+
+
+def test_garment_fit_requires_exact_registered_evidence_id(client):
+    register_source(
+        client,
+        source_id="source-garment-exact",
+        kind="manufacturer",
+        rights_status="licensed",
+        permitted_purposes=["commercial_recommendation"],
+        attribution_required=False,
+    )
+    register_evidence(
+        client,
+        source_id="source-garment-exact",
+        evidence_id="evidence-garment-exact",
+        grade="E4",
+        scope="finished_product",
+    )
+    payload = {
+        "purpose": "commercial_recommendation",
+        "product_id": "product-garment-exact",
+        "catalog_version": 1,
+        "claims": [],
+        "ingredient_declarations": [],
+        "garment_fit_specs": [{
+            "variant_id": "123e4567-e89b-12d3-a456-426614174002",
+            "size_label": "m",
+            "evidence": {
+                "evidence_id": "unregistered-size-chart-id",
+                "source_id": "source-garment-exact",
+                "scope": "finished_product",
+            },
+        }],
+    }
+    result = client.post("/serving/assessment", json=payload, headers=auth("catalog-test"))
+    assert result.status_code == 200
+    decision = result.json()["decisions"][0]
+    assert decision["eligible"] is False
+    assert decision["reason"] == "EVIDENCE_NOT_REGISTERED"
