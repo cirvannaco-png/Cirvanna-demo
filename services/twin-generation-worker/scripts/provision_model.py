@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 from pathlib import Path
 
 from huggingface_hub import snapshot_download
@@ -72,6 +73,15 @@ def main() -> None:
         local_dir=str(output),
         local_dir_use_symlinks=False,
     )
+
+    # Remove Hugging Face download metadata and lock files so every runtime
+    # artifact is represented in the immutable manifest.
+    cache_dir = output / ".cache"
+    if cache_dir.exists():
+        shutil.rmtree(cache_dir)
+    for lock_file in output.rglob("*.lock"):
+        if lock_file.is_file():
+            lock_file.unlink()
 
     required = [args.checkpoint_file, args.config_file, args.mhr_file]
     for relative in required:
