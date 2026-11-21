@@ -63,6 +63,12 @@ def test_catalog_attributes_and_appearance_constraints_are_immutable():
         context.preferred_attributes["style"] = "bold"
 
 
+def test_catalog_snapshot_rejects_non_datetime_timestamp():
+    item = catalog_product("invalid-snapshot-time", "makeup")
+    with pytest.raises(ValueError, match="timezone-aware datetime"):
+        CatalogSnapshot((item,), "not-a-datetime", True)
+
+
 def test_catalog_snapshot_rejects_boolean_freshness_window():
     item = catalog_product("freshness-window", "makeup")
     current = snapshot(item)
