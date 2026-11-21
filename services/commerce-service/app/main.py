@@ -7,6 +7,7 @@ Stripe-hosted checkout. Only a verified provider webhook can mark an order paid.
 from __future__ import annotations
 
 import base64
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import hmac
 import json
@@ -37,9 +38,11 @@ from app.market_provider_adapters import (
     provider_verification_required,
     verify_fulfillment_market,
     verify_fulfillment_quote,
+    fulfillment_distance_has_centikilometre_precision,
     verify_fx_quote,
     verify_merchant_approval,
     verify_payment_capability,
+    verify_tax_market_capability,
     verify_tax_quote,
 )
 
@@ -1044,6 +1047,8 @@ class FulfillmentQuoteIn(BaseModel):
             raise ValueError("estimated or confirmed fulfilment quotes require an amount")
         if self.observed_at.tzinfo is None or self.expires_at.tzinfo is None or self.expires_at <= self.observed_at:
             raise ValueError("fulfilment quote timestamps must be valid and ordered")
+        if self.distance_km is not None and not fulfillment_distance_has_centikilometre_precision(self.distance_km):
+            raise ValueError("fulfilment distance must not exceed the stored precision of 0.01 km")
         return self
 
 
@@ -2019,17 +2024,29 @@ def readiness(db: Annotated[Session, Depends(get_db)]) -> Readiness:
         cal_gateway_ready = False
     migrations_applied = schema_revision == EXPECTED_SCHEMA_REVISION
     provider_required = provider_verification_required()
-    merchant_provider_ready = (
-        adapter_ready("MERCHANT_VERIFICATION_ADAPTER") if provider_required else False
-    )
-    fulfillment_provider_ready = (
-        adapter_ready("FULFILLMENT_ADAPTER") if provider_required else False
-    )
-    fx_provider_ready = adapter_ready("FX_ADAPTER") if provider_required else False
-    tax_provider_ready = adapter_ready("TAX_ADAPTER") if provider_required else False
-    payment_capability_provider_ready = (
-        adapter_ready("PAYMENT_CAPABILITY_ADAPTER") if provider_required else False
-    )
+    if provider_required:
+        # Probe independent adapters concurrently. Sequential 3-second probes can
+        # exceed the Marketplace BFF's 5-second Commerce readiness deadline.
+        adapter_prefixes = (
+            "MERCHANT_VERIFICATION_ADAPTER", "FULFILLMENT_ADAPTER", "FX_ADAPTER",
+            "TAX_ADAPTER", "PAYMENT_CAPABILITY_ADAPTER",
+        )
+        with ThreadPoolExecutor(max_workers=len(adapter_prefixes)) as executor:
+            readiness_results = dict(zip(
+                adapter_prefixes,
+                executor.map(adapter_ready, adapter_prefixes),
+            ))
+        merchant_provider_ready = readiness_results["MERCHANT_VERIFICATION_ADAPTER"]
+        fulfillment_provider_ready = readiness_results["FULFILLMENT_ADAPTER"]
+        fx_provider_ready = readiness_results["FX_ADAPTER"]
+        tax_provider_ready = readiness_results["TAX_ADAPTER"]
+        payment_capability_provider_ready = readiness_results["PAYMENT_CAPABILITY_ADAPTER"]
+    else:
+        merchant_provider_ready = False
+        fulfillment_provider_ready = False
+        fx_provider_ready = False
+        tax_provider_ready = False
+        payment_capability_provider_ready = False
     provider_dependencies_ready = (
         not provider_required
         or all([
@@ -2367,8 +2384,30 @@ def set_merchant_market_state(
             for item in capable
         ):
             raise HTTPException(409, detail={"code": "MARKET_PAYMENT_CAPABILITY_NOT_READY"})
+        if provider_verification_required():
+            # Approval evidence is bound to the operating-market set at approval.
+            # Re-verify that complete set at activation so a newly declared market
+            # cannot inherit stale or out-of-scope KYB evidence.
+            operating_markets = list(db.scalars(select(
+                MerchantOperatingMarket.market_country_code
+            ).where(MerchantOperatingMarket.merchant_id == merchant.id)).all())
+            stored_reference = merchant.verification_reference or ""
+            provider_reference = (
+                stored_reference.split(":", 1)[1] if ":" in stored_reference else stored_reference
+            )
+            verify_merchant_approval(
+                merchant, provider_reference, operating_markets=operating_markets,
+            )
         if not quote_is_current(payload.tax_capability_observed_at, payload.tax_capability_expires_at):
             raise HTTPException(409, detail={"code": "MARKET_TAX_CAPABILITY_NOT_READY"})
+        verify_tax_market_capability(
+            merchant_id=merchant.id,
+            market_country_code=market_code,
+            provider=payload.tax_provider or "",
+            provider_reference=payload.tax_provider_reference or "",
+            observed_at=payload.tax_capability_observed_at,
+            expires_at=payload.tax_capability_expires_at,
+        )
         if not quote_is_current(payload.fulfillment_capability_observed_at, payload.fulfillment_capability_expires_at):
             raise HTTPException(409, detail={"code": "MARKET_FULFILLMENT_CAPABILITY_NOT_READY"})
         verify_fulfillment_market(
