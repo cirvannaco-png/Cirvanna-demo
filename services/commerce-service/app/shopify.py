@@ -195,6 +195,7 @@ class ShopifyConnection(commerce.Base):
     webhook_registration: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     products_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     products_cursor: Mapped[str | None] = mapped_column(String(512))
+    products_sync_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     orders_reconciled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     installed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -657,6 +658,9 @@ def _sync_products(connection: ShopifyConnection, db: Session, *, max_pages: int
     if connection.status != "active":
         raise HTTPException(409, detail={"code": "SHOPIFY_CONNECTION_NOT_ACTIVE"})
     after: str | None = connection.products_cursor
+    if after is None:
+        connection.products_sync_started_at = utcnow()
+    sync_started_at = commerce._aware_utc(connection.products_sync_started_at) if connection.products_sync_started_at else utcnow()
     variants_seen = inventory_conflicts = pages = 0
     products_seen_ids: set[str] = set()
     product_cache = {
@@ -791,12 +795,27 @@ def _sync_products(connection: ShopifyConnection, db: Session, *, max_pages: int
     connection.updated_at = utcnow()
     db.flush()
     if after is None:
+        # A complete cursor cycle is the only safe point to infer that a remote
+        # variant disappeared. Hold old local offers before they can be sold.
+        stale_variants = list(db.scalars(select(ShopifyVariantSnapshot).where(
+            ShopifyVariantSnapshot.connection_id == connection.id,
+            ShopifyVariantSnapshot.synced_at < sync_started_at,
+            ShopifyVariantSnapshot.mapping_state != "remote_deleted",
+        )).all())
+        for stale in stale_variants:
+            stale.mapping_state = "remote_deleted"
+            if stale.local_variant_id:
+                local = db.get(commerce.Variant, stale.local_variant_id)
+                if local is not None:
+                    local.state = "inactive"
+                    local.observed_at = utcnow() - timedelta(days=30)
         all_products = list(db.scalars(select(ShopifyProductSnapshot).where(
             ShopifyProductSnapshot.connection_id == connection.id
         )).all())
         for product in all_products:
             product_variants = list(db.scalars(select(ShopifyVariantSnapshot).where(
-                ShopifyVariantSnapshot.product_snapshot_id == product.id
+                ShopifyVariantSnapshot.product_snapshot_id == product.id,
+                ShopifyVariantSnapshot.mapping_state != "remote_deleted",
             )).all())
             product.variants_complete = bool(product_variants)
             if product.catalog_product_id:
@@ -804,6 +823,7 @@ def _sync_products(connection: ShopifyConnection, db: Session, *, max_pages: int
                     "mapped" if product_variants and all(item.local_variant_id for item in product_variants)
                     else "partial"
                 )
+        connection.products_sync_started_at = None
     db.commit()
     return {
         "products_seen": len(products_seen_ids),
@@ -1066,14 +1086,15 @@ def map_shopify_product(
     if len(requested) != len(payload.variants):
         raise HTTPException(422, detail={"code": "DUPLICATE_SHOPIFY_VARIANT_MAPPING"})
     snapshots = list(db.scalars(select(ShopifyVariantSnapshot).where(
-        ShopifyVariantSnapshot.product_snapshot_id == product_snapshot.id
+        ShopifyVariantSnapshot.product_snapshot_id == product_snapshot.id,
+        ShopifyVariantSnapshot.mapping_state != "remote_deleted",
     )).all())
     by_gid = {item.shopify_variant_gid: item for item in snapshots}
     if not set(requested).issubset(by_gid):
         raise HTTPException(422, detail={"code": "SHOPIFY_VARIANT_MAPPING_NOT_IN_PRODUCT"})
     existing_canonical = {
         item.canonical_variant_id for item in snapshots
-        if item.canonical_variant_id and item.shopify_variant_gid not in requested
+        if item.canonical_variant_id and item.mapping_state != "remote_deleted" and item.shopify_variant_gid not in requested
     }
     if existing_canonical.intersection(requested.values()):
         raise HTTPException(409, detail={"code": "CANONICAL_VARIANT_ALREADY_MAPPED"})
