@@ -6,6 +6,8 @@ internal outbox API and relies on Wardrobe's order-line idempotency for replay.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -14,6 +16,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -31,6 +34,8 @@ class Settings:
     worker_id: str
     identity_learning_url: str | None = None
     identity_learning_token: str | None = None
+    operations_webhook_url: str | None = None
+    operations_webhook_secret: str | None = None
     batch_size: int = 20
     timeout_seconds: float = 10.0
     poll_seconds: float = 3.0
@@ -57,6 +62,16 @@ class Settings:
             raise ValueError("IDENTITY_SERVICE_URL and IDENTITY_SERVICE_TOKEN must be configured together")
         if identity_token is not None and len(identity_token.encode()) < 32:
             raise ValueError("IDENTITY_SERVICE_TOKEN must be at least 32 bytes")
+        operations_url = os.getenv("COMMERCE_OPERATIONS_WEBHOOK_URL", "").strip().rstrip("/") or None
+        operations_secret = os.getenv("COMMERCE_OPERATIONS_WEBHOOK_SECRET", "").strip() or None
+        if bool(operations_url) != bool(operations_secret):
+            raise ValueError("COMMERCE_OPERATIONS_WEBHOOK_URL and COMMERCE_OPERATIONS_WEBHOOK_SECRET must be configured together")
+        if operations_url:
+            parsed = urlsplit(operations_url)
+            if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password or parsed.query or parsed.fragment:
+                raise ValueError("COMMERCE_OPERATIONS_WEBHOOK_URL must be an HTTPS origin/path without credentials, query or fragment")
+            if len(operations_secret.encode()) < 32:
+                raise ValueError("COMMERCE_OPERATIONS_WEBHOOK_SECRET must be at least 32 bytes")
         return cls(
             commerce_url=required["COMMERCE_SERVICE_URL"].rstrip("/"),
             commerce_token=required["COMMERCE_SYNC_TOKEN"],
@@ -65,6 +80,8 @@ class Settings:
             worker_id=required["SYNC_WORKER_ID"],
             identity_learning_url=identity_url,
             identity_learning_token=identity_token,
+            operations_webhook_url=operations_url,
+            operations_webhook_secret=operations_secret,
             batch_size=max(1, min(int(os.getenv("SYNC_BATCH_SIZE", "20")), 100)),
             timeout_seconds=max(1.0, min(float(os.getenv("SYNC_TIMEOUT_SECONDS", "10")), 60.0)),
             poll_seconds=max(1.0, min(float(os.getenv("SYNC_POLL_SECONDS", "3")), 60.0)),
@@ -212,8 +229,23 @@ def _refund_payload(event: dict[str, Any]) -> dict[str, Any]:
         raise SyncContractError("unsupported_refund_event_type")
     if event.get("schema_version") != 1 or payload.get("schema_version") != 1:
         raise SyncContractError("unsupported_refund_event_schema")
-    if payload.get("ownership_authority") != "verified_stripe_charge_refund":
+    authority = payload.get("ownership_authority")
+    if authority not in {"verified_stripe_charge_refund", "verified_stripe_refund_event"}:
         raise SyncContractError("unverified_refund_authority")
+    charge_id = payload.get("charge_id")
+    refund_id = payload.get("refund_id")
+    if authority == "verified_stripe_charge_refund":
+        charge_id = _required_string(charge_id, "charge_id", 180)
+        if not charge_id.startswith("ch_"):
+            raise SyncContractError("invalid_charge_id")
+    else:
+        refund_id = _required_string(refund_id, "refund_id", 180)
+        if not refund_id.startswith("re_"):
+            raise SyncContractError("invalid_refund_id")
+    if charge_id is not None and (not isinstance(charge_id, str) or not charge_id.startswith("ch_")):
+        raise SyncContractError("invalid_charge_id")
+    if refund_id is not None and (not isinstance(refund_id, str) or not refund_id.startswith("re_")):
+        raise SyncContractError("invalid_refund_id")
     if payload.get("physical_return_confirmed") is not False or payload.get("ownership_effect") != "financial_status_only":
         raise SyncContractError("refund_must_not_imply_physical_return")
     order_total = payload.get("order_total_minor")
@@ -224,6 +256,12 @@ def _refund_payload(event: dict[str, Any]) -> dict[str, Any]:
         or refunded > order_total
     ):
         raise SyncContractError("invalid_refund_amount")
+    merchandise_subtotal = payload.get("merchandise_subtotal_minor", order_total)
+    if (
+        not isinstance(merchandise_subtotal, int) or isinstance(merchandise_subtotal, bool)
+        or merchandise_subtotal <= 0 or merchandise_subtotal > order_total
+    ):
+        raise SyncContractError("invalid_merchandise_subtotal")
     expected_state = "refunded" if refunded == order_total else "partial_refund"
     if payload.get("refund_state") != expected_state:
         raise SyncContractError("refund_state_amount_mismatch")
@@ -235,19 +273,58 @@ def _refund_payload(event: dict[str, Any]) -> dict[str, Any]:
         "provider_event_id": _required_string(payload.get("provider_event_id"), "provider_event_id", 180),
         "event_type": "commerce.order.refund.updated",
         "schema_version": 1,
-        "ownership_authority": "verified_stripe_charge_refund",
+        "ownership_authority": authority,
         "owner_user_id": _required_string(payload.get("buyer_user_id"), "buyer_user_id", 128),
         "order_id": _required_string(payload.get("order_id"), "order_id", 36),
         "payment_intent_id": _required_string(payload.get("payment_intent_id"), "payment_intent_id", 180),
-        "charge_id": _required_string(payload.get("charge_id"), "charge_id", 180),
+        "charge_id": charge_id,
+        "refund_id": refund_id,
         "currency": currency,
         "order_total_minor": order_total,
+        "merchandise_subtotal_minor": merchandise_subtotal,
         "amount_refunded_minor": refunded,
         "refund_state": expected_state,
         "refunded_at": _required_string(payload.get("refunded_at"), "refunded_at", 64),
         "physical_return_confirmed": False,
         "ownership_effect": "financial_status_only",
     }
+
+
+def _operator_review_payload(event: dict[str, Any]) -> dict[str, Any]:
+    """Project only the bounded operational fields needed for human intervention."""
+    payload = event.get("payload")
+    if not isinstance(payload, dict):
+        raise SyncContractError("invalid_operator_review_payload")
+    event_id = _required_string(event.get("event_id"), "event_id", 36)
+    event_type = event.get("event_type")
+    allowed = {
+        "commerce.shopify.compensation.manual_review",
+        "commerce.payment.refund.manual_review",
+    }
+    if (
+        event_type not in allowed
+        or payload.get("event_id") != event_id
+        or payload.get("event_type") != event_type
+        or event.get("schema_version") != 1
+        or payload.get("schema_version") != 1
+        or payload.get("action_required") != "operator_review"
+        or payload.get("fulfillment_blocked") is not True
+    ):
+        raise SyncContractError("invalid_operator_review_authority")
+    result = {
+        "event_id": event_id,
+        "event_type": event_type,
+        "schema_version": 1,
+        "order_id": _required_string(payload.get("order_id"), "order_id", 36),
+        "reason_code": _required_string(payload.get("reason_code"), "reason_code", 180),
+        "action_required": "operator_review",
+        "fulfillment_blocked": True,
+    }
+    for field in ("case_id", "merchant_id", "refund_attempt_id"):
+        value = payload.get(field)
+        if value is not None:
+            result[field] = _required_string(value, field, 128)
+    return result
 
 
 class CommerceWardrobeWorker:
@@ -328,6 +405,27 @@ class CommerceWardrobeWorker:
                         f"{self.settings.wardrobe_url}/v1/purchases/refund-status",
                         headers=self._wardrobe_headers(),
                         json=refund,
+                    )
+                    response.raise_for_status()
+                elif event_type in {
+                    "commerce.shopify.compensation.manual_review",
+                    "commerce.payment.refund.manual_review",
+                }:
+                    if not self.settings.operations_webhook_url or not self.settings.operations_webhook_secret:
+                        raise SyncContractError("OPERATIONS_REVIEW_SINK_NOT_CONFIGURED")
+                    review = _operator_review_payload(event)
+                    body = json.dumps(review, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                    signature = hmac.new(
+                        self.settings.operations_webhook_secret.encode("utf-8"), body, hashlib.sha256
+                    ).hexdigest()
+                    response = self.client.post(
+                        self.settings.operations_webhook_url,
+                        content=body,
+                        headers={
+                            "Content-Type": "application/json",
+                            "Idempotency-Key": review["event_id"],
+                            "X-Cirvanna-Signature": "sha256=" + signature,
+                        },
                     )
                     response.raise_for_status()
                 else:
