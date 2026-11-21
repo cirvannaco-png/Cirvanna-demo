@@ -46,3 +46,8 @@ Apply `migrations/0001_virtual_try_on_jobs.sql` through approved migrations. Do 
 ## Validation
 
 The dedicated workflow runs API tests and builds the container. Tests use fakes and do not prove live providers, GPU inference, image realism, fit accuracy, deployment security, commercial rights or Android acceptance.
+
+
+## 2026-11-21: first real inference mode
+
+The orchestration API now accepts and forwards only `garment_photo_type="flat-lay"`. The private worker uses the pinned FASHN VTON 1.5 pipeline with `segmentation_free=True`, and its image build excludes the separately licensed Human Parser dependency. Model-worn garment photos are rejected. This is a genuine model-inference path once the pinned weights and GPU worker are provisioned; current CI uses a mock pipeline and does not prove GPU readiness or visual quality.
