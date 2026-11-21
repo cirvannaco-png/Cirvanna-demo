@@ -176,10 +176,18 @@ def validate_case(row: Any, line_number: int) -> dict[str, Any]:
         if isinstance(grade, bool) or not isinstance(grade, int) or not 0 <= grade <= 4:
             raise ValueError(f"{prefix}: qrel for {candidate_id!r} must be an integer from 0 to 4")
     excluded = row.get("excluded_product_ids", [])
-    if not isinstance(excluded, list) or any(not isinstance(x, str) for x in excluded):
-        raise ValueError(f"{prefix}: excluded_product_ids must be an array of IDs")
+    if (not isinstance(excluded, list) or any(not isinstance(x, str) or not x.strip() for x in excluded)
+            or len(excluded) != len(set(excluded))):
+        raise ValueError(f"{prefix}: excluded_product_ids must be a unique array of IDs")
     if not set(excluded).issubset(set(candidate_ids)):
         raise ValueError(f"{prefix}: excluded_product_ids contains an ID outside candidate_ids")
+    human_violations = row.get("human_exclusion_violation_ids", [])
+    if (not isinstance(human_violations, list)
+            or any(not isinstance(x, str) or not x.strip() for x in human_violations)
+            or len(human_violations) != len(set(human_violations))):
+        raise ValueError(f"{prefix}: human_exclusion_violation_ids must be a unique array of candidate IDs")
+    if not set(human_violations).issubset(set(candidate_ids)):
+        raise ValueError(f"{prefix}: human_exclusion_violation_ids contains an ID outside candidate_ids")
     subgroups = row.get("subgroups", {})
     if not isinstance(subgroups, dict):
         raise ValueError(f"{prefix}: subgroups must be an object")
@@ -607,6 +615,7 @@ def main() -> int:
                                  for model_id in args.models},
                 "score_type": "cosine_similarity_not_probability",
                 "excluded_product_ids": case["excluded_product_ids"],
+                "human_exclusion_violation_ids": case["human_exclusion_violation_ids"],
                 "subgroups": case["subgroups"],
             }
             handle.write(json.dumps(record, sort_keys=True) + "\n")
