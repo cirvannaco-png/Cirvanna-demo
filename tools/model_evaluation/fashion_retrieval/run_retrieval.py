@@ -203,6 +203,7 @@ def validate_case(row: Any, line_number: int) -> dict[str, Any]:
         "candidate_texts": candidate_texts,
         "qrels": qrels,
         "excluded_product_ids": excluded,
+        "human_exclusion_violation_ids": human_violations,
         "subgroups": subgroups,
     }
 
