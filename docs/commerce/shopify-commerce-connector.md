@@ -49,7 +49,7 @@ Requested scopes:
 
 The connector no longer uses orderCreate; draftOrderCreate/draftOrderComplete/draftOrderDelete require draft-order permissions. The read scope is used only to reconcile the deterministic draft reservation by ID/tag; the connector does not request or persist draft customer, address, or contact fields.
 
-No customer-data scope is requested. Customer names, emails, addresses and Shopify customer objects are not synchronized. Shopify order creation deliberately excludes buyer PII.
+No customer profile scope is requested. The order/draft-order read scopes can expose customer-associated fields, but connector GraphQL projections deliberately exclude customer, email, phone, billing and shipping fields; none of those values are synchronized or persisted. Shopify order creation deliberately excludes buyer PII.
 
 ## Implemented API surface
 

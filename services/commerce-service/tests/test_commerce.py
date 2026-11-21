@@ -2517,3 +2517,10 @@ def test_shopify_reservation_rejection_releases_local_stock_before_payment(monke
     assert variant.reserved_qty == 0
     assert order.payment_session_id is None
     db.close()
+
+
+def test_shopify_required_scopes_cover_draft_reservation_without_order_write_scope():
+    from app.shopify import REQUIRED_SCOPES
+
+    assert {"read_draft_orders", "write_draft_orders", "read_orders"} <= REQUIRED_SCOPES
+    assert "write_orders" not in REQUIRED_SCOPES
