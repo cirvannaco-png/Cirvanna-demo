@@ -3943,6 +3943,7 @@ def test_shopify_targeted_reconcile_returns_explicit_error_for_inactive_connecti
     db.close()
 
 
+@pytest.mark.parametrize("refund_has_charge", [False, True])
 def test_refund_object_before_charge_event_always_emits_one_wardrobe_snapshot(client, monkeypatch, refund_has_charge):
     monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_test_unit_only_secret")
     db = TEST_SESSION()
