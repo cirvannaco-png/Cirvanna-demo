@@ -105,6 +105,9 @@ async def authorize_click_it_policy(subject_id: str, photographed_people_status:
     )
     valid = (
         isinstance(receipt, dict)
+        and receipt.get("subject_id") == subject_id
+        and receipt.get("service") == "cirvanna-click-it"
+        and receipt.get("purpose") == "visual_product_discovery"
         and receipt.get("decision") == "PASS"
         and receipt.get("current") is True
         and receipt.get("jurisdiction_resolution_complete") is True
@@ -118,6 +121,7 @@ async def authorize_click_it_policy(subject_id: str, photographed_people_status:
         and all(receipt.get(flag) is False for flag in safety_flags)
         and isinstance(receipt.get("guardian_consent_required"), bool)
         and receipt.get("public_sharing_allowed") is False
+        and receipt.get("retention_seconds") == 0
     )
     if not valid:
         raise HTTPException(403, detail={"code": "PRIVACY_POLICY_BLOCKED"})
