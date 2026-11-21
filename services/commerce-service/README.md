@@ -61,7 +61,7 @@ Local run from this directory:
     pip install -r requirements.txt
     uvicorn app.main:app --host 127.0.0.1 --port 8081
 
-Historical migration ordering: `20261107_0004` introduced the verified-purchase outbox and `20261107_0005` added refund snapshots. The current Commerce schema head is `20261121_0015`; always apply the full Alembic chain with `alembic upgrade head`:
+Historical migration ordering: `20261107_0004` introduced the verified-purchase outbox and `20261107_0005` added refund snapshots. The current Commerce schema head is `20261121_0016`; always apply the full Alembic chain with `alembic upgrade head`:
 
     export COMMERCE_DATABASE_URL='postgresql+psycopg://...'
     export COMMERCE_AUTO_CREATE_SCHEMA=false

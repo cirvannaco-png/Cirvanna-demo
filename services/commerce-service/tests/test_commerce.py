@@ -329,7 +329,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
         ))
         connection.execute(
             text("INSERT INTO alembic_version (version_num) VALUES (:revision)"),
-            {"revision": "20261121_0015"},
+            {"revision": "20261121_0016"},
         )
 
     ready = client.get("/ready")
@@ -342,7 +342,7 @@ def test_readiness_requires_current_migration_before_production_ready(client, mo
     assert payload["payment_configured"] is True
     assert payload["migrations_required"] is True
     assert payload["migrations_applied"] is True
-    assert payload["schema_revision"] == "20261121_0015"
+    assert payload["schema_revision"] == "20261121_0016"
     assert payload["ready"] is True
 
 
@@ -1458,6 +1458,7 @@ def _market_compare_seed(client, monkeypatch):
             charge_basis="per_unit", distance_km=main.Decimal("10") if merchant is merchant_a else main.Decimal("40"),
             provider="test-courier", provider_quote_id=str(uuid.uuid4()),
             observed_at=main.now(), expires_at=main.now()+timedelta(hours=1),
+            distance_precision_verified_at=main.now(),
         )
         tax = main.OfferTaxQuote(
             id=str(uuid.uuid4()), variant_id=variant.id, destination_country_code="KE",
@@ -2732,6 +2733,150 @@ def test_fulfillment_quote_api_rejects_distance_that_would_round_inside_radius(c
         },
     )
     assert response.status_code == 422
+
+
+def test_legacy_fulfillment_quotes_without_precision_attestation_are_excluded_from_radius_filters(client, monkeypatch):
+    a, b = _market_compare_seed(client, monkeypatch)
+    db = TEST_SESSION()
+    legacy_quote = db.query(main.OfferFulfillmentQuote).filter_by(variant_id=a["variant_id"]).one()
+    # Simulate a pre-gate row whose Numeric(9, 2) value may already have rounded
+    # 30.004 km to 30.00 km. Its lost source precision cannot be reconstructed.
+    legacy_quote.distance_km = main.Decimal("30.00")
+    legacy_quote.distance_precision_verified_at = None
+    db.commit()
+    db.close()
+
+    base = "/marketplace/offers?market_country_code=KE&destination_key=Nakuru%2FSubukia&fulfillment_mode=courier_delivery"
+    default_response = client.get(base, headers=MARKETPLACE_READ_HEADERS)
+    assert default_response.status_code == 200, default_response.text
+    assert default_response.json()["total"] == 0
+
+    expanded_response = client.get(base + "&radius_km=50", headers=MARKETPLACE_READ_HEADERS)
+    assert expanded_response.status_code == 200, expanded_response.text
+    assert expanded_response.json()["total"] == 1
+    assert expanded_response.json()["items"][0]["merchant_id"] == b["merchant_id"]
+
+    comparison = client.post("/marketplace/compare", headers=MARKETPLACE_READ_HEADERS, json={
+        "variant_ids": [a["variant_id"], b["variant_id"]],
+        "destination_country_code": "KE",
+        "destination_key": "Nakuru/Subukia",
+        "fulfillment_mode": "courier_delivery",
+        "display_currency": "KES",
+    })
+    assert comparison.status_code == 200, comparison.text
+    assert comparison.json()["status"] == "unavailable"
+    assert comparison.json()["reason_code"] == "FULFILLMENT_QUOTE_MISSING_OR_STALE"
+
+
+def test_local_create_all_upgrades_existing_fulfillment_quote_table():
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
+
+    legacy_engine = create_engine("sqlite://", poolclass=StaticPool)
+    with legacy_engine.begin() as connection:
+        connection.execute(text(
+            "CREATE TABLE commerce_offer_fulfillment_quotes "
+            "(id VARCHAR(36) PRIMARY KEY, distance_km NUMERIC(9, 2))"
+        ))
+
+    main._ensure_local_fulfillment_precision_column(legacy_engine)
+    columns = {column["name"] for column in main.inspect(legacy_engine).get_columns(
+        "commerce_offer_fulfillment_quotes"
+    )}
+    assert "distance_precision_verified_at" in columns
+    legacy_engine.dispose()
+
+
+def test_readiness_probe_pool_caps_outstanding_work():
+    from threading import Event
+
+    release = Event()
+    futures = {}
+
+    def blocked_probe():
+        release.wait(timeout=3)
+        return True
+
+    for index in range(main.READINESS_PROBE_CAPACITY):
+        assert main._submit_readiness_probe(futures, str(index), blocked_probe)
+
+    assert not main._submit_readiness_probe(futures, "overflow", lambda: True)
+    release.set()
+    assert all(future.result(timeout=3) is True for future in futures.values())
+
+
+def test_readiness_runs_cal_and_provider_probes_under_one_shared_deadline(client, monkeypatch):
+    from threading import Barrier
+
+    monkeypatch.setenv("COMMERCE_MARKET_PROVIDER_VERIFICATION_REQUIRED", "true")
+    monkeypatch.setattr(main, "_cal_gateway_settings", lambda: (
+        "https://cal.example.test", "cal-token", "cal-signing-key-with-more-than-32-bytes",
+    ))
+    rendezvous = Barrier(6, timeout=0.8)
+
+    def probe(*_args, **_kwargs):
+        rendezvous.wait()
+        return True
+
+    monkeypatch.setattr(main, "_cal_gateway_probe", probe)
+    monkeypatch.setattr(main, "adapter_ready", probe)
+    response = client.get("/ready")
+    detail = response.json() if response.status_code == 200 else response.json()["detail"]
+    assert detail["cal_gateway_ready"] is True
+    assert detail["merchant_verification_provider_ready"] is True
+    assert detail["fulfillment_provider_ready"] is True
+    assert detail["fx_provider_ready"] is True
+    assert detail["tax_provider_ready"] is True
+    assert detail["payment_capability_provider_ready"] is True
+
+
+def test_market_declaration_and_activation_use_the_same_parent_row_lock():
+    from types import SimpleNamespace
+    from sqlalchemy.dialects import postgresql
+
+    statements = []
+
+    class RecordingSession:
+        def scalar(self, statement):
+            statements.append(statement)
+            return SimpleNamespace(state="approved")
+
+    session = RecordingSession()
+    actor = main.Actor(user_id="merchant-lock-test", role="merchant")
+    main.approved_merchant(session, actor, for_update=True)
+    main.lock_merchant_by_id(session, "merchant-lock-test")
+
+    assert len(statements) == 2
+    assert all(
+        "FOR UPDATE" in str(statement.compile(dialect=postgresql.dialect()))
+        for statement in statements
+    )
+
+
+def test_fulfillment_quote_ingestion_marks_validated_distance_precision(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_MARKET_CONTEXT_TOKEN", "market-context-token-long-enough-for-tests")
+    seeded = seed_offer()
+    observed = main.now()
+    response = client.post(
+        f"/internal/market-context/variants/{seeded['variant_id']}/fulfillment-quotes",
+        headers={"X-Commerce-Market-Context-Token": "market-context-token-long-enough-for-tests"},
+        json={
+            "provider": "carrier-001", "provider_quote_id": "quote-precision-valid-001",
+            "destination_country_code": "KE", "destination_key": "Nairobi/Westlands",
+            "fulfillment_mode": "courier_delivery", "charge_basis": "per_quote",
+            "amount_minor": 250, "currency": "KES", "status": "confirmed",
+            "distance_km": "30.00", "observed_at": observed.isoformat(),
+            "expires_at": (observed + main.timedelta(hours=1)).isoformat(),
+        },
+    )
+    assert response.status_code == 200 or response.status_code == 201, response.text
+    db = TEST_SESSION()
+    quote = db.query(main.OfferFulfillmentQuote).filter_by(
+        variant_id=seeded["variant_id"], provider_quote_id="quote-precision-valid-001",
+    ).one()
+    assert quote.distance_precision_verified_at is not None
+    assert quote.distance_km == main.Decimal("30.00")
+    db.close()
 
 
 def _seed_shopify_compensation_case(db, seeded, *, fulfillment_status="UNFULFILLED", include_link=False):
