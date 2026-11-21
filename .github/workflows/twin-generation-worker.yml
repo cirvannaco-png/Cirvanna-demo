@@ -35,6 +35,6 @@ jobs:
           python -m pip install -r services/twin-generation-worker/requirements-test.txt
       - name: Run worker contract tests
         working-directory: services/twin-generation-worker
-        run: pytest -q
+        run: PYTHONPATH=. pytest -q
       - name: Compile worker source
         run: python -m compileall -q services/twin-generation-worker/app services/twin-generation-worker/scripts
