@@ -168,8 +168,8 @@ def validate_case(row: Any, line_number: int) -> dict[str, Any]:
     if any(not isinstance(value, str) or not value.strip() for value in candidate_texts.values()):
         raise ValueError(f"{prefix}: candidate_texts must contain non-empty strings")
     qrels = row.get("qrels")
-    if not isinstance(qrels, dict) or not set(qrels).issubset(set(candidate_ids)):
-        raise ValueError(f"{prefix}: qrels must map known candidate IDs to relevance grades")
+    if not isinstance(qrels, dict) or set(qrels) != set(candidate_ids):
+        raise ValueError(f"{prefix}: qrels must contain an explicit grade for every candidate ID")
     if not any(isinstance(v, int) and not isinstance(v, bool) and v > 0 for v in qrels.values()):
         raise ValueError(f"{prefix}: qrels must contain at least one positive relevance grade")
     for candidate_id, grade in qrels.items():
