@@ -865,3 +865,23 @@ def test_publication_approval_uses_authenticated_nonredirecting_privacy_service_
     assert kwargs["json"]["asset_id"] == asset["asset_id"]
     assert kwargs["json"]["asset_sha256"] == asset["sha256"]
     assert kwargs["json"]["consent_id"] == "consent-http-gate-001"
+
+
+@pytest.mark.parametrize("purpose", ["catalog_garment_flat_lay", "wardrobe_garment_flat_lay"])
+def test_flat_lay_garment_asset_purposes_are_private_source_assets(client, monkeypatch, purpose):
+    response = client.post(
+        "/internal/v1/assets",
+        headers=auth(),
+        data={
+            "owner_user_id": "flat-lay-owner",
+            "purpose": purpose,
+            "parent_id": "flat-lay-parent-001",
+        },
+        files={"file": ("flat-lay.png", png_bytes(), "image/png")},
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["purpose"] == purpose
+    assert body["asset_role"] == "source"
+    assert body["publication_scope"] == "private_only"
+    assert body["publication_state"] == "private_only"
