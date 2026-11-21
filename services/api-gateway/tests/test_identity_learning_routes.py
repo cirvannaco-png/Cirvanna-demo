@@ -75,3 +75,63 @@ def test_export_and_deletion_use_verified_subject(client, monkeypatch):
 def test_user_data_routes_require_gateway_authentication(client):
     response = client.get("/v1/me/style-profile", headers={"X-End-User-Authorization": "Bearer user"})
     assert response.status_code == 401
+
+
+def test_skin_analysis_consent_must_be_resource_bound_and_expiring(client):
+    missing = client.post("/v1/me/consents", headers=headers(), json={
+        "receipt_id": "skin-consent-0001",
+        "scope": "skin_analysis",
+        "consent_id": "skin-bundle-0001",
+        "consent_version": "skin-v1",
+        "granted": True,
+    })
+    assert missing.status_code == 422
+
+    no_resource = client.post("/v1/me/consents", headers=headers(), json={
+        "receipt_id": "skin-consent-0002",
+        "scope": "skin_analysis",
+        "consent_id": "skin-bundle-0002",
+        "consent_version": "skin-v1",
+        "granted": True,
+        "expires_at": "2027-01-01T00:00:00Z",
+    })
+    assert no_resource.status_code == 422
+
+    expired = client.post("/v1/me/consents", headers=headers(), json={
+        "receipt_id": "skin-consent-0003",
+        "scope": "skin_analysis",
+        "consent_id": "skin-bundle-0003",
+        "resource_id": "skin-resource-0003",
+        "consent_version": "skin-v1",
+        "granted": True,
+        "expires_at": "2020-01-01T00:00:00Z",
+    })
+    assert expired.status_code == 422
+
+
+def test_skin_analysis_consent_forwards_expiry_to_canonical_identity_store(client, monkeypatch):
+    calls = []
+    monkeypatch.setattr(main, "_verified_actor_from_header", lambda token: "commerce-verified-adult-subject")
+    monkeypatch.setattr(
+        main,
+        "_identity_service_request",
+        lambda method, path, subject, payload=None: (
+            calls.append((method, path, subject, payload)) or {"status": "recorded"}
+        ),
+    )
+    expiry = "2027-01-01T00:00:00Z"
+    response = client.post("/v1/me/consents", headers=headers(), json={
+        "receipt_id": "skin-consent-expiring",
+        "scope": "skin_analysis",
+        "consent_id": "skin-bundle-expiring",
+        "resource_id": "skin-resource-expiring",
+        "consent_version": "skin-v1",
+        "granted": True,
+        "expires_at": expiry,
+    })
+    assert response.status_code == 200
+    assert calls[0][0] == "POST"
+    assert calls[0][1] == "/v1/tal/consents"
+    assert calls[0][2] == "commerce-verified-adult-subject"
+    assert calls[0][3]["resource_id"] == "skin-resource-expiring"
+    assert calls[0][3]["expires_at"].startswith("2027-01-01T00:00:00")

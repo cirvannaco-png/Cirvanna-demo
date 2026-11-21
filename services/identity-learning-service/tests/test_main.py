@@ -1,3 +1,8 @@
+import asyncio
+import base64
+import hashlib
+import hmac
+import json
 import os
 from datetime import datetime, timedelta, timezone
 
@@ -18,6 +23,10 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setenv("IDENTITY_DSI_CAPTURE_SERVICE_TOKEN", DSI_CAPTURE_TOKEN)
     monkeypatch.setenv("IDENTITY_AUTO_CREATE_SCHEMA", "true")
     monkeypatch.setenv("IDENTITY_CRON_TOKEN", "identity-cron-token-that-is-at-least-32-bytes")
+    monkeypatch.setenv("CIL_CONTRIBUTOR_TOKEN_HMAC_SECRET", "identity-cil-contributor-pseudonym-key-at-least-32-bytes")
+    monkeypatch.setenv("CIL_SKIN_ANALYSIS_CONSENT_KEY", "shared-cil-skin-analysis-consent-key-at-least-32-bytes")
+    monkeypatch.setenv("IDENTITY_CIL_CONSENT_ISSUER_TOKEN", "identity-cil-consent-issuer-token-at-least-32-bytes")
+    monkeypatch.setenv("IDENTITY_CIL_CONSENT_VERIFIER_TOKEN", "identity-cil-consent-verifier-token-at-least-32-bytes")
     main._engine.cache_clear()
     main._session_factory.cache_clear()
     main.Base.metadata.create_all(bind=main._engine(url))
@@ -35,12 +44,45 @@ def dsi_capture_auth():
     return {"Authorization": f"Bearer {DSI_CAPTURE_TOKEN}"}
 
 
+def cil_consent_issuer_auth():
+    return {"Authorization": "Bearer identity-cil-consent-issuer-token-at-least-32-bytes"}
+
+
+def cil_consent_verifier_auth():
+    return {"Authorization": "Bearer identity-cil-consent-verifier-token-at-least-32-bytes"}
+
+
 def consent(client, subject="user-verified-1", scope="style_learning", receipt="receipt-style-0001"):
     return client.post(
         "/v1/tal/consents",
         params={"subject_id": subject},
         headers=auth(),
         json={"receipt_id": receipt, "scope": scope, "consent_version": "2026-11-01", "granted": True},
+    )
+
+
+def skin_analysis_consent(
+    client,
+    *,
+    subject="user-verified-1",
+    bundle="skin-analysis-bundle-001",
+    resource="skin-analysis-resource-001",
+    receipt="skin-analysis-receipt-001",
+    expires_at=None,
+):
+    return client.post(
+        "/v1/tal/consents",
+        params={"subject_id": subject},
+        headers=auth(),
+        json={
+            "receipt_id": receipt,
+            "scope": "skin_analysis",
+            "consent_id": bundle,
+            "resource_id": resource,
+            "consent_version": "skin-analysis-v1",
+            "granted": True,
+            "expires_at": expires_at or (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
+        },
     )
 
 
@@ -676,7 +718,7 @@ def test_twin_consent_cleanup_failure_is_durable_and_retryable(client, monkeypat
     monkeypatch.setattr(main, "_notify_twin_registry_of_revocation", recovered)
     retry = client.post("/internal/v1/consent-revocations/dispatch?limit=10", headers=auth())
     assert retry.status_code == 200, retry.text
-    assert retry.json() == {"processed": 1, "completed": 1, "failed": 0, "pending": False}
+    assert retry.json() == {"processed": 1, "completed": 1, "already_delivered": 0, "delivered": 1, "failed": 0, "pending": False}
     assert calls == [command_id]
 
     db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
@@ -1716,3 +1758,642 @@ def test_dsi_capture_retention_purges_expired_challenge_and_receipt_state(client
     assert purged.json()["purged_dsi_capture_challenges"] == 1
     assert purged.json()["purged_dsi_capture_receipts"] == 1
 
+
+
+def test_skin_analysis_consent_derives_subject_pseudonym_and_issues_digest_bound_cil_receipt(client):
+    granted = skin_analysis_consent(client)
+    assert granted.status_code == 200, granted.text
+    assert "provider_contributor_token" not in granted.json()
+
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    try:
+        row = db.get(main.ConsentReceipt, "skin-analysis-receipt-001")
+        assert row is not None
+        token = row.provider_contributor_token
+        assert token is not None and token.startswith("hmac-sha256:")
+        assert len(token) == len("hmac-sha256:") + 64
+    finally:
+        db.close()
+
+    image_digest = "a" * 64
+    issued = client.post(
+        "/internal/v1/consents/skin-analysis-provider-receipts?subject_id=user-verified-1",
+        headers=cil_consent_issuer_auth(),
+        json={
+            "receipt_id": "skin-analysis-receipt-001",
+            "image_sha256": image_digest,
+            "verified_subject_age_years": 24,
+        },
+    )
+    assert issued.status_code == 200, issued.text
+    parts = issued.json()["receipt"].split(".")
+    assert len(parts) == 2
+    encoded, signature = parts
+    expected = hmac.new(
+        b"shared-cil-skin-analysis-consent-key-at-least-32-bytes",
+        encoded.encode("ascii"),
+        hashlib.sha256,
+    ).hexdigest()
+    assert hmac.compare_digest(signature, expected)
+    payload = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
+    assert payload["type"] == "consent"
+    assert payload["purpose"] == "perfectcorp_skin_analysis"
+    assert payload["provider"] == "perfectcorp"
+    assert payload["subject_token"] == token
+    assert payload["consent_id"] == "skin-analysis-bundle-001"
+    assert payload["consent_receipt_id"] == "skin-analysis-receipt-001"
+    assert payload["resource_id"] == "skin-analysis-resource-001"
+    assert payload["consent_expires_at"] > payload["expires_at"]
+    assert payload["image_sha256"] == image_digest
+    assert payload["subject_age_years"] == 24
+    assert payload["single_subject"] is True
+    assert "subject_id" not in payload
+
+
+def test_skin_analysis_receipt_issuer_rejects_general_internal_service_token(client):
+    assert skin_analysis_consent(client).status_code == 200
+    response = client.post(
+        "/internal/v1/consents/skin-analysis-provider-receipts?subject_id=user-verified-1",
+        headers=auth(),
+        json={
+            "receipt_id": "skin-analysis-receipt-001",
+            "image_sha256": "c" * 64,
+            "verified_subject_age_years": 24,
+        },
+    )
+    assert response.status_code == 401
+
+
+def test_skin_analysis_provider_receipt_rejects_non_owner_and_non_adult(client):
+    assert skin_analysis_consent(client).status_code == 200
+    wrong_owner = client.post(
+        "/internal/v1/consents/skin-analysis-provider-receipts?subject_id=another-user",
+        headers=cil_consent_issuer_auth(),
+        json={
+            "receipt_id": "skin-analysis-receipt-001",
+            "image_sha256": "b" * 64,
+            "verified_subject_age_years": 24,
+        },
+    )
+    assert wrong_owner.status_code == 403
+
+    underage = client.post(
+        "/internal/v1/consents/skin-analysis-provider-receipts?subject_id=user-verified-1",
+        headers=cil_consent_issuer_auth(),
+        json={
+            "receipt_id": "skin-analysis-receipt-001",
+            "image_sha256": "b" * 64,
+            "verified_subject_age_years": 17,
+        },
+    )
+    assert underage.status_code == 422
+
+
+def test_skin_analysis_consent_id_cannot_be_reused_by_another_subject(client):
+    assert skin_analysis_consent(client, subject="user-verified-1", bundle="globally-unique-skin-consent").status_code == 200
+    duplicate = skin_analysis_consent(
+        client,
+        subject="user-verified-2",
+        bundle="globally-unique-skin-consent",
+        resource="skin-analysis-resource-other",
+        receipt="skin-analysis-receipt-other",
+    )
+    assert duplicate.status_code == 409
+    assert duplicate.json()["detail"]["code"] == "SKIN_ANALYSIS_CONSENT_ID_MUST_BE_UNIQUE"
+
+
+def test_skin_analysis_revocation_dispatches_exact_cil_provider_cleanup(client, monkeypatch):
+    assert skin_analysis_consent(client).status_code == 200
+    image_bundle_scope = client.post(
+        "/v1/tal/consents",
+        params={"subject_id": "user-verified-1"},
+        headers=auth(),
+        json={
+            "receipt_id": "skin-analysis-image-processing-001",
+            "scope": "image_processing",
+            "consent_id": "skin-analysis-bundle-001",
+            "resource_id": "skin-analysis-resource-001",
+            "consent_version": "image-processing-v1",
+            "granted": True,
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat(),
+        },
+    )
+    assert image_bundle_scope.status_code == 200, image_bundle_scope.text
+
+    observed = []
+    async def notify(item):
+        observed.append({
+            "consent_id": item.consent_id,
+            "resource_id": item.resource_id,
+            "receipt_id": item.receipt_id,
+            "contributor_token": item.contributor_token,
+            "command_id": item.command_id,
+        })
+        return {
+            "revoked": True,
+            "consent_id": item.consent_id,
+            "revocation_reference": item.command_id,
+            "matched_tasks": 2,
+            "deleted_tasks": 1,
+            "waiting_for_terminal": 1,
+        }
+
+    monkeypatch.setattr(main, "_notify_cil_provider_of_consent_revocation", notify)
+    revoked = client.post(
+        "/v1/tal/consents/skin-analysis-image-processing-001/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert revoked.status_code == 200, revoked.text
+    assert revoked.json()["cil_provider_cleanup_status"] == "delivered"
+    assert revoked.json()["twin_cleanup_status"] == "not_applicable"
+    assert len(observed) == 1
+    event = observed[0]
+    assert "subject_id" not in event
+    assert event["consent_id"] == "skin-analysis-bundle-001"
+    assert event["resource_id"] == "skin-analysis-resource-001"
+    assert event["receipt_id"] == "skin-analysis-receipt-001"
+    assert event["contributor_token"].startswith("hmac-sha256:")
+    assert event["command_id"].startswith("cil-provider-consent-revocation:")
+
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    try:
+        outbox = db.get(main.CILProviderConsentRevocationOutbox, event["command_id"])
+        assert outbox is not None
+        assert outbox.status == "delivered"
+        assert outbox.matched_tasks == 2
+        assert outbox.deleted_tasks == 1
+        assert outbox.waiting_for_terminal == 1
+        assert outbox.attempts == 0
+    finally:
+        db.close()
+
+
+def test_denied_skin_analysis_consent_replay_reports_delivered_cil_cleanup(client, monkeypatch):
+    bundle = "skin-analysis-denied-replay-bundle"
+    resource = "skin-analysis-denied-replay-resource"
+    grant = skin_analysis_consent(
+        client,
+        bundle=bundle,
+        resource=resource,
+        receipt="skin-analysis-denied-replay-grant",
+    )
+    assert grant.status_code == 200, grant.text
+
+    calls = []
+    async def notify(item):
+        calls.append(item.command_id)
+        return {
+            "revoked": True,
+            "consent_id": item.consent_id,
+            "revocation_reference": item.command_id,
+            "matched_tasks": 1,
+            "deleted_tasks": 1,
+            "waiting_for_terminal": 0,
+        }
+
+    monkeypatch.setattr(main, "_notify_cil_provider_of_consent_revocation", notify)
+    payload = {
+        "receipt_id": "skin-analysis-denied-replay-event",
+        "scope": "skin_analysis",
+        "consent_id": bundle,
+        "resource_id": resource,
+        "consent_version": "skin-analysis-v1",
+        "granted": False,
+    }
+    first = client.post(
+        "/v1/tal/consents",
+        params={"subject_id": "user-verified-1"},
+        headers=auth(),
+        json=payload,
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["cil_provider_cleanup_status"] == "delivered"
+    assert len(calls) == 1
+
+    replay = client.post(
+        "/v1/tal/consents",
+        params={"subject_id": "user-verified-1"},
+        headers=auth(),
+        json=payload,
+    )
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["status"] == "replayed"
+    assert replay.json()["cil_provider_cleanup_status"] == "delivered"
+    assert calls == [calls[0]]
+
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    try:
+        outbox = db.query(main.CILProviderConsentRevocationOutbox).filter_by(
+            revocation_receipt_id=payload["receipt_id"]
+        ).one()
+        assert outbox.status == "delivered"
+        assert outbox.completed_at is not None
+    finally:
+        db.close()
+
+
+def test_cil_provider_revocation_command_uses_unambiguous_field_framing(client):
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    token = "hmac-sha256:" + "c" * 64
+    now = datetime.now(timezone.utc)
+    first = main.ConsentReceipt(
+        receipt_id="skin-colon-receipt-0001",
+        subject_id="user-verified-1",
+        consent_id="bundle-0001:resource-0002",
+        resource_id="xxx",
+        scope="skin_analysis",
+        consent_version="skin-analysis-v1",
+        granted=True,
+        granted_at=now,
+        expires_at=now + timedelta(minutes=30),
+        provider_contributor_token=token,
+    )
+    second = main.ConsentReceipt(
+        receipt_id="skin-colon-receipt-0002",
+        subject_id="user-verified-1",
+        consent_id="bundle-0001",
+        resource_id="resource-0002:xxx",
+        scope="skin_analysis",
+        consent_version="skin-analysis-v1",
+        granted=True,
+        granted_at=now,
+        expires_at=now + timedelta(minutes=30),
+        provider_contributor_token=token,
+    )
+    try:
+        db.add_all([first, second])
+        db.flush()
+        event_receipt = "skin-revoke-event-colon-0001"
+        first_command = main._queue_cil_provider_consent_cleanup(
+            db, first, revocation_receipt_id=event_receipt
+        )[0]
+        second_command = main._queue_cil_provider_consent_cleanup(
+            db, second, revocation_receipt_id=event_receipt
+        )[0]
+        assert first_command.command_id != second_command.command_id
+        assert first_command.consent_id == first.consent_id
+        assert second_command.consent_id == second.consent_id
+        assert first_command.revocation_receipt_id == event_receipt
+        assert second_command.revocation_receipt_id == event_receipt
+    finally:
+        db.rollback()
+        db.close()
+
+
+def test_cil_provider_revocation_failure_is_durable_and_retryable(client, monkeypatch):
+    assert skin_analysis_consent(
+        client,
+        bundle="skin-analysis-retry-bundle",
+        resource="skin-analysis-retry-resource",
+        receipt="skin-analysis-retry-receipt",
+    ).status_code == 200
+
+    async def unavailable(_item):
+        raise RuntimeError("CIL_PROVIDER_REVOCATION_UNAVAILABLE")
+
+    monkeypatch.setattr(main, "_notify_cil_provider_of_consent_revocation", unavailable)
+    revoked = client.post(
+        "/v1/tal/consents/skin-analysis-retry-receipt/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert revoked.status_code == 200, revoked.text
+    assert revoked.json()["cil_provider_cleanup_status"] == "pending"
+
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    try:
+        pending = db.query(main.CILProviderConsentRevocationOutbox).one()
+        command_id = pending.command_id
+        assert pending.status == "pending"
+        assert pending.attempts == 1
+        assert pending.last_error_code == "CIL_PROVIDER_REVOCATION_UNAVAILABLE"
+    finally:
+        db.close()
+
+    delivered = []
+    async def recovered(item):
+        delivered.append(item.command_id)
+        return {
+            "revoked": True,
+            "consent_id": item.consent_id,
+            "revocation_reference": item.command_id,
+            "matched_tasks": 1,
+            "deleted_tasks": 1,
+            "waiting_for_terminal": 0,
+        }
+
+    monkeypatch.setattr(main, "_notify_cil_provider_of_consent_revocation", recovered)
+    retry = client.post(
+        "/internal/v1/cil/provider-consent-revocations/dispatch?limit=10",
+        headers=auth(),
+    )
+    assert retry.status_code == 200, retry.text
+    assert retry.json() == {"processed": 1, "completed": 1, "already_delivered": 0, "delivered": 1, "failed": 0, "pending": False}
+    assert delivered == [command_id]
+
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    try:
+        completed = db.get(main.CILProviderConsentRevocationOutbox, command_id)
+        assert completed.status == "delivered"
+        assert completed.attempts == 1
+        assert completed.waiting_for_terminal == 0
+    finally:
+        db.close()
+
+
+def test_expired_skin_analysis_consent_queues_provider_cleanup(client, monkeypatch):
+    expires_at = (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
+    assert skin_analysis_consent(
+        client,
+        bundle="skin-analysis-expired-bundle",
+        resource="skin-analysis-expired-resource",
+        receipt="skin-analysis-expired-receipt",
+        expires_at=expires_at,
+    ).status_code == 200
+    image_scope = client.post(
+        "/v1/tal/consents",
+        params={"subject_id": "user-verified-1"},
+        headers=auth(),
+        json={
+            "receipt_id": "skin-analysis-expired-image-scope",
+            "scope": "image_processing",
+            "consent_id": "skin-analysis-expired-bundle",
+            "resource_id": "skin-analysis-expired-resource",
+            "consent_version": "image-processing-v1",
+            "granted": True,
+            "expires_at": expires_at,
+        },
+    )
+    assert image_scope.status_code == 200, image_scope.text
+
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    try:
+        db.query(main.ConsentReceipt).filter(
+            main.ConsentReceipt.receipt_id == "skin-analysis-expired-receipt"
+        ).update({
+            "expires_at": datetime.now(timezone.utc) - timedelta(minutes=1)
+        }, synchronize_session=False)
+        db.commit()
+    finally:
+        db.close()
+
+    observed = []
+    async def notify(item):
+        observed.append(item.command_id)
+        return {
+            "revoked": True,
+            "consent_id": item.consent_id,
+            "revocation_reference": item.command_id,
+            "matched_tasks": 1,
+            "deleted_tasks": 0,
+            "waiting_for_terminal": 1,
+        }
+
+    monkeypatch.setattr(main, "_notify_cil_provider_of_consent_revocation", notify)
+    purged = client.post(
+        "/internal/retention/purge",
+        headers={
+            **auth(),
+            "X-Identity-Cron-Token": "identity-cron-token-that-is-at-least-32-bytes",
+        },
+    )
+    assert purged.status_code == 200, purged.text
+    assert purged.json()["cil_provider_cleanup_commands"] == 1
+    assert purged.json()["cil_provider_cleanup_delivered"] == 1
+    assert purged.json()["cil_provider_cleanup_pending"] is False
+    assert len(observed) == 1
+
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    try:
+        receipt = db.get(main.ConsentReceipt, "skin-analysis-expired-receipt")
+        image_receipt = db.get(main.ConsentReceipt, "skin-analysis-expired-image-scope")
+        assert receipt.revoked_at is not None
+        assert image_receipt.revoked_at is not None
+    finally:
+        db.close()
+
+
+def test_cil_live_consent_verifier_requires_dedicated_token_and_returns_canonical_expiry(client):
+    expiry = datetime.now(timezone.utc) + timedelta(hours=2)
+    assert skin_analysis_consent(client, expires_at=expiry.isoformat()).status_code == 200
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    try:
+        consent_row = db.get(main.ConsentReceipt, "skin-analysis-receipt-001")
+        contributor_token = consent_row.provider_contributor_token
+    finally:
+        db.close()
+    payload = {
+        "receipt_id": "skin-analysis-receipt-001",
+        "consent_id": "skin-analysis-bundle-001",
+        "resource_id": "skin-analysis-resource-001",
+        "contributor_token": contributor_token,
+        "image_sha256": "f" * 64,
+    }
+    url = "/internal/v1/consents/skin-analysis-provider-receipts/verify"
+    wrong = client.post(url, headers=auth(), json=payload)
+    assert wrong.status_code == 401
+
+    verified = client.post(url, headers=cil_consent_verifier_auth(), json=payload)
+    assert verified.status_code == 200, verified.text
+    body = verified.json()
+    assert body["status"] == "active"
+    assert body["consent_receipt_id"] == payload["receipt_id"]
+    assert body["consent_id"] == payload["consent_id"]
+    assert body["resource_id"] == payload["resource_id"]
+    assert body["contributor_token"] == payload["contributor_token"]
+    assert body["image_sha256"] == payload["image_sha256"]
+    assert body["consent_expires_at"] > int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp())
+
+    revoked = client.post(
+        "/v1/tal/consents/skin-analysis-receipt-001/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert revoked.status_code == 200
+    denied = client.post(url, headers=cil_consent_verifier_auth(), json=payload)
+    assert denied.status_code == 403
+
+
+def test_stale_revocation_retry_does_not_withdraw_a_later_grant(client):
+    first = client.post(
+        "/v1/tal/consents",
+        params={"subject_id": "user-verified-1"},
+        headers=auth(),
+        json={
+            "receipt_id": "profile-consent-old",
+            "scope": "profile_storage",
+            "consent_id": "profile-bundle-reused",
+            "resource_id": "profile-resource-1",
+            "consent_version": "v1",
+            "granted": True,
+        },
+    )
+    assert first.status_code == 200
+    revoked = client.post(
+        "/v1/tal/consents/profile-consent-old/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert revoked.status_code == 200
+
+    second = client.post(
+        "/v1/tal/consents",
+        params={"subject_id": "user-verified-1"},
+        headers=auth(),
+        json={
+            "receipt_id": "profile-consent-new",
+            "scope": "profile_storage",
+            "consent_id": "profile-bundle-reused",
+            "resource_id": "profile-resource-1",
+            "consent_version": "v2",
+            "granted": True,
+        },
+    )
+    assert second.status_code == 200
+    retry = client.post(
+        "/v1/tal/consents/profile-consent-old/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert retry.status_code == 200
+    assert retry.json()["status"] == "already_revoked"
+    active = client.post(
+        "/internal/v1/consents/verify",
+        headers=auth(),
+        json={
+            "subject_id": "user-verified-1",
+            "consent_id": "profile-bundle-reused",
+            "required_scopes": ["profile_storage"],
+            "resource_id": "profile-resource-1",
+        },
+    )
+    assert active.status_code == 200
+    assert active.json()["active"] is True
+
+
+def test_expired_legacy_skin_analysis_receipt_cannot_revoke_new_active_bundle(client):
+    active = _grant_resource_consent(
+        client,
+        subject="user-verified-1",
+        bundle="skin-analysis-new-active-bundle",
+        resource="skin-analysis-new-active-resource",
+        scope="skin_analysis",
+        receipt="skin-analysis-new-active-receipt",
+        expires_at=(datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
+    )
+    assert active.status_code == 200
+
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    try:
+        db.add(main.ConsentReceipt(
+            receipt_id="skin-analysis-legacy-expired",
+            subject_id="user-verified-1",
+            consent_id="legacy-skin-analysis-consent",
+            resource_id=None,
+            scope="skin_analysis",
+            consent_version="legacy-v1",
+            granted=True,
+            granted_at=datetime.now(timezone.utc) - timedelta(days=3),
+            revoked_at=None,
+            expires_at=datetime.now(timezone.utc) - timedelta(days=1),
+            provider_contributor_token=None,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    stale_revoke = client.post(
+        "/v1/tal/consents/skin-analysis-legacy-expired/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert stale_revoke.status_code == 200
+    assert stale_revoke.json()["status"] == "already_expired"
+
+    verified = client.post(
+        "/internal/v1/consents/verify",
+        headers=auth(),
+        json={
+            "subject_id": "user-verified-1",
+            "consent_id": "skin-analysis-new-active-bundle",
+            "required_scopes": ["skin_analysis"],
+            "resource_id": "skin-analysis-new-active-resource",
+            "require_expiring": True,
+        },
+    )
+    assert verified.status_code == 200
+    assert verified.json()["active"] is True
+
+
+def test_image_processing_expiry_in_twin_bundle_queues_twin_asset_cleanup(client, monkeypatch):
+    expires = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    for index, scope in enumerate(["image_processing", "body_measurements", "virtual_twin_storage"]):
+        assert _grant_resource_consent(
+            client,
+            subject="user-verified-1",
+            bundle="bundle-twin-image-expiry",
+            resource="twin-image-expiry",
+            scope=scope,
+            receipt=f"twin-image-expiry-{index:02d}",
+            expires_at=expires,
+        ).status_code == 200
+
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    try:
+        db.query(main.ConsentReceipt).filter(
+            main.ConsentReceipt.receipt_id == "twin-image-expiry-00"
+        ).update({"expires_at": datetime.now(timezone.utc) - timedelta(minutes=1)}, synchronize_session=False)
+        db.commit()
+    finally:
+        db.close()
+
+    observed = []
+    async def notify(item):
+        observed.append((item.consent_id, item.resource_id))
+        return {"status": "pending", "twins_queued": 1}
+
+    monkeypatch.setattr(main, "_notify_twin_registry_of_revocation", notify)
+    purge = client.post(
+        "/internal/retention/purge",
+        headers={**auth(), "X-Identity-Cron-Token": "identity-cron-token-that-is-at-least-32-bytes"},
+    )
+    assert purge.status_code == 200, purge.text
+    assert purge.json()["twin_cleanup_commands"] == 1
+    assert purge.json()["twin_cleanup_delivered"] == 1
+    assert observed == [("bundle-twin-image-expiry", "twin-image-expiry")]
+    # Expiry of the image-processing scope withdraws the exact resource bundle,
+    # not merely the expired row, so sibling Twin scopes cannot remain active.
+    assert _verify_resource_consent(
+        client,
+        subject="user-verified-1",
+        bundle="bundle-twin-image-expiry",
+        resource="twin-image-expiry",
+    ).status_code == 403
+
+
+def test_cil_and_twin_cleanup_dispatch_batch_more_than_one_hundred_commands(monkeypatch):
+    cil_batches = []
+    twin_batches = []
+
+    async def fake_cil(_db, *, limit, command_ids):
+        cil_batches.append((limit, len(command_ids)))
+        return {
+            "processed": len(command_ids), "completed": len(command_ids),
+            "already_delivered": 0, "delivered": len(command_ids),
+            "failed": 0, "pending": False,
+        }
+
+    async def fake_twin(_db, *, limit, command_ids):
+        twin_batches.append((limit, len(command_ids)))
+        return {
+            "processed": len(command_ids), "completed": len(command_ids),
+            "already_delivered": 0, "delivered": len(command_ids),
+            "failed": 0, "pending": False,
+        }
+
+    monkeypatch.setattr(main, "_dispatch_cil_provider_consent_revocations", fake_cil)
+    monkeypatch.setattr(main, "_dispatch_twin_consent_revocations", fake_twin)
+    command_ids = [f"cleanup-command-{index:03d}" for index in range(205)]
+
+    cil = asyncio.run(main._dispatch_cil_provider_consent_revocations_batched(None, command_ids))
+    twin = asyncio.run(main._dispatch_twin_consent_revocations_batched(None, command_ids))
+
+    assert cil_batches == [(100, 100), (100, 100), (5, 5)]
+    assert twin_batches == [(100, 100), (100, 100), (5, 5)]
+    assert cil["delivered"] == 205 and cil["failed"] == 0 and cil["pending"] is False
+    assert twin["delivered"] == 205 and twin["failed"] == 0 and twin["pending"] is False

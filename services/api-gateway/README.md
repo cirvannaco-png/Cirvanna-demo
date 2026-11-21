@@ -15,12 +15,7 @@
 - Retrieve and verify candidate-bound signed safety and FCI evidence from separately configured providers.
 - Submit every candidate to CaTaCaCi/CAL. Product and offer details are returned to the marketplace only for CAL SHOW. The lower-level `/v1/decisions` response also redacts SKU, name, category, brand, price, currency and images for BLOCK/REVIEW.
 - After CAL SHOW and before returning product/offer details, call CIL `POST /serving/assessment` with the exact Catalog product ID/version, claims and ingredient declarations. CIL checks commercial-use rights, permitted purpose, evidence grade/scope, attribution and human claim approval. Missing/mismatched assessments, stale versions, unlicensed sources, unsupported claims or CIL outages withhold the candidate. CAL remains the final display authority; CIL is an additional rights/evidence gate, not a replacement.
-- When `CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED=true`, query the latest final human CAL feedback decision for the same product and normalized climate/occasion context before releasing details. A matching `BLOCK` is an additional context-scoped veto; feedback `SHOW` cannot override the ordinary CAL/safety/legal/NPL/USI/FCI pipeline. If configured enforcement cannot obtain a valid review result, the Gateway fails closed.
 - Keep Complementer styling guidance advisory-only.
-
-## Human CAL feedback review enforcement
-
-Set `CIL_CAL_REVIEW_ENFORCEMENT_REQUIRED=true` only after the Intelligence Service review store is deployed, migrated and staging-tested. The Gateway calls `POST /cal/feedback-decisions` with exact product IDs and the normalized coarse climate/occasion context using the dedicated `CIL_CAL_SERVICE_TOKEN`. Responses are validated for exact product/context, final verdict, review ID and decision reference. A matching `BLOCK` suppresses the candidate before audit and the CIL rights assessment; a feedback `SHOW` cannot change a normal `BLOCK` or `REVIEW`. Missing configuration, unavailable service, malformed or ambiguous decisions fail closed. Keep the flag false until live integration evidence exists.
 
 ## Authentication model
 
@@ -41,7 +36,7 @@ The gateway sends that user token to Commerce `GET /me` and uses only the verifi
 - `GET /capabilities` — reports enabled integrations and explicit unavailable capabilities.
 - `POST /v1/decisions` — evaluate 1–25 canonical Catalog product IDs through the decision pipeline; merchandising fields are present only for CAL SHOW, otherwise only the candidate ID and decision evidence are returned.
 - `POST /v1/discover` — live Catalog search + Commerce purchasable-offer retrieval, USI preference ranking, then CAL arbitration. Product and offer details are included only for SHOW candidates.
-- `POST /v1/complementer/recommend` — requires a Commerce-verified end-user token whose subject exactly matches the request; returns stateless styling advice only, with no product candidates or display authority.
+- `POST /v1/complementer/recommend` — styling advice only; no product candidates or display authority.
 - `GET /v1/me/style-profile` and `PUT /v1/me/style-profile` — read/update the verified subject's USI profile.
 - `POST /v1/me/consents` and `POST /v1/me/consents/{receipt_id}/revoke` — create and revoke versioned consent receipts.
 - `POST /v1/me/tal/events` — append consented observations or append-only correction events.
@@ -53,8 +48,6 @@ The gateway sends that user token to Commerce `GET /me` and uses only the verifi
 The gateway resolves the end-user subject through Commerce `/me`, then calls the identity-learning service using its private service token. The identity service owns prefixed tables in the existing approved Postgres database; it does not create a second database. Profile reads and writes require an active `profile_storage` consent receipt. TAL writes require active `personalization` or `style_learning` consent. Event IDs and per-subject idempotency keys prevent duplicate writes; changed replays return 409. Corrections are append-only and identify the event they supersede. A denial receipt or revocation revokes every active grant for the same subject and consent scope, so parallel older receipts cannot keep authorizing writes. A later grant creates a new receipt; revoked receipts remain revoked. Retention purge, export and deletion are implemented by the canonical identity service.
 
 Rejected Complementer suggestions remain soft observations. They do not automatically become NPL hard vetoes.
-
-Complementer requests are bound to the same Commerce `/me` identity resolution used by `/v1/discover`. The service rejects missing identity and subject mismatch before contacting the Complementer provider. Advice remains request-scoped and cannot be persisted as a user preference without a separate, consented TAL action.
 
 ## Marketplace discovery and display control
 
@@ -150,7 +143,7 @@ From the repository root:
     python -m unittest discover -s tests/architecture -v
     python scripts/scan_source_secrets.py
 
-The Decision Gateway workflow runs gateway HTTP/integration tests, container build, architecture checks and secret scanning. When human feedback enforcement is enabled, configure the private `CIL_SERVICE_URL` and dedicated `CIL_CAL_SERVICE_TOKEN`; the gateway fails closed when the review store is unavailable. The identity-learning workflow runs its persistence, review lifecycle and consent-revocation regression tests plus container build. Check the exact branch commit's CI before merge.
+The Decision Gateway workflow runs gateway HTTP/integration tests, container build, architecture checks and secret scanning. The identity-learning workflow runs its own persistence and consent regression tests plus container build. Check the exact branch commit's CI before merge.
 
 ## Current production blockers
 
@@ -162,3 +155,8 @@ The Decision Gateway workflow runs gateway HTTP/integration tests, container bui
 - Production marketplace offer API security and end-to-end display verification.
 
 Do not claim production readiness from unit tests, signed test fixtures, a passing container build, or a configured URL alone.
+
+
+## Consent scope expiry
+
+The `/v1/me/consents` request accepts an optional timezone-aware `expires_at`. For `skin_analysis`, the Gateway requires both a resource-bound `resource_id` and a future `expires_at`; it forwards them to Identity Learning. The browser cannot provide a CIL pseudonym, provider credential, signed provider receipt or adult-verification assertion. Those are issued only by trusted server-side services.
