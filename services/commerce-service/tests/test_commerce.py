@@ -3398,7 +3398,10 @@ def test_shopify_inventory_levels_are_fully_paginated_before_stock_is_marked_com
     complete = shopify._complete_inventory_levels(connection, db, first, lease_owner="catalog-sync-worker")
     db.refresh(connection)
     assert len(calls) == 1
-    assert connection.products_sync_lease_until > main.now() + main.timedelta(minutes=14)
+    lease_until = connection.products_sync_lease_until
+    if lease_until.tzinfo is None:
+        lease_until = lease_until.replace(tzinfo=main.now().tzinfo)
+    assert lease_until > main.now() + main.timedelta(minutes=14)
     assert shopify._inventory_totals(complete) == (True, 7, 11, True)
     db.close()
 
@@ -3947,7 +3950,7 @@ def test_shopify_inventory_pagination_stops_when_catalog_sync_lease_is_reclaimed
     from app import shopify
     from fastapi import HTTPException
     db = TEST_SESSION()
-    shopify.Base.metadata.create_all(bind=db.get_bind())
+    main.Base.metadata.create_all(bind=db.get_bind())
     connection = shopify.ShopifyConnection(
         id=str(uuid.uuid4()), merchant_id=str(uuid.uuid4()), shop_domain="inventory-lease-loss.myshopify.com",
         shop_currency="KES", granted_scopes=["read_inventory", "read_locations"], status="active",
