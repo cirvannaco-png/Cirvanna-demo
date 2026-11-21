@@ -16,8 +16,8 @@ class LookOption:
     currency: str
     decision: CandidateEvaluation
     @property
-    def may_display(self) -> bool:
-        return self.decision.may_display
+    def cal_preflight_show(self) -> bool:
+        return self.decision.cal_preflight_show
 
 @dataclass(frozen=True)
 class LookCompositionResult:
@@ -104,7 +104,7 @@ def build_look(
         for component in components
     }
     shown = {
-        component: tuple(c for c in result.candidates if c.may_display)[:max_candidates_per_component]
+        component: tuple(c for c in result.candidates if c.cal_preflight_show)[:max_candidates_per_component]
         for component, result in component_results.items()
     }
     if any(not candidates for candidates in shown.values()):
@@ -131,7 +131,7 @@ def build_look(
         )
         bundles.append(evaluation)
         inspected += 1
-        if evaluation.may_display:
+        if evaluation.cal_preflight_show:
             options.append(LookOption(tuple(item.product_id for item in combo), bundle.price_minor, bundle.currency, evaluation))
 
     status = EvaluationStatus.COMPLETED if options else EvaluationStatus.NEEDS_REVIEW
