@@ -7,6 +7,7 @@ import io
 import json
 import logging
 import os
+from functools import lru_cache
 import re
 import threading
 import uuid
@@ -89,6 +90,13 @@ def _artifact_manifest() -> tuple[dict[str, Any] | None, str | None]:
     files = manifest.get("files")
     if not isinstance(files, dict) or not files:
         return None, "artifact_file_manifest_missing"
+    required_files = {
+        os.getenv("SAM3D_BODY_CHECKPOINT_FILE", "model.ckpt"),
+        os.getenv("SAM3D_BODY_CONFIG_FILE", "model_config.yaml"),
+        os.getenv("SAM3D_BODY_MHR_FILE", "assets/mhr_model.pt"),
+    }
+    if not required_files.issubset(files.keys()):
+        return None, "required_model_artifact_not_manifested"
     for relative, expected in files.items():
         if not isinstance(relative, str) or not isinstance(expected, str):
             return None, "artifact_file_manifest_invalid"
@@ -132,6 +140,7 @@ def _gpu_status() -> tuple[bool, str]:
     return True, "ready"
 
 
+@lru_cache(maxsize=1)
 def _configured() -> tuple[bool, str]:
     token = os.getenv("TWIN_GENERATION_WORKER_TOKEN", "")
     if len(token) < 32:
@@ -140,6 +149,8 @@ def _configured() -> tuple[bool, str]:
         return False, "source_revision_not_pinned"
     if os.getenv("SAM3D_BODY_LICENSE_ACCEPTED", "").lower() != "true":
         return False, "model_license_acceptance_not_recorded"
+    if not os.getenv("SAM3D_BODY_LICENSE_EVIDENCE_ID", "").strip():
+        return False, "model_license_evidence_missing"
     if os.getenv("SAM3D_BODY_MODEL_ID", DEFAULT_MODEL_ID) != DEFAULT_MODEL_ID:
         return False, "unsupported_model_id"
     manifest, error = _artifact_manifest()
@@ -168,7 +179,10 @@ def _load_estimator() -> Any:
     from sam_3d_body.sam_3d_body_estimator import SAM3DBodyEstimator
 
     checkpoint_path = _artifact_path("SAM3D_BODY_CHECKPOINT_FILE", "model.ckpt")
+    config_path = _artifact_path("SAM3D_BODY_CONFIG_FILE", "model_config.yaml")
     mhr_path = _artifact_path("SAM3D_BODY_MHR_FILE", "assets/mhr_model.pt")
+    if config_path.parent != checkpoint_path.parent:
+        raise RuntimeError("model_config.yaml must be beside the checkpoint file.")
     model, model_cfg = load_sam_3d_body(
         checkpoint_path=str(checkpoint_path),
         device=torch.device("cuda"),
@@ -251,6 +265,11 @@ def _reconstruct(image: Image.Image) -> tuple[bytes, int, int]:
         _ESTIMATOR.faces,
         output["pred_cam_t"],
     )
+
+
+def _reconstruct_with_lock(image: Image.Image) -> tuple[bytes, int, int]:
+    with _INFERENCE_LOCK:
+        return _reconstruct(image)
 
 
 def _require_internal_auth(authorization: str | None) -> None:
@@ -348,8 +367,7 @@ async def reconstruct(
         raise HTTPException(422, detail={"code": "EMPTY_IMAGE"})
     pil_image = _image_from_bytes(raw)
     try:
-        with _INFERENCE_LOCK:
-            glb, vertex_count, face_count = await run_in_threadpool(_reconstruct, pil_image)
+        glb, vertex_count, face_count = await run_in_threadpool(_reconstruct_with_lock, pil_image)
     except ValueError as exc:
         raise HTTPException(422, detail={"code": "RECONSTRUCTION_INVALID", "message": str(exc)})
     except Exception:
