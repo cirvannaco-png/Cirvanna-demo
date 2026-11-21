@@ -28,7 +28,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import (
     Boolean, DateTime, ForeignKey, Index, Integer, JSON, String, Text, and_, or_,
-    UniqueConstraint, select,
+    UniqueConstraint, select, update,
 )
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Mapped, Session, mapped_column
@@ -58,6 +58,7 @@ REQUIRED_SCOPES = {
     "read_products", "read_inventory", "read_locations", "read_orders",
     "read_draft_orders", "write_draft_orders",
 }
+COMPENSATION_SCOPES = {"write_orders"}
 WEBHOOK_TOPICS = (
     "PRODUCTS_CREATE", "PRODUCTS_UPDATE", "PRODUCTS_DELETE",
     "INVENTORY_LEVELS_UPDATE",
@@ -209,6 +210,8 @@ class ShopifyConnection(commerce.Base):
     products_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     products_cursor: Mapped[str | None] = mapped_column(String(512))
     products_sync_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    products_sync_lease_owner: Mapped[str | None] = mapped_column(String(64))
+    products_sync_lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     orders_reconciled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     installed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -314,6 +317,31 @@ class ShopifyOrderLink(commerce.Base):
     financial_status: Mapped[str | None] = mapped_column(String(40))
     fulfillment_status: Mapped[str | None] = mapped_column(String(40))
     link_state: Mapped[str] = mapped_column(String(24), nullable=False, default="creating")
+    last_error: Mapped[str | None] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
+
+
+class ShopifyCompensationCase(commerce.Base):
+    """Per-seller recovery record; no buyer refund until every seller is safe."""
+    __tablename__ = "commerce_shopify_compensation_cases"
+    __table_args__ = (
+        UniqueConstraint("commerce_order_id", "merchant_id", name="uq_shopify_compensation_order_merchant"),
+        Index("ix_shopify_compensation_state_lease", "state", "lease_until"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    commerce_order_id: Mapped[str] = mapped_column(ForeignKey("commerce_orders.id", ondelete="CASCADE"), nullable=False)
+    merchant_id: Mapped[str] = mapped_column(ForeignKey("commerce_merchants.id", ondelete="CASCADE"), nullable=False)
+    connection_id: Mapped[str] = mapped_column(ForeignKey("commerce_shopify_connections.id", ondelete="CASCADE"), nullable=False)
+    reservation_id: Mapped[str] = mapped_column(ForeignKey("commerce_shopify_inventory_reservations.id", ondelete="CASCADE"), nullable=False)
+    shopify_order_gid: Mapped[str | None] = mapped_column(String(180))
+    cancellation_job_gid: Mapped[str | None] = mapped_column(String(180))
+    inventory_before_json: Mapped[dict[str, int] | None] = mapped_column(JSON)
+    inventory_expected_restore_json: Mapped[dict[str, int] | None] = mapped_column(JSON)
+    state: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    lease_owner: Mapped[str | None] = mapped_column(String(64))
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_error: Mapped[str | None] = mapped_column(String(300))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
@@ -542,19 +570,58 @@ def _inventory_totals(inventory_item: dict[str, Any]) -> tuple[bool, int | None,
     tracked = inventory_item.get("tracked") is True
     if not tracked:
         return False, None, None, False
-    connection = inventory_item.get("inventoryLevels") or {}
-    nodes = connection.get("nodes") or []
-    complete = not bool((connection.get("pageInfo") or {}).get("hasNextPage"))
+    if not isinstance(inventory_item.get("id"), str) or not inventory_item["id"].startswith("gid://shopify/InventoryItem/"):
+        return True, None, None, False
+    levels_connection = inventory_item.get("inventoryLevels") or {}
+    nodes = levels_connection.get("nodes") or []
+    page_info = levels_connection.get("pageInfo")
+    complete = isinstance(nodes, list) and isinstance(page_info, dict) and page_info.get("hasNextPage") is False
+    if not isinstance(nodes, list):
+        return True, None, None, False
     available = 0
     on_hand = 0
+    seen_level_ids: set[str] = set()
+    seen_location_ids: set[str] = set()
     for level in nodes:
-        if level.get("isActive") is False:
+        if not isinstance(level, dict):
+            complete = False
+            continue
+        level_id = level.get("id")
+        if not isinstance(level_id, str) or not level_id.startswith("gid://shopify/InventoryLevel/") or level_id in seen_level_ids:
+            complete = False
+            continue
+        seen_level_ids.add(level_id)
+        level_active = level.get("isActive")
+        if level_active is False:
+            continue
+        if level_active is not True:
+            complete = False
             continue
         location = level.get("location") or {}
-        if location.get("isActive") is False:
+        location_id = location.get("id") if isinstance(location, dict) else None
+        if not isinstance(location_id, str) or not location_id.startswith("gid://shopify/Location/") or location_id in seen_location_ids:
+            complete = False
             continue
-        values = {item.get("name"): item.get("quantity") for item in level.get("quantities") or []}
-        if not isinstance(values.get("available"), int) or not isinstance(values.get("on_hand"), int):
+        seen_location_ids.add(location_id)
+        if location.get("isActive") is not True:
+            complete = False
+            continue
+        quantities = level.get("quantities")
+        if not isinstance(quantities, list):
+            complete = False
+            continue
+        values: dict[str, int] = {}
+        malformed = False
+        for item in quantities:
+            if not isinstance(item, dict) or item.get("name") not in {"available", "on_hand"} or item.get("name") in values:
+                malformed = True
+                continue
+            quantity = item.get("quantity")
+            if isinstance(quantity, bool) or not isinstance(quantity, int):
+                malformed = True
+                continue
+            values[item["name"]] = quantity
+        if malformed or set(values) != {"available", "on_hand"}:
             complete = False
             continue
         available += values["available"]
@@ -562,6 +629,106 @@ def _inventory_totals(inventory_item: dict[str, Any]) -> tuple[bool, int | None,
     if not complete or not nodes:
         return True, None, None, False
     return True, available, on_hand, True
+
+
+def _renew_products_sync_lease(db: Session, connection_id: str, lease_owner: str) -> None:
+    """Extend only the current active catalog-sync owner's lease."""
+    now_value = utcnow()
+    result = db.execute(update(ShopifyConnection).where(
+        ShopifyConnection.id == connection_id,
+        ShopifyConnection.status == "active",
+        ShopifyConnection.products_sync_lease_owner == lease_owner,
+    ).values(
+        products_sync_lease_until=now_value + timedelta(minutes=15),
+    ).execution_options(synchronize_session=False))
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(409, detail={"code": "SHOPIFY_CATALOG_SYNC_LEASE_LOST"})
+    db.commit()
+
+
+def _complete_inventory_levels(connection: ShopifyConnection, db: Session,
+                               inventory_item: dict[str, Any], *, max_pages: int = 20,
+                               lease_owner: str | None = None) -> dict[str, Any]:
+    """Hydrate every location for a tracked item; incomplete pagination stays unsellable."""
+    if inventory_item.get("tracked") is not True:
+        return inventory_item
+    inventory_item_gid = inventory_item.get("id")
+    if not isinstance(inventory_item_gid, str) or not inventory_item_gid.startswith("gid://shopify/InventoryItem/"):
+        levels = inventory_item.get("inventoryLevels") or {}
+        return {**inventory_item, "inventoryLevels": {**levels,
+            "pageInfo": {"hasNextPage": True, "endCursor": None}}}
+    levels_connection = inventory_item.get("inventoryLevels") or {}
+    raw_nodes = levels_connection.get("nodes")
+    page_info = levels_connection.get("pageInfo")
+    if not isinstance(raw_nodes, list) or not isinstance(page_info, dict):
+        return {**inventory_item, "inventoryLevels": {"nodes": [], "pageInfo": {"hasNextPage": True, "endCursor": None}}}
+    nodes = list(raw_nodes)
+    after = page_info.get("endCursor")
+    pages = 0
+    seen = {node.get("id") for node in nodes if isinstance(node, dict) and node.get("id")}
+    seen_cursors: set[str] = set()
+    if isinstance(after, str):
+        seen_cursors.add(after)
+    if page_info.get("hasNextPage") not in {True, False}:
+        page_info = {**page_info, "hasNextPage": True}
+    while page_info.get("hasNextPage") is True and pages < max_pages:
+        if not isinstance(after, str) or not after:
+            break
+        if lease_owner:
+            _renew_products_sync_lease(db, connection.id, lease_owner)
+        data = _graphql(connection, db, """
+          query CirvannaShopifyInventoryLevels($id: ID!, $after: String) {
+            inventoryItem(id: $id) {
+              id
+              inventoryLevels(first: 100, after: $after) {
+                pageInfo { hasNextPage endCursor }
+                nodes {
+                  id isActive
+                  location { id name isActive }
+                  quantities(names: ["available", "on_hand"]) { name quantity }
+                }
+              }
+            }
+          }
+        """, {"id": inventory_item.get("id"), "after": after})
+        item = data.get("inventoryItem")
+        if not isinstance(item, dict) or item.get("id") != inventory_item.get("id"):
+            raise HTTPException(502, detail={"code": "SHOPIFY_INVENTORY_ITEM_PAGE_MISMATCH"})
+        next_connection = item.get("inventoryLevels")
+        if not isinstance(next_connection, dict) or not isinstance(next_connection.get("nodes"), list) or not isinstance(next_connection.get("pageInfo"), dict):
+            page_info = {"hasNextPage": True, "endCursor": None}
+            break
+        next_nodes = next_connection["nodes"]
+        malformed_page = False
+        for node in next_nodes:
+            if not isinstance(node, dict):
+                malformed_page = True
+                continue
+            node_id = node.get("id")
+            if node_id and node_id in seen:
+                raise HTTPException(502, detail={"code": "SHOPIFY_INVENTORY_LEVEL_DUPLICATE"})
+            if node_id:
+                seen.add(node_id)
+            nodes.append(node)
+        page_info = next_connection["pageInfo"]
+        if malformed_page:
+            page_info = {"hasNextPage": True, "endCursor": None}
+            break
+        next_cursor = page_info.get("endCursor")
+        if page_info.get("hasNextPage") is True and (not isinstance(next_cursor, str) or not next_cursor or next_cursor in seen_cursors):
+            page_info = {**page_info, "hasNextPage": True, "endCursor": None}
+            break
+        if isinstance(next_cursor, str):
+            seen_cursors.add(next_cursor)
+        after = next_cursor
+        pages += 1
+    # If the bounded page budget was exhausted, preserve hasNextPage=true so
+    # _inventory_totals rejects the aggregate rather than selling partial stock.
+    return {**inventory_item, "inventoryLevels": {
+        **levels_connection, "nodes": nodes,
+        "pageInfo": {"hasNextPage": page_info.get("hasNextPage") is not False, "endCursor": after},
+    }}
 
 
 PRODUCTS_QUERY = """
@@ -578,9 +745,9 @@ query CirvannaShopifyVariantCatalog($first: Int!, $after: String) {
         inventoryItem {
           id tracked
           inventoryLevels(first: 50) {
-            pageInfo { hasNextPage }
+            pageInfo { hasNextPage endCursor }
             nodes {
-              isActive
+              id isActive
               location { id name isActive }
               quantities(names: ["available", "on_hand"]) { name quantity }
             }
@@ -719,14 +886,65 @@ def _deactivate_product_listing(db: Session, connection: ShopifyConnection, prod
                 variant.observed_at = utcnow() - timedelta(days=30)
 
 
+def _assert_products_sync_lease(db: Session, connection_id: str, lease_owner: str) -> None:
+    row = db.execute(select(
+        ShopifyConnection.products_sync_lease_owner, ShopifyConnection.status
+    ).where(ShopifyConnection.id == connection_id)).first()
+    if row is None or row[0] != lease_owner:
+        raise HTTPException(409, detail={"code": "SHOPIFY_CATALOG_SYNC_LEASE_LOST"})
+    if row[1] != "active":
+        raise HTTPException(409, detail={"code": "SHOPIFY_CONNECTION_NOT_ACTIVE"})
+
+
 def _sync_products(connection: ShopifyConnection, db: Session, *, max_pages: int = 20) -> dict[str, int | bool]:
     if connection.status != "active":
         raise HTTPException(409, detail={"code": "SHOPIFY_CONNECTION_NOT_ACTIVE"})
+    if max_pages < 1 or max_pages > 100:
+        raise HTTPException(400, detail={"code": "SHOPIFY_SYNC_PAGE_LIMIT_INVALID"})
+    lease_owner = uuid.uuid4().hex
+    now_value = utcnow()
+    claim = db.execute(update(ShopifyConnection).where(
+        ShopifyConnection.id == connection.id,
+        ShopifyConnection.status == "active",
+        or_(ShopifyConnection.products_sync_lease_until.is_(None),
+            ShopifyConnection.products_sync_lease_until < now_value),
+    ).values(
+        products_sync_lease_owner=lease_owner,
+        products_sync_lease_until=now_value + timedelta(minutes=15),
+    ).execution_options(synchronize_session=False))
+    if claim.rowcount != 1:
+        db.rollback()
+        raise HTTPException(409, detail={"code": "SHOPIFY_CATALOG_SYNC_ALREADY_RUNNING"})
+    db.commit()
+    db.refresh(connection)
+    try:
+        return _sync_products_locked(connection, db, max_pages=max_pages, lease_owner=lease_owner)
+    finally:
+        # Release only our lease. A crashed worker is recovered by lease expiry;
+        # a late worker must never clear a newer worker's lease.
+        try:
+            db.rollback()
+            db.execute(update(ShopifyConnection).where(
+                ShopifyConnection.id == connection.id,
+                ShopifyConnection.products_sync_lease_owner == lease_owner,
+            ).values(products_sync_lease_owner=None, products_sync_lease_until=None))
+            db.commit()
+        except Exception:
+            db.rollback()
+
+
+def _sync_products_locked(connection: ShopifyConnection, db: Session, *, max_pages: int,
+                          lease_owner: str) -> dict[str, int | bool]:
+    if connection.status != "active":
+        raise HTTPException(409, detail={"code": "SHOPIFY_CONNECTION_NOT_ACTIVE"})
     after: str | None = connection.products_cursor
-    if after is None:
+    if after is None or connection.products_sync_started_at is None:
+        _assert_products_sync_lease(db, connection.id, lease_owner)
         connection.products_sync_started_at = utcnow()
-    sync_started_at = commerce._aware_utc(connection.products_sync_started_at) if connection.products_sync_started_at else utcnow()
-    variants_seen = inventory_conflicts = pages = 0
+        connection.products_sync_lease_until = utcnow() + timedelta(minutes=15)
+        db.commit()
+    sync_started_at = commerce._aware_utc(connection.products_sync_started_at)
+    variants_seen = inventory_conflicts = pages_processed = 0
     products_seen_ids: set[str] = set()
     product_cache = {
         item.shopify_product_gid: item
@@ -740,7 +958,7 @@ def _sync_products(connection: ShopifyConnection, db: Session, *, max_pages: int
             ShopifyVariantSnapshot.connection_id == connection.id
         )).all()
     }
-    while pages < max_pages:
+    while pages_processed < max_pages:
         data = _graphql(connection, db, PRODUCTS_QUERY, {"first": 20, "after": after})
         shop = data.get("shop") or {}
         shop_currency = str(shop.get("currencyCode") or "").upper()
@@ -794,7 +1012,9 @@ def _sync_products(connection: ShopifyConnection, db: Session, *, max_pages: int
                 product.mapping_state = "partial"
             _deactivate_product_listing(db, connection, product)
             products_seen_ids.add(product.id)
-            inventory_item = remote_variant.get("inventoryItem") or {}
+            inventory_item = _complete_inventory_levels(
+                connection, db, remote_variant.get("inventoryItem") or {}, lease_owner=lease_owner
+            )
             tracked, available, on_hand, inventory_complete = _inventory_totals(inventory_item)
             sku = _safe_sku(remote_variant.get("sku"), remote_gid)
             sku_collision = db.scalar(select(ShopifyVariantSnapshot.id).where(
@@ -847,18 +1067,25 @@ def _sync_products(connection: ShopifyConnection, db: Session, *, max_pages: int
             variants_seen += 1
             db.flush()
         page_info = variant_connection.get("pageInfo") or {}
+        pages_processed += 1
         if not page_info.get("hasNextPage"):
             after = None
+            connection.products_cursor = None
+            connection.products_synced_at = utcnow()
+            connection.updated_at = utcnow()
+            db.flush()
             break
         after = page_info.get("endCursor")
         if not after:
             raise HTTPException(502, detail={"code": "SHOPIFY_VARIANT_CURSOR_MISSING"})
-        pages += 1
-    # Persist the cursor so repeated sync invocations progress through large stores.
-    connection.products_cursor = after
-    connection.products_synced_at = utcnow()
-    connection.updated_at = utcnow()
-    db.flush()
+        # Commit each complete page with its continuation cursor. A later page
+        # failure resumes here rather than replaying the whole merchant catalogue.
+        _assert_products_sync_lease(db, connection.id, lease_owner)
+        connection.products_cursor = after
+        connection.products_synced_at = utcnow()
+        connection.products_sync_lease_until = utcnow() + timedelta(minutes=15)
+        connection.updated_at = utcnow()
+        db.commit()
     if after is None:
         # A complete cursor cycle is the only safe point to infer that a remote
         # variant disappeared. Hold old local offers before they can be sold.
@@ -892,12 +1119,14 @@ def _sync_products(connection: ShopifyConnection, db: Session, *, max_pages: int
                     else "partial"
                 )
         connection.products_sync_started_at = None
+    _assert_products_sync_lease(db, connection.id, lease_owner)
+    connection.products_sync_lease_until = utcnow() + timedelta(minutes=15)
     db.commit()
     return {
         "products_seen": len(products_seen_ids),
         "variants_seen": variants_seen,
         "inventory_conflicts": inventory_conflicts,
-        "pages_processed": min(pages + 1, max_pages),
+        "pages_processed": pages_processed,
         "has_more": connection.products_cursor is not None,
     }
 
@@ -923,7 +1152,7 @@ def install_shopify(
     redirect_uri = base_url + "/integrations/shopify/callback"
     params = {
         "client_id": api_key,
-        "scope": ",".join(sorted(REQUIRED_SCOPES)),
+        "scope": ",".join(sorted(REQUIRED_SCOPES | (COMPENSATION_SCOPES if os.getenv("SHOPIFY_COMPENSATION_SCOPE_ENABLED", "false").strip().lower() in {"1", "true", "yes"} else set()))),
         "redirect_uri": redirect_uri,
         "state": state,
     }
@@ -1092,6 +1321,7 @@ def list_staged_shopify_products(
     products = []
     for row in rows:
         variants = list(db.scalars(select(ShopifyVariantSnapshot).where(
+            ShopifyVariantSnapshot.connection_id == connection.id,
             ShopifyVariantSnapshot.product_snapshot_id == row.id
         ).order_by(ShopifyVariantSnapshot.sku)).all())
         products.append({
@@ -1155,6 +1385,7 @@ def map_shopify_product(
     if len(requested) != len(payload.variants):
         raise HTTPException(422, detail={"code": "DUPLICATE_SHOPIFY_VARIANT_MAPPING"})
     snapshots = list(db.scalars(select(ShopifyVariantSnapshot).where(
+        ShopifyVariantSnapshot.connection_id == connection.id,
         ShopifyVariantSnapshot.product_snapshot_id == product_snapshot.id,
         ShopifyVariantSnapshot.mapping_state != "remote_deleted",
     )).all())
@@ -1169,13 +1400,14 @@ def map_shopify_product(
         raise HTTPException(409, detail={"code": "CANONICAL_VARIANT_ALREADY_MAPPED"})
     for remote_gid in requested:
         target = by_gid[remote_gid]
-        sku_collision = db.scalar(select(commerce.Variant.id).where(
-            commerce.Variant.listing_id == listing.id,
-            commerce.Variant.sku == target.sku,
-            commerce.Variant.id != (target.local_variant_id or ""),
-        ))
-        if sku_collision:
-            raise HTTPException(409, detail={"code": "SHOPIFY_SKU_CONFLICT_WITH_EXISTING_LISTING"})
+        if target.sku:
+            sku_collision = db.scalar(select(commerce.Variant.id).where(
+                commerce.Variant.listing_id == listing.id,
+                commerce.Variant.sku == target.sku,
+                commerce.Variant.id != (target.local_variant_id or ""),
+            ))
+            if sku_collision:
+                raise HTTPException(409, detail={"code": "SHOPIFY_SKU_CONFLICT_WITH_EXISTING_LISTING"})
     results = []
     for remote_gid, canonical_variant_id in requested.items():
         snapshot = by_gid[remote_gid]
@@ -1246,6 +1478,7 @@ def reactivate_shopify_product(
     if listing is None or listing.merchant_id != merchant.id or listing.catalog_product_id != product.catalog_product_id:
         raise HTTPException(409, detail={"code": "SHOPIFY_CANONICAL_LISTING_MAPPING_INVALID"})
     variants = list(db.scalars(select(ShopifyVariantSnapshot).where(
+        ShopifyVariantSnapshot.connection_id == connection.id,
         ShopifyVariantSnapshot.product_snapshot_id == product.id,
         ShopifyVariantSnapshot.mapping_state != "remote_deleted",
     )).all())
@@ -1283,6 +1516,8 @@ def sync_shopify_contextual_pricing(
     country_code: str,
     actor: Annotated[commerce.Actor, Depends(commerce.require_actor)],
     db: Annotated[Session, Depends(commerce.get_db)],
+    after_snapshot_id: str | None = Query(default=None, max_length=36),
+    limit: int = Query(100, ge=1, le=250),
 ):
     merchant = _approved_merchant(actor, db)
     connection = _connection_for_merchant(db, merchant.id)
@@ -1295,9 +1530,11 @@ def sync_shopify_contextual_pricing(
     ))
     if market is None:
         raise HTTPException(409, detail={"code": "MERCHANT_MARKET_NOT_DECLARED"})
+    if market.state != "active":
+        raise HTTPException(409, detail={"code": "MERCHANT_MARKET_NOT_ACTIVE"})
     query = """
-    query CirvannaContextualVariantPrice($id: ID!, $country: CountryCode!) {
-      node(id: $id) {
+    query CirvannaContextualVariantPrices($ids: [ID!]!, $country: CountryCode!) {
+      nodes(ids: $ids) {
         ... on ProductVariant {
           id
           contextualPricing(context: {country: $country}) {
@@ -1308,38 +1545,85 @@ def sync_shopify_contextual_pricing(
       }
     }
     """
-    snapshots = list(db.scalars(select(ShopifyVariantSnapshot).join(
+    snapshot_query = select(ShopifyVariantSnapshot).join(
         ShopifyProductSnapshot, ShopifyProductSnapshot.id == ShopifyVariantSnapshot.product_snapshot_id
     ).where(
         ShopifyVariantSnapshot.connection_id == connection.id,
-        ShopifyProductSnapshot.mapping_state.in_(["mapped", "partial"]),
-    )).limit(250).all())
-    updated = 0
-    for snapshot in snapshots:
-        data = _graphql(connection, db, query, {"id": snapshot.shopify_variant_gid, "country": country})
-        node = data.get("node") or {}
-        contextual = node.get("contextualPricing") or {}
-        price = contextual.get("price")
-        if not price or not price.get("currencyCode") or price.get("amount") is None:
-            continue
-        currency = str(price["currencyCode"]).upper()
-        amount_minor = _minor_units(price["amount"], currency)
-        snapshot.regional_prices = {
-            **(snapshot.regional_prices or {}),
-            country: {
-                "amount_minor": amount_minor,
-                "currency": currency,
-                "observed_at": utcnow().isoformat(),
-                "source": "shopify_markets_contextual_pricing",
-                "landed_cost": False,
-                "fx_quote": False,
-                "tax_and_fulfillment_included": False,
-            },
-        }
-        updated += 1
-    db.commit()
+        ShopifyProductSnapshot.connection_id == connection.id,
+        ShopifyVariantSnapshot.mapping_state == "mapped",
+        ShopifyProductSnapshot.mapping_state == "mapped",
+        ShopifyProductSnapshot.remote_status == "ACTIVE",
+        ShopifyProductSnapshot.variants_complete.is_(True),
+    )
+    if after_snapshot_id:
+        snapshot_query = snapshot_query.where(ShopifyVariantSnapshot.id > after_snapshot_id)
+    snapshots = list(db.scalars(snapshot_query.order_by(ShopifyVariantSnapshot.id).limit(limit + 1)).all())
+    has_more = len(snapshots) > limit
+    snapshots = snapshots[:limit]
+    by_gid = {snapshot.shopify_variant_gid: snapshot for snapshot in snapshots}
+    if len(by_gid) != len(snapshots):
+        raise HTTPException(409, detail={"code": "SHOPIFY_VARIANT_GID_MAPPING_DUPLICATE"})
+    updated = skipped = batches = 0
+    gids = list(by_gid)
+    for offset in range(0, len(gids), 50):
+        batch = gids[offset:offset + 50]
+        data = _graphql(connection, db, query, {"ids": batch, "country": country})
+        nodes = data.get("nodes")
+        if not isinstance(nodes, list):
+            raise HTTPException(502, detail={"code": "SHOPIFY_CONTEXTUAL_PRICING_RESPONSE_INVALID"})
+        returned: set[str] = set()
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+            node_id = node.get("id")
+            if node_id not in batch or node_id in returned:
+                raise HTTPException(502, detail={"code": "SHOPIFY_CONTEXTUAL_PRICING_VARIANT_MISMATCH"})
+            returned.add(node_id)
+            contextual = node.get("contextualPricing") or {}
+            price = contextual.get("price")
+            currency = str((price or {}).get("currencyCode") or "").upper()
+            if not price or not re.fullmatch(r"[A-Z]{3}", currency) or price.get("amount") is None:
+                skipped += 1
+                continue
+            try:
+                amount_minor = _minor_units(price["amount"], currency)
+            except (TypeError, ValueError):
+                skipped += 1
+                continue
+            compare = contextual.get("compareAtPrice")
+            compare_minor = None
+            if compare and compare.get("amount") is not None and str(compare.get("currencyCode") or "").upper() == currency:
+                try:
+                    compare_minor = _minor_units(compare["amount"], currency)
+                except (TypeError, ValueError):
+                    compare_minor = None
+            snapshot = by_gid[node_id]
+            snapshot.regional_prices = {
+                **(snapshot.regional_prices or {}),
+                country: {
+                    "amount_minor": amount_minor,
+                    "currency": currency,
+                    "compare_at_amount_minor": compare_minor,
+                    "compare_at_currency": currency if compare_minor is not None else None,
+                    "observed_at": utcnow().isoformat(),
+                    "source": "shopify_markets_contextual_pricing",
+                    "landed_cost": False,
+                    "fx_quote": False,
+                    "tax_and_fulfillment_included": False,
+                },
+            }
+            updated += 1
+        skipped += len(batch) - len(returned)
+        batches += 1
+        db.commit()
     return {
-        "country_code": country, "variants_updated": updated,
+        "country_code": country,
+        "variants_scanned": len(snapshots),
+        "variants_updated": updated,
+        "variants_skipped": skipped,
+        "batches": batches,
+        "has_more": has_more,
+        "next_after_snapshot_id": snapshots[-1].id if has_more and snapshots else None,
         "price_semantics": "merchant contextual item price only; not a landed price or Commerce FX/tax/fulfillment quote",
     }
 
@@ -1359,6 +1643,56 @@ def _resource_gid(topic: str, payload: dict[str, Any]) -> str | None:
     if kind and str(raw_id).isdigit():
         return "gid://shopify/" + kind + "/" + str(raw_id)
     return None
+
+
+def _flag_connection_orders_manual_review(db: Session, connection: ShopifyConnection, reason: str) -> int:
+    """Preserve fulfilment safety before uninstall/redaction removes provider linkage."""
+    handled: set[str] = set()
+    cases = list(db.scalars(select(ShopifyCompensationCase).where(
+        ShopifyCompensationCase.connection_id == connection.id
+    )).all())
+    for case in cases:
+        order = db.get(commerce.CommerceOrder, case.commerce_order_id)
+        if order is not None and order.refund_state != "refunded":
+            _case_manual_review(db, case, order, reason)
+            handled.add(order.id)
+    order_ids = set(db.scalars(select(ShopifyInventoryReservation.commerce_order_id).where(
+        ShopifyInventoryReservation.connection_id == connection.id
+    )).all())
+    order_ids.update(db.scalars(select(ShopifyOrderLink.commerce_order_id).where(
+        ShopifyOrderLink.connection_id == connection.id
+    )).all())
+    flagged = len(handled)
+    if order_ids:
+        orders = list(db.scalars(select(commerce.CommerceOrder).where(
+            commerce.CommerceOrder.id.in_(order_ids)
+        )).all())
+        for order in orders:
+            if order.id in handled or order.refund_state == "refunded":
+                continue
+            if order.state not in {"pending_payment", "paid"}:
+                continue
+            order.fulfillment_state = "manual_review"
+            order.updated_at = utcnow()
+            event_type = "commerce.shopify.compensation.manual_review"
+            exists = db.scalar(select(commerce.CommerceOutboxEvent.event_id).where(
+                commerce.CommerceOutboxEvent.aggregate_type == "commerce_order",
+                commerce.CommerceOutboxEvent.aggregate_id == order.id,
+                commerce.CommerceOutboxEvent.event_type == event_type,
+            ))
+            if not exists:
+                event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cirvanna:{event_type}:{order.id}"))
+                db.add(commerce.CommerceOutboxEvent(
+                    event_id=event_id, aggregate_type="commerce_order", aggregate_id=order.id,
+                    event_type=event_type, schema_version=1,
+                    payload={"event_id": event_id, "event_type": event_type, "schema_version": 1,
+                        "order_id": order.id, "merchant_id": connection.merchant_id,
+                        "reason_code": reason[:180], "action_required": "operator_review",
+                        "fulfillment_blocked": True},
+                ))
+            flagged += 1
+    db.commit()
+    return flagged
 
 
 @router.post("/webhooks/shopify")
@@ -1390,6 +1724,7 @@ async def receive_shopify_webhook(
     # Shopify may retry app/uninstalled after the connection has already been removed.
     if topic == "app/uninstalled":
         if connection:
+            _flag_connection_orders_manual_review(db, connection, "SHOPIFY_APP_UNINSTALLED_DURING_ORDER_LIFECYCLE")
             _quarantine_connection_listings(db, connection)
             connection.status = "revoked"
             connection.access_token_ciphertext = None
@@ -1519,6 +1854,7 @@ def process_shopify_events(
         raise HTTPException(401, detail={"code": "SHOPIFY_SYNC_AUTH_FAILED"})
     events = _claim_events(db, limit)
     processed = failed = ignored = 0
+    catalog_sync_results: dict[str, bool] = {}
     for event in events:
         try:
             if event.topic == "shop/redact":
@@ -1526,13 +1862,16 @@ def process_shopify_events(
                     ShopifyConnection.shop_domain == event.shop_domain
                 ))
                 if connection:
+                    _flag_connection_orders_manual_review(db, connection, "SHOPIFY_SHOP_REDACTED_DURING_ORDER_LIFECYCLE")
                     _quarantine_connection_listings(db, connection)
-                    db.execute(ShopifyWebhookEvent.__table__.delete().where(
-                        ShopifyWebhookEvent.shop_domain == event.shop_domain,
-                        ShopifyWebhookEvent.id != event.id,
-                    ))
                     db.execute(ShopifyOrderLink.__table__.delete().where(
                         ShopifyOrderLink.connection_id == connection.id
+                    ))
+                    db.execute(ShopifyCompensationCase.__table__.delete().where(
+                        ShopifyCompensationCase.connection_id == connection.id
+                    ))
+                    db.execute(ShopifyInventoryReservation.__table__.delete().where(
+                        ShopifyInventoryReservation.connection_id == connection.id
                     ))
                     db.execute(ShopifyVariantSnapshot.__table__.delete().where(
                         ShopifyVariantSnapshot.connection_id == connection.id
@@ -1543,6 +1882,15 @@ def process_shopify_events(
                     connection.access_token_ciphertext = None
                     connection.refresh_token_ciphertext = None
                     db.delete(connection)
+                # Delete every webhook delivery record for the redacted shop,
+                # including this event; the durable Commerce manual-review outbox
+                # above contains only order/merchant IDs and a reason code.
+                db.execute(ShopifyWebhookEvent.__table__.delete().where(
+                    ShopifyWebhookEvent.shop_domain == event.shop_domain
+                ))
+                db.commit()
+                processed += 1
+                continue
             elif event.topic in {"customers/data_request", "customers/redact"}:
                 # Cirvanna does not request customer scopes or persist Shopify
                 # customer records/addresses; keep this compliance handler PII-free.
@@ -1564,7 +1912,16 @@ def process_shopify_events(
                     ShopifyConnection.shop_domain == event.shop_domain
                 ))
                 if connection:
-                    _sync_products(connection, db)
+                    previous_result = catalog_sync_results.get(connection.id)
+                    if previous_result is None:
+                        try:
+                            _sync_products(connection, db)
+                            catalog_sync_results[connection.id] = True
+                        except Exception:
+                            catalog_sync_results[connection.id] = False
+                            raise
+                    elif previous_result is False:
+                        raise HTTPException(503, detail={"code": "SHOPIFY_CATALOG_SYNC_BATCH_FAILED"})
             event.state = "processed"
             event.processed_at = utcnow()
             event.last_error = None
@@ -1955,6 +2312,604 @@ def _create_paid_order(connection: ShopifyConnection, db: Session, commerce_orde
     return link
 
 
+def _find_reservation_order(connection: ShopifyConnection, db: Session, key: str) -> dict[str, Any] | None:
+    data = _graphql(connection, db, """
+      query CirvannaFindReservationOrder($query: String!) {
+        orders(first: 10, query: $query, sortKey: CREATED_AT, reverse: true) {
+          nodes {
+            id name tags cancelledAt displayFulfillmentStatus
+          }
+        }
+      }
+    """, {"query": "tag:" + key})
+    nodes = (data.get("orders") or {}).get("nodes") or []
+    matches = [node for node in nodes if isinstance(node, dict)
+        and node.get("id") and key in (node.get("tags") or [])]
+    if len(matches) > 1:
+        raise HTTPException(409, detail={"code": "SHOPIFY_RESERVATION_ORDER_DUPLICATE"})
+    return matches[0] if matches else None
+
+
+def begin_shopify_compensation(db: Session, order: commerce.CommerceOrder, reason: str) -> int:
+    """Freeze fulfillment and create a recovery case for every Shopify seller."""
+    merchants = list(db.scalars(select(commerce.OrderItem.merchant_id).where(
+        commerce.OrderItem.order_id == order.id
+    ).distinct()).all())
+    created = 0
+    for merchant_id in merchants:
+        connection = db.scalar(select(ShopifyConnection).where(
+            ShopifyConnection.merchant_id == merchant_id
+        ))
+        reservation = db.scalar(select(ShopifyInventoryReservation).where(
+            ShopifyInventoryReservation.commerce_order_id == order.id,
+            ShopifyInventoryReservation.merchant_id == merchant_id,
+        ))
+        if connection is None or reservation is None:
+            order.fulfillment_state = "manual_review"
+            order.updated_at = utcnow()
+            continue
+        case = db.scalar(select(ShopifyCompensationCase).where(
+            ShopifyCompensationCase.commerce_order_id == order.id,
+            ShopifyCompensationCase.merchant_id == merchant_id,
+        ))
+        if case is None:
+            link = db.scalar(select(ShopifyOrderLink).where(
+                ShopifyOrderLink.commerce_order_id == order.id,
+                ShopifyOrderLink.merchant_id == merchant_id,
+            ))
+            case = ShopifyCompensationCase(
+                id=str(uuid.uuid4()), commerce_order_id=order.id, merchant_id=merchant_id,
+                connection_id=connection.id, reservation_id=reservation.id,
+                shopify_order_gid=link.shopify_order_gid if link else None,
+                state="pending", last_error=reason[:300],
+            )
+            db.add(case)
+            created += 1
+        elif case.state not in {"compensated", "manual_review"}:
+            case.state = "pending"
+            case.last_error = reason[:300]
+            case.updated_at = utcnow()
+    if order.fulfillment_state != "manual_review":
+        order.fulfillment_state = "compensation_pending"
+    else:
+        event_type = "commerce.shopify.compensation.manual_review"
+        exists = db.scalar(select(commerce.CommerceOutboxEvent.event_id).where(
+            commerce.CommerceOutboxEvent.aggregate_type == "commerce_order",
+            commerce.CommerceOutboxEvent.aggregate_id == order.id,
+            commerce.CommerceOutboxEvent.event_type == event_type,
+        ))
+        if not exists:
+            event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cirvanna:{event_type}:{order.id}"))
+            db.add(commerce.CommerceOutboxEvent(
+                event_id=event_id, aggregate_type="commerce_order", aggregate_id=order.id,
+                event_type=event_type, schema_version=1,
+                payload={"event_id": event_id, "event_type": event_type, "schema_version": 1,
+                    "order_id": order.id, "reason_code": "SHOPIFY_SELLER_NOT_COMPENSATABLE",
+                    "action_required": "operator_review", "fulfillment_blocked": True},
+            ))
+    order.updated_at = utcnow()
+    db.commit()
+    return created
+
+
+def _case_manual_review(db: Session, case: ShopifyCompensationCase, order: commerce.CommerceOrder, code: str) -> None:
+    case.state = "manual_review"
+    case.last_error = code[:300]
+    case.lease_owner = None
+    case.lease_until = None
+    case.updated_at = utcnow()
+    order.fulfillment_state = "manual_review"
+    order.updated_at = utcnow()
+    event_type = "commerce.shopify.compensation.manual_review"
+    exists = db.scalar(select(commerce.CommerceOutboxEvent.event_id).where(
+        commerce.CommerceOutboxEvent.aggregate_type == "shopify_compensation_case",
+        commerce.CommerceOutboxEvent.aggregate_id == case.id,
+        commerce.CommerceOutboxEvent.event_type == event_type,
+    ))
+    if not exists:
+        event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cirvanna:{event_type}:{case.id}"))
+        db.add(commerce.CommerceOutboxEvent(
+            event_id=event_id, aggregate_type="shopify_compensation_case", aggregate_id=case.id,
+            event_type=event_type, schema_version=1,
+            payload={"event_id": event_id, "event_type": event_type, "schema_version": 1,
+                "order_id": order.id, "merchant_id": case.merchant_id,
+                "case_id": case.id, "reason_code": code[:180],
+                "action_required": "operator_review", "fulfillment_blocked": True},
+        ))
+    db.commit()
+
+
+def _read_compensation_inventory_state(connection: ShopifyConnection, db: Session,
+                                        order: commerce.CommerceOrder, merchant_id: str) -> tuple[dict[str, int], dict[str, int]]:
+    """Read complete available quantities before/after cancellation for restock evidence.
+
+    Any untracked/unmapped item, missing page, or inactive location fails closed.
+    """
+    order_items = list(db.scalars(select(commerce.OrderItem).where(
+        commerce.OrderItem.order_id == order.id,
+        commerce.OrderItem.merchant_id == merchant_id,
+    )).all())
+    if not order_items:
+        raise HTTPException(409, detail={"code": "SHOPIFY_COMPENSATION_ORDER_LINES_MISSING"})
+    local_ids = {item.variant_id for item in order_items}
+    snapshots = list(db.scalars(select(ShopifyVariantSnapshot).where(
+        ShopifyVariantSnapshot.connection_id == connection.id,
+        ShopifyVariantSnapshot.local_variant_id.in_(local_ids),
+    )).all())
+    by_local = {snapshot.local_variant_id: snapshot for snapshot in snapshots}
+    expected: dict[str, int] = {}
+    for item in order_items:
+        snapshot = by_local.get(item.variant_id)
+        if (snapshot is None or not snapshot.shopify_inventory_item_gid
+            or not snapshot.tracked or not snapshot.inventory_complete
+            or snapshot.mapping_state != "mapped"):
+            raise HTTPException(409, detail={"code": "SHOPIFY_COMPENSATION_INVENTORY_MAPPING_INCOMPLETE"})
+        expected[snapshot.shopify_inventory_item_gid] = expected.get(snapshot.shopify_inventory_item_gid, 0) + item.quantity
+
+    available_by_item: dict[str, int] = {}
+    for inventory_item_gid in sorted(expected):
+        after = None
+        total_available = 0
+        page_count = 0
+        while True:
+            data = _graphql(connection, db, """
+              query CirvannaReadCompensationInventory($id: ID!, $after: String) {
+                inventoryItem(id: $id) {
+                  id
+                  inventoryLevels(first: 100, after: $after) {
+                    nodes { location { id isActive } quantities(names: ["available"]) { name quantity } }
+                    pageInfo { hasNextPage endCursor }
+                  }
+                }
+              }
+            """, {"id": inventory_item_gid, "after": after})
+            inventory_item = data.get("inventoryItem")
+            if not isinstance(inventory_item, dict) or inventory_item.get("id") != inventory_item_gid:
+                raise HTTPException(409, detail={"code": "SHOPIFY_COMPENSATION_INVENTORY_ITEM_NOT_FOUND"})
+            levels = inventory_item.get("inventoryLevels") or {}
+            nodes = levels.get("nodes") or []
+            for level in nodes:
+                location = (level or {}).get("location") or {}
+                if not location.get("id") or location.get("isActive") is not True:
+                    raise HTTPException(409, detail={"code": "SHOPIFY_COMPENSATION_INACTIVE_OR_UNKNOWN_LOCATION"})
+                quantities = (level or {}).get("quantities") or []
+                available = next((q.get("quantity") for q in quantities if q.get("name") == "available"), None)
+                if isinstance(available, bool) or not isinstance(available, int) or available < 0:
+                    raise HTTPException(409, detail={"code": "SHOPIFY_COMPENSATION_INVENTORY_QUANTITY_INCOMPLETE"})
+                total_available += available
+            page_info = levels.get("pageInfo") or {}
+            if not page_info.get("hasNextPage"):
+                if not nodes:
+                    raise HTTPException(409, detail={"code": "SHOPIFY_COMPENSATION_INVENTORY_LEVELS_EMPTY"})
+                break
+            after = page_info.get("endCursor")
+            page_count += 1
+            if not after or page_count >= 20:
+                raise HTTPException(409, detail={"code": "SHOPIFY_COMPENSATION_INVENTORY_PAGINATION_INCOMPLETE"})
+        available_by_item[inventory_item_gid] = total_available
+    return available_by_item, expected
+
+
+def _verify_compensation_inventory_restock(connection: ShopifyConnection, db: Session,
+                                           case: ShopifyCompensationCase, order: commerce.CommerceOrder) -> bool:
+    if not case.inventory_before_json or not case.inventory_expected_restore_json:
+        return False
+    after, expected = _read_compensation_inventory_state(connection, db, order, case.merchant_id)
+    if expected != case.inventory_expected_restore_json:
+        return False
+    return all(
+        isinstance(before, int) and isinstance(after.get(gid), int)
+        and after[gid] >= before + expected[gid]
+        for gid, before in case.inventory_before_json.items()
+    ) and set(after) == set(case.inventory_before_json) == set(expected)
+
+
+def _persist_compensation_cancel_intent(db: Session, case: ShopifyCompensationCase) -> None:
+    """Atomically fence the worker and extend its lease before orderCancel."""
+    owner = case.lease_owner
+    if not owner:
+        raise HTTPException(409, detail={"code": "SHOPIFY_COMPENSATION_LEASE_LOST"})
+    now_value = utcnow()
+    result = db.execute(update(ShopifyCompensationCase).where(
+        ShopifyCompensationCase.id == case.id,
+        ShopifyCompensationCase.lease_owner == owner,
+        ShopifyCompensationCase.state.in_(["pending", "cancel_pending", "cancel_requesting"]),
+    ).values(
+        state="cancel_requesting",
+        last_error="SHOPIFY_ORDER_CANCEL_REQUEST_STARTED",
+        updated_at=now_value,
+        lease_until=now_value + timedelta(seconds=90),
+    ).execution_options(synchronize_session=False))
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(409, detail={"code": "SHOPIFY_COMPENSATION_LEASE_LOST"})
+    db.commit()
+    db.refresh(case)
+
+
+def _renew_compensation_cancel_lease(db: Session, case: ShopifyCompensationCase) -> None:
+    """Fence the response write too; a stale worker cannot overwrite a reclaimed case."""
+    owner = case.lease_owner
+    if not owner:
+        raise HTTPException(409, detail={"code": "SHOPIFY_COMPENSATION_LEASE_LOST"})
+    now_value = utcnow()
+    result = db.execute(update(ShopifyCompensationCase).where(
+        ShopifyCompensationCase.id == case.id,
+        ShopifyCompensationCase.lease_owner == owner,
+        ShopifyCompensationCase.state == "cancel_requesting",
+    ).values(
+        lease_until=now_value + timedelta(seconds=90),
+        updated_at=now_value,
+    ).execution_options(synchronize_session=False))
+    if result.rowcount != 1:
+        db.rollback()
+        raise HTTPException(409, detail={"code": "SHOPIFY_COMPENSATION_LEASE_LOST"})
+    db.commit()
+    db.refresh(case)
+
+
+def _process_shopify_compensation_case(db: Session, case: ShopifyCompensationCase,
+                                       order: commerce.CommerceOrder) -> str:
+    connection = db.get(ShopifyConnection, case.connection_id)
+    reservation = db.get(ShopifyInventoryReservation, case.reservation_id)
+    if connection is None or connection.status != "active" or reservation is None:
+        _case_manual_review(db, case, order, "SHOPIFY_CONNECTION_OR_RESERVATION_UNAVAILABLE")
+        return case.state
+    if case.state == "cancel_requesting" and not case.cancellation_job_gid:
+        # The process may have died after Shopify accepted orderCancel but before
+        # the job ID was persisted. Never issue that irreversible mutation twice.
+        verify = _graphql(connection, db, """
+          query CirvannaReconcileAmbiguousCancellation($id: ID!) {
+            order(id: $id) { id cancelledAt displayFulfillmentStatus }
+          }
+        """, {"id": case.shopify_order_gid})
+        remote = verify.get("order")
+        if isinstance(remote, dict) and remote.get("cancelledAt"):
+            # A cancelledAt timestamp alone does not prove this worker's
+            # restock=true cancellation job succeeded. It may have been a
+            # merchant-side cancellation with restocking disabled.
+            _case_manual_review(db, case, order, "SHOPIFY_CANCELLATION_RESTOCK_UNVERIFIED")
+            return case.state
+        _case_manual_review(db, case, order, "SHOPIFY_CANCELLATION_OUTCOME_AMBIGUOUS")
+        return case.state
+    if case.cancellation_job_gid:
+        job_data = _graphql(connection, db, """
+          query CirvannaReadCancellationJobResult($id: ID!) {
+            node(id: $id) {
+              ... on OrderCancelJobResult {
+                id done status errors { field message code }
+                order { id cancelledAt displayFulfillmentStatus }
+              }
+            }
+          }
+        """, {"id": case.cancellation_job_gid})
+        job_result = job_data.get("node")
+        if not isinstance(job_result, dict) or job_result.get("id") != case.cancellation_job_gid:
+            _case_manual_review(db, case, order, "SHOPIFY_CANCELLATION_JOB_RESULT_NOT_FOUND")
+            return case.state
+        if not job_result.get("done"):
+            case.state = "cancel_pending"
+            case.lease_owner = None
+            case.lease_until = None
+            case.updated_at = utcnow()
+            db.commit()
+            return case.state
+        remote_order = job_result.get("order")
+        if (str(job_result.get("status", "")).upper() == "SUCCEEDED"
+            and not (job_result.get("errors") or [])
+            and isinstance(remote_order, dict) and remote_order.get("cancelledAt")):
+            if not _verify_compensation_inventory_restock(connection, db, case, order):
+                _case_manual_review(db, case, order, "SHOPIFY_INVENTORY_RESTOCK_NOT_CONFIRMED")
+                return case.state
+            case.state = "compensated"
+            case.last_error = None
+            reservation.state = "compensated"
+            link = db.scalar(select(ShopifyOrderLink).where(
+                ShopifyOrderLink.commerce_order_id == order.id,
+                ShopifyOrderLink.merchant_id == case.merchant_id,
+            ))
+            if link:
+                link.link_state = "cancelled"
+                link.fulfillment_status = str(remote_order.get("displayFulfillmentStatus") or "CANCELLED")
+                link.updated_at = utcnow()
+            case.lease_owner = None
+            case.lease_until = None
+            case.updated_at = utcnow()
+            db.commit()
+            return case.state
+        _case_manual_review(db, case, order, "SHOPIFY_CANCELLATION_NOT_CONFIRMED")
+        return case.state
+
+    # Resolve the provider resource from the exact reservation tag before any
+    # destructive operation. A completed draft may have become an Order even if
+    # Cirvanna lost the completion response.
+    draft = None
+    if reservation.draft_order_gid:
+        data = _graphql(connection, db, """
+          query CirvannaReadCompensationDraft($id: ID!) {
+            draftOrder(id: $id) { id status tags order { id name cancelledAt displayFulfillmentStatus } }
+          }
+        """, {"id": reservation.draft_order_gid})
+        draft = data.get("draftOrder")
+        if isinstance(draft, dict) and reservation.reservation_key not in (draft.get("tags") or []):
+            _case_manual_review(db, case, order, "SHOPIFY_RESERVATION_DRAFT_TAG_MISMATCH")
+            return case.state
+    remote_order = (draft or {}).get("order") if isinstance(draft, dict) else None
+    if not remote_order:
+        remote_order = _find_reservation_order(connection, db, reservation.reservation_key)
+    if isinstance(remote_order, dict) and remote_order.get("id"):
+        case.shopify_order_gid = remote_order["id"]
+        case.updated_at = utcnow()
+        db.commit()
+        if remote_order.get("cancelledAt"):
+            _case_manual_review(db, case, order, "SHOPIFY_ORDER_ALREADY_CANCELLED_RESTOCK_UNVERIFIED")
+            return case.state
+        fulfillment_status = str(remote_order.get("displayFulfillmentStatus") or "").upper()
+        if fulfillment_status != "UNFULFILLED":
+            _case_manual_review(db, case, order, "SHOPIFY_ORDER_HAS_ACTIVE_OR_COMPLETED_FULFILLMENT")
+            return case.state
+        if not COMPENSATION_SCOPES.issubset(_required_scopes(connection.granted_scopes or [])):
+            _case_manual_review(db, case, order, "SHOPIFY_COMPENSATION_REAUTHORIZATION_REQUIRED")
+            return case.state
+        # Snapshot all mapped inventory levels before cancellation so the later
+        # job result can be corroborated against a provider-side available-quantity delta.
+        try:
+            inventory_before, inventory_expected = _read_compensation_inventory_state(
+                connection, db, order, case.merchant_id
+            )
+        except HTTPException as exc:
+            _case_manual_review(db, case, order, str((exc.detail or {}).get("code", "SHOPIFY_COMPENSATION_INVENTORY_UNVERIFIED")))
+            return case.state
+        case.inventory_before_json = inventory_before
+        case.inventory_expected_restore_json = inventory_expected
+        # Atomically fence the lease owner immediately before the irreversible mutation.
+        _persist_compensation_cancel_intent(db, case)
+        try:
+            cancelled = _graphql(connection, db, """
+          mutation CirvannaCancelCompensatedOrder($orderId: ID!, $notifyCustomer: Boolean, $refundMethod: OrderCancelRefundMethodInput!, $restock: Boolean!, $reason: OrderCancelReason!, $staffNote: String) {
+            orderCancel(orderId: $orderId, notifyCustomer: $notifyCustomer, refundMethod: $refundMethod, restock: $restock, reason: $reason, staffNote: $staffNote) {
+              job { id done }
+              jobResult { id done status errors { field message code } order { id cancelledAt displayFulfillmentStatus } }
+              orderCancelUserErrors { field message code }
+            }
+          }
+            """, {"orderId": remote_order["id"], "notifyCustomer": False,
+                "refundMethod": {"originalPaymentMethodsRefund": False}, "restock": True,
+                "reason": "INVENTORY", "staffNote": "Cirvanna checkout compensation; Stripe refund is managed by Cirvanna."})
+            _renew_compensation_cancel_lease(db, case)
+        except Exception:
+            case.state = "cancel_requesting"
+            case.last_error = "SHOPIFY_ORDER_CANCEL_OUTCOME_AMBIGUOUS"
+            case.lease_owner = None
+            case.lease_until = None
+            case.updated_at = utcnow()
+            db.commit()
+            raise
+        result = cancelled.get("orderCancel") or {}
+        errors = result.get("orderCancelUserErrors") or []
+        if errors:
+            _case_manual_review(db, case, order, "SHOPIFY_ORDER_CANCEL_REJECTED")
+            return case.state
+        job_result = result.get("jobResult")
+        if not isinstance(job_result, dict) or not job_result.get("id"):
+            _case_manual_review(db, case, order, "SHOPIFY_ORDER_CANCEL_JOB_RESULT_MISSING")
+            return case.state
+        case.cancellation_job_gid = job_result["id"]
+        case.state = "cancel_pending"
+        case.lease_owner = None
+        case.lease_until = None
+        case.updated_at = utcnow()
+        db.commit()
+        if job_result.get("done"):
+            return _process_shopify_compensation_case(db, case, order)
+        return case.state
+
+    # No Shopify order exists. Delete any remaining draft hold; only a confirmed
+    # deletion (or a confirmed absence of both draft and tagged order) is safe.
+    if isinstance(draft, dict) and draft.get("id"):
+        if not release_one_shopify_reservation(connection, db, reservation):
+            _case_manual_review(db, case, order, "SHOPIFY_DRAFT_RELEASE_NOT_CONFIRMED")
+            return case.state
+    else:
+        reservation.state = "compensated"
+        reservation.last_error = None
+        db.commit()
+    case.state = "compensated"
+    case.last_error = None
+    case.lease_owner = None
+    case.lease_until = None
+    case.updated_at = utcnow()
+    db.commit()
+    return case.state
+
+
+def _refund_manual_review(db: Session, order: commerce.CommerceOrder,
+                          attempt: commerce.StripeRefundAttempt | None, code: str) -> str:
+    if attempt is not None:
+        attempt.state = "manual_review"
+        attempt.last_error = code[:300]
+        attempt.updated_at = utcnow()
+        aggregate_type, aggregate_id = "stripe_refund_attempt", attempt.id
+    else:
+        aggregate_type, aggregate_id = "commerce_order", order.id
+    order.fulfillment_state = "manual_review"
+    order.updated_at = utcnow()
+    event_type = "commerce.payment.refund.manual_review"
+    exists = db.scalar(select(commerce.CommerceOutboxEvent.event_id).where(
+        commerce.CommerceOutboxEvent.aggregate_type == aggregate_type,
+        commerce.CommerceOutboxEvent.aggregate_id == aggregate_id,
+        commerce.CommerceOutboxEvent.event_type == event_type,
+    ))
+    if not exists:
+        event_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cirvanna:{event_type}:{aggregate_id}"))
+        db.add(commerce.CommerceOutboxEvent(
+            event_id=event_id, aggregate_type=aggregate_type, aggregate_id=aggregate_id,
+            event_type=event_type, schema_version=1,
+            payload={"event_id": event_id, "event_type": event_type, "schema_version": 1,
+                "order_id": order.id, "refund_attempt_id": attempt.id if attempt else None,
+                "reason_code": code[:180], "action_required": "operator_review",
+                "fulfillment_blocked": True},
+        ))
+    db.commit()
+    return "manual_review"
+
+
+def _process_compensation_refund(db: Session, order: commerce.CommerceOrder) -> str:
+    order = db.scalar(select(commerce.CommerceOrder).where(
+        commerce.CommerceOrder.id == order.id
+    ).with_for_update())
+    if order is None:
+        return "manual_review"
+    attempt = db.scalar(select(commerce.StripeRefundAttempt).where(
+        commerce.StripeRefundAttempt.order_id == order.id,
+    ).with_for_update())
+    if attempt is None:
+        if not order.payment_intent_id or order.payment_state != "paid" or order.refund_state != "none":
+            return _refund_manual_review(db, order, None, "STRIPE_REFUND_ORDER_NOT_ELIGIBLE")
+        amount = order.total_minor if order.total_minor is not None else order.subtotal_minor
+        key = "cirvanna-compensation-refund-" + uuid.uuid5(uuid.NAMESPACE_URL, order.id).hex
+        attempt = commerce.StripeRefundAttempt(
+            id=str(uuid.uuid4()), order_id=order.id, payment_intent_id=order.payment_intent_id,
+            amount_minor=amount, currency=order.currency, idempotency_key=key,
+            state="prepared", attempts=0,
+        )
+        db.add(attempt)
+        order.fulfillment_state = "refund_pending"
+        db.commit()
+    if attempt.state in {"confirmed", "failed", "manual_review"}:
+        return attempt.state
+    gateway = commerce.StripeGateway()
+    if not gateway.secret.startswith(("sk_test_", "sk_live_")):
+        return _refund_manual_review(db, order, attempt, "STRIPE_REFUND_PROVIDER_NOT_CONFIGURED")
+    if attempt.state in {"requesting", "ambiguous", "provider_pending", "provider_succeeded"}:
+        try:
+            found = gateway.retrieve_compensation_refund(attempt)
+        except RuntimeError:
+            if attempt.requested_at and utcnow() - commerce._aware_utc(attempt.requested_at) > timedelta(hours=20):
+                return _refund_manual_review(db, order, attempt, "STRIPE_REFUND_RECONCILIATION_UNAVAILABLE_BEYOND_SAFE_WINDOW")
+            return attempt.state
+        if found:
+            attempt.provider_refund_id = found.get("id")
+            provider_status = str(found.get("status", "")).lower()
+            if provider_status == "failed" or provider_status == "canceled":
+                return _refund_manual_review(db, order, attempt, "STRIPE_REFUND_FAILED")
+            elif provider_status == "succeeded":
+                attempt.state = "provider_succeeded"
+            else:
+                attempt.state = "provider_pending"
+            attempt.updated_at = utcnow()
+            db.commit()
+            return attempt.state
+        if attempt.requested_at and utcnow() - commerce._aware_utc(attempt.requested_at) > timedelta(hours=20):
+            return _refund_manual_review(db, order, attempt, "STRIPE_REFUND_AMBIGUITY_EXCEEDED_SAFE_IDEMPOTENCY_WINDOW")
+    attempt.state = "requesting"
+    attempt.attempts += 1
+    attempt.requested_at = attempt.requested_at or utcnow()
+    attempt.updated_at = utcnow()
+    db.commit()
+    try:
+        response = gateway.create_compensation_refund(attempt)
+    except RuntimeError:
+        attempt.state = "ambiguous"
+        attempt.last_error = "STRIPE_REFUND_REQUEST_AMBIGUOUS"
+        attempt.updated_at = utcnow()
+        db.commit()
+        return attempt.state
+    attempt.provider_refund_id = response["id"]
+    status = str(response.get("status", "")).lower()
+    attempt.state = "provider_succeeded" if status == "succeeded" else "provider_pending" if status in {"pending", "requires_action"} else "failed"
+    attempt.last_error = None if attempt.state != "failed" else "STRIPE_REFUND_FAILED"
+    attempt.updated_at = utcnow()
+    if attempt.state == "failed":
+        return _refund_manual_review(db, order, attempt, "STRIPE_REFUND_FAILED")
+    db.commit()
+    return attempt.state
+
+
+@router.post("/internal/shopify/compensate-paid-orders")
+def compensate_paid_shopify_orders(
+    db: Annotated[Session, Depends(commerce.get_db)],
+    token: str | None = Header(default=None, alias="X-Commerce-Shopify-Sync-Token"),
+    limit: int = Query(25, ge=1, le=100),
+):
+    expected = os.getenv("COMMERCE_SHOPIFY_SYNC_TOKEN", "").strip()
+    if len(expected.encode()) < 32 or not token or not hmac.compare_digest(token, expected):
+        raise HTTPException(401, detail={"code": "SHOPIFY_SYNC_AUTH_FAILED"})
+    cases = list(db.scalars(select(ShopifyCompensationCase).where(
+        ShopifyCompensationCase.state.in_(["pending", "cancel_pending", "cancel_requesting"]),
+        (ShopifyCompensationCase.lease_until.is_(None) | (ShopifyCompensationCase.lease_until < utcnow())),
+    ).order_by(ShopifyCompensationCase.created_at).with_for_update(skip_locked=True).limit(limit)).all())
+    processed = compensated = manual_review = refunds_requested = 0
+    errors = []
+    for case in cases:
+        order = db.get(commerce.CommerceOrder, case.commerce_order_id)
+        if order is None or order.state != "paid":
+            case.state = "manual_review"
+            case.last_error = "COMPENSATION_ORDER_NOT_PAID"
+            db.commit()
+            manual_review += 1
+            continue
+        case.lease_owner = uuid.uuid4().hex
+        case.lease_until = utcnow() + timedelta(seconds=90)
+        case.attempts += 1
+        db.commit()
+        try:
+            state = _process_shopify_compensation_case(db, case, order)
+            processed += 1
+            if state == "compensated":
+                compensated += 1
+            elif state == "manual_review":
+                manual_review += 1
+        except HTTPException as exc:
+            db.rollback()
+            current = db.get(ShopifyCompensationCase, case.id)
+            if current:
+                # Once orderCancel intent is persisted, never reset to pending:
+                # a timeout may hide a successful irreversible provider action.
+                if current.state != "cancel_requesting":
+                    current.state = "manual_review" if exc.status_code in {400, 401, 403, 404, 409} else "pending"
+                current.last_error = str((exc.detail or {}).get("code", "SHOPIFY_COMPENSATION_ERROR"))[:300]
+                current.lease_owner = None
+                current.lease_until = None
+                db.commit()
+            errors.append({"case_id": case.id, "code": (exc.detail or {}).get("code", "SHOPIFY_COMPENSATION_ERROR")})
+        except Exception:
+            db.rollback()
+            current = db.get(ShopifyCompensationCase, case.id)
+            if current:
+                if current.state != "cancel_requesting":
+                    current.state = "pending"
+                current.last_error = "SHOPIFY_COMPENSATION_RETRY_REQUIRED"
+                current.lease_owner = None
+                current.lease_until = None
+                db.commit()
+            errors.append({"case_id": case.id, "code": "SHOPIFY_COMPENSATION_RETRY_REQUIRED"})
+    order_ids = list(db.scalars(select(ShopifyCompensationCase.commerce_order_id).where(
+        ShopifyCompensationCase.state == "compensated"
+    ).distinct()).all())
+    for order_id in order_ids:
+        order = db.get(commerce.CommerceOrder, order_id)
+        if not order or order.state != "paid" or order.fulfillment_state in {"manual_review", "refunded"}:
+            continue
+        all_cases = list(db.scalars(select(ShopifyCompensationCase).where(
+            ShopifyCompensationCase.commerce_order_id == order_id
+        )).all())
+        all_merchants = set(db.scalars(select(commerce.OrderItem.merchant_id).where(
+            commerce.OrderItem.order_id == order_id
+        ).distinct()).all())
+        case_merchants = {case.merchant_id for case in all_cases}
+        if case_merchants != all_merchants or not all_cases or any(case.state != "compensated" for case in all_cases):
+            order.fulfillment_state = "manual_review" if case_merchants != all_merchants else "compensation_pending"
+            db.commit()
+            continue
+        state = _process_compensation_refund(db, order)
+        if state in {"provider_pending", "provider_succeeded", "ambiguous", "requesting"}:
+            refunds_requested += 1
+    return {"examined": len(cases), "processed": processed, "seller_compensated": compensated,
+        "manual_review": manual_review, "refunds_requested_or_reconciled": refunds_requested,
+        "errors": errors[:20]}
+
+
 @router.post("/internal/shopify/export-paid-orders")
 def export_paid_orders_to_shopify(
     db: Annotated[Session, Depends(commerce.get_db)],
@@ -1974,6 +2929,7 @@ def export_paid_orders_to_shopify(
         ))
         .where(
             commerce.CommerceOrder.state == "paid",
+            commerce.CommerceOrder.fulfillment_state == "provider_pending",
             ShopifyConnection.status == "active",
             or_(ShopifyOrderLink.id.is_(None), ShopifyOrderLink.link_state != "synced"),
         )
@@ -2003,11 +2959,51 @@ def export_paid_orders_to_shopify(
             exported += 1
         except HTTPException as exc:
             failed += 1
-            errors.append({"order_id": order.id, "merchant_id": merchant_id, "code": (exc.detail or {}).get("code", "SHOPIFY_EXPORT_FAILED")})
+            code = (exc.detail or {}).get("code", "SHOPIFY_EXPORT_FAILED")
+            errors.append({"order_id": order.id, "merchant_id": merchant_id, "code": code})
+            if code in {
+                "SHOPIFY_DRAFT_COMPLETION_PENDING", "SHOPIFY_RESERVED_DRAFT_NOT_COMPLETABLE",
+                "SHOPIFY_RESERVED_DRAFT_NOT_FOUND", "SHOPIFY_ORDER_VARIANT_MAPPING_MISSING",
+                "SHOPIFY_ORDER_SHOP_CURRENCY_MISMATCH", "SHOPIFY_ORDER_SOURCE_CURRENCY_MISMATCH",
+                "SHOPIFY_ORDER_CHARGES_NOT_ALLOCATED_PER_MERCHANT", "SHOPIFY_ORDER_TOTAL_REQUIRES_MERCHANT_ALLOCATION",
+                "SHOPIFY_PREPAYMENT_RESERVATION_REQUIRED",
+            }:
+                begin_shopify_compensation(db, order, code)
         except SQLAlchemyError:
             db.rollback()
             failed += 1
             errors.append({"order_id": order.id, "merchant_id": merchant_id, "code": "SHOPIFY_DATABASE_ERROR"})
+    # Only release the marketplace fulfilment hold after every Shopify seller
+    # reservation is completed and linked to its provider order.
+    pending_orders = list(db.scalars(select(commerce.CommerceOrder).where(
+        commerce.CommerceOrder.state == "paid",
+        commerce.CommerceOrder.fulfillment_state == "provider_pending",
+    ).limit(limit)).all())
+    for paid_order in pending_orders:
+        reservations = list(db.scalars(select(ShopifyInventoryReservation).where(
+            ShopifyInventoryReservation.commerce_order_id == paid_order.id,
+        )).all())
+        links = list(db.scalars(select(ShopifyOrderLink).where(
+            ShopifyOrderLink.commerce_order_id == paid_order.id,
+        )).all())
+        if not reservations or any(row.state not in {"reserved", "completed", "completion_pending"} for row in reservations):
+            begin_shopify_compensation(db, paid_order, "SHOPIFY_PREPAYMENT_RESERVATION_REQUIRED")
+            continue
+        unavailable = any(
+            (connection := db.get(ShopifyConnection, row.connection_id)) is None
+            or connection.status != "active"
+            for row in reservations
+        )
+        if unavailable:
+            begin_shopify_compensation(db, paid_order, "SHOPIFY_CONNECTION_UNAVAILABLE_AFTER_PAYMENT")
+            continue
+        if reservations and all(row.state == "completed" for row in reservations) and all(
+            any(link.merchant_id == row.merchant_id and link.link_state == "synced" for link in links)
+            for row in reservations
+        ):
+            paid_order.fulfillment_state = "ready"
+            paid_order.updated_at = utcnow()
+            db.commit()
     return {"exported": exported, "skipped": skipped, "failed": failed, "errors": errors[:20]}
 
 
@@ -2016,16 +3012,41 @@ def reconcile_shopify(
     db: Annotated[Session, Depends(commerce.get_db)],
     token: str | None = Header(default=None, alias="X-Commerce-Shopify-Sync-Token"),
     limit: int = Query(100, ge=1, le=500),
+    connection_limit: int = Query(50, ge=1, le=100),
+    after_connection_id: str | None = Query(default=None, max_length=36),
+    connection_id: str | None = Query(default=None, max_length=36),
 ):
     expected = os.getenv("COMMERCE_SHOPIFY_SYNC_TOKEN", "").strip()
     if len(expected.encode()) < 32 or not token or not hmac.compare_digest(token, expected):
         raise HTTPException(401, detail={"code": "SHOPIFY_SYNC_AUTH_FAILED"})
-    connections = list(db.scalars(select(ShopifyConnection).where(
-        ShopifyConnection.status == "active"
-    ).limit(50)).all())
-    products = orders = errors = 0
+    if connection_id and after_connection_id:
+        raise HTTPException(400, detail={"code": "SHOPIFY_RECONCILE_CURSOR_AND_CONNECTION_ID_CONFLICT"})
+    connection_query = select(ShopifyConnection)
+    if connection_id:
+        connection_query = connection_query.where(ShopifyConnection.id == connection_id)
+    else:
+        connection_query = connection_query.where(ShopifyConnection.status == "active")
+        if after_connection_id:
+            connection_query = connection_query.where(ShopifyConnection.id > after_connection_id)
+    connections = list(db.scalars(connection_query.order_by(ShopifyConnection.id).limit(1 if connection_id else connection_limit)).all())
+    products = orders = errors = webhooks_verified = 0
+    failed_connection_ids: list[str] = []
+    ineligible_connection_ids: list[str] = []
     for connection in connections:
+        if connection.status != "active":
+            errors += 1
+            failed_connection_ids.append(connection.id)
+            ineligible_connection_ids.append(connection.id)
+            continue
         try:
+            callback_url = _webhook_base_url() + "/webhooks/shopify"
+        except RuntimeError as exc:
+            raise HTTPException(503, detail={"code": "SHOPIFY_WEBHOOK_BASE_URL_NOT_CONFIGURED"}) from exc
+        try:
+            registrations = _register_webhooks(connection, db, callback_url)
+            if any(status != "registered" for status in registrations.values()):
+                raise HTTPException(503, detail={"code": "SHOPIFY_WEBHOOK_REGISTRATION_INCOMPLETE"})
+            webhooks_verified += len(registrations)
             _sync_products(connection, db, max_pages=5)
             products += 1
             links = list(db.scalars(select(ShopifyOrderLink).where(
@@ -2039,8 +3060,14 @@ def reconcile_shopify(
             db.commit()
         except HTTPException:
             errors += 1
+            failed_connection_ids.append(connection.id)
             db.rollback()
-    return {"stores_checked": len(connections), "product_syncs": products, "order_statuses_reconciled": orders, "stores_with_errors": errors}
+    next_connection_id = connections[-1].id if not connection_id and len(connections) == connection_limit else None
+    return {"stores_checked": len(connections), "webhooks_verified": webhooks_verified,
+        "product_syncs": products, "order_statuses_reconciled": orders, "stores_with_errors": errors,
+        "failed_connection_ids": failed_connection_ids,
+        "ineligible_connection_ids": ineligible_connection_ids,
+        "next_after_connection_id": next_connection_id}
 
 
 @router.get("/integrations/shopify/readiness")
@@ -2054,12 +3081,22 @@ def shopify_readiness(
         return {"configured": False, "ready": False, "reason": "SHOPIFY_NOT_CONNECTED"}
     required_ready = connection.status == "active" and REQUIRED_SCOPES.issubset(_required_scopes(connection.granted_scopes))
     hooks_ready = all(connection.webhook_registration.get(topic) == "registered" for topic in WEBHOOK_TOPICS)
+    sync_lease_active = bool(connection.products_sync_lease_until and
+        commerce._aware_utc(connection.products_sync_lease_until) > utcnow())
+    sync_recovery_required = connection.products_sync_started_at is not None and not sync_lease_active
+    sync_complete = (connection.products_synced_at is not None and connection.products_cursor is None
+        and connection.products_sync_started_at is None and not sync_lease_active)
     return {
         "configured": True, "ready": required_ready and hooks_ready,
         "connection_status": connection.status,
         "required_scopes_granted": required_ready,
         "webhooks_registered": hooks_ready,
         "products_synced": connection.products_synced_at is not None,
+        "products_sync_complete": sync_complete,
+        "products_sync_has_more": connection.products_cursor is not None,
+        "products_sync_in_progress": sync_lease_active,
+        "products_sync_recovery_required": sync_recovery_required,
+        "catalog_ready": sync_complete,
         "shop_currency": connection.shop_currency,
         "shopify_is_commerce_provider_only": True,
         "cal_display_authorization_required": True,
