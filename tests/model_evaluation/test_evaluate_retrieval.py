@@ -45,7 +45,7 @@ class RetrievalEvaluationTests(unittest.TestCase):
                 read_cases(path)
 
     def test_human_adjudicated_violation_triggers_hard_gate(self):
-        row = make_case("query-001", "cluster-001", ["p1", "p3"], ["p1", "p2"])
+        row = make_case("query-001", "cluster-001", ["p1", "p3"], ["p2", "p3"])
         row["excluded_product_ids"] = []
         row["human_exclusion_violation_ids"] = ["p1"]
         report = evaluate([row], baseline_model_id="cirvanna-fashion-clip", k=1,
