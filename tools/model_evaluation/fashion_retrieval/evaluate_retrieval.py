@@ -245,10 +245,27 @@ def sha256_file(path: str | Path) -> str:
     return digest.hexdigest()
 
 
+def validate_private_artifact_manifests(registration: dict[str, Any]) -> dict[str, Any]:
+    """Verify the data, qrels and dependency artifacts against preregistered digests."""
+    loaded = {}
+    for path_field, digest_field, label in (
+        ("data_manifest_path", "data_manifest_sha256", "data"),
+        ("qrels_manifest_path", "qrels_manifest_sha256", "qrels"),
+        ("dependency_lock_path", "dependency_lock_sha256", "dependency lock"),
+    ):
+        path = registration[path_field]
+        if sha256_file(path) != registration[digest_field]:
+            raise ValueError(f"{label} artifact SHA-256 differs from locked preregistration")
+        if label == "data":
+            loaded[label] = json.loads(Path(path).read_text(encoding="utf-8"))
+    return loaded
+
+
 def validate_run_manifest(
     manifest: dict[str, Any], registration: dict[str, Any], rankings_path: str | Path,
+    data_manifest: dict[str, Any],
 ) -> None:
-    """Bind final rankings to the exact runner output and immutable model revisions."""
+    """Bind final rankings to the exact prepared data, runner output and model revisions."""
     if not isinstance(manifest, dict) or manifest.get("schema_version") != "1.0":
         raise ValueError("run manifest must be a schema_version 1.0 object")
     expected_models = {
@@ -259,6 +276,8 @@ def validate_run_manifest(
         raise ValueError("run manifest model revisions differ from the locked preregistration")
     if manifest.get("rankings_output_sha256") != sha256_file(rankings_path):
         raise ValueError("rankings input SHA-256 does not match the runner manifest")
+    if manifest.get("input_sha256") != data_manifest.get("output_sha256"):
+        raise ValueError("runner input SHA-256 does not match the preregistered prepared-data manifest")
     if manifest.get("split") != "test":
         raise ValueError("runner manifest split must be test for final evaluation")
     if manifest.get("task_id") != registration["task_id"]:
@@ -329,8 +348,9 @@ def main() -> int:
                       primary_metric=args.primary_metric, bootstrap_samples=args.bootstrap_samples,
                       seed=args.seed)
     if args.split == "test":
+        artifacts = validate_private_artifact_manifests(registration)
         manifest = json.loads(Path(args.run_manifest).read_text(encoding="utf-8"))
-        validate_run_manifest(manifest, registration, args.input)
+        validate_run_manifest(manifest, registration, args.input, artifacts["data"])
         gates = {}
         for model_id, paired in report["paired_vs_baseline"].items():
             delta = paired["delta_vs_baseline"]["ndcg_at_k"]
