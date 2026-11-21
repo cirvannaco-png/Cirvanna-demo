@@ -3505,15 +3505,23 @@ async def public_offers(
         decision = candidate.get("decision")
         product = candidate.get("product")
         offer = candidate.get("offer")
+        product_id = product.get("product_id") if isinstance(product, dict) else None
+        catalog_version = product.get("catalog_version") if isinstance(product, dict) else None
         if (
             not isinstance(decision, dict)
             or decision.get("verdict") != "show"
             or decision.get("may_display") is not True
-            or not isinstance(product, dict)
+            or decision.get("product_id") != product_id
+            or decision.get("catalog_version") != catalog_version
+            or decision.get("cil_serving_status") != "eligible"
+            or not isinstance(product_id, str)
+            or isinstance(catalog_version, bool)
+            or not isinstance(catalog_version, int)
+            or catalog_version < 1
             or not isinstance(offer, dict)
-            or not isinstance(product.get("product_id"), str)
-            or offer.get("catalog_product_id") != product.get("product_id")
+            or offer.get("catalog_product_id") != product_id
             or not isinstance(offer.get("variant_id"), str)
+            or not offer.get("variant_id").strip()
         ):
             raise HTTPException(502, detail={"code": "CAL_MARKETPLACE_CANDIDATE_AUTHORIZATION_INVALID"})
         safe_offer = _withhold_unverified_media(offer)
