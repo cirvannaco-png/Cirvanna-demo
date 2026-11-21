@@ -43,6 +43,13 @@ class RetrievalRunnerTests(unittest.TestCase):
                          "c56244cc94f92419e8369fa71efdaf403b124ce8")
         self.assertIsNone(MODEL_SPECS["zooclaw-fashionsiglip2"]["default_revision"])
 
+    def test_research_requirements_pin_compatible_openclip_and_torch(self):
+        requirements = Path("tools/model_evaluation/fashion_retrieval/requirements-research.txt")
+        content = requirements.read_text(encoding="utf-8")
+        self.assertIn("open_clip_torch==4.2.2", content)
+        self.assertIn("torch>=2.6,<3", content)
+        self.assertIn("timm>=1.0.30,<2", content)
+
     def test_revision_pin_requires_full_commit_sha(self):
         with self.assertRaisesRegex(ValueError, "40-character"):
             parse_revisions(["marqo-fashionclip=44f4c65"])
