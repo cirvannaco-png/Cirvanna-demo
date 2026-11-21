@@ -52,6 +52,7 @@ def payload(**overrides):
         "garment_image_asset_id": GARMENT_ASSET,
         "garment_asset_purpose": "catalog_garment_image",
         "garment_category": "upper_body",
+        "garment_photo_type": "flat-lay",
         "consent": {
             "consent_id": "consent-test-0001",
             "image_processing": True,
