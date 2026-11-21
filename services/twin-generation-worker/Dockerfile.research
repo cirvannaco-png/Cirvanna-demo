@@ -1,0 +1,33 @@
+# Research-only GPU image. This Dockerfile is intentionally not included in
+# the production container build matrix until the gated weights, full SBOM,
+# GPU smoke test and real-person validation gate have passed.
+FROM python:3.11-slim
+
+ARG SAM3D_BODY_GIT_REF=b5c765a0d89d789985e186d396315e7590887b94
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/opt/sam-3d-body \
+    SAM3D_BODY_SOURCE_REF=${SAM3D_BODY_GIT_REF} \
+    SAM3D_BODY_ARTIFACT_DIR=/models/sam3d-body
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git build-essential libgl1 libglib2.0-0 libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone https://github.com/facebookresearch/sam-3d-body.git /opt/sam-3d-body \
+    && git -C /opt/sam-3d-body checkout "$SAM3D_BODY_GIT_REF" \
+    && test "$(git -C /opt/sam-3d-body rev-parse HEAD)" = "$SAM3D_BODY_GIT_REF"
+
+COPY services/twin-generation-worker/requirements.txt /tmp/twin-requirements.txt
+
+RUN python -m pip install --no-cache-dir --upgrade pip==25.2 \
+    && python -m pip install --no-cache-dir \
+       torch==2.7.1+cu126 torchvision==0.22.1+cu126 \
+       --index-url https://download.pytorch.org/whl/cu126 \
+    && python -m pip install --no-cache-dir -r /tmp/twin-requirements.txt
+
+COPY services/twin-generation-worker/app /app/app
+WORKDIR /app
+
+EXPOSE 8080
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--workers", "1"]
