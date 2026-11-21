@@ -2756,6 +2756,54 @@ def test_legacy_fulfillment_quotes_without_precision_attestation_are_excluded_fr
     assert expanded_response.json()["total"] == 1
     assert expanded_response.json()["items"][0]["merchant_id"] == b["merchant_id"]
 
+    comparison = client.post("/marketplace/compare", headers=MARKETPLACE_READ_HEADERS, json={
+        "variant_ids": [a["variant_id"], b["variant_id"]],
+        "destination_country_code": "KE",
+        "destination_key": "Nakuru/Subukia",
+        "fulfillment_mode": "courier_delivery",
+        "display_currency": "KES",
+    })
+    assert comparison.status_code == 200, comparison.text
+    assert comparison.json()["status"] == "unavailable"
+    assert comparison.json()["reason_code"] == "FULFILLMENT_QUOTE_MISSING_OR_STALE"
+
+
+def test_local_create_all_upgrades_existing_fulfillment_quote_table():
+    from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
+
+    legacy_engine = create_engine("sqlite://", poolclass=StaticPool)
+    with legacy_engine.begin() as connection:
+        connection.execute(text(
+            "CREATE TABLE commerce_offer_fulfillment_quotes "
+            "(id VARCHAR(36) PRIMARY KEY, distance_km NUMERIC(9, 2))"
+        ))
+
+    main._ensure_local_fulfillment_precision_column(legacy_engine)
+    columns = {column["name"] for column in main.inspect(legacy_engine).get_columns(
+        "commerce_offer_fulfillment_quotes"
+    )}
+    assert "distance_precision_verified_at" in columns
+    legacy_engine.dispose()
+
+
+def test_readiness_probe_pool_caps_outstanding_work():
+    from threading import Event
+
+    release = Event()
+    futures = {}
+
+    def blocked_probe():
+        release.wait(timeout=3)
+        return True
+
+    for index in range(main.READINESS_PROBE_CAPACITY):
+        assert main._submit_readiness_probe(futures, str(index), blocked_probe)
+
+    assert not main._submit_readiness_probe(futures, "overflow", lambda: True)
+    release.set()
+    assert all(future.result(timeout=3) is True for future in futures.values())
+
 
 def test_readiness_runs_cal_and_provider_probes_under_one_shared_deadline(client, monkeypatch):
     from threading import Barrier
