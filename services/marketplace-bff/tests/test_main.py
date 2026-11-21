@@ -2312,6 +2312,14 @@ def test_commerce_proxy_allowlist_routes_role_based_operations():
         ("POST", "admin/merchants/123e4567-e89b-12d3-a456-426614174000/decision"),
         ("GET", "admin/merchants/123e4567-e89b-12d3-a456-426614174000/markets"),
         ("PUT", "admin/merchants/123e4567-e89b-12d3-a456-426614174000/markets/KE"),
+        ("GET", "integrations/shopify/install"),
+        ("GET", "integrations/shopify/connection"),
+        ("GET", "integrations/shopify/readiness"),
+        ("GET", "integrations/shopify/staged-products"),
+        ("POST", "integrations/shopify/disconnect"),
+        ("POST", "integrations/shopify/sync/products"),
+        ("POST", "integrations/shopify/products/123e4567-e89b-12d3-a456-426614174000/map"),
+        ("POST", "integrations/shopify/markets/KE/sync-pricing"),
     ]
     for method, route in allowed:
         assert main._authorized_commerce_path(method, route), (method, route)
@@ -2322,6 +2330,11 @@ def test_commerce_proxy_allowlist_routes_role_based_operations():
         ("DELETE", "admin/merchant-decisions"),
         ("PUT", "admin/merchants/123e4567-e89b-12d3-a456-426614174000/markets/not-a-country"),
         ("POST", "admin/merchants/123e4567-e89b-12d3-a456-426614174000/markets"),
+        ("GET", "integrations/shopify/callback"),
+        ("POST", "webhooks/shopify"),
+        ("POST", "internal/shopify/process-events"),
+        ("POST", "integrations/shopify/products/not-a-uuid/map"),
+        ("DELETE", "integrations/shopify/disconnect"),
     ]
     for method, route in blocked:
         assert not main._authorized_commerce_path(method, route), (method, route)
