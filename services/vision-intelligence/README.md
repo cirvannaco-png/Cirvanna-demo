@@ -224,7 +224,7 @@ Every SDK envelope remains `pending_server_verification`. No Android device is c
 
 The Vision service includes a one-off CLI, `app/retrieval_snapshot_export.py`, for the fashion retrieval research workflow. It calls the same internal `_live_offers()` function used by marketplace retrieval, so active Catalog filtering, current Commerce eligibility, the existing 1,000-offer bound, Commerce order and exact `_offer_description()` text are reused rather than rebuilt by a separate script.
 
-Run it only inside the trusted Vision service container/environment, where the existing `COMMERCE_API_URL`, `CATALOG_API_URL` and `CATALOG_API_TOKEN` or `CATALOG_READ_TOKEN` are already configured. Mount or provide a restricted evaluation volume, then run from the service's `/app` working directory:
+Run it only from an isolated build/checkout of the reviewed research branch, inside a trusted Vision service environment; the exporter is not present in `main` until this PR is merged. Do not deploy this research branch to the customer-facing Vision service just to obtain a snapshot. The environment must already have the existing `COMMERCE_API_URL`, `CATALOG_API_URL` and `CATALOG_API_TOKEN` or `CATALOG_READ_TOKEN` are already configured. Mount or provide a restricted evaluation volume, then run from the service's `/app` working directory:
 
 ```sh
 python -m app.retrieval_snapshot_export \
