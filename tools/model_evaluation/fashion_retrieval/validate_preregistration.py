@@ -25,7 +25,7 @@ def validate_registration(value: Any) -> dict[str, Any]:
         "minimum_independent_clusters", "candidate_pool_sizes",
         "bootstrap_samples", "bootstrap_seed", "baseline",
         "challengers", "data_manifest_sha256", "qrels_manifest_sha256",
-        "dependency_lock_sha256",
+        "dependency_lock_sha256", "data_manifest_path", "qrels_manifest_path", "dependency_lock_path",
     }
     missing = sorted(required - set(value))
     if missing:
@@ -88,6 +88,11 @@ def validate_registration(value: Any) -> dict[str, Any]:
             raise ValueError("challenger model IDs must be non-empty strings")
         if not isinstance(revision, str) or not SHA40.fullmatch(revision):
             raise ValueError(f"challenger {model_id!r} revision must be a full 40-character lowercase SHA")
+
+    for field in ("data_manifest_path", "qrels_manifest_path", "dependency_lock_path"):
+        path = value[field]
+        if not isinstance(path, str) or not path.strip():
+            raise ValueError(f"{field} must be a non-empty private file path")
 
     for field in ("data_manifest_sha256", "qrels_manifest_sha256", "dependency_lock_sha256"):
         digest = value[field]
