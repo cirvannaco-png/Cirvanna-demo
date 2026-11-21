@@ -113,9 +113,14 @@ Pre-register the primary metric before opening final-test results:
       --baseline-model-id cirvanna-fashion-clip \
       --split test --k 10 --primary-metric ndcg_at_k \
       --bootstrap-samples 2000 --seed 20261121 \
-      --preregistration /secure/evaluation/final-preregistration.json
+      --preregistration /secure/evaluation/final-preregistration.json \\
+      --run-manifest /secure/evaluation/fashion-retrieval-rankings.jsonl.manifest.json
 
 Metrics include Recall@k, Precision@k, MRR@k, nDCG@k, top-1 hit rate, no-result rate, top-k fill, candidate coverage and hard-exclusion violations. Reports include paired challenger-minus-baseline deltas, 95% cluster-bootstrap intervals and subgroup slices. Fewer than two independent clusters yields no confidence interval rather than a degenerate interval.
+
+For final-test runs, the evaluator also requires `--run-manifest`. The locked registration must include private paths and SHA-256 digests for the prepared-data manifest, human-qrels manifest and complete dependency lock. The evaluator verifies those file digests, verifies that the runner consumed the exact prepared JSONL recorded by the data manifest, verifies the ranking-output digest, and checks every baseline/challenger revision against the pinned model commits before scoring. Keep all paths and artifacts in the restricted evaluation workspace.
+
+A challenger passes the preregistered selection gate only if its nDCG@10 paired point improvement is at least the declared minimum practically important delta, the 95% paired cluster-bootstrap interval's lower bound is above zero, and the hard-exclusion gate has zero violations. Passing this retrieval gate is necessary, not sufficient, for production adoption; latency, cost, safety, privacy, rights and end-to-end CAL checks remain separate release gates.
 
 The evaluator refuses final `--split test` scoring unless `--preregistration` is supplied. It checks the locked metric, k, bootstrap settings, task, baseline/challenger model set, minimum query/cluster counts and candidate-pool sizes before computing final-test metrics. Use a non-final split such as `pilot` for diagnostic runs without a final preregistration. The runner ranks the full supplied candidate pool and applies no calibrated no-match threshold. Therefore its no-result rate is not a meaningful quality signal in this initial version. Similarity outputs are ranking scores, never probabilities or calibrated confidence.
 
