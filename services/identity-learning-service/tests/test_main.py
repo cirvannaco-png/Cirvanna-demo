@@ -2267,6 +2267,59 @@ def test_stale_revocation_retry_does_not_withdraw_a_later_grant(client):
     assert active.json()["active"] is True
 
 
+def test_expired_legacy_skin_analysis_receipt_cannot_revoke_new_active_bundle(client):
+    active = _grant_resource_consent(
+        client,
+        subject="user-verified-1",
+        bundle="skin-analysis-new-active-bundle",
+        resource="skin-analysis-new-active-resource",
+        scope="skin_analysis",
+        receipt="skin-analysis-new-active-receipt",
+        expires_at=(datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
+    )
+    assert active.status_code == 200
+
+    db = main._session_factory(os.environ["IDENTITY_DATABASE_URL"])()
+    try:
+        db.add(main.ConsentReceipt(
+            receipt_id="skin-analysis-legacy-expired",
+            subject_id="user-verified-1",
+            consent_id="legacy-skin-analysis-consent",
+            resource_id=None,
+            scope="skin_analysis",
+            consent_version="legacy-v1",
+            granted=True,
+            granted_at=datetime.now(timezone.utc) - timedelta(days=3),
+            revoked_at=None,
+            expires_at=datetime.now(timezone.utc) - timedelta(days=1),
+            provider_contributor_token=None,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    stale_revoke = client.post(
+        "/v1/tal/consents/skin-analysis-legacy-expired/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert stale_revoke.status_code == 200
+    assert stale_revoke.json()["status"] == "already_expired"
+
+    verified = client.post(
+        "/internal/v1/consents/verify",
+        headers=auth(),
+        json={
+            "subject_id": "user-verified-1",
+            "consent_id": "skin-analysis-new-active-bundle",
+            "required_scopes": ["skin_analysis"],
+            "resource_id": "skin-analysis-new-active-resource",
+            "require_expiring": True,
+        },
+    )
+    assert verified.status_code == 200
+    assert verified.json()["active"] is True
+
+
 def test_image_processing_expiry_in_twin_bundle_queues_twin_asset_cleanup(client, monkeypatch):
     expires = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
     for index, scope in enumerate(["image_processing", "body_measurements", "virtual_twin_storage"]):
