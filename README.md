@@ -198,7 +198,6 @@ The 30-observation floor is a disclosure safeguard. It is not differential priva
 
 The platform-wide CIL now has a durable Intelligence Service for source rights, append-only revocation events, evidence references, consented recommendation outcomes and CAL review requests. Catalog product/variant/version GET responses call the CIL serving gate; missing gateway configuration or failed evidence/rights checks withhold product-intelligence metadata. Claims remain withheld unless explicitly approved; ingredient declarations are assessed independently and carry required attribution. The generic provider adapter requires an explicit API token, licence ID and terms URL. A Perfect Corp YouCam Skin Analysis V2.1 connector is implemented behind adult-only image-digest consent and DPA/retention gates, but remains disabled until contracted credentials and privacy approvals are supplied. Revieve remains a researched partner option, not a connected provider. See [external beauty provider research](docs/integrations/beauty-provider-research.md). Consented outcome aggregates are now queried by the API Gateway and can apply a configurable contextual ranking penalty after the 30-contributor floor; this is feedback-informed reranking, not automated model training. The narrower `catacaci.cil` cohort kernel remains a separate CaTaCaCi capability. See [CIL architecture](docs/architecture/cirvanna-intelligence-layer.md) and [Intelligence Service](services/intelligence-service/README.md).
 ## Modules and services
-## Modules and services
 
 The actual repository is a multi-service monorepo. Important areas are:
 
@@ -207,6 +206,7 @@ The actual repository is a multi-service monorepo. Important areas are:
 | apps/demo-web | Demo and marketplace browser application |
 | services/api-gateway | Catalog and Commerce discovery, verified Commerce subject resolution, USI/TAL proxy, signed safety/FCI adapters, CAL arbitration, CIL feedback-informed reranking, Complementer advisory proxy |
 | services/recommendation-service | Complementer advisory API and domain modules |
+| services/appearance-orchestrator | Internal read-only Catalog + NPL specialist orchestration; no public route or durable display receipt |
 | services/catalog-service | Canonical product CRUD, metadata validation, product versions, fail-closed CIL serving gate |
 | services/intelligence-service | Durable source/evidence registry, rights revocation, licensed-provider adapter, gated Perfect Corp image-analysis connector, recommendation outcomes, CAL review queue |
 | services/identity-learning-service | Durable USI profiles, consent receipts, TAL event persistence, replay/idempotency, correction, export, deletion and retention |
@@ -226,6 +226,7 @@ The actual repository is a multi-service monorepo. Important areas are:
 | services/xari | PNELLY conversational discovery/orchestration (preserved Xari compatibility source path) |
 | services/graph-service, perception-service, sync-service | Supporting service foundations; inspect their READMEs before use |
 | packages/identity-intelligence | CaTaCaCi, USI, EEPL, TAL event contracts, and cultural identity domain contracts |
+| packages/appearance_intelligence/specialists | Seven-domain catalog specialist registry, NPL hard-negative checks, and CAL preflight; no image inference |
 | packages/intelligence-layer | Platform-wide CIL source-rights, evidence, ingredient, model-validation, and outcome-learning domain contracts |
 | packages/preferences/npl | Canonical NPL policy and evidence contract |
 | packages/fit-intelligence | Fit-confidence evidence contracts; no calibrated predictor is registered |
@@ -233,6 +234,7 @@ The actual repository is a multi-service monorepo. Important areas are:
 | packages/wardrobe | Wardrobe domain package |
 | integration-staging | Preserved source bundles and candidate implementations; not automatically runtime code |
 | tests/architecture | Domain and architecture regression tests |
+| tests/appearance_intelligence | Specialist, adapter, NPL, CAL preflight and Look + Makeup composition contracts |
 | docs/architecture | Architecture decisions, boundaries, readiness, and release gates |
 | .github/workflows | Service, architecture, container, and contract CI workflows |
 
