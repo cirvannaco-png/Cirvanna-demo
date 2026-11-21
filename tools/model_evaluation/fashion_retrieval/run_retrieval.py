@@ -15,6 +15,7 @@ import os
 import platform
 import re
 import sys
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,21 +29,33 @@ MODEL_SPECS = {
         "repo_id": "patrickjohncyh/fashion-clip",
         "loader": "transformers_clip",
         "default_revision": BASELINE_REVISION,
+        "allow_patterns": ["model.safetensors", "config.json", "preprocessor_config.json",
+                           "special_tokens_map.json", "tokenizer.json", "tokenizer_config.json",
+                           "vocab.json", "merges.txt"],
     },
     "marqo-fashionclip": {
         "repo_id": "Marqo/marqo-fashionCLIP",
         "loader": "open_clip",
         "default_revision": None,
+        "allow_patterns": ["open_clip_config.json", "open_clip_model.safetensors",
+                           "preprocessor_config.json", "tokenizer.json", "tokenizer_config.json",
+                           "special_tokens_map.json", "vocab.json", "merges.txt"],
     },
     "marqo-fashionsiglip": {
         "repo_id": "Marqo/marqo-fashionSigLIP",
         "loader": "open_clip",
         "default_revision": None,
+        "allow_patterns": ["open_clip_config.json", "open_clip_model.safetensors",
+                           "preprocessor_config.json", "tokenizer.json", "tokenizer_config.json",
+                           "special_tokens_map.json", "spiece.model", "config.json"],
     },
     "zooclaw-fashionsiglip2": {
         "repo_id": "srpone/zooclaw-fashionsiglip2",
         "loader": "transformers_auto",
         "default_revision": None,
+        "allow_patterns": ["model.safetensors", "config.json", "preprocessor_config.json",
+                           "special_tokens_map.json", "tokenizer.json", "tokenizer.model",
+                           "tokenizer_config.json"],
     },
 }
 
@@ -217,6 +230,43 @@ def hash_snapshot(snapshot_dir: str | Path) -> dict[str, dict[str, Any]]:
     return files
 
 
+def prepare_open_clip_local_dir(snapshot_dir: str | Path, overlay_dir: str | Path) -> tuple[str, dict[str, Any]]:
+    """Create a symlink-only local OpenCLIP view and pin tokenizer files to that snapshot."""
+    import json
+    import os
+
+    snapshot = Path(snapshot_dir).resolve()
+    overlay = Path(overlay_dir).resolve()
+    overlay.mkdir(parents=True, exist_ok=True)
+    config_path = snapshot / "open_clip_config.json"
+    if not config_path.is_file():
+        raise FileNotFoundError("OpenCLIP snapshot is missing open_clip_config.json")
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    text_cfg = config.get("model_cfg", {}).get("text_cfg", {})
+    external_tokenizer = text_cfg.get("hf_tokenizer_name")
+    for source in snapshot.iterdir():
+        target = overlay / source.name
+        if target.exists() or target.is_symlink():
+            target.unlink()
+        if source.is_file() and source.name != "open_clip_config.json":
+            os.symlink(source.resolve(), target)
+    overrides: dict[str, Any] = {}
+    if external_tokenizer:
+        if not (
+            (snapshot / "tokenizer.json").is_file()
+            or ((snapshot / "vocab.json").is_file() and (snapshot / "merges.txt").is_file())
+            or (snapshot / "spiece.model").is_file()
+        ):
+            raise FileNotFoundError(
+                "model snapshot does not contain tokenizer files needed to avoid a floating tokenizer dependency"
+            )
+        text_cfg["hf_tokenizer_name"] = str(snapshot)
+        overrides["hf_tokenizer_name"] = "local files from the exact model snapshot"
+    config_path_overlay = overlay / "open_clip_config.json"
+    config_path_overlay.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    return "local-dir:" + str(overlay), overrides
+
+
 def _to_device(batch: dict[str, Any], device: str) -> dict[str, Any]:
     return {key: value.to(device) if hasattr(value, "to") else value for key, value in batch.items()}
 
@@ -229,6 +279,7 @@ class EmbeddingAdapter:
     loader: str
     tokenizer: Any = None
     image_preprocess: Any = None
+    processor_overrides: dict[str, Any] | None = None
 
     @classmethod
     def load(cls, model_id: str, snapshot_dir: str | Path, device: str) -> "EmbeddingAdapter":
@@ -239,17 +290,19 @@ class EmbeddingAdapter:
                 import open_clip
             except ImportError as exc:
                 raise RuntimeError("install open_clip_torch to run Marqo challengers") from exc
-            local_uri = "local-dir:" + snapshot
             try:
-                model, _, preprocess = open_clip.create_model_and_transforms(local_uri, device=device)
-                tokenizer = open_clip.get_tokenizer(local_uri)
+                with tempfile.TemporaryDirectory(prefix="cirvanna-openclip-") as overlay_path:
+                    local_uri, overrides = prepare_open_clip_local_dir(snapshot, overlay_path)
+                    model, _, preprocess = open_clip.create_model_and_transforms(local_uri, device=device)
+                    tokenizer = open_clip.get_tokenizer(local_uri)
             except Exception as exc:
                 raise RuntimeError(
-                    "OpenCLIP must support the local-dir: schema and load only the pinned local snapshot"
+                    "OpenCLIP must load from the pinned local snapshot; remote model code and floating tokenizer downloads are disabled"
                 ) from exc
             model.eval()
             return cls(model=model, processor=None, device=device, loader="open_clip",
-                       tokenizer=tokenizer, image_preprocess=preprocess)
+                       tokenizer=tokenizer, image_preprocess=preprocess,
+                       processor_overrides=overrides)
 
         import torch
         if spec["loader"] == "transformers_clip":
@@ -357,6 +410,7 @@ def run_model(
         repo_id=spec["repo_id"],
         revision=revision,
         cache_dir=str(cache_dir),
+        allow_patterns=spec["allow_patterns"],
     )
     artifact_manifest = hash_snapshot(snapshot)
     adapter = EmbeddingAdapter.load(model_id, snapshot, device)
@@ -394,6 +448,7 @@ def run_model(
             "revision": revision,
             "loader": spec["loader"],
             "artifact_files": artifact_manifest,
+            "processor_overrides": adapter.processor_overrides or {},
             "weight_files": {
                 path: item for path, item in artifact_manifest.items()
                 if path.endswith((".safetensors", ".bin", ".pt"))
