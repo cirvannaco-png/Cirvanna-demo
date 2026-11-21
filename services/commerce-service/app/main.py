@@ -740,7 +740,7 @@ class StripeGateway:
             and self.success_url.startswith("https://") and self.cancel_url.startswith("https://")
             and self.countries and all(COUNTRY_RE.fullmatch(x) for x in self.countries))
 
-    def create_session(self, order: CommerceOrder, items: list[OrderItem], charges: list[OrderCharge], email: str | None) -> dict[str, str]:
+    def create_session(self, order: CommerceOrder, items: list[OrderItem], charges: list[OrderCharge], email: str | None, *, card_only: bool = False) -> dict[str, str]:
         if not self.ready:
             raise RuntimeError("Stripe not configured")
         params: dict[str, str] = {
@@ -748,6 +748,10 @@ class StripeGateway:
             "client_reference_id": order.id, "expires_at": str(int(order.expires_at.timestamp())),
             "metadata[order_id]": order.id, "metadata[order_number]": order.order_number,
         }
+        if card_only:
+            # Shopify's provider-side stock hold expires with this checkout. Do not
+            # offer delayed-settlement methods that can succeed after that hold expires.
+            params["payment_method_types[0]"] = "card"
         if order.destination_country_code:
             # Market-aware destination is a provider-quoted zone key. Do not let
             # Stripe collect a second, potentially different address after the quote.
@@ -1835,8 +1839,12 @@ def persist_stripe_session(db: Session, order_id: str, email: str | None, gatewa
         raise HTTPException(409, detail={"code": "ORDER_NOT_PAYABLE", "state": order.state})
     lines = list(db.scalars(select(OrderItem).where(OrderItem.order_id == order.id).order_by(OrderItem.id)).all())
     charges = list(db.scalars(select(OrderCharge).where(OrderCharge.order_id == order.id).order_by(OrderCharge.charge_type, OrderCharge.id)).all())
+    from app.shopify import ShopifyInventoryReservation
+    has_shopify_reservation = db.scalar(select(ShopifyInventoryReservation.id).where(
+        ShopifyInventoryReservation.commerce_order_id == order.id
+    ).limit(1)) is not None
     try:
-        session = gateway.create_session(order, lines, charges, email)
+        session = gateway.create_session(order, lines, charges, email, card_only=has_shopify_reservation)
     except RuntimeError as exc:
         # Network failure may occur after Stripe accepted the request. Keep the
         # reservation and recover via stable provider idempotency on retry.
