@@ -4,7 +4,7 @@
 
 - Repository: `cirvannaco-png/Cirvanna-demo`
 - Comparison base: current-main commit `c09ce323c6dc7f5a9e02a9021896ec87bc430440`
-- Branch inventory: 252 unique refs, including `main`.
+- Branch inventory: 253 unique refs, including `main`.
 - Method: paginated GitHub branch search followed by a commit-graph comparison of every returned branch against the same pinned main SHA.
 - This is a complete graph inventory for the 252 refs at this snapshot. It is not a semantic review of every unique commit or a certification that every branch's changes are useful, safe, or already represented elsewhere.
 
@@ -16,7 +16,7 @@
 | Behind only | 71 | No unique commits ahead of main. Candidate for archival only after open-PR, dependency, and source-material checks. |
 | Ahead only | 2 | Strictly ahead of main with no commits behind. Both require reviewable PR disposition. |
 | Identical | 1 | The `main` branch compared with itself. |
-| **Total** | **252** | Every returned branch compared against the pinned base. |
+| **Total** | **253** | Every returned branch compared against the pinned base. |
 
 The two ahead-only refs at this snapshot are:
 - `security/twin-click-it-policy-current-main-2026-11-21`: 8 commits ahead, 0 behind; open PR #260.
@@ -67,4 +67,4 @@ For each candidate, inspect unique file content and commits, identify whether an
 
 ## Remaining limitation
 
-The graph comparison is complete for this 252-ref snapshot. Semantic review is not complete for all 179 diverged branches, and the 71 behind-only branches have not all passed dependency/source-retention checks. The next work is prioritized feature-family review and safe archival, not mass merge or mass deletion.
+The graph comparison is complete for this 253-ref snapshot. Semantic review is not complete for all 179 diverged branches, and the 71 behind-only branches have not all passed dependency/source-retention checks. The next work is prioritized feature-family review and safe archival, not mass merge or mass deletion.
