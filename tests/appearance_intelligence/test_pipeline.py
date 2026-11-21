@@ -30,6 +30,23 @@ def product_gates(product_id: str, *, include_fit: bool = False) -> tuple[Decisi
 def bundle_gates() -> tuple[DecisionSignal, ...]:
     return (signal("bundle:safety", SignalKind.SAFETY), signal("bundle:legal", SignalKind.LEGAL_ELIGIBILITY), signal("bundle:fit", SignalKind.FIT_CONFIDENCE, confidence=0.92))
 
+def test_catalog_product_rejects_malformed_optional_brand_and_description():
+    base = product_record("catalog-text", "makeup")
+    with pytest.raises(ValueError, match="brand"):
+        CatalogProduct.from_mapping({**base, "brand": 42})
+    with pytest.raises(ValueError, match="description"):
+        CatalogProduct.from_mapping({**base, "description": ["not", "text"]})
+    with pytest.raises(ValueError, match="brand"):
+        CatalogProduct.from_mapping({**base, "brand": " "})
+
+
+def test_catalog_snapshot_rejects_boolean_freshness_window():
+    item = catalog_product("freshness-window", "makeup")
+    current = snapshot(item)
+    with pytest.raises(ValueError, match="max_age_seconds"):
+        current.is_fresh(datetime.now(timezone.utc), True)
+
+
 def test_all_seven_specialists_are_registered_and_skincare_is_separate_from_skin():
     assert set(SPECIALISTS) == {SpecialistId.HAIR, SpecialistId.FACE, SpecialistId.SKIN, SpecialistId.LOOK, SpecialistId.FOOTWEAR, SpecialistId.MAKEUP, SpecialistId.SKINCARE}
     assert not SPECIALISTS[SpecialistId.SKIN].catalog_matching_available
