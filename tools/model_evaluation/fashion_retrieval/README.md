@@ -145,7 +145,7 @@ For text queries use `task_id=text_to_catalog_text` and provide `query_text`. Th
       --queries /secure/evaluation/query-qrels.jsonl \
       --output /secure/evaluation/fashion-retrieval-test.jsonl
 
-The 1,000 candidate bound matches the current Vision worker cap. Prepare one task and one split per run. Use exact eligible variant IDs, not product names or generated row numbers. The source snapshot, query/qrel input, prepared JSONL and manifests are private research records and must remain outside GitHub. Human qrels must be prepared by the independent review process before a final test run.
+The 1,000 candidate bound matches the current Vision worker cap. Prepare one task and one split per run. Use exact eligible variant IDs, not product names or generated row numbers. The source snapshot, query/review/adjudication inputs, prepared JSONL and manifests are private research records and must remain outside GitHub. Every candidate must have a complete grade; no unjudged candidate is silently treated as irrelevant. Human-adjudicated constraint violations remain hard ranking gates.
 
 ## End-to-end local tests
 
