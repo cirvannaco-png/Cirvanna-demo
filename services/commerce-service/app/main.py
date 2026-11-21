@@ -506,6 +506,11 @@ class OutboxFailureIn(BaseModel):
     error_code: str = Field(min_length=1, max_length=120)
 
 
+class ManualReviewAckIn(BaseModel):
+    action: Literal["acknowledged", "escalated", "resolved"]
+    operator_note: str | None = Field(default=None, max_length=500)
+
+
 def require_sync_token(token: Annotated[str | None, Header(alias="X-Commerce-Sync-Token")] = None) -> None:
     expected = os.getenv("COMMERCE_SYNC_TOKEN", "")
     if len(expected.encode()) < 32:
@@ -4232,6 +4237,54 @@ def list_manual_review_queue(
         raise
     except Exception as exc:
         raise HTTPException(503, detail={"code": "MANUAL_REVIEW_QUEUE_UNAVAILABLE"}) from exc
+
+
+@app.post("/admin/operations/manual-review/{event_id}/ack", tags=["operations"])
+def acknowledge_manual_review_event(
+    event_id: str,
+    payload: ManualReviewAckIn,
+    actor: Annotated[Actor, Depends(require_actor)],
+) -> dict[str, object]:
+    """Acknowledge an operator queue item and persist a minimal audit event."""
+    if actor.role != "admin":
+        raise HTTPException(403, detail={"code": "ADMIN_REQUIRED"})
+    try:
+        with SessionLocal() as db, db.begin():
+            event = db.scalar(select(CommerceOutboxEvent).where(
+                CommerceOutboxEvent.event_id == event_id,
+                CommerceOutboxEvent.event_type.in_(MANUAL_REVIEW_EVENT_TYPES),
+            ).with_for_update())
+            if event is None:
+                raise HTTPException(404, detail={"code": "MANUAL_REVIEW_EVENT_NOT_FOUND"})
+            if event.delivered_at is not None:
+                return {"status": "already_acknowledged", "event_id": event_id}
+            audit_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"cirvanna:manual-review-ack:{event_id}"))
+            if db.get(CommerceOutboxEvent, audit_id) is None:
+                db.add(CommerceOutboxEvent(
+                    event_id=audit_id,
+                    aggregate_type="manual_review_ack",
+                    aggregate_id=event_id,
+                    event_type="commerce.operations.manual_review.acknowledged",
+                    schema_version=1,
+                    payload={
+                        "event_id": audit_id,
+                        "event_type": "commerce.operations.manual_review.acknowledged",
+                        "schema_version": 1,
+                        "manual_review_event_id": event_id,
+                        "operator_user_id": actor.user_id,
+                        "action": payload.action,
+                        "operator_note": payload.operator_note,
+                        "acknowledged_at": now().isoformat(),
+                    },
+                ))
+            event.delivered_at = now()
+            event.lease_owner = "admin:" + actor.user_id[:118]
+            event.lease_until = None
+            return {"status": "acknowledged", "event_id": event_id, "audit_event_id": audit_id}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(503, detail={"code": "MANUAL_REVIEW_ACK_UNAVAILABLE"}) from exc
 
 
 @app.post("/internal/outbox/claim", dependencies=[Depends(require_sync_token)], tags=["internal event delivery"])
