@@ -97,18 +97,26 @@ def _encryption_key() -> bytes:
     return decoded
 
 
-def _seal(value: str) -> str:
+def _token_aad(connection: ShopifyConnection, purpose: str) -> bytes:
+    return TOKEN_AAD + b"|" + connection.id.encode() + b"|" + connection.merchant_id.encode() + b"|" + connection.shop_domain.encode() + b"|" + purpose.encode()
+
+
+def _seal(value: str, connection: ShopifyConnection, purpose: str) -> str:
     nonce = secrets.token_bytes(12)
-    ciphertext = AESGCM(_encryption_key()).encrypt(nonce, value.encode("utf-8"), TOKEN_AAD)
+    ciphertext = AESGCM(_encryption_key()).encrypt(
+        nonce, value.encode("utf-8"), _token_aad(connection, purpose)
+    )
     return base64.urlsafe_b64encode(nonce + ciphertext).decode("ascii")
 
 
-def _unseal(value: str) -> str:
+def _unseal(value: str, connection: ShopifyConnection, purpose: str) -> str:
     try:
         packed = base64.urlsafe_b64decode(value.encode("ascii"))
         if len(packed) < 29:
             raise ValueError("ciphertext too short")
-        return AESGCM(_encryption_key()).decrypt(packed[:12], packed[12:], TOKEN_AAD).decode("utf-8")
+        return AESGCM(_encryption_key()).decrypt(
+            packed[:12], packed[12:], _token_aad(connection, purpose)
+        ).decode("utf-8")
     except HTTPException:
         raise
     except Exception as exc:
@@ -342,8 +350,8 @@ def _save_token_response(connection: ShopifyConnection, data: dict[str, Any]) ->
         scope_list = [str(value).strip() for value in scopes if str(value).strip()]
     else:
         scope_list = []
-    connection.access_token_ciphertext = _seal(access)
-    connection.refresh_token_ciphertext = _seal(refresh)
+    connection.access_token_ciphertext = _seal(access, connection, "access")
+    connection.refresh_token_ciphertext = _seal(refresh, connection, "refresh")
     connection.access_expires_at = utcnow() + timedelta(seconds=expires_in)
     connection.refresh_expires_at = utcnow() + timedelta(seconds=refresh_expires)
     connection.granted_scopes = sorted(set(scope_list))
@@ -359,7 +367,7 @@ def _refresh_access_token(connection: ShopifyConnection, db: Session) -> str:
     if locked is None or locked.status != "active":
         raise HTTPException(409, detail={"code": "SHOPIFY_REAUTH_REQUIRED"})
     if locked.access_expires_at and commerce._aware_utc(locked.access_expires_at) > utcnow() + timedelta(minutes=5):
-        return _unseal(locked.access_token_ciphertext or "")
+        return _unseal(locked.access_token_ciphertext or "", locked, "access")
     if (
         not locked.refresh_token_ciphertext or not locked.refresh_expires_at
         or commerce._aware_utc(locked.refresh_expires_at) <= utcnow()
@@ -374,7 +382,7 @@ def _refresh_access_token(connection: ShopifyConnection, db: Session) -> str:
                 "client_id": api_key,
                 "client_secret": api_secret,
                 "grant_type": "refresh_token",
-                "refresh_token": _unseal(locked.refresh_token_ciphertext),
+                "refresh_token": _unseal(locked.refresh_token_ciphertext, locked, "refresh"),
             },
             headers={"Accept": "application/json"},
             timeout=8.0,
@@ -569,6 +577,21 @@ def _sync_mapped_variant(
         snapshot.mapping_state = "currency_conflict"
         variant.observed_at = utcnow() - timedelta(days=30)
         return "SHOP_CURRENCY_CHANGED"
+    sku_conflict = db.scalar(select(commerce.Variant.id).join(
+        commerce.Listing, commerce.Variant.listing_id == commerce.Listing.id
+    ).where(
+        commerce.Listing.merchant_id == connection.merchant_id,
+        commerce.Variant.listing_id == variant.listing_id,
+        commerce.Variant.sku == snapshot.sku,
+        commerce.Variant.id != variant.id,
+    ))
+    if sku_conflict:
+        snapshot.mapping_state = "sku_conflict"
+        variant.observed_at = utcnow() - timedelta(days=30)
+        return "SHOPIFY_SKU_CONFLICT"
+    sku_changed = variant.sku != snapshot.sku
+    if sku_changed:
+        variant.sku = snapshot.sku
     old_on_hand = variant.on_hand
     if snapshot.tracked and snapshot.inventory_complete and snapshot.available_quantity is not None:
         desired_on_hand = snapshot.available_quantity + variant.reserved_qty
@@ -589,7 +612,7 @@ def _sync_mapped_variant(
         variant.observed_at = utcnow() - timedelta(days=30)
         snapshot.mapping_state = "inventory_unknown"
         return "SHOPIFY_INVENTORY_NOT_VERIFIABLE"
-    changed = variant.price_minor != snapshot.price_minor or variant.currency != snapshot.currency
+    changed = variant.price_minor != snapshot.price_minor or variant.currency != snapshot.currency or sku_changed
     if changed:
         variant.price_minor = snapshot.price_minor
         variant.source_price_minor = snapshot.price_minor
@@ -606,7 +629,8 @@ def _sync_products(connection: ShopifyConnection, db: Session, *, max_pages: int
     if connection.status != "active":
         raise HTTPException(409, detail={"code": "SHOPIFY_CONNECTION_NOT_ACTIVE"})
     after: str | None = connection.products_cursor
-    products_seen = variants_seen = inventory_conflicts = pages = 0
+    variants_seen = inventory_conflicts = pages = 0
+    products_seen_ids: set[str] = set()
     product_cache = {
         item.shopify_product_gid: item
         for item in db.scalars(select(ShopifyProductSnapshot).where(
@@ -671,7 +695,7 @@ def _sync_products(connection: ShopifyConnection, db: Session, *, max_pages: int
             product.synced_at = utcnow()
             if product.catalog_product_id:
                 product.mapping_state = "partial"
-            products_seen += 1
+            products_seen_ids.add(product.id)
             inventory_item = remote_variant.get("inventoryItem") or {}
             tracked, available, on_hand, inventory_complete = _inventory_totals(inventory_item)
             sku = _safe_sku(remote_variant.get("sku"), remote_gid)
@@ -753,11 +777,10 @@ def _sync_products(connection: ShopifyConnection, db: Session, *, max_pages: int
                 )
     db.commit()
     return {
-        "products_seen": len({item.product_snapshot_id for item in variant_cache.values()
-                              if item.connection_id == connection.id}),
+        "products_seen": len(products_seen_ids),
         "variants_seen": variants_seen,
         "inventory_conflicts": inventory_conflicts,
-        "pages_processed": pages + 1,
+        "pages_processed": min(pages + 1, max_pages),
         "has_more": connection.products_cursor is not None,
     }
 
@@ -991,6 +1014,8 @@ def map_shopify_product(
     canonical_product = catalog.product(payload.canonical_product_id)
     if product_snapshot.catalog_product_id and product_snapshot.catalog_product_id != canonical_product["product_id"]:
         raise HTTPException(409, detail={"code": "SHOPIFY_PRODUCT_CANONICAL_MAPPING_IMMUTABLE"})
+    if len(set(item.canonical_variant_id for item in payload.variants)) != len(payload.variants):
+        raise HTTPException(422, detail={"code": "DUPLICATE_CANONICAL_VARIANT_MAPPING"})
     listing = db.scalar(select(commerce.Listing).where(
         commerce.Listing.merchant_id == merchant.id,
         commerce.Listing.catalog_product_id == canonical_product["product_id"],
