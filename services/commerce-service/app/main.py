@@ -3975,6 +3975,9 @@ async def stripe_webhook(request: Request, db: Annotated[Session, Depends(get_db
         payment_intent = obj.get("payment_intent")
         if isinstance(payment_intent, dict):
             payment_intent = payment_intent.get("id")
+        charge_id = obj.get("charge")
+        if isinstance(charge_id, dict):
+            charge_id = charge_id.get("id")
         if compensation_key:
             attempt = db.scalar(select(StripeRefundAttempt).where(
                 StripeRefundAttempt.idempotency_key == str(compensation_key),
