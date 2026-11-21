@@ -3994,6 +3994,8 @@ async def stripe_webhook(request: Request, db: Annotated[Session, Depends(get_db
             attempt.provider_refund_id = str(provider_refund_id)
             status = str(obj.get("status", "")).lower()
             if status == "succeeded":
+                if not isinstance(charge_id, str) or not charge_id.startswith("ch_"):
+                    raise HTTPException(409, detail={"code": "REFUND_CHARGE_REFERENCE_MISSING"})
                 if attempt.state != "confirmed":
                     attempt.state = "confirmed"
                     attempt.confirmed_at = now()
@@ -4015,10 +4017,10 @@ async def stripe_webhook(request: Request, db: Annotated[Session, Depends(get_db
                             payload={
                                 "event_id": refund_event_id, "provider_event_id": event_id,
                                 "event_type": "commerce.order.refund.updated", "schema_version": 1,
-                                "ownership_authority": "verified_stripe_refund_event",
+                                "ownership_authority": "verified_stripe_charge_refund",
                                 "order_id": order.id, "buyer_user_id": order.buyer_user_id,
                                 "payment_intent_id": attempt.payment_intent_id,
-                                "refund_id": str(provider_refund_id), "currency": order.currency,
+                                "charge_id": charge_id, "currency": order.currency,
                                 "order_total_minor": attempt.amount_minor,
                                 "amount_refunded_minor": attempt.amount_minor, "refund_state": "refunded",
                                 "refunded_at": now().isoformat(), "physical_return_confirmed": False,
