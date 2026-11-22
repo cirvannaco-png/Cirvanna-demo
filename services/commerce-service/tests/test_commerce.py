@@ -812,6 +812,81 @@ def test_real_cal_receipt_requester_rejects_modified_signed_offer(client, monkey
     assert exc.value.detail["code"] == "CAL_PURCHASE_RECEIPT_BINDING_OR_SIGNATURE_INVALID"
 
 
+def test_real_cal_receipt_requester_rejects_validly_signed_receipt_for_another_subject(client, monkeypatch):
+    from starlette.requests import Request
+
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-token-with-more-than-32-bytes")
+    signing_key = "cal-signing-key-with-more-than-thirty-two-bytes-long"
+    monkeypatch.setenv("CAL_PURCHASE_RECEIPT_HMAC_SECRET", signing_key)
+    item = {
+        "catalog_product_id": str(uuid.uuid4()),
+        "variant_id": str(uuid.uuid4()),
+        "listing_id": str(uuid.uuid4()),
+        "merchant_id": str(uuid.uuid4()),
+        "action": "checkout",
+        "offer_snapshot_sha256": "b" * 64,
+        "market_country_code": None,
+        "destination_key_sha256": None,
+        "fulfillment_mode": None,
+        "display_currency": None,
+        "quantity": 1,
+        "unit_price_minor": 500,
+        "currency": "KES",
+    }
+    request = Request({
+        "type": "http",
+        "method": "POST",
+        "path": "/checkout",
+        "headers": [(b"authorization", b"Bearer user-access-token")],
+    })
+
+    class Response:
+        status_code = 200
+        def __init__(self, payload):
+            self.payload = payload
+        def json(self):
+            return self.payload
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def post(self, url, headers, json):
+            issued = main.now()
+            unsigned = {
+                "schema_version": "1",
+                "receipt_id": str(uuid.uuid4()),
+                "request_id": "gateway-request-subject-mismatch",
+                "subject_id": "different-customer",
+                "candidate_id": item["variant_id"],
+                **json["authorizations"][0],
+                "catalog_version": 5,
+                "decision": "SHOW",
+                "may_display": True,
+                "reason_codes": [],
+                "policy_version": "test-policy-v1",
+                "issued_at": issued.isoformat(),
+                "expires_at": (issued + main.timedelta(seconds=45)).isoformat(),
+            }
+            canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+            signature = hmac.new(signing_key.encode(), canonical, hashlib.sha256).hexdigest()
+            return Response({
+                "subject_id": json["user_id"],
+                "request_id": "gateway-request-subject-mismatch",
+                "receipts": [{**unsigned, "signature": signature}],
+            })
+
+    monkeypatch.setattr(main.httpx, "Client", FakeClient)
+    with pytest.raises(main.HTTPException) as exc:
+        REAL_CAL_PURCHASE_RECEIPT_REQUESTER(request, "expected-customer", [item])
+    assert exc.value.status_code == 502
+    assert exc.value.detail["code"] == "CAL_PURCHASE_RECEIPT_BINDING_OR_SIGNATURE_INVALID"
+
+
 def test_real_cal_receipt_requester_fails_closed_without_trusted_gateway_config(client, monkeypatch):
     from starlette.requests import Request
 
