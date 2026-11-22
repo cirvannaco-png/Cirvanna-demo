@@ -1,19 +1,19 @@
 # Branch reconciliation — 22 November 2026
 
 Repository: `cirvannaco-png/Cirvanna-demo`  
-Current main: `81df302848468f1e744252e435cbbd75d579b7f3`. Prior audit main: `eca1a7349daef730a9e1ac43c72fec91712cb8b8`. Original code comparison base: `81580b26034e0cf424172d5b96eead4a1c22f840`.
+Reviewed code main before this documentation PR: `81df302848468f1e744252e435cbbd75d579b7f3`. Prior audit main: `eca1a7349daef730a9e1ac43c72fec91712cb8b8`. Original code comparison base: `81580b26034e0cf424172d5b96eead4a1c22f840`.
 
 ## Inventory and method
 
-Paginated GitHub branch search now returns **267 refs including main** (266 non-main). The prior audit covered 263 refs including main (262 non-main). Main advanced by six commits from `eca1a7349daef730a9e1ac43c72fec91712cb8b8` to `81df302848468f1e744252e435cbbd75d579b7f3`: appearance-specialist orchestration (#269), audit refresh (#274), private benchmark artifact-write hardening (#275), CAL checkout regression coverage (#276), the hash-locked CPU retrieval research environment (#277), and PNELLY/Wardrobe Complementer feedback-to-TAL integration (#278).
+Paginated GitHub branch search now returns **268 refs including main** (267 non-main). The prior audit covered 263 refs including main (262 non-main). Four implementation/research refs were created after that audit; this documentation-audit branch is the fifth new ref. Main advanced by six commits from `eca1a7349daef730a9e1ac43c72fec91712cb8b8` to `81df302848468f1e744252e435cbbd75d579b7f3`: appearance-specialist orchestration (#269), audit refresh (#274), private benchmark artifact-write hardening (#275), CAL checkout regression coverage (#276), the hash-locked CPU retrieval research environment (#277), and PNELLY/Wardrobe Complementer feedback-to-TAL integration (#278).
 
-For the 260 original non-main refs compared against `81580b26034e0cf424172d5b96eead4a1c22f840`, ahead counts remain unchanged and behind counts are now eight greater than that original comparison (two intervening audit-only main commits to `eca1...`, plus six subsequent main commits). The two audit branches previously compared directly against `eca1...` have six additional behind commits. Four new refs were compared directly against current main:
+For the 260 original non-main refs compared against `81580b26034e0cf424172d5b96eead4a1c22f840`, ahead counts remain unchanged and behind counts are now eight greater than that original comparison (two intervening audit-only main commits to `eca1...`, plus six subsequent main commits). The two audit branches previously compared directly against `eca1...` have six additional behind commits. Four new implementation/research refs were compared directly against current main:
 - `security/private-benchmark-artifact-writes`: 1 ahead / 4 behind (merged PR #275).
 - `test/cal-display-checkout-regression-matrix-2026-11-22`: 5 ahead / 4 behind (merged PR #276).
 - `research/fashion-retrieval-hashed-lock`: 1 ahead / 3 behind (merged PR #277).
 - `feature/pnelly-wardrobe-complementer-feedback-2026-11-22`: 3 ahead / 3 behind (merged PR #278).
 
-The appearance-specialist branch `integration/appearance-specialist-current-main-v2` is 30 ahead / 8 behind after PR #269 merged. Squash-merged branches can remain graph-diverged because their original commits are not ancestors of the squash commit. No non-main ref is identical to current main, and no current ahead-only ref remains. A diverged branch is not a merge recommendation; graph counts are not quality scores. No mass merge, force-push or branch deletion was performed.
+The appearance-specialist branch `integration/appearance-specialist-current-main-v2` is 30 ahead / 8 behind after PR #269 merged. The new documentation-audit branch `docs/update-267-branch-audit-and-readme-2026-11-22` is the only ahead-only ref because it was created directly from the reviewed main to carry this audit; it is not an implementation branch. Squash-merged branches can remain graph-diverged because their original commits are not ancestors of the squash commit. No non-main ref is identical to the reviewed code main. A diverged branch is not a merge recommendation; graph counts are not quality scores. No mass merge, force-push or branch deletion was performed.
 
 ## Canonical dispositions
 
@@ -42,7 +42,7 @@ These are graph counts, not quality scores or proof that code is absent from mai
 - #269 is merged; its retained branch is 30 ahead / 8 behind after squash merge. Exact-head CI passed 8/8.
 - #267 was closed as a duplicate/superseded base for #269.
 - #206 remains an evidence-led DermalSight research roadmap, not production implementation; its branch is 3 ahead / 63 behind and the PR remains open for selective documentation port or closure.
-- #67 is an older intelligent-marketplace-filter PR; its branch is 11 ahead / 186 behind and the PR is not mergeable. Current main has the authenticated CAL-governed marketplace path but not every legacy filter in #67. Preserve it as a source candidate; port only compatible server-side filters after contract and CAL review.
+- #67 is an older intelligent-marketplace-filter PR; its branch is 11 ahead / 186 behind and the PR is not mergeable. Current main has the authenticated CAL-governed marketplace path but not every legacy filter in #67. Preserve it as a source candidate; port only compatible server-side filters after contract and CAL review.\n- #279 carries this refreshed documentation audit; its head is based directly on the reviewed main and is the only ahead-only documentation ref in this inventory.
 - Keep main, open-PR heads, active dependencies and unique source material. Behind-only branches are archival candidates only after dependency, PR and source-lineage checks.
 - No branch was deleted or rewritten.
 
