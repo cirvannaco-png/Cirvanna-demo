@@ -230,6 +230,11 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     ["material:silk", "Silk"], ["pattern:solid", "Solid"], ["pattern:floral", "Floral"],
     ["pattern:striped", "Striped"], ["pattern:geometric", "Geometric"]
   ];
+  const preferenceRequestId = prefix => {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    return prefix + Array.from(bytes, value => value.toString(16).padStart(2, "0")).join("");
+  };
   const status = (id, message, kind = "") => {
     $(id).textContent = message;
     $(id).className = "status" + (kind ? " " + kind : "");
@@ -435,7 +440,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
             const result = await api("/api/wardrobe/pnelly/preferences/" + encodeURIComponent(preference.preference_id) + "/replace", {
               method: "POST",
               body: JSON.stringify({
-                request_id: "pnelly-edit-" + crypto.randomUUID(),
+                request_id: preferenceRequestId("pnelly-edit-"),
                 consent_receipt_id: profileReceipt,
                 expected_version: pnellyPreferenceVersion,
                 attribute: select.value
@@ -456,7 +461,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
             const result = await api("/api/wardrobe/pnelly/preferences/" + encodeURIComponent(preference.preference_id) + "/deactivate", {
               method: "POST",
               body: JSON.stringify({
-                request_id: "pnelly-deactivate-" + crypto.randomUUID(),
+                request_id: preferenceRequestId("pnelly-deactivate-"),
                 consent_receipt_id: profileReceipt,
                 expected_version: pnellyPreferenceVersion
               })
