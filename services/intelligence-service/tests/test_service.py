@@ -184,6 +184,56 @@ def test_outcome_requires_signed_consent_and_cal_show_receipts(client):
     assert result.json()["stored"] is True
 
 
+def test_outcome_replay_is_idempotent_and_event_id_reuse_is_rejected(client):
+    token = "hmac-sha256:" + "c" * 64
+    common = {
+        "product_id": "product-idempotent",
+        "expires_at": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()),
+    }
+    consent = receipt({
+        **common,
+        "type": "consent",
+        "purpose": "recommendation_outcome_learning",
+        "subject_token": token,
+    })
+    cal = receipt({
+        **common,
+        "type": "cal",
+        "verdict": "SHOW",
+        "candidate_id": "candidate-idempotent",
+        "decision_id": "decision-idempotent",
+    })
+    payload = {
+        "event_id": "event-idempotent-001",
+        "product_id": "product-idempotent",
+        "context_key": "humid-daily",
+        "contributor_token": token,
+        "action": "saved",
+        "suitability": "suitable",
+        "suitability_reported": True,
+        "reason_codes": [],
+        "candidate_id": "candidate-idempotent",
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "consent_receipt": consent,
+        "cal_decision_receipt": cal,
+    }
+
+    first = client.post("/outcomes", json=payload, headers=auth("service-test"))
+    assert first.status_code == 201, first.text
+    assert first.json()["replayed"] is False
+
+    replay = client.post("/outcomes", json=payload, headers=auth("service-test"))
+    assert replay.status_code == 200, replay.text
+    assert replay.json()["stored"] is True
+    assert replay.json()["replayed"] is True
+    assert replay.json()["event_id"] == payload["event_id"]
+
+    conflicting = {**payload, "suitability": "unsuitable", "reason_codes": ["poor_match"]}
+    conflict = client.post("/outcomes", json=conflicting, headers=auth("service-test"))
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"] == "OUTCOME_EVENT_ID_REUSED"
+
+
 def test_outcome_rejects_mismatched_consent_subject(client):
     token = "hmac-sha256:" + "a" * 64
     common = {"product_id": "product-1", "expires_at": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp())}
