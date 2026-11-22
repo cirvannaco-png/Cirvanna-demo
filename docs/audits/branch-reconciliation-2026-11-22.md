@@ -39,10 +39,10 @@ These are graph counts, not quality scores or proof that code is absent from mai
 
 ## Open PRs and branch retention
 
-- #269 is the current-main appearance-specialist/orchestrator candidate; 8/8 exact-head workflows pass, final review still required.
+- #269 is merged; its retained branch is 30 ahead / 8 behind after squash merge. Exact-head CI passed 8/8.
 - #267 was closed as a duplicate/superseded base for #269.
-- #206 remains an evidence-led DermalSight research roadmap, not production implementation.
-- #67 is an older intelligent-marketplace-filter PR and needs explicit compatibility/supersession review.
+- #206 remains an evidence-led DermalSight research roadmap, not production implementation; its branch is 3 ahead / 63 behind and the PR remains open for selective documentation port or closure.
+- #67 is an older intelligent-marketplace-filter PR; its branch is 11 ahead / 186 behind and the PR is not mergeable. Current main has the authenticated CAL-governed marketplace path but not every legacy filter in #67. Preserve it as a source candidate; port only compatible server-side filters after contract and CAL review.
 - Keep main, open-PR heads, active dependencies and unique source material. Behind-only branches are archival candidates only after dependency, PR and source-lineage checks.
 - No branch was deleted or rewritten.
 
