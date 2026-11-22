@@ -2523,20 +2523,25 @@ def test_shopify_checkout_reservation_uses_deterministic_provider_draft(monkeypa
     db.add_all([connection, product, variant_snapshot, order, item])
     db.commit()
     calls = []
+    provider_expiry = []
 
     def fake_graphql(conn, session, query, variables=None):
         calls.append((query, variables or {}))
         if "CirvannaFindInventoryReservation" in query:
             return {"draftOrders": {"nodes": []}}
         if "CirvannaReserveInventory" in query:
+            provider_expiry[:] = [variables["input"]["reserveInventoryUntil"]]
             return {"draftOrderCreate": {
-                "draftOrder": {"id": "gid://shopify/DraftOrder/900", "status": "OPEN", "ready": True},
+                "draftOrder": {
+                    "id": "gid://shopify/DraftOrder/900", "status": "OPEN", "ready": True,
+                    "reserveInventoryUntil": variables["input"]["reserveInventoryUntil"],
+                },
                 "userErrors": [],
             }}
         if "CirvannaReadReservedDraft" in query:
             return {"draftOrder": {
-                "id": "gid://shopify/DraftOrder/900", "status": "OPEN",
-                "order": None,
+                "id": "gid://shopify/DraftOrder/900", "status": "OPEN", "ready": True,
+                "reserveInventoryUntil": provider_expiry[0], "order": None,
             }}
         if "CirvannaCompleteReservedDraft" in query:
             return {"draftOrderComplete": {
@@ -2563,6 +2568,7 @@ def test_shopify_checkout_reservation_uses_deterministic_provider_draft(monkeypa
     }]
     assert draft_input["presentmentCurrencyCode"] == "KES"
     assert draft_input["reserveInventoryUntil"].endswith("Z")
+    assert main._aware_utc(reservation.expires_at).isoformat().replace("+00:00", "Z") == draft_input["reserveInventoryUntil"]
     assert reservation.reservation_key in draft_input["tags"]
 
     # A concurrent retry must not create a second Shopify draft while the lease
@@ -2583,12 +2589,42 @@ def test_shopify_checkout_reservation_uses_deterministic_provider_draft(monkeypa
     assert shopify.prepare_checkout_inventory_reservations(db, order) == 1
     assert len(calls) == before_retry
 
+    # A provider-side hold that has expired or changed since checkout creation
+    # must not be completed after payment. The completion path re-reads and
+    # validates the exact provider deadline before consuming the draft.
+    from fastapi import HTTPException
+    valid_expiry = provider_expiry[0]
+    provider_expiry[0] = (main.now() - timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
+    with pytest.raises(HTTPException) as expired_provider_hold:
+        shopify._complete_shopify_inventory_reservation(connection, db, reservation)
+    assert expired_provider_hold.value.detail["code"] == "SHOPIFY_RESERVED_DRAFT_NOT_COMPLETABLE"
+    provider_expiry[0] = valid_expiry
+
     completed = shopify._complete_shopify_inventory_reservation(connection, db, reservation)
     assert completed["id"] == "gid://shopify/Order/901"
     db.refresh(reservation)
     assert reservation.state == "completed"
     assert not any("orderCreate(" in query for query, _ in calls)
     db.close()
+
+
+def test_shopify_provider_reservation_expiry_readback_is_exact_and_future():
+    from datetime import timedelta
+    from app.shopify import _reservation_expiry_matches
+
+    expected = (main.now() + timedelta(minutes=10)).replace(microsecond=0)
+    exact = expected.isoformat().replace("+00:00", "Z")
+    later = (expected + timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
+    earlier = (expected - timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
+
+    assert _reservation_expiry_matches(exact, expected) is True
+    assert _reservation_expiry_matches(None, expected) is False
+    assert _reservation_expiry_matches("", expected) is False
+    assert _reservation_expiry_matches("not-a-timestamp", expected) is False
+    assert _reservation_expiry_matches(expected.replace(tzinfo=None).isoformat(), expected) is False
+    assert _reservation_expiry_matches(later, expected) is False
+    assert _reservation_expiry_matches(earlier, expected) is False
+    assert _reservation_expiry_matches((main.now() - timedelta(seconds=1)).isoformat(), expected) is False
 
 
 def test_shopify_reservation_key_is_stable_and_merchant_scoped():
