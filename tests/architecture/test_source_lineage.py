@@ -42,11 +42,11 @@ class SourceLineageUtilityTests(unittest.TestCase):
         snapshot = (
             "src/example.py\n\n"
             + tick * 3 + "python\n"
-            "def answer():\n    return 42\n"
+            "def answer():\n    return 42\n\n"
             + tick * 3 + "\n"
         )
         blocks = _named_code_blocks(snapshot)
-        self.assertEqual(blocks["src/example.py"], ["def answer():\n    return 42\n"])
+        self.assertEqual(blocks["src/example.py"], ["def answer():\n    return 42\n\n"])
 
     def test_unclosed_final_fence_is_still_a_source_block(self):
         tick = chr(96)
