@@ -1,6 +1,6 @@
 # PNELLY explicit style-preference learning
 
-**Status:** implementation candidate; requires review and exact-head CI before merge.  
+**Status:** explicit save path merged in PR #283; management and EEPL journey follow-up is under review.
 **Owners:** Marketplace BFF (presentation boundary), Identity Learning Service (USI persistence), Decision Gateway (verified profile hydration), Complementer daily-look composer (ranking).  
 **Scope:** PNELLY + Wardrobe only. This does not change Click It, Look It, Virtual Twin, Try-On, Catalog, NPL, or CAL ownership.
 
@@ -30,6 +30,26 @@ Free-form model output, raw advisory text, and inferred user traits are not acce
 
 The profile API's existing version conflict is returned rather than overwritten. A retry with the same request ID and selected value is idempotent; a conflicting reuse of the derived preference ID is rejected. A duplicate active attribute returns `already_present` without adding a second entry.
 
+## Preference management
+
+The Marketplace BFF exposes a private, same-origin management surface for PNELLY-owned entries only:
+
+- `GET /api/wardrobe/pnelly/preferences?consent_receipt_id=...` verifies the exact active profile-storage receipt and returns the PNELLY-owned subset plus the USI profile version.
+- `POST /api/wardrobe/pnelly/preferences/{preference_id}/replace` requires the current profile version and a newly selected taxonomy value. The prior entry is deactivated and a new provenance-bearing entry is created; deterministic IDs make a committed retry replay-safe.
+- `POST /api/wardrobe/pnelly/preferences/{preference_id}/deactivate` marks the entry inactive. It never creates an NPL exclusion or deletes unrelated user-declared preferences.
+
+Both mutation paths recheck the exact receipt, bind the subject through Commerce `/me`, reject profile-version conflicts, and confirm the persisted result before reporting success. Revoking profile-storage consent hides the manager and blocks further reads and writes. Deactivated preferences remain auditable in USI but are filtered out of later ranking hydration.
+
+## EEPL in the PNELLY daily-look journey
+
+The same-origin BFF accepts a user-declared location, occasion and climate, then stamps a server-side observation time. The Decision Gateway applies the existing strict freshness policy (location 24 hours, occasion 7 days, climate 6 hours) and evaluates EEPL before loading USI profile data, NPL wardrobe exclusions or the look composer.
+
+- `PASS`: look composition may proceed. This is context-policy passage only; it is not product-display authorization and does not bypass CAL.
+- `REVIEW`: missing, invalid, future-dated or stale required context produces no looks and does not update wardrobe rotation.
+- `BLOCK`: an explicit policy violation produces no looks and does not update wardrobe rotation.
+
+The BFF validates the fail-closed response contract. The UI surfaces the reason codes/explanations rather than showing an empty response as a successful recommendation. User-declared values are explicitly identified as user-declared; this path does not infer age, location or climate from appearance or device signals.
+
 ## Consent and learning semantics
 
 - Saving a durable USI preference requires active `profile_storage` consent. The exact receipt is checked twice: at the BFF boundary and in the canonical persistence service.
@@ -52,7 +72,10 @@ The implementation adds coverage for:
 - exact-receipt consent enforcement, including a revoked receipt when another profile receipt exists;
 - verified Commerce subject binding at the BFF and gateway boundaries;
 - idempotent replay and no duplicate profile entries;
-- profile-version conflict handling;
+- profile-version conflict handling and replay-safe preference replacement;
+- inspect/replace/deactivate semantics restricted to PNELLY-owned preference records;
+- EEPL PASS, BLOCK, missing-context REVIEW and stale-context REVIEW through the daily-look gateway;
+- BFF early-return behaviour that does not write rotation state on BLOCK/REVIEW;
 - use of active USI style signals by the daily-look composition path;
 - browser contract and inline JavaScript syntax.
 

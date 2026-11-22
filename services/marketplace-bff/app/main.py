@@ -24,7 +24,14 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.observability import install_observability
-from app.pnelly_preferences import PnellyStylePreferenceIn, save_pnelly_style_preference
+from app.pnelly_preferences import (
+    PnellyPreferenceMutationIn,
+    PnellyStylePreferenceIn,
+    deactivate_pnelly_style_preference,
+    list_pnelly_style_preferences,
+    replace_pnelly_style_preference,
+    save_pnelly_style_preference,
+)
 
 SERVICE = "cirvanna-marketplace-bff"
 ROOT = Path(__file__).resolve().parents[3]
@@ -630,6 +637,7 @@ class WardrobeConsentIn(BaseModel):
 
 class DailyLooksIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
+    location: str | None = Field(default=None, max_length=120)
     occasion: str | None = Field(default=None, max_length=120)
     climate: str | None = Field(default=None, max_length=80)
     timezone: str = Field(default="UTC", min_length=1, max_length=80)
@@ -926,6 +934,55 @@ async def save_pnelly_style_preference_route(request: Request, payload: PnellySt
         base, token = _identity_learning_service()
         result = await save_pnelly_style_preference(
             client, base=base, token=token, subject=subject, payload=payload,
+        )
+    return _private_json_response(result)
+
+
+@app.get("/api/wardrobe/pnelly/preferences")
+async def list_pnelly_style_preference_route(
+    request: Request,
+    consent_receipt_id: str = Query(min_length=8, max_length=128),
+) -> Response:
+    """List PNELLY-owned profile preferences without exposing unrelated USI entries."""
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(10.0, connect=2.0), trust_env=False, follow_redirects=False
+    ) as client:
+        subject, _user_token = await _verified_commerce_subject(client, request)
+        base, token = _identity_learning_service()
+        result = await list_pnelly_style_preferences(
+            client, base=base, token=token, subject=subject, receipt_id=consent_receipt_id,
+        )
+    return _private_json_response(result)
+
+
+@app.post("/api/wardrobe/pnelly/preferences/{preference_id}/deactivate")
+async def deactivate_pnelly_style_preference_route(
+    request: Request, preference_id: str, payload: PnellyPreferenceMutationIn,
+) -> Response:
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(10.0, connect=2.0), trust_env=False, follow_redirects=False
+    ) as client:
+        subject, _user_token = await _verified_commerce_subject(client, request)
+        base, token = _identity_learning_service()
+        result = await deactivate_pnelly_style_preference(
+            client, base=base, token=token, subject=subject,
+            preference_id=preference_id, payload=payload,
+        )
+    return _private_json_response(result)
+
+
+@app.post("/api/wardrobe/pnelly/preferences/{preference_id}/replace")
+async def replace_pnelly_style_preference_route(
+    request: Request, preference_id: str, payload: PnellyPreferenceMutationIn,
+) -> Response:
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(10.0, connect=2.0), trust_env=False, follow_redirects=False
+    ) as client:
+        subject, _user_token = await _verified_commerce_subject(client, request)
+        base, token = _identity_learning_service()
+        result = await replace_pnelly_style_preference(
+            client, base=base, token=token, subject=subject,
+            preference_id=preference_id, payload=payload,
         )
     return _private_json_response(result)
 
@@ -2936,12 +2993,28 @@ async def wardrobe_daily_looks(request: Request, payload: DailyLooksIn = Body(de
             "X-End-User-Authorization": "Bearer " + user_token,
             "Accept": "application/json",
         }
+        observed_at = datetime.now(timezone.utc).isoformat()
+        location = payload.location.strip() if payload.location and payload.location.strip() else None
+        occasion = payload.occasion.strip() if payload.occasion and payload.occasion.strip() else None
+        climate = payload.climate.strip() if payload.climate and payload.climate.strip() else None
         body = {
             "request_id": request_id,
             "user_id": subject,
             "local_date": local_date,
-            "occasion": payload.occasion.strip() if payload.occasion and payload.occasion.strip() else None,
-            "climate": payload.climate.strip() if payload.climate and payload.climate.strip() else None,
+            "occasion": occasion,
+            "climate": climate,
+            "context": {
+                "age_years": None,
+                "location": location,
+                "occasion": occasion,
+                "climate": climate,
+                "location_source": "user_declared" if location else None,
+                "location_observed_at": observed_at if location else None,
+                "occasion_source": "user_declared" if occasion else None,
+                "occasion_observed_at": observed_at if occasion else None,
+                "climate_source": "user_declared" if climate else None,
+                "climate_observed_at": observed_at if climate else None,
+            },
             "evaluation_consent_receipt_id": payload.evaluation_consent_receipt_id,
             "wardrobe_items": active_items,
         }
@@ -2977,6 +3050,41 @@ async def wardrobe_daily_looks(request: Request, payload: DailyLooksIn = Body(de
             except ValueError as exc:
                 raise HTTPException(502, detail={"code": "PNELLY_RECOMMENDATION_RESPONSE_INVALID"}) from exc
 
+            if (
+                not isinstance(result, dict)
+                or result.get("mode") != "pnelly_wardrobe_daily_looks"
+                or result.get("request_id") != request_id
+                or result.get("schema_version") != "1.0"
+            ):
+                raise HTTPException(502, detail={"code": "PNELLY_RECOMMENDATION_RESPONSE_INVALID"})
+            eligibility = result.get("eligibility")
+            if isinstance(eligibility, dict) and eligibility.get("verdict") in {"BLOCK", "REVIEW"}:
+                recommendation = result.get("recommendation")
+                if (
+                    result.get("mode") != "pnelly_wardrobe_daily_looks"
+                    or not isinstance(recommendation, dict)
+                    or recommendation.get("look_count") != 0
+                    or recommendation.get("looks") != []
+                    or eligibility.get("candidate_id") != request_id
+                    or eligibility.get("cal_authorized") is not False
+                    or not isinstance(eligibility.get("reason_codes"), list)
+                    or not isinstance(eligibility.get("explanations"), list)
+                    or not eligibility["reason_codes"]
+                    or len(eligibility["reason_codes"]) != len(eligibility["explanations"])
+                ):
+                    raise HTTPException(502, detail={"code": "PNELLY_EEPL_RESPONSE_INVALID"})
+                return _private_json_response(result)
+            if (
+                not isinstance(eligibility, dict)
+                or eligibility.get("verdict") != "PASS"
+                or eligibility.get("candidate_id") != request_id
+                or eligibility.get("cal_authorized") is not False
+                or not isinstance(eligibility.get("reason_codes"), list)
+                or not isinstance(eligibility.get("explanations"), list)
+                or len(eligibility["reason_codes"]) != len(eligibility["explanations"])
+                or not eligibility["reason_codes"]
+            ):
+                raise HTTPException(502, detail={"code": "PNELLY_EEPL_RESPONSE_INVALID"})
             recommendation = result.get("recommendation") if isinstance(result, dict) else None
             roles = ["everyday", "elevated", "explore"]
             looks = recommendation.get("looks") if isinstance(recommendation, dict) else None

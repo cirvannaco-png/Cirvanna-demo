@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -20,6 +21,17 @@ def request_body():
         "local_date": "2026-11-05",
         "occasion": "work",
         "climate": "hot_dry",
+        "context": {
+            "location": "Nairobi, Kenya",
+            "occasion": "work",
+            "climate": "hot_dry",
+            "location_source": "user_declared",
+            "location_observed_at": datetime.now(timezone.utc).isoformat(),
+            "occasion_source": "user_declared",
+            "occasion_observed_at": datetime.now(timezone.utc).isoformat(),
+            "climate_source": "user_declared",
+            "climate_observed_at": datetime.now(timezone.utc).isoformat(),
+        },
         "rotation_seen_item_ids": ["shirt-001"],
         "rotation_cycle_started_at": "2026-11-01",
         "rotation_cycle_number": 2,
@@ -190,6 +202,65 @@ def test_pnelly_fails_closed_when_persistent_npl_is_not_configured(monkeypatch):
     )
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "PNELLY_NPL_PROVIDER_NOT_CONFIGURED"
+
+
+def test_pnelly_eepl_review_fails_closed_before_profile_or_look_composition(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_API_TOKEN", GATEWAY_TOKEN)
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda _header: "signed-user-42")
+    observed = {"profile": False, "compose": False}
+    monkeypatch.setattr(main, "_load_verified_usi_profile", lambda *_args, **_kwargs: observed.__setitem__("profile", True))
+    monkeypatch.setattr(main, "_pnelly_daily_looks", lambda *_args, **_kwargs: observed.__setitem__("compose", True))
+    body = request_body()
+    body["context"] = {}
+    response = TestClient(main.app).post(
+        "/v1/pnelly/daily-looks",
+        headers={"Authorization": f"Bearer {GATEWAY_TOKEN}", "X-End-User-Authorization": END_USER},
+        json=body,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["eligibility"]["verdict"] == "REVIEW"
+    assert "EEPL_REQUIRED_CONTEXT_MISSING_LOCATION" in response.json()["eligibility"]["reason_codes"]
+    assert response.json()["recommendation"] == {"look_count": 0, "ready_count": 0, "looks": []}
+    assert response.json()["eligibility"]["cal_authorized"] is False
+    assert observed == {"profile": False, "compose": False}
+
+
+def test_pnelly_eepl_block_suppresses_daily_looks_for_disallowed_climate(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_API_TOKEN", GATEWAY_TOKEN)
+    monkeypatch.setenv("CIRVANNA_ALLOWED_CLIMATES", "hot_humid")
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda _header: "signed-user-42")
+    monkeypatch.setattr(main, "_load_verified_usi_profile", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("profile must not load")))
+    body = request_body()
+    response = TestClient(main.app).post(
+        "/v1/pnelly/daily-looks",
+        headers={"Authorization": f"Bearer {GATEWAY_TOKEN}", "X-End-User-Authorization": END_USER},
+        json=body,
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["eligibility"]["verdict"] == "BLOCK"
+    assert "EEPL_CLIMATE_NOT_ALLOWED" in response.json()["eligibility"]["reason_codes"]
+    assert response.json()["recommendation"]["looks"] == []
+
+
+def test_pnelly_eepl_drops_stale_context_and_routes_to_review(monkeypatch):
+    monkeypatch.setenv("CIRVANNA_API_TOKEN", GATEWAY_TOKEN)
+    monkeypatch.setattr(main, "_resolve_verified_subject", lambda _header: "signed-user-42")
+    body = request_body()
+    old = datetime.now(timezone.utc) - timedelta(days=8)
+    body["context"]["location_observed_at"] = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+    body["context"]["occasion_observed_at"] = old.isoformat()
+    body["context"]["climate_observed_at"] = (datetime.now(timezone.utc) - timedelta(hours=8)).isoformat()
+    response = TestClient(main.app).post(
+        "/v1/pnelly/daily-looks",
+        headers={"Authorization": f"Bearer {GATEWAY_TOKEN}", "X-End-User-Authorization": END_USER},
+        json=body,
+    )
+    assert response.status_code == 200, response.text
+    evidence = response.json()["eligibility"]["context_evidence"]
+    assert evidence["location"]["status"] == "stale_or_future"
+    assert evidence["occasion"]["status"] == "stale_or_future"
+    assert evidence["climate"]["status"] == "stale_or_future"
+    assert response.json()["eligibility"]["verdict"] == "REVIEW"
 
 
 def test_legacy_tari_gateway_route_is_hidden_compatibility_alias(monkeypatch):

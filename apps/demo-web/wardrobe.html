@@ -134,14 +134,23 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
 <p class="small">Try-On stays unavailable until persistent full-body mesh generation, private asset authorization, current consent verification, a validated renderer and output controls all pass their release gates. No preview is fabricated.</p>
 </section>
 
+<section class="panel hidden" id="pnellyPreferencesPanel">
+  <div class="eyebrow">USI · your saved choices</div>
+  <h2>Manage PNELLY preferences</h2>
+  <p class="small">These are the style preferences you explicitly saved. Replace a preference or deactivate it; deactivated preferences stop guiding later daily looks. This does not change your wardrobe, TAL feedback history or NPL exclusions.</p>
+  <div class="status" id="pnellyPreferencesStatus" role="status">Enable profile storage to review saved preferences.</div>
+  <div id="pnellyPreferencesList"></div>
+</section>
+
 <section class="panel hidden" id="pnellyPanel">
 <div class="eyebrow">PNELLY · daily look intelligence</div>
 <h2>Three ways to wear what you own</h2>
-<p class="small">PNELLY creates an Everyday, Elevated and Explore look from your active wardrobe. Occasion and climate are optional context you choose to provide. It will flag missing wardrobe coverage instead of inventing pieces or pushing unnecessary purchases.</p>
+<p class="small">PNELLY creates an Everyday, Elevated and Explore look from your active wardrobe. EEPL checks current, explicitly declared location, occasion and climate before composing looks. Missing, stale or policy-blocked context is routed to REVIEW or BLOCK; it is never silently treated as a pass.</p>
 <form id="pnellyForm">
 <div class="grid">
-<div class="field"><label for="pnellyOccasion">Today's occasion (optional)</label><select id="pnellyOccasion"><option value="">Not specified</option><option value="everyday">Everyday</option><option value="work">Work</option><option value="meeting">Meeting</option><option value="evening">Evening</option><option value="formal">Formal</option><option value="travel">Travel</option><option value="special occasion">Special occasion</option></select></div>
-<div class="field"><label for="pnellyClimate">Climate (optional)</label><select id="pnellyClimate"><option value="">Not specified</option><option value="hot_humid">Hot and humid</option><option value="hot_dry">Hot and dry</option><option value="temperate">Temperate</option><option value="cool">Cool</option></select></div>
+<div class="field"><label for="pnellyLocation">Today's location (required by current context policy)</label><input id="pnellyLocation" maxlength="120" placeholder="e.g. Nairobi, Kenya"></div>
+<div class="field"><label for="pnellyOccasion">Today's occasion</label><select id="pnellyOccasion"><option value="">Not specified</option><option value="everyday">Everyday</option><option value="work">Work</option><option value="meeting">Meeting</option><option value="evening">Evening</option><option value="formal">Formal</option><option value="travel">Travel</option><option value="special occasion">Special occasion</option></select></div>
+<div class="field"><label for="pnellyClimate">Climate</label><select id="pnellyClimate"><option value="">Not specified</option><option value="hot_humid">Hot and humid</option><option value="hot_dry">Hot and dry</option><option value="temperate">Temperate</option><option value="cool">Cool</option></select></div>
 <div class="field"><label>&nbsp;</label><button class="btn primary" type="submit" id="generatePNELLY">Generate today's three looks</button></div>
 </div>
 </form>
@@ -188,6 +197,8 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
   let styleReceipt = null;
   let profileReceipt = null;
   let colorProfileVersion = 0;
+  let pnellyPreferenceVersion = 0;
+  let pnellyPreferences = [];
   let pnellyData = null;
   let items = [];
   const api = async (path, options = {}) => {
@@ -207,6 +218,22 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
       throw new Error(typeof code === "string" ? code : JSON.stringify(code));
     }
     return data;
+  };
+  const PNELLY_PREFERENCE_OPTIONS = [
+    ["style:minimalist", "Minimalist"], ["style:elegant", "Elegant"], ["style:romantic", "Romantic"],
+    ["style:bold", "Bold"], ["style:streetwear", "Streetwear"], ["style:classic", "Classic"],
+    ["style:editorial", "Editorial"], ["color:teal", "Teal"], ["color:navy", "Navy"],
+    ["color:earthy", "Earth tones"], ["color:monochrome", "Monochrome"], ["color:pastel", "Pastels"],
+    ["silhouette:relaxed", "Relaxed silhouette"], ["silhouette:tailored", "Tailored silhouette"],
+    ["silhouette:oversized", "Oversized silhouette"], ["silhouette:structured", "Structured silhouette"],
+    ["material:linen", "Linen"], ["material:cotton", "Cotton"], ["material:denim", "Denim"],
+    ["material:silk", "Silk"], ["pattern:solid", "Solid"], ["pattern:floral", "Floral"],
+    ["pattern:striped", "Striped"], ["pattern:geometric", "Geometric"]
+  ];
+  const preferenceRequestId = prefix => {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    return prefix + Array.from(bytes, value => value.toString(16).padStart(2, "0")).join("");
   };
   const status = (id, message, kind = "") => {
     $(id).textContent = message;
@@ -372,6 +399,98 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     const analysis = data.analysis || {};
     $("colorAnalysisStatus").textContent = analysis.message || "Objective colour analysis is unavailable.";
     status("colorProfileStatus", "Loaded your declared colour preferences · profile v" + colorProfileVersion + ".", "good");
+  };
+  const renderPnellyPreferences = () => {
+    const root = $("pnellyPreferencesList");
+    root.replaceChildren();
+    if (!profileReceipt) {
+      $("pnellyPreferencesPanel").classList.add("hidden");
+      status("pnellyPreferencesStatus", "Enable profile storage to review saved preferences.");
+      return;
+    }
+    $("pnellyPreferencesPanel").classList.remove("hidden");
+    if (!pnellyPreferences.length) {
+      status("pnellyPreferencesStatus", "No PNELLY-saved preferences yet. Save one from a Complementer advisory.");
+      return;
+    }
+    status("pnellyPreferencesStatus", "Loaded " + pnellyPreferences.length + " saved preference record(s) · USI profile v" + pnellyPreferenceVersion + ".", "good");
+    for (const preference of pnellyPreferences) {
+      const card = document.createElement("div");
+      card.className = "consent";
+      const info = document.createElement("div");
+      const label = PNELLY_PREFERENCE_OPTIONS.find(([value]) => value === preference.attribute)?.[1] || preference.attribute;
+      info.append(text("strong", label));
+      info.append(text("div", preference.active ? "Active · guides future daily looks" : "Inactive · no longer used for ranking", "small"));
+      card.append(info);
+      if (preference.active) {
+        const controls = document.createElement("div");
+        controls.className = "row";
+        const select = document.createElement("select");
+        select.setAttribute("aria-label", "Replace " + label + " preference");
+        for (const [value, optionLabel] of PNELLY_PREFERENCE_OPTIONS) {
+          const option = new Option(optionLabel, value);
+          option.selected = value === preference.attribute;
+          select.append(option);
+        }
+        const replace = text("button", "Replace", "btn");
+        replace.type = "button";
+        replace.addEventListener("click", async () => {
+          replace.disabled = true;
+          try {
+            const result = await api("/api/wardrobe/pnelly/preferences/" + encodeURIComponent(preference.preference_id) + "/replace", {
+              method: "POST",
+              body: JSON.stringify({
+                request_id: preferenceRequestId("pnelly-edit-"),
+                consent_receipt_id: profileReceipt,
+                expected_version: pnellyPreferenceVersion,
+                attribute: select.value
+              })
+            });
+            await loadPnellyPreferences();
+            status("pnellyPreferencesStatus", "Preference updated (" + result.status + ").", "good");
+          } catch (error) {
+            status("pnellyPreferencesStatus", error.message, "error");
+            if (error.message.includes("USI_PROFILE_VERSION_CONFLICT")) await loadPnellyPreferences();
+          } finally { replace.disabled = false; }
+        });
+        const deactivate = text("button", "Deactivate", "btn danger");
+        deactivate.type = "button";
+        deactivate.addEventListener("click", async () => {
+          deactivate.disabled = true;
+          try {
+            const result = await api("/api/wardrobe/pnelly/preferences/" + encodeURIComponent(preference.preference_id) + "/deactivate", {
+              method: "POST",
+              body: JSON.stringify({
+                request_id: preferenceRequestId("pnelly-deactivate-"),
+                consent_receipt_id: profileReceipt,
+                expected_version: pnellyPreferenceVersion
+              })
+            });
+            await loadPnellyPreferences();
+            status("pnellyPreferencesStatus", "Preference deactivated (" + result.status + "). It will no longer guide later looks.", "good");
+          } catch (error) {
+            status("pnellyPreferencesStatus", error.message, "error");
+            if (error.message.includes("USI_PROFILE_VERSION_CONFLICT")) await loadPnellyPreferences();
+          } finally { deactivate.disabled = false; }
+        });
+        controls.append(select, replace, deactivate);
+        card.append(controls);
+      }
+      root.append(card);
+    }
+  };
+  const loadPnellyPreferences = async () => {
+    if (!profileReceipt) {
+      pnellyPreferences = [];
+      pnellyPreferenceVersion = 0;
+      renderPnellyPreferences();
+      return;
+    }
+    const data = await api("/api/wardrobe/pnelly/preferences?consent_receipt_id=" + encodeURIComponent(profileReceipt));
+    if (!Array.isArray(data.preferences) || !Number.isInteger(data.profile_version)) throw new Error("PNELLY_PROFILE_RESPONSE_INVALID");
+    pnellyPreferences = data.preferences;
+    pnellyPreferenceVersion = data.profile_version;
+    renderPnellyPreferences();
   };
   const saveColorProfile = async event => {
     event.preventDefault();
@@ -585,7 +704,10 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     styleReceipt = activeReceipts.find(x => x.scope === "style_learning" || x.scope === "personalization")?.receipt_id || null;
     profileReceipt = activeReceipts.find(x => x.scope === "profile_storage")?.receipt_id || null;
     updateConsentState();
-    if (profileReceipt) await loadColorProfile();
+    if (profileReceipt) {
+      await loadColorProfile();
+      await loadPnellyPreferences();
+    }
     $("twinPanel").classList.remove("hidden");
     await loadTwinCapabilities();
     $("learningPanel").classList.remove("hidden");
@@ -598,7 +720,11 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
   const createConsent = async scope => {
     const data = await api("/api/wardrobe/consents", {method:"POST", body:JSON.stringify({scope,granted:true})});
     if (scope === "style_learning") styleReceipt = data.receipt_id;
-    if (scope === "profile_storage") { profileReceipt = data.receipt_id; await loadColorProfile(); }
+    if (scope === "profile_storage") {
+      profileReceipt = data.receipt_id;
+      await loadColorProfile();
+      await loadPnellyPreferences();
+    }
     renderItems();
     updateConsentState();
     status("learningStatus", scope + " consent recorded.", "good");
@@ -608,7 +734,14 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     if (!receipt) return;
     await api("/api/wardrobe/consents/" + encodeURIComponent(receipt) + "/revoke", {method:"POST"});
     if (scope === "style_learning") styleReceipt = null;
-    if (scope === "profile_storage") { profileReceipt = null; $("saveColorProfile").disabled = true; status("colorProfileStatus", "Profile storage consent revoked. Further profile reads and writes are blocked."); }
+    if (scope === "profile_storage") {
+      profileReceipt = null;
+      $("saveColorProfile").disabled = true;
+      pnellyPreferences = [];
+      pnellyPreferenceVersion = 0;
+      renderPnellyPreferences();
+      status("colorProfileStatus", "Profile storage consent revoked. Further profile reads and writes are blocked.");
+    }
     renderItems();
     updateConsentState();
     status("learningStatus", scope + " consent revoked. New learning writes are blocked.", "good");
@@ -1029,17 +1162,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
       statusNode.append(feedbackControls, feedbackStatus);
       statusNode.append(text("p", "A reaction is a user-confirmed TAL observation. It is not yet used as an independent ranking signal.", "small"));
 
-      const preferenceOptions = [
-        ["style:minimalist", "Minimalist"], ["style:elegant", "Elegant"], ["style:romantic", "Romantic"],
-        ["style:bold", "Bold"], ["style:streetwear", "Streetwear"], ["style:classic", "Classic"],
-        ["style:editorial", "Editorial"], ["color:teal", "Teal"], ["color:navy", "Navy"],
-        ["color:earthy", "Earth tones"], ["color:monochrome", "Monochrome"], ["color:pastel", "Pastels"],
-        ["silhouette:relaxed", "Relaxed silhouette"], ["silhouette:tailored", "Tailored silhouette"],
-        ["silhouette:oversized", "Oversized silhouette"], ["silhouette:structured", "Structured silhouette"],
-        ["material:linen", "Linen"], ["material:cotton", "Cotton"], ["material:denim", "Denim"],
-        ["material:silk", "Silk"], ["pattern:solid", "Solid"], ["pattern:floral", "Floral"],
-        ["pattern:striped", "Striped"], ["pattern:geometric", "Geometric"]
-      ];
+      const preferenceOptions = PNELLY_PREFERENCE_OPTIONS;
       const preferenceControls = document.createElement("div");
       preferenceControls.className = "row";
       const preferenceSelect = document.createElement("select");
@@ -1069,6 +1192,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
           preferenceStatus.textContent = saved.status === "already_present"
             ? "That preference is already active in your USI profile."
             : "Preference saved to USI profile v" + saved.profile_version + ". Generate your next set of looks to apply it.";
+          await loadPnellyPreferences();
         } catch (error) {
           preferenceStatus.textContent = "Could not confirm the preference was saved: " + (error.message || "Please retry.");
         } finally {
@@ -1089,6 +1213,13 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
     const root = $("pnellyLooks");
     root.replaceChildren();
     const recommendation = data.recommendation || {};
+    const eligibility = data.eligibility || {};
+    if (eligibility.verdict !== "PASS") {
+      const heading = eligibility.verdict === "BLOCK" ? "EEPL blocked this context." : "EEPL review required before looks can be generated.";
+      root.append(text("p", heading, "pnelly-note"));
+      for (const explanation of (eligibility.explanations || [])) root.append(text("p", explanation, "pnelly-note"));
+      return;
+    }
     for (const look of recommendation.looks || []) {
       const card = document.createElement("article");
       card.className = "pnelly-card";
@@ -1195,6 +1326,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
       const data = await api("/api/wardrobe/pnelly/daily-looks", {
         method: "POST",
         body: JSON.stringify({
+          location: $("pnellyLocation").value.trim() || null,
           occasion: $("pnellyOccasion").value || null,
           climate: $("pnellyClimate").value || null,
           timezone,
@@ -1202,8 +1334,13 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
         })
       });
       renderPNELLYLooks(data);
+      if (data.eligibility?.verdict !== "PASS") {
+        const verdict = data.eligibility?.verdict || "REVIEW";
+        status("pnellyStatus", "EEPL " + verdict + ": " + (data.eligibility?.reason_codes || []).join(", ") + ". No looks were composed and wardrobe rotation was not changed.", verdict === "BLOCK" ? "error" : "");
+        return;
+      }
       const ready = data.recommendation?.ready_count || 0;
-      status("pnellyStatus", ready + " of 3 looks can be assembled from your current active wardrobe. No virtual try-on image was generated.", ready === 3 ? "good" : "");
+      status("pnellyStatus", ready + " of 3 looks can be assembled from your current active wardrobe. EEPL passed context policy; this is not a CAL product-display authorization. No virtual try-on image was generated.", ready === 3 ? "good" : "");
     } catch (error) {
       status("pnellyStatus", error.message, "error");
     } finally {

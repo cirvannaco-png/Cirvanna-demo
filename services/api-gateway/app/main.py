@@ -42,7 +42,7 @@ from cultural_identity import (  # noqa: E402
     RequirementKind,
     canonical_cultural_evidence_payload,
 )
-from eepl import ContextField, EEPLContext, EEPLPolicy  # noqa: E402
+from eepl import ContextField, EEPLContext, EEPLPolicy, evaluate as evaluate_eepl  # noqa: E402
 from fci import FitConfidenceEstimate  # noqa: E402
 from npl import NegativePreference, PreferenceSource, TargetType, canonical_npl_evidence_payload, evaluate as evaluate_npl  # noqa: E402
 from usi import StylePreference, USIProfile  # noqa: E402
@@ -329,6 +329,7 @@ class PNELLYDailyLooksRequest(BaseModel):
     local_date: str = Field(min_length=10, max_length=10)
     occasion: str | None = Field(default=None, max_length=120)
     climate: str | None = Field(default=None, max_length=80)
+    context: ContextInput = Field(default_factory=ContextInput)
     wardrobe_items: list[dict[str, Any]] = Field(max_length=150)
     # Rotation state is supplied only by the trusted same-origin BFF after reading
     # the owner-scoped Wardrobe record. Browser input is never forwarded directly.
@@ -2171,6 +2172,43 @@ def compose_pnelly_daily_looks(
     subject = _resolve_verified_subject(end_user_authorization)
     if not hmac.compare_digest(subject, payload.user_id):
         raise HTTPException(403, detail={"code": "REQUEST_SUBJECT_MISMATCH"})
+    # EEPL is evaluated before profile hydration or recommendation composition.
+    # Missing, stale, future-dated or policy-blocked context cannot produce looks.
+    fresh_context, context_evidence = _fresh_context_for_eepl(payload.context, strict=True)
+    try:
+        policy = _policy()
+        eepl_result = evaluate_eepl(
+            policy,
+            EEPLContext(
+                user_id=subject,
+                age_years=fresh_context.age_years,
+                location=fresh_context.location,
+                occasion=fresh_context.occasion,
+                climate=fresh_context.climate,
+            ),
+            candidate_id=payload.request_id,
+        )
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(503, detail={"code": "PNELLY_EEPL_POLICY_CONFIGURATION_INVALID"}) from exc
+    eligibility = {
+        "verdict": eepl_result.verdict.value.upper(),
+        "policy_id": eepl_result.policy_id,
+        "policy_version": eepl_result.policy_version,
+        "candidate_id": eepl_result.candidate_id,
+        "reason_codes": list(eepl_result.reason_codes),
+        "explanations": list(eepl_result.explanations),
+        "context_evidence": context_evidence,
+        "cal_authorized": False,
+        "meaning": "EEPL context pass is not a product-display or CAL authorization.",
+    }
+    if eepl_result.verdict.value != "pass":
+        return {
+            "schema_version": "1.0",
+            "request_id": payload.request_id,
+            "mode": "pnelly_wardrobe_daily_looks",
+            "eligibility": eligibility,
+            "recommendation": {"look_count": 0, "ready_count": 0, "looks": []},
+        }
     active_item_ids = {
         item.get("item_id") for item in payload.wardrobe_items
         if isinstance(item, dict) and isinstance(item.get("item_id"), str)
@@ -2200,10 +2238,6 @@ def compose_pnelly_daily_looks(
         user_id=subject, receipt_id=payload.evaluation_consent_receipt_id
     ):
         raise HTTPException(403, detail={"code": "PNELLY_EVALUATION_CONSENT_REQUIRED"})
-    if trace_enabled and not _has_active_pnelly_evaluation_consent(
-        user_id=subject, receipt_id=payload.evaluation_consent_receipt_id
-    ):
-        raise HTTPException(403, detail={"code": "PNELLY_EVALUATION_CONSENT_REQUIRED"})
     eligible_items, npl_excluded_count, blocked_item_ids = _filter_npl_blocked_wardrobe_items(
         request_id=payload.request_id,
         user_id=subject,
@@ -2222,6 +2256,9 @@ def compose_pnelly_daily_looks(
         if isinstance(attribute, str) and attribute.strip() and isinstance(weight, (int, float)) and weight > 0
     ][:40]
     result = _pnelly_daily_looks(safe_payload, style_signals, feedback_signals)
+    if not isinstance(result, dict):
+        raise HTTPException(502, detail={"code": "PNELLY_RECOMMENDATION_RESPONSE_INVALID"})
+    result["eligibility"] = eligibility
     result["npl_excluded_wardrobe_item_count"] = npl_excluded_count
     return result
 
