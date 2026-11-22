@@ -90,18 +90,87 @@ def _normalise_path(value: str) -> str:
     return re.sub(r"/+", "/", value.strip().lstrip("./"))
 
 
+def _iter_fenced_blocks(snapshot_text: str):
+    """Yield fenced bodies, including a final fence that is truncated at EOF."""
+    opening = re.compile(r"^" + TICK * 3 + r"[^\r\n]*\r?\n$")
+    closing = re.compile(r"^" + TICK * 3 + r"[ \t]*(?:\r?\n|$)")
+    offset = 0
+    block_start: int | None = None
+    body: list[str] = []
+
+    for line in snapshot_text.splitlines(keepends=True):
+        if block_start is None:
+            if opening.fullmatch(line):
+                block_start = offset
+                body = []
+        elif closing.fullmatch(line):
+            yield block_start, "".join(body)
+            block_start = None
+            body = []
+        else:
+            body.append(line)
+        offset += len(line)
+
+    if block_start is not None:
+        # Some preserved intake snapshots end during the final code fence.
+        yield block_start, "".join(body)
+
+
 def _named_code_blocks(snapshot_text: str) -> dict[str, list[str]]:
-    """Map declared filenames to the code following each fenced filename line."""
+    """Extract files from one-file, external-header, and multi-file fences.
+
+    Historical snapshots use three layouts: a filename as the first line in a
+    fence, a plain filename immediately before a fence, or multiple '# File:'
+    markers inside one language fence.
+    """
     found: dict[str, list[str]] = {}
-    for match in FENCED_BLOCK.finditer(snapshot_text):
-        lines = match.group(1).splitlines(keepends=True)
-        if not lines:
-            continue
-        declared = _normalise_path(lines[0].strip())
-        if not declared or "." not in Path(declared).name:
-            continue
-        body = "".join(lines[1:])
-        found.setdefault(declared, []).append(body.replace("\r\n", "\n"))
+    file_header = re.compile(r"^\s*(?:#\s*File:|//\s*File:|--\s*File:|FILE:)\s*(.+?)\s*$", re.IGNORECASE)
+    separator = re.compile(r"^\s*#\s*[=\-]{5,}\s*$")
+    plain_path = re.compile(r"^[A-Za-z0-9_./-]+\.[A-Za-z0-9_-]+$")
+
+    for block_start, block_content in _iter_fenced_blocks(snapshot_text):
+        lines = block_content.splitlines(keepends=True)
+        prefix_lines = snapshot_text[:block_start].splitlines()
+        previous = next((line.strip() for line in reversed(prefix_lines) if line.strip()), "")
+        embedded_headers = any(file_header.match(line.rstrip("\r\n")) for line in lines)
+        external_path = None
+        if not embedded_headers and plain_path.fullmatch(previous):
+            candidate = _normalise_path(previous)
+            if candidate and "." in Path(candidate).name:
+                external_path = candidate
+
+        current_path: str | None = external_path
+        body: list[str] = []
+
+        def flush() -> None:
+            if current_path is None:
+                return
+            while body and (not body[-1].strip() or separator.fullmatch(body[-1].rstrip("\r\n"))):
+                body.pop()
+            content = "".join(body).replace("\r\n", "\n")
+            if content and not content.endswith("\n"):
+                content += "\n"
+            found.setdefault(current_path, []).append(content)
+
+        for index, line in enumerate(lines):
+            header = file_header.match(line.rstrip("\r\n"))
+            if header:
+                flush()
+                current_path = _normalise_path(header.group(1))
+                body = []
+                if not current_path or "." not in Path(current_path).name:
+                    current_path = None
+                continue
+
+            if current_path is None:
+                declared = _normalise_path(line.strip())
+                if index == 0 and declared and "." in Path(declared).name:
+                    current_path = declared
+                continue
+
+            body.append(line)
+
+        flush()
     return found
 
 
