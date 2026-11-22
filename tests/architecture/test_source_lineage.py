@@ -93,10 +93,10 @@ class SourceLineageUtilityTests(unittest.TestCase):
         )
 
     def test_only_optional_final_newline_is_noncontent_difference(self):
-        self.assertTrue(_only_final_newline_diff("same content", "same content\\n"))
-        self.assertTrue(_only_final_newline_diff("same content\\n", "same content"))
-        self.assertFalse(_only_final_newline_diff("same content", "same content changed\\n"))
-        self.assertFalse(_only_final_newline_diff("same content\\n", "same content\\n\\n"))
+        self.assertTrue(_only_final_newline_diff("same content", "same content\n"))
+        self.assertTrue(_only_final_newline_diff("same content\n", "same content"))
+        self.assertFalse(_only_final_newline_diff("same content", "same content changed\n"))
+        self.assertFalse(_only_final_newline_diff("same content\n", "same content\n\n"))
 
     def test_path_normalisation_supports_headers(self):
         self.assertEqual(_normalise_path("# File: src/example.py"), "src/example.py")
