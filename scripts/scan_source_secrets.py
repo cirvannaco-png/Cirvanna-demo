@@ -25,7 +25,7 @@ PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("slack-token", re.compile(r"\bxox[baprs]-[0-9A-Za-z-]{20,}\b")),
     ("stripe-live-secret", re.compile(r"\b(?:sk|rk)_live_[0-9A-Za-z]{20,}\b")),
     ("embedded-url-credentials", re.compile(r"\bhttps?://[^\s/:@]+:[^\s/@]+@[^\s]+")),
-    ("database-uri-credentials", re.compile(r"\b(?P<scheme>postgres(?:ql)?|mysql|mongodb(?:\+srv)?|rediss?|amqps?|nats(?:\+tls)?|mqtts?|kafka)://(?P<user>[^/\s:@]+):(?P<password>[^@\s/]+)@(?P<host>[^/\s]+)", re.IGNORECASE)),
+    ("database-uri-credentials", re.compile(r"\b(?P<scheme>postgres(?:ql)?(?:\+[A-Za-z0-9._-]+)?|mysql(?:\+[A-Za-z0-9._-]+)?|mongodb(?:\+srv)?|rediss?|amqps?|nats(?:\+tls)?|mqtts?|kafka)://(?P<user>[^/\s:@]+):(?P<password>[^@\s/]+)@(?P<host>[^/\s]+)", re.IGNORECASE)),
 )
 
 # These exact guest:guest AMQP values are preserved in the immutable, non-runtime
