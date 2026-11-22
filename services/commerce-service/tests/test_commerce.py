@@ -2712,6 +2712,37 @@ def test_shopify_failure_does_not_release_inventory_while_existing_stripe_sessio
     assert db.commits == 1
 
 
+def test_shopify_failure_preserves_reservations_when_stripe_expiry_raises(monkeypatch):
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from app import shopify
+
+    order = SimpleNamespace(id="order-expiry-exception", state="pending_payment", payment_session_id="cs_test_exception")
+    reservation = SimpleNamespace(state="unknown", connection_id="connection-1", last_error=None)
+    class FakeDB:
+        commits = 0
+        def scalar(self, _statement):
+            return order
+        def commit(self):
+            self.commits += 1
+    db = FakeDB()
+    class FakeStripe:
+        def expire_session(self, _session_id):
+            raise RuntimeError("Stripe API timeout")
+    monkeypatch.setattr(main, "StripeGateway", FakeStripe)
+    monkeypatch.setattr(shopify, "release_one_shopify_reservation", lambda *_: pytest.fail("provider hold released after ambiguous Stripe expiry"))
+    monkeypatch.setattr(main, "release_reservations", lambda *_: pytest.fail("local stock released after ambiguous Stripe expiry"))
+
+    with pytest.raises(HTTPException) as rejected:
+        shopify._compensate_failed_checkout_reservations(db, order, [reservation])
+    assert rejected.value.status_code == 503
+    assert rejected.value.detail["code"] == "SHOPIFY_RESERVATION_PAYMENT_SESSION_EXPIRY_UNCONFIRMED"
+    assert order.state == "pending_payment"
+    assert reservation.state == "unknown"
+    assert reservation.last_error == "SHOPIFY_RESERVATION_PAYMENT_SESSION_EXPIRY_UNCONFIRMED"
+    assert db.commits == 1
+
+
 def test_shopify_failure_expires_existing_stripe_session_before_releasing_reservations(monkeypatch):
     from types import SimpleNamespace
     from app import shopify
