@@ -27,9 +27,11 @@ No unresolved inline review threads were found on #243, #254, #266, #265, #261, 
 ## Findings
 
 ### PNELLY + Wardrobe
-Authenticated wardrobe-aware discovery, three daily-look roles, Complementer advisory, saved outfits, editing and consent-gated feedback contracts exist. However, Recommendation Service documents durable profile memory, production gateway hydration, live product retrieval and skin-state forecasting as not implemented. TAL events do not automatically change USI/NPL or ranking; a reviewed learning consumer and measured feedback loop are missing. Wardrobe production PostgreSQL, live asset-deletion worker/retry/DLQ and deployed identity/consent acceptance remain unverified. Browser photo entry remains text-only.
+Authenticated wardrobe-aware discovery, three daily-look roles, Complementer advisory, saved outfits, editing and consent-gated feedback contracts exist. The API Gateway reads the verified user's USI style profile, applies NPL hard vetoes to wardrobe items, and loads current-consent, unexpired TAL wardrobe like/wear events as bounded positive ranking signals. Wardrobe feedback is durably recorded through the Wardrobe → Identity Learning/TAL and NPL integration with idempotency and retry state. Complementer itself remains advisory-only; explicit Complementer reaction events are persisted to TAL, but the current ranking consumer specifically reads wardrobe like/wear events and USI profile preferences, so no evidence shows Complementer reaction events independently changing future ranking. The Recommendation Service's own README correctly limits its responsibility: it is not the durable profile owner.
 
-**Decision:** integration foundation present; end-to-end production acceptance incomplete.
+Wardrobe production PostgreSQL, live asset-deletion worker/retry/DLQ and deployed identity/consent acceptance remain unverified. Browser photo entry remains text-only. No staging evidence or cohort study demonstrates the complete loop for real users or quantifies the effect of each feedback source.
+
+**Decision:** the core USI/TAL/NPL-to-wardrobe recommendation loop is implemented at code/contract level; production deployment and real-user end-to-end validation remain incomplete.
 
 ### CAL display and checkout
 PR #266 binds displayed candidates to exact product/catalog version, CIL eligibility and policy/arbitration versions. Non-SHOW results are intended to be withheld. BFF cart/checkout proxy is default-off and requires live Commerce readiness/capability checks plus candidate-bound purchase receipts.
