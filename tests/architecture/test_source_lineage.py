@@ -58,6 +58,22 @@ class SourceLineageUtilityTests(unittest.TestCase):
         blocks = _named_code_blocks(snapshot)
         self.assertEqual(blocks["src/final.py"], ["def final():\n    return True\n"])
 
+    def test_standalone_filename_fence_precedes_code_fence(self):
+        tick = chr(96)
+        snapshot = (
+            tick * 3 + "\\n"
+            "src/types/index.ts\\n"
+            + tick * 3 + "\\n\\n"
+            + tick * 3 + "typescript\\n"
+            "export type DecisionIntent = string;\\n"
+            + tick * 3 + "\\n"
+        )
+        blocks = _named_code_blocks(snapshot)
+        self.assertEqual(
+            blocks["src/types/index.ts"],
+            ["export type DecisionIntent = string;\\n"],
+        )
+
     def test_path_normalisation_supports_headers(self):
         self.assertEqual(_normalise_path("# File: src/example.py"), "src/example.py")
         self.assertEqual(_normalise_path("-- schema.sql"), "schema.sql")
