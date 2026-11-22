@@ -1,71 +1,58 @@
-# Branch reconciliation — 22 November 2026 (graph pass)
+# Branch reconciliation — 22 November 2026 (graph pass + PR delta)
 
 Repository: `cirvannaco-png/Cirvanna-demo`  
-Reviewed main: `856fb986b5c626911137028a2c40f469dc4d8bb6`  
-Method: GitHub's paginated branch-ref inventory and commit-ancestry comparisons. This is a graph-level audit, not a code-quality review of every diverged branch.
+Current main observed: `210e9e370782a13bc69b93286bf8d3cd8ab3cc69`  
+Method: GitHub branch-ref inventory and commit-ancestry comparisons. This is a graph-level audit, not a code-quality review of every diverged branch.
 
 ## Inventory
 
-- **304 branch refs** total, including `main` (303 non-main refs).
-- **301 unique commit heads** across those refs.
-- Three actual duplicate-head pairs are present; this reduces the unique head count by three.
+- Last complete inventory: **304 branch refs** total, including `main` (303 non-main refs).
+- **301 unique commit heads** across those refs; three duplicate-head pairs reduce the unique count by three.
 - **300 unique non-main commit heads**.
-- The audit branch created for this report is now **6 commits ahead / 1 behind** current `main`; it is diverged and included in the classification.
-- `main` currently reports `protected: false`. Required PR/review/check enforcement remains an administrator blocker tracked by [#271](https://github.com/cirvannaco-png/Cirvanna-demo/issues/271).
+- `main` reports `protected: false`; required PR/review/check enforcement remains an administrator blocker tracked by [#271](https://github.com/cirvannaco-png/Cirvanna-demo/issues/271).
+- The counts are a timestamped snapshot. Re-run the full paginated inventory before any branch deletion or archival operation.
 
-## Ancestry classification
+## Ancestry classification and changes since the last full pass
 
-A complete comparison was performed for the original 290 unique non-main heads against main at `74e153dfbc2911770670ec171ad2b31092047b8b`: 223 were diverged and 67 were behind-only. Main subsequently advanced through five commits: the Shopify reservation fix (#302), its documentation follow-up (#307), the CAL evidence/gap map (#309), the combined cross-service evidence clarification (#310), and source-lineage snapshot parsing (#312). These five mainline commits post-date the original branch-head snapshot; none of the original 290 branch heads contains those later mainline commits, so their status classes remain unchanged and their behind counts increase by five.
+The last complete graph pass classified the 300 unique non-main heads as **231 diverged**, **67 behind-only**, and **2 ahead-only** against main `856fb986b5c626911137028a2c40f469dc4d8bb6`.
 
-Five additional unique PR branch heads were then compared against the later mainline snapshots:
-- PR #305 branch: 1 ahead / 5 behind; merged.
-- PR #306 branch: 4 ahead / 4 behind; closed unmerged.
-- PR #307 branch: 3 ahead / 1 behind; merged.
-- PR #308 branch: 5 ahead / 1 behind at the comparison snapshot; subsequently closed unmerged.
-- PR #310 branch: 1 ahead / 1 behind; merged.
+Since that pass, PR #315 was merged. Its branch head `8d0253c57055f3f5c0bb5da9070bad3f5b2301ae` is now reachable from main through merge commit `210e9e370782a13bc69b93286bf8d3cd8ab3cc69`; its retained branch ref is therefore behind-only, not ahead-only. PR #314 remains open and is now **10 ahead / 1 behind** main. This produces a reconciled classification of **231 diverged**, **68 behind-only**, and **1 ahead-only** across the same 300 unique non-main heads, assuming no intervening branch-ref changes. This is a delta reconciliation, not a fresh 300-head rescan.
 
-Four further PR branch heads were compared against current main at `856fb986`:
-- PR #312 branch: 2 ahead / 1 behind; merged.
-- PR #313 branch: 2 ahead / 1 behind; closed unmerged.
-- PR #314 branch: 2 ahead / 0 behind; open (ahead-only).
-- PR #315 branch: 3 ahead / 0 behind; open (ahead-only).
-
-The audit branch for this report is 4 ahead / 1 behind. The combined current classification is therefore **231 diverged**, **67 behind-only**, and **2 ahead-only** across 300 unique non-main heads. A behind-only branch contains no commit absent from main; it is an archival/deletion candidate, not an automatic deletion. A diverged branch may contain useful work, already-squash-merged work, superseded work, or unsafe/obsolete code. Ahead/behind counts alone do not determine merge or deletion eligibility.
+The audit PR branch itself is **7 ahead / 2 behind** main and remains diverged. A behind-only branch contains no commit absent from main; it is an archival/deletion candidate, not an automatic deletion. A diverged branch may contain useful work, already-squash-merged work, superseded work, or unsafe/obsolete code. Ahead/behind counts alone do not determine merge or deletion eligibility.
 
 ## Duplicate branch-head pairs
 
 | Branches | Shared head | PR/dependency observations | Disposition |
 |---|---|---|---|
 | `feature/cal-candidate-gating-current-main-2026-11-09` and `feature/cal-offer-bound-boundary-2026-11-09` | `dfce1c7d4d4040acd83f7714e830ad7be3e64f5c` | No PR returned by head search. | Duplicate-ref candidate; inspect automation/workflow references before retirement. |
-| `integration/privacy-rights-ci-rerun-2026-11-21` and `integration/privacy-rights-current-main-2026-11-21` | `fd89fcbea4931008cefb2e73fc64a85445081935` | PRs #259 and #262 both closed unmerged; later privacy work includes merged PR #265. | Likely superseded; preserve until content and workflow dependency checks complete. |
+| `integration/privacy-rights-ci-rerun-2026-11-21` and `integration/privacy-rights-current-main-2026-11-21` | `fd89fcbea4931008cefb2e73fc64a85445081935` | PRs #259 and #262 closed unmerged; later privacy work includes merged PR #265. | Likely superseded; preserve until content and workflow dependency checks complete. |
 | `security/twin-click-it-policy-ci-rerun-2026-11-21` and `security/twin-click-it-policy-current-main-2026-11-21` | `6c905bd8efa7be7ed8cba4ca9e4821263c3ff110` | PR #261 merged; PR #260 closed unmerged on the same head. | Likely redundant alias; confirm no external dependency before retirement. |
 
 ## High-risk diverged families requiring content review
 
-The following branches contain substantial commits not reachable from current main. They must not be merged wholesale; inspect their file-level diffs, tests, licenses, service boundaries and current-main equivalents before selective promotion:
+These branches contain substantial commits not reachable from the earlier main snapshot. Do not merge them wholesale; inspect file-level diffs, tests, licenses, service boundaries and current-main equivalents before selective promotion:
 
-- Twin / Try-On / evaluation: `feat/pnelly-runtime-persistent-twin-tryon` (128 ahead at the original comparison), `feature/outfit-evaluation-publication-guards` (165), `feature/pnelly-outfit-evaluation-benchmark` (163), `feature/privacy-governance-service` (154).
-- CAL / commerce: `feature/end-to-end-cal-purchase-governance` (119), `feature/cirvanna-feature-spine` (101), `feature/commerce-multimarket-offers-rebased` (85), `feat/shopify-inventory-reservation-saga` (63).
-- Wardrobe / identity / DSI: `feat/daily-look-retention-experiments-v2` (118), `feature/living-filters-mvp` (96), `feat/dsi-p0-capture-provenance` (60), `feature/wardrobe-pnelly-npl-eepl` (44).
-- Retrieval / appearance research: `research/model-competition-and-logic-transfer` (107), `feature/primal-atelier-living-couture` (94), `feature/appearance-look-sessions` (97).
+- Twin / Try-On / evaluation: `feat/pnelly-runtime-persistent-twin-tryon`, `feature/outfit-evaluation-publication-guards`, `feature/pnelly-outfit-evaluation-benchmark`, `feature/privacy-governance-service`.
+- CAL / commerce: `feature/end-to-end-cal-purchase-governance`, `feature/cirvanna-feature-spine`, `feature/commerce-multimarket-offers-rebased`, `feat/shopify-inventory-reservation-saga`.
+- Wardrobe / identity / DSI: `feat/daily-look-retention-experiments-v2`, `feature/living-filters-mvp`, `feat/dsi-p0-capture-provenance`, `feature/wardrobe-pnelly-npl-eepl`.
+- Retrieval / appearance research: `research/model-competition-and-logic-transfer`, `feature/primal-atelier-living-couture`, `feature/appearance-look-sessions`.
 
-These are examples of high-ahead branches, not a complete priority list. Their commit counts are not quality scores. Main already contains selected later implementations in several of these areas; content-level comparison is still required to avoid duplicate or regressive promotion.
+These are examples, not a complete priority list. Their commit counts are not quality scores. Main already contains selected later implementations in several areas; content-level comparison is required to avoid duplicate or regressive promotion.
 
 ## Current PR and release context
 
 - PR #302 is merged. Its provider hold revalidation and Stripe-expiry-safe cleanup changes are on main; its exact-head Commerce, Architecture, Privacy Governance and container-image checks passed.
-- PR #303 was closed unmerged after its Architecture secret scan failed. PR #314 is the current scanner retry; its exact path/line/scheme/host exception for historical AMQP defaults is scoped, but driver-qualified SQLAlchemy URIs such as `postgresql+asyncpg://` still need coverage. Do not weaken the scanner to obtain green CI.
-- PR #308, #306 and #313 were closed unmerged; PR #312 merged the source-lineage boundary fix; PR #315 is open for standalone filename-fence parsing. PRs #305, #307, #309 and #310 were merged documentation/evidence changes. PR #311 is this audit report and remains open.
-- The production release ledger still records **23 required gates, all 23 blocked**. This graph audit does not change production readiness.
+- PR #303 was closed unmerged after its Architecture secret scan failed. PR #314 is the current scanner retry. Its exact-head Architecture, Commerce, Intelligence and Privacy Governance workflows all passed on `c9e3037c7be5f6b97ee60441935eb0d48b3b394a`. It remains open and has no submitted reviews; it is 10 ahead / 1 behind main. Review and branch-governance checks remain required before merge.
+- PR #315 merged at `210e9e370782a13bc69b93286bf8d3cd8ab3cc69`. Its final strict source-lineage audit reported 544 candidates, 519 exact matches, 5 documented syntax repairs, 19 path-specific approved exceptions, 1 trailing-whitespace-only difference, 0 missing source blocks and 0 unresolved content differences. Six archive/snapshot differences remain hash-pinned and documented. The review states REL-01 source-lineage integrity is closed on that exact commit; this does not pass the entire REL-01 gate for a release candidate or certify production.
+- PR #311 is this audit report. Its Architecture workflow passed on `4514b87f60f06c677f91d9a03dcd505ee7992a7d`; it has no submitted reviews and is 7 ahead / 2 behind main. The PR branch is not merge-ready until it is reconciled with current main and independently reviewed.
+- The release ledger still records **23 required gates, all 23 blocked**, with empty evidence references and null verified commits. The source-lineage subtask merge does not change that ledger state.
 
 ## Disposition and next actions
 
-1. Preserve all 231 diverged heads while performing file-level classification and checking open/closed PRs, workflows, release references and unique source lineage.
-2. For the 67 behind-only heads, verify no external automation or recovery process depends on the ref; then prepare a separate, reviewable archival/deletion plan.
+1. Preserve all diverged heads while performing file-level classification and checking open/closed PRs, workflows, release references and source lineage.
+2. For the 68 behind-only heads, verify no external automation or recovery process depends on each ref; then prepare a separate, reviewable archival/deletion plan.
 3. Review the three duplicate implementation pairs. Do not delete either side until the superseding implementation and dependency references are confirmed.
 4. Configure and independently verify branch protection for `main` under #271.
-5. Refresh this inventory before any destructive ref operation; the repository is actively changing.
+5. Refresh the full paginated inventory before any destructive ref operation; the repository is actively changing.
 
-Review the two ahead-only branches (#314 and #315) as ordinary PR candidates; ahead-only status is not approval.
-
-**No branch was deleted, force-pushed, or merged as part of this audit.**
+**No branch was deleted or force-pushed in this audit. PR #315 was merged by the repository; PR #311 and #314 remain open.**
