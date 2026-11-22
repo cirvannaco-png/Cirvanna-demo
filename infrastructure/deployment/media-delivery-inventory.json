@@ -5,10 +5,11 @@
   "status": "blocked",
   "policy": "No customer-facing binary media is enabled until the exact asset, bytes, consent, privacy attestation, publication decision, delivery origin and deletion lifecycle are independently verified.",
   "repository_baseline": {
-    "click_it_ingress": "blocked_before_multipart_read",
     "customer_media_api_fields": "recursively_withheld",
     "marketplace_browser_media": "placeholder_only",
-    "public_user_asset_routes": "none_in_current_service_route_inventory"
+    "public_user_asset_routes": "none_in_current_service_route_inventory",
+    "public_click_it_ingress": "blocked_before_multipart_read",
+    "private_click_it_ingress": "Virtual Twin private API bearer; resource-bound consent and jurisdiction checked before read; not production enabled"
   },
   "public_binary_delivery": [
     {
@@ -21,6 +22,30 @@
       "allows_user_originated_media": false,
       "allows_uploaded_or_derived_media": false,
       "symlinks_allowed": false
+    }
+  ],
+  "private_ingress": [
+    {
+      "id": "marketplace_bff_click_it_ingress",
+      "service": "marketplace-bff",
+      "method": "POST",
+      "route": "/api/vision/click-it",
+      "behavior": "503_before_multipart_parse",
+      "production_enabled": false
+    },
+    {
+      "id": "virtual_twin_click_it_orchestrator",
+      "service": "virtual-twin",
+      "method": "POST",
+      "route": "/click-it",
+      "authentication": "internal_api_bearer",
+      "service_exposure": "private_api",
+      "production_enabled": false,
+      "consent_authority": "Identity Learning resource-bound image_processing, click_it and photographed-person declaration scopes",
+      "jurisdiction_authority": "Privacy Governance current jurisdiction policy",
+      "forwarding": "private Vision /v1/click-it/scan; face masking precedes quality analysis and embedding",
+      "source_photo_persisted": false,
+      "public_result": "aggregate candidate metadata only; display_authorized=false; public_sharing_allowed=false"
     }
   ],
   "private_binary_delivery": [

@@ -13,7 +13,7 @@ PUBLIC_MEDIA_SURFACE_SEGMENTS = {
     "restore", "share", "shared", "shared-link", "shared-links",
     "syndicate", "syndication", "community", "feed", "upload", "uploads",
     "file", "files", "gallery", "galleries", "public", "static", "cdn",
-    "story", "stories", "post", "posts", "lookbook", "banner", "cover",
+    "story", "stories", "post", "posts", "lookbook", "banner", "cover", "click-it",
 }
 
 # These routes are media-adjacent but do not publish or deliver user photographs:
@@ -24,6 +24,7 @@ NON_PUBLICATION_ROUTE_EXCEPTIONS = {
     ("services/marketplace-bff/app/main.py", "POST", "/api/appearance/looks/{look_id}/source", "upload_appearance_source"),
     ("services/marketplace-bff/app/main.py", "POST", "/api/vision/look-it", "marketplace_look_it"),
     ("services/marketplace-bff/app/main.py", "POST", "/api/vision/click-it", "marketplace_click_it"),
+    ("services/virtual-twin/app/main.py", "POST", "/click-it", "click_it"),
     ("services/vision-intelligence/app/main.py", "POST", "/v1/search/image", "look_it_image_search"),
     ("services/vision-intelligence/app/main.py", "POST", "/v1/click-it/scan", "click_it_scan"),
     ("services/xari/app/main.py", "POST", "/v1/marketplace/search/image", "look_it_image_search"),
@@ -306,6 +307,52 @@ def test_nonpublication_media_adjacent_routes_remain_narrow_and_explicit():
     assert '"decision_status": "PENDING_CAL"' in xari_body
     assert '"Cache-Control": "no-store, private"' in xari_body
 
+    # The private Virtual Twin Click It orchestrator is an alternate internal
+    # ingress. It must authenticate the service caller, verify exact resource-bound
+    # consent and jurisdiction before reading bytes, and forward only to the
+    # mask-before-embedding Vision worker. It is not a public publisher.
+    virtual_twin_key = ("services/virtual-twin/app/main.py", "POST", "/click-it", "click_it")
+    virtual_twin_source, virtual_twin_handler = route_handlers[virtual_twin_key]
+    virtual_twin_body = ast.get_source_segment(virtual_twin_source, virtual_twin_handler) or ""
+    virtual_twin_route = next(
+        decorator for decorator in virtual_twin_handler.decorator_list
+        if isinstance(decorator, ast.Call)
+        and isinstance(decorator.func, ast.Attribute)
+        and decorator.func.attr == "post"
+        and decorator.args
+        and isinstance(decorator.args[0], ast.Constant)
+        and decorator.args[0].value == "/click-it"
+    )
+    assert any(
+        isinstance(item, ast.Call)
+        and isinstance(item.func, ast.Name)
+        and item.func.id == "Depends"
+        and item.args
+        and isinstance(item.args[0], ast.Name)
+        and item.args[0].id == "require_api_token"
+        for item in ast.walk(virtual_twin_handler)
+    )
+    for token in (
+        "_verify_consent",
+        "authorize_click_it_policy",
+        '"/v1/click-it/scan"',
+        '"image_persisted": False',
+        '"display_authorized": False',
+        '"public_sharing_allowed": False',
+        "await product_image.close()",
+    ):
+        assert token in virtual_twin_body
+    assert virtual_twin_body.index("_verify_consent") < virtual_twin_body.index("product_image.read")
+    assert virtual_twin_body.index("authorize_click_it_policy") < virtual_twin_body.index("product_image.read")
+    assert "generate_presigned_url" not in virtual_twin_body
+    assert "put_object" not in virtual_twin_body
+    assert '"Cache-Control": "no-store, private"' in virtual_twin_source
+
+    stack = json.loads((ROOT / "infrastructure" / "deployment" / "canonical-stack.json").read_text(encoding="utf-8"))
+    virtual_twin_service = next(service for service in stack["services"] if service["id"] == "virtual-twin")
+    assert virtual_twin_service["exposure"] == "private_api"
+    assert virtual_twin_service["production_enabled"] is False
+
     # Public skincare sharing is a text-only routine token, not media delivery.
     # Strict request models and the fixed serializer prevent arbitrary image/asset fields.
     skin_key = ("services/skincare-routine-service/app/main.py", "GET", "/public/routines/{token}", "get_shared_routine")
@@ -425,6 +472,9 @@ def test_binary_media_inventory_is_complete_and_fail_closed():
     assert inventory["release_gate"] == "REL-14"
     assert inventory["issue"] == 121
     assert inventory["status"] == "blocked"
+    baseline = inventory["repository_baseline"]
+    assert baseline["public_click_it_ingress"] == "blocked_before_multipart_read"
+    assert "not production enabled" in baseline["private_click_it_ingress"]
 
     public_routes = inventory["public_binary_delivery"]
     assert len(public_routes) == 1
@@ -434,6 +484,15 @@ def test_binary_media_inventory_is_complete_and_fail_closed():
     assert portal["allows_user_originated_media"] is False
     assert portal["allows_uploaded_or_derived_media"] is False
     assert portal["symlinks_allowed"] is False
+
+    ingress = {item["id"]: item for item in inventory["private_ingress"]}
+    assert ingress["marketplace_bff_click_it_ingress"]["behavior"] == "503_before_multipart_parse"
+    twin_ingress = ingress["virtual_twin_click_it_orchestrator"]
+    assert twin_ingress["route"] == "/click-it"
+    assert twin_ingress["service_exposure"] == "private_api"
+    assert twin_ingress["production_enabled"] is False
+    assert twin_ingress["source_photo_persisted"] is False
+    assert "masking precedes" in twin_ingress["forwarding"]
 
     private_routes = {
         item["route"]: item for item in inventory["private_binary_delivery"]
