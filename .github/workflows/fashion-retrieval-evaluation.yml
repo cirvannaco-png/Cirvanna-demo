@@ -6,6 +6,8 @@ on:
     branches: [main]
     paths:
       - "tools/model_evaluation/fashion_retrieval/**"
+      - "tools/model_evaluation/fashion_retrieval/requirements-research-*.lock"
+      - "tools/model_evaluation/fashion_retrieval/requirements-research-*.constraints.txt"
       - "tests/model_evaluation/**"
       - "services/vision-intelligence/app/retrieval_snapshot_export.py"
       - "services/vision-intelligence/README.md"
@@ -14,6 +16,8 @@ on:
     branches: [main, "research/**"]
     paths:
       - "tools/model_evaluation/fashion_retrieval/**"
+      - "tools/model_evaluation/fashion_retrieval/requirements-research-*.lock"
+      - "tools/model_evaluation/fashion_retrieval/requirements-research-*.constraints.txt"
       - "tests/model_evaluation/**"
       - "services/vision-intelligence/app/retrieval_snapshot_export.py"
       - "services/vision-intelligence/README.md"
@@ -47,3 +51,19 @@ jobs:
           python tools/model_evaluation/fashion_retrieval/prepare_cases.py --help
           python tools/model_evaluation/fashion_retrieval/build_qrels.py --help
           python services/vision-intelligence/app/retrieval_snapshot_export.py --help
+
+
+  locked-cpu-environment:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install hash-locked CPU research environment
+        run: python -m pip install --require-hashes --only-binary=:all: -r tools/model_evaluation/fashion_retrieval/requirements-research-py311-linux-x86_64-cpu.lock
+      - name: Check dependency consistency
+        run: python -m pip check
+      - name: Verify pinned model-runtime packages
+        run: python -c 'from importlib.metadata import version; import open_clip, torch, torchvision, transformers; assert torch.__version__ == "2.7.0+cpu"; assert torchvision.__version__ == "0.22.0+cpu"; assert version("open_clip_torch") == "4.2.2"; assert transformers.__version__ == "4.57.6"; assert not torch.cuda.is_available(); print("Hash-locked CPU model runtime imports and version checks passed.")'

@@ -51,7 +51,7 @@ These are individual checkpoint-file sizes from the Hub file listing, not full d
 
 The two Marqo revisions above were checked as explicit `hf://models/OWNER/REPO@SHA` repository references, and each exact revision exposed the expected `open_clip_model.safetensors` file. They are now frozen in the runner's model registry. ZooClaw's full commit SHA is still unresolved; do not replace it with a short hash or moving `main`. The first executable shortlist can proceed with the baseline and the two pinned Marqo challengers, subject to the data-rights and compute gates.
 
-The research dependency file is a set of compatible package ranges, not a lock. Generate an exact dependency lock with hashes, record its digest, and use that locked environment for all official comparisons.
+The research dependency source ranges are accompanied by a SHA-256-hashed CPU-only lock for CPython 3.11 on Linux x86_64. That lock supports controlled CPU pilots only; a separate CUDA-specific lock and approved GPU image/driver validation remain required before GPU benchmarking. Record the exact lock digest in each private experiment preregistration.
 
 
 

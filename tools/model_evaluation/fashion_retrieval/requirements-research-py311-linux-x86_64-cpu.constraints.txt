@@ -1,0 +1,9 @@
+# CPU-only lock target: CPython 3.11, Linux x86_64, manylinux_2_28.
+# PyTorch CPU wheels are served from the official PyTorch CPU index.
+torch==2.7.0+cpu
+torchvision==0.22.0+cpu
+hf-xet==1.1.9
+numpy==2.2.6
+pillow==12.2.0
+tiktoken==0.11.0
+setuptools==84.2.1

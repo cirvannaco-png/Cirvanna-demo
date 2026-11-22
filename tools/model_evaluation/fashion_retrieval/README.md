@@ -68,7 +68,23 @@ Image paths must be relative to `--media-root` and remain inside that directory.
 
 ## Install dependencies
 
-Use a locked Python 3.11+ research environment. The Marqo adapters require `open_clip_torch==4.2.2`, which supports the `local-dir:` loader used to load pinned snapshots without remote code. That OpenCLIP release requires PyTorch 2.6 or newer; the research environment is deliberately separate from the Vision service's production requirements. The runner fails fast if a different OpenCLIP version is installed. The runtime also needs Transformers, Hugging Face Hub, Safetensors, Pillow, NumPy, timm, and OpenCLIP's tokenizer dependencies. `requirements-research.txt` pins the OpenCLIP API version and sets compatible ranges for the other packages, but it is **not** a complete reproducibility lock. Generate and retain an exact transitive lock with hashes before any official comparison, and attach its digest to the experiment record.
+Use the committed, hash-locked **CPython 3.11 / Linux x86_64 / CPU-only** research environment for the first controlled pilot. The Marqo adapters require `open_clip_torch==4.2.2`, which supports the `local-dir:` loader used to load pinned snapshots without remote code. That OpenCLIP release requires PyTorch 2.6 or newer; the research environment is deliberately separate from the Vision service's production requirements. The runner fails fast if a different OpenCLIP version is installed. The runtime also needs Transformers, Hugging Face Hub, Safetensors, Pillow, NumPy, timm, setuptools and OpenCLIP's tokenizer dependencies.
+
+Install the exact locked environment on the supported target:
+
+    python3.11 -m venv .venv
+    . .venv/bin/activate
+    python -m pip install --upgrade pip
+    python -m pip install --require-hashes --only-binary=:all: -r tools/model_evaluation/fashion_retrieval/requirements-research-py311-linux-x86_64-cpu.lock
+    python -m pip check
+
+The lock pins every direct and transitive dependency and includes SHA-256 hashes. It uses the official PyTorch CPU wheel index and PyPI. It is intentionally CPU-only: it does not validate GPU kernels, CUDA driver compatibility, VRAM capacity, or GPU throughput. Do not use its latency results as production GPU evidence. A separate CUDA-specific lock must be generated and validated against the approved GPU image, driver, CUDA runtime and target architecture before GPU benchmarking.
+
+The source ranges remain in `requirements-research.txt`. The target-specific constraints are in `requirements-research-py311-linux-x86_64-cpu.constraints.txt`. To regenerate the committed lock, use uv 0.13.9 and this exact command:
+
+    uv pip compile tools/model_evaluation/fashion_retrieval/requirements-research.txt --constraint tools/model_evaluation/fashion-retrieval/requirements-research-py311-linux-x86_64-cpu.constraints.txt --python-version 3.11 --python-platform x86_64-manylinux_2_28 --generate-hashes --index-url https://download.pytorch.org/whl/cpu --extra-index-url https://pypi.org/simple --index-strategy unsafe-best-match --emit-index-url -o tools/model_evaluation/fashion_retrieval/requirements-research-py311-linux-x86_64-cpu.lock
+
+Record the lock's SHA-256 digest in the private experiment preregistration and data manifest. CI installs the hash-locked CPU environment, runs `pip check`, and imports the pinned model-runtime packages; it does not download model weights or run inference.
 
 ## Lock the final-test preregistration
 
