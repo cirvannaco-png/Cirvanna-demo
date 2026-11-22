@@ -29,7 +29,7 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_USER: privacy
-          POSTGRES_PASSWORD: privacy
+          POSTGRES_HOST_AUTH_METHOD: trust
           POSTGRES_DB: privacy_governance
         ports:
           - 5432:5432
@@ -54,7 +54,7 @@ jobs:
         run: python -m pip check
       - name: Apply PostgreSQL migration and verify mapped schema
         env:
-          PRIVACY_GOVERNANCE_DATABASE_URL: postgresql+psycopg://privacy:privacy@localhost:5432/privacy_governance
+          PRIVACY_GOVERNANCE_DATABASE_URL: postgresql+psycopg://privacy@localhost:5432/privacy_governance
         run: |
           python - <<'PY'
           import os
