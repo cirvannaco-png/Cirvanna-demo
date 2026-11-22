@@ -185,6 +185,25 @@ def test_declared_climate_changes_look_ranking():
     assert "declared climate (hot humid)" in result["looks"][0]["reason"]
 
 
+def test_explicit_saved_style_preference_is_used_in_later_look_explanations():
+    items = wardrobe()
+    items[1]["attributes"].append("elegant")
+    result = build_daily_looks(
+        request_id="daily-usi-style-preference",
+        user_id="user-123",
+        wardrobe_items=items,
+        local_date="2026-11-05",
+        style_signals=["style:elegant"],
+    )
+    assert result["personalization"]["style_signals_used"] is True
+    assert any(
+        "Silk blouse" in " ".join(look.get("item_names", []))
+        or "saved style preferences: elegant" in look["reason"]
+        for look in result["looks"]
+    )
+    assert any("saved style preferences: elegant" in look["reason"] for look in result["looks"])
+
+
 def test_consent_based_feedback_signal_changes_look_ranking():
     items = [
         {"item_id": "plain-top", "owner_user_id": "user-123", "display_name": "Plain shirt", "category": "tops", "attributes": [], "status": "active"},
