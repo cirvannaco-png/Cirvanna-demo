@@ -1,3 +1,4 @@
+import hashlib
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -2738,6 +2739,18 @@ def test_wardrobe_recommendations_reject_candidate_id_mismatch_before_display(cl
     assert response.json()["detail"]["code"] == "WARDROBE_CANDIDATE_CAL_CIL_AUTHORIZATION_INVALID"
 
 
+def test_wardrobe_ui_is_packaged_in_the_marketplace_bff_image(client):
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    dockerfile = (root / "services/marketplace-bff/Dockerfile").read_text()
+    assert "COPY apps/demo-web/wardrobe.html /app/wardrobe.html" in dockerfile
+    assert "WARDROBE_HTML_PATH=/app/wardrobe.html" in dockerfile
+    response = client.get("/wardrobe")
+    assert response.status_code == 200
+    assert "/api/wardrobe/pnelly/preferences" in response.text
+
+
 def test_complementer_bff_uses_verified_subject_and_returns_advisory_only(client, monkeypatch):
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
     monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
@@ -2851,6 +2864,128 @@ def test_complementer_feedback_writes_only_consented_minimal_event_to_verified_t
     }
     assert "navy trousers" not in response.text
     assert response.headers["cache-control"] == "no-store, private"
+
+
+def test_pnelly_preference_write_requires_exact_profile_consent_and_uses_allowlisted_usi_value(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-learning-internal-token-more-than-32")
+    expected_preference_id = "pnelly-" + hashlib.sha256(
+        "verified-customer-42|complementer-request-001|color:teal".encode("utf-8")
+    ).hexdigest()[:32]
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "verified-customer-42", "role": "customer"}),
+        FakeResponse([{
+            "receipt_id": "profile-consent-001", "scope": "profile_storage", "granted": True,
+            "revoked_at": None, "expires_at": future_expiry(),
+        }]),
+        FakeResponse({"subject_id": "verified-customer-42", "profile_version": 2, "preferences": [
+            {"preference_id": "existing-1", "attribute": "style:classic", "weight": 0.8, "active": True},
+        ]}),
+        FakeResponse({"subject_id": "verified-customer-42", "profile_version": 3, "preferences": [
+            {"preference_id": "existing-1", "attribute": "style:classic", "weight": 0.8, "active": True},
+            {"preference_id": expected_preference_id, "attribute": "color:teal", "weight": 0.8, "active": True,
+             "source": "pnelly_user_confirmed", "source_request_id": "complementer-request-001"},
+        ]}),
+        FakeResponse({"user_id": "verified-customer-42", "role": "customer"}),
+        FakeResponse([{
+            "receipt_id": "profile-consent-001", "scope": "profile_storage", "granted": True,
+            "revoked_at": None, "expires_at": future_expiry(),
+        }]),
+        FakeResponse({"subject_id": "verified-customer-42", "profile_version": 3, "preferences": [
+            {"preference_id": "existing-1", "attribute": "style:classic", "weight": 0.8, "active": True},
+            {"preference_id": expected_preference_id, "attribute": "color:teal", "weight": 0.8, "active": True,
+             "source": "pnelly_user_confirmed", "source_request_id": "complementer-request-001"},
+        ]}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/pnelly/preferences",
+        headers={"Authorization": "Bearer signed-customer-session"},
+        json={"request_id": "complementer-request-001", "consent_receipt_id": "profile-consent-001", "attribute": "color:teal"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "recorded"
+    assert response.json()["durable_persistence"] is True
+    assert response.json()["learning_owner"] == "USI"
+    assert response.json()["profile_version"] == 3
+    assert [call[0] for call in fake.calls] == ["GET", "GET", "GET", "PUT"]
+    assert fake.calls[1][1] == "https://identity.example.test/v1/tal/consents/verified-customer-42"
+    assert fake.calls[2][1] == "https://identity.example.test/v1/profiles/verified-customer-42"
+    saved = fake.calls[3][2]["json"]["preferences"][-1]
+    assert saved["preference_id"] == expected_preference_id
+    assert saved["attribute"] == "color:teal"
+    assert saved["source"] == "pnelly_user_confirmed"
+    assert saved["source_request_id"] == "complementer-request-001"
+    assert fake.calls[3][2]["json"]["consent_receipt_id"] == "profile-consent-001"
+    assert response.headers["cache-control"] == "no-store, private"
+
+    replay = client.post(
+        "/api/wardrobe/pnelly/preferences",
+        headers={"Authorization": "Bearer signed-customer-session"},
+        json={"request_id": "complementer-request-001", "consent_receipt_id": "profile-consent-001", "attribute": "color:teal"},
+    )
+    assert replay.status_code == 200
+    assert replay.json()["status"] == "replayed"
+    assert replay.json()["preference_id"] == expected_preference_id
+    assert len(fake.calls) == 7
+    assert [call[0] for call in fake.calls] == ["GET", "GET", "GET", "PUT", "GET", "GET", "GET"]
+
+
+def test_pnelly_preference_write_rejects_revoked_or_wrong_scope_receipt(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-learning-internal-token-more-than-32")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "verified-customer-42", "role": "customer"}),
+        FakeResponse([{
+            "receipt_id": "revoked-profile-consent", "scope": "profile_storage", "granted": True,
+            "revoked_at": "2026-11-22T00:00:00Z", "expires_at": future_expiry(),
+        }]),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/pnelly/preferences",
+        headers={"Authorization": "Bearer signed-customer-session"},
+        json={"request_id": "complementer-request-002", "consent_receipt_id": "revoked-profile-consent", "attribute": "style:elegant"},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "ACTIVE_PROFILE_STORAGE_CONSENT_REQUIRED"
+    assert len(fake.calls) == 2
+
+
+def test_pnelly_preference_write_rejects_style_learning_receipt_for_profile_storage(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-learning-internal-token-more-than-32")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "verified-customer-42", "role": "customer"}),
+        FakeResponse([{
+            "receipt_id": "style-consent-004", "scope": "style_learning", "granted": True,
+            "revoked_at": None, "expires_at": future_expiry(),
+        }]),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/pnelly/preferences",
+        headers={"Authorization": "Bearer signed-customer-session"},
+        json={"request_id": "complementer-request-004", "consent_receipt_id": "style-consent-004", "attribute": "style:elegant"},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "ACTIVE_PROFILE_STORAGE_CONSENT_REQUIRED"
+    assert len(fake.calls) == 2
+
+
+def test_pnelly_preference_write_rejects_unbounded_values_before_identity_lookup(client, monkeypatch):
+    fake = FakeAsyncClient([])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/pnelly/preferences",
+        headers={"Authorization": "Bearer signed-customer-session"},
+        json={"request_id": "complementer-request-003", "consent_receipt_id": "profile-consent-003", "attribute": "style:surprise-me"},
+    )
+    assert response.status_code == 422
+    assert fake.calls == []
 
 
 def test_complementer_feedback_requires_authenticated_user(client, monkeypatch):
@@ -4280,3 +4415,35 @@ def test_click_it_revocation_rejects_mismatched_provider_receipt(client, monkeyp
     assert response.status_code == 502
     assert response.json()["detail"]["code"] == "CONSENT_REVOCATION_RESPONSE_INVALID"
 
+
+
+def test_bff_and_identity_service_use_the_same_pnelly_preference_taxonomy():
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    identity_tree = ast.parse((root / "services/identity-learning-service/app/main.py").read_text())
+    bff_tree = ast.parse((root / "services/marketplace-bff/app/pnelly_preferences.py").read_text())
+
+    identity_values = None
+    for node in identity_tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "PNELLY_CONFIRMED_PROFILE_ATTRIBUTES"
+            for target in node.targets
+        ):
+            identity_values = set(ast.literal_eval(node.value))
+            break
+
+    bff_values = None
+    for node in bff_tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == "PnellyStylePreferenceIn":
+            for member in node.body:
+                if isinstance(member, ast.AnnAssign) and isinstance(member.target, ast.Name) and member.target.id == "attribute":
+                    annotation = member.annotation
+                    if isinstance(annotation, ast.Subscript) and isinstance(annotation.slice, ast.Tuple):
+                        bff_values = set(ast.literal_eval(value) for value in annotation.slice.elts)
+            break
+
+    assert identity_values is not None
+    assert bff_values is not None
+    assert bff_values == identity_values

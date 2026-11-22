@@ -28,11 +28,18 @@ def test_profile_update_uses_verified_subject_not_body_subject(client, monkeypat
     ))
     response = client.put("/v1/me/style-profile", headers=headers(), json={
         "expected_version": 0,
-        "preferences": [{"preference_id": "p1", "attribute": "classic", "weight": 0.8, "active": True}],
+        "consent_receipt_id": "profile-receipt-verified-001",
+        "preferences": [{
+            "preference_id": "p1", "attribute": "style:classic", "weight": 0.8, "active": True,
+            "source": "pnelly_user_confirmed", "source_request_id": "pnelly-request-001",
+        }],
     })
     assert response.status_code == 200
     assert calls[0][2] == "commerce-verified-subject"
-    assert calls[0][3]["preferences"][0]["attribute"] == "classic"
+    assert calls[0][3]["preferences"][0]["attribute"] == "style:classic"
+    assert calls[0][3]["preferences"][0]["source"] == "pnelly_user_confirmed"
+    assert calls[0][3]["preferences"][0]["source_request_id"] == "pnelly-request-001"
+    assert calls[0][3]["consent_receipt_id"] == "profile-receipt-verified-001"
 
 
 def test_consent_and_tal_event_are_bound_to_verified_subject(client, monkeypatch):

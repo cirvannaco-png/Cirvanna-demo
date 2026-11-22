@@ -314,15 +314,39 @@ class SkinAnalysisProviderConsentVerifyIn(StrictModel):
     image_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
 
 
+PNELLY_CONFIRMED_PROFILE_ATTRIBUTES = {
+    "style:minimalist", "style:elegant", "style:romantic", "style:bold",
+    "style:streetwear", "style:classic", "style:editorial",
+    "color:teal", "color:navy", "color:earthy", "color:monochrome", "color:pastel",
+    "silhouette:relaxed", "silhouette:tailored", "silhouette:oversized", "silhouette:structured",
+    "material:linen", "material:cotton", "material:denim", "material:silk",
+    "pattern:solid", "pattern:floral", "pattern:striped", "pattern:geometric",
+}
+
+
 class PreferenceIn(StrictModel):
     preference_id: str = Field(min_length=1, max_length=128)
     attribute: str = Field(min_length=1, max_length=120)
     weight: float = Field(default=1.0, gt=0, le=1)
     active: bool = True
+    source: Literal["user_declared", "pnelly_user_confirmed"] = "user_declared"
+    source_request_id: str | None = Field(default=None, min_length=8, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_pnelly_provenance(self):
+        if self.source == "pnelly_user_confirmed":
+            if self.attribute not in PNELLY_CONFIRMED_PROFILE_ATTRIBUTES:
+                raise ValueError("PNELLY preference attribute is not in the controlled taxonomy")
+            if not self.source_request_id or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{7,127}", self.source_request_id):
+                raise ValueError("PNELLY preferences require a valid source request ID")
+        elif self.source_request_id is not None:
+            raise ValueError("source_request_id is reserved for PNELLY-confirmed preferences")
+        return self
 
 
 class ProfilePut(StrictModel):
     expected_version: int | None = Field(default=None, ge=0)
+    consent_receipt_id: str | None = Field(default=None, min_length=8, max_length=128)
     preferences: list[PreferenceIn] = Field(max_length=100)
 
     @model_validator(mode="after")
@@ -846,7 +870,19 @@ def get_profile(subject_id: str, db: Annotated[Session, Depends(get_db)]):
 @app.put("/v1/profiles/{subject_id}", dependencies=[Depends(require_internal_token)])
 def put_profile(subject_id: str, payload: ProfilePut, db: Annotated[Session, Depends(get_db)]):
     subject = subject_or_404(subject_id)
-    active = db.scalar(select(ConsentReceipt).where(ConsentReceipt.subject_id == subject, ConsentReceipt.scope == "profile_storage", ConsentReceipt.granted.is_(True), ConsentReceipt.revoked_at.is_(None), active_consent_predicate()).limit(1))
+    consent_query = select(ConsentReceipt).where(
+        ConsentReceipt.subject_id == subject,
+        ConsentReceipt.scope == "profile_storage",
+        ConsentReceipt.granted.is_(True),
+        ConsentReceipt.revoked_at.is_(None),
+        active_consent_predicate(),
+    )
+    if payload.consent_receipt_id is not None:
+        consent_query = consent_query.where(ConsentReceipt.receipt_id == payload.consent_receipt_id)
+    # Serialize profile writes against concurrent receipt revocation. On
+    # PostgreSQL, the row lock makes a revocation either precede this check or
+    # wait until this authorized write commits; a stale receipt cannot race it.
+    active = db.scalar(consent_query.with_for_update().limit(1))
     if active is None:
         raise HTTPException(403, detail={"code": "ACTIVE_PROFILE_STORAGE_CONSENT_REQUIRED"})
     row = db.get(USIProfileRow, subject)

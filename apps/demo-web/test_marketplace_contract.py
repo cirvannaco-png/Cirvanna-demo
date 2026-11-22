@@ -111,6 +111,9 @@ class MarketplaceContractTests(unittest.TestCase):
         self.assertIn('result.durable_persistence !== true', WARDROBE_HTML)
         self.assertIn("private TAL learning timeline", WARDROBE_HTML)
         self.assertIn("not yet used as an independent ranking signal", WARDROBE_HTML)
+        self.assertIn('/api/wardrobe/pnelly/preferences', WARDROBE_HTML)
+        self.assertIn('consent_receipt_id: profileReceipt', WARDROBE_HTML)
+        self.assertIn('Only the preference you choose here is saved to your USI profile.', WARDROBE_HTML)
 
 
     def test_pnelly_describe_it_uses_verified_wardrobe_and_cal_discovery(self):

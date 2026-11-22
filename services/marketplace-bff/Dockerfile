@@ -5,6 +5,7 @@ COPY services/marketplace-bff/requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 COPY services/marketplace-bff/app /app/app
 COPY apps/demo-web/marketplace.html /app/marketplace.html
-ENV MARKETPLACE_HTML_PATH=/app/marketplace.html
+COPY apps/demo-web/wardrobe.html /app/wardrobe.html
+ENV MARKETPLACE_HTML_PATH=/app/marketplace.html WARDROBE_HTML_PATH=/app/wardrobe.html
 EXPOSE 8080
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}"]

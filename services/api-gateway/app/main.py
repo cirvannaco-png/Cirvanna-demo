@@ -242,11 +242,14 @@ class USIProfilePreferenceInput(BaseModel):
     attribute: str = Field(min_length=1, max_length=120)
     weight: float = Field(default=1.0, gt=0, le=1)
     active: bool = True
+    source: Literal["user_declared", "pnelly_user_confirmed"] = "user_declared"
+    source_request_id: str | None = Field(default=None, min_length=8, max_length=128)
 
 
 class USIProfileUpdateInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     expected_version: int | None = Field(default=None, ge=0)
+    consent_receipt_id: str | None = Field(default=None, min_length=8, max_length=128)
     preferences: list[USIProfilePreferenceInput] = Field(max_length=100)
 
 
