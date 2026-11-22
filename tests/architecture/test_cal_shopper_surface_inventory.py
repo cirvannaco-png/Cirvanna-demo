@@ -11,7 +11,6 @@ ROOT = Path(__file__).resolve().parents[2]
 # purchase surface and must be explicitly classified below. This is a route
 # inventory guard, not proof of deployed provider/CDN behavior.
 BFF_SURFACES = {
-    "/",
     "/marketplace.html",
     "/api/vision/marketplace-search",
     "/api/vision/look-it",
@@ -129,8 +128,13 @@ class CalShopperSurfaceInventoryTests(unittest.TestCase):
         compare = _function_source("services/marketplace-bff/app/main.py", "compare_public_offers")
         self.assertIn("CLICK_IT_PRIVACY_PIPELINE_NOT_RELEASED", click_it)
         self.assertIn("CAL_AUTHORIZATION_REQUIRED", compare)
-        self.assertNotIn("request.form(", click_it)
-        self.assertNotIn("request.body(", click_it)
+        click_tree = ast.parse(click_it)
+        called_methods = {
+            node.func.attr
+            for node in ast.walk(click_tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        }
+        self.assertTrue({"form", "body", "stream"}.isdisjoint(called_methods))
 
     def test_purchase_proxy_requires_fresh_purchase_authorization(self):
         source = _function_source("services/marketplace-bff/app/main.py", "commerce_proxy")
