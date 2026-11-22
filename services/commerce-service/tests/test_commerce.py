@@ -4819,3 +4819,74 @@ def test_shopify_reconciliation_rejects_targeted_non_active_store(client, monkey
     assert response.json()["detail"]["code"] == "SHOPIFY_CONNECTION_NOT_ACTIVE"
     assert response.json()["detail"]["connection_status"] == "revoked"
     db.close()
+
+
+def test_shopify_staged_products_are_private_and_scoped_to_approved_merchant_owner(client):
+    from app.shopify import ShopifyConnection, ShopifyProductSnapshot, ShopifyVariantSnapshot
+
+    owner_offer = seed_offer(owner_user_id="shopify-owner-1")
+    connection = ShopifyConnection(
+        id=str(uuid.uuid4()),
+        merchant_id=owner_offer["merchant_id"],
+        shop_domain="owner-one.myshopify.com",
+        shop_currency="KES",
+        status="active",
+    )
+    product = ShopifyProductSnapshot(
+        id=str(uuid.uuid4()),
+        connection_id=connection.id,
+        shopify_product_gid="gid://shopify/Product/1001",
+        title="Private staged product",
+        remote_status="ACTIVE",
+        mapping_state="staged",
+        variants_complete=True,
+    )
+    variant = ShopifyVariantSnapshot(
+        id=str(uuid.uuid4()),
+        connection_id=connection.id,
+        product_snapshot_id=product.id,
+        shopify_variant_gid="gid://shopify/ProductVariant/2001",
+        sku="PRIVATE-SKU-1",
+        title="Default",
+        options={"size": "M"},
+        price_minor=12000,
+        currency="KES",
+        tracked=True,
+        available_quantity=3,
+        inventory_complete=True,
+        mapping_state="staged",
+    )
+    db = TEST_SESSION()
+    db.add_all([connection, product, variant])
+    db.commit()
+    db.close()
+
+    # The owner can inspect their own staging records.
+    owner_response = client.get(
+        "/integrations/shopify/staged-products",
+        headers=auth("shopify-owner-1", "merchant"),
+    )
+    assert owner_response.status_code == 200, owner_response.text
+    assert owner_response.json()["visibility"] == "merchant_only_staging"
+    assert [item["title"] for item in owner_response.json()["items"]] == ["Private staged product"]
+
+    # A customer cannot use the merchant staging API, even when the user ID is the owner.
+    customer_response = client.get(
+        "/integrations/shopify/staged-products",
+        headers=auth("shopify-owner-1", "customer"),
+    )
+    assert customer_response.status_code == 403
+    assert customer_response.json()["detail"]["code"] == "MERCHANT_ROLE_REQUIRED"
+
+    # Another approved merchant receives no connection and cannot enumerate the owner's rows.
+    seed_offer(owner_user_id="shopify-owner-2")
+    other_response = client.get(
+        "/integrations/shopify/staged-products",
+        headers=auth("shopify-owner-2", "merchant"),
+    )
+    assert other_response.status_code == 404
+    assert other_response.json()["detail"]["code"] == "SHOPIFY_CONNECTION_NOT_FOUND"
+
+    # Anonymous shopper traffic is rejected before any staging data is queried.
+    anonymous_response = client.get("/integrations/shopify/staged-products")
+    assert anonymous_response.status_code == 401
