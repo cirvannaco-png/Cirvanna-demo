@@ -1,7 +1,7 @@
 # Public image publication inventory and fail-closed contract
 
 **Audit snapshot:** 22 November 2026  
-**Repository baseline:** reviewed main before this audit branch at 013c7503548fc638affceb21cc20c6383636face  
+**Repository baseline:** reviewed main at `bba0b82efa327300b48a1625ac39c626fa7b87d1`  
 **Status:** marketplace serializers withhold unverified image URLs; the Privacy Governance publication evaluator and Vision face masker are present on main. Click It remains disabled at the public BFF before multipart parsing. Global publication safety is **not certified**.
 
 This inventory distinguishes three separate authorities: CAL authorizes product/offer display; Identity/TAL authorizes the user's image-processing purpose; Privacy Governance plus trusted Vision attestation authorizes public media publication. None substitutes for another.
@@ -52,7 +52,7 @@ Container integrity and a model-load smoke test are not proof that every face is
 
 ## Rights, consent and deletion
 
-The Privacy Governance service on main provides consent grant/revocation, jurisdiction policy, guardian-authority checks, image-rights intake, urgent quarantine/unpublication, review, deletion propagation and audit events. PR #256 exposes the missing public BFF consent and photographed-person rights routes. Until that PR is merged and live dependencies are accepted, the public user-facing rights journey is incomplete.
+The Privacy Governance service on main provides consent grant/revocation, jurisdiction policy, guardian-authority checks, image-rights intake, urgent quarantine/unpublication, review, deletion propagation and audit events. Merged [PR #265](https://github.com/cirvannaco-png/Cirvanna-demo/pull/265) exposes the public BFF consent and photographed-person rights intake/status routes. The earlier [PR #256](https://github.com/cirvannaco-png/Cirvanna-demo/pull/256) was closed as superseded by #265. The public API journey now exists in code, but live jurisdiction, identity, quarantine, deletion and provider integrations remain unverified.
 
 Urgent reports for unmasked faces, possible minors or non-consensual images are not accepted unless quarantine and unpublication are confirmed. Removal is complete only when all required surfaces report deletion propagation, including CDN/cache, shared links, merchant surfaces and derivatives. A request receipt is not proof of completed deletion.
 
@@ -71,7 +71,7 @@ Urgent reports for unmasked faces, possible minors or non-consensual images are 
 
 - The Privacy Governance service, its publication evaluator, and the Vision face-masking implementation are present on main. Their existence does not prove that every publisher invokes them.
 - The older privacy-publication hardening branch contains code already represented on main; its missing publication inventory documentation is being forward-ported here.
-- PR #182's BFF consent and rights routes are being forward-ported by PR #256.
+- Merged PR #265 forward-ported the BFF consent and photographed-person rights routes onto current main. These routes are a user-facing intake boundary, not proof that a real provider has quarantined or deleted every copy.
 - PR #255 fixes a Look It consent-revocation defect: both request-scoped receipts must be revoked, and failure to revoke either suppresses the response.
 - Click It remains disabled at the BFF. Do not enable it merely because the internal Vision worker can mask a test image.
 
