@@ -91,6 +91,7 @@ jobs:
           alembic upgrade head
       - name: Verify CAL purchase audit immutability on PostgreSQL
         env:
+          PGPASSWORD: postgres_ci
           COMMERCE_DATABASE_URL: postgresql+psycopg://commerce_runtime:commerce_runtime_ci@localhost:5432/commerce_ci
           COMMERCE_MIGRATION_DATABASE_URL: postgresql+psycopg://commerce_migrator:commerce_migrator_ci@localhost:5432/commerce_ci
           COMMERCE_CAL_AUDIT_PROBE_DATABASE_URL: postgresql+psycopg://commerce_audit_probe:commerce_audit_probe_ci@localhost:5432/commerce_ci
