@@ -2568,6 +2568,7 @@ def test_shopify_checkout_reservation_uses_deterministic_provider_draft(monkeypa
     }]
     assert draft_input["presentmentCurrencyCode"] == "KES"
     assert draft_input["reserveInventoryUntil"].endswith("Z")
+    assert main._aware_utc(reservation.expires_at).isoformat().replace("+00:00", "Z") == draft_input["reserveInventoryUntil"]
     assert reservation.reservation_key in draft_input["tags"]
 
     # A concurrent retry must not create a second Shopify draft while the lease
