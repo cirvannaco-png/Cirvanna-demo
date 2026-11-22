@@ -50,6 +50,23 @@ HISTORICAL_LOCAL_DEFAULT_URI_FIXTURES = {
         ("amqp", "guest", "guest", "rabbitmq:5672"),
     ("integration-staging/source-intake/original/cirvanna-source.txt", 50900):
         ("amqp", "guest", "guest", "localhost"),
+    # Exact local-only PostgreSQL defaults in the same immutable, non-runtime source intake.
+    ("integration-staging/source-candidates/31-wardrobe-part-1.txt/docker-compose.yml", 4):
+        ("postgresql+asyncpg", "cirvanna", "cirvanna", "postgres:5432"),
+    ("integration-staging/source-candidates/31-wardrobe-part-1.txt/services/common/config.py", 50):
+        ("postgresql+asyncpg", "cirvanna", "cirvanna", "localhost:5432"),
+    ("integration-staging/source-intake/extracted/0031__wardrobe_part_1.txt", 152):
+        ("postgresql+asyncpg", "cirvanna", "cirvanna", "postgres:5432"),
+    ("integration-staging/source-intake/extracted/0031__wardrobe_part_1.txt", 234):
+        ("postgresql+asyncpg", "cirvanna", "cirvanna", "postgres:5432"),
+    ("integration-staging/source-intake/extracted/0031__wardrobe_part_1.txt", 556):
+        ("postgresql+asyncpg", "cirvanna", "cirvanna", "localhost:5432"),
+    ("integration-staging/source-intake/original/cirvanna-source.txt", 50480):
+        ("postgresql+asyncpg", "cirvanna", "cirvanna", "postgres:5432"),
+    ("integration-staging/source-intake/original/cirvanna-source.txt", 50562):
+        ("postgresql+asyncpg", "cirvanna", "cirvanna", "postgres:5432"),
+    ("integration-staging/source-intake/original/cirvanna-source.txt", 50884):
+        ("postgresql+asyncpg", "cirvanna", "cirvanna", "localhost:5432"),
 }
 
 
