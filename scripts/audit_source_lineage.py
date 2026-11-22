@@ -91,22 +91,34 @@ def _normalise_path(value: str) -> str:
 
 
 def _iter_fenced_blocks(snapshot_text: str):
-    """Yield fenced bodies, including a final fence that is truncated at EOF."""
+    """Yield outer fenced bodies, preserving nested language-labelled fences."""
     opening = re.compile(r"^" + TICK * 3 + r"[^\r\n]*\r?\n$")
+    nested_opening = re.compile(
+        r"^" + TICK * 3 + r"[^ \t\r\n" + re.escape(TICK) + r"]+(?:[ \t][^\r\n]*)?\r?\n$"
+    )
     closing = re.compile(r"^" + TICK * 3 + r"[ \t]*(?:\r?\n|$)")
     offset = 0
     block_start: int | None = None
+    nested_depth = 0
     body: list[str] = []
 
     for line in snapshot_text.splitlines(keepends=True):
         if block_start is None:
             if opening.fullmatch(line):
                 block_start = offset
+                nested_depth = 0
                 body = []
+        elif nested_opening.fullmatch(line):
+            nested_depth += 1
+            body.append(line)
         elif closing.fullmatch(line):
-            yield block_start, "".join(body)
-            block_start = None
-            body = []
+            if nested_depth:
+                nested_depth -= 1
+                body.append(line)
+            else:
+                yield block_start, "".join(body)
+                block_start = None
+                body = []
         else:
             body.append(line)
         offset += len(line)
