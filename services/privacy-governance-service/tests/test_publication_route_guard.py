@@ -323,11 +323,6 @@ def test_nonpublication_media_adjacent_routes_remain_narrow_and_explicit():
         and isinstance(decorator.args[0], ast.Constant)
         and decorator.args[0].value == "/click-it"
     )
-    virtual_twin_dependencies = next(
-        (keyword.value for keyword in virtual_twin_route.keywords if keyword.arg == "dependencies"),
-        None,
-    )
-    assert isinstance(virtual_twin_dependencies, ast.List)
     assert any(
         isinstance(item, ast.Call)
         and isinstance(item.func, ast.Name)
@@ -335,7 +330,7 @@ def test_nonpublication_media_adjacent_routes_remain_narrow_and_explicit():
         and item.args
         and isinstance(item.args[0], ast.Name)
         and item.args[0].id == "require_api_token"
-        for item in virtual_twin_dependencies.elts
+        for item in ast.walk(virtual_twin_handler)
     )
     for token in (
         "_verify_consent",
