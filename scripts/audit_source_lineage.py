@@ -195,9 +195,9 @@ def _named_code_blocks(snapshot_text: str) -> dict[str, list[str]]:
 
 def _only_final_newline_diff(left: str, right: str) -> bool:
     """Return true only when text differs by one optional final line feed."""
-    if left.endswith("\\n") and not right.endswith("\\n"):
+    if left.endswith("\n") and not right.endswith("\n"):
         return left[:-1] == right
-    if right.endswith("\\n") and not left.endswith("\\n"):
+    if right.endswith("\n") and not left.endswith("\n"):
         return right[:-1] == left
     return False
 
