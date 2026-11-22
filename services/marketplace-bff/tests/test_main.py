@@ -107,6 +107,7 @@ def test_marketplace_offers_rejects_unbound_or_cil_ineligible_cal_decisions(clie
             FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
             FakeResponse({
                 "request_id": "req-marketplace-invalid",
+                "display_authority": "CaTaCaCi/CAL",
                 "ranked_candidate_count": 1,
                 "displayable_products": [{
                     "product": {"product_id": "product-1", "catalog_version": 7,
@@ -180,6 +181,7 @@ def test_marketplace_offers_use_authenticated_gateway_cal_show_only(client, monk
     assert response.status_code == 200, response.text
     data = response.json()
     assert data["display_authority"] == "CaTaCaCi/CAL"
+    assert data["request_id"] == "req-marketplace-1"
     assert data["withheld_candidate_count"] == 1
     assert "withheld_candidate_ids" not in data
     assert "blocked-product-secret" not in response.text
@@ -861,7 +863,7 @@ def test_wardrobe_recommendations_persist_context_before_cal_discovery(client, m
             },
         }),
         FakeResponse({
-            "request_id": "req-conversation-1", "ranked_candidate_count": 0,
+            "request_id": "req-conversation-1", "display_authority": "CaTaCaCi/CAL", "ranked_candidate_count": 0,
             "displayable_products": [], "withheld_candidate_ids": [],
         }),
     ])
@@ -925,7 +927,8 @@ def test_wardrobe_recommendations_forward_verified_token_to_cal_decision_gateway
         FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
         FakeResponse({
             "request_id": "req-1",
-            "ranked_candidate_count": 1,
+            "display_authority": "CaTaCaCi/CAL",
+            "ranked_candidate_count": 2,
             "displayable_products": [{
                 "product": {"product_id": "product-1", "catalog_version": 3,
                             "image_urls": ["https://cdn.example.test/product.jpg"]},
@@ -933,7 +936,9 @@ def test_wardrobe_recommendations_forward_verified_token_to_cal_decision_gateway
                           "image_urls": ["https://cdn.example.test/offer.jpg"],
                           "product": {"image_urls": ["https://cdn.example.test/nested-offer.jpg"]}},
                 "decision": {"product_id": "product-1", "catalog_version": 3,
-                             "verdict": "show", "may_display": True},
+                             "verdict": "show", "may_display": True,
+                             "policy_version": "policy-1", "arbitration_contract_version": "1",
+                             "decision_pipeline_contract_version": "1"},
                 "cil_serving_assessment": {"status": "eligible", "assessed_catalog_version": 3},
             }],
             "withheld_candidate_ids": [{"product_id": "blocked-product-secret", "decision": "review"}],
@@ -2817,12 +2822,15 @@ def test_wardrobe_recommendations_reject_candidate_id_mismatch_before_display(cl
         FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
         FakeResponse({
             "request_id": "req-mismatch",
+            "display_authority": "CaTaCaCi/CAL",
             "ranked_candidate_count": 1,
             "displayable_products": [{
                 "product": {"product_id": "product-1", "catalog_version": 3},
                 "offer": {"catalog_product_id": "different-product", "variant_id": "variant-1"},
                 "decision": {"product_id": "product-1", "catalog_version": 3,
-                             "verdict": "show", "may_display": True},
+                             "verdict": "show", "may_display": True,
+                             "policy_version": "policy-1", "arbitration_contract_version": "1",
+                             "decision_pipeline_contract_version": "1"},
                 "cil_serving_assessment": {"status": "eligible", "assessed_catalog_version": 3},
             }],
             "withheld_candidate_ids": [],
@@ -4577,3 +4585,27 @@ def test_bff_and_identity_service_use_the_same_pnelly_preference_taxonomy():
     assert identity_values is not None
     assert bff_values is not None
     assert bff_values == identity_values
+
+
+def test_cal_discovery_envelope_requires_authority_request_id_and_complete_counts():
+    valid = {
+        "request_id": "req-envelope-1",
+        "display_authority": "CaTaCaCi/CAL",
+        "displayable_products": [],
+        "withheld_candidate_ids": [],
+        "ranked_candidate_count": 0,
+    }
+    assert main._validate_cal_discovery_envelope(valid, error_code="INVALID")[2:] == (0, "req-envelope-1")
+    invalid_payloads = [
+        {**valid, "request_id": " "},
+        {**valid, "display_authority": "commerce"},
+        {**valid, "withheld_candidate_ids": None},
+        {**valid, "ranked_candidate_count": True},
+        {**valid, "ranked_candidate_count": -1},
+        {**valid, "ranked_candidate_count": -1},
+    ]
+    for payload in invalid_payloads:
+        with pytest.raises(main.HTTPException) as exc:
+            main._validate_cal_discovery_envelope(payload, error_code="INVALID")
+        assert exc.value.status_code == 502
+        assert exc.value.detail["code"] == "INVALID"

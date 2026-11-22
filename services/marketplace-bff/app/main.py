@@ -886,6 +886,26 @@ def _withhold_unverified_media(value):
     return value
 
 
+def _validate_cal_discovery_envelope(data: Any, *, error_code: str) -> tuple[list, list, int, str]:
+    """Validate the canonical CAL discovery envelope before any shopper serialization."""
+    if not isinstance(data, dict):
+        raise HTTPException(502, detail={"code": error_code})
+    request_id = data.get("request_id")
+    display_authority = data.get("display_authority")
+    displayable = data.get("displayable_products")
+    withheld = data.get("withheld_candidate_ids")
+    ranked_count = data.get("ranked_candidate_count")
+    if (
+        not isinstance(request_id, str) or not request_id.strip()
+        or display_authority != "CaTaCaCi/CAL"
+        or not isinstance(displayable, list)
+        or not isinstance(withheld, list)
+        or isinstance(ranked_count, bool) or not isinstance(ranked_count, int) or ranked_count < 0
+    ):
+        raise HTTPException(502, detail={"code": error_code})
+    return displayable, withheld, ranked_count, request_id
+
+
 def _private_json_response(data: dict, *, status_code: int = 200) -> JSONResponse:
     return JSONResponse(
         content=_withhold_unverified_media(data),
@@ -3611,18 +3631,12 @@ async def public_offers(
         data = response.json()
     except ValueError as exc:
         raise HTTPException(502, detail={"code": "CAL_MARKETPLACE_DISCOVERY_RESPONSE_INVALID"}) from exc
-    if (
-        not isinstance(data, dict)
-        or not isinstance(data.get("displayable_products"), list)
-        or not isinstance(data.get("withheld_candidate_ids", []), list)
-        or isinstance(data.get("ranked_candidate_count"), bool)
-        or not isinstance(data.get("ranked_candidate_count", 0), int)
-        or data.get("ranked_candidate_count", 0) < 0
-    ):
-        raise HTTPException(502, detail={"code": "CAL_MARKETPLACE_DISCOVERY_RESPONSE_INVALID"})
+    displayable, withheld, ranked_count, request_id = _validate_cal_discovery_envelope(
+        data, error_code="CAL_MARKETPLACE_DISCOVERY_RESPONSE_INVALID"
+    )
 
     items = []
-    for candidate in data["displayable_products"]:
+    for candidate in displayable:
         if not isinstance(candidate, dict):
             raise HTTPException(502, detail={"code": "CAL_MARKETPLACE_DISCOVERY_RESPONSE_INVALID"})
         decision = candidate.get("decision")
@@ -3663,12 +3677,11 @@ async def public_offers(
         safe_offer["product"] = _withhold_unverified_media(product)
         items.append(safe_offer)
 
-    withheld = data.get("withheld_candidate_ids", [])
-    ranked_count = data.get("ranked_candidate_count", len(items) + len(withheld))
     has_more = ranked_count >= min(limit, 25)
     total = offset + ranked_count + (1 if has_more else 0)
     return JSONResponse(
         content={
+            "request_id": request_id,
             "items": items,
             "total": total,
             "offset": offset,
@@ -4368,15 +4381,12 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
         raise HTTPException(502, detail={"code": "WARDROBE_RECOMMENDATIONS_RESPONSE_INVALID"}) from exc
     # Treat the gateway decision as a candidate-bound authorization contract.
     # Never pass withheld IDs or raw policy evidence to the browser.
-    if (
-        not isinstance(data, dict)
-        or not isinstance(data.get("displayable_products"), list)
-        or not isinstance(data.get("withheld_candidate_ids", []), list)
-    ):
-        raise HTTPException(502, detail={"code": "WARDROBE_RECOMMENDATIONS_RESPONSE_INVALID"})
+    displayable, withheld, ranked_count, request_id = _validate_cal_discovery_envelope(
+        data, error_code="WARDROBE_RECOMMENDATIONS_RESPONSE_INVALID"
+    )
 
     authorized_products = []
-    for candidate in data["displayable_products"]:
+    for candidate in displayable:
         if not isinstance(candidate, dict):
             raise HTTPException(502, detail={"code": "WARDROBE_RECOMMENDATIONS_RESPONSE_INVALID"})
         decision = candidate.get("decision")
@@ -4391,6 +4401,12 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
             or decision.get("may_display") is not True
             or decision.get("product_id") != product_id
             or decision.get("catalog_version") != catalog_version
+            or not isinstance(decision.get("policy_version"), str)
+            or not decision.get("policy_version", "").strip()
+            or not isinstance(decision.get("arbitration_contract_version"), str)
+            or not decision.get("arbitration_contract_version", "").strip()
+            or not isinstance(decision.get("decision_pipeline_contract_version"), str)
+            or not decision.get("decision_pipeline_contract_version", "").strip()
             or not isinstance(product_id, str)
             or isinstance(catalog_version, bool)
             or not isinstance(catalog_version, int)
@@ -4404,10 +4420,9 @@ async def wardrobe_recommendations(request: Request, payload: WardrobeRecommenda
             raise HTTPException(502, detail={"code": "WARDROBE_CANDIDATE_CAL_CIL_AUTHORIZATION_INVALID"})
         authorized_products.append(_withhold_unverified_media(candidate))
 
-    withheld = data.get("withheld_candidate_ids", [])
     safe_payload = {
-        "request_id": data.get("request_id"),
-        "ranked_candidate_count": data.get("ranked_candidate_count", len(authorized_products) + len(withheld)),
+        "request_id": request_id,
+        "ranked_candidate_count": ranked_count,
         "displayable_products": authorized_products,
         "withheld_candidate_count": len(withheld),
         "display_authority": "CaTaCaCi/CAL",
