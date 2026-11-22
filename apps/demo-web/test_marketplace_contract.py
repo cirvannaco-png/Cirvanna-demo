@@ -102,6 +102,15 @@ class MarketplaceContractTests(unittest.TestCase):
         self.assertIn("data.display_authorized !== false", WARDROBE_HTML)
         self.assertIn("data.durable_personal_memory !== false", WARDROBE_HTML)
         self.assertIn("One-session advice only", WARDROBE_HTML)
+        self.assertNotIn("Refine with Complementer", WARDROBE_HTML)
+
+    def test_daily_look_complementer_reactions_are_explicit_and_tal_confirmed(self):
+        self.assertIn('api("/api/vision/complementer/feedback"', WARDROBE_HTML)
+        self.assertIn('consent_receipt_id: styleReceipt', WARDROBE_HTML)
+        self.assertIn('outcome', WARDROBE_HTML)
+        self.assertIn('result.durable_persistence !== true', WARDROBE_HTML)
+        self.assertIn("private TAL learning timeline", WARDROBE_HTML)
+        self.assertIn("not yet used as an independent ranking signal", WARDROBE_HTML)
 
 
     def test_pnelly_describe_it_uses_verified_wardrobe_and_cal_discovery(self):
