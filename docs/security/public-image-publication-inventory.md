@@ -1,7 +1,7 @@
 # Public image publication inventory and fail-closed contract
 
 **Audit snapshot:** 22 November 2026  
-**Repository baseline:** main at 11b9d18cc29ed9fe650341022171488d4267f907  
+**Repository baseline:** reviewed main before this audit branch at 013c7503548fc638affceb21cc20c6383636face  
 **Status:** marketplace serializers withhold unverified image URLs; the Privacy Governance publication evaluator and Vision face masker are present on main. Click It remains disabled at the public BFF before multipart parsing. Global publication safety is **not certified**.
 
 This inventory distinguishes three separate authorities: CAL authorizes product/offer display; Identity/TAL authorizes the user's image-processing purpose; Privacy Governance plus trusted Vision attestation authorizes public media publication. None substitutes for another.
