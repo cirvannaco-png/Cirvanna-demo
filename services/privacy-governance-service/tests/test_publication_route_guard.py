@@ -538,3 +538,70 @@ def test_marketplace_browser_does_not_render_api_supplied_media_urls():
     assert "p.image_urls[0]" not in source
     assert 'src="\'+escapeHtml(p.image_urls[0])' not in source
 
+
+
+def test_internal_asset_publication_approval_is_privacy_gate_bound_and_private_reads_are_no_store():
+    """Internal asset routes are not public, but their publication state is a public-media control plane."""
+    asset_path = ROOT / "services" / "asset-service" / "app" / "main.py"
+    source = asset_path.read_text(encoding="utf-8")
+    routes = _route_definitions(source, asset_path)
+
+    approval_routes = [
+        item for item in routes
+        if item[0] == "POST" and item[1] == "/internal/v1/assets/{asset_id}/publication/approve"
+    ]
+    assert len(approval_routes) == 1
+    _method, _route, approval = approval_routes[0]
+    approval_body = ast.get_source_segment(source, approval) or ""
+    approval_decorator = next(
+        item for item in approval.decorator_list
+        if isinstance(item, ast.Call)
+        and isinstance(item.func, ast.Attribute)
+        and item.func.attr == "post"
+        and item.args
+        and isinstance(item.args[0], ast.Constant)
+        and item.args[0].value == "/internal/v1/assets/{asset_id}/publication/approve"
+    )
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "Depends"
+        and node.args
+        and isinstance(node.args[0], ast.Name)
+        and node.args[0].id == "require_internal_token"
+        for node in ast.walk(approval_decorator)
+    )
+    assert "_evaluate_publication_with_privacy_governance" in approval_body
+    assert approval_body.index("_evaluate_publication_with_privacy_governance") < approval_body.index('row.publication_state = "approved"')
+    for token in (
+        '"asset_sha256": row.sha256',
+        '"consent_resource_id") == row.asset_id',
+        '"masking_attestation_id") == attestation_id',
+        '"target_surface") == surface',
+        '"human_privacy_review_passed") is True',
+        "masking_model_sha256",
+        "human_privacy_review_receipt_id",
+        "human_privacy_reviewer_ref",
+    ):
+        assert token in approval_body
+
+    revoke_routes = [
+        item for item in routes
+        if item[0] == "POST" and item[1] == "/internal/v1/assets/{asset_id}/publication/revoke"
+    ]
+    assert len(revoke_routes) == 1
+    revoke_body = ast.get_source_segment(source, revoke_routes[0][2]) or ""
+    assert 'row.publication_scope = "private_only"' in revoke_body
+    assert 'row.publication_state = "revoked"' in revoke_body
+    assert "row.revoked_at = datetime.now(timezone.utc)" in revoke_body
+
+    content_routes = [
+        item for item in routes
+        if item[0] == "GET" and item[1] == "/internal/v1/assets/{asset_id}/content"
+    ]
+    assert len(content_routes) == 1
+    content_body = ast.get_source_segment(source, content_routes[0][2]) or ""
+    assert "_owned_asset(db, asset_id, subject_id, purpose, parent_id)" in content_body
+    assert "hashlib.sha256(data).hexdigest() != row.sha256" in content_body
+    assert '"Cache-Control": "no-store, private"' in source
+    assert '"X-Content-Type-Options": "nosniff"' in source
