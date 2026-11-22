@@ -83,6 +83,15 @@ app.mount("/assets", StaticFiles(directory=str(PORTAL_ASSETS_DIR), check_dir=Tru
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
+    # Every API response, including framework-generated 4xx/5xx errors, can
+    # contain account- or authorization-dependent state. Route-level headers
+    # are easy to omit on exceptional paths, so enforce the cache boundary here.
+    if request.url.path.startswith("/api/"):
+        cache_control = response.headers.get("Cache-Control", "").casefold()
+        if "no-store" not in cache_control:
+            response.headers["Cache-Control"] = "no-store, private"
+        response.headers.setdefault("Pragma", "no-cache")
+        response.headers.setdefault("Expires", "0")
     response.headers.setdefault(
         "Content-Security-Policy",
         "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
