@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,16 @@ SHA1 = re.compile(r"^[0-9a-f]{40}$")
 
 def _ref(value: Any) -> bool:
     return isinstance(value, str) and (value.startswith("https://") or value.startswith("evidence://"))
+
+
+def _timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
 
 
 def validate(document: dict[str, Any]) -> list[str]:
@@ -62,12 +73,21 @@ def validate(document: dict[str, Any]) -> list[str]:
         release = evidence.get("verified_release_sha")
         if not isinstance(release, str) or not SHA1.fullmatch(release):
             errors.append(f"{prefix} evidence.verified_release_sha must be a full commit SHA")
-        for field in ("reviewed_at", "expires_at"):
-            if not isinstance(evidence.get(field), str) or not evidence[field].strip():
-                errors.append(f"{prefix} evidence.{field} is required")
+        reviewed = _timestamp(evidence.get("reviewed_at"))
+        expires = _timestamp(evidence.get("expires_at"))
+        if reviewed is None:
+            errors.append(f"{prefix} evidence.reviewed_at must be timezone-aware ISO-8601")
+        if expires is None:
+            errors.append(f"{prefix} evidence.expires_at must be timezone-aware ISO-8601")
+        if reviewed is not None and expires is not None and expires <= reviewed:
+            errors.append(f"{prefix} evidence.expires_at must follow reviewed_at")
+        if expires is not None and expires <= datetime.now(timezone.utc):
+            errors.append(f"{prefix} evidence has expired")
         refs = evidence.get("evidence_refs")
         if not isinstance(refs, list) or not refs or any(not _ref(value) for value in refs):
             errors.append(f"{prefix} evidence.evidence_refs must contain https:// or evidence:// references")
+        if evidence.get("operator") and evidence.get("independent_approver") == evidence.get("operator"):
+            errors.append(f"{prefix} operator and independent_approver must be different")
     return errors
 
 
