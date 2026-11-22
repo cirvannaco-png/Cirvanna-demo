@@ -1,7 +1,7 @@
 # Independent regression, security and deployment review — 22 November 2026
 
 Reviewed repository: `cirvannaco-png/Cirvanna-demo`  
-Reviewed main: `81580b26034e0cf424172d5b96eead4a1c22f840`.
+Reviewed main: `eca1a7349daef730a9e1ac43c72fec91712cb8b8`. Runtime findings are unchanged from the immediately prior code snapshot `81580b26034e0cf424172d5b96eead4a1c22f840`; the two intervening commits changed only audit documentation.
 
 This is a cross-workstream review of code contracts, merged PRs, CI evidence, service READMEs, runbooks and release-gate state. It is not a third-party penetration test, external privacy assessment, live deployment certification or real-customer acceptance study.
 
