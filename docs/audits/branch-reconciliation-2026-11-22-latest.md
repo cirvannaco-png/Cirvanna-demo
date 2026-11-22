@@ -1,20 +1,21 @@
 # Branch reconciliation — 22 November 2026 (graph pass)
 
 Repository: `cirvannaco-png/Cirvanna-demo`  
-Reviewed main: `029d96637023b2e120619c7ab3219bdb4a0aa3cd`  
+Reviewed main: `856fb986b5c626911137028a2c40f469dc4d8bb6`  
 Method: GitHub's paginated branch-ref inventory and commit-ancestry comparisons. This is a graph-level audit, not a code-quality review of every diverged branch.
 
 ## Inventory
 
-- **300 branch refs** total, including `main` (299 non-main refs).
-- **296 unique commit heads** across those refs.
-- Three actual duplicate-head pairs are present; this reduces the unique head count by three. The audit branch created for this report also points at the same commit as `main`, so it is a deliberate temporary alias rather than a duplicate implementation.
-- **295 unique non-main commit heads**.
+- **304 branch refs** total, including `main` (303 non-main refs).
+- **301 unique commit heads** across those refs.
+- Three actual duplicate-head pairs are present; this reduces the unique head count by three.
+- **300 unique non-main commit heads**.
+- The audit branch created for this report is now **4 commits ahead / 1 behind** current `main`; it is diverged and included in the classification.
 - `main` currently reports `protected: false`. Required PR/review/check enforcement remains an administrator blocker tracked by [#271](https://github.com/cirvannaco-png/Cirvanna-demo/issues/271).
 
 ## Ancestry classification
 
-A complete comparison was performed for the original 290 unique non-main heads against main at `74e153dfbc2911770670ec171ad2b31092047b8b`: 223 were diverged and 67 were behind-only. Main subsequently advanced through the Shopify reservation fix (#302), its documentation follow-up (#307), and the combined cross-service evidence clarification (#310). Those three mainline commits post-date the original branch-head snapshot; none of the original branch heads contains those later mainline commits, so their status classes remain unchanged and their behind counts increase by three.
+A complete comparison was performed for the original 290 unique non-main heads against main at `74e153dfbc2911770670ec171ad2b31092047b8b`: 223 were diverged and 67 were behind-only. Main subsequently advanced through five commits: the Shopify reservation fix (#302), its documentation follow-up (#307), the CAL evidence/gap map (#309), the combined cross-service evidence clarification (#310), and source-lineage snapshot parsing (#312). These five mainline commits post-date the original branch-head snapshot; none of the original 290 branch heads contains those later mainline commits, so their status classes remain unchanged and their behind counts increase by five.
 
 Five additional unique PR branch heads were then compared against the later mainline snapshots:
 - PR #305 branch: 1 ahead / 5 behind; merged.
@@ -23,7 +24,13 @@ Five additional unique PR branch heads were then compared against the later main
 - PR #308 branch: 5 ahead / 1 behind at the comparison snapshot; open.
 - PR #310 branch: 1 ahead / 1 behind; merged.
 
-The combined current classification is therefore **228 diverged** and **67 behind-only** across 295 unique non-main heads. A behind-only branch contains no commit absent from main; it is an archival/deletion candidate, not an automatic deletion. A diverged branch may contain useful work, already-squash-merged work, superseded work, or unsafe/obsolete code. Ahead/behind counts alone do not determine merge or deletion eligibility.
+Four further PR branch heads were compared against current main at `856fb986`:
+- PR #312 branch: 2 ahead / 1 behind; merged.
+- PR #313 branch: 2 ahead / 1 behind; closed unmerged.
+- PR #314 branch: 2 ahead / 0 behind; open (ahead-only).
+- PR #315 branch: 3 ahead / 0 behind; open (ahead-only).
+
+The audit branch for this report is 4 ahead / 1 behind. The combined current classification is therefore **231 diverged**, **67 behind-only**, and **2 ahead-only** across 300 unique non-main heads. A behind-only branch contains no commit absent from main; it is an archival/deletion candidate, not an automatic deletion. A diverged branch may contain useful work, already-squash-merged work, superseded work, or unsafe/obsolete code. Ahead/behind counts alone do not determine merge or deletion eligibility.
 
 ## Duplicate branch-head pairs
 
@@ -47,16 +54,18 @@ These are examples of high-ahead branches, not a complete priority list. Their c
 ## Current PR and release context
 
 - PR #302 is merged. Its provider hold revalidation and Stripe-expiry-safe cleanup changes are on main; its exact-head Commerce, Architecture, Privacy Governance and container-image checks passed.
-- PR #303 remains open with a failed Architecture secret scan. The expanded broker-URI matcher exposed legacy candidate/intake defaults; additional review found that driver-qualified SQLAlchemy URIs such as `postgresql+asyncpg://` also need coverage. Do not weaken the scanner to obtain green CI.
-- PR #308 is open for source-lineage header reconciliation. PR #306 was closed unmerged; PRs #305, #307 and #310 were merged documentation changes.
+- PR #303 was closed unmerged after its Architecture secret scan failed. PR #314 is the current scanner retry; its exact path/line/scheme/host exception for historical AMQP defaults is scoped, but driver-qualified SQLAlchemy URIs such as `postgresql+asyncpg://` still need coverage. Do not weaken the scanner to obtain green CI.
+- PR #308 and #306 were closed unmerged; PR #312 merged the source-lineage boundary fix; PR #315 is open for standalone filename-fence parsing. PRs #305, #307, #309 and #310 were merged documentation/evidence changes. PR #311 is this audit report and remains open.
 - The production release ledger still records **23 required gates, all 23 blocked**. This graph audit does not change production readiness.
 
 ## Disposition and next actions
 
-1. Preserve all 229 diverged heads while performing file-level classification and checking open/closed PRs, workflows, release references and unique source lineage.
-2. For the 66 behind-only heads, verify no external automation or recovery process depends on the ref; then prepare a separate, reviewable archival/deletion plan.
+1. Preserve all 231 diverged heads while performing file-level classification and checking open/closed PRs, workflows, release references and unique source lineage.
+2. For the 67 behind-only heads, verify no external automation or recovery process depends on the ref; then prepare a separate, reviewable archival/deletion plan.
 3. Review the three duplicate implementation pairs. Do not delete either side until the superseding implementation and dependency references are confirmed.
 4. Configure and independently verify branch protection for `main` under #271.
 5. Refresh this inventory before any destructive ref operation; the repository is actively changing.
 
-**No branch was deleted, force-pushed, or merged as part of this audit.**
+**Review the two ahead-only branches (#314 and #315) as ordinary PR candidates; ahead-only status is not approval.
+
+No branch was deleted, force-pushed, or merged as part of this audit.**
