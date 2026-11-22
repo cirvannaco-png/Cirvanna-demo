@@ -1900,6 +1900,20 @@ app = FastAPI(
 )
 
 
+@app.middleware("http")
+async def prevent_api_response_caching(request, call_next):
+    response = await call_next(request)
+    # Discovery and purchase authorization responses are user/context-bound.
+    # Apply this to success and framework-generated error responses alike.
+    if request.url.path.startswith("/v1/"):
+        cache_control = response.headers.get("Cache-Control", "").casefold()
+        if "no-store" not in cache_control:
+            response.headers["Cache-Control"] = "no-store, private"
+        response.headers.setdefault("Pragma", "no-cache")
+        response.headers.setdefault("Expires", "0")
+    return response
+
+
 def _purchase_receipt_signature(unsigned: dict[str, Any], secret: str) -> str:
     canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
     return hmac.new(secret.encode("utf-8"), canonical, hashlib.sha256).hexdigest()
