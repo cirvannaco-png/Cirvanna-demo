@@ -2558,7 +2558,8 @@ def test_shopify_checkout_reservation_uses_deterministic_provider_draft(monkeypa
             }}
         if "CirvannaReadReservedDraft" in query:
             return {"draftOrder": {
-                "id": "gid://shopify/DraftOrder/900", "status": "OPEN", "ready": True,
+                "id": "gid://shopify/DraftOrder/900", "tags": [reservation_key],
+                "status": "OPEN", "ready": True,
                 "reserveInventoryUntil": provider_expiry[0], "order": None,
             }}
         if "CirvannaCompleteReservedDraft" in query:
@@ -2606,7 +2607,10 @@ def test_shopify_checkout_reservation_uses_deterministic_provider_draft(monkeypa
     db.commit()
     before_retry = len(calls)
     assert shopify.prepare_checkout_inventory_reservations(db, order) == 1
-    assert len(calls) == before_retry
+    retry_calls = calls[before_retry:]
+    assert len(retry_calls) == 1
+    assert "CirvannaReadReservedDraft" in retry_calls[0][0]
+    assert not any("CirvannaReserveInventory" in call[0] for call in retry_calls)
 
     # A durable UNKNOWN state must reconcile by stable tag and revalidate the
     # full provider hold before adopting the draft; an ID alone is insufficient.
@@ -2674,6 +2678,170 @@ def test_shopify_provider_reservation_expiry_readback_is_exact_and_future():
     assert _reservation_expiry_matches(later, expected) is False
     assert _reservation_expiry_matches(earlier, expected) is False
     assert _reservation_expiry_matches((main.now() - timedelta(seconds=1)).isoformat(), expected) is False
+
+
+def test_shopify_failure_does_not_release_inventory_while_existing_stripe_session_is_unconfirmed(monkeypatch):
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from app import shopify
+
+    order = SimpleNamespace(id="order-active-session", state="pending_payment", payment_session_id="cs_test_active")
+    reservation = SimpleNamespace(state="failed", connection_id="connection-1", last_error=None)
+    class FakeDB:
+        commits = 0
+        def scalar(self, _statement):
+            return order
+        def commit(self):
+            self.commits += 1
+    db = FakeDB()
+    class FakeStripe:
+        def expire_session(self, session_id):
+            assert session_id == "cs_test_active"
+            return False
+    monkeypatch.setattr(main, "StripeGateway", FakeStripe)
+    monkeypatch.setattr(shopify, "release_one_shopify_reservation", lambda *_: pytest.fail("provider hold released while Stripe session may still be payable"))
+    monkeypatch.setattr(main, "release_reservations", lambda *_: pytest.fail("local stock released while Stripe session may still be payable"))
+
+    with pytest.raises(HTTPException) as rejected:
+        shopify._compensate_failed_checkout_reservations(db, order, [reservation])
+    assert rejected.value.status_code == 503
+    assert rejected.value.detail["code"] == "SHOPIFY_RESERVATION_PAYMENT_SESSION_EXPIRY_UNCONFIRMED"
+    assert order.state == "pending_payment"
+    assert reservation.state == "failed"
+    assert reservation.last_error == "SHOPIFY_RESERVATION_PAYMENT_SESSION_EXPIRY_UNCONFIRMED"
+    assert db.commits == 1
+
+
+def test_shopify_failure_preserves_reservations_when_stripe_expiry_raises(monkeypatch):
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from app import shopify
+
+    order = SimpleNamespace(id="order-expiry-exception", state="pending_payment", payment_session_id="cs_test_exception")
+    reservation = SimpleNamespace(state="unknown", connection_id="connection-1", last_error=None)
+    class FakeDB:
+        commits = 0
+        def scalar(self, _statement):
+            return order
+        def commit(self):
+            self.commits += 1
+    db = FakeDB()
+    class FakeStripe:
+        def expire_session(self, _session_id):
+            raise RuntimeError("Stripe API timeout")
+    monkeypatch.setattr(main, "StripeGateway", FakeStripe)
+    monkeypatch.setattr(shopify, "release_one_shopify_reservation", lambda *_: pytest.fail("provider hold released after ambiguous Stripe expiry"))
+    monkeypatch.setattr(main, "release_reservations", lambda *_: pytest.fail("local stock released after ambiguous Stripe expiry"))
+
+    with pytest.raises(HTTPException) as rejected:
+        shopify._compensate_failed_checkout_reservations(db, order, [reservation])
+    assert rejected.value.status_code == 503
+    assert rejected.value.detail["code"] == "SHOPIFY_RESERVATION_PAYMENT_SESSION_EXPIRY_UNCONFIRMED"
+    assert order.state == "pending_payment"
+    assert reservation.state == "unknown"
+    assert reservation.last_error == "SHOPIFY_RESERVATION_PAYMENT_SESSION_EXPIRY_UNCONFIRMED"
+    assert db.commits == 1
+
+
+def test_shopify_failure_expires_existing_stripe_session_before_releasing_reservations(monkeypatch):
+    from types import SimpleNamespace
+    from app import shopify
+
+    order = SimpleNamespace(id="order-expire-session", state="pending_payment", payment_session_id="cs_test_expire")
+    reservation = SimpleNamespace(state="failed", connection_id="connection-1", last_error=None)
+    connection = SimpleNamespace(id="connection-1")
+    calls = []
+    class FakeDB:
+        def scalar(self, _statement):
+            return order
+        def get(self, model, _identifier):
+            return connection if model is shopify.ShopifyConnection else order
+        def commit(self):
+            calls.append("commit")
+    db = FakeDB()
+    class FakeStripe:
+        def expire_session(self, session_id):
+            calls.append(("expire", session_id))
+            return True
+    def release_provider(_connection, _db, row):
+        calls.append("release_provider")
+        row.state = "released"
+        return True
+    def release_local(_db, current, final_state):
+        calls.append("release_local")
+        current.state = final_state
+    monkeypatch.setattr(main, "StripeGateway", FakeStripe)
+    monkeypatch.setattr(shopify, "release_one_shopify_reservation", release_provider)
+    monkeypatch.setattr(main, "release_reservations", release_local)
+
+    shopify._compensate_failed_checkout_reservations(db, order, [reservation])
+    assert calls.index(("expire", "cs_test_expire")) < calls.index("release_provider") < calls.index("release_local")
+    assert reservation.state == "released"
+    assert order.state == "checkout_failed"
+
+
+def test_shopify_failure_after_payment_preserves_provider_draft_for_compensation_worker(monkeypatch):
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from app import shopify
+
+    order = SimpleNamespace(id="order-already-paid", state="paid", payment_session_id="cs_test_paid")
+    reservation = SimpleNamespace(state="reserved", connection_id="connection-1", last_error=None)
+    class FakeDB:
+        commits = 0
+        def scalar(self, _statement):
+            return order
+        def commit(self):
+            self.commits += 1
+    db = FakeDB()
+    monkeypatch.setattr(main, "StripeGateway", lambda: pytest.fail("paid order must not expire its completed payment session"))
+    monkeypatch.setattr(shopify, "release_one_shopify_reservation", lambda *_: pytest.fail("paid order draft must be preserved for completion/compensation"))
+    monkeypatch.setattr(main, "release_reservations", lambda *_: pytest.fail("paid stock reservation must not be released"))
+
+    with pytest.raises(HTTPException) as rejected:
+        shopify._compensate_failed_checkout_reservations(db, order, [reservation])
+    assert rejected.value.status_code == 503
+    assert rejected.value.detail["code"] == "SHOPIFY_RESERVATION_POST_PAYMENT_RECONCILIATION_REQUIRED"
+    assert order.state == "paid"
+    assert reservation.state == "reserved"
+    assert reservation.last_error == "SHOPIFY_RESERVATION_FAILURE_AFTER_PAYMENT"
+    assert db.commits == 1
+
+
+def test_shopify_existing_reserved_draft_readback_requires_exact_id_and_reservation_tag(monkeypatch):
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from app import shopify
+
+    reservation = SimpleNamespace(
+        draft_order_gid="gid://shopify/DraftOrder/expected",
+        reservation_key="cirvanna-reserve-expected",
+        state="reserved",
+        last_error=None,
+    )
+    connection = SimpleNamespace(id="connection-1")
+    class CommitCounter:
+        commits = 0
+        def commit(self):
+            self.commits += 1
+
+    db = CommitCounter()
+    monkeypatch.setattr(shopify, "_graphql", lambda *_args, **_kwargs: {
+        "draftOrder": {
+            "id": "gid://shopify/DraftOrder/other",
+            "tags": ["cirvanna-reserve-other"],
+            "status": "OPEN", "ready": True,
+            "reserveInventoryUntil": (main.now() + __import__("datetime").timedelta(minutes=10)).isoformat().replace("+00:00", "Z"),
+            "order": None,
+        }
+    })
+    with pytest.raises(HTTPException) as rejected:
+        shopify._read_verified_reservation_draft(connection, db, reservation)
+    assert rejected.value.status_code == 409
+    assert rejected.value.detail["code"] == "SHOPIFY_RESERVATION_READBACK_MISMATCH"
+    assert reservation.state == "failed"
+    assert reservation.last_error == "SHOPIFY_RESERVATION_READBACK_MISMATCH"
+    assert db.commits == 1
 
 
 def test_shopify_recovered_reservation_draft_is_adopted_only_after_exact_hold_verification():
