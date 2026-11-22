@@ -3236,7 +3236,10 @@ def save_product(catalog_product_id: uuid.UUID, actor: Annotated[Actor, Depends(
             db.commit()
         except IntegrityError:
             db.rollback()
-    return {"catalog_product_id": pid, "product_name": product["name"], "saved": True}
+    # Saving a reference is not a CAL display authorization. Keep the
+    # mutation response identifier-only; product names and offer details may
+    # be returned only through a fresh, candidate-bound CAL SHOW surface.
+    return {"catalog_product_id": pid, "saved": True}
 
 
 @app.get("/saved-products")
