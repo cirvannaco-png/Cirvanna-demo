@@ -62,8 +62,10 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install hash-locked CPU research environment
-        run: python -m pip install --require-hashes --only-binary=:all: -r tools/model_evaluation/fashion_retrieval/requirements-research-py311-linux-x86_64-cpu.lock
+        run: |
+          python -m pip install --require-hashes --only-binary=:all: -r tools/model_evaluation/fashion_retrieval/requirements-research-py311-linux-x86_64-cpu.lock
       - name: Check dependency consistency
         run: python -m pip check
       - name: Verify pinned model-runtime packages
-        run: python -c 'from importlib.metadata import version; import open_clip, torch, torchvision, transformers; assert torch.__version__ == "2.7.0+cpu"; assert torchvision.__version__ == "0.22.0+cpu"; assert version("open_clip_torch") == "4.2.2"; assert transformers.__version__ == "4.57.6"; assert not torch.cuda.is_available(); print("Hash-locked CPU model runtime imports and version checks passed.")'
+        run: |
+          python -c 'from importlib.metadata import version; import open_clip, torch, torchvision, transformers; assert torch.__version__ == "2.7.0+cpu"; assert torchvision.__version__ == "0.22.0+cpu"; assert version("open_clip_torch") == "4.2.2"; assert transformers.__version__ == "4.57.6"; assert not torch.cuda.is_available(); print("Hash-locked CPU model runtime imports and version checks passed.")'
