@@ -98,8 +98,8 @@ def _named_code_blocks(snapshot_text: str) -> dict[str, list[str]]:
     assuming the first line of every fence is the only filename.
     """
     found: dict[str, list[str]] = {}
-    file_header = re.compile(r"^\\s*(?:#\\s*File:|//\\s*File:|--\\s*File:|FILE:)\\s*(.+?)\\s*$", re.IGNORECASE)
-    separator = re.compile(r"^\\s*#\\s*[=\\-]{5,}\\s*$")
+    file_header = re.compile(r"^\s*(?:#\s*File:|//\s*File:|--\s*File:|FILE:)\s*(.+?)\s*$", re.IGNORECASE)
+    separator = re.compile(r"^\s*#\s*[=\-]{5,}\s*$")
 
     for match in FENCED_BLOCK.finditer(snapshot_text):
         lines = match.group(1).splitlines(keepends=True)
@@ -111,15 +111,15 @@ def _named_code_blocks(snapshot_text: str) -> dict[str, list[str]]:
                 return
             # Intake section dividers and spacing belong to the archive format,
             # not to the source file body. Preserve the source's final newline.
-            while body and (not body[-1].strip() or separator.fullmatch(body[-1].rstrip("\\r\\n"))):
+            while body and (not body[-1].strip() or separator.fullmatch(body[-1].rstrip("\r\n"))):
                 body.pop()
-            content = "".join(body).replace("\\r\\n", "\\n")
-            if content and not content.endswith("\\n"):
-                content += "\\n"
+            content = "".join(body).replace("\r\n", "\n")
+            if content and not content.endswith("\n"):
+                content += "\n"
             found.setdefault(current_path, []).append(content)
 
         for index, line in enumerate(lines):
-            header = file_header.match(line.rstrip("\\r\\n"))
+            header = file_header.match(line.rstrip("\r\n"))
             if header:
                 flush()
                 current_path = _normalise_path(header.group(1))
