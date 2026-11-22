@@ -1,13 +1,13 @@
 # Branch reconciliation — 22 November 2026
 
 Repository: `cirvannaco-png/Cirvanna-demo`  
-Comparison base: `main` at `81580b26034e0cf424172d5b96eead4a1c22f840`.
+Current main: `eca1a7349daef730a9e1ac43c72fec91712cb8b8`. Prior code comparison base: `81580b26034e0cf424172d5b96eead4a1c22f840`.
 
 ## Inventory and method
 
-Paginated GitHub branch search returned **261 refs including main**, so 260 non-main branches were compared against the exact main SHA. All 260 comparisons returned successfully. Exactly one non-main branch is strictly ahead-only: `integration/appearance-specialist-current-main-v2` (30 ahead, 0 behind), the head of PR #269. No non-main branch is identical to main. The other 259 are either behind-only or diverged.
+Paginated GitHub branch search now returns **263 refs including main** (262 non-main). The original 260 non-main refs were each compared against `81580b26034e0cf424172d5b96eead4a1c22f840`. Main then advanced by exactly two documentation-only commits to `eca1a7349daef730a9e1ac43c72fec91712cb8b8`; therefore, for those 260 refs, ahead counts are unchanged and behind counts increase by exactly two. The two subsequently created audit branches were compared directly against current main: `audit/cirvanna-261-branch-and-production-review-2026-11-22` is 6 ahead / 2 behind, and `audit/cirvanna-261-branch-and-production-review-current-main-2026-11-22` is 4 ahead / 0 behind. `integration/appearance-specialist-current-main-v2` is now 30 ahead / 2 behind (the head of PR #269), not ahead-only. No non-main ref is identical to main. The only current ahead-only ref is the current-main audit branch with 4 commits.
 
-A diverged branch is not a merge recommendation. Squash-merged branches can appear ahead because their original commits are not ancestors of the squash commit. Many older branches are hundreds of commits behind and contain no unique commits. No mass merge, force-push or deletion was performed.
+A diverged branch is not a merge recommendation. Squash-merged branches can appear ahead because their original commits are not ancestors of the squash commit. Many older branches are hundreds of commits behind and contain no unique commits. No mass merge, force-push or deletion was performed. The two mainline commits between the comparison base and current main changed only the two audit documents; no runtime source changed.
 
 ## Canonical dispositions
 
