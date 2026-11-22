@@ -1028,6 +1028,55 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
       }
       statusNode.append(feedbackControls, feedbackStatus);
       statusNode.append(text("p", "A reaction is a user-confirmed TAL observation. It is not yet used as an independent ranking signal.", "small"));
+
+      const preferenceOptions = [
+        ["style:minimalist", "Minimalist"], ["style:elegant", "Elegant"], ["style:romantic", "Romantic"],
+        ["style:bold", "Bold"], ["style:streetwear", "Streetwear"], ["style:classic", "Classic"],
+        ["style:editorial", "Editorial"], ["color:teal", "Teal"], ["color:navy", "Navy"],
+        ["color:earthy", "Earth tones"], ["color:monochrome", "Monochrome"], ["color:pastel", "Pastels"],
+        ["silhouette:relaxed", "Relaxed silhouette"], ["silhouette:tailored", "Tailored silhouette"],
+        ["silhouette:oversized", "Oversized silhouette"], ["silhouette:structured", "Structured silhouette"],
+        ["material:linen", "Linen"], ["material:cotton", "Cotton"], ["material:denim", "Denim"],
+        ["material:silk", "Silk"], ["pattern:solid", "Solid"], ["pattern:floral", "Floral"],
+        ["pattern:striped", "Striped"], ["pattern:geometric", "Geometric"]
+      ];
+      const preferenceControls = document.createElement("div");
+      preferenceControls.className = "row";
+      const preferenceSelect = document.createElement("select");
+      preferenceSelect.setAttribute("aria-label", "Choose a style preference to save");
+      for (const [value, label] of preferenceOptions) preferenceSelect.append(new Option(label, value));
+      const savePreference = text("button", "Save this preference", "btn");
+      savePreference.type = "button";
+      savePreference.disabled = !profileReceipt;
+      const preferenceStatus = text("p", profileReceipt
+        ? "Only the preference you choose here is saved to your USI profile."
+        : "Enable profile-storage consent to save an explicit preference. Advice and reactions remain separate.", "pnelly-note");
+      savePreference.addEventListener("click", async () => {
+        if (!profileReceipt) {
+          preferenceStatus.textContent = "Enable profile-storage consent before saving. Nothing has been changed.";
+          return;
+        }
+        savePreference.disabled = true;
+        preferenceStatus.textContent = "Saving your explicit preference to USI…";
+        try {
+          const saved = await api("/api/wardrobe/pnelly/preferences", {
+            method: "POST",
+            body: JSON.stringify({request_id: requestId, consent_receipt_id: profileReceipt, attribute: preferenceSelect.value})
+          });
+          if (saved.durable_persistence !== true || saved.learning_owner !== "USI" || !["recorded", "replayed", "already_present"].includes(saved.status)) {
+            throw new Error("PNELLY_PREFERENCE_PERSISTENCE_UNCONFIRMED");
+          }
+          preferenceStatus.textContent = saved.status === "already_present"
+            ? "That preference is already active in your USI profile."
+            : "Preference saved to USI profile v" + saved.profile_version + ". Generate your next set of looks to apply it.";
+        } catch (error) {
+          preferenceStatus.textContent = "Could not confirm the preference was saved: " + (error.message || "Please retry.");
+        } finally {
+          savePreference.disabled = !profileReceipt;
+        }
+      });
+      preferenceControls.append(preferenceSelect, savePreference);
+      statusNode.append(preferenceControls, preferenceStatus);
     } catch (error) {
       statusNode.textContent = error.message || "Complementer is unavailable.";
     } finally {
