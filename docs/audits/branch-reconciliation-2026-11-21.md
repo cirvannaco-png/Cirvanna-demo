@@ -1,3 +1,5 @@
+> **Superseded on 22 November 2026.** The repository now has 261 refs and all 260 non-main branches have been compared against current main. Use [the 22 November reconciliation](branch-reconciliation-2026-11-22.md) for the current inventory and [the independent regression/security/deployment audit](independent-regression-security-deployment-audit-2026-11-22.md) for current release findings. The historical 21 November counts below are retained for provenance only.
+
 # Branch reconciliation audit — current main, 21 November 2026
 
 ## Current snapshot
