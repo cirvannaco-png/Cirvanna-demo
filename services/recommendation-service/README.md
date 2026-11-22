@@ -16,7 +16,9 @@ Complementer coordinates a complete look without treating the user's existing id
 
 ## PNELLY Occasion Intelligence
 
-The daily-look composer also recognizes a bounded set of explicit dress-code themes (currently Old Money, Quiet Luxury, Black Tie and Cocktail). When a recognized theme is supplied as the occasion, the response includes `recommendation.theme_guide`: a plain-language explanation, palette, fabrics, silhouettes, finishing directions, and common mismatches to avoid. The same theme metadata adds transparent ranking hints to the existing three-look wardrobe composer; it does not create or assume wardrobe inventory.
+The service also exposes `POST /v1/pnelly/occasion-guide`, an internal-token-protected, non-personalized education endpoint. It recognizes a bounded set of explicit dress-code themes (currently Old Money, Quiet Luxury, Black Tie and Cocktail) and returns a plain-language explanation, palette, fabrics, silhouettes, finishing directions, and common mismatches to avoid. It needs only the user's theme text; it does not read profile, wardrobe, image or Twin data. Unknown themes return `theme_guide: null`.
+
+The daily-look composer embeds the same `recommendation.theme_guide` and adds transparent ranking hints to the existing three-look wardrobe composer; it does not create or assume wardrobe inventory.
 
 - The user may enter natural-language occasion text such as `old money themed party`; the UI does not constrain this to a fixed dropdown.
 - The three existing distinct roles are labelled with theme-specific styling directions while preserving the stable `everyday`, `elevated`, and `explore` role identifiers.
