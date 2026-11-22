@@ -147,3 +147,8 @@ The output includes D50 CIELAB candidate values, per-region p10/p90 spread and M
 The post-2014 patch reference is a generic manufacturer average. X-Rite states that the ColorChecker formulations changed for charts made after November 2014 and requires corresponding reference data; the production date appears on the back. It also notes that generic reference data are averaged values and that custom chart-specific measurements are preferable for highest accuracy. The published X-Rite data file is mirrored here with its original archive checksum: https://babelcolor.com/index_htm_files/ColorChecker24_After_Nov2014.txt (archive MD5: bc09e5e6a0a5812a26fe693a710522f1).
 
 This preview is still limited by the coarse face/body skin segmenter, JPEG/computational-photography processing, local illumination differences, chart wear and the lack of a camera/skin-population evaluation dataset. It is not an exact skin tone, a medically meaningful measurement or a guarantee that two body regions are colour-matched.
+
+
+## Further architecture guidance
+
+The current research-to-engineering priorities are captured in [the DSI evidence-led improvement roadmap](../../docs/architecture/dsi-evidence-led-improvement-roadmap-2026-11-15.md). It supplements this service contract with the CIE skin-colour measurement protocol, device/capture limitations, spectrophotometer validation, anatomical-region segmentation, cosmetic attribute task design, body-measurement ownership boundaries and personal-colour evaluation. It does not authorize any currently blocked capability.
