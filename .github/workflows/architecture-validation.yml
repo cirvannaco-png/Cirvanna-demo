@@ -29,7 +29,7 @@ jobs:
       - name: Validate ownership and source inventory
         run: python scripts/validate_architecture.py
       - name: Audit archive and candidate integrity; report unresolved source mappings
-        run: python scripts/audit_source_lineage.py --allow-unreconciled
+        run: python scripts/audit_source_lineage.py
       - name: Verify file-level code-snippet inventory
         run: python scripts/build_code_snippet_inventory.py --check
       - name: Validate canonical source import boundaries

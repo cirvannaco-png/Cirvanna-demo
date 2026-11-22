@@ -6,7 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
-from audit_source_lineage import _extract_archive_sections, _named_code_blocks, _normalise_path, git_blob_sha1, sha256
+from audit_source_lineage import _extract_archive_sections, _named_code_blocks, _normalise_path, _only_trailing_whitespace_diff, git_blob_sha1, sha256
 
 class SourceLineageUtilityTests(unittest.TestCase):
     def test_git_blob_hash_includes_object_header(self):
@@ -57,6 +57,48 @@ class SourceLineageUtilityTests(unittest.TestCase):
         )
         blocks = _named_code_blocks(snapshot)
         self.assertEqual(blocks["src/final.py"], ["def final():\n    return True\n"])
+
+    def test_standalone_filename_fence_precedes_code_fence(self):
+        tick = chr(96)
+        snapshot = (
+            tick * 3 + "\n"
+            "src/types/index.ts\n"
+            + tick * 3 + "\n\n"
+            + tick * 3 + "typescript\n"
+            "export type DecisionIntent = string;\n"
+            + tick * 3 + "\n"
+        )
+        blocks = _named_code_blocks(snapshot)
+        self.assertEqual(
+            blocks["src/types/index.ts"],
+            ["export type DecisionIntent = string;\n"],
+        )
+
+    def test_markdown_source_keeps_nested_language_fences(self):
+        tick = chr(96)
+        snapshot = (
+            tick * 3 + "markdown\n"
+            "README.md\n"
+            "# Guide\n"
+            + tick * 3 + "bash\n"
+            "echo hi\n"
+            + tick * 3 + "\n"
+            "Text after nested example\n"
+            + tick * 3 + "\n"
+        )
+        blocks = _named_code_blocks(snapshot)
+        self.assertEqual(
+            blocks["README.md"],
+            ["# Guide\n" + tick * 3 + "bash\necho hi\n" + tick * 3 + "\nText after nested example\n"],
+        )
+
+    def test_only_trailing_whitespace_is_noncontent_difference(self):
+        self.assertTrue(_only_trailing_whitespace_diff("same content", "same content\n"))
+        self.assertTrue(_only_trailing_whitespace_diff("same content\n", "same content"))
+        self.assertTrue(_only_trailing_whitespace_diff("same content", "same content \n\n"))
+        self.assertFalse(_only_trailing_whitespace_diff("same content", "same content changed\n"))
+        self.assertFalse(_only_trailing_whitespace_diff("", "\n"))
+
 
     def test_path_normalisation_supports_headers(self):
         self.assertEqual(_normalise_path("# File: src/example.py"), "src/example.py")

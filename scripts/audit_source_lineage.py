@@ -91,22 +91,34 @@ def _normalise_path(value: str) -> str:
 
 
 def _iter_fenced_blocks(snapshot_text: str):
-    """Yield fenced bodies, including a final fence that is truncated at EOF."""
+    """Yield outer fenced bodies, preserving nested language-labelled fences."""
     opening = re.compile(r"^" + TICK * 3 + r"[^\r\n]*\r?\n$")
+    nested_opening = re.compile(
+        r"^" + TICK * 3 + r"[^ \t\r\n" + re.escape(TICK) + r"]+(?:[ \t][^\r\n]*)?\r?\n$"
+    )
     closing = re.compile(r"^" + TICK * 3 + r"[ \t]*(?:\r?\n|$)")
     offset = 0
     block_start: int | None = None
+    nested_depth = 0
     body: list[str] = []
 
     for line in snapshot_text.splitlines(keepends=True):
         if block_start is None:
             if opening.fullmatch(line):
                 block_start = offset
+                nested_depth = 0
                 body = []
+        elif nested_opening.fullmatch(line):
+            nested_depth += 1
+            body.append(line)
         elif closing.fullmatch(line):
-            yield block_start, "".join(body)
-            block_start = None
-            body = []
+            if nested_depth:
+                nested_depth -= 1
+                body.append(line)
+            else:
+                yield block_start, "".join(body)
+                block_start = None
+                body = []
         else:
             body.append(line)
         offset += len(line)
@@ -117,18 +129,24 @@ def _iter_fenced_blocks(snapshot_text: str):
 
 
 def _named_code_blocks(snapshot_text: str) -> dict[str, list[str]]:
-    """Extract files from one-file, external-header, and multi-file fences.
+    """Extract files from the historical source snapshot fence layouts.
 
-    Historical snapshots use three layouts: a filename as the first line in a
-    fence, a plain filename immediately before a fence, or multiple '# File:'
-    markers inside one language fence.
+    Supported layouts include a filename as the first line in a fence, a plain
+    filename immediately before a fence, a filename-only fence followed by a
+    code fence, and multiple '# File:' markers inside one language fence.
     """
     found: dict[str, list[str]] = {}
     file_header = re.compile(r"^\s*(?:#\s*File:|//\s*File:|--\s*File:|FILE:)\s*(.+?)\s*$", re.IGNORECASE)
     separator = re.compile(r"^\s*#\s*[=\-]{5,}\s*$")
     plain_path = re.compile(r"^[A-Za-z0-9_./-]+\.[A-Za-z0-9_-]+$")
+    pending_path: str | None = None
 
     for block_start, block_content in _iter_fenced_blocks(snapshot_text):
+        path_only = block_content.strip()
+        if plain_path.fullmatch(path_only):
+            pending_path = _normalise_path(path_only)
+            continue
+
         lines = block_content.splitlines(keepends=True)
         prefix_lines = snapshot_text[:block_start].splitlines()
         previous = next((line.strip() for line in reversed(prefix_lines) if line.strip()), "")
@@ -139,7 +157,8 @@ def _named_code_blocks(snapshot_text: str) -> dict[str, list[str]]:
             if candidate and "." in Path(candidate).name:
                 external_path = candidate
 
-        current_path: str | None = external_path
+        current_path: str | None = external_path or pending_path
+        pending_path = None
         body: list[str] = []
 
         def flush() -> None:
@@ -172,6 +191,14 @@ def _named_code_blocks(snapshot_text: str) -> dict[str, list[str]]:
 
         flush()
     return found
+
+
+def _only_trailing_whitespace_diff(left: str, right: str) -> bool:
+    """Return true only when non-whitespace content is identical at EOF."""
+    normalized_left = left.rstrip()
+    normalized_right = right.rstrip()
+    return left != right and bool(normalized_left) and normalized_left == normalized_right
+
 
 
 def _load_exceptions() -> dict[str, str]:
@@ -397,6 +424,10 @@ def audit() -> tuple[list[str], list[dict[str, str]], dict[str, int]]:
             status = "SOURCE_BLOCK_NOT_FOUND"
         elif candidate_text in source_blocks:
             status = "EXACT_CONTENT_MATCH"
+        elif any(_only_trailing_whitespace_diff(candidate_text, source_block) for source_block in source_blocks):
+            # Trailing whitespace is formatting, not a source-code content edit.
+            # Keep it visible in the audit rather than silently calling it exact.
+            status = "TRAILING_WHITESPACE_ONLY_DIFF"
         elif rel_path in DOCUMENTED_REPAIR_PATHS:
             status = "DOCUMENTED_SYNTAX_REPAIR_DIFF"
         elif rel_path in approved_exceptions:
@@ -452,7 +483,7 @@ def main() -> int:
     for key in ("archive_sections", "source_snapshots", "candidate_files", "archive_snapshot_differences"):
         print(f"{key}: {stats.get(key, 0)}")
     for status in (
-        "EXACT_CONTENT_MATCH", "DOCUMENTED_SYNTAX_REPAIR_DIFF",
+        "EXACT_CONTENT_MATCH", "TRAILING_WHITESPACE_ONLY_DIFF", "DOCUMENTED_SYNTAX_REPAIR_DIFF",
         "APPROVED_EXCEPTION", "SOURCE_BLOCK_NOT_FOUND", "UNRECONCILED_CONTENT_DIFF",
     ):
         print(f"{status}: {stats.get(status, 0)}")
