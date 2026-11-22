@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.observability import install_observability
+from app.pnelly_preferences import PnellyStylePreferenceIn, save_pnelly_style_preference
 
 SERVICE = "cirvanna-marketplace-bff"
 ROOT = Path(__file__).resolve().parents[3]
@@ -913,6 +914,20 @@ def twin_onboarding_page() -> HTMLResponse:
     except OSError as exc:
         raise HTTPException(status_code=503, detail={"code": "TWIN_ONBOARDING_PAGE_UNAVAILABLE"}) from exc
     return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/api/wardrobe/pnelly/preferences")
+async def save_pnelly_style_preference_route(request: Request, payload: PnellyStylePreferenceIn) -> Response:
+    """Save a user-selected PNELLY preference to the canonical USI profile."""
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(10.0, connect=2.0), trust_env=False, follow_redirects=False
+    ) as client:
+        subject, _user_token = await _verified_commerce_subject(client, request)
+        base, token = _identity_learning_service()
+        result = await save_pnelly_style_preference(
+            client, base=base, token=token, subject=subject, payload=payload,
+        )
+    return _private_json_response(result)
 
 
 @app.get("/api/style/color-profile")
