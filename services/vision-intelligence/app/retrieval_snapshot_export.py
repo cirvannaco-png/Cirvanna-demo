@@ -124,8 +124,20 @@ def write_snapshot(
     manifest_path = output.with_suffix(output.suffix + ".manifest.json")
     if output == manifest_path:
         raise ValueError("snapshot and manifest paths must be different")
-    if not overwrite and (output.exists() or manifest_path.exists()):
-        raise FileExistsError("snapshot or manifest already exists; pass --overwrite to replace both")
+    if overwrite:
+        raise ValueError(
+            "catalogue snapshots are immutable; choose a new versioned output path instead"
+        )
+    if output.exists() or manifest_path.exists():
+        raise FileExistsError("snapshot or manifest already exists; choose a new versioned output path")
+    if os.name != "posix":
+        raise PermissionError("private catalogue snapshots require POSIX permission enforcement")
+    output.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    directory_mode = stat.S_IMODE(output.parent.stat().st_mode)
+    if directory_mode & 0o077:
+        raise PermissionError(
+            "snapshot destination directory is accessible by group or other users"
+        )
     payload = jsonl_bytes(records)
     digest = sha256_bytes(payload)
     final_manifest = {
@@ -158,7 +170,6 @@ async def export_current_snapshot(
     output_path: str | Path,
     *,
     rights_summary: dict[str, str],
-    overwrite: bool = False,
 ) -> dict[str, Any]:
     # Import only inside the trusted Vision service environment. _live_offers()
     # applies Commerce eligibility and active Catalog product checks, preserving
@@ -190,7 +201,7 @@ async def export_current_snapshot(
         "data_rights": rights_summary,
     }
     output, manifest_path, digest = write_snapshot(
-        output_path, records, manifest, overwrite=overwrite
+        output_path, records, manifest
     )
     return {
         "status": "exported",
@@ -208,8 +219,6 @@ def main() -> int:
                         help="Destination on a restricted local volume or mounted evaluation workspace")
     parser.add_argument("--rights-manifest", required=True,
                         help="Private approved data-rights manifest; validation occurs before service access")
-    parser.add_argument("--overwrite", action="store_true",
-                        help="Atomically replace an existing snapshot and manifest")
     args = parser.parse_args()
     try:
         # The exporter is an isolated-checkout operator tool, not a production
@@ -218,7 +227,7 @@ def main() -> int:
         rights = load_rights_manifest(args.rights_manifest)
         rights_summary = rights_manifest_summary(rights)
         result = asyncio.run(export_current_snapshot(
-            args.output, rights_summary=rights_summary, overwrite=args.overwrite
+            args.output, rights_summary=rights_summary
         ))
         print(json.dumps(result, sort_keys=True))
         return 0
