@@ -41,7 +41,7 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_USER: commerce
-          POSTGRES_PASSWORD: commerce
+          POSTGRES_HOST_AUTH_METHOD: trust
           POSTGRES_DB: commerce_ci
         ports:
           - 5432:5432
@@ -74,7 +74,7 @@ jobs:
           alembic upgrade head
       - name: Verify CAL purchase audit immutability on PostgreSQL
         env:
-          COMMERCE_DATABASE_URL: postgresql+psycopg://commerce:commerce@localhost:5432/commerce_ci
+          COMMERCE_DATABASE_URL: postgresql+psycopg://commerce@localhost:5432/commerce_ci
           COMMERCE_AUTO_CREATE_SCHEMA: "false"
         run: |
           alembic upgrade 20261109_0007
