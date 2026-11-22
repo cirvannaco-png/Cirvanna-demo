@@ -2179,7 +2179,11 @@ def _compensate_failed_checkout_reservations(
         })
 
     if current and current.payment_session_id:
-        if not commerce.StripeGateway().expire_session(current.payment_session_id):
+        try:
+            session_expired = commerce.StripeGateway().expire_session(current.payment_session_id)
+        except Exception:
+            session_expired = False
+        if not session_expired:
             for reservation in prepared:
                 reservation.last_error = "SHOPIFY_RESERVATION_PAYMENT_SESSION_EXPIRY_UNCONFIRMED"
             db.commit()
@@ -2192,7 +2196,7 @@ def _compensate_failed_checkout_reservations(
         if connection and reservation.state in {"reserved", "failed", "unknown", "release_pending"}:
             try:
                 release_one_shopify_reservation(connection, db, reservation)
-            except HTTPException:
+            except Exception:
                 reservation.state = "release_pending"
                 reservation.last_error = "SHOPIFY_RESERVATION_COMPENSATION_PENDING"
                 db.commit()
