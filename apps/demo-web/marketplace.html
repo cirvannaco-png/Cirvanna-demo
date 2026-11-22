@@ -444,6 +444,9 @@ footer{
     if(cats.includes(current))$("category").value=current;
   }
   async function load(){
+    const requestGeneration=marketplaceSessionGeneration;
+    const requestToken=config.userToken;
+    const requestIsCurrent=()=>requestGeneration===marketplaceSessionGeneration&&requestToken===config.userToken;
     const q=$("query").value.trim(),category=$("category").value;
     const marketCountry=$("marketCountry").value.trim().toUpperCase();
     const destinationKey=$("destinationKey").value.trim();
@@ -473,33 +476,41 @@ footer{
         addMarketParams(url);
         url.searchParams.set("limit","20");url.searchParams.set("offset",String(page*20));
         const headers={Authorization:"Bearer "+config.userToken,Accept:"application/json"};
-        const response=await fetch(url,{headers});
+        const response=await fetch(url,{headers,cache:"no-store"});
+        if(!requestIsCurrent())return;
         if(!response.ok)throw new Error(response.status===401?"Sign in with a verified Cirvanna account to browse live offers.":response.status===503?"Live product browsing is unavailable because CAL or a required evidence provider is not ready.":"Marketplace offers API returned HTTP "+response.status+".");
         const data=await response.json();
+        if(!requestIsCurrent())return;
         if(!Array.isArray(data.items)||!Number.isFinite(Number(data.total))||data.display_authority!=="CaTaCaCi/CAL")throw new Error("Marketplace API returned an invalid or non-CAL-governed offer list.");
-        const savedResponse=await fetch(config.commerceBase+"/saved-products",{headers});
+        const savedResponse=await fetch(config.commerceBase+"/saved-products",{headers,cache:"no-store"});
+        if(!requestIsCurrent())return;
         if(!savedResponse.ok)throw new Error("Your account saved-products service is unavailable; no guest fallback was used.");
         const savedData=await savedResponse.json();
-        const cartResponse=await fetch(config.commerceBase+"/cart",{headers});
+        if(!requestIsCurrent())return;
+        const cartResponse=await fetch(config.commerceBase+"/cart",{headers,cache:"no-store"});
+        if(!requestIsCurrent())return;
         cart=[];cartVersion=0;purchaseEnabled=false;
         if(cartResponse.ok){
           const cartData=await cartResponse.json();
+          if(!requestIsCurrent())return;
           if(!cartData||!Array.isArray(cartData.items)||!Number.isSafeInteger(Number(cartData.version)))throw new Error("Account cart returned an invalid response; purchase controls remain locked.");
           cart=cartData.items;cartVersion=Number(cartData.version);purchaseEnabled=true;
           purchaseMessage="Cart and checkout are available. Every cart view, change and checkout is reauthorized by CAL.";
         }else{
-          let gateCode="";try{const gateData=await cartResponse.json();gateCode=gateData&&gateData.detail&&gateData.detail.code||""}catch{}
+          let gateCode="";try{const gateData=await cartResponse.json();if(!requestIsCurrent())return;gateCode=gateData&&gateData.detail&&gateData.detail.code||""}catch{}
+          if(!requestIsCurrent())return;
           purchaseMessage=cartResponse.status===503||gateCode==="CAL_CANDIDATE_PURCHASE_REAUTH_REQUIRED"
             ?"Cart and checkout remain paused because the operator gate or live CAL purchase readiness is not enabled."
             :"Cart and checkout remain paused because the account cart could not be authorized ("+(gateCode||("HTTP "+cartResponse.status))+").";
         }
+        if(!requestIsCurrent())return;
         items=data.items.map(p=>({...p,product_id:p.catalog_product_id,name:p.product_name,brand:p.merchant_name,description:p.description||Object.entries(p.options||{}).map(([k,v])=>k+": "+v).join(" · "),image_urls:p.image_urls||[],attributes:p.attributes||{}}));
         total=Number(data.total)||0;
         saved=(Array.isArray(savedData.items)?savedData.items:[]).map(x=>({product_id:x.catalog_product_id,name:x.catalog_product_id,currency:"",price_minor:null}));
         updateCategories(items);updateCounts();
         setStatus("CAL-GOVERNED LIVE COMMERCE — "+items.length+" authorized offer(s) on this page. "+(Number(data.withheld_candidate_count)||0)+" candidate(s) withheld. "+purchaseMessage);
         render();return;
-      }catch(e){items=[];total=0;setStatus((e&&e.message?e.message:"Marketplace request failed")+" No demo fallback was used.",true);render();return}
+      }catch(e){if(!requestIsCurrent())return;items=[];total=0;setStatus((e&&e.message?e.message:"Marketplace request failed")+" No demo fallback was used.",true);render();return}
     }
     if(config.commerceBase&&config.userToken){
       items=[];total=0;
@@ -729,12 +740,20 @@ footer{
     }
     if(config.userToken===nextToken)return true;
     const generation=++marketplaceSessionGeneration;
-    // Never leave a previous account's discovery cards visible during a handoff.
+    const previousToken=config.userToken;
+    const previousConversationId=pnellyConversationId;
+    // Invalidate the old token before any awaited cleanup. In-flight requests
+    // compare their captured generation/token and cannot repopulate stale cards.
+    config={base:"",token:"",commerceBase:"",userToken:""};
+    items=[];saved=[];cart=[];total=0;cartVersion=0;purchaseEnabled=false;mode="commerce";page=0;
+    purchaseMessage="Cart and checkout are paused while the signed-in account changes.";
+    updateCounts();closeDrawer();render();
+    setStatus("Switching signed-in account. Previous account products and cart are hidden.");
     $("aiDiscoveryResults").replaceChildren();
     setAiBusy("aiSearchBtn",false,"Search my wardrobe-aware marketplace");
     $("pnellyConversationConsent").disabled=false;
-    const previousToken=config.userToken;
-    const previousConversationId=pnellyConversationId;
+    pnellyConversationId=null;pnellyConversationStateVersion=null;pnellyConversationExpiresAt=null;
+    $("pnellyConversationConsent").checked=false;
     if(previousToken&&previousConversationId){
       try{
         await deletePnellyConversationRemotely(previousToken,previousConversationId);
