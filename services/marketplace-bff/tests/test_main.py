@@ -89,6 +89,14 @@ def test_marketplace_offers_rejects_unbound_or_cil_ineligible_cal_decisions(clie
          "may_display": True, "cil_serving_status": "eligible",
          "policy_version": "policy-1", "arbitration_contract_version": "1",
          "decision_pipeline_contract_version": ""},
+        {"product_id": "product-1", "catalog_version": 7, "verdict": "block",
+         "may_display": False, "cil_serving_status": "eligible",
+         "policy_version": "policy-1", "arbitration_contract_version": "1",
+         "decision_pipeline_contract_version": "1"},
+        {"product_id": "product-1", "catalog_version": 7, "verdict": "review",
+         "may_display": False, "cil_serving_status": "eligible",
+         "policy_version": "policy-1", "arbitration_contract_version": "1",
+         "decision_pipeline_contract_version": "1"},
     ]
     for decision in invalid_decisions:
         configure_upstreams(monkeypatch)
