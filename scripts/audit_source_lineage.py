@@ -91,26 +91,34 @@ def _normalise_path(value: str) -> str:
 
 
 def _named_code_blocks(snapshot_text: str) -> dict[str, list[str]]:
-    """Extract files from either one-file fences or multi-file fenced snapshots.
+    """Extract files from one-file, external-header, and multi-file fences.
 
-    Historical intake sometimes places many '# File: path' sections inside a
-    single language fence. Treat those markers as file boundaries rather than
-    assuming the first line of every fence is the only filename.
+    Historical snapshots use three layouts: a filename as the first line in a
+    fence, a plain filename immediately before a fence, or multiple '# File:'
+    markers inside one language fence.
     """
     found: dict[str, list[str]] = {}
     file_header = re.compile(r"^\s*(?:#\s*File:|//\s*File:|--\s*File:|FILE:)\s*(.+?)\s*$", re.IGNORECASE)
     separator = re.compile(r"^\s*#\s*[=\-]{5,}\s*$")
+    plain_path = re.compile(r"^[A-Za-z0-9_./-]+\.[A-Za-z0-9_-]+$")
 
     for match in FENCED_BLOCK.finditer(snapshot_text):
         lines = match.group(1).splitlines(keepends=True)
-        current_path: str | None = None
+        prefix_lines = snapshot_text[:match.start()].splitlines()
+        previous = next((line.strip() for line in reversed(prefix_lines) if line.strip()), "")
+        embedded_headers = any(file_header.match(line.rstrip("\r\n")) for line in lines)
+        external_path = None
+        if not embedded_headers and plain_path.fullmatch(previous):
+            candidate = _normalise_path(previous)
+            if candidate and "." in Path(candidate).name:
+                external_path = candidate
+
+        current_path: str | None = external_path
         body: list[str] = []
 
         def flush() -> None:
             if current_path is None:
                 return
-            # Intake section dividers and spacing belong to the archive format,
-            # not to the source file body. Preserve the source's final newline.
             while body and (not body[-1].strip() or separator.fullmatch(body[-1].rstrip("\r\n"))):
                 body.pop()
             content = "".join(body).replace("\r\n", "\n")
@@ -129,8 +137,6 @@ def _named_code_blocks(snapshot_text: str) -> dict[str, list[str]]:
                 continue
 
             if current_path is None:
-                # Preserve the original one-file-per-fence format, where the
-                # first line inside the fence is the declared path.
                 declared = _normalise_path(line.strip())
                 if index == 0 and declared and "." in Path(declared).name:
                     current_path = declared
