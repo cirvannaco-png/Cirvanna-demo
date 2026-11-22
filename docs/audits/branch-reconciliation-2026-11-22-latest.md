@@ -10,7 +10,7 @@ Method: GitHub's paginated branch-ref inventory and commit-ancestry comparisons.
 - **301 unique commit heads** across those refs.
 - Three actual duplicate-head pairs are present; this reduces the unique head count by three.
 - **300 unique non-main commit heads**.
-- The audit branch created for this report is now **4 commits ahead / 1 behind** current `main`; it is diverged and included in the classification.
+- The audit branch created for this report is now **6 commits ahead / 1 behind** current `main`; it is diverged and included in the classification.
 - `main` currently reports `protected: false`. Required PR/review/check enforcement remains an administrator blocker tracked by [#271](https://github.com/cirvannaco-png/Cirvanna-demo/issues/271).
 
 ## Ancestry classification
@@ -21,7 +21,7 @@ Five additional unique PR branch heads were then compared against the later main
 - PR #305 branch: 1 ahead / 5 behind; merged.
 - PR #306 branch: 4 ahead / 4 behind; closed unmerged.
 - PR #307 branch: 3 ahead / 1 behind; merged.
-- PR #308 branch: 5 ahead / 1 behind at the comparison snapshot; open.
+- PR #308 branch: 5 ahead / 1 behind at the comparison snapshot; subsequently closed unmerged.
 - PR #310 branch: 1 ahead / 1 behind; merged.
 
 Four further PR branch heads were compared against current main at `856fb986`:
@@ -55,7 +55,7 @@ These are examples of high-ahead branches, not a complete priority list. Their c
 
 - PR #302 is merged. Its provider hold revalidation and Stripe-expiry-safe cleanup changes are on main; its exact-head Commerce, Architecture, Privacy Governance and container-image checks passed.
 - PR #303 was closed unmerged after its Architecture secret scan failed. PR #314 is the current scanner retry; its exact path/line/scheme/host exception for historical AMQP defaults is scoped, but driver-qualified SQLAlchemy URIs such as `postgresql+asyncpg://` still need coverage. Do not weaken the scanner to obtain green CI.
-- PR #308 and #306 were closed unmerged; PR #312 merged the source-lineage boundary fix; PR #315 is open for standalone filename-fence parsing. PRs #305, #307, #309 and #310 were merged documentation/evidence changes. PR #311 is this audit report and remains open.
+- PR #308, #306 and #313 were closed unmerged; PR #312 merged the source-lineage boundary fix; PR #315 is open for standalone filename-fence parsing. PRs #305, #307, #309 and #310 were merged documentation/evidence changes. PR #311 is this audit report and remains open.
 - The production release ledger still records **23 required gates, all 23 blocked**. This graph audit does not change production readiness.
 
 ## Disposition and next actions
@@ -66,6 +66,6 @@ These are examples of high-ahead branches, not a complete priority list. Their c
 4. Configure and independently verify branch protection for `main` under #271.
 5. Refresh this inventory before any destructive ref operation; the repository is actively changing.
 
-**Review the two ahead-only branches (#314 and #315) as ordinary PR candidates; ahead-only status is not approval.
+Review the two ahead-only branches (#314 and #315) as ordinary PR candidates; ahead-only status is not approval.
 
-No branch was deleted, force-pushed, or merged as part of this audit.**
+**No branch was deleted, force-pushed, or merged as part of this audit.**
