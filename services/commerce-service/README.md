@@ -34,7 +34,8 @@ Customer and merchant routes require bearer JWT authentication. Inventory writes
 
 Set these in a secret manager; never commit real secrets.
 
-- COMMERCE_DATABASE_URL: PostgreSQL for shared/production use. SQLite is local-development only.
+- COMMERCE_DATABASE_URL: PostgreSQL runtime connection for shared/production use. The application role must be a non-owner with only required DML/sequence privileges; it must not own schema/tables, create roles/databases, alter/drop triggers, or truncate CAL audit tables. SQLite is local-development only.
+- COMMERCE_MIGRATION_DATABASE_URL: separate Alembic-only connection for schema migrations. It must authenticate as the approved schema-owner/migration role, not the Commerce runtime role. Do not inject this credential into the running application container. Alembic falls back to COMMERCE_DATABASE_URL only for local/backward-compatible workflows; production deployment must configure both URLs distinctly.
 - COMMERCE_AUTO_CREATE_SCHEMA: defaults true locally; set false in deployments and apply Alembic migrations.
 - COMMERCE_ENVIRONMENT: set to production in deployed environments; production requires OIDC/JWKS.
 - SHOPIFY_INVENTORY_RESERVATION_PRODUCTION_ENABLED: defaults false; Shopify-backed checkout is blocked in production (and when the environment is unclassified) until live provider, PostgreSQL restore and compensation/refund acceptance is complete. Keep false in production until those gates are signed off.
@@ -63,7 +64,8 @@ Local run from this directory:
 
 Historical migration ordering: `20261107_0004` introduced the verified-purchase outbox and `20261107_0005` added refund snapshots. The current Commerce schema head is `20261121_0016`; always apply the full Alembic chain with `alembic upgrade head`:
 
-    export COMMERCE_DATABASE_URL='postgresql+psycopg://...'
+    export COMMERCE_DATABASE_URL='postgresql+psycopg://runtime-role:...'
+    export COMMERCE_MIGRATION_DATABASE_URL='postgresql+psycopg://schema-owner:...'
     export COMMERCE_AUTO_CREATE_SCHEMA=false
     alembic upgrade head
 
@@ -83,7 +85,8 @@ This repository does not issue login sessions or manage the user lifecycle. Conn
 
 ## Production gates still open
 
-- Run migration on PostgreSQL and test backup/restore plus concurrent last-unit checkout contention. SQLite tests do not prove production locking semantics.
+- Provision separate managed PostgreSQL migration-owner and Commerce runtime credentials; the PostgreSQL CI suite now verifies the role boundary and immutable audit triggers, but production role provisioning is not yet evidenced.
+- Run migration on PostgreSQL and test encrypted backup/restore plus concurrent last-unit checkout contention. SQLite tests do not prove production locking semantics.
 - Integrate the actual Cirvanna identity issuer and validate JWT claims, role administration and secret handling.
 - Configure a non-production catalog and verify real TLS, credentials and CORS from the intended origin.
 - Configure Stripe test mode and exercise real test payment, expiry, retry, webhook replay and reconciliation. Stripe/card is the only implemented payment rail; PayPal and bank rails are not integrated. Market-aware checkout can calculate totals only from fresh, validated FX/fulfilment/tax/payment capability records; live third-party quote-provider operations and market settlements still require staging evidence.
