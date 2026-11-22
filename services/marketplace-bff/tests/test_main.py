@@ -37,6 +37,21 @@ def configure_upstreams(monkeypatch):
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
 
 
+def test_api_error_responses_are_never_cacheable(client):
+    # Framework-generated auth errors must receive the same cache policy as
+    # successful personalized responses; otherwise intermediaries may retain
+    # stale authorization-dependent representations.
+    offers = client.get("/api/commerce/marketplace/offers")
+    assert offers.status_code == 401
+    assert "no-store" in offers.headers["cache-control"].casefold()
+    assert offers.headers["pragma"] == "no-cache"
+    assert offers.headers["expires"] == "0"
+
+    click_it = client.post("/api/vision/click-it", headers={"Authorization": "Bearer test-user-token"})
+    assert click_it.status_code == 503
+    assert "no-store" in click_it.headers["cache-control"].casefold()
+
+
 def test_marketplace_pnelly_search_uses_wardrobe_cil_path_and_complementer_advisory(client):
     response = client.get("/")
     assert response.status_code == 200
