@@ -2216,12 +2216,41 @@ def compose_pnelly_daily_looks(
         "meaning": "EEPL context pass is not a product-display or CAL authorization.",
     }
     if eepl_result.verdict.value != "pass":
+        # Dress-code education is informational and must remain useful even
+        # when EEPL correctly withholds wardrobe composition pending context.
+        # Ask the internal composer for theme metadata only, with an empty
+        # wardrobe snapshot; never surface its empty look slots as suggestions.
+        theme_guide = None
+        if payload.occasion:
+            guide_payload = payload.model_copy(update={
+                "wardrobe_items": [],
+                "rotation_seen_item_ids": [],
+                "wear_history": [],
+                "evaluation_wardrobe_items": [],
+                "hard_excluded_item_ids": [],
+            })
+            try:
+                guide_result = _pnelly_daily_looks(guide_payload, [], [])
+                guide_recommendation = guide_result.get("recommendation") if isinstance(guide_result, dict) else None
+                if isinstance(guide_recommendation, dict):
+                    candidate_guide = guide_recommendation.get("theme_guide")
+                    if isinstance(candidate_guide, dict) and candidate_guide.get("status") == "recognized":
+                        theme_guide = candidate_guide
+            except HTTPException:
+                # Do not turn an informational guide outage into an eligibility
+                # bypass or an invented explanation. The response remains REVIEW/BLOCK.
+                theme_guide = None
         return {
             "schema_version": "1.0",
             "request_id": payload.request_id,
             "mode": "pnelly_wardrobe_daily_looks",
             "eligibility": eligibility,
-            "recommendation": {"look_count": 0, "ready_count": 0, "looks": []},
+            "recommendation": {
+                "look_count": 0,
+                "ready_count": 0,
+                "looks": [],
+                "theme_guide": theme_guide,
+            },
         }
     active_item_ids = {
         item.get("item_id") for item in payload.wardrobe_items
