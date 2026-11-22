@@ -249,6 +249,7 @@ def validate_private_artifact_manifests(registration: dict[str, Any]) -> dict[st
     """Verify the data, qrels and dependency artifacts against preregistered digests."""
     loaded = {}
     for path_field, digest_field, label in (
+        ("rights_manifest_path", "rights_manifest_sha256", "rights"),
         ("data_manifest_path", "data_manifest_sha256", "data"),
         ("qrels_manifest_path", "qrels_manifest_sha256", "qrels"),
         ("dependency_lock_path", "dependency_lock_sha256", "dependency lock"),
@@ -256,7 +257,13 @@ def validate_private_artifact_manifests(registration: dict[str, Any]) -> dict[st
         path = registration[path_field]
         if sha256_file(path) != registration[digest_field]:
             raise ValueError(f"{label} artifact SHA-256 differs from locked preregistration")
-        if label == "data":
+        if label == "rights":
+            try:
+                from .data_rights import load_and_validate_data_rights_manifest
+            except ImportError:
+                from data_rights import load_and_validate_data_rights_manifest
+            loaded[label] = load_and_validate_data_rights_manifest(path)
+        elif label == "data":
             loaded[label] = json.loads(Path(path).read_text(encoding="utf-8"))
     return loaded
 
@@ -272,6 +279,9 @@ def validate_run_manifest(
         registration["baseline"]["model_id"]: registration["baseline"]["revision"],
         **registration["challengers"],
     }
+    rights = manifest.get("data_rights")
+    if not isinstance(rights, dict) or rights.get("manifest_sha256") != registration["rights_manifest_sha256"]:
+        raise ValueError("runner manifest data-rights digest differs from locked preregistration")
     if manifest.get("model_revisions") != expected_models:
         raise ValueError("run manifest model revisions differ from the locked preregistration")
     if manifest.get("rankings_output_sha256") != sha256_file(rankings_path):
