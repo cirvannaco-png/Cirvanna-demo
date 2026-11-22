@@ -845,6 +845,43 @@ def _filter_npl_blocked_wardrobe_items(
     return allowed, len(blocked_ids), blocked_ids
 
 
+def _pnelly_occasion_guide(occasion: str) -> dict[str, Any] | None:
+    """Fetch general dress-code education without profile or wardrobe access."""
+    base = os.getenv("COMPLEMENTER_SERVICE_URL", "").strip().rstrip("/")
+    token = os.getenv("COMPLEMENTER_SERVICE_TOKEN", "").strip()
+    if not base or len(token.encode("utf-8")) < 32 or not _trusted_internal_base_url(base):
+        raise HTTPException(503, detail={"code": "PNELLY_PROVIDER_CONFIGURATION_INVALID"})
+    try:
+        with httpx.Client(
+            timeout=httpx.Timeout(5.0, connect=1.5),
+            trust_env=False,
+            follow_redirects=False,
+        ) as client:
+            response = client.post(
+                f"{base}/v1/pnelly/occasion-guide",
+                headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+                json={"occasion": occasion},
+            )
+    except httpx.TimeoutException as exc:
+        raise HTTPException(504, detail={"code": "PNELLY_OCCASION_GUIDE_TIMEOUT"}) from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "PNELLY_OCCASION_GUIDE_UNAVAILABLE"}) from exc
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "PNELLY_OCCASION_GUIDE_UNAVAILABLE"})
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise HTTPException(502, detail={"code": "PNELLY_OCCASION_GUIDE_RESPONSE_INVALID"}) from exc
+    if not isinstance(data, dict) or data.get("schema_version") != "1.0" or data.get("capability") != "pnelly_occasion_intelligence":
+        raise HTTPException(502, detail={"code": "PNELLY_OCCASION_GUIDE_RESPONSE_INVALID"})
+    guide = data.get("theme_guide")
+    if guide is None:
+        return None
+    if not isinstance(guide, dict) or guide.get("status") != "recognized":
+        raise HTTPException(502, detail={"code": "PNELLY_OCCASION_GUIDE_RESPONSE_INVALID"})
+    return guide
+
+
 def _pnelly_daily_looks(payload: PNELLYDailyLooksRequest, style_signals: list[str], feedback_signals: list[str]) -> dict[str, Any]:
     """Call the internal wardrobe-only composer and verify every returned item ID."""
     base = os.getenv("COMPLEMENTER_SERVICE_URL", "").strip().rstrip("/")
@@ -2216,29 +2253,15 @@ def compose_pnelly_daily_looks(
         "meaning": "EEPL context pass is not a product-display or CAL authorization.",
     }
     if eepl_result.verdict.value != "pass":
-        # Dress-code education is informational and must remain useful even
-        # when EEPL correctly withholds wardrobe composition pending context.
-        # Ask the internal composer for theme metadata only, with an empty
-        # wardrobe snapshot; never surface its empty look slots as suggestions.
+        # Dress-code education is informational and remains useful even when
+        # EEPL withholds wardrobe composition pending context. This separate
+        # endpoint has no access to profile, wardrobe or Twin assets.
         theme_guide = None
         if payload.occasion:
-            guide_payload = payload.model_copy(update={
-                "wardrobe_items": [],
-                "rotation_seen_item_ids": [],
-                "wear_history": [],
-                "evaluation_wardrobe_items": [],
-                "hard_excluded_item_ids": [],
-            })
             try:
-                guide_result = _pnelly_daily_looks(guide_payload, [], [])
-                guide_recommendation = guide_result.get("recommendation") if isinstance(guide_result, dict) else None
-                if isinstance(guide_recommendation, dict):
-                    candidate_guide = guide_recommendation.get("theme_guide")
-                    if isinstance(candidate_guide, dict) and candidate_guide.get("status") == "recognized":
-                        theme_guide = candidate_guide
+                theme_guide = _pnelly_occasion_guide(payload.occasion)
             except HTTPException:
-                # Do not turn an informational guide outage into an eligibility
-                # bypass or an invented explanation. The response remains REVIEW/BLOCK.
+                # A guide outage never weakens REVIEW/BLOCK or invents guidance.
                 theme_guide = None
         blocked_recommendation = {
             "look_count": 0,
