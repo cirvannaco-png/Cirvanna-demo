@@ -139,3 +139,28 @@ class MarketplaceContractTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_pnelly_saved_preferences_are_manageable_and_consent_gated():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent
+    wardrobe = (root / "wardrobe.html").read_text()
+    assert 'id="pnellyPreferencesPanel"' in wardrobe
+    assert '/api/wardrobe/pnelly/preferences?consent_receipt_id=' in wardrobe
+    assert '/replace' in wardrobe
+    assert '/deactivate' in wardrobe
+    assert 'deactivated preferences stop guiding later daily looks.' in wardrobe
+    assert 'profileReceipt = null' in wardrobe
+
+
+def test_pnelly_daily_looks_ui_surfaces_eepl_review_and_block_without_claiming_pass():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent
+    wardrobe = (root / "wardrobe.html").read_text()
+    assert 'id="pnellyLocation"' in wardrobe
+    assert 'eligibility.verdict !== "PASS"' in wardrobe
+    assert 'EEPL " + verdict' in wardrobe
+    assert 'No looks were composed and wardrobe rotation was not changed.' in wardrobe
+    assert 'context:' in wardrobe
