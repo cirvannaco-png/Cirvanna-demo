@@ -1948,11 +1948,31 @@ def _reservation_key(order_id: str, merchant_id: str) -> str:
     return "cirvanna-reserve-" + digest
 
 
+def _reservation_expiry_matches(provider_expiry: Any, expected_expiry: datetime) -> bool:
+    """Require Shopify to confirm the exact, still-future reservation deadline.
+
+    Draft-order creation does not hold inventory unless reserveInventoryUntil is
+    accepted. A returned draft ID or ready flag alone is not proof of the hold.
+    We send whole-second UTC timestamps and require Shopify's read-back to match.
+    """
+    if not isinstance(provider_expiry, str) or not provider_expiry.strip():
+        return False
+    try:
+        actual = datetime.fromisoformat(provider_expiry.strip().replace("Z", "+00:00"))
+        if actual.tzinfo is None or actual.utcoffset() is None:
+            return False
+        actual = actual.astimezone(timezone.utc)
+        expected = commerce._aware_utc(expected_expiry).replace(microsecond=0)
+    except (TypeError, ValueError, AttributeError):
+        return False
+    return actual == expected and actual > utcnow()
+
+
 def _find_reservation_draft(connection: ShopifyConnection, db: Session, key: str) -> dict[str, Any] | None:
     data = _graphql(connection, db, """
       query CirvannaFindInventoryReservation($query: String!) {
         draftOrders(first: 10, query: $query, sortKey: CREATED_AT, reverse: true) {
-          nodes { id tags status reserveInventoryUntil order { id } }
+          nodes { id tags status ready reserveInventoryUntil order { id } }
         }
       }
     """, {"query": "tag:" + key})
@@ -1974,6 +1994,12 @@ def _create_inventory_draft(connection: ShopifyConnection, db: Session,
         reservation.state = "reserved"
         reservation.last_error = None
         db.commit()
+        if (existing.get("status") != "OPEN" or existing.get("ready") is not True
+                or not _reservation_expiry_matches(existing.get("reserveInventoryUntil"), reservation.expires_at)):
+            reservation.state = "failed"
+            reservation.last_error = "SHOPIFY_RESERVATION_READBACK_MISMATCH"
+            db.commit()
+            raise HTTPException(409, detail={"code": "SHOPIFY_RESERVATION_READBACK_MISMATCH"})
         return existing["id"]
     snapshots = {x.local_variant_id: x for x in db.scalars(select(ShopifyVariantSnapshot).where(
         ShopifyVariantSnapshot.connection_id == connection.id,
@@ -2001,15 +2027,20 @@ def _create_inventory_draft(connection: ShopifyConnection, db: Session,
                 "currencyCode": connection.shop_currency,
             },
         })
+    # Keep the durable local deadline identical to the provider's second-level
+    # timestamp. Flooring is conservative: the local reservation expires no
+    # later than the Shopify hold, never after it.
+    reservation.expires_at = commerce._aware_utc(reservation.expires_at).replace(microsecond=0)
+    db.commit()
     mutation = """
       mutation CirvannaReserveInventory($input: DraftOrderInput!) {
         draftOrderCreate(input: $input) {
-          draftOrder { id status reserveInventoryUntil ready }
+          draftOrder { id status ready reserveInventoryUntil }
           userErrors { field message }
         }
       }
     """
-    expiry = commerce._aware_utc(reservation.expires_at).isoformat().replace("+00:00", "Z")
+    expiry = commerce._aware_utc(reservation.expires_at).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     try:
         data = _graphql(connection, db, mutation, {"input": {
             "lineItems": line_items,
@@ -2047,10 +2078,12 @@ def _create_inventory_draft(connection: ShopifyConnection, db: Session,
         reservation.last_error = json.dumps(errors[:3], ensure_ascii=True)[:300] or "SHOPIFY_DRAFT_RESERVATION_FAILED"
         db.commit()
         raise HTTPException(409, detail={"code": "SHOPIFY_INVENTORY_RESERVATION_REJECTED"})
-    if draft.get("ready") is False:
-        reservation.last_error = "SHOPIFY_DRAFT_RESERVATION_NOT_READY"
+    if (draft.get("status") != "OPEN" or draft.get("ready") is not True
+            or not _reservation_expiry_matches(draft.get("reserveInventoryUntil"), reservation.expires_at)):
+        reservation.state = "failed"
+        reservation.last_error = "SHOPIFY_RESERVATION_READBACK_MISMATCH"
         db.commit()
-        raise HTTPException(409, detail={"code": "SHOPIFY_INVENTORY_RESERVATION_NOT_READY"})
+        raise HTTPException(409, detail={"code": "SHOPIFY_RESERVATION_READBACK_MISMATCH"})
     reservation.draft_order_gid = draft["id"]
     reservation.state = "reserved"
     reservation.last_error = None
@@ -2215,7 +2248,7 @@ def _complete_shopify_inventory_reservation(connection: ShopifyConnection, db: S
         raise HTTPException(409, detail={"code": "SHOPIFY_INVENTORY_RESERVATION_MISSING"})
     data = _graphql(connection, db, """
       query CirvannaReadReservedDraft($id: ID!) {
-        draftOrder(id: $id) { id status reserveInventoryUntil order { id name displayFinancialStatus displayFulfillmentStatus } }
+        draftOrder(id: $id) { id status ready reserveInventoryUntil order { id name displayFinancialStatus displayFulfillmentStatus } }
       }
     """, {"id": reservation.draft_order_gid})
     draft = data.get("draftOrder")
@@ -2223,7 +2256,8 @@ def _complete_shopify_inventory_reservation(connection: ShopifyConnection, db: S
         raise HTTPException(409, detail={"code": "SHOPIFY_RESERVED_DRAFT_NOT_FOUND"})
     remote = draft.get("order")
     if not isinstance(remote, dict) or not remote.get("id"):
-        if draft.get("status") != "OPEN" or commerce._aware_utc(reservation.expires_at) <= commerce.now():
+        if (draft.get("status") != "OPEN" or draft.get("ready") is not True
+                or not _reservation_expiry_matches(draft.get("reserveInventoryUntil"), reservation.expires_at)):
             raise HTTPException(409, detail={"code": "SHOPIFY_RESERVED_DRAFT_NOT_COMPLETABLE"})
         completed = _graphql(connection, db, """
           mutation CirvannaCompleteReservedDraft($id: ID!) {
