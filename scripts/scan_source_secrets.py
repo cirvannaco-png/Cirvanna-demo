@@ -25,8 +25,40 @@ PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("slack-token", re.compile(r"\bxox[baprs]-[0-9A-Za-z-]{20,}\b")),
     ("stripe-live-secret", re.compile(r"\b(?:sk|rk)_live_[0-9A-Za-z]{20,}\b")),
     ("embedded-url-credentials", re.compile(r"\bhttps?://[^\s/:@]+:[^\s/@]+@[^\s]+")),
-    ("database-uri-credentials", re.compile(r"\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|rediss?|amqps?|nats(?:\+tls)?|mqtts?|kafka)://(?P<user>[^/\s:@]+):(?P<password>[^@\s/]+)@[^\s]+", re.IGNORECASE)),
+    ("database-uri-credentials", re.compile(r"\b(?P<scheme>postgres(?:ql)?|mysql|mongodb(?:\+srv)?|rediss?|amqps?|nats(?:\+tls)?|mqtts?|kafka)://(?P<user>[^/\s:@]+):(?P<password>[^@\s/]+)@(?P<host>[^/\s]+)", re.IGNORECASE)),
 )
+
+# These exact guest:guest AMQP values are preserved in the immutable, non-runtime
+# Wardrobe intake snapshot and its extracted/candidate copies. They are local
+# development defaults, not production credentials. Keep this allowlist path-,
+# line-, scheme- and host-bound: any other use of a default broker credential
+# must remain a failing finding. Never copy these fixtures into a runtime service.
+HISTORICAL_LOCAL_DEFAULT_URI_FIXTURES = {
+    ("integration-staging/source-candidates/31-wardrobe-part-1.txt/docker-compose.yml", 6):
+        ("amqp", "guest", "guest", "rabbitmq:5672"),
+    ("integration-staging/source-candidates/31-wardrobe-part-1.txt/services/common/config.py", 66):
+        ("amqp", "guest", "guest", "localhost"),
+    ("integration-staging/source-intake/extracted/0031__wardrobe_part_1.txt", 170):
+        ("amqp", "guest", "guest", "rabbitmq:5672"),
+    ("integration-staging/source-intake/extracted/0031__wardrobe_part_1.txt", 236):
+        ("amqp", "guest", "guest", "rabbitmq:5672"),
+    ("integration-staging/source-intake/extracted/0031__wardrobe_part_1.txt", 572):
+        ("amqp", "guest", "guest", "localhost"),
+    ("integration-staging/source-intake/original/cirvanna-source.txt", 50498):
+        ("amqp", "guest", "guest", "rabbitmq:5672"),
+    ("integration-staging/source-intake/original/cirvanna-source.txt", 50564):
+        ("amqp", "guest", "guest", "rabbitmq:5672"),
+    ("integration-staging/source-intake/original/cirvanna-source.txt", 50900):
+        ("amqp", "guest", "guest", "localhost"),
+}
+
+
+def is_historical_local_default_uri_fixture(
+    relative_path: str, line: int, scheme: str, user: str, password: str, host: str
+) -> bool:
+    expected = HISTORICAL_LOCAL_DEFAULT_URI_FIXTURES.get((relative_path, line))
+    return expected == (scheme.lower(), user, password, host)
+
 
 ASSIGNMENT = re.compile(
     r"""(?ix)
@@ -130,8 +162,22 @@ def scan_file(path: Path):
     for category, pattern in PATTERNS:
         for match in pattern.finditer(content):
             token = match.group(0)
-            if category == "database-uri-credentials" and looks_like_placeholder(match.group("password")):
-                continue
+            if category == "database-uri-credentials":
+                if looks_like_placeholder(match.group("password")):
+                    continue
+                try:
+                    relative_path = path.relative_to(ROOT).as_posix()
+                except ValueError:
+                    relative_path = ""
+                if is_historical_local_default_uri_fixture(
+                    relative_path,
+                    line_number(content, match.start()),
+                    match.group("scheme"),
+                    match.group("user"),
+                    match.group("password"),
+                    match.group("host"),
+                ):
+                    continue
             if category in {"embedded-url-credentials", "database-uri-credentials"}:
                 # Never include the matched URL or credential value in output.
                 pass
