@@ -145,8 +145,9 @@ def _named_code_blocks(snapshot_text: str) -> dict[str, list[str]]:
         def flush() -> None:
             if current_path is None:
                 return
-            while body and (not body[-1].strip() or separator.fullmatch(body[-1].rstrip("\r\n"))):
-                body.pop()
+            if embedded_headers:
+                while body and (not body[-1].strip() or separator.fullmatch(body[-1].rstrip("\r\n"))):
+                    body.pop()
             content = "".join(body).replace("\r\n", "\n")
             if content and not content.endswith("\n"):
                 content += "\n"
