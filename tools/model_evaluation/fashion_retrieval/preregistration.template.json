@@ -10,7 +10,11 @@
   "minimum_practically_important_delta": null,
   "minimum_query_count": null,
   "minimum_independent_clusters": null,
-  "candidate_pool_sizes": [100, 500, 1000],
+  "candidate_pool_sizes": [
+    100,
+    500,
+    1000
+  ],
   "bootstrap_samples": 2000,
   "bootstrap_seed": 20261121,
   "baseline": {
@@ -26,5 +30,7 @@
   "dependency_lock_sha256": "REPLACE_WITH_64_CHARACTER_SHA256",
   "data_manifest_path": "/secure/evaluation/prepared-cases.jsonl.manifest.json",
   "qrels_manifest_path": "/secure/evaluation/human-qrels.manifest.json",
-  "dependency_lock_path": "/secure/evaluation/requirements-research.lock"
+  "dependency_lock_path": "/secure/evaluation/requirements-research.lock",
+  "rights_manifest_sha256": "REPLACE_WITH_64_CHARACTER_SHA256",
+  "rights_manifest_path": "/secure/evaluation/data-rights.manifest.json"
 }
