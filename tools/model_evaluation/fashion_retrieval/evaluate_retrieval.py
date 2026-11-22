@@ -263,8 +263,17 @@ def validate_private_artifact_manifests(registration: dict[str, Any]) -> dict[st
             except ImportError:
                 from data_rights import load_and_validate_data_rights_manifest
             loaded[label] = load_and_validate_data_rights_manifest(path)
-        elif label == "data":
+        elif label in {"data", "qrels"}:
             loaded[label] = json.loads(Path(path).read_text(encoding="utf-8"))
+    expected_rights_digest = loaded["rights"]["manifest_sha256"]
+    for label in ("data", "qrels"):
+        artifact_rights = loaded[label].get("data_rights") if isinstance(loaded[label], dict) else None
+        if not isinstance(artifact_rights, dict) or artifact_rights.get("manifest_sha256") != expected_rights_digest:
+            raise ValueError(f"{label} manifest is not bound to the preregistered data-rights approval")
+    if loaded["data"].get("qrels_manifest_sha256") != registration["qrels_manifest_sha256"]:
+        raise ValueError("prepared-data manifest does not bind the preregistered human-qrels manifest")
+    if loaded["data"].get("query_cases_sha256") != loaded["qrels"].get("output_sha256"):
+        raise ValueError("prepared-data manifest does not bind the reviewed qrels artifact digest")
     return loaded
 
 
