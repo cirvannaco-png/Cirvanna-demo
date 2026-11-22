@@ -59,7 +59,9 @@ Rejected Complementer suggestions remain soft observations. They do not automati
 4. Keeps the lowest-priced purchasable offer per canonical product.
 5. Ranks by weighted explicit USI preference matches, then price and product ID.
 6. Runs the candidate IDs through the same decision pipeline as `/v1/decisions`.
-7. Returns full product and offer details only where the corresponding CAL result is `SHOW` and `may_display=true`. Other candidates are returned only as withheld IDs and decision states.
+7. Validates that CAL returns exactly one decision for every ranked candidate, with no duplicate or foreign candidate IDs.
+8. Requires each CAL decision's `catalog_version` to match the exact Catalog version used for ranking and offer composition. A catalogue update between retrieval and arbitration returns a fail-closed conflict; stale product details are never combined with a newer CAL SHOW.
+9. Returns full product and offer details only where the corresponding CAL result is `SHOW` and `may_display=true`. Other candidates are returned only as withheld IDs and decision states.
 
 The rank score is not a probability and never overrides CAL. The CIL serving assessment is mandatory after CAL SHOW; configure `CIL_SERVICE_URL` and the distinct `CIL_CATALOG_SERVICE_TOKEN` before discovery can return details. In the current build the safety and FCI providers are not provisioned, so otherwise eligible candidates remain REVIEW and no product details are returned from discovery. This is intentional fail-closed behavior, not a marketplace ranking failure.
 
