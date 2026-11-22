@@ -23,6 +23,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+try:
+    from .private_artifacts import ensure_private_targets_available, write_private_text
+except ImportError:  # Support direct execution as documented in the CLI examples.
+    from private_artifacts import ensure_private_targets_available, write_private_text
+
 BASELINE_REVISION = "afacf5e5851d5979ab030e228eab60e2c95a912c"
 TEXT_QUERY_PREFIX = "A marketplace product matching this description: "
 SHA40 = re.compile(r"^[0-9a-f]{40}$")
@@ -551,6 +556,7 @@ def main() -> int:
     parser.add_argument("--input", required=True, help="Private JSONL query/candidate cases")
     parser.add_argument("--media-root", required=True, help="Root directory for relative query_image_path values")
     parser.add_argument("--output", required=True, help="Private output JSONL path")
+    parser.add_argument("--overwrite", action="store_true", help="Atomically replace existing rankings and manifest")
     parser.add_argument("--models", nargs="+", required=True, choices=sorted(MODEL_SPECS))
     parser.add_argument("--revision", action="append", default=[],
                         help="Immutable model-id=40-character-commit-sha; repeat for each challenger")
@@ -558,6 +564,9 @@ def main() -> int:
     parser.add_argument("--device", default="auto", choices=("auto", "cpu", "cuda"))
     parser.add_argument("--batch-size", type=int, default=32)
     args = parser.parse_args()
+    output_path = Path(args.output).expanduser()
+    manifest_path = output_path.with_suffix(output_path.suffix + ".manifest.json")
+    ensure_private_targets_available([output_path, manifest_path], overwrite=args.overwrite)
     if args.batch_size < 1:
         raise ValueError("--batch-size must be positive")
     if len(args.models) < 2 or "cirvanna-fashion-clip" not in args.models:
@@ -604,28 +613,27 @@ def main() -> int:
         model_scores[model_id] = scores
         model_manifest[model_id] = metadata
 
-    output_path = Path(args.output).expanduser()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with output_path.open("w", encoding="utf-8") as handle:
-        for case in cases:
-            record = {
-                "schema_version": "1.0",
-                "query_id": case["query_id"],
-                "cluster_id": case["cluster_id"],
-                "task_id": case["task_id"],
-                "split": case["split"],
-                "candidate_ids": case["candidate_ids"],
-                "qrels": case["qrels"],
-                "rankings": {model_id: model_rankings[model_id][case["query_id"]]
+    output_records = []
+    for case in cases:
+        record = {
+            "schema_version": "1.0",
+            "query_id": case["query_id"],
+            "cluster_id": case["cluster_id"],
+            "task_id": case["task_id"],
+            "split": case["split"],
+            "candidate_ids": case["candidate_ids"],
+            "qrels": case["qrels"],
+            "rankings": {model_id: model_rankings[model_id][case["query_id"]]
+                         for model_id in args.models},
+            "model_scores": {model_id: model_scores[model_id][case["query_id"]]
                              for model_id in args.models},
-                "model_scores": {model_id: model_scores[model_id][case["query_id"]]
-                                 for model_id in args.models},
-                "score_type": "cosine_similarity_not_probability",
-                "excluded_product_ids": case["excluded_product_ids"],
-                "human_exclusion_violation_ids": case["human_exclusion_violation_ids"],
-                "subgroups": case["subgroups"],
-            }
-            handle.write(json.dumps(record, sort_keys=True) + "\n")
+            "score_type": "cosine_similarity_not_probability",
+            "excluded_product_ids": case["excluded_product_ids"],
+            "human_exclusion_violation_ids": case["human_exclusion_violation_ids"],
+            "subgroups": case["subgroups"],
+        }
+        output_records.append(json.dumps(record, sort_keys=True))
+    write_private_text(output_path, "".join(record + "\n" for record in output_records), overwrite=args.overwrite)
 
     manifest = {
         "schema_version": "1.0",
@@ -662,8 +670,9 @@ def main() -> int:
             "The runner does not verify dataset/model commercial rights or human-review independence.",
         ],
     }
-    manifest_path = output_path.with_suffix(output_path.suffix + ".manifest.json")
-    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_private_text(
+        manifest_path, json.dumps(manifest, indent=2, sort_keys=True) + "\n", overwrite=args.overwrite
+    )
     print(json.dumps({
         "status": "rankings_generated",
         "query_count": len(cases),
