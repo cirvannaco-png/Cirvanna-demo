@@ -8,10 +8,14 @@
       "id": "REL-01",
       "name": "Exact-candidate CI",
       "required": true,
-      "status": "blocked",
+      "status": "in_progress",
       "owner_role": "Release engineer",
       "acceptance": "All required GitHub Actions workflows pass on the exact proposed release commit; scripts/audit_source_lineage.py is run in strict mode without --allow-unreconciled, and source archive, snapshot and candidate-lineage integrity checks pass; skips and warnings are reviewed and justified.",
-      "evidence_refs": [],
+      "evidence_refs": [
+        "https://github.com/cirvannaco-png/Cirvanna-demo/pull/315",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45062226300",
+        "main:210e9e370782a13bc69b93286bf8d3cd8ab3cc69"
+      ],
       "verified_commit": null
     },
     {
@@ -28,10 +32,14 @@
       "id": "REL-03",
       "name": "Managed database migrations and restore",
       "required": true,
-      "status": "blocked",
+      "status": "in_progress",
       "owner_role": "Database/reliability owner",
       "acceptance": "Catalog and Commerce managed PostgreSQL schemas are migrated; identity-learning migration is applied to its approved shared PostgreSQL database; exact schema versions are verified; encrypted backup restores to an isolated clean database and row/constraint/order/payment/inventory invariants pass. CAL purchase audit evidence is database-immutable: use distinct schema-owner and Commerce runtime credentials; the runtime role must not own the audit table or be able to disable/drop immutability guards, and UPDATE/DELETE/TRUNCATE attempts must be rejected and verified in PostgreSQL after migration.",
-      "evidence_refs": [],
+      "evidence_refs": [
+        "https://github.com/cirvannaco-png/Cirvanna-demo/pull/318",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45069741738",
+        "head:8e2eb49b0aab2dc80292d017c20982f75a957374"
+      ],
       "verified_commit": null
     },
     {
@@ -68,10 +76,16 @@
       "id": "REL-07",
       "name": "CAL display gate and durable decision receipts",
       "required": true,
-      "status": "blocked",
+      "status": "in_progress",
       "owner_role": "Decision-platform owner",
       "acceptance": "Every surfaced candidate passes through the sole CAL authority; only SHOW is released; BLOCK and REVIEW details stay withheld; durable decision receipts are committed before response release and include policy, contract, candidate, and evidence source versions. In production, the Gateway and Decision Service require the latest context-scoped CIL CAL feedback review; BLOCK is an additional veto, SHOW cannot override ordinary gates, and missing/malformed/unavailable review evidence fails closed. Every cart_view, cart_add, cart_update and checkout action receives a fresh subject/action/candidate/offer-snapshot-bound signed purchase receipt, verified by Commerce and recorded in commerce_cal_purchase_audits. Database triggers reject audit UPDATE/DELETE and PostgreSQL TRUNCATE; the runtime role cannot disable the guards or mutate audit rows. Missing, stale, mismatched, expired or non-SHOW evidence fails closed.",
-      "evidence_refs": [],
+      "evidence_refs": [
+        "https://github.com/cirvannaco-png/Cirvanna-demo/pull/276",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/pull/299",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/pull/293",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/pull/317",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45068944839"
+      ],
       "verified_commit": null
     },
     {
@@ -88,10 +102,16 @@
       "id": "REL-09",
       "name": "Security, privacy, consent, and deletion",
       "required": true,
-      "status": "blocked",
+      "status": "in_progress",
       "owner_role": "Security/privacy owner",
       "acceptance": "Threat/security review, least-privilege service credentials, HTTPS/private networking, CORS/CSP/rate limits, secret scanning/rotation, log redaction, consent revocation, retention purge, export/deletion, tenant isolation, and privacy verification pass.",
-      "evidence_refs": [],
+      "evidence_refs": [
+        "https://github.com/cirvannaco-png/Cirvanna-demo/pull/314",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45061755945",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45061755946",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45061755971",
+        "https://github.com/cirvannaco-png/Cirvanna-demo/actions/runs/45061755982"
+      ],
       "verified_commit": null
     },
     {
