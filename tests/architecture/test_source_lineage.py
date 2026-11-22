@@ -77,19 +77,19 @@ class SourceLineageUtilityTests(unittest.TestCase):
     def test_markdown_source_keeps_nested_language_fences(self):
         tick = chr(96)
         snapshot = (
-            tick * 3 + "markdown\\n"
-            "README.md\\n"
-            "# Guide\\n"
-            + tick * 3 + "bash\\n"
-            "echo hi\\n"
-            + tick * 3 + "\\n"
-            "Text after nested example\\n"
-            + tick * 3 + "\\n"
+            tick * 3 + "markdown\n"
+            "README.md\n"
+            "# Guide\n"
+            + tick * 3 + "bash\n"
+            "echo hi\n"
+            + tick * 3 + "\n"
+            "Text after nested example\n"
+            + tick * 3 + "\n"
         )
         blocks = _named_code_blocks(snapshot)
         self.assertEqual(
             blocks["README.md"],
-            ["# Guide\\n" + tick * 3 + "bash\\necho hi\\n" + tick * 3 + "\\nText after nested example\\n"],
+            ["# Guide\n" + tick * 3 + "bash\necho hi\n" + tick * 3 + "\nText after nested example\n"],
         )
 
     def test_path_normalisation_supports_headers(self):
