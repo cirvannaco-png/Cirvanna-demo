@@ -90,6 +90,32 @@ def _normalise_path(value: str) -> str:
     return re.sub(r"/+", "/", value.strip().lstrip("./"))
 
 
+def _iter_fenced_blocks(snapshot_text: str):
+    """Yield fenced bodies, including a final fence that is truncated at EOF."""
+    opening = re.compile(r"^" + TICK * 3 + r"[^\r\n]*\r?\n$")
+    closing = re.compile(r"^" + TICK * 3 + r"[ \t]*(?:\r?\n|$)")
+    offset = 0
+    block_start: int | None = None
+    body: list[str] = []
+
+    for line in snapshot_text.splitlines(keepends=True):
+        if block_start is None:
+            if opening.fullmatch(line):
+                block_start = offset
+                body = []
+        elif closing.fullmatch(line):
+            yield block_start, "".join(body)
+            block_start = None
+            body = []
+        else:
+            body.append(line)
+        offset += len(line)
+
+    if block_start is not None:
+        # Some preserved intake snapshots end during the final code fence.
+        yield block_start, "".join(body)
+
+
 def _named_code_blocks(snapshot_text: str) -> dict[str, list[str]]:
     """Extract files from one-file, external-header, and multi-file fences.
 
@@ -102,9 +128,9 @@ def _named_code_blocks(snapshot_text: str) -> dict[str, list[str]]:
     separator = re.compile(r"^\s*#\s*[=\-]{5,}\s*$")
     plain_path = re.compile(r"^[A-Za-z0-9_./-]+\.[A-Za-z0-9_-]+$")
 
-    for match in FENCED_BLOCK.finditer(snapshot_text):
-        lines = match.group(1).splitlines(keepends=True)
-        prefix_lines = snapshot_text[:match.start()].splitlines()
+    for block_start, block_content in _iter_fenced_blocks(snapshot_text):
+        lines = block_content.splitlines(keepends=True)
+        prefix_lines = snapshot_text[:block_start].splitlines()
         previous = next((line.strip() for line in reversed(prefix_lines) if line.strip()), "")
         embedded_headers = any(file_header.match(line.rstrip("\r\n")) for line in lines)
         external_path = None
