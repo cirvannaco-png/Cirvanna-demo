@@ -108,7 +108,7 @@ The sample values in unit tests are synthetic examples only, not recommended pow
 
 ## Data-rights approval gate (mandatory)
 
-Before any model inference, create a private `data-rights` manifest from `data-rights.template.json` and retain the referenced approval evidence in the restricted evaluation workspace. Replace every placeholder only after review; the template is intentionally invalid and must never be treated as approval. The manifest must record `approval_status=approved`, `scope=fashion_retrieval_evaluation`, reviewer identity/role and timestamp, source provenance, evidence path and SHA-256, explicit commercial-evaluation and human-review permissions, a future retention expiry, and whether personal images are present. If personal images are present, depicted-person consent must be recorded as `verified`. Missing, pending, expired, out-of-scope, mismatched or inaccessible evidence blocks inference. The runner requires `--rights-manifest`; it validates this before importing the model runtime or reading query inputs. The rights-manifest digest is written to the private run manifest and must also be locked in final preregistration.
+Before any catalogue snapshot export, human-qrels aggregation, case preparation or model inference, create a private `data-rights` manifest from `data-rights.template.json` and retain the referenced approval evidence in the restricted evaluation workspace. All four stages require the same canonical validator and bind its manifest/evidence digests into their private output manifests. Replace every placeholder only after review; the template is intentionally invalid and must never be treated as approval. The manifest must record `approval_status=approved`, `scope=fashion_retrieval_evaluation`, reviewer identity/role and timestamp, source provenance, evidence path and SHA-256, explicit commercial-evaluation and human-review permissions, a future retention expiry, and whether personal images are present. If personal images are present, depicted-person consent must be recorded as `verified`. Missing, pending, expired, out-of-scope, mismatched or inaccessible evidence blocks inference. The runner requires `--rights-manifest`; it validates this before importing the model runtime or reading query inputs. The rights-manifest digest is written to the private run manifest and must also be locked in final preregistration.
 
 This is an evidence-integrity control, not a legal determination. It does not authenticate signatures, determine copyright or privacy-law compliance, or replace approval by the responsible legal/data-rights owner. Never create an approval record merely to bypass the gate.
 
@@ -192,11 +192,12 @@ Run the aggregator:
       --queries /secure/evaluation/query-cases.jsonl \
       --reviews /secure/evaluation/blinded-reviews.jsonl \
       --adjudications /secure/evaluation/adjudications.jsonl \
+      --rights-manifest /secure/evaluation/data-rights.manifest.json \
       --output /secure/evaluation/reviewed-query-cases.jsonl
 
 Add --overwrite only when deliberately replacing both the output and its manifest.
 
-Omit `--adjudications` only when no candidate pair has reviewer disagreement. The script rejects missing/duplicate reviewers, missing candidate reviews, unresolved disagreements, and adjudicators who are not independent of both reviewers. It writes complete qrels and the adjudicated `human_exclusion_violation_ids`, but not reviewer keys or raw reviewer records. Keep source reviews, adjudications, output, and manifests encrypted and restricted; they must never be committed to GitHub.
+Omit `--adjudications` only when no candidate pair has reviewer disagreement. The script validates the approved rights manifest before reading annotation files, then rejects missing/duplicate reviewers, missing candidate reviews, unresolved disagreements, and adjudicators who are not independent of both reviewers. Its output manifest carries the rights and evidence digests but never reviewer IDs or evidence paths. It writes complete qrels and the adjudicated `human_exclusion_violation_ids`, but not reviewer keys or raw reviewer records. Keep source reviews, adjudications, output, and manifests encrypted and restricted; they must never be committed to GitHub.
 
 Then join those qrels to the exact frozen eligible Commerce/Catalog offer text with `prepare_cases.py` as described below. Human violation IDs remain a hard evaluation gate even when no user exclusion ID was supplied.
 
@@ -204,12 +205,14 @@ Then join those qrels to the exact frozen eligible Commerce/Catalog offer text w
 
 The first parity track needs a frozen candidate snapshot of the exact offer text the current Vision service ranks. Do not reconstruct `_offer_description()` in a separate script. The service now contains a restricted CLI that invokes its own `_live_offers()` implementation and writes only `variant_id` plus the exact `search_text` value.
 
-Run this **inside the trusted Vision Intelligence container** (working directory `/app`) where its existing Commerce/Catalog read environment is configured. Mount a restricted evaluation volume and use an unused destination:
+Run this from an **isolated full Cirvanna source checkout**, with the Vision service's trusted read-only Commerce/Catalog environment explicitly supplied to the isolated process. Do not run it in a public deployment or against a production environment. The canonical rights validator is loaded from the checkout; a stripped service image without the repository tooling fails closed. Mount a restricted evaluation volume and use an unused destination:
 
+    cd services/vision-intelligence
     python -m app.retrieval_snapshot_export \
+      --rights-manifest /restricted-evaluation/data-rights.manifest.json \
       --output /restricted-evaluation/catalog-offers.jsonl
 
-It emits a sibling `.manifest.json` and records the snapshot SHA-256, model pin, candidate count, whether the service's 1,000-offer ceiling truncated the Commerce offer list, and that this was a sequential point-in-time Commerce/Catalog read (not a cross-service transaction). Both files are created with mode `0600`; existing files are refused unless `--overwrite` is explicitly supplied.
+It validates the approved rights manifest before importing the Vision service or making Commerce/Catalog calls. It emits a sibling `.manifest.json` and records the snapshot SHA-256, model pin, candidate count, whether the service's 1,000-offer ceiling truncated the Commerce offer list, the rights-manifest/evidence digests, and that this was a sequential point-in-time Commerce/Catalog read (not a cross-service transaction). Both files are created with mode `0600`; existing files are refused unless `--overwrite` is explicitly supplied.
 
 The exporter excludes product image URLs, raw Commerce/Catalog payloads, names as separate fields, service URLs, and credentials. It preserves the Commerce offer order and refuses duplicate/invalid variant IDs. The text is commercial catalogue information, so the resulting file and manifest must remain in the restricted evaluation workspace and must not be committed, attached to the PR, or sent to unapproved model endpoints.
 
@@ -222,15 +225,16 @@ The runner input is assembled from two private JSONL files. The first is a fixed
 The `search_text` must be the exact output of the Vision service's `_offer_description(offer, product)`. Do not rebuild it with a different template. The runner/evaluator use the variant ID because the production `_rank_offers()` keys results by `variant_id`.
 
 
-The second file contains one record per query with query metadata, candidate variant IDs, human-reviewed qrels, any declared excluded variant IDs, and task-grounded subgroup values:
+The qrels builder output (`reviewed-query-cases.jsonl`) is the second input. It contains one record per query with query metadata, candidate variant IDs, human-reviewed qrels, any declared excluded variant IDs, and task-grounded subgroup values. Its sidecar manifest is mandatory and must match the approved rights digest:
 
     {"schema_version":"1.0","query_id":"query-000001","cluster_id":"source-cluster-001","task_id":"image_to_catalog_text","split":"test","query_image_path":"queries/query-000001.jpg","candidate_ids":["variant-a","variant-b"],"qrels":{"variant-a":4,"variant-b":0},"excluded_product_ids":[],"subgroups":{"source_type":"studio"}}
 
-For text queries use `task_id=text_to_catalog_text` and provide `query_text`. The script verifies every candidate belongs to the frozen snapshot, rejects duplicate IDs, empty/invalid qrels, unsupported tasks and missing query data, then writes the runner input plus a digest manifest:
+For text queries use `task_id=text_to_catalog_text` and provide `query_text`. The script validates the approved rights manifest and both source sidecars before reading either input. It verifies snapshot and qrels digests, matching rights-manifest digests, snapshot row count, and every candidate against the frozen snapshot; it rejects duplicate IDs, empty/invalid qrels, unsupported tasks and missing query data, then writes runner input plus a digest manifest bound to both source manifests and the rights approval:
 
     python tools/model_evaluation/fashion_retrieval/prepare_cases.py \
       --catalog-snapshot /secure/evaluation/catalog-offers.jsonl \
-      --queries /secure/evaluation/query-qrels.jsonl \
+      --queries /secure/evaluation/reviewed-query-cases.jsonl \
+      --rights-manifest /secure/evaluation/data-rights.manifest.json \
       --output /secure/evaluation/fashion-retrieval-test.jsonl
 
 Add --overwrite only when deliberately replacing both the output and its manifest.

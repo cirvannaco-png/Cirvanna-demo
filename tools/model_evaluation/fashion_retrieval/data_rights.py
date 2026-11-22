@@ -94,3 +94,14 @@ def load_and_validate_data_rights_manifest(path: str | Path) -> dict[str, Any]:
     except json.JSONDecodeError as exc:
         raise ValueError(f"invalid data-rights JSON: {exc.msg}") from exc
     return validate_data_rights_manifest(value, manifest_path)
+
+
+def rights_manifest_summary(rights: dict[str, Any]) -> dict[str, str]:
+    """Persist minimal approval provenance without reviewer IDs or evidence paths."""
+    return {
+        "manifest_sha256": rights["manifest_sha256"],
+        "evidence_sha256": rights["evidence_sha256"],
+        "approval_status": rights["approval_status"],
+        "scope": rights["scope"],
+        "retention_until": rights["retention_until"],
+    }

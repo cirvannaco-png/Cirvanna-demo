@@ -4,6 +4,7 @@ import os
 import stat
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 MODULE_PATH = (
@@ -64,6 +65,50 @@ class CatalogSnapshotExportTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(sidecar.stat().st_mode), 0o600)
             with self.assertRaises(FileExistsError):
                 MODULE.write_snapshot(output, records, manifest)
+
+    def test_loads_only_a_valid_rights_manifest(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            evidence = root / "approval.txt"
+            evidence.write_text("approved evidence", encoding="utf-8")
+            manifest = root / "rights.json"
+            value = {
+                "schema_version": "1.0", "approval_status": "approved",
+                "scope": "fashion_retrieval_evaluation", "reviewed_by": "reviewer",
+                "reviewer_role": "data-rights-owner", "reviewed_at_utc": "2026-11-22T00:00:00Z",
+                "source_provenance": "approved controlled query sources",
+                "evidence_path": str(evidence),
+                "evidence_sha256": MODULE.sha256_bytes(evidence.read_bytes()),
+                "commercial_evaluation_permitted": True, "human_review_permitted": True,
+                "retention_until": "2027-12-31", "contains_personal_images": False,
+                "depicted_person_consent_status": "not_applicable",
+            }
+            manifest.write_text(json.dumps(value), encoding="utf-8")
+            self.assertEqual(MODULE.load_rights_manifest(manifest)["approval_status"], "approved")
+            value["approval_status"] = "pending"
+            manifest.write_text(json.dumps(value), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "must be 'approved'"):
+                MODULE.load_rights_manifest(manifest)
+
+    def test_exporter_checks_rights_before_starting_live_service_read(self):
+        with tempfile.TemporaryDirectory() as temp:
+            with patch("sys.argv", ["retrieval_snapshot_export.py", "--output", str(Path(temp) / "snapshot.jsonl"),
+                                    "--rights-manifest", str(Path(temp) / "missing-rights.json")]), \
+                 patch.object(MODULE.asyncio, "run", side_effect=AssertionError("service access must not start")):
+                self.assertEqual(MODULE.main(), 2)
+
+    def test_snapshot_manifest_carries_rights_digest_without_reviewer_or_evidence_paths(self):
+        rights = {
+            "approval_status": "approved", "scope": "fashion_retrieval_evaluation",
+            "manifest_sha256": "a" * 64, "evidence_sha256": "b" * 64,
+            "retention_until": "2027-12-31", "reviewed_by": "private-reviewer",
+            "evidence_path": "/restricted/private-approval.pdf",
+        }
+        summary = MODULE.rights_manifest_summary(rights)
+        self.assertEqual(summary["manifest_sha256"], "a" * 64)
+        self.assertEqual(summary["evidence_sha256"], "b" * 64)
+        self.assertNotIn("reviewed_by", summary)
+        self.assertNotIn("evidence_path", summary)
 
     def test_manifest_records_truncation_and_privacy_boundaries(self):
         records = MODULE.snapshot_records([

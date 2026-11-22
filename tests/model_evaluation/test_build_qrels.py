@@ -1,6 +1,10 @@
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
-from tools.model_evaluation.fashion_retrieval.build_qrels import aggregate
+from tools.model_evaluation.fashion_retrieval.build_qrels import aggregate, main
+from tools.model_evaluation.fashion_retrieval.data_rights import rights_manifest_summary
 
 
 def queries():
@@ -31,6 +35,28 @@ def reviews():
 
 
 class BuildQrelsTests(unittest.TestCase):
+    def test_cli_requires_rights_before_opening_review_inputs(self):
+        with tempfile.TemporaryDirectory() as temp:
+            missing_rights = str(Path(temp) / "missing-rights.json")
+            args = ["build_qrels.py", "--queries", str(Path(temp) / "missing-queries.jsonl"),
+                    "--reviews", str(Path(temp) / "missing-reviews.jsonl"),
+                    "--rights-manifest", missing_rights, "--output", str(Path(temp) / "qrels.jsonl")]
+            with patch("sys.argv", args), self.assertRaises(FileNotFoundError) as error:
+                main()
+            self.assertIn(missing_rights, str(error.exception))
+            self.assertNotIn("missing-queries.jsonl", str(error.exception))
+
+    def test_rights_provenance_excludes_reviewer_identity_and_evidence_path(self):
+        summary = rights_manifest_summary({
+            "manifest_sha256": "a" * 64, "evidence_sha256": "b" * 64,
+            "approval_status": "approved", "scope": "fashion_retrieval_evaluation",
+            "retention_until": "2027-12-31", "reviewed_by": "private-reviewer",
+            "evidence_path": "/restricted/private.pdf",
+        })
+        self.assertEqual(summary["manifest_sha256"], "a" * 64)
+        self.assertNotIn("reviewed_by", summary)
+        self.assertNotIn("evidence_path", summary)
+
     def test_builds_complete_qrels_and_human_violation_ids(self):
         adjudication = [{
             "query_id": "query-0001", "candidate_id": "variant-b", "adjudicator_key": "reviewer-c",

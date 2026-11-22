@@ -12,8 +12,10 @@ from pathlib import Path
 from typing import Any
 
 try:
+    from .data_rights import load_and_validate_data_rights_manifest, rights_manifest_summary
     from .private_artifacts import ensure_private_targets_available, write_private_text
 except ImportError:  # Support direct execution as documented in the CLI examples.
+    from data_rights import load_and_validate_data_rights_manifest, rights_manifest_summary
     from private_artifacts import ensure_private_targets_available, write_private_text
 
 MAX_CATALOG_CANDIDATES = 1000
@@ -118,6 +120,32 @@ def _validate_query(row: dict[str, Any], line: int, catalog_ids: set[str]) -> di
     return row
 
 
+def validate_source_manifest(
+    artifact_path: str | Path,
+    *,
+    rights_manifest_sha256: str,
+    artifact_digest_field: str,
+) -> tuple[dict[str, Any], str]:
+    """Verify a private source artifact's sidecar and its binding to approved rights."""
+    artifact = Path(artifact_path).expanduser().resolve()
+    sidecar = artifact.with_suffix(artifact.suffix + ".manifest.json")
+    if not sidecar.is_file():
+        raise ValueError(f"required source manifest is missing for {artifact.name}")
+    try:
+        manifest = json.loads(sidecar.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"source manifest for {artifact.name} is invalid JSON") from exc
+    if not isinstance(manifest, dict):
+        raise ValueError(f"source manifest for {artifact.name} must be a JSON object")
+    expected_digest = manifest.get(artifact_digest_field)
+    if expected_digest != _sha256(artifact):
+        raise ValueError(f"source artifact digest mismatch for {artifact.name}")
+    rights = manifest.get("data_rights")
+    if not isinstance(rights, dict) or rights.get("manifest_sha256") != rights_manifest_sha256:
+        raise ValueError(f"source manifest for {artifact.name} is not bound to the approved data-rights manifest")
+    return manifest, _sha256(sidecar)
+
+
 def prepare(catalog_rows: list[dict[str, Any]], query_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     catalog = _catalog_map(catalog_rows)
     catalog_positions = {variant_id: index for index, variant_id in enumerate(catalog)}
@@ -161,9 +189,21 @@ def main() -> int:
     parser.add_argument("--queries", required=True,
                         help="Private query cases containing human-reviewed qrels and relative image paths")
     parser.add_argument("--output", required=True, help="Private runner-input JSONL")
+    parser.add_argument("--rights-manifest", required=True, help="Approved private data-rights manifest for evaluation inputs")
     parser.add_argument("--overwrite", action="store_true", help="Atomically replace existing output and manifest")
     args = parser.parse_args()
+    rights = load_and_validate_data_rights_manifest(args.rights_manifest)
+    catalog_source_manifest, catalog_source_manifest_sha256 = validate_source_manifest(
+        args.catalog_snapshot, rights_manifest_sha256=rights["manifest_sha256"],
+        artifact_digest_field="snapshot_file_sha256",
+    )
+    qrels_source_manifest, qrels_source_manifest_sha256 = validate_source_manifest(
+        args.queries, rights_manifest_sha256=rights["manifest_sha256"],
+        artifact_digest_field="output_sha256",
+    )
     catalog_rows = _read_jsonl(args.catalog_snapshot)
+    if catalog_source_manifest.get("snapshot_record_count") != len(catalog_rows):
+        raise ValueError("catalogue snapshot record count differs from its source manifest")
     query_rows = _read_jsonl(args.queries)
     cases = prepare(catalog_rows, query_rows)
     output = Path(args.output).expanduser()
@@ -176,7 +216,10 @@ def main() -> int:
     manifest = {
         "schema_version": "1.0",
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "data_rights": rights_manifest_summary(rights),
         "catalog_snapshot_sha256": _sha256(args.catalog_snapshot),
+        "catalog_snapshot_manifest_sha256": catalog_source_manifest_sha256,
+        "qrels_manifest_sha256": qrels_source_manifest_sha256,
         "query_cases_sha256": _sha256(args.queries),
         "output_sha256": _sha256(output),
         "catalog_candidate_count": len(catalog_rows),

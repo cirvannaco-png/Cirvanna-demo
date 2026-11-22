@@ -13,8 +13,10 @@ from pathlib import Path
 from typing import Any
 
 try:
+    from .data_rights import load_and_validate_data_rights_manifest, rights_manifest_summary
     from .private_artifacts import ensure_private_targets_available, write_private_text
 except ImportError:  # Support direct execution as documented in the CLI examples.
+    from data_rights import load_and_validate_data_rights_manifest, rights_manifest_summary
     from private_artifacts import ensure_private_targets_available, write_private_text
 
 
@@ -211,8 +213,10 @@ def main() -> int:
     parser.add_argument("--reviews", required=True, help="Private blinded two-reviewer judgments JSONL")
     parser.add_argument("--adjudications", help="Private independent adjudications JSONL; omit if none")
     parser.add_argument("--output", required=True, help="Private query/qrel output for prepare_cases.py")
+    parser.add_argument("--rights-manifest", required=True, help="Approved private data-rights manifest for human review")
     parser.add_argument("--overwrite", action="store_true", help="Atomically replace existing output and manifest")
     args = parser.parse_args()
+    rights = load_and_validate_data_rights_manifest(args.rights_manifest)
     query_rows = read_jsonl(args.queries)
     review_rows = read_jsonl(args.reviews)
     adjudications = read_jsonl(args.adjudications) if args.adjudications else []
@@ -225,6 +229,7 @@ def main() -> int:
     manifest = {
         "schema_version": "1.0",
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
+        "data_rights": rights_manifest_summary(rights),
         "queries_sha256": sha256_file(args.queries),
         "reviews_sha256": sha256_file(args.reviews),
         "adjudications_sha256": sha256_file(args.adjudications) if args.adjudications else None,

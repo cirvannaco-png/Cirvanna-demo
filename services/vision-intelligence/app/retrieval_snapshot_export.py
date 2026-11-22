@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import hashlib
+import importlib.util
 import json
 import os
 import stat
@@ -20,6 +21,29 @@ from pathlib import Path
 from typing import Any
 
 MAX_MARKETPLACE_CANDIDATES = 1000
+
+
+def _load_rights_validator():
+    """Load the canonical benchmark rights validator from a full source checkout."""
+    repository_root = Path(__file__).resolve().parents[3]
+    validator_path = (repository_root / "tools" / "model_evaluation" / "fashion_retrieval"
+                      / "data_rights.py")
+    if not validator_path.is_file():
+        raise RuntimeError("run the snapshot exporter from a complete Cirvanna repository checkout")
+    spec = importlib.util.spec_from_file_location("cirvanna_benchmark_data_rights", validator_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load the canonical data-rights validator")
+    validator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(validator)
+    return validator
+
+
+def load_rights_manifest(path: str | Path) -> dict[str, Any]:
+    return _load_rights_validator().load_and_validate_data_rights_manifest(path)
+
+
+def rights_manifest_summary(rights: dict[str, Any]) -> dict[str, str]:
+    return _load_rights_validator().rights_manifest_summary(rights)
 
 
 def snapshot_records(offers: Any) -> list[dict[str, str]]:
@@ -130,7 +154,12 @@ def write_snapshot(
     return output, manifest_path, digest
 
 
-async def export_current_snapshot(output_path: str | Path, *, overwrite: bool = False) -> dict[str, Any]:
+async def export_current_snapshot(
+    output_path: str | Path,
+    *,
+    rights_summary: dict[str, str],
+    overwrite: bool = False,
+) -> dict[str, Any]:
     # Import only inside the trusted Vision service environment. _live_offers()
     # applies Commerce eligibility and active Catalog product checks, preserving
     # the same order and _offer_description() text used by _rank_offers().
@@ -158,6 +187,7 @@ async def export_current_snapshot(output_path: str | Path, *, overwrite: bool = 
         "candidate_order": "original Commerce offer order after active Catalog product filtering",
         "search_text_source": "exact _offer_description() output produced by Vision Intelligence _live_offers()",
         "search_text_max_chars_in_source": 2000,
+        "data_rights": rights_summary,
     }
     output, manifest_path, digest = write_snapshot(
         output_path, records, manifest, overwrite=overwrite
@@ -176,11 +206,20 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True,
                         help="Destination on a restricted local volume or mounted evaluation workspace")
+    parser.add_argument("--rights-manifest", required=True,
+                        help="Private approved data-rights manifest; validation occurs before service access")
     parser.add_argument("--overwrite", action="store_true",
                         help="Atomically replace an existing snapshot and manifest")
     args = parser.parse_args()
     try:
-        result = asyncio.run(export_current_snapshot(args.output, overwrite=args.overwrite))
+        # The exporter is an isolated-checkout operator tool, not a production
+        # endpoint. Load the same canonical validator used by the benchmark
+        # runner; fail closed if the checkout does not contain that validator.
+        rights = load_rights_manifest(args.rights_manifest)
+        rights_summary = rights_manifest_summary(rights)
+        result = asyncio.run(export_current_snapshot(
+            args.output, rights_summary=rights_summary, overwrite=args.overwrite
+        ))
         print(json.dumps(result, sort_keys=True))
         return 0
     except Exception as exc:
