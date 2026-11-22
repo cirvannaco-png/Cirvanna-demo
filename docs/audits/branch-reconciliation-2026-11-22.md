@@ -1,25 +1,31 @@
 # Branch reconciliation — 22 November 2026
 
 Repository: `cirvannaco-png/Cirvanna-demo`  
-Current main: `eca1a7349daef730a9e1ac43c72fec91712cb8b8`. Prior code comparison base: `81580b26034e0cf424172d5b96eead4a1c22f840`.
+Current main: `81df302848468f1e744252e435cbbd75d579b7f3`. Prior audit main: `eca1a7349daef730a9e1ac43c72fec91712cb8b8`. Original code comparison base: `81580b26034e0cf424172d5b96eead4a1c22f840`.
 
 ## Inventory and method
 
-Paginated GitHub branch search now returns **263 refs including main** (262 non-main). The original 260 non-main refs were each compared against `81580b26034e0cf424172d5b96eead4a1c22f840`. Main then advanced by exactly two documentation-only commits to `eca1a7349daef730a9e1ac43c72fec91712cb8b8`; therefore, for those 260 refs, ahead counts are unchanged and behind counts increase by exactly two. The two subsequently created audit branches were compared directly against current main: `audit/cirvanna-261-branch-and-production-review-2026-11-22` is 6 ahead / 2 behind, and `audit/cirvanna-261-branch-and-production-review-current-main-2026-11-22` is 4 ahead / 0 behind. `integration/appearance-specialist-current-main-v2` is now 30 ahead / 2 behind (the head of PR #269), not ahead-only. No non-main ref is identical to main. The only current ahead-only ref is the current-main audit branch with 4 commits.
+Paginated GitHub branch search now returns **267 refs including main** (266 non-main). The prior audit covered 263 refs including main (262 non-main). Main advanced by six commits from `eca1a7349daef730a9e1ac43c72fec91712cb8b8` to `81df302848468f1e744252e435cbbd75d579b7f3`: appearance-specialist orchestration (#269), audit refresh (#274), private benchmark artifact-write hardening (#275), CAL checkout regression coverage (#276), the hash-locked CPU retrieval research environment (#277), and PNELLY/Wardrobe Complementer feedback-to-TAL integration (#278).
 
-A diverged branch is not a merge recommendation. Squash-merged branches can appear ahead because their original commits are not ancestors of the squash commit. Many older branches are hundreds of commits behind and contain no unique commits. No mass merge, force-push or deletion was performed. The two mainline commits between the comparison base and current main changed only the two audit documents; no runtime source changed.
+For the 260 original non-main refs compared against `81580b26034e0cf424172d5b96eead4a1c22f840`, ahead counts remain unchanged and behind counts are now eight greater than that original comparison (two intervening audit-only main commits to `eca1...`, plus six subsequent main commits). The two audit branches previously compared directly against `eca1...` have six additional behind commits. Four new refs were compared directly against current main:
+- `security/private-benchmark-artifact-writes`: 1 ahead / 4 behind (merged PR #275).
+- `test/cal-display-checkout-regression-matrix-2026-11-22`: 5 ahead / 4 behind (merged PR #276).
+- `research/fashion-retrieval-hashed-lock`: 1 ahead / 3 behind (merged PR #277).
+- `feature/pnelly-wardrobe-complementer-feedback-2026-11-22`: 3 ahead / 3 behind (merged PR #278).
+
+The appearance-specialist branch `integration/appearance-specialist-current-main-v2` is 30 ahead / 8 behind after PR #269 merged. Squash-merged branches can remain graph-diverged because their original commits are not ancestors of the squash commit. No non-main ref is identical to current main, and no current ahead-only ref remains. A diverged branch is not a merge recommendation; graph counts are not quality scores. No mass merge, force-push or branch deletion was performed.
 
 ## Canonical dispositions
 
 | Workstream | Current-main evidence | Decision |
 |---|---|---|
 | Shopify | #242 and #243 merged; #254 merged. #243 exact-head workflows 4/4 pass; #254 workflows 6/6 pass. | Do not merge old Shopify branches or closed PRs #245/#247/#248/#251. Live Shopify/Stripe operations and PostgreSQL restore remain release gates. |
-| PNELLY + Wardrobe | #197 merged; 7/7 workflows pass. Authenticated wardrobe-aware discovery, three daily-look roles, Complementer advisory, saved outfits and explicit feedback contracts exist. | USI profile + current-consent TAL wardrobe like/wear signals and NPL vetoes feed code-level recommendation paths. Complementer reaction TAL events are not yet shown to affect ranking. Production Wardrobe PostgreSQL, asset-deletion worker and real-user end-to-end validation remain incomplete. |
-| CAL | #196 merged; #266 merged with exact product/catalog-version/CIL/policy binding; #266 workflows 5/5 pass. | Code-level display and candidate-bound purchase gates exist. Real staging route-coverage and purchase receipt evidence remain missing. |
+| PNELLY + Wardrobe | #197 and #278 merged; #278 exact-head workflows 6/6 pass. Authenticated wardrobe-aware discovery, three daily-look roles, Complementer advisory, saved outfits and explicit, idempotent Complementer reaction events to TAL exist. | USI profile + current-consent TAL wardrobe like/wear signals and NPL vetoes feed code-level recommendation paths. Complementer reaction events are persisted but are not yet shown to affect ranking. Production Wardrobe PostgreSQL, asset-deletion worker and real-user end-to-end validation remain incomplete. |
+| CAL | #196 and #266 merged; #276 adds expired-receipt, offer-mutation race and wrong-subject receipt regression coverage; #276 workflows 6/6 pass. | Code-level display and candidate-bound purchase gates exist. Real staging route-coverage and purchase receipt evidence remain missing. |
 | Click It / Look It | #255, #261 and #265 merged; relevant workflows pass. Look It uses request-scoped consent; Click It BFF rejects before multipart parsing. | Click It remains disabled pending detector evaluation, independent attestation, publication/restore/CDN route proof and deletion evidence. |
 | Twin / Try-On | #249 and #250 merged; #249 workflows 7/7; #250 workflows 3/3. | SAM 3D Body is research-only and not connected to public Twin/Asset/Registry. BFF reports `try_on_available=false`; FASHN is flat-lay-only pending GPU/visual acceptance. |
 | Multi-market | #239/#244 and follow-up commerce changes merged. Versioned FX/tax/fulfilment/payment evidence contracts exist. | No live KYC or fulfilment vendor is connected; Stripe/card only, no completed seller payouts or provider-booked shipments. |
-| Production | `docs/release/release-gates.json`: 23 required gates, 23 blocked, no exact-release-commit evidence. | No production promotion based on CI alone. |
+| Retrieval research | #277 merged; exact-head Architecture validation and Twin worker contract workflows 2/2 pass. A hash-locked CPython 3.11 Linux x86_64 CPU environment is available for controlled retrieval research. | CPU lock is not a CUDA/GPU environment, model inference validation or production deployment. |\n| Production | `docs/release/release-gates.json`: 23 required gates, 23 blocked, no exact-release-commit evidence. | No production promotion based on CI alone. |
 
 ## High-risk divergent families — do not merge wholesale
 
