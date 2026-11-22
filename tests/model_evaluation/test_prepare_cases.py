@@ -1,6 +1,13 @@
+import tempfile
+import hashlib
+import json
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
-from tools.model_evaluation.fashion_retrieval.prepare_cases import prepare
+from tools.model_evaluation.fashion_retrieval.prepare_cases import main, prepare, validate_source_manifest
+from tools.model_evaluation.fashion_retrieval.data_rights import rights_manifest_summary
 
 
 def catalog():
@@ -26,6 +33,57 @@ def query():
 
 
 class PrepareCasesTests(unittest.TestCase):
+    def test_source_manifest_requires_matching_artifact_and_rights_digests(self):
+        with tempfile.TemporaryDirectory() as temp:
+            artifact = Path(temp) / "catalog.jsonl"
+            artifact.write_text('{"variant_id":"variant-a"}\n', encoding="utf-8")
+            sidecar = artifact.with_suffix(artifact.suffix + ".manifest.json")
+            digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+            sidecar.write_text(json.dumps({
+                "snapshot_file_sha256": digest,
+                "snapshot_record_count": 1,
+                "data_rights": {"manifest_sha256": "a" * 64},
+            }), encoding="utf-8")
+            manifest, manifest_digest = validate_source_manifest(
+                artifact, rights_manifest_sha256="a" * 64,
+                artifact_digest_field="snapshot_file_sha256",
+            )
+            self.assertEqual(manifest["snapshot_record_count"], 1)
+            self.assertEqual(manifest_digest, hashlib.sha256(sidecar.read_bytes()).hexdigest())
+            with self.assertRaisesRegex(ValueError, "not bound to the approved"):
+                validate_source_manifest(
+                    artifact, rights_manifest_sha256="b" * 64,
+                    artifact_digest_field="snapshot_file_sha256",
+                )
+            artifact.write_text("tampered\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "digest mismatch"):
+                validate_source_manifest(
+                    artifact, rights_manifest_sha256="a" * 64,
+                    artifact_digest_field="snapshot_file_sha256",
+                )
+
+    def test_cli_requires_rights_before_opening_catalog_or_query_inputs(self):
+        with tempfile.TemporaryDirectory() as temp:
+            missing_rights = str(Path(temp) / "missing-rights.json")
+            args = ["prepare_cases.py", "--catalog-snapshot", str(Path(temp) / "missing-catalog.jsonl"),
+                    "--queries", str(Path(temp) / "missing-queries.jsonl"),
+                    "--rights-manifest", missing_rights, "--output", str(Path(temp) / "prepared.jsonl")]
+            with patch("sys.argv", args), self.assertRaises(FileNotFoundError) as error:
+                main()
+            self.assertIn(missing_rights, str(error.exception))
+            self.assertNotIn("missing-catalog.jsonl", str(error.exception))
+
+    def test_rights_provenance_excludes_reviewer_identity_and_evidence_path(self):
+        summary = rights_manifest_summary({
+            "manifest_sha256": "c" * 64, "evidence_sha256": "d" * 64,
+            "approval_status": "approved", "scope": "fashion_retrieval_evaluation",
+            "retention_until": "2027-12-31", "reviewed_by": "private-reviewer",
+            "evidence_path": "/restricted/private.pdf",
+        })
+        self.assertEqual(summary["manifest_sha256"], "c" * 64)
+        self.assertNotIn("reviewed_by", summary)
+        self.assertNotIn("evidence_path", summary)
+
     def test_joins_exact_snapshot_offer_text_to_fixed_candidate_ids(self):
         result = prepare(catalog(), [query()])
         self.assertEqual(result[0]["candidate_texts"]["variant-a"], catalog()[0]["search_text"])
