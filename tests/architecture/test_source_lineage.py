@@ -6,7 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
-from audit_source_lineage import _extract_archive_sections, _named_code_blocks, _normalise_path, _only_final_newline_diff, git_blob_sha1, sha256
+from audit_source_lineage import _extract_archive_sections, _named_code_blocks, _normalise_path, _only_trailing_whitespace_diff, git_blob_sha1, sha256
 
 class SourceLineageUtilityTests(unittest.TestCase):
     def test_git_blob_hash_includes_object_header(self):
@@ -92,11 +92,13 @@ class SourceLineageUtilityTests(unittest.TestCase):
             ["# Guide\n" + tick * 3 + "bash\necho hi\n" + tick * 3 + "\nText after nested example\n"],
         )
 
-    def test_only_optional_final_newline_is_noncontent_difference(self):
-        self.assertTrue(_only_final_newline_diff("same content", "same content\n"))
-        self.assertTrue(_only_final_newline_diff("same content\n", "same content"))
-        self.assertFalse(_only_final_newline_diff("same content", "same content changed\n"))
-        self.assertFalse(_only_final_newline_diff("same content\n", "same content\n\n"))
+    def test_only_trailing_whitespace_is_noncontent_difference(self):
+        self.assertTrue(_only_trailing_whitespace_diff("same content", "same content\n"))
+        self.assertTrue(_only_trailing_whitespace_diff("same content\n", "same content"))
+        self.assertTrue(_only_trailing_whitespace_diff("same content", "same content \n\n"))
+        self.assertFalse(_only_trailing_whitespace_diff("same content", "same content changed\n"))
+        self.assertFalse(_only_trailing_whitespace_diff("", "\n"))
+
 
     def test_path_normalisation_supports_headers(self):
         self.assertEqual(_normalise_path("# File: src/example.py"), "src/example.py")
