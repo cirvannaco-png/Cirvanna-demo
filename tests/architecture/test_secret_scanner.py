@@ -23,7 +23,7 @@ class SecretScannerRegressionTests(unittest.TestCase):
         for scheme in ("postgresql+asyncpg", "postgresql+psycopg", "mysql+pymysql"):
             with self.subTest(scheme=scheme):
                 uri = f"{scheme}://app:" + "nonPlaceholderSecret" + "@db.internal/app"
-                findings = self.scan_text(f'DATABASE_URL = "{uri}"\\n')
+                findings = self.scan_text(f'DATABASE_URL = "{uri}"\n')
                 self.assertIn((1, "database-uri-credentials"), findings)
 
     def test_ignores_redacted_database_uri(self) -> None:
