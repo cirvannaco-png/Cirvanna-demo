@@ -171,7 +171,7 @@ def test_outcome_requires_signed_consent_and_cal_show_receipts(client):
     token = "hmac-sha256:" + "a" * 64
     common = {"product_id": "product-1", "expires_at": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp())}
     consent = receipt({**common, "type": "consent", "purpose": "recommendation_outcome_learning", "subject_token": token})
-    cal = receipt({**common, "type": "cal", "verdict": "SHOW", "candidate_id": "candidate-1", "decision_id": "decision-1"})
+    cal = receipt({**common, "type": "cal", "verdict": "SHOW", "context_key": "humid-daily", "candidate_id": "candidate-1", "decision_id": "decision-1"})
     payload = {
         "event_id": "event-1", "product_id": "product-1", "context_key": "humid-daily",
         "contributor_token": token, "action": "saved", "suitability": "suitable", "suitability_reported": True,
@@ -200,6 +200,7 @@ def test_outcome_replay_is_idempotent_and_event_id_reuse_is_rejected(client):
         **common,
         "type": "cal",
         "verdict": "SHOW",
+        "context_key": "humid-daily",
         "candidate_id": "candidate-idempotent",
         "decision_id": "decision-idempotent",
     })
@@ -238,7 +239,7 @@ def test_outcome_rejects_mismatched_consent_subject(client):
     token = "hmac-sha256:" + "a" * 64
     common = {"product_id": "product-1", "expires_at": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp())}
     consent = receipt({**common, "type": "consent", "purpose": "recommendation_outcome_learning", "subject_token": "hmac-sha256:" + "b" * 64})
-    cal = receipt({**common, "type": "cal", "verdict": "SHOW", "candidate_id": "candidate-1"})
+    cal = receipt({**common, "type": "cal", "verdict": "SHOW", "context_key": "humid-daily", "candidate_id": "candidate-1", "decision_id": "decision-1"})
     payload = {
         "event_id": "event-1", "product_id": "product-1", "context_key": "humid-daily",
         "contributor_token": token, "action": "opened", "suitability": "not_reported",
@@ -247,6 +248,43 @@ def test_outcome_rejects_mismatched_consent_subject(client):
     }
     result = client.post("/outcomes", json=payload, headers=auth("service-test"))
     assert result.status_code == 403
+
+
+def test_outcome_rejects_cal_show_receipt_for_wrong_context(client):
+    token = "hmac-sha256:" + "d" * 64
+    common = {
+        "product_id": "product-context",
+        "expires_at": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()),
+    }
+    consent = receipt({
+        **common,
+        "type": "consent",
+        "purpose": "recommendation_outcome_learning",
+        "subject_token": token,
+    })
+    cal = receipt({
+        **common,
+        "type": "cal",
+        "verdict": "SHOW",
+        "context_key": "dry-climate",
+        "candidate_id": "candidate-context",
+        "decision_id": "decision-context",
+    })
+    payload = {
+        "event_id": "event-context-mismatch",
+        "product_id": "product-context",
+        "context_key": "humid-daily",
+        "contributor_token": token,
+        "action": "opened",
+        "suitability": "not_reported",
+        "candidate_id": "candidate-context",
+        "observed_at": datetime.now(timezone.utc).isoformat(),
+        "consent_receipt": consent,
+        "cal_decision_receipt": cal,
+    }
+    response = client.post("/outcomes", json=payload, headers=auth("service-test"))
+    assert response.status_code == 403
+    assert response.json()["detail"] == "CAL receipt context does not match the outcome"
 
 
 def test_provider_adapter_requires_explicit_licence_configuration(monkeypatch):
@@ -277,7 +315,7 @@ def test_feedback_aggregate_opens_cal_review_and_records_final_cal_decision(clie
             "subject_token": contributor,
         })
         cal = receipt({
-            **common, "type": "cal", "verdict": "SHOW",
+            **common, "type": "cal", "verdict": "SHOW", "context_key": "humid-daily",
             "candidate_id": "candidate-review", "decision_id": f"decision-{index}",
         })
         payload = {
@@ -742,7 +780,7 @@ def test_purchase_event_cannot_be_misrepresented_as_suitability_feedback(client)
     token = "hmac-sha256:" + "9" * 64
     common = {"product_id": "product-purchase", "expires_at": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp())}
     consent = receipt({**common, "type": "consent", "purpose": "recommendation_outcome_learning", "subject_token": token})
-    cal = receipt({**common, "type": "cal", "verdict": "SHOW", "candidate_id": "candidate-purchase"})
+    cal = receipt({**common, "type": "cal", "verdict": "SHOW", "context_key": "humid-daily", "candidate_id": "candidate-purchase", "decision_id": "decision-purchase"})
     payload = {
         "event_id": "purchase-is-not-satisfaction", "product_id": "product-purchase",
         "context_key": "humid-daily", "contributor_token": token,
@@ -758,7 +796,7 @@ def test_outcome_requires_explicit_suitability_report_before_learning(client):
     token = "hmac-sha256:" + "8" * 64
     common = {"product_id": "product-feedback", "expires_at": int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp())}
     consent = receipt({**common, "type": "consent", "purpose": "recommendation_outcome_learning", "subject_token": token})
-    cal = receipt({**common, "type": "cal", "verdict": "SHOW", "candidate_id": "candidate-feedback"})
+    cal = receipt({**common, "type": "cal", "verdict": "SHOW", "context_key": "humid-daily", "candidate_id": "candidate-feedback", "decision_id": "decision-feedback"})
     payload = {
         "event_id": "implicit-suitability-denied", "product_id": "product-feedback",
         "context_key": "humid-daily", "contributor_token": token,
