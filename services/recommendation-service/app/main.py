@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.complementer import compose_complementary_look
 from app.daily_looks import build_daily_looks
+from app.occasion_intelligence import build_theme_guide
 from app.intelligence.learning import build_learning_event
 
 SERVICE = "cirvanna-complementer-agent"
@@ -160,6 +161,18 @@ class WardrobeItemForDailyLook(StrictModel):
     status: Literal["draft", "active", "archived", "deleted"]
 
 
+class PNELLYOccasionGuideRequest(StrictModel):
+    occasion: str = Field(min_length=1, max_length=120)
+
+    @field_validator("occasion")
+    @classmethod
+    def trim_occasion(cls, value: str) -> str:
+        normalized = " ".join(value.split()).strip()
+        if not normalized:
+            raise ValueError("occasion must not be blank")
+        return normalized
+
+
 class PNELLYDailyLooksRequest(StrictModel):
     request_id: str = Field(min_length=1, max_length=128)
     user_id: str = Field(min_length=1, max_length=128)
@@ -269,6 +282,8 @@ def capabilities() -> dict[str, object]:
         "look_completion": True,
         "pnelly_daily_look_orchestration": True,
         "pnelly_daily_look_roles": ["everyday", "elevated", "explore"],
+        "pnelly_occasion_intelligence": True,
+        "pnelly_recognized_occasion_themes": ["old_money", "quiet_luxury", "black_tie", "cocktail"],
         "evaluation_trace_opt_in": os.getenv("PNELLY_EVALUATION_TRACE_ENABLED", "").lower() == "true",
         "virtual_twin_preview_enabled": False,
         "feedback_event_contract": True,
@@ -286,6 +301,20 @@ def capabilities() -> dict[str, object]:
 )
 def recommend(request: RecommendationRequest) -> dict[str, object]:
     return compose_complementary_look(request.model_dump())
+
+
+@app.post(
+    "/v1/pnelly/occasion-guide",
+    tags=["pnelly occasion intelligence"],
+    dependencies=[Depends(require_internal_token)],
+)
+def pnelly_occasion_guide(request: PNELLYOccasionGuideRequest) -> dict[str, object]:
+    """Explain a recognized public dress-code theme without reading user data."""
+    return {
+        "schema_version": "1.0",
+        "capability": "pnelly_occasion_intelligence",
+        "theme_guide": build_theme_guide(request.occasion),
+    }
 
 
 @app.post(
