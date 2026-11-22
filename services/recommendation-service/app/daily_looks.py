@@ -13,6 +13,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from app.wardrobe_rotation import build_rotation_state, wear_history_index
+from app.occasion_intelligence import build_theme_guide, theme_ranking_signals
 
 POLICY_VERSION = "pnelly-daily-looks-v1"
 ROLES = ("everyday", "elevated", "explore")
@@ -96,6 +97,10 @@ _OCCASION_TERMS = {
     "travel": ("travel", "comfortable", "relaxed", "cotton", "linen"),
     "sport": ("sport", "active", "performance", "breathable", "sneaker"),
     "special occasion": ("formal", "elegant", "statement", "dress", "tailored"),
+    "old money": ("classic", "tailored", "elegant", "preppy", "linen", "cotton", "knitwear", "navy", "cream", "beige", "loafers", "leather", "wool", "silk", "tweed"),
+    "quiet luxury": ("minimal", "classic", "tailored", "neutral", "linen", "cotton", "wool", "silk", "leather"),
+    "black tie": ("formal", "evening", "tailored", "suit", "tuxedo", "gown", "dress", "satin", "silk", "velvet"),
+    "cocktail": ("evening", "formal", "elegant", "dress", "tailored", "silk", "satin", "crepe", "velvet"),
 }
 _CLIMATE_TERMS = {
     "hot_humid": {
@@ -513,7 +518,8 @@ def _score(
     feedback_matches = sum(1 for signal in feedback_signals if signal and signal.split(":", 1)[-1] in text)
     # Keep learned feedback advisory and bounded so a noisy event history
     # cannot overwhelm the declared day context or hard policy boundaries.
-    score += min(8, style_matches) + min(4, feedback_matches)
+    theme_matches = sum(2 for signal in theme_ranking_signals(occasion) if signal.split(":", 1)[-1] in text)
+    score += min(8, style_matches) + min(4, feedback_matches) + min(12, theme_matches)
     return score
 
 
@@ -643,6 +649,7 @@ def build_daily_looks(
             )
             looks.append({
                 "role": role,
+                "direction": (build_theme_guide(occasion) or {}).get("look_directions", {}).get(role, role.title()),
                 "status": "needs_input",
                 "item_ids": [],
                 "items": [],
@@ -681,6 +688,7 @@ def build_daily_looks(
         selected_item_ids.update(used)
         looks.append({
             "role": role,
+            "direction": (build_theme_guide(occasion) or {}).get("look_directions", {}).get(role, role.title()),
             "status": "ready",
             "item_ids": [x["item_id"] for x in chosen],
             "items": chosen,
@@ -699,6 +707,7 @@ def build_daily_looks(
     surfaced_today = sorted({item_id for look in looks if look["status"] == "ready" for item_id in look["item_ids"]})
     rotation = build_rotation_state(items=active, local_date=local_date, seen_item_ids=rotation_seen, cycle_started_at=rotation_cycle_started_at, cycle_number=rotation_cycle_number, wear_history=wear_history, surfaced_item_ids=surfaced_today)
     rotation["combination_cycle_number"] = effective_cycle_number
+    theme_guide = build_theme_guide(occasion)
     output = {
         "schema_version": "1.0",
         "policy_version": POLICY_VERSION,
@@ -708,6 +717,7 @@ def build_daily_looks(
         "look_count": 3,
         "ready_count": ready_count,
         "looks": looks,
+        "theme_guide": theme_guide,
         "wardrobe_rotation": rotation,
         "personalization": {
             "style_signals_used": bool(signals),
@@ -721,6 +731,7 @@ def build_daily_looks(
         "limits": [
             "Looks use only active, owner-scoped wardrobe item records.",
             "The three roles are distinct outfit combinations, not a fit or purchase guarantee.",
+            "Recognized theme guidance is curated general styling information; it does not imply that every wardrobe item is a verified fabric or fit attribute.",
             "No body, face, culture, gender, religion or modesty attribute is inferred.",
             "Virtual Twin preview is unavailable until persistent Twin ownership, consent and a validated renderer are integrated.",
             "Marketplace candidates, prices, stock and product-display authorization are not part of this response.",
