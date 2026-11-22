@@ -77,6 +77,7 @@ class FinalTestGateTests(unittest.TestCase):
         registration = valid_registration()
         manifest = {
             "schema_version": "1.0",
+            "data_rights": {"manifest_sha256": registration["rights_manifest_sha256"]},
             "model_revisions": {
                 "cirvanna-fashion-clip": registration["baseline"]["revision"],
                 "marqo-fashionclip": "d" * 40,
@@ -100,6 +101,20 @@ class FinalTestGateTests(unittest.TestCase):
             data = root / "data.json"
             qrels = root / "qrels.json"
             lock = root / "requirements.lock"
+            rights_evidence = root / "rights-approval.txt"
+            rights_evidence.write_text("approved by designated reviewer", encoding="utf-8")
+            rights = root / "data-rights.json"
+            rights.write_text(json.dumps({
+                "schema_version": "1.0", "approval_status": "approved",
+                "scope": "fashion_retrieval_evaluation", "reviewed_by": "reviewer",
+                "reviewer_role": "data-rights-owner", "reviewed_at_utc": "2026-11-21T06:00:00Z",
+                "source_provenance": "documented source records",
+                "evidence_path": str(rights_evidence),
+                "evidence_sha256": hashlib.sha256(rights_evidence.read_bytes()).hexdigest(),
+                "commercial_evaluation_permitted": True, "human_review_permitted": True,
+                "retention_until": "2027-12-31", "contains_personal_images": False,
+                "depicted_person_consent_status": "not_applicable"
+            }), encoding="utf-8")
             data.write_text(json.dumps({"output_sha256": "b" * 64, "query_count": 100, "candidate_pool_sizes": [100]}), encoding="utf-8")
             qrels.write_text("human-reviewed-qrels-manifest", encoding="utf-8")
             lock.write_text("fully-pinned-dependencies", encoding="utf-8")
@@ -107,6 +122,8 @@ class FinalTestGateTests(unittest.TestCase):
                 "data_manifest_path": str(data),
                 "qrels_manifest_path": str(qrels),
                 "dependency_lock_path": str(lock),
+                "rights_manifest_path": str(rights),
+                "rights_manifest_sha256": hashlib.sha256(rights.read_bytes()).hexdigest(),
                 "data_manifest_sha256": hashlib.sha256(data.read_bytes()).hexdigest(),
                 "qrels_manifest_sha256": hashlib.sha256(qrels.read_bytes()).hexdigest(),
                 "dependency_lock_sha256": hashlib.sha256(lock.read_bytes()).hexdigest(),
@@ -116,6 +133,7 @@ class FinalTestGateTests(unittest.TestCase):
             rankings.write_text("{}\\n", encoding="utf-8")
             manifest = {
                 "schema_version": "1.0",
+                "data_rights": {"manifest_sha256": registration["rights_manifest_sha256"]},
                 "model_revisions": {
                     "cirvanna-fashion-clip": registration["baseline"]["revision"],
                     **registration["challengers"],

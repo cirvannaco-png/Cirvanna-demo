@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "approval_status": "REPLACE_WITH_approved_ONLY_AFTER_REVIEW",
+  "scope": "fashion_retrieval_evaluation",
+  "reviewed_by": "REPLACE_WITH_REVIEWER_ID",
+  "reviewer_role": "REPLACE_WITH_AUTHORIZED_ROLE",
+  "reviewed_at_utc": "REPLACE_WITH_ISO8601_TIMESTAMP_WITH_TIMEZONE",
+  "source_provenance": "REPLACE_WITH_SOURCE_REGISTER_AND_PROVENANCE_DETAILS",
+  "evidence_path": "/secure/evaluation/rights-approval-evidence.pdf",
+  "evidence_sha256": "REPLACE_WITH_64_CHARACTER_SHA256",
+  "commercial_evaluation_permitted": false,
+  "human_review_permitted": false,
+  "retention_until": "REPLACE_WITH_YYYY-MM-DD",
+  "contains_personal_images": true,
+  "depicted_person_consent_status": "REPLACE_WITH_verified_OR_not_applicable"
+}

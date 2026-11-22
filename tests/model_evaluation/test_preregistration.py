@@ -28,9 +28,11 @@ def valid_registration():
         "data_manifest_sha256": "a" * 64,
         "qrels_manifest_sha256": "b" * 64,
         "dependency_lock_sha256": "c" * 64,
+        "rights_manifest_sha256": "d" * 64,
         "data_manifest_path": "/private/prepared.manifest.json",
         "qrels_manifest_path": "/private/qrels.manifest.json",
         "dependency_lock_path": "/private/requirements.lock",
+        "rights_manifest_path": "/private/data-rights.manifest.json",
     }
 
 

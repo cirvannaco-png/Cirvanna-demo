@@ -554,6 +554,7 @@ def run_model(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", required=True, help="Private JSONL query/candidate cases")
+    parser.add_argument("--rights-manifest", required=True, help="Approved private data-rights manifest; inference is blocked without it")
     parser.add_argument("--media-root", required=True, help="Root directory for relative query_image_path values")
     parser.add_argument("--output", required=True, help="Private output JSONL path")
     parser.add_argument("--overwrite", action="store_true", help="Atomically replace existing rankings and manifest")
@@ -564,6 +565,11 @@ def main() -> int:
     parser.add_argument("--device", default="auto", choices=("auto", "cpu", "cuda"))
     parser.add_argument("--batch-size", type=int, default=32)
     args = parser.parse_args()
+    try:
+        from .data_rights import load_and_validate_data_rights_manifest
+    except ImportError:
+        from data_rights import load_and_validate_data_rights_manifest
+    rights = load_and_validate_data_rights_manifest(args.rights_manifest)
     output_path = Path(args.output).expanduser()
     manifest_path = output_path.with_suffix(output_path.suffix + ".manifest.json")
     ensure_private_targets_available([output_path, manifest_path], overwrite=args.overwrite)
@@ -640,6 +646,14 @@ def main() -> int:
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "runner": "cirvanna-fashion-retrieval-runner/1.0",
         "input_sha256": sha256_file(Path(args.input)),
+        "data_rights": {
+            "manifest_path": str(Path(args.rights_manifest).expanduser().resolve()),
+            "manifest_sha256": rights["manifest_sha256"],
+            "approval_status": rights["approval_status"],
+            "scope": rights["scope"],
+            "evidence_sha256": rights["evidence_sha256"],
+            "retention_until": rights["retention_until"],
+        },
         "query_count": len(cases),
         "task_id": cases[0]["task_id"],
         "split": cases[0]["split"],
@@ -667,7 +681,7 @@ def main() -> int:
             "Only image-to-catalog-text and text-to-catalog-text are implemented; image-to-image is a separate task.",
             "The runner ranks all supplied eligible candidates; no calibrated no-match threshold is applied.",
             "Scores are cosine similarities, not probabilities or calibrated confidence.",
-            "The runner does not verify dataset/model commercial rights or human-review independence.",
+            "The runner validates a recorded data-rights approval manifest and evidence digest; it cannot establish legal sufficiency or reviewer independence.",
         ],
     }
     write_private_text(
