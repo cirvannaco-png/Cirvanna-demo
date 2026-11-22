@@ -85,7 +85,7 @@ jobs:
           pg_dump -h localhost -U commerce -d commerce_ci --format=custom > /tmp/cirvanna-commerce.dump
           createdb -h localhost -U commerce commerce_restore
           pg_restore -h localhost -U commerce -d commerce_restore --exit-on-error < /tmp/cirvanna-commerce.dump
-          psql -h localhost -U commerce -d commerce_restore -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM alembic_version WHERE version_num='20261121_0016') THEN RAISE EXCEPTION 'Commerce migration head was not restored'; END IF; IF to_regclass('public.commerce_cal_purchase_audits') IS NULL THEN RAISE EXCEPTION 'CAL purchase audit table missing after restore'; END IF; IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='trg_commerce_cal_purchase_audit_immutable' AND NOT tgisinternal) THEN RAISE EXCEPTION 'CAL audit immutability trigger missing after restore'; END IF; END \$\$;"
+          psql -h localhost -U commerce -d commerce_restore -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM alembic_version WHERE version_num='20261121_0016') THEN RAISE EXCEPTION 'Commerce migration head was not restored'; END IF; IF to_regclass('public.commerce_cal_purchase_audits') IS NULL THEN RAISE EXCEPTION 'CAL purchase audit table missing after restore'; END IF; IF NOT EXISTS (SELECT 1 FROM pg_trigger WHERE tgname='trg_commerce_cal_purchase_audits_no_update_delete' AND NOT tgisinternal) THEN RAISE EXCEPTION 'CAL audit immutability trigger missing after restore'; END IF; END \$\$;"
       - name: Validate model schema compilation
         run: python -m compileall -q app migrations
       - name: Run portal contract tests
