@@ -879,7 +879,10 @@ def put_profile(subject_id: str, payload: ProfilePut, db: Annotated[Session, Dep
     )
     if payload.consent_receipt_id is not None:
         consent_query = consent_query.where(ConsentReceipt.receipt_id == payload.consent_receipt_id)
-    active = db.scalar(consent_query.limit(1))
+    # Serialize profile writes against concurrent receipt revocation. On
+    # PostgreSQL, the row lock makes a revocation either precede this check or
+    # wait until this authorized write commits; a stale receipt cannot race it.
+    active = db.scalar(consent_query.with_for_update().limit(1))
     if active is None:
         raise HTTPException(403, detail={"code": "ACTIVE_PROFILE_STORAGE_CONSENT_REQUIRED"})
     row = db.get(USIProfileRow, subject)
