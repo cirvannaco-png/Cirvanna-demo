@@ -40,13 +40,13 @@ class SourceLineageUtilityTests(unittest.TestCase):
     def test_filename_preceding_fence_is_associated_with_code(self):
         tick = chr(96)
         snapshot = (
-            "src/example.py\\n\\n"
-            + tick * 3 + "python\\n"
-            "def answer():\\n    return 42\\n"
-            + tick * 3 + "\\n"
+            "src/example.py\n\n"
+            + tick * 3 + "python\n"
+            "def answer():\n    return 42\n"
+            + tick * 3 + "\n"
         )
         blocks = _named_code_blocks(snapshot)
-        self.assertEqual(blocks["src/example.py"], ["def answer():\\n    return 42\\n"])
+        self.assertEqual(blocks["src/example.py"], ["def answer():\n    return 42\n"])
 
     def test_path_normalisation_supports_headers(self):
         self.assertEqual(_normalise_path("# File: src/example.py"), "src/example.py")
