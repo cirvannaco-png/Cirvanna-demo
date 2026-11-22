@@ -631,7 +631,7 @@ def test_checkout_rejects_expired_cal_receipt_and_persists_denial_audit(client, 
     assert db.query(main.CommerceOrder).count() == 0
     audit = db.query(main.CALPurchaseAudit).filter_by(action="checkout").one()
     assert audit.order_id is None
-    assert audit.expires_at <= main.now()
+    assert audit.expires_at.replace(tzinfo=main.now().tzinfo) <= main.now()
     assert audit.reason_code == "OFFER_OR_RECEIPT_CHANGED_AFTER_CAL"
     db.close()
 
