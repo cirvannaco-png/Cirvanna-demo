@@ -1968,6 +1968,51 @@ def _reservation_expiry_matches(provider_expiry: Any, expected_expiry: datetime)
     return actual == expected and actual > utcnow()
 
 
+def _adopt_verified_reservation_draft(
+    db: Session,
+    reservation: ShopifyInventoryReservation,
+    draft: dict[str, Any],
+) -> str:
+    """Adopt a discovered provider draft only after proving its live hold.
+
+    This helper is shared by normal idempotent retries and ambiguous-create
+    recovery. A matching reservation tag and a draft ID are not proof that
+    Shopify actually accepted the inventory hold.
+    """
+    draft_id = draft.get("id") if isinstance(draft, dict) else None
+    if not isinstance(draft_id, str) or not draft_id.strip():
+        reservation.state = "unknown"
+        reservation.last_error = "SHOPIFY_RESERVATION_READBACK_MISSING"
+        db.commit()
+        raise HTTPException(503, detail={"code": "SHOPIFY_RESERVATION_OUTCOME_UNKNOWN"})
+
+    reservation.draft_order_gid = draft_id
+    if draft.get("order"):
+        reservation.state = "unknown"
+        reservation.last_error = "SHOPIFY_RESERVATION_ALREADY_COMPLETED"
+        db.commit()
+        raise HTTPException(409, detail={"code": "SHOPIFY_RESERVATION_ALREADY_COMPLETED"})
+
+    if (
+        draft.get("status") != "OPEN"
+        or draft.get("ready") is not True
+        or not _reservation_expiry_matches(draft.get("reserveInventoryUntil"), reservation.expires_at)
+    ):
+        # Persist the provider ID before failing. The caller's compensation
+        # path can now release this invalid/partial draft rather than orphan it.
+        reservation.state = "failed"
+        reservation.last_error = "SHOPIFY_RESERVATION_READBACK_MISMATCH"
+        db.commit()
+        raise HTTPException(409, detail={"code": "SHOPIFY_RESERVATION_READBACK_MISMATCH"})
+
+    reservation.state = "reserved"
+    reservation.lease_owner = None
+    reservation.lease_until = None
+    reservation.last_error = None
+    db.commit()
+    return draft_id
+
+
 def _find_reservation_draft(connection: ShopifyConnection, db: Session, key: str) -> dict[str, Any] | None:
     data = _graphql(connection, db, """
       query CirvannaFindInventoryReservation($query: String!) {
@@ -1988,19 +2033,7 @@ def _create_inventory_draft(connection: ShopifyConnection, db: Session,
                             items: list[commerce.OrderItem]) -> str:
     existing = _find_reservation_draft(connection, db, reservation.reservation_key)
     if existing:
-        if existing.get("order"):
-            raise HTTPException(409, detail={"code": "SHOPIFY_RESERVATION_ALREADY_COMPLETED"})
-        reservation.draft_order_gid = existing["id"]
-        reservation.state = "reserved"
-        reservation.last_error = None
-        db.commit()
-        if (existing.get("status") != "OPEN" or existing.get("ready") is not True
-                or not _reservation_expiry_matches(existing.get("reserveInventoryUntil"), reservation.expires_at)):
-            reservation.state = "failed"
-            reservation.last_error = "SHOPIFY_RESERVATION_READBACK_MISMATCH"
-            db.commit()
-            raise HTTPException(409, detail={"code": "SHOPIFY_RESERVATION_READBACK_MISMATCH"})
-        return existing["id"]
+        return _adopt_verified_reservation_draft(db, reservation, existing)
     snapshots = {x.local_variant_id: x for x in db.scalars(select(ShopifyVariantSnapshot).where(
         ShopifyVariantSnapshot.connection_id == connection.id,
         ShopifyVariantSnapshot.local_variant_id.is_not(None),
@@ -2054,12 +2087,8 @@ def _create_inventory_draft(connection: ShopifyConnection, db: Session,
             recovered = _find_reservation_draft(connection, db, reservation.reservation_key)
         except HTTPException:
             recovered = None
-        if recovered and recovered.get("id") and not recovered.get("order"):
-            reservation.draft_order_gid = recovered["id"]
-            reservation.state = "reserved"
-            reservation.last_error = None
-            db.commit()
-            return recovered["id"]
+        if recovered and recovered.get("id"):
+            return _adopt_verified_reservation_draft(db, reservation, recovered)
         reservation.state = "unknown"
         reservation.last_error = "SHOPIFY_RESERVATION_CREATE_OUTCOME_UNKNOWN"
         db.commit()
@@ -2139,17 +2168,12 @@ def prepare_checkout_inventory_reservations(db: Session, order: commerce.Commerc
                 if reservation.state not in {"creating", "unknown"}:
                     raise HTTPException(409, detail={"code": "SHOPIFY_RESERVATION_NOT_REUSABLE"})
                 found = _find_reservation_draft(connection, db, reservation.reservation_key)
-                if not found or not found.get("id") or found.get("order"):
+                if not found:
                     reservation.state = "unknown"
                     reservation.last_error = "SHOPIFY_RESERVATION_RECONCILIATION_REQUIRED"
                     db.commit()
                     raise HTTPException(503, detail={"code": "SHOPIFY_RESERVATION_OUTCOME_UNKNOWN"})
-                reservation.draft_order_gid = found["id"]
-                reservation.state = "reserved"
-                reservation.lease_owner = None
-                reservation.lease_until = None
-                reservation.last_error = None
-                db.commit()
+                _adopt_verified_reservation_draft(db, reservation, found)
                 continue
             _create_inventory_draft(connection, db, reservation, merchant_items)
             reservation.lease_owner = None

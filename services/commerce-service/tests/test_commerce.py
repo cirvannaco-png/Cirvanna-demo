@@ -2525,12 +2525,29 @@ def test_shopify_checkout_reservation_uses_deterministic_provider_draft(monkeypa
     db.commit()
     calls = []
     provider_expiry = []
+    recovery_mode = {"state": "normal", "find_calls": 0}
 
     def fake_graphql(conn, session, query, variables=None):
         calls.append((query, variables or {}))
         if "CirvannaFindInventoryReservation" in query:
+            if recovery_mode["state"] == "unknown_state":
+                return {"draftOrders": {"nodes": [{
+                    "id": "gid://shopify/DraftOrder/900", "tags": [reservation_key],
+                    "status": "OPEN", "ready": True,
+                    "reserveInventoryUntil": provider_expiry[0], "order": None,
+                }]}}
+            if recovery_mode["state"] == "ambiguous_create":
+                recovery_mode["find_calls"] += 1
+                if recovery_mode["find_calls"] == 2:
+                    return {"draftOrders": {"nodes": [{
+                        "id": "gid://shopify/DraftOrder/900", "tags": [reservation_key],
+                        "status": "OPEN", "ready": True,
+                        "reserveInventoryUntil": provider_expiry[0], "order": None,
+                    }]}}
             return {"draftOrders": {"nodes": []}}
         if "CirvannaReserveInventory" in query:
+            if recovery_mode["state"] == "ambiguous_create":
+                raise HTTPException(503, detail={"code": "SHOPIFY_API_UNAVAILABLE"})
             provider_expiry[:] = [variables["input"]["reserveInventoryUntil"]]
             return {"draftOrderCreate": {
                 "draftOrder": {
@@ -2561,6 +2578,7 @@ def test_shopify_checkout_reservation_uses_deterministic_provider_draft(monkeypa
     assert reservation is not None
     assert reservation.state == "reserved"
     assert reservation.draft_order_gid == "gid://shopify/DraftOrder/900"
+    reservation_key = reservation.reservation_key
     create_call = next(call for call in calls if "CirvannaReserveInventory" in call[0])
     draft_input = create_call[1]["input"]
     assert draft_input["lineItems"] == [{
@@ -2589,6 +2607,36 @@ def test_shopify_checkout_reservation_uses_deterministic_provider_draft(monkeypa
     before_retry = len(calls)
     assert shopify.prepare_checkout_inventory_reservations(db, order) == 1
     assert len(calls) == before_retry
+
+    # A durable UNKNOWN state must reconcile by stable tag and revalidate the
+    # full provider hold before adopting the draft; an ID alone is insufficient.
+    reservation.state = "unknown"
+    reservation.draft_order_gid = None
+    db.commit()
+    recovery_mode["state"] = "unknown_state"
+    before_reconcile = len(calls)
+    assert shopify.prepare_checkout_inventory_reservations(db, order) == 1
+    db.refresh(reservation)
+    assert reservation.state == "reserved"
+    assert reservation.draft_order_gid == "gid://shopify/DraftOrder/900"
+    assert len([call for call in calls[before_reconcile:] if "CirvannaReserveInventory" in call[0]]) == 0
+
+    # A timeout/ambiguous create result follows the same verification path.
+    # The second stable-tag lookup finds the provider-created draft, but the
+    # original create mutation is never blindly retried.
+    reservation.state = "creating"
+    reservation.draft_order_gid = None
+    db.commit()
+    recovery_mode["state"] = "ambiguous_create"
+    recovery_mode["find_calls"] = 0
+    before_ambiguous = len(calls)
+    recovered_gid = shopify._create_inventory_draft(connection, db, reservation, [item])
+    db.refresh(reservation)
+    assert recovered_gid == "gid://shopify/DraftOrder/900"
+    assert reservation.state == "reserved"
+    assert reservation.draft_order_gid == recovered_gid
+    assert len([call for call in calls[before_ambiguous:] if "CirvannaReserveInventory" in call[0]]) == 1
+    recovery_mode["state"] = "normal"
 
     # A provider-side hold that has expired or changed since checkout creation
     # must not be completed after payment. The completion path re-reads and
@@ -2626,6 +2674,96 @@ def test_shopify_provider_reservation_expiry_readback_is_exact_and_future():
     assert _reservation_expiry_matches(later, expected) is False
     assert _reservation_expiry_matches(earlier, expected) is False
     assert _reservation_expiry_matches((main.now() - timedelta(seconds=1)).isoformat(), expected) is False
+
+
+def test_shopify_recovered_reservation_draft_is_adopted_only_after_exact_hold_verification():
+    from datetime import timedelta
+    from types import SimpleNamespace
+    from app import shopify
+
+    expected = main._aware_utc(main.now()).replace(microsecond=0) + timedelta(minutes=10)
+    expiry = expected.isoformat().replace("+00:00", "Z")
+    reservation = SimpleNamespace(
+        expires_at=expected,
+        draft_order_gid=None,
+        state="unknown",
+        lease_owner="stale-worker",
+        lease_until=main.now(),
+        last_error="prior-timeout",
+    )
+
+    class CommitCounter:
+        commits = 0
+        def commit(self):
+            self.commits += 1
+
+    db = CommitCounter()
+    draft = {
+        "id": "gid://shopify/DraftOrder/recovered-900",
+        "status": "OPEN",
+        "ready": True,
+        "reserveInventoryUntil": expiry,
+        "order": None,
+    }
+    adopted = shopify._adopt_verified_reservation_draft(db, reservation, draft)
+    assert adopted == draft["id"]
+    assert reservation.draft_order_gid == draft["id"]
+    assert reservation.state == "reserved"
+    assert reservation.lease_owner is None and reservation.lease_until is None
+    assert reservation.last_error is None
+    assert db.commits == 1
+
+
+@pytest.mark.parametrize("mutation", ["closed", "not_ready", "missing_expiry", "expired_expiry", "different_expiry"])
+def test_shopify_recovered_reservation_draft_fails_closed_on_invalid_hold(mutation):
+    from datetime import timedelta
+    from types import SimpleNamespace
+    from fastapi import HTTPException
+    from app import shopify
+
+    expected = main._aware_utc(main.now()).replace(microsecond=0) + timedelta(minutes=10)
+    expiry = expected.isoformat().replace("+00:00", "Z")
+    draft = {
+        "id": "gid://shopify/DraftOrder/recovered-invalid",
+        "status": "OPEN",
+        "ready": True,
+        "reserveInventoryUntil": expiry,
+        "order": None,
+    }
+    if mutation == "closed":
+        draft["status"] = "CLOSED"
+    elif mutation == "not_ready":
+        draft["ready"] = False
+    elif mutation == "missing_expiry":
+        draft["reserveInventoryUntil"] = None
+    elif mutation == "expired_expiry":
+        draft["reserveInventoryUntil"] = (main.now() - timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
+    elif mutation == "different_expiry":
+        draft["reserveInventoryUntil"] = (expected + timedelta(seconds=1)).isoformat().replace("+00:00", "Z")
+
+    reservation = SimpleNamespace(
+        expires_at=expected,
+        draft_order_gid=None,
+        state="unknown",
+        lease_owner="stale-worker",
+        lease_until=main.now(),
+        last_error=None,
+    )
+
+    class CommitCounter:
+        commits = 0
+        def commit(self):
+            self.commits += 1
+
+    db = CommitCounter()
+    with pytest.raises(HTTPException) as rejected:
+        shopify._adopt_verified_reservation_draft(db, reservation, draft)
+    assert rejected.value.status_code == 409
+    assert rejected.value.detail["code"] == "SHOPIFY_RESERVATION_READBACK_MISMATCH"
+    assert reservation.draft_order_gid == draft["id"]
+    assert reservation.state == "failed"
+    assert reservation.last_error == "SHOPIFY_RESERVATION_READBACK_MISMATCH"
+    assert db.commits == 1
 
 
 def test_shopify_reservation_key_is_stable_and_merchant_scoped():
