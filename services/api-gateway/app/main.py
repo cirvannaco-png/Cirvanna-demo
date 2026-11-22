@@ -2240,17 +2240,19 @@ def compose_pnelly_daily_looks(
                 # Do not turn an informational guide outage into an eligibility
                 # bypass or an invented explanation. The response remains REVIEW/BLOCK.
                 theme_guide = None
+        blocked_recommendation = {
+            "look_count": 0,
+            "ready_count": 0,
+            "looks": [],
+        }
+        if theme_guide is not None:
+            blocked_recommendation["theme_guide"] = theme_guide
         return {
             "schema_version": "1.0",
             "request_id": payload.request_id,
             "mode": "pnelly_wardrobe_daily_looks",
             "eligibility": eligibility,
-            "recommendation": {
-                "look_count": 0,
-                "ready_count": 0,
-                "looks": [],
-                "theme_guide": theme_guide,
-            },
+            "recommendation": blocked_recommendation,
         }
     active_item_ids = {
         item.get("item_id") for item in payload.wardrobe_items
