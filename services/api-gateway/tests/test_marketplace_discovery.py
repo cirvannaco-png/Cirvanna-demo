@@ -476,3 +476,56 @@ def test_discovery_forwards_market_destination_and_fulfilment_filters_to_commerc
 def test_discovery_query_may_be_empty_for_market_browse():
     request = main.DiscoveryRequest(user_id="subject-verified-1", query="", market_country_code="KE")
     assert request.query == ""
+
+
+def _decision(product_id: str, catalog_version: int = 1):
+    return main.CandidateDecisionOutput(
+        product_id=product_id, sku=None, name=None, category=None, brand=None,
+        price_minor=None, currency=None, image_urls=[], catalog_version=catalog_version,
+        verdict="review", may_display=False, reasons=[], policy_version="policy-1",
+        arbitration_contract_version="1", decision_pipeline_contract_version="1",
+    )
+
+
+def _decision_response(*candidates, request_id="req-cal-1"):
+    return main.DecisionResponse(
+        schema_version="1.0", request_id=request_id,
+        created_at="2026-11-22T00:00:00Z", candidates=list(candidates),
+    )
+
+
+def test_cal_discovery_response_must_cover_exact_candidate_set_and_versions():
+    indexed = main._index_discovery_cal_decisions(
+        _decision_response(_decision(P1, 1), _decision(P2, 2)),
+        {P1: 1, P2: 2},
+    )
+    assert set(indexed) == {P1, P2}
+
+    with pytest.raises(main.HTTPException) as duplicate:
+        main._index_discovery_cal_decisions(
+            _decision_response(_decision(P1, 1), _decision(P1, 1)), {P1: 1}
+        )
+    assert duplicate.value.detail["code"] == "CAL_DISCOVERY_DUPLICATE_CANDIDATE"
+
+    with pytest.raises(main.HTTPException) as missing:
+        main._index_discovery_cal_decisions(_decision_response(_decision(P1, 1)), {P1: 1, P2: 2})
+    assert missing.value.detail["code"] == "CAL_DISCOVERY_CANDIDATE_SET_INCOMPLETE"
+
+    with pytest.raises(main.HTTPException) as foreign:
+        main._index_discovery_cal_decisions(
+            _decision_response(_decision("foreign-product", 1)), {P1: 1}
+        )
+    assert foreign.value.detail["code"] == "CAL_DISCOVERY_FOREIGN_CANDIDATE"
+
+    with pytest.raises(main.HTTPException) as stale:
+        main._index_discovery_cal_decisions(_decision_response(_decision(P1, 2)), {P1: 1})
+    assert stale.value.status_code == 409
+    assert stale.value.detail["code"] == "CAL_DISCOVERY_CATALOG_VERSION_MISMATCH"
+
+
+def test_cal_discovery_response_requires_a_nonempty_request_id():
+    with pytest.raises(main.HTTPException) as invalid:
+        main._index_discovery_cal_decisions(
+            _decision_response(_decision(P1, 1), request_id=" "), {P1: 1}
+        )
+    assert invalid.value.detail["code"] == "CAL_DISCOVERY_RESPONSE_INVALID"

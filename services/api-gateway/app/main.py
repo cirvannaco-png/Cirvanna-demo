@@ -2601,6 +2601,38 @@ def _feedback_adjusted_score(base_score: float, signal: dict | None, weight: flo
     }
 
 
+def _index_discovery_cal_decisions(
+    response: DecisionResponse,
+    expected_catalog_versions: dict[str, int],
+) -> dict[str, CandidateDecisionOutput]:
+    """Accept only a complete, unique CAL result for the exact catalogue versions read.
+
+    Discovery reads Catalog before invoking CAL. A product can change between those
+    operations, so a SHOW decision for a newer/older catalogue version must never be
+    combined with the earlier product/offer payload.
+    """
+    if not isinstance(response, DecisionResponse) or not response.request_id.strip():
+        raise HTTPException(502, detail={"code": "CAL_DISCOVERY_RESPONSE_INVALID"})
+    if not expected_catalog_versions:
+        raise HTTPException(502, detail={"code": "CAL_DISCOVERY_CANDIDATE_SET_EMPTY"})
+
+    decisions: dict[str, CandidateDecisionOutput] = {}
+    for item in response.candidates:
+        product_id = item.product_id
+        if product_id not in expected_catalog_versions:
+            raise HTTPException(502, detail={"code": "CAL_DISCOVERY_FOREIGN_CANDIDATE"})
+        if product_id in decisions:
+            raise HTTPException(502, detail={"code": "CAL_DISCOVERY_DUPLICATE_CANDIDATE"})
+        expected_version = expected_catalog_versions[product_id]
+        if item.catalog_version != expected_version:
+            raise HTTPException(409, detail={"code": "CAL_DISCOVERY_CATALOG_VERSION_MISMATCH"})
+        decisions[product_id] = item
+
+    if set(decisions) != set(expected_catalog_versions):
+        raise HTTPException(502, detail={"code": "CAL_DISCOVERY_CANDIDATE_SET_INCOMPLETE"})
+    return decisions
+
+
 @app.post(
     "/v1/discover",
     dependencies=[Depends(require_api_token)],
@@ -2636,7 +2668,17 @@ def discover_marketplace(
         payload.context, strict=payload.use_wardrobe_context
     )
     products, offers = _discover_catalog_and_offers(payload)
-    by_product = {item["product_id"]: item for item in products}
+    by_product: dict[str, dict[str, Any]] = {}
+    for product in products:
+        product_id = product.get("product_id") if isinstance(product, dict) else None
+        catalog_version = product.get("catalog_version") if isinstance(product, dict) else None
+        if (not isinstance(product_id, str) or not product_id.strip()
+                or product_id in by_product):
+            raise HTTPException(502, detail={"code": "CATALOG_DISCOVERY_PRODUCT_SET_INVALID"})
+        if (isinstance(catalog_version, bool) or not isinstance(catalog_version, int)
+                or catalog_version < 1):
+            raise HTTPException(502, detail={"code": "CATALOG_DISCOVERY_VERSION_INVALID"})
+        by_product[product_id] = product
     owned_product_ids = {
         item.get("catalog_product_id")
         for item in wardrobe_items
@@ -2738,7 +2780,10 @@ def discover_marketplace(
         hard_constraints=payload.hard_constraints,
     )
     decision_response = evaluate_decisions(decision_request, end_user_authorization)
-    decisions = {item.product_id: item for item in decision_response.candidates}
+    decisions = _index_discovery_cal_decisions(
+        decision_response,
+        {product_id: int(by_product[product_id]["catalog_version"]) for product_id, *_ in ranked},
+    )
     displayable = []
     comparisons_by_product = {
         product_id: compare_like_for_like_offers(
