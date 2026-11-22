@@ -942,7 +942,8 @@ def test_saved_products_are_persistent_and_validate_canonical_catalog(client, mo
     buyer = auth("buyer-saved")
     saved = client.put(f"/saved-products/{pid}", headers=buyer)
     assert saved.status_code == 201
-    assert saved.json()["saved"] is True
+    assert saved.json() == {"catalog_product_id": pid, "saved": True}
+    assert "product_name" not in saved.json()
     assert client.get("/saved-products", headers=buyer).json()["total"] == 1
     assert client.get("/saved-products", headers=auth("different-user")).json()["total"] == 0
     assert client.delete(f"/saved-products/{pid}", headers=buyer).status_code == 204
