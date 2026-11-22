@@ -39,6 +39,7 @@ jobs:
         run: |
           python -m py_compile tools/model_evaluation/fashion_retrieval/evaluate_retrieval.py
           python -m py_compile tools/model_evaluation/fashion_retrieval/run_retrieval.py
+          python -m py_compile tools/model_evaluation/fashion_retrieval/data_rights.py
           python -m py_compile tools/model_evaluation/fashion_retrieval/prepare_cases.py
           python -m py_compile tools/model_evaluation/fashion_retrieval/build_qrels.py
           python -m py_compile services/vision-intelligence/app/retrieval_snapshot_export.py
