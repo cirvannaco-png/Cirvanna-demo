@@ -482,6 +482,15 @@ def test_binary_media_inventory_is_complete_and_fail_closed():
     assert portal["allows_uploaded_or_derived_media"] is False
     assert portal["symlinks_allowed"] is False
 
+    ingress = {item["id"]: item for item in inventory["private_ingress"]}
+    assert ingress["marketplace_bff_click_it_ingress"]["behavior"] == "503_before_multipart_parse"
+    twin_ingress = ingress["virtual_twin_click_it_orchestrator"]
+    assert twin_ingress["route"] == "/click-it"
+    assert twin_ingress["service_exposure"] == "private_api"
+    assert twin_ingress["production_enabled"] is False
+    assert twin_ingress["source_photo_persisted"] is False
+    assert "masking precedes" in twin_ingress["forwarding"]
+
     private_routes = {
         item["route"]: item for item in inventory["private_binary_delivery"]
     }
