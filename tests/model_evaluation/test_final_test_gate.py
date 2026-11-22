@@ -115,8 +115,16 @@ class FinalTestGateTests(unittest.TestCase):
                 "retention_until": "2027-12-31", "contains_personal_images": False,
                 "depicted_person_consent_status": "not_applicable"
             }), encoding="utf-8")
-            data.write_text(json.dumps({"output_sha256": "b" * 64, "query_count": 100, "candidate_pool_sizes": [100]}), encoding="utf-8")
-            qrels.write_text("human-reviewed-qrels-manifest", encoding="utf-8")
+            qrels.write_text(json.dumps({
+                "output_sha256": "e" * 64,
+                "data_rights": {"manifest_sha256": hashlib.sha256(rights.read_bytes()).hexdigest()},
+            }), encoding="utf-8")
+            data.write_text(json.dumps({
+                "output_sha256": "b" * 64, "query_count": 100, "candidate_pool_sizes": [100],
+                "data_rights": {"manifest_sha256": hashlib.sha256(rights.read_bytes()).hexdigest()},
+                "qrels_manifest_sha256": hashlib.sha256(qrels.read_bytes()).hexdigest(),
+                "query_cases_sha256": "e" * 64,
+            }), encoding="utf-8")
             lock.write_text("fully-pinned-dependencies", encoding="utf-8")
             registration.update({
                 "data_manifest_path": str(data),
@@ -146,6 +154,43 @@ class FinalTestGateTests(unittest.TestCase):
                 "task_id": "image_to_catalog_text",
             }
             validate_run_manifest(manifest, registration, rankings, artifacts["data"])
+
+    def test_rejects_data_or_qrels_manifest_bound_to_different_rights(self):
+        registration = valid_registration()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            evidence = root / "rights.txt"
+            evidence.write_text("approved", encoding="utf-8")
+            rights = root / "rights.json"
+            rights.write_text(json.dumps({
+                "schema_version": "1.0", "approval_status": "approved",
+                "scope": "fashion_retrieval_evaluation", "reviewed_by": "reviewer",
+                "reviewer_role": "rights-owner", "reviewed_at_utc": "2026-11-21T06:00:00Z",
+                "source_provenance": "approved source register", "evidence_path": str(evidence),
+                "evidence_sha256": hashlib.sha256(evidence.read_bytes()).hexdigest(),
+                "commercial_evaluation_permitted": True, "human_review_permitted": True,
+                "retention_until": "2027-12-31", "contains_personal_images": False,
+                "depicted_person_consent_status": "not_applicable",
+            }), encoding="utf-8")
+            data = root / "data.json"
+            qrels = root / "qrels.json"
+            lock = root / "lock.txt"
+            rights_digest = hashlib.sha256(rights.read_bytes()).hexdigest()
+            qrels.write_text(json.dumps({"data_rights": {"manifest_sha256": rights_digest}, "output_sha256": "1" * 64}), encoding="utf-8")
+            data.write_text(json.dumps({
+                "data_rights": {"manifest_sha256": "f" * 64},
+                "qrels_manifest_sha256": hashlib.sha256(qrels.read_bytes()).hexdigest(),
+                "query_cases_sha256": "1" * 64,
+            }), encoding="utf-8")
+            lock.write_text("lock", encoding="utf-8")
+            registration.update({
+                "rights_manifest_path": str(rights), "rights_manifest_sha256": rights_digest,
+                "data_manifest_path": str(data), "data_manifest_sha256": hashlib.sha256(data.read_bytes()).hexdigest(),
+                "qrels_manifest_path": str(qrels), "qrels_manifest_sha256": hashlib.sha256(qrels.read_bytes()).hexdigest(),
+                "dependency_lock_path": str(lock), "dependency_lock_sha256": hashlib.sha256(lock.read_bytes()).hexdigest(),
+            })
+            with self.assertRaisesRegex(ValueError, "data manifest is not bound"):
+                validate_private_artifact_manifests(registration)
 
     def test_practical_improvement_requires_threshold_and_positive_ci(self):
         registration = valid_registration()
