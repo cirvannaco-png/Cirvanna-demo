@@ -604,6 +604,76 @@ def test_checkout_order_persists_exact_offer_bound_cal_receipt(client, monkeypat
     db.close()
 
 
+def test_checkout_rejects_expired_cal_receipt_and_persists_denial_audit(client, monkeypatch):
+    offer = seed_offer(stock=5, price_minor=900)
+    buyer = auth("buyer-cal-expired")
+    assert client.post(
+        "/cart/items",
+        json={"variant_id": offer["variant_id"], "quantity": 2},
+        headers=buyer,
+    ).status_code == 201
+    configure_stripe(monkeypatch)
+
+    def expired_receipt(request, subject, items):
+        receipts = fake_cal_receipts(request, subject, items)
+        receipts[0]["expires_at"] = (main.now() - main.timedelta(seconds=1)).isoformat()
+        return receipts
+
+    monkeypatch.setattr(main, "_request_cal_purchase_receipts", expired_receipt)
+    response = client.post(
+        "/checkout",
+        headers={**buyer, "Idempotency-Key": "cal-expired-checkout-key-01"},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "CAL_CHECKOUT_OFFER_CHANGED_REAUTHORIZE"
+    assert row(main.Variant, offer["variant_id"]).reserved_qty == 0
+    db = TEST_SESSION()
+    assert db.query(main.CommerceOrder).count() == 0
+    audit = db.query(main.CALPurchaseAudit).filter_by(action="checkout").one()
+    assert audit.order_id is None
+    assert audit.expires_at.replace(tzinfo=main.now().tzinfo) <= main.now()
+    assert audit.reason_code == "OFFER_OR_RECEIPT_CHANGED_AFTER_CAL"
+    db.close()
+
+
+def test_checkout_rejects_offer_change_during_cal_roundtrip_and_keeps_audit(client, monkeypatch):
+    offer = seed_offer(stock=5, price_minor=900)
+    buyer = auth("buyer-cal-race")
+    assert client.post(
+        "/cart/items",
+        json={"variant_id": offer["variant_id"], "quantity": 2},
+        headers=buyer,
+    ).status_code == 201
+    configure_stripe(monkeypatch)
+
+    def mutate_offer_after_cal(request, subject, items):
+        receipts = fake_cal_receipts(request, subject, items)
+        db = TEST_SESSION()
+        variant = db.get(main.Variant, offer["variant_id"])
+        variant.price_minor += 1
+        variant.version += 1
+        db.commit()
+        db.close()
+        return receipts
+
+    monkeypatch.setattr(main, "_request_cal_purchase_receipts", mutate_offer_after_cal)
+    response = client.post(
+        "/checkout",
+        headers={**buyer, "Idempotency-Key": "cal-offer-race-checkout-key-01"},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "CAL_CHECKOUT_OFFER_CHANGED_REAUTHORIZE"
+    current = row(main.Variant, offer["variant_id"])
+    assert current.price_minor == 901
+    assert current.reserved_qty == 0
+    db = TEST_SESSION()
+    assert db.query(main.CommerceOrder).count() == 0
+    audit = db.query(main.CALPurchaseAudit).filter_by(action="checkout").one()
+    assert audit.order_id is None
+    assert audit.reason_code == "OFFER_OR_RECEIPT_CHANGED_AFTER_CAL"
+    db.close()
+
+
 def test_existing_idempotent_order_without_cal_audit_cannot_reopen_payment(client, monkeypatch):
     offer = seed_offer(stock=5)
     buyer = auth("buyer-cal-legacy")
@@ -738,6 +808,81 @@ def test_real_cal_receipt_requester_rejects_modified_signed_offer(client, monkey
     monkeypatch.setattr(main.httpx, "Client", FakeClient)
     with pytest.raises(main.HTTPException) as exc:
         REAL_CAL_PURCHASE_RECEIPT_REQUESTER(request, "buyer-cal-signature", [item])
+    assert exc.value.status_code == 502
+    assert exc.value.detail["code"] == "CAL_PURCHASE_RECEIPT_BINDING_OR_SIGNATURE_INVALID"
+
+
+def test_real_cal_receipt_requester_rejects_validly_signed_receipt_for_another_subject(client, monkeypatch):
+    from starlette.requests import Request
+
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-token-with-more-than-32-bytes")
+    signing_key = "cal-signing-key-with-more-than-thirty-two-bytes-long"
+    monkeypatch.setenv("CAL_PURCHASE_RECEIPT_HMAC_SECRET", signing_key)
+    item = {
+        "catalog_product_id": str(uuid.uuid4()),
+        "variant_id": str(uuid.uuid4()),
+        "listing_id": str(uuid.uuid4()),
+        "merchant_id": str(uuid.uuid4()),
+        "action": "checkout",
+        "offer_snapshot_sha256": "b" * 64,
+        "market_country_code": None,
+        "destination_key_sha256": None,
+        "fulfillment_mode": None,
+        "display_currency": None,
+        "quantity": 1,
+        "unit_price_minor": 500,
+        "currency": "KES",
+    }
+    request = Request({
+        "type": "http",
+        "method": "POST",
+        "path": "/checkout",
+        "headers": [(b"authorization", b"Bearer user-access-token")],
+    })
+
+    class Response:
+        status_code = 200
+        def __init__(self, payload):
+            self.payload = payload
+        def json(self):
+            return self.payload
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def post(self, url, headers, json):
+            issued = main.now()
+            unsigned = {
+                "schema_version": "1",
+                "receipt_id": str(uuid.uuid4()),
+                "request_id": "gateway-request-subject-mismatch",
+                "subject_id": "different-customer",
+                "candidate_id": item["variant_id"],
+                **json["authorizations"][0],
+                "catalog_version": 5,
+                "decision": "SHOW",
+                "may_display": True,
+                "reason_codes": [],
+                "policy_version": "test-policy-v1",
+                "issued_at": issued.isoformat(),
+                "expires_at": (issued + main.timedelta(seconds=45)).isoformat(),
+            }
+            canonical = __import__("json").dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+            signature = hmac.new(signing_key.encode(), canonical, hashlib.sha256).hexdigest()
+            return Response({
+                "subject_id": json["user_id"],
+                "request_id": "gateway-request-subject-mismatch",
+                "receipts": [{**unsigned, "signature": signature}],
+            })
+
+    monkeypatch.setattr(main.httpx, "Client", FakeClient)
+    with pytest.raises(main.HTTPException) as exc:
+        REAL_CAL_PURCHASE_RECEIPT_REQUESTER(request, "expected-customer", [item])
     assert exc.value.status_code == 502
     assert exc.value.detail["code"] == "CAL_PURCHASE_RECEIPT_BINDING_OR_SIGNATURE_INVALID"
 
