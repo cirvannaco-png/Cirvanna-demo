@@ -102,9 +102,15 @@ The validator requires:
 - fixed candidate-pool sizes including the current 1,000-offer Vision ceiling;
 - a fixed bootstrap count and seed;
 - immutable baseline/challenger revisions; and
-- SHA-256 digests for the data, qrels and complete dependency lock.
+- SHA-256 digests for the data, qrels, complete dependency lock and approved data-rights manifest.
 
 The sample values in unit tests are synthetic examples only, not recommended power calculations or a Cirvanna success threshold. Set the effect threshold and minimum sample/cluster counts from the intended product decision, reviewer capacity and a documented power/precision analysis before final-test unblinding. If the final dataset cannot meet the declared minimums, report the study as underpowered; do not silently lower the gates. Keep the completed registration and its source manifests in the restricted evaluation workspace, not GitHub.
+
+## Data-rights approval gate (mandatory)
+
+Before any model inference, create a private `data-rights` manifest from `data-rights.template.json` and retain the referenced approval evidence in the restricted evaluation workspace. Replace every placeholder only after review; the template is intentionally invalid and must never be treated as approval. The manifest must record `approval_status=approved`, `scope=fashion_retrieval_evaluation`, reviewer identity/role and timestamp, source provenance, evidence path and SHA-256, explicit commercial-evaluation and human-review permissions, a future retention expiry, and whether personal images are present. If personal images are present, depicted-person consent must be recorded as `verified`. Missing, pending, expired, out-of-scope, mismatched or inaccessible evidence blocks inference. The runner requires `--rights-manifest`; it validates this before importing the model runtime or reading query inputs. The rights-manifest digest is written to the private run manifest and must also be locked in final preregistration.
+
+This is an evidence-integrity control, not a legal determination. It does not authenticate signatures, determine copyright or privacy-law compliance, or replace approval by the responsible legal/data-rights owner. Never create an approval record merely to bypass the gate.
 
 ## Generate rankings
 
@@ -112,6 +118,7 @@ The baseline alone is not a comparison. Include the baseline and at least one ch
 
     python tools/model_evaluation/fashion_retrieval/run_retrieval.py \
       --input /secure/evaluation/fashion-retrieval-test.jsonl \
+      --rights-manifest /secure/evaluation/data-rights.manifest.json \
       --media-root /secure/evaluation/media \
       --output /secure/evaluation/fashion-retrieval-rankings.jsonl \
       --models cirvanna-fashion-clip marqo-fashionclip marqo-fashionsiglip \
