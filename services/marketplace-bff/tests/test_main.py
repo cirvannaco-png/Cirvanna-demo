@@ -1587,6 +1587,8 @@ def test_pnelly_daily_looks_uses_verified_wardrobe_and_gateway_subject(client, m
         "schema_version": "1.0",
         "request_id": "will-be-uuid",
         "mode": "pnelly_wardrobe_daily_looks",
+        "eligibility": {"verdict": "PASS", "candidate_id": "will-be-uuid", "reason_codes": ["EEPL_POLICY_PASSED"],
+                        "explanations": ["Context passed."], "cal_authorized": False},
         "recommendation": recommendation,
     })
     fake = FakeAsyncClient([
@@ -1608,6 +1610,7 @@ def test_pnelly_daily_looks_uses_verified_wardrobe_and_gateway_subject(client, m
         if url == "https://decision.example.test/v1/pnelly/daily-looks":
             request_body = kwargs["json"]
             gateway_response._payload["request_id"] = request_body["request_id"]
+            gateway_response._payload["eligibility"]["candidate_id"] = request_body["request_id"]
             gateway_response._payload["recommendation"]["wardrobe_rotation"]["next_state"]["cycle_started_at"] = request_body["local_date"]
         return await original_post(url, **kwargs)
 
@@ -1616,7 +1619,7 @@ def test_pnelly_daily_looks_uses_verified_wardrobe_and_gateway_subject(client, m
     response = client.post(
         "/api/wardrobe/pnelly/daily-looks",
         headers={"Authorization": "Bearer signed-session"},
-        json={"occasion": "work", "climate": "hot_dry", "timezone": "Africa/Nairobi"},
+        json={"location": "Nairobi, Kenya", "occasion": "work", "climate": "hot_dry", "timezone": "Africa/Nairobi"},
     )
     assert response.status_code == 200, response.text
     assert response.headers["cache-control"] == "no-store, private"
@@ -1628,6 +1631,12 @@ def test_pnelly_daily_looks_uses_verified_wardrobe_and_gateway_subject(client, m
     assert "image_asset_id" not in sent_items[0]
     assert gateway_call[2]["json"]["occasion"] == "work"
     assert gateway_call[2]["json"]["climate"] == "hot_dry"
+    context = gateway_call[2]["json"]["context"]
+    assert context["location"] == "Nairobi, Kenya"
+    assert context["location_source"] == "user_declared"
+    assert context["occasion_source"] == "user_declared"
+    assert context["climate_source"] == "user_declared"
+    assert context["location_observed_at"] == context["occasion_observed_at"] == context["climate_observed_at"]
     assert gateway_call[2]["json"]["rotation_seen_item_ids"] == []
     assert gateway_call[2]["json"]["rotation_cycle_started_at"] is None
     assert gateway_call[2]["json"]["rotation_cycle_number"] == 1
@@ -1638,6 +1647,57 @@ def test_pnelly_daily_looks_uses_verified_wardrobe_and_gateway_subject(client, m
     assert put_call[2]["json"]["expected_version"] == 0
     assert put_call[2]["json"]["surfaced_item_ids"] == []
     assert "DECISION_GATEWAY_TOKEN" not in response.text
+
+
+def test_pnelly_daily_looks_returns_eepl_review_without_writing_rotation(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_URL", "https://wardrobe.example.test")
+    monkeypatch.setenv("WARDROBE_SERVICE_TOKEN", "wardrobe-internal-token-more-than-thirty-two-bytes")
+    monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
+    monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
+    review_response = FakeResponse({
+            "schema_version": "1.0", "request_id": "review-request-001",
+            "mode": "pnelly_wardrobe_daily_looks",
+            "eligibility": {
+                "verdict": "REVIEW", "candidate_id": "review-request-001", "cal_authorized": False,
+                "reason_codes": ["EEPL_REQUIRED_CONTEXT_MISSING_LOCATION"],
+                "explanations": ["Location is required."],
+            },
+            "recommendation": {"look_count": 0, "ready_count": 0, "looks": []},
+        })
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
+        FakeResponse({"owner_user_id": "signed-user-42", "items": []}),
+        FakeResponse({"state": None, "version": 0}),
+        review_response,
+    ])
+    original_post = fake.post
+    async def post_with_review_envelope(url, **kwargs):
+        if url == "https://decision.example.test/v1/pnelly/daily-looks":
+            review_response._payload["request_id"] = kwargs["json"]["request_id"]
+            review_response._payload["eligibility"]["candidate_id"] = kwargs["json"]["request_id"]
+        return await original_post(url, **kwargs)
+    fake.post = post_with_review_envelope
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/pnelly/daily-looks",
+        headers={"Authorization": "Bearer signed-session"},
+        json={"timezone": "Africa/Nairobi"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["eligibility"]["verdict"] == "REVIEW"
+    assert response.json()["recommendation"]["looks"] == []
+    assert len(fake.calls) == 4
+    assert not any(call[0] == "PUT" for call in fake.calls)
+
+
+def test_pnelly_daily_looks_does_not_accept_browser_supplied_context_timestamps(client):
+    response = client.post(
+        "/api/wardrobe/pnelly/daily-looks",
+        headers={"Authorization": "Bearer signed-session"},
+        json={"location": "Nairobi, Kenya", "context": {"location_observed_at": "2020-01-01T00:00:00Z"}},
+    )
+    assert response.status_code == 422
 
 
 def test_pnelly_daily_looks_rejects_cross_subject_wardrobe_data(client, monkeypatch):
@@ -1667,7 +1727,11 @@ def test_pnelly_daily_looks_rejects_gateway_response_with_missing_or_reordered_r
     monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
     monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
     malformed = {
+        "schema_version": "1.0", "request_id": "malformed-request-001",
         "mode": "pnelly_wardrobe_daily_looks",
+        "eligibility": {"verdict": "PASS", "candidate_id": "malformed-request-001",
+                        "reason_codes": ["EEPL_POLICY_PASSED"], "explanations": ["Context passed."],
+                        "cal_authorized": False},
         "recommendation": {
             "look_count": 3,
             "looks": [
@@ -1683,6 +1747,13 @@ def test_pnelly_daily_looks_rejects_gateway_response_with_missing_or_reordered_r
         FakeResponse({"state": None, "version": 0}),
         FakeResponse(malformed),
     ])
+    original_post = fake.post
+    async def post_with_request_id(url, **kwargs):
+        if url == "https://decision.example.test/v1/pnelly/daily-looks":
+            malformed["request_id"] = kwargs["json"]["request_id"]
+            malformed["eligibility"]["candidate_id"] = kwargs["json"]["request_id"]
+        return await original_post(url, **kwargs)
+    fake.post = post_with_request_id
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.post(
         "/api/wardrobe/pnelly/daily-looks",
@@ -1699,7 +1770,11 @@ def test_pnelly_daily_looks_rejects_unverified_twin_preview_claims(client, monke
     monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
     monkeypatch.setenv("DECISION_GATEWAY_TOKEN", "decision-gateway-internal-token-more-than-thirty-two")
     forged_preview = {
+        "schema_version": "1.0", "request_id": "forged-preview-request-001",
         "mode": "pnelly_wardrobe_daily_looks",
+        "eligibility": {"verdict": "PASS", "candidate_id": "forged-preview-request-001",
+                        "reason_codes": ["EEPL_POLICY_PASSED"], "explanations": ["Context passed."],
+                        "cal_authorized": False},
         "recommendation": {
             "look_count": 3,
             "looks": [
@@ -1722,6 +1797,13 @@ def test_pnelly_daily_looks_rejects_unverified_twin_preview_claims(client, monke
         FakeResponse({"state": None, "version": 0}),
         FakeResponse(forged_preview),
     ])
+    original_post = fake.post
+    async def post_with_forged_preview_envelope(url, **kwargs):
+        if url == "https://decision.example.test/v1/pnelly/daily-looks":
+            forged_preview["request_id"] = kwargs["json"]["request_id"]
+            forged_preview["eligibility"]["candidate_id"] = kwargs["json"]["request_id"]
+        return await original_post(url, **kwargs)
+    fake.post = post_with_forged_preview_envelope
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
     response = client.post(
         "/api/wardrobe/pnelly/daily-looks",
@@ -1769,7 +1851,14 @@ def test_pnelly_daily_looks_hides_server_side_evaluation_trace_from_browser(clie
             "next_state": {"cycle_number": 1, "cycle_started_at": "2026-11-07", "seen_item_ids": []},
         },
     }
-    gateway_response = FakeResponse({"mode": "pnelly_wardrobe_daily_looks", "recommendation": recommendation})
+    gateway_response = FakeResponse({
+        "schema_version": "1.0", "request_id": "will-be-uuid",
+        "mode": "pnelly_wardrobe_daily_looks",
+        "eligibility": {"verdict": "PASS", "candidate_id": "will-be-uuid",
+                        "reason_codes": ["EEPL_POLICY_PASSED"], "explanations": ["Context passed."],
+                        "cal_authorized": False},
+        "recommendation": recommendation,
+    })
     fake = FakeAsyncClient([
         FakeResponse({"user_id": "signed-user-42", "role": "customer"}),
         FakeResponse({"owner_user_id": "signed-user-42", "items": [item]}),
@@ -1787,6 +1876,7 @@ def test_pnelly_daily_looks_hides_server_side_evaluation_trace_from_browser(clie
         body = response.json()
         body["schema_version"] = "1.0"
         body["request_id"] = kwargs["json"]["request_id"]
+        body["eligibility"]["candidate_id"] = kwargs["json"]["request_id"]
         body["recommendation"]["wardrobe_rotation"]["next_state"]["cycle_started_at"] = kwargs["json"]["local_date"]
         return FakeResponse(body, status_code=response.status_code)
     fake.post = post_with_gateway_envelope
@@ -1853,13 +1943,21 @@ def test_pnelly_daily_looks_reloads_and_recomposes_after_rotation_compare_and_sw
             },
         }
     first_gateway = FakeResponse({
+        "schema_version": "1.0", "request_id": "will-be-uuid",
         "mode": "pnelly_wardrobe_daily_looks",
+        "eligibility": {"verdict": "PASS", "candidate_id": "will-be-uuid",
+                        "reason_codes": ["EEPL_POLICY_PASSED"], "explanations": ["Context passed."],
+                        "cal_authorized": False},
         "recommendation": recommendation(
             complete=False, cycle=1, start="2026-11-07", seen=["shirt-001"], queue=["pants-001"],
         ),
     })
     second_gateway = FakeResponse({
+        "schema_version": "1.0", "request_id": "will-be-uuid",
         "mode": "pnelly_wardrobe_daily_looks",
+        "eligibility": {"verdict": "PASS", "candidate_id": "will-be-uuid",
+                        "reason_codes": ["EEPL_POLICY_PASSED"], "explanations": ["Context passed."],
+                        "cal_authorized": False},
         "recommendation": recommendation(
             complete=True, cycle=2, start="2026-11-07", seen=[], queue=[],
         ),
@@ -1891,6 +1989,7 @@ def test_pnelly_daily_looks_reloads_and_recomposes_after_rotation_compare_and_sw
         if url == "https://decision.example.test/v1/pnelly/daily-looks":
             body = kwargs["json"]
             response._payload["request_id"] = body["request_id"]
+            response._payload["eligibility"]["candidate_id"] = body["request_id"]
             rotation = response._payload["recommendation"]["wardrobe_rotation"]
             if rotation["cycle_complete"]:
                 rotation["next_state"]["cycle_started_at"] = body["local_date"]
@@ -2863,6 +2962,36 @@ def test_complementer_feedback_writes_only_consented_minimal_event_to_verified_t
         "outcome": "rejected",
     }
     assert "navy trousers" not in response.text
+    assert response.headers["cache-control"] == "no-store, private"
+
+
+def test_pnelly_preference_list_is_scoped_to_verified_customer_and_exact_profile_receipt(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_URL", "https://identity.example.test")
+    monkeypatch.setenv("IDENTITY_SERVICE_TOKEN", "identity-learning-internal-token-more-than-32")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "verified-customer-42", "role": "customer"}),
+        FakeResponse([{
+            "receipt_id": "profile-consent-001", "scope": "profile_storage", "granted": True,
+            "revoked_at": None, "expires_at": future_expiry(),
+        }]),
+        FakeResponse({"subject_id": "verified-customer-42", "profile_version": 4, "preferences": [
+            {"preference_id": "pnelly-1", "attribute": "style:elegant", "weight": 0.8,
+             "active": True, "source": "pnelly_user_confirmed", "source_request_id": "request-1"},
+            {"preference_id": "user-1", "attribute": "style:romantic", "weight": 1.0,
+             "active": True, "source": "user_declared"},
+        ]}),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.get(
+        "/api/wardrobe/pnelly/preferences?consent_receipt_id=profile-consent-001",
+        headers={"Authorization": "Bearer signed-customer-session"},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["profile_version"] == 4
+    assert [item["preference_id"] for item in response.json()["preferences"]] == ["pnelly-1"]
+    assert fake.calls[1][1] == "https://identity.example.test/v1/tal/consents/verified-customer-42"
+    assert fake.calls[2][1] == "https://identity.example.test/v1/profiles/verified-customer-42"
     assert response.headers["cache-control"] == "no-store, private"
 
 
@@ -4436,12 +4565,13 @@ def test_bff_and_identity_service_use_the_same_pnelly_preference_taxonomy():
 
     bff_values = None
     for node in bff_tree.body:
-        if isinstance(node, ast.ClassDef) and node.name == "PnellyStylePreferenceIn":
-            for member in node.body:
-                if isinstance(member, ast.AnnAssign) and isinstance(member.target, ast.Name) and member.target.id == "attribute":
-                    annotation = member.annotation
-                    if isinstance(annotation, ast.Subscript) and isinstance(annotation.slice, ast.Tuple):
-                        bff_values = set(ast.literal_eval(value) for value in annotation.slice.elts)
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "PnellyStyleAttribute"
+            for target in node.targets
+        ):
+            annotation = node.value
+            if isinstance(annotation, ast.Subscript) and isinstance(annotation.slice, ast.Tuple):
+                bff_values = set(ast.literal_eval(value) for value in annotation.slice.elts)
             break
 
     assert identity_values is not None
