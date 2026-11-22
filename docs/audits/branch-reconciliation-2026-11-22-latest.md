@@ -14,7 +14,7 @@ Method: GitHub's paginated branch-ref inventory and commit-ancestry comparisons.
 
 ## Ancestry classification
 
-A complete comparison was performed for the original 290 unique non-main heads against main at `74e153dfbc2911770670ec171ad2b31092047b8b`: 224 were diverged and 66 were behind-only. Main subsequently advanced through the Shopify reservation fix (#302), its documentation follow-up (#307), and the combined cross-service evidence clarification (#310). Those three mainline commits post-date the original branch-head snapshot; none of the original branch heads contains those later mainline commits, so their status classes remain unchanged and their behind counts increase by three.
+A complete comparison was performed for the original 290 unique non-main heads against main at `74e153dfbc2911770670ec171ad2b31092047b8b`: 223 were diverged and 67 were behind-only. Main subsequently advanced through the Shopify reservation fix (#302), its documentation follow-up (#307), and the combined cross-service evidence clarification (#310). Those three mainline commits post-date the original branch-head snapshot; none of the original branch heads contains those later mainline commits, so their status classes remain unchanged and their behind counts increase by three.
 
 Five additional unique PR branch heads were then compared against the later mainline snapshots:
 - PR #305 branch: 1 ahead / 5 behind; merged.
@@ -23,7 +23,7 @@ Five additional unique PR branch heads were then compared against the later main
 - PR #308 branch: 5 ahead / 1 behind at the comparison snapshot; open.
 - PR #310 branch: 1 ahead / 1 behind; merged.
 
-The combined current classification is therefore **229 diverged** and **66 behind-only** across 295 unique non-main heads. A behind-only branch contains no commit absent from main; it is an archival/deletion candidate, not an automatic deletion. A diverged branch may contain useful work, already-squash-merged work, superseded work, or unsafe/obsolete code. Ahead/behind counts alone do not determine merge or deletion eligibility.
+The combined current classification is therefore **228 diverged** and **67 behind-only** across 295 unique non-main heads. A behind-only branch contains no commit absent from main; it is an archival/deletion candidate, not an automatic deletion. A diverged branch may contain useful work, already-squash-merged work, superseded work, or unsafe/obsolete code. Ahead/behind counts alone do not determine merge or deletion eligibility.
 
 ## Duplicate branch-head pairs
 
