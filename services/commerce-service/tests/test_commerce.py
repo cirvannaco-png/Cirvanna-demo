@@ -604,6 +604,76 @@ def test_checkout_order_persists_exact_offer_bound_cal_receipt(client, monkeypat
     db.close()
 
 
+def test_checkout_rejects_expired_cal_receipt_and_persists_denial_audit(client, monkeypatch):
+    offer = seed_offer(stock=5, price_minor=900)
+    buyer = auth("buyer-cal-expired")
+    assert client.post(
+        "/cart/items",
+        json={"variant_id": offer["variant_id"], "quantity": 2},
+        headers=buyer,
+    ).status_code == 201
+    configure_stripe(monkeypatch)
+
+    def expired_receipt(request, subject, items):
+        receipts = fake_cal_receipts(request, subject, items)
+        receipts[0]["expires_at"] = (main.now() - main.timedelta(seconds=1)).isoformat()
+        return receipts
+
+    monkeypatch.setattr(main, "_request_cal_purchase_receipts", expired_receipt)
+    response = client.post(
+        "/checkout",
+        headers={**buyer, "Idempotency-Key": "cal-expired-checkout-key-01"},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "CAL_CHECKOUT_OFFER_CHANGED_REAUTHORIZE"
+    assert row(main.Variant, offer["variant_id"]).reserved_qty == 0
+    db = TEST_SESSION()
+    assert db.query(main.CommerceOrder).count() == 0
+    audit = db.query(main.CALPurchaseAudit).filter_by(action="checkout").one()
+    assert audit.order_id is None
+    assert audit.expires_at <= main.now()
+    assert audit.reason_code == "OFFER_OR_RECEIPT_CHANGED_AFTER_CAL"
+    db.close()
+
+
+def test_checkout_rejects_offer_change_during_cal_roundtrip_and_keeps_audit(client, monkeypatch):
+    offer = seed_offer(stock=5, price_minor=900)
+    buyer = auth("buyer-cal-race")
+    assert client.post(
+        "/cart/items",
+        json={"variant_id": offer["variant_id"], "quantity": 2},
+        headers=buyer,
+    ).status_code == 201
+    configure_stripe(monkeypatch)
+
+    def mutate_offer_after_cal(request, subject, items):
+        receipts = fake_cal_receipts(request, subject, items)
+        db = TEST_SESSION()
+        variant = db.get(main.Variant, offer["variant_id"])
+        variant.price_minor += 1
+        variant.version += 1
+        db.commit()
+        db.close()
+        return receipts
+
+    monkeypatch.setattr(main, "_request_cal_purchase_receipts", mutate_offer_after_cal)
+    response = client.post(
+        "/checkout",
+        headers={**buyer, "Idempotency-Key": "cal-offer-race-checkout-key-01"},
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "CAL_CHECKOUT_OFFER_CHANGED_REAUTHORIZE"
+    current = row(main.Variant, offer["variant_id"])
+    assert current.price_minor == 901
+    assert current.reserved_qty == 0
+    db = TEST_SESSION()
+    assert db.query(main.CommerceOrder).count() == 0
+    audit = db.query(main.CALPurchaseAudit).filter_by(action="checkout").one()
+    assert audit.order_id is None
+    assert audit.reason_code == "OFFER_OR_RECEIPT_CHANGED_AFTER_CAL"
+    db.close()
+
+
 def test_existing_idempotent_order_without_cal_audit_cannot_reopen_payment(client, monkeypatch):
     offer = seed_offer(stock=5)
     buyer = auth("buyer-cal-legacy")
