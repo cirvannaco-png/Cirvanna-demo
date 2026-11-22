@@ -37,7 +37,7 @@ GATEWAY_SURFACES = {"/v1/discover"}
 
 BFF_MARKER = re.compile(
     r"marketplace|marketplace-search|conversational-discovery|look-it|click-it|"
-    r"recommendations|daily-looks|commerce/\\{path:path\\}",
+    r"recommendations|daily-looks",
     re.IGNORECASE,
 )
 COMMERCE_MARKER = re.compile(
@@ -79,7 +79,7 @@ def _function_source(path: str, function_name: str) -> str:
 class CalShopperSurfaceInventoryTests(unittest.TestCase):
     def test_bff_product_and_purchase_surface_inventory_is_exhaustive(self):
         routes = _route_functions("services/marketplace-bff/app/main.py")
-        observed = {path for path in routes if BFF_MARKER.search(path)}
+        observed = {path for path in routes if BFF_MARKER.search(path) or path == "/api/commerce/{path:path}"}
         self.assertEqual(observed, BFF_SURFACES, "A new or removed BFF shopper surface needs explicit CAL disposition.")
 
     def test_commerce_product_and_purchase_surface_inventory_is_exhaustive(self):
