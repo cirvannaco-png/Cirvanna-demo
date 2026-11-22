@@ -22,6 +22,21 @@ class SourceLineageUtilityTests(unittest.TestCase):
         blocks = _named_code_blocks(snapshot)
         self.assertEqual(blocks["src/example.py"], ["def answer():\n    return 42\n"])
 
+    def test_embedded_file_headers_split_multi_file_fence(self):
+        tick = chr(96)
+        snapshot = (
+            tick * 3 + "python\n"
+            "# File: src/first.py\n"
+            "def first():\n    return 1\n\n"
+            "# ======================================================================\n"
+            "# File: src/second.py\n"
+            "def second():\n    return 2\n"
+            + tick * 3 + "\n"
+        )
+        blocks = _named_code_blocks(snapshot)
+        self.assertEqual(blocks["src/first.py"], ["def first():\n    return 1\n"])
+        self.assertEqual(blocks["src/second.py"], ["def second():\n    return 2\n"])
+
     def test_path_normalisation_supports_headers(self):
         self.assertEqual(_normalise_path("# File: src/example.py"), "src/example.py")
         self.assertEqual(_normalise_path("-- schema.sql"), "schema.sql")
