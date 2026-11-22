@@ -25,7 +25,8 @@ The appearance-specialist branch `integration/appearance-specialist-current-main
 | Click It / Look It | #255, #261 and #265 merged; relevant workflows pass. Look It uses request-scoped consent; Click It BFF rejects before multipart parsing. | Click It remains disabled pending detector evaluation, independent attestation, publication/restore/CDN route proof and deletion evidence. |
 | Twin / Try-On | #249 and #250 merged; #249 workflows 7/7; #250 workflows 3/3. | SAM 3D Body is research-only and not connected to public Twin/Asset/Registry. BFF reports `try_on_available=false`; FASHN is flat-lay-only pending GPU/visual acceptance. |
 | Multi-market | #239/#244 and follow-up commerce changes merged. Versioned FX/tax/fulfilment/payment evidence contracts exist. | No live KYC or fulfilment vendor is connected; Stripe/card only, no completed seller payouts or provider-booked shipments. |
-| Retrieval research | #277 merged; exact-head Architecture validation and Twin worker contract workflows 2/2 pass. A hash-locked CPython 3.11 Linux x86_64 CPU environment is available for controlled retrieval research. | CPU lock is not a CUDA/GPU environment, model inference validation or production deployment. |\n| Production | `docs/release/release-gates.json`: 23 required gates, 23 blocked, no exact-release-commit evidence. | No production promotion based on CI alone. |
+| Retrieval research | #277 merged; exact-head Architecture validation and Twin worker contract workflows 2/2 pass. A hash-locked CPython 3.11 Linux x86_64 CPU environment is available for controlled retrieval research. | CPU lock is not a CUDA/GPU environment, model inference validation or production deployment. |
+| Production | `docs/release/release-gates.json`: 23 required gates, 23 blocked, no exact-release-commit evidence. | No production promotion based on CI alone. |
 
 ## High-risk divergent families — do not merge wholesale
 
