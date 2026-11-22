@@ -197,6 +197,43 @@ class MarketplaceBrowserTests(unittest.TestCase):
             page.close()
 
 
+    def test_account_switch_immediately_hides_old_products_and_ignores_late_old_session_response(self):
+        page = self._open_live_marketplace(cart_status=200)
+        try:
+            self.assertEqual(page.locator(".card").count(), 1)
+            self.assertEqual(page.locator("#cartCount").inner_text(), "1")
+
+            page.evaluate("""() => {
+                const originalFetch = window.fetch.bind(window);
+                window.__resolveOldMarketplaceRequest = null;
+                window.fetch = (input, init = {}) => {
+                    const headers = new Headers(init.headers || {});
+                    const url = String(input);
+                    if (headers.get("Authorization") === "Bearer signed-user-session-token" && url.includes("/marketplace/offers")) {
+                        return new Promise(resolve => { window.__resolveOldMarketplaceRequest = () => resolve(new Response(JSON.stringify({
+                            items: [{catalog_product_id:"old-account-product",variant_id:"old-account-variant",product_name:"Stale old-account product",merchant_name:"Old Merchant",price_minor:999,currency:"KES"}],
+                            total:1,display_authority:"CaTaCaCi/CAL",withheld_candidate_count:0
+                        }), {status:200,headers:{"Content-Type":"application/json"}})); });
+                    }
+                    if (headers.get("Authorization") === "Bearer second-user-session-token") return new Promise(() => {});
+                    return originalFetch(input, init);
+                };
+            }""")
+            page.locator("#query").fill("old account refresh")
+            page.locator("#query").press("Enter")
+            page.wait_for_function("typeof window.__resolveOldMarketplaceRequest === 'function'")
+            page.evaluate("window.dispatchEvent(new CustomEvent('cirvanna:session-ready',{detail:{accessToken:'second-user-session-token'}}))")
+            page.wait_for_function("document.querySelectorAll('.card').length === 0")
+            self.assertEqual(page.locator("#cartCount").inner_text(), "0")
+            self.assertEqual(page.locator("#savedCount").inner_text(), "0")
+            page.evaluate("window.__resolveOldMarketplaceRequest()")
+            page.wait_for_timeout(100)
+            self.assertEqual(page.locator(".card").count(), 0)
+            self.assertNotIn("Stale old-account product", page.locator("body").inner_text())
+        finally:
+            page.close()
+
+
     def test_live_marketplace_never_renders_unapproved_external_media_urls(self):
         page = self._open_live_marketplace(
             cart_status=503,

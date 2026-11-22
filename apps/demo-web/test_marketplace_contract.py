@@ -41,7 +41,7 @@ class MarketplaceContractTests(unittest.TestCase):
         self.assertIn('data.display_authority!=="CaTaCaCi/CAL"', HTML)
         self.assertIn("Direct Commerce browsing is disabled", HTML)
         self.assertIn("Direct Catalog product display is disabled", HTML)
-        self.assertIn('fetch(config.commerceBase+"/cart",{headers})', HTML)
+        self.assertIn('fetch(config.commerceBase+"/cart",{headers,cache:"no-store"})', HTML)
         self.assertIn("purchaseEnabled=true", HTML)
         self.assertIn("purchaseEnabled=false", HTML)
         self.assertIn('mode="commerce";purchaseEnabled=false;saved=[];cart=[];cartVersion=0;updateCounts();', HTML)
