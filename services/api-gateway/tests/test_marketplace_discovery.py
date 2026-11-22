@@ -82,6 +82,9 @@ def test_discovery_returns_only_products_authorized_by_cal(client, monkeypatch):
     ))
     response = client.post("/v1/discover", headers=auth(), json=payload())
     assert response.status_code == 200, response.text
+    assert "no-store" in response.headers["cache-control"].casefold()
+    assert response.headers["pragma"] == "no-cache"
+    assert response.headers["expires"] == "0"
     data = response.json()
     assert [item["product"]["product_id"] for item in data["displayable_products"]] == [P1]
     assert data["displayable_products"][0]["product"]["image_urls"] == []
@@ -98,6 +101,7 @@ def test_discovery_fails_closed_when_verified_identity_is_disabled(client, monke
     monkeypatch.setenv("CIRVANNA_REQUIRE_VERIFIED_IDENTITY", "false")
     response = client.post("/v1/discover", headers=auth(), json=payload())
     assert response.status_code == 503
+    assert "no-store" in response.headers["cache-control"].casefold()
     assert response.json()["detail"]["code"] == "VERIFIED_IDENTITY_REQUIRED_FOR_DISCOVERY"
 
 
