@@ -872,7 +872,7 @@ def test_real_cal_receipt_requester_rejects_validly_signed_receipt_for_another_s
                 "issued_at": issued.isoformat(),
                 "expires_at": (issued + main.timedelta(seconds=45)).isoformat(),
             }
-            canonical = json.dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+            canonical = __import__("json").dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
             signature = hmac.new(signing_key.encode(), canonical, hashlib.sha256).hexdigest()
             return Response({
                 "subject_id": json["user_id"],
