@@ -231,7 +231,7 @@ python -m app.retrieval_snapshot_export \
   --output /restricted-evaluation/catalog-offers.jsonl
 ```
 
-The exporter emits only `variant_id` and the exact `search_text` used by the current ranker. It does not export product names separately, image URLs, raw Commerce/Catalog objects, service URLs or credentials. It writes a sibling SHA-256 manifest and creates both files with mode `0600`; existing files are not overwritten unless `--overwrite` is supplied.
+The exporter emits only `variant_id` and the exact `search_text` used by the current ranker. It does not export product names separately, image URLs, raw Commerce/Catalog objects, service URLs or credentials. It writes a sibling SHA-256 manifest and creates both files with mode `0600` inside an owner-only POSIX directory; refuses shared destination directories; existing files are never overwritten; choose a new versioned output path for each snapshot.
 
 The manifest records candidate count, source service/model pin, Commerce truncation state, source field semantics, order preservation, file digest and the fact that this is a sequential point-in-time Commerce/Catalog read rather than a cross-service transaction. If the service reports that the Commerce offers list exceeded its 1,000-offer cap, that fact is recorded; the exported candidate set still represents the service's current bounded retrieval universe.
 

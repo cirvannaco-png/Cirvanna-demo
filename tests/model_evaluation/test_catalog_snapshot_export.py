@@ -66,6 +66,33 @@ class CatalogSnapshotExportTests(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 MODULE.write_snapshot(output, records, manifest)
 
+    def test_snapshot_pair_is_immutable_and_overwrite_is_rejected(self):
+        records = MODULE.snapshot_records([
+            {"variant_id": "v1", "search_text": "Vision exact offer text"},
+        ])
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / "catalog.jsonl"
+            _, sidecar, digest = MODULE.write_snapshot(output, records, {"schema_version": "1.0"})
+            original_snapshot = output.read_bytes()
+            original_manifest = sidecar.read_bytes()
+            with self.assertRaisesRegex(ValueError, "immutable"):
+                MODULE.write_snapshot(output, records, {"schema_version": "1.0"}, overwrite=True)
+            self.assertEqual(output.read_bytes(), original_snapshot)
+            self.assertEqual(sidecar.read_bytes(), original_manifest)
+            self.assertEqual(MODULE.sha256_bytes(output.read_bytes()), digest)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX permission semantics required")
+    def test_refuses_group_or_world_accessible_existing_directory(self):
+        records = MODULE.snapshot_records([
+            {"variant_id": "v1", "search_text": "Vision exact offer text"},
+        ])
+        with tempfile.TemporaryDirectory() as temp:
+            output_dir = Path(temp) / "shared"
+            output_dir.mkdir(mode=0o755)
+            output_dir.chmod(0o755)
+            with self.assertRaisesRegex(PermissionError, "accessible by group or other"):
+                MODULE.write_snapshot(output_dir / "catalog.jsonl", records, {"schema_version": "1.0"})
+
     def test_loads_only_a_valid_rights_manifest(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -89,6 +116,12 @@ class CatalogSnapshotExportTests(unittest.TestCase):
             manifest.write_text(json.dumps(value), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "must be 'approved'"):
                 MODULE.load_rights_manifest(manifest)
+
+    def test_exporter_cli_does_not_offer_overwrite_for_immutable_snapshots(self):
+        with patch("sys.argv", ["retrieval_snapshot_export.py", "--help"]):
+            with self.assertRaises(SystemExit) as raised:
+                MODULE.main()
+            self.assertEqual(raised.exception.code, 0)
 
     def test_exporter_checks_rights_before_starting_live_service_read(self):
         with tempfile.TemporaryDirectory() as temp:
