@@ -61,50 +61,53 @@ def test_no_public_media_publication_or_restore_route_bypasses_privacy_gate():
     """Any future public media surface must explicitly wire the masking attestation gate."""
     unguarded = []
     scanned = 0
-    for source_path in sorted(SERVICES.rglob("*.py")):
-        relative_parts = source_path.relative_to(SERVICES).parts
-        if {"tests", "migrations", "__pycache__"}.intersection(relative_parts):
-            continue
-        source = source_path.read_text(encoding="utf-8")
-        scanned += 1
-        for method, route, handler in _route_definitions(source, source_path):
-            if route.startswith("/internal/") or method == "DELETE":
-                # Deletion/removal endpoints reduce exposure; they do not publish an asset.
+    # Scan every Python application source root, not only microservices.
+    # A future FastAPI app under apps/ can expose media just as a service can.
+    for source_root in (SERVICES, ROOT / "apps"):
+        for source_path in sorted(source_root.rglob("*.py")):
+            relative_parts = source_path.relative_to(source_root).parts
+            if {"tests", "migrations", "__pycache__", "node_modules"}.intersection(relative_parts):
                 continue
-            segments = {part.casefold() for part in route.split("/") if part}
-            handler_media_name = any(term in handler.name.casefold() for term in (
-                "publish", "restore", "share", "syndicat", "upload",
-                "serve_image", "serve_photo", "serve_media", "avatar",
-                "gallery", "lookbook",
-            ))
-            if not segments.intersection(PUBLIC_MEDIA_SURFACE_SEGMENTS) and not handler_media_name:
-                continue
-            # Inbound private processing and text-only share routes are not public
-            # binary-media publication. Their exact implementations are guarded below.
-            source_relative = source_path.relative_to(ROOT).as_posix()
-            route_key = (source_relative, method, route, handler.name)
-            if route_key in NON_PUBLICATION_ROUTE_EXCEPTIONS:
-                continue
-            # This dependency name is the integration contract every publisher must import.
-            private_vton_worker_response = (
-                source_relative == "services/virtual-try-on/model-worker/app/main.py"
-                and route == "/v1/render"
-                and any(
-                    isinstance(item, ast.Name) and item.id == "require_worker_auth"
+            source = source_path.read_text(encoding="utf-8")
+            scanned += 1
+            for method, route, handler in _route_definitions(source, source_path):
+                if route.startswith("/internal/") or method == "DELETE":
+                    # Deletion/removal endpoints reduce exposure; they do not publish an asset.
+                    continue
+                segments = {part.casefold() for part in route.split("/") if part}
+                handler_media_name = any(term in handler.name.casefold() for term in (
+                    "publish", "restore", "share", "syndicat", "upload",
+                    "serve_image", "serve_photo", "serve_media", "avatar",
+                    "gallery", "lookbook",
+                ))
+                if not segments.intersection(PUBLIC_MEDIA_SURFACE_SEGMENTS) and not handler_media_name:
+                    continue
+                # Inbound private processing and text-only share routes are not public
+                # binary-media publication. Their exact implementations are guarded below.
+                source_relative = source_path.relative_to(ROOT).as_posix()
+                route_key = (source_relative, method, route, handler.name)
+                if route_key in NON_PUBLICATION_ROUTE_EXCEPTIONS:
+                    continue
+                # This dependency name is the integration contract every publisher must import.
+                private_vton_worker_response = (
+                    source_relative == "services/virtual-try-on/model-worker/app/main.py"
+                    and route == "/v1/render"
+                    and any(
+                        isinstance(item, ast.Name) and item.id == "require_worker_auth"
+                        for item in ast.walk(handler)
+                    )
+                    and '"input_persistence": False' in source
+                    and '"output_persistence": False' in source
+                    and '"Cache-Control": "no-store, private"' in source
+                )
+                if private_vton_worker_response:
+                    continue
+                guarded = any(
+                    isinstance(item, ast.Name) and item.id == "require_publication_gate"
                     for item in ast.walk(handler)
                 )
-                and '"input_persistence": False' in source
-                and '"output_persistence": False' in source
-                and '"Cache-Control": "no-store, private"' in source
-            )
-            if private_vton_worker_response:
-                continue
-            guarded = any(
-                isinstance(item, ast.Name) and item.id == "require_publication_gate"
-                for item in ast.walk(handler)
-            )
-            if not guarded:
-                unguarded.append(f"{source_relative}:{handler.name} {method} {route}")
+                if not guarded:
+                    unguarded.append(f"{source_relative}:{handler.name} {method} {route}")
     assert scanned > 0
     assert not unguarded, (
         "Public media routes must call require_publication_gate before returning or "
