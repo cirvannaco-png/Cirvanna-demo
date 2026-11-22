@@ -2739,6 +2739,18 @@ def test_wardrobe_recommendations_reject_candidate_id_mismatch_before_display(cl
     assert response.json()["detail"]["code"] == "WARDROBE_CANDIDATE_CAL_CIL_AUTHORIZATION_INVALID"
 
 
+def test_wardrobe_ui_is_packaged_in_the_marketplace_bff_image(client):
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3]
+    dockerfile = (root / "services/marketplace-bff/Dockerfile").read_text()
+    assert "COPY apps/demo-web/wardrobe.html /app/wardrobe.html" in dockerfile
+    assert "WARDROBE_HTML_PATH=/app/wardrobe.html" in dockerfile
+    response = client.get("/wardrobe")
+    assert response.status_code == 200
+    assert "/api/wardrobe/pnelly/preferences" in response.text
+
+
 def test_complementer_bff_uses_verified_subject_and_returns_advisory_only(client, monkeypatch):
     monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
     monkeypatch.setenv("DECISION_GATEWAY_URL", "https://decision.example.test")
