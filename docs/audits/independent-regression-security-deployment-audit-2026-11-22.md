@@ -20,7 +20,11 @@ This is a cross-workstream review of code contracts, merged PRs, CI evidence, se
 | #253 | CIL provider-consent revocation | 7/7 successful |
 | #249 | FASHN flat-lay VTON contract | 7/7 successful |
 | #250 | Research-only SAM 3D Body worker | 3/3 successful |
-| #269 | Appearance specialist/orchestrator orchestration | 8/8 successful; merged |\n| #275 | Private benchmark artifact-write hardening | 3/3 successful runs |\n| #276 | CAL display/checkout regression matrix | 6/6 successful |\n| #277 | Hash-locked CPU fashion-retrieval research environment | 2/2 successful |\n| #278 | Wardrobe Complementer feedback-to-TAL UI integration | 6/6 successful |
+| #269 | Appearance specialist/orchestrator orchestration | 8/8 successful; merged |
+| #275 | Private benchmark artifact-write hardening | 3/3 successful runs |
+| #276 | CAL display/checkout regression matrix | 6/6 successful |
+| #277 | Hash-locked CPU fashion-retrieval research environment | 2/2 successful |
+| #278 | Wardrobe Complementer feedback-to-TAL UI integration | 6/6 successful |
 
 No unresolved inline review threads were found on #243, #254, #266, #265, #261, #255, #253, #269, #275, #276, #277 or #278. PR #278 was merged after its six exact-head workflows passed. CI validates automated contracts/builds, not live provider or deployment behavior.
 
@@ -57,7 +61,10 @@ Versioned FX/tax/fulfilment/payment evidence, market activation validation and q
 
 **Decision:** schema and adapter contracts present; multi-market production operations blocked.
 
-### Fashion retrieval research environment\nPR #277 adds a hash-locked CPython 3.11/Linux x86_64 CPU-only dependency environment and a CI install/import consistency check. This supports reproducible CPU research setup only. It does not run model weights, retrieval inference, GPU kernels, CUDA compatibility or performance acceptance. A separate pinned CUDA environment and approved GPU validation are still required before GPU benchmarking.\n\n## Security and deployment
+### Fashion retrieval research environment
+PR #277 adds a hash-locked CPython 3.11/Linux x86_64 CPU-only dependency environment and a CI install/import consistency check. This supports reproducible CPU research setup only. It does not run model weights, retrieval inference, GPU kernels, CUDA compatibility or performance acceptance. A separate pinned CUDA environment and approved GPU validation are still required before GPU benchmarking.
+
+## Security and deployment
 
 Positive controls observed:
 - Service credentials stay server-side; private routes use authenticated service boundaries.
