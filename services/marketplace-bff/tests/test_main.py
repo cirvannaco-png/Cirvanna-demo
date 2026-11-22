@@ -1002,7 +1002,9 @@ def test_wardrobe_page_exposes_feedback_and_consent_controls(client):
     assert "Avoid" in response.text
     assert "/api/wardrobe/recommendations" in response.text
     assert "/api/vision/complementer" in response.text
-    assert "Refine with Complementer" in response.text
+    assert "/api/vision/complementer/feedback" in response.text
+    assert "Ask Complementer" in response.text
+    assert "Refine with Complementer" not in response.text
     assert "24-hour discovery continuity" in response.text
     assert "Remember my discovery context for 24 hours" in response.text
     assert "/api/wardrobe/pnelly/conversations" in response.text

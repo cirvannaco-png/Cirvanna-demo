@@ -922,8 +922,47 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
   };
   $("refreshTwinReadiness").addEventListener("click", loadTwinCapabilities);
 
+  const recordComplementerFeedback = async (look, requestId, outcome, buttons, feedbackStatus) => {
+    if (!styleReceipt) {
+      feedbackStatus.textContent = "Enable style learning before recording your reaction. No feedback has been saved.";
+      return;
+    }
+    if (look.complementerFeedbackOutcome && look.complementerFeedbackOutcome !== outcome) return;
+    look.complementerFeedbackOutcome = outcome;
+    const feedbackId = look.complementerFeedbackEventId || (look.complementerFeedbackEventId = crypto.randomUUID());
+    buttons.forEach(button => { button.disabled = true; });
+    feedbackStatus.textContent = "Recording your reaction in your private learning timeline…";
+    try {
+      const result = await api("/api/vision/complementer/feedback", {
+        method: "POST",
+        body: JSON.stringify({
+          feedback_id: feedbackId,
+          request_id: requestId,
+          outcome,
+          consent_receipt_id: styleReceipt
+        })
+      });
+      if (
+        result.feedback_id !== feedbackId ||
+        result.durable_persistence !== true ||
+        result.learning_owner !== "TAL" ||
+        !["recorded", "replayed"].includes(result.status)
+      ) throw new Error("COMPLEMENTER_FEEDBACK_PERSISTENCE_UNCONFIRMED");
+      feedbackStatus.textContent = outcome === "approved"
+        ? "Your approval was saved to your private TAL learning timeline."
+        : "Your rejection was saved as a soft TAL observation; it did not create a hard exclusion.";
+      look.complementerFeedbackRecorded = true;
+    } catch (error) {
+      feedbackStatus.textContent = "Could not confirm feedback persistence: " + (error.message || "Please retry.");
+      const retryButton = buttons.find(button => button.dataset.outcome === outcome);
+      if (retryButton) retryButton.disabled = false;
+    }
+  };
+
   const requestComplementerAdvice = async (look, statusNode, button) => {
     button.disabled = true;
+    const requestId = crypto.randomUUID();
+    look.complementerRequestId = requestId;
     statusNode.textContent = "Requesting one-session styling advice…";
     try {
       const wardrobePieces = (Array.isArray(look.items) ? look.items : []).map(item => ({
@@ -934,7 +973,7 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
       const data = await api("/api/vision/complementer", {
         method: "POST",
         body: JSON.stringify({
-          request_id: crypto.randomUUID(),
+          request_id: requestId,
           preferences: {},
           look: {
             role: String(look.role || "").slice(0, 40),
@@ -970,7 +1009,25 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
       } else {
         for (const snippet of snippets) statusNode.append(text("p", snippet));
       }
-      statusNode.append(text("p", "One-session advice only. It does not select products, authorize display, or update your learned profile.", "small"));
+      statusNode.append(text("p", "One-session advice only. It does not select products, authorize display, or change hard exclusions.", "small"));
+      const feedbackControls = document.createElement("div");
+      feedbackControls.className = "row";
+      const feedbackStatus = text("p", styleReceipt
+        ? "Was this advice useful? Your reaction is recorded only with active style-learning consent."
+        : "Enable style learning to record a reaction to this advice.", "pnelly-note");
+      const feedbackButtons = [];
+      for (const [outcome, label] of [["approved", "Helpful"], ["rejected", "Not for me"]]) {
+        const feedbackButton = text("button", label, "btn");
+        feedbackButton.type = "button";
+        feedbackButton.dataset.outcome = outcome;
+        feedbackButton.addEventListener("click", () =>
+          recordComplementerFeedback(look, requestId, outcome, feedbackButtons, feedbackStatus)
+        );
+        feedbackButtons.push(feedbackButton);
+        feedbackControls.append(feedbackButton);
+      }
+      statusNode.append(feedbackControls, feedbackStatus);
+      statusNode.append(text("p", "A reaction is a user-confirmed TAL observation. It is not yet used as an independent ranking signal.", "small"));
     } catch (error) {
       statusNode.textContent = error.message || "Complementer is unavailable.";
     } finally {
@@ -1075,53 +1132,6 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
           }
         })));
         actions.append(appearanceButton);
-        const refineButton = document.createElement("button");
-        refineButton.type = "button";
-        refineButton.className = "btn primary";
-        refineButton.textContent = "Refine with Complementer";
-        refineButton.disabled = !token;
-        refineButton.title = token ? "Ask for request-scoped styling advice about this Wardrobe look" : "Connect your signed-in session first";
-        refineButton.addEventListener("click", async () => {
-          const description = (look.items || []).map(item =>
-            [item.display_name, item.category, ...(item.attributes || [])].filter(Boolean).join(" ")
-          ).join("; ");
-          if (description.length < 3) {
-            status("pnellyStatus", "This look does not contain enough wardrobe detail for styling advice.", "error");
-            return;
-          }
-          refineButton.disabled = true;
-          refineButton.textContent = "Asking…";
-          try {
-            const result = await api("/api/vision/complementer", {
-              method: "POST",
-              body: JSON.stringify({
-                request_id: crypto.randomUUID(),
-                preferences: {
-                  occasion: $("pnellyOccasion").value || "unspecified",
-                  climate: $("pnellyClimate").value || "unspecified"
-                },
-                look: {description}
-              })
-            });
-            if (
-              result.mode !== "advisory_only" ||
-              result.display_authorized !== false ||
-              result.durable_personal_memory !== false ||
-              !result.recommendation
-            ) throw new Error("Complementer returned an invalid advisory response.");
-            card.append(text(
-              "p",
-              "Complementer advisory (request-scoped): " + JSON.stringify(result.recommendation),
-              "pnelly-note"
-            ));
-          } catch (error) {
-            status("pnellyStatus", "Complementer is unavailable: " + error.message, "error");
-          } finally {
-            refineButton.disabled = !token;
-            refineButton.textContent = "Refine with Complementer";
-          }
-        });
-        actions.append(refineButton);
         card.append(actions);
       }
       root.append(card);
