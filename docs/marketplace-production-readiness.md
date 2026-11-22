@@ -161,6 +161,8 @@ The current code-level display boundary is as follows:
 - PNELLY daily looks compose the customer's own active wardrobe. The response explicitly states `cal_authorized=false`; it is not an external Catalog product feed. Saved-product listing returns identifiers only. Cart reads/adds/updates and checkout use separate action-bound purchase authorization; a previous display SHOW is not reused as a purchase receipt.
 - Marketplace BFF `/api/` and Decision Gateway `/v1/` responses carry `no-store` cache directives, including framework-generated errors. The browser uses `cache: no-store` for offers, saved products and cart; account handoff clears the previous account's product/saved/cart state and rejects late responses from the previous session generation.
 
+See [the CAL shopper-surface acceptance matrix](audits/cal-cross-surface-acceptance-matrix-2026-11-22.md) for the exact regression-test map and outstanding scenario coverage.
+
 These are code and automated-test claims. They do **not** prove CDN cache invalidation, browser-tab/session revocation propagation in a deployed topology, real Shopify product lifecycle/disconnect behavior, or zero leakage through every external search index and publication path. Issue #237 remains open until the complete mapped/unmapped, suspended, stale-stock, disconnected, deleted and revoked-market matrix passes across search, recommendations, product detail, PNELLY, Look It, Click It, wardrobe, saved lists, cart and checkout on an exact release candidate, with deployed cache/CDN evidence and independent review.
 ## 10. Shopify pre-payment reservation and Stripe compensation acceptance
 
