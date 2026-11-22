@@ -138,6 +138,69 @@ def test_usi_profile_requires_consent_and_uses_optimistic_version(client):
     assert conflict.json()["detail"]["code"] == "USI_PROFILE_VERSION_CONFLICT"
 
 
+def test_pnelly_confirmed_usi_preferences_require_allowlisted_value_and_request_provenance(client):
+    assert consent(client, scope="profile_storage", receipt="receipt-pnelly-profile-0001").status_code == 200
+    valid = client.put("/v1/profiles/user-verified-1", headers=auth(), json={
+        "expected_version": 0,
+        "preferences": [{
+            "preference_id": "pnelly-pref-0001",
+            "attribute": "style:minimalist",
+            "weight": 0.8,
+            "active": True,
+            "source": "pnelly_user_confirmed",
+            "source_request_id": "complementer-request-0001",
+        }],
+    })
+    assert valid.status_code == 200, valid.text
+    stored = valid.json()["preferences"][0]
+    assert stored["source"] == "pnelly_user_confirmed"
+    assert stored["source_request_id"] == "complementer-request-0001"
+
+    invalid_value = client.put("/v1/profiles/user-verified-1", headers=auth(), json={
+        "expected_version": 1,
+        "preferences": [{
+            "preference_id": "pnelly-pref-0002", "attribute": "style:unbounded-free-text",
+            "source": "pnelly_user_confirmed", "source_request_id": "complementer-request-0002",
+        }],
+    })
+    missing_provenance = client.put("/v1/profiles/user-verified-1", headers=auth(), json={
+        "expected_version": 1,
+        "preferences": [{
+            "preference_id": "pnelly-pref-0003", "attribute": "style:elegant",
+            "source": "pnelly_user_confirmed",
+        }],
+    })
+    forged_provenance = client.put("/v1/profiles/user-verified-1", headers=auth(), json={
+        "expected_version": 1,
+        "preferences": [{
+            "preference_id": "pnelly-pref-0004", "attribute": "style:elegant",
+            "source": "user_declared", "source_request_id": "complementer-request-0004",
+        }],
+    })
+    assert invalid_value.status_code == 422
+    assert missing_provenance.status_code == 422
+    assert forged_provenance.status_code == 422
+
+
+def test_usi_profile_update_can_be_bound_to_the_exact_active_consent_receipt(client):
+    consent(client, scope="profile_storage", receipt="receipt-profile-current-0001")
+    consent(client, scope="profile_storage", receipt="receipt-profile-stale-0001")
+    # The second receipt is revoked while the first remains active. A stale client
+    # must not be able to rely on some other profile-storage grant.
+    revoked = client.post(
+        "/v1/tal/consents/receipt-profile-stale-0001/revoke?subject_id=user-verified-1",
+        headers=auth(),
+    )
+    assert revoked.status_code == 200
+    response = client.put("/v1/profiles/user-verified-1", headers=auth(), json={
+        "expected_version": 0,
+        "consent_receipt_id": "receipt-profile-stale-0001",
+        "preferences": [{"preference_id": "p1", "attribute": "style:elegant"}],
+    })
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "ACTIVE_PROFILE_STORAGE_CONSENT_REQUIRED"
+
+
 def test_usi_profile_versions_increment_without_lost_updates(client):
     consent(client, scope="profile_storage", receipt="receipt-profile-0001")
     first = client.put(
