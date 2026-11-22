@@ -472,6 +472,9 @@ def test_binary_media_inventory_is_complete_and_fail_closed():
     assert inventory["release_gate"] == "REL-14"
     assert inventory["issue"] == 121
     assert inventory["status"] == "blocked"
+    baseline = inventory["repository_baseline"]
+    assert baseline["public_click_it_ingress"] == "blocked_before_multipart_read"
+    assert "not production enabled" in baseline["private_click_it_ingress"]
 
     public_routes = inventory["public_binary_delivery"]
     assert len(public_routes) == 1
