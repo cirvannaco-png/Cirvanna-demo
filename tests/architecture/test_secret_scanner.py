@@ -65,6 +65,22 @@ class SecretScannerRegressionTests(unittest.TestCase):
             path, 50498, "amqp", "guest", "guest", "external.example:5672"
         ))
 
+    def test_historical_local_database_default_exception_is_exactly_scoped(self) -> None:
+        candidate = "integration-staging/source-candidates/31-wardrobe-part-1.txt/docker-compose.yml"
+        self.assertTrue(is_historical_local_default_uri_fixture(
+            candidate, 4, "postgresql+asyncpg", "cirvanna", "cirvanna", "postgres:5432"
+        ))
+        self.assertTrue(is_historical_local_default_uri_fixture(
+            "integration-staging/source-intake/original/cirvanna-source.txt",
+            50884, "postgresql+asyncpg", "cirvanna", "cirvanna", "localhost:5432"
+        ))
+        self.assertFalse(is_historical_local_default_uri_fixture(
+            candidate, 5, "postgresql+asyncpg", "cirvanna", "cirvanna", "postgres:5432"
+        ))
+        self.assertFalse(is_historical_local_default_uri_fixture(
+            candidate, 4, "postgresql+asyncpg", "cirvanna", "cirvanna", "external.example:5432"
+        ))
+
     def test_detects_short_quoted_password_assignment(self) -> None:
         assignment = "password = " + '"' + "abc123" + '"' + "\n"
         findings = self.scan_text(assignment)
