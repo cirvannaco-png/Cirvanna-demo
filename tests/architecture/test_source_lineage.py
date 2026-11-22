@@ -51,12 +51,12 @@ class SourceLineageUtilityTests(unittest.TestCase):
     def test_unclosed_final_fence_is_still_a_source_block(self):
         tick = chr(96)
         snapshot = (
-            "src/final.py\\n"
-            + tick * 3 + "python\\n"
-            "def final():\\n    return True\\n"
+            "src/final.py\n"
+            + tick * 3 + "python\n"
+            "def final():\n    return True\n"
         )
         blocks = _named_code_blocks(snapshot)
-        self.assertEqual(blocks["src/final.py"], ["def final():\\n    return True\\n"])
+        self.assertEqual(blocks["src/final.py"], ["def final():\n    return True\n"])
 
     def test_path_normalisation_supports_headers(self):
         self.assertEqual(_normalise_path("# File: src/example.py"), "src/example.py")
