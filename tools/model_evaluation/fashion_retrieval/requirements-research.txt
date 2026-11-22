@@ -15,3 +15,5 @@ ftfy>=6.1,<7
 regex>=2024.0
 tqdm>=4.66,<5
 tiktoken>=0.7,<1
+# PyTorch's runtime metadata requires setuptools; keep it explicit for hash-locked installs.
+setuptools>=70,<86
