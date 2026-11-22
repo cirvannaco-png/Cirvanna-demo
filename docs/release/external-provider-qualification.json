@@ -1,0 +1,186 @@
+{
+  "schema_version": 1,
+  "repository": "cirvannaco-png/Cirvanna-demo",
+  "policy": "External production dependencies remain blocked until exact-release, provider-backed evidence is independently reviewed. Code, mocks, vendor marketing claims and unsigned screenshots are not sufficient.",
+  "workstreams": [
+    {
+      "id": "PRIV-01",
+      "name": "Private object storage and origin isolation",
+      "status": "blocked",
+      "owner_role": "Platform security owner",
+      "acceptance": "Production bucket is private, encrypted, least-privilege, region-approved and isolated from public origins; exact deployed controls and byte-level access tests pass.",
+      "required_evidence": [
+        "provider_identity",
+        "region",
+        "configuration_sha256",
+        "verified_release_sha",
+        "independent_reviewer",
+        "reviewed_at",
+        "expires_at",
+        "evidence_refs"
+      ]
+    },
+    {
+      "id": "PRIV-02",
+      "name": "Content lifecycle and CDN revocation",
+      "status": "blocked",
+      "owner_role": "Privacy operations owner",
+      "acceptance": "A real provider synchronously quarantines/unpublishes and propagates revocation through source objects, derivatives, replicas, backups where applicable, caches, CDN, shared links and merchant surfaces; failure injection proves no stale delivery.",
+      "required_evidence": [
+        "provider_identity",
+        "provider_version",
+        "configuration_sha256",
+        "verified_release_sha",
+        "independent_reviewer",
+        "reviewed_at",
+        "expires_at",
+        "evidence_refs"
+      ]
+    },
+    {
+      "id": "PRIV-03",
+      "name": "Licensed face masking and safety/FCI evidence",
+      "status": "blocked",
+      "owner_role": "Model risk and safety owner",
+      "acceptance": "The exact detector/runtime and safety/FCI providers have documented commercial rights, immutable model/data digests, representative subgroup evaluation, calibrated thresholds, signed reports and failure-mode tests.",
+      "required_evidence": [
+        "provider_identity",
+        "provider_version",
+        "model_sha256",
+        "dataset_sha256",
+        "verified_release_sha",
+        "independent_reviewer",
+        "reviewed_at",
+        "expires_at",
+        "evidence_refs"
+      ]
+    },
+    {
+      "id": "PRIV-04",
+      "name": "Independent privacy assessment",
+      "status": "blocked",
+      "owner_role": "Security/privacy owner",
+      "acceptance": "An assessor independent of implementation verifies exact deployed ingress, processing, storage, publication, restore and deletion routes; zero unmasked escape; consent/revocation; child safeguards; and deletion propagation.",
+      "required_evidence": [
+        "assessor_organization",
+        "independence_declaration",
+        "report_sha256",
+        "route_inventory_sha256",
+        "storage_cdn_configuration_sha256",
+        "verified_release_sha",
+        "reviewed_at",
+        "expires_at",
+        "evidence_refs"
+      ]
+    },
+    {
+      "id": "TWIN-01",
+      "name": "Licensed reconstruction and rendering models",
+      "status": "blocked",
+      "owner_role": "Model licensing owner",
+      "acceptance": "Commercial-use rights cover the complete model, weights, preprocessing, runtime and transitive dependencies; immutable revisions and data-processing terms are approved.",
+      "required_evidence": [
+        "provider_identity",
+        "provider_version",
+        "model_sha256",
+        "license_evidence_ref",
+        "dependency_sbom_sha256",
+        "verified_release_sha",
+        "independent_reviewer",
+        "reviewed_at",
+        "expires_at",
+        "evidence_refs"
+      ]
+    },
+    {
+      "id": "TWIN-02",
+      "name": "Persistent private Twin assets and deletion",
+      "status": "blocked",
+      "owner_role": "Platform and privacy owners",
+      "acceptance": "Real private storage, consent-bound registry, owner-scoped reads, revocation, deletion outbox, backup/restore and cross-surface deletion are exercised in deployed staging.",
+      "required_evidence": [
+        "provider_identity",
+        "configuration_sha256",
+        "verified_release_sha",
+        "deletion_drill_ref",
+        "restore_drill_ref",
+        "independent_reviewer",
+        "reviewed_at",
+        "expires_at",
+        "evidence_refs"
+      ]
+    },
+    {
+      "id": "AI-01",
+      "name": "Look It processor/provider approval",
+      "status": "blocked",
+      "owner_role": "AI privacy owner",
+      "acceptance": "Any external processor is contractually approved for purpose, region, retention, training use, subprocessors, deletion and incident notification; request-time consent and revocation are verified.",
+      "required_evidence": [
+        "provider_identity",
+        "provider_version",
+        "dpa_evidence_ref",
+        "data_flow_sha256",
+        "verified_release_sha",
+        "independent_reviewer",
+        "reviewed_at",
+        "expires_at",
+        "evidence_refs"
+      ]
+    },
+    {
+      "id": "AI-02",
+      "name": "Twin and Look It independent quality evaluation",
+      "status": "blocked",
+      "owner_role": "Independent model evaluation owner",
+      "acceptance": "Pre-registered human-reviewed evaluation covers capture conditions, body/skin-tone/market/device slices, geometry and retrieval quality, uncertainty, failure rates and deletion; holdout data is untouched by tuning.",
+      "required_evidence": [
+        "protocol_sha256",
+        "dataset_sha256",
+        "results_sha256",
+        "verified_release_sha",
+        "independent_reviewer",
+        "reviewed_at",
+        "expires_at",
+        "evidence_refs"
+      ]
+    },
+    {
+      "id": "OPS-01",
+      "name": "Telemetry, alert routing and named ownership",
+      "status": "blocked",
+      "owner_role": "Platform reliability owner",
+      "acceptance": "All production services emit privacy-safe telemetry to approved private collectors; dashboards, SLO alerts and test notifications reach named on-call owners with acknowledged delivery.",
+      "required_evidence": [
+        "provider_identity",
+        "configuration_sha256",
+        "service_inventory_sha256",
+        "verified_release_sha",
+        "named_on_call_roster_ref",
+        "alert_delivery_exercise_ref",
+        "independent_reviewer",
+        "reviewed_at",
+        "expires_at",
+        "evidence_refs"
+      ]
+    },
+    {
+      "id": "OPS-02",
+      "name": "Incident exercises and rollback evidence",
+      "status": "blocked",
+      "owner_role": "Incident commander / release owner",
+      "acceptance": "Privacy, provider outage, payment, database restore and rollback exercises are executed in deployed staging; measured RPO/RTO, reconciliation, independent approval and post-exercise actions are recorded.",
+      "required_evidence": [
+        "incident_exercise_ref",
+        "rollback_evidence_ref",
+        "restore_evidence_ref",
+        "verified_release_sha",
+        "operator",
+        "independent_approver",
+        "reviewed_at",
+        "expires_at",
+        "evidence_refs"
+      ]
+    }
+  ]
+}
