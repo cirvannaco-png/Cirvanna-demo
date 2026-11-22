@@ -18,7 +18,7 @@ The last complete graph pass classified the 300 unique non-main heads as **231 d
 
 Since that pass, PR #315 was merged. Its branch head `8d0253c57055f3f5c0bb5da9070bad3f5b2301ae` is now reachable from main through merge commit `210e9e370782a13bc69b93286bf8d3cd8ab3cc69`; its retained branch ref is therefore behind-only, not ahead-only. PR #314 remains open and is now **10 ahead / 1 behind** main. This produces a reconciled classification of **231 diverged**, **68 behind-only**, and **1 ahead-only** across the same 300 unique non-main heads, assuming no intervening branch-ref changes. This is a delta reconciliation, not a fresh 300-head rescan.
 
-The audit PR branch itself is **7 ahead / 2 behind** main and remains diverged. A behind-only branch contains no commit absent from main; it is an archival/deletion candidate, not an automatic deletion. A diverged branch may contain useful work, already-squash-merged work, superseded work, or unsafe/obsolete code. Ahead/behind counts alone do not determine merge or deletion eligibility.
+The audit PR branch itself is **9 ahead / 2 behind** main and remains diverged. A behind-only branch contains no commit absent from main; it is an archival/deletion candidate, not an automatic deletion. A diverged branch may contain useful work, already-squash-merged work, superseded work, or unsafe/obsolete code. Ahead/behind counts alone do not determine merge or deletion eligibility.
 
 ## Duplicate branch-head pairs
 
