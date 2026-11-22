@@ -13,7 +13,7 @@ PUBLIC_MEDIA_SURFACE_SEGMENTS = {
     "restore", "share", "shared", "shared-link", "shared-links",
     "syndicate", "syndication", "community", "feed", "upload", "uploads",
     "file", "files", "gallery", "galleries", "public", "static", "cdn",
-    "story", "stories", "post", "posts", "lookbook", "banner", "cover",
+    "story", "stories", "post", "posts", "lookbook", "banner", "cover", "click-it",
 }
 
 # These routes are media-adjacent but do not publish or deliver user photographs:
@@ -24,6 +24,7 @@ NON_PUBLICATION_ROUTE_EXCEPTIONS = {
     ("services/marketplace-bff/app/main.py", "POST", "/api/appearance/looks/{look_id}/source", "upload_appearance_source"),
     ("services/marketplace-bff/app/main.py", "POST", "/api/vision/look-it", "marketplace_look_it"),
     ("services/marketplace-bff/app/main.py", "POST", "/api/vision/click-it", "marketplace_click_it"),
+    ("services/virtual-twin/app/main.py", "POST", "/click-it", "click_it"),
     ("services/vision-intelligence/app/main.py", "POST", "/v1/search/image", "look_it_image_search"),
     ("services/vision-intelligence/app/main.py", "POST", "/v1/click-it/scan", "click_it_scan"),
     ("services/xari/app/main.py", "POST", "/v1/marketplace/search/image", "look_it_image_search"),
@@ -305,6 +306,57 @@ def test_nonpublication_media_adjacent_routes_remain_narrow_and_explicit():
     assert '"display_authorized": False' in xari_body
     assert '"decision_status": "PENDING_CAL"' in xari_body
     assert '"Cache-Control": "no-store, private"' in xari_body
+
+    # The private Virtual Twin Click It orchestrator is an alternate internal
+    # ingress. It must authenticate the service caller, verify exact resource-bound
+    # consent and jurisdiction before reading bytes, and forward only to the
+    # mask-before-embedding Vision worker. It is not a public publisher.
+    virtual_twin_key = ("services/virtual-twin/app/main.py", "POST", "/click-it", "click_it")
+    virtual_twin_source, virtual_twin_handler = route_handlers[virtual_twin_key]
+    virtual_twin_body = ast.get_source_segment(virtual_twin_source, virtual_twin_handler) or ""
+    virtual_twin_route = next(
+        decorator for decorator in virtual_twin_handler.decorator_list
+        if isinstance(decorator, ast.Call)
+        and isinstance(decorator.func, ast.Attribute)
+        and decorator.func.attr == "post"
+        and decorator.args
+        and isinstance(decorator.args[0], ast.Constant)
+        and decorator.args[0].value == "/click-it"
+    )
+    virtual_twin_dependencies = next(
+        (keyword.value for keyword in virtual_twin_route.keywords if keyword.arg == "dependencies"),
+        None,
+    )
+    assert isinstance(virtual_twin_dependencies, ast.List)
+    assert any(
+        isinstance(item, ast.Call)
+        and isinstance(item.func, ast.Name)
+        and item.func.id == "Depends"
+        and item.args
+        and isinstance(item.args[0], ast.Name)
+        and item.args[0].id == "require_api_token"
+        for item in virtual_twin_dependencies.elts
+    )
+    for token in (
+        "_verify_consent",
+        "authorize_click_it_policy",
+        '"/v1/click-it/scan"',
+        '"image_persisted": False',
+        '"display_authorized": False',
+        '"public_sharing_allowed": False',
+        "await product_image.close()",
+    ):
+        assert token in virtual_twin_body
+    assert virtual_twin_body.index("_verify_consent") < virtual_twin_body.index("product_image.read")
+    assert virtual_twin_body.index("authorize_click_it_policy") < virtual_twin_body.index("product_image.read")
+    assert "generate_presigned_url" not in virtual_twin_body
+    assert "put_object" not in virtual_twin_body
+    assert '"Cache-Control": "no-store, private"' in virtual_twin_source
+
+    stack = json.loads((ROOT / "infrastructure" / "deployment" / "canonical-stack.json").read_text(encoding="utf-8"))
+    virtual_twin_service = next(service for service in stack["services"] if service["id"] == "virtual-twin")
+    assert virtual_twin_service["exposure"] == "private_api"
+    assert virtual_twin_service["production_enabled"] is False
 
     # Public skincare sharing is a text-only routine token, not media delivery.
     # Strict request models and the fixed serializer prevent arbitrary image/asset fields.
