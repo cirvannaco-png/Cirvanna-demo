@@ -11,6 +11,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+try:
+    from .private_artifacts import ensure_private_targets_available, write_private_text
+except ImportError:  # Support direct execution as documented in the CLI examples.
+    from private_artifacts import ensure_private_targets_available, write_private_text
+
 MAX_CATALOG_CANDIDATES = 1000
 VALID_TASKS = {"image_to_catalog_text", "text_to_catalog_text"}
 
@@ -156,15 +161,16 @@ def main() -> int:
     parser.add_argument("--queries", required=True,
                         help="Private query cases containing human-reviewed qrels and relative image paths")
     parser.add_argument("--output", required=True, help="Private runner-input JSONL")
+    parser.add_argument("--overwrite", action="store_true", help="Atomically replace existing output and manifest")
     args = parser.parse_args()
     catalog_rows = _read_jsonl(args.catalog_snapshot)
     query_rows = _read_jsonl(args.queries)
     cases = prepare(catalog_rows, query_rows)
     output = Path(args.output).expanduser()
-    output.parent.mkdir(parents=True, exist_ok=True)
-    with output.open("w", encoding="utf-8") as handle:
-        for case in cases:
-            handle.write(json.dumps(case, sort_keys=True) + "\n")
+    manifest_path = output.with_suffix(output.suffix + ".manifest.json")
+    ensure_private_targets_available([output, manifest_path], overwrite=args.overwrite)
+    output_text = "".join(json.dumps(case, sort_keys=True) + "\n" for case in cases)
+    write_private_text(output, output_text, overwrite=args.overwrite)
     split_counts = dict(Counter(case["split"] for case in cases))
     tasks = sorted({case["task_id"] for case in cases})
     manifest = {
@@ -183,8 +189,9 @@ def main() -> int:
         "source_images_written": False,
         "privacy_note": "Keep the input, output, source paths, and manifest in an approved restricted evaluation workspace.",
     }
-    manifest_path = output.with_suffix(output.suffix + ".manifest.json")
-    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_private_text(
+        manifest_path, json.dumps(manifest, indent=2, sort_keys=True) + "\n", overwrite=args.overwrite
+    )
     print(json.dumps({"status": "prepared", "catalog_candidates": len(catalog_rows),
                       "queries": len(cases), "splits": split_counts, "manifest": str(manifest_path)},
                      sort_keys=True))

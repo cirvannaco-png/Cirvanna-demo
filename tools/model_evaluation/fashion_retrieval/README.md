@@ -101,6 +101,8 @@ The baseline alone is not a comparison. Include the baseline and at least one ch
       --models cirvanna-fashion-clip marqo-fashionclip marqo-fashionsiglip \
       --device auto --batch-size 16
 
+Add --overwrite only when deliberately replacing both rankings and their manifest.
+
 This first run uses the two frozen Marqo revisions from the model registry. Add ZooClaw only after its full commit SHA has been verified, using `--revision zooclaw-fashionsiglip2=<FULL_40_CHAR_COMMIT_SHA>`. Models are loaded sequentially to reduce peak memory. If using CPU, measure runtime and memory; do not treat a CPU smoke run as production throughput evidence.
 
 ## Score rankings
@@ -123,6 +125,27 @@ For final-test runs, the evaluator also requires `--run-manifest`. The locked re
 A challenger passes the preregistered selection gate only if its nDCG@10 paired point improvement is at least the declared minimum practically important delta, the 95% paired cluster-bootstrap interval's lower bound is above zero, and the hard-exclusion gate has zero violations. Passing this retrieval gate is necessary, not sufficient, for production adoption; latency, cost, safety, privacy, rights and end-to-end CAL checks remain separate release gates.
 
 The evaluator refuses final `--split test` scoring unless `--preregistration` is supplied. It checks the locked metric, k, bootstrap settings, task, baseline/challenger model set, minimum query/cluster counts and candidate-pool sizes before computing final-test metrics. Use a non-final split such as `pilot` for diagnostic runs without a final preregistration. The runner ranks the full supplied candidate pool and applies no calibrated no-match threshold. Therefore its no-result rate is not a meaningful quality signal in this initial version. Similarity outputs are ranking scores, never probabilities or calibrated confidence.
+
+## Private artifact handling
+
+The runner, qrels builder, and case-preparation tool write rankings, prepared
+cases, qrels, and manifests through the shared private-artifact writer. Writes
+are staged in the destination directory, flushed, and atomically published.
+On POSIX, files are created with mode 0600; newly created output directories
+are restricted to 0700. An existing destination directory with group/other
+permissions is rejected rather than silently writing private data into it.
+
+Existing output or manifest files are never replaced by default. Pass
+--overwrite to each of the three commands only when replacement is intended;
+each file replacement is atomic, but the output/manifest pair is not a single
+transaction. The tools preflight both names before starting, then publish each
+file separately. Choose a dedicated encrypted,
+restricted evaluation directory, not a shared directory such as /tmp.
+On Windows and other non-POSIX platforms, Python chmod does not establish an
+equivalent ACL guarantee: the writer emits a warning, and operators must use a
+workspace whose OS ACLs restrict access to the intended account. Do not
+generate real human qrels or private catalogue snapshots until those ACLs have
+been verified.
 
 ## Tests
 
@@ -147,6 +170,8 @@ Run the aggregator:
       --reviews /secure/evaluation/blinded-reviews.jsonl \
       --adjudications /secure/evaluation/adjudications.jsonl \
       --output /secure/evaluation/reviewed-query-cases.jsonl
+
+Add --overwrite only when deliberately replacing both the output and its manifest.
 
 Omit `--adjudications` only when no candidate pair has reviewer disagreement. The script rejects missing/duplicate reviewers, missing candidate reviews, unresolved disagreements, and adjudicators who are not independent of both reviewers. It writes complete qrels and the adjudicated `human_exclusion_violation_ids`, but not reviewer keys or raw reviewer records. Keep source reviews, adjudications, output, and manifests encrypted and restricted; they must never be committed to GitHub.
 
@@ -184,6 +209,8 @@ For text queries use `task_id=text_to_catalog_text` and provide `query_text`. Th
       --catalog-snapshot /secure/evaluation/catalog-offers.jsonl \
       --queries /secure/evaluation/query-qrels.jsonl \
       --output /secure/evaluation/fashion-retrieval-test.jsonl
+
+Add --overwrite only when deliberately replacing both the output and its manifest.
 
 The 1,000 candidate bound matches the current Vision worker cap. Prepare one task and one split per run. Use exact eligible variant IDs, not product names or generated row numbers. The source snapshot, query/review/adjudication inputs, prepared JSONL and manifests are private research records and must remain outside GitHub. Every candidate must have a complete grade; no unjudged candidate is silently treated as irrelevant. Human-adjudicated constraint violations remain hard ranking gates.
 

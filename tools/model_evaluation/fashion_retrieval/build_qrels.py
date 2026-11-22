@@ -12,6 +12,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+try:
+    from .private_artifacts import ensure_private_targets_available, write_private_text
+except ImportError:  # Support direct execution as documented in the CLI examples.
+    from private_artifacts import ensure_private_targets_available, write_private_text
+
 
 def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
     rows = []
@@ -206,16 +211,17 @@ def main() -> int:
     parser.add_argument("--reviews", required=True, help="Private blinded two-reviewer judgments JSONL")
     parser.add_argument("--adjudications", help="Private independent adjudications JSONL; omit if none")
     parser.add_argument("--output", required=True, help="Private query/qrel output for prepare_cases.py")
+    parser.add_argument("--overwrite", action="store_true", help="Atomically replace existing output and manifest")
     args = parser.parse_args()
     query_rows = read_jsonl(args.queries)
     review_rows = read_jsonl(args.reviews)
     adjudications = read_jsonl(args.adjudications) if args.adjudications else []
     output_rows, summary = aggregate(query_rows, review_rows, adjudications)
     out = Path(args.output).expanduser()
-    out.parent.mkdir(parents=True, exist_ok=True)
-    with out.open("w", encoding="utf-8") as handle:
-        for row in output_rows:
-            handle.write(json.dumps(row, sort_keys=True) + "\n")
+    manifest_path = out.with_suffix(out.suffix + ".manifest.json")
+    ensure_private_targets_available([out, manifest_path], overwrite=args.overwrite)
+    output_text = "".join(json.dumps(row, sort_keys=True) + "\n" for row in output_rows)
+    write_private_text(out, output_text, overwrite=args.overwrite)
     manifest = {
         "schema_version": "1.0",
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -229,8 +235,10 @@ def main() -> int:
         "human_review_required": True,
         "privacy_note": "Keep source query/review/adjudication files, output and manifest in the restricted evaluation workspace.",
     }
-    out.with_suffix(out.suffix + ".manifest.json").write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    write_private_text(
+        manifest_path,
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        overwrite=args.overwrite,
     )
     print(json.dumps({"status": "qrels_built", **summary}, sort_keys=True))
     return 0
