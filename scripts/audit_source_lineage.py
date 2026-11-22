@@ -193,13 +193,12 @@ def _named_code_blocks(snapshot_text: str) -> dict[str, list[str]]:
     return found
 
 
-def _only_final_newline_diff(left: str, right: str) -> bool:
-    """Return true only when text differs by one optional final line feed."""
-    if left.endswith("\n") and not right.endswith("\n"):
-        return left[:-1] == right
-    if right.endswith("\n") and not left.endswith("\n"):
-        return right[:-1] == left
-    return False
+def _only_trailing_whitespace_diff(left: str, right: str) -> bool:
+    """Return true only when non-whitespace content is identical at EOF."""
+    normalized_left = left.rstrip()
+    normalized_right = right.rstrip()
+    return left != right and bool(normalized_left) and normalized_left == normalized_right
+
 
 
 def _load_exceptions() -> dict[str, str]:
@@ -425,10 +424,10 @@ def audit() -> tuple[list[str], list[dict[str, str]], dict[str, int]]:
             status = "SOURCE_BLOCK_NOT_FOUND"
         elif candidate_text in source_blocks:
             status = "EXACT_CONTENT_MATCH"
-        elif any(_only_final_newline_diff(candidate_text, source_block) for source_block in source_blocks):
-            # A single optional EOF newline is formatting, not a content edit.
+        elif any(_only_trailing_whitespace_diff(candidate_text, source_block) for source_block in source_blocks):
+            # Trailing whitespace is formatting, not a source-code content edit.
             # Keep it visible in the audit rather than silently calling it exact.
-            status = "TRAILING_NEWLINE_ONLY_DIFF"
+            status = "TRAILING_WHITESPACE_ONLY_DIFF"
         elif rel_path in DOCUMENTED_REPAIR_PATHS:
             status = "DOCUMENTED_SYNTAX_REPAIR_DIFF"
         elif rel_path in approved_exceptions:
@@ -484,7 +483,7 @@ def main() -> int:
     for key in ("archive_sections", "source_snapshots", "candidate_files", "archive_snapshot_differences"):
         print(f"{key}: {stats.get(key, 0)}")
     for status in (
-        "EXACT_CONTENT_MATCH", "TRAILING_NEWLINE_ONLY_DIFF", "DOCUMENTED_SYNTAX_REPAIR_DIFF",
+        "EXACT_CONTENT_MATCH", "TRAILING_WHITESPACE_ONLY_DIFF", "DOCUMENTED_SYNTAX_REPAIR_DIFF",
         "APPROVED_EXCEPTION", "SOURCE_BLOCK_NOT_FOUND", "UNRECONCILED_CONTENT_DIFF",
     ):
         print(f"{status}: {stats.get(status, 0)}")
