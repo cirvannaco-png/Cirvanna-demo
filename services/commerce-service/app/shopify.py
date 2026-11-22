@@ -2028,6 +2028,36 @@ def _find_reservation_draft(connection: ShopifyConnection, db: Session, key: str
     ), None)
 
 
+def _read_verified_reservation_draft(
+    connection: ShopifyConnection,
+    db: Session,
+    reservation: ShopifyInventoryReservation,
+) -> dict[str, Any]:
+    """Re-read a live Shopify hold before reusing an existing Stripe session."""
+    if not reservation.draft_order_gid:
+        reservation.state = "failed"
+        reservation.last_error = "SHOPIFY_RESERVATION_READBACK_MISSING"
+        db.commit()
+        raise HTTPException(409, detail={"code": "SHOPIFY_RESERVATION_READBACK_MISMATCH"})
+    data = _graphql(connection, db, """
+      query CirvannaReadReservedDraft($id: ID!) {
+        draftOrder(id: $id) { id tags status ready reserveInventoryUntil order { id } }
+      }
+    """, {"id": reservation.draft_order_gid})
+    draft = data.get("draftOrder")
+    if (
+        not isinstance(draft, dict)
+        or draft.get("id") != reservation.draft_order_gid
+        or not isinstance(draft.get("tags"), list)
+        or reservation.reservation_key not in draft["tags"]
+    ):
+        reservation.state = "failed"
+        reservation.last_error = "SHOPIFY_RESERVATION_READBACK_MISMATCH"
+        db.commit()
+        raise HTTPException(409, detail={"code": "SHOPIFY_RESERVATION_READBACK_MISMATCH"})
+    return draft
+
+
 def _create_inventory_draft(connection: ShopifyConnection, db: Session,
                             reservation: ShopifyInventoryReservation,
                             items: list[commerce.OrderItem]) -> str:
@@ -2120,6 +2150,59 @@ def _create_inventory_draft(connection: ShopifyConnection, db: Session,
     return draft["id"]
 
 
+def _compensate_failed_checkout_reservations(
+    db: Session,
+    order: commerce.CommerceOrder,
+    prepared: list[ShopifyInventoryReservation],
+) -> None:
+    """Release holds only after any existing Stripe session is confirmed expired.
+
+    A retry can fail after a Stripe Checkout Session was already created. The
+    session may still be payable, so releasing local/provider inventory first
+    would permit a paid order without its stock protection. Serialize against
+    the payment webhook and preserve reservations when Stripe expiry is
+    ambiguous. If payment already won the race, leave the paid saga to the
+    provider-completion/compensation worker instead of deleting its draft.
+    """
+    current = db.scalar(
+        select(commerce.CommerceOrder)
+        .where(commerce.CommerceOrder.id == order.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if current and current.state == "paid":
+        for reservation in prepared:
+            reservation.last_error = "SHOPIFY_RESERVATION_FAILURE_AFTER_PAYMENT"
+        db.commit()
+        raise HTTPException(503, detail={
+            "code": "SHOPIFY_RESERVATION_POST_PAYMENT_RECONCILIATION_REQUIRED",
+        })
+
+    if current and current.payment_session_id:
+        if not commerce.StripeGateway().expire_session(current.payment_session_id):
+            for reservation in prepared:
+                reservation.last_error = "SHOPIFY_RESERVATION_PAYMENT_SESSION_EXPIRY_UNCONFIRMED"
+            db.commit()
+            raise HTTPException(503, detail={
+                "code": "SHOPIFY_RESERVATION_PAYMENT_SESSION_EXPIRY_UNCONFIRMED",
+            })
+
+    for reservation in prepared:
+        connection = db.get(ShopifyConnection, reservation.connection_id)
+        if connection and reservation.state in {"reserved", "failed", "unknown", "release_pending"}:
+            try:
+                release_one_shopify_reservation(connection, db, reservation)
+            except HTTPException:
+                reservation.state = "release_pending"
+                reservation.last_error = "SHOPIFY_RESERVATION_COMPENSATION_PENDING"
+                db.commit()
+
+    current = db.get(commerce.CommerceOrder, order.id)
+    if current and current.state == "pending_payment":
+        commerce.release_reservations(db, current, "checkout_failed")
+        db.commit()
+
+
 def prepare_checkout_inventory_reservations(db: Session, order: commerce.CommerceOrder, *,
                                             allow_create: bool = True) -> int:
     items = list(db.scalars(select(commerce.OrderItem).where(
@@ -2161,6 +2244,11 @@ def prepare_checkout_inventory_reservations(db: Session, order: commerce.Commerc
             if reservation.state == "reserved" and reservation.draft_order_gid:
                 if commerce._aware_utc(reservation.expires_at) <= commerce.now():
                     raise HTTPException(409, detail={"code": "SHOPIFY_RESERVATION_EXPIRED"})
+                # A previously confirmed hold can be deleted or changed in the
+                # merchant's Shopify admin. Re-read it before creating or
+                # returning a Stripe Checkout Session on an idempotent retry.
+                provider_draft = _read_verified_reservation_draft(connection, db, reservation)
+                _adopt_verified_reservation_draft(db, reservation, provider_draft)
                 continue
             if not created_here:
                 if reservation.state == "creating" and reservation.lease_until and commerce._aware_utc(reservation.lease_until) > commerce.now():
@@ -2183,34 +2271,10 @@ def prepare_checkout_inventory_reservations(db: Session, order: commerce.Commerc
     except HTTPException as exc:
         if (exc.detail or {}).get("code") == "SHOPIFY_RESERVATION_IN_PROGRESS":
             raise
-        for reservation in prepared:
-            connection = db.get(ShopifyConnection, reservation.connection_id)
-            if connection and reservation.state in {"reserved", "failed", "unknown", "release_pending"}:
-                try:
-                    release_one_shopify_reservation(connection, db, reservation)
-                except HTTPException:
-                    reservation.state = "release_pending"
-                    reservation.last_error = "SHOPIFY_RESERVATION_COMPENSATION_PENDING"
-                    db.commit()
-        current = db.get(commerce.CommerceOrder, order.id)
-        if current and current.state == "pending_payment":
-            commerce.release_reservations(db, current, "checkout_failed")
-            db.commit()
+        _compensate_failed_checkout_reservations(db, order, prepared)
         raise
     except Exception:
-        for reservation in prepared:
-            connection = db.get(ShopifyConnection, reservation.connection_id)
-            if connection and reservation.state in {"reserved", "failed", "unknown", "release_pending"}:
-                try:
-                    release_one_shopify_reservation(connection, db, reservation)
-                except HTTPException:
-                    reservation.state = "release_pending"
-                    reservation.last_error = "SHOPIFY_RESERVATION_COMPENSATION_PENDING"
-                    db.commit()
-        current = db.get(commerce.CommerceOrder, order.id)
-        if current and current.state == "pending_payment":
-            commerce.release_reservations(db, current, "checkout_failed")
-            db.commit()
+        _compensate_failed_checkout_reservations(db, order, prepared)
         raise
 
 
