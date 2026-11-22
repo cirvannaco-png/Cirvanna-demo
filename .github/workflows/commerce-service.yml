@@ -76,6 +76,7 @@ jobs:
         env:
           COMMERCE_DATABASE_URL: postgresql+psycopg://commerce:commerce@localhost:5432/commerce_ci
           COMMERCE_AUTO_CREATE_SCHEMA: "false"
+          PGPASSWORD: commerce
         run: |
           alembic upgrade 20261109_0007
           alembic upgrade head
