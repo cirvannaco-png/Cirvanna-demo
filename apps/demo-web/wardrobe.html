@@ -1232,6 +1232,14 @@ footer{padding:28px 0 44px;border-top:1px solid var(--line);color:var(--muted);f
       }
       guide.append(text("p", "You do not need to buy anything first. PNELLY has matched the looks below to items already in your wardrobe.", "pnelly-note"));
       root.append(guide);
+    } else if ($("pnellyOccasion").value.trim()) {
+      const guide = document.createElement("section");
+      guide.className = "pnelly-card";
+      guide.style.gridColumn = "1 / -1";
+      guide.append(text("div", "PNELLY · one more clue", "eyebrow"));
+      guide.append(text("h3", "Let's decode this invitation"));
+      guide.append(text("p", "I don't have a reliable definition for this exact theme yet, so I won't guess and misdress you. Share the invitation's wording or a reference look, and PNELLY can narrow the styling direction. Any wardrobe combinations below are general options, not verified matches for this theme.", "pnelly-note"));
+      root.append(guide);
     }
     if (eligibility.verdict !== "PASS") {
       const heading = eligibility.verdict === "BLOCK" ? "EEPL blocked this context." : "EEPL review required before looks can be generated.";
