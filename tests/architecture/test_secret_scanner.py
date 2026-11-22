@@ -25,6 +25,22 @@ class SecretScannerRegressionTests(unittest.TestCase):
         )
         self.assertNotIn((1, "database-uri-credentials"), findings)
 
+    def test_detects_credentialed_broker_uris(self) -> None:
+        for scheme in ("amqp", "amqps", "nats", "nats+tls", "mqtt", "mqtts", "kafka"):
+            with self.subTest(scheme=scheme):
+                uri = f"{scheme}://worker:nonPlaceholderSecret@broker.internal/vhost"
+                findings = self.scan_text(f'BROKER_URL = "{uri}"\\n')
+                self.assertIn((1, "database-uri-credentials"), findings)
+
+    def test_detects_tls_redis_uri_credentials(self) -> None:
+        uri = "rediss://cache:nonPlaceholderSecret@cache.internal/0"
+        findings = self.scan_text(f'CACHE_URL = "{uri}"\\n')
+        self.assertIn((1, "database-uri-credentials"), findings)
+
+    def test_ignores_redacted_broker_uri(self) -> None:
+        findings = self.scan_text('BROKER_URL = "amqps://worker:REDACTED@broker.internal/vhost"\\n')
+        self.assertNotIn((1, "database-uri-credentials"), findings)
+
     def test_detects_short_quoted_password_assignment(self) -> None:
         assignment = "password = " + '"' + "abc123" + '"' + "\n"
         findings = self.scan_text(assignment)
