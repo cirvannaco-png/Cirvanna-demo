@@ -419,13 +419,11 @@ def test_pnelly_theme_education_remains_available_when_eepl_requires_review(monk
     )
     seen = {}
 
-    def theme_only_composer(payload, style_signals, feedback_signals):
-        seen["wardrobe_count"] = len(payload.wardrobe_items)
-        seen["style_signals"] = style_signals
-        seen["feedback_signals"] = feedback_signals
-        return {"recommendation": {"theme_guide": {"status": "recognized", "label": "Old Money"}}}
+    def theme_only_guide(occasion):
+        seen["occasion"] = occasion
+        return {"status": "recognized", "label": "Old Money"}
 
-    monkeypatch.setattr(main, "_pnelly_daily_looks", theme_only_composer)
+    monkeypatch.setattr(main, "_pnelly_occasion_guide", theme_only_guide)
     body = request_body()
     body["occasion"] = "old money themed party"
     client = TestClient(main.app)
@@ -440,4 +438,4 @@ def test_pnelly_theme_education_remains_available_when_eepl_requires_review(monk
     assert result["recommendation"]["look_count"] == 0
     assert result["recommendation"]["looks"] == []
     assert result["recommendation"]["theme_guide"]["label"] == "Old Money"
-    assert seen == {"wardrobe_count": 0, "style_signals": [], "feedback_signals": []}
+    assert seen == {"occasion": "old money themed party"}
