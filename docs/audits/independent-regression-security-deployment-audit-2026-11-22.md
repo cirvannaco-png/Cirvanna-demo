@@ -3,7 +3,9 @@
 Reviewed repository: `cirvannaco-png/Cirvanna-demo`  
 Reviewed code main before this documentation PR: `81df302848468f1e744252e435cbbd75d579b7f3`. The reviewed code now includes six mainline commits since `eca1a7349daef730a9e1ac43c72fec91712cb8b8`, including appearance orchestration, private benchmark artifact hardening, CAL checkout regression coverage, the hash-locked CPU research environment and PNELLY/Wardrobe Complementer feedback integration.
 
-The companion branch inventory now records 268 refs including main (267 non-main), with the four post-audit implementation/research branches compared directly to the reviewed code main and this documentation branch identified separately.\n\nThis is a cross-workstream review of code contracts, merged PRs, CI evidence, service READMEs, runbooks and release-gate state. It is not a third-party penetration test, external privacy assessment, live deployment certification or real-customer acceptance study.
+The companion branch inventory now records 268 refs including main (267 non-main), with the four post-audit implementation/research branches compared directly to the reviewed code main and this documentation branch identified separately.
+
+This is a cross-workstream review of code contracts, merged PRs, CI evidence, service READMEs, runbooks and release-gate state. It is not a third-party penetration test, external privacy assessment, live deployment certification or real-customer acceptance study.
 
 ## Regression evidence
 
