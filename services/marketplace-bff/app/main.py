@@ -29,7 +29,7 @@ from app.pnelly_preferences import PnellyStylePreferenceIn, save_pnelly_style_pr
 SERVICE = "cirvanna-marketplace-bff"
 ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_HTML = ROOT / "apps" / "demo-web" / "marketplace.html"
-DEFAULT_WARDROBE_HTML = ROOT / "apps" / "demo-web" / "wardrobe.html"
+DEFAULT_WARDROBE_HTML = Path(os.getenv("WARDROBE_HTML_PATH", str(ROOT / "apps" / "demo-web" / "wardrobe.html")))
 DEFAULT_SANCTUARY_HTML = ROOT / "apps" / "demo-web" / "sanctuary.html"
 DEFAULT_TWIN_ONBOARDING_HTML = ROOT / "apps" / "demo-web" / "twin-onboarding.html"
 DEFAULT_BRAND_PORTAL_HTML = ROOT / "apps" / "demo-web" / "brand-portal.html"
