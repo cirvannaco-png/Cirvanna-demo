@@ -12,7 +12,11 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-database_url = os.getenv("COMMERCE_DATABASE_URL", config.get_main_option("sqlalchemy.url"))
+database_url = (
+    os.getenv("COMMERCE_MIGRATION_DATABASE_URL", "").strip()
+    or os.getenv("COMMERCE_DATABASE_URL", "").strip()
+    or config.get_main_option("sqlalchemy.url")
+)
 config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 target_metadata = Base.metadata
 
