@@ -19,9 +19,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 import httpx
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import DateTime, Float, Index, Integer, JSON, String, Text, UniqueConstraint, create_engine, inspect, or_, select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 from sqlalchemy.pool import StaticPool
 from PIL import Image, ImageOps
@@ -1327,28 +1328,91 @@ def assess_serving(payload: ServingAssessmentIn, db: Session = Depends(get_db)):
             "all_eligible": all(item["eligible"] for item in decisions)}
 
 
+def _outcome_matches_payload(
+    row: Outcome,
+    payload: OutcomeIn,
+    consent_digest: str,
+    cal_digest: str,
+) -> bool:
+    stored_observed_at = row.observed_at
+    if stored_observed_at.tzinfo is None or stored_observed_at.utcoffset() is None:
+        stored_observed_at = stored_observed_at.replace(tzinfo=timezone.utc)
+    return (
+        row.event_id == payload.event_id
+        and row.product_id == payload.product_id
+        and row.context_key == payload.context_key
+        and row.contributor_token == payload.contributor_token
+        and row.action == payload.action
+        and row.suitability == payload.suitability
+        and list(row.reason_codes or []) == list(payload.reason_codes)
+        and row.model_version == payload.model_version
+        and row.candidate_id == payload.candidate_id
+        and row.consent_receipt_digest == consent_digest
+        and row.cal_receipt_digest == cal_digest
+        and stored_observed_at.astimezone(timezone.utc) == payload.observed_at.astimezone(timezone.utc)
+    )
+
+
+def _outcome_replay_response(row: Outcome, consent_subject: str, cal_decision_id: str | None) -> dict:
+    return {
+        "event_id": row.event_id,
+        "stored": True,
+        "replayed": True,
+        "consent_subject": consent_subject,
+        "cal_decision_id": cal_decision_id,
+    }
+
+
 @app.post("/outcomes", dependencies=[Depends(_service)], status_code=201)
-def record_outcome(payload: OutcomeIn, db: Session = Depends(get_db)):
+def record_outcome(
+    payload: OutcomeIn,
+    response: Response,
+    db: Session = Depends(get_db),
+):
     consent = _receipt(payload.consent_receipt, "consent", payload.product_id)
     cal = _receipt(payload.cal_decision_receipt, "cal", payload.product_id)
     if consent.get("subject_token") != payload.contributor_token:
         raise HTTPException(403, "Consent subject does not match the pseudonymous contributor")
     if cal.get("candidate_id") != payload.candidate_id:
         raise HTTPException(403, "CAL receipt candidate does not match the recommendation event")
-    if db.get(Outcome, payload.event_id):
-        raise HTTPException(409, "event_id already recorded")
+
+    consent_digest = hashlib.sha256(payload.consent_receipt.encode()).hexdigest()
+    cal_digest = hashlib.sha256(payload.cal_decision_receipt.encode()).hexdigest()
+    existing = db.get(Outcome, payload.event_id)
+    if existing is not None:
+        if not _outcome_matches_payload(existing, payload, consent_digest, cal_digest):
+            raise HTTPException(409, "OUTCOME_EVENT_ID_REUSED")
+        response.status_code = 200
+        return _outcome_replay_response(existing, consent.get("subject_token"), cal.get("decision_id"))
+
     row = Outcome(
         event_id=payload.event_id, product_id=payload.product_id, context_key=payload.context_key,
         contributor_token=payload.contributor_token, action=payload.action, suitability=payload.suitability,
         reason_codes=payload.reason_codes, model_version=payload.model_version, candidate_id=payload.candidate_id,
-        consent_receipt_digest=hashlib.sha256(payload.consent_receipt.encode()).hexdigest(),
-        cal_receipt_digest=hashlib.sha256(payload.cal_decision_receipt.encode()).hexdigest(),
+        consent_receipt_digest=consent_digest,
+        cal_receipt_digest=cal_digest,
         observed_at=payload.observed_at,
     )
     db.add(row)
-    db.commit()
-    return {"event_id": row.event_id, "stored": True, "consent_subject": consent.get("subject_token"),
-            "cal_decision_id": cal.get("decision_id")}
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        # Concurrent duplicate deliveries can both pass the initial lookup.
+        # Resolve the unique-key race as an exact replay, never as a second event.
+        db.rollback()
+        existing = db.get(Outcome, payload.event_id)
+        if existing is not None and _outcome_matches_payload(existing, payload, consent_digest, cal_digest):
+            response.status_code = 200
+            return _outcome_replay_response(existing, consent.get("subject_token"), cal.get("decision_id"))
+        raise HTTPException(409, "OUTCOME_EVENT_ID_REUSED") from exc
+
+    return {
+        "event_id": row.event_id,
+        "stored": True,
+        "replayed": False,
+        "consent_subject": consent.get("subject_token"),
+        "cal_decision_id": cal.get("decision_id"),
+    }
 
 
 @app.post("/learning/signals", dependencies=[Depends(_service)])
