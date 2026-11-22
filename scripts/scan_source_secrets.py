@@ -25,7 +25,7 @@ PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("slack-token", re.compile(r"\bxox[baprs]-[0-9A-Za-z-]{20,}\b")),
     ("stripe-live-secret", re.compile(r"\b(?:sk|rk)_live_[0-9A-Za-z]{20,}\b")),
     ("embedded-url-credentials", re.compile(r"\bhttps?://[^\s/:@]+:[^\s/@]+@[^\s]+")),
-    ("database-uri-credentials", re.compile(r"\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis)://(?P<user>[^/\s:@]+):(?P<password>[^@\s/]+)@[^\s]+", re.IGNORECASE)),
+    ("database-uri-credentials", re.compile(r"\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|rediss?|amqps?|nats(?:\+tls)?|mqtts?|kafka)://(?P<user>[^/\s:@]+):(?P<password>[^@\s/]+)@[^\s]+", re.IGNORECASE)),
 )
 
 ASSIGNMENT = re.compile(
@@ -188,8 +188,8 @@ def main() -> int:
         print(f"Found {len(findings)} potential secret(s); inspect privately and rotate any exposed credential.")
         return 1
     print("Secret-pattern scan passed: no configured high-confidence credential patterns found.")
-    print("LIMITATION: database/cache/broker connection URIs with embedded credentials in legacy source snapshots are not checked by the HTTP(S)-userinfo pattern.")
-    print("Review and externalize those settings before promoting any source candidate; this scan is not a substitute for provider-side secret scanning.")
+    print("LIMITATION: URI schemes outside the explicit database/cache/broker allowlist are not scanned for embedded userinfo credentials.")
+    print("Review and externalize any unsupported connection URI before promoting a source candidate; this scan is not a substitute for provider-side secret scanning.")
     return 0
 
 
