@@ -13,7 +13,7 @@ EXPECTED_LOCK_SHA256 = "28351b56bcb8604ad0c7499561364200f4b683a690f874a34566e494
 REQUIRED_PINS = (
     "torch==2.7.0+cpu",
     "torchvision==0.22.0+cpu",
-    "open_clip_torch==4.2.2",
+    "open-clip-torch==4.2.2",
     "transformers==4.57.6",
 )
 
@@ -40,7 +40,7 @@ class CpuResearchLockTests(unittest.TestCase):
         hash_lines = [line for line in lines if "--hash=sha256:" in line]
         self.assertGreater(len(hash_lines), 0)
         for line in hash_lines:
-            digest = line.split("--hash=sha256:", 1)[1].strip()
+            digest = line.split("--hash=sha256:", 1)[1].strip().rstrip("\\\\").strip()
             self.assertEqual(len(digest), 64, line)
             self.assertTrue(all(char in "0123456789abcdef" for char in digest), line)
 
