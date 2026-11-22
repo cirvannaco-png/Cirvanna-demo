@@ -117,18 +117,24 @@ def _iter_fenced_blocks(snapshot_text: str):
 
 
 def _named_code_blocks(snapshot_text: str) -> dict[str, list[str]]:
-    """Extract files from one-file, external-header, and multi-file fences.
+    """Extract files from the historical source snapshot fence layouts.
 
-    Historical snapshots use three layouts: a filename as the first line in a
-    fence, a plain filename immediately before a fence, or multiple '# File:'
-    markers inside one language fence.
+    Supported layouts include a filename as the first line in a fence, a plain
+    filename immediately before a fence, a filename-only fence followed by a
+    code fence, and multiple '# File:' markers inside one language fence.
     """
     found: dict[str, list[str]] = {}
     file_header = re.compile(r"^\s*(?:#\s*File:|//\s*File:|--\s*File:|FILE:)\s*(.+?)\s*$", re.IGNORECASE)
     separator = re.compile(r"^\s*#\s*[=\-]{5,}\s*$")
     plain_path = re.compile(r"^[A-Za-z0-9_./-]+\.[A-Za-z0-9_-]+$")
+    pending_path: str | None = None
 
     for block_start, block_content in _iter_fenced_blocks(snapshot_text):
+        path_only = block_content.strip()
+        if plain_path.fullmatch(path_only):
+            pending_path = _normalise_path(path_only)
+            continue
+
         lines = block_content.splitlines(keepends=True)
         prefix_lines = snapshot_text[:block_start].splitlines()
         previous = next((line.strip() for line in reversed(prefix_lines) if line.strip()), "")
@@ -139,7 +145,8 @@ def _named_code_blocks(snapshot_text: str) -> dict[str, list[str]]:
             if candidate and "." in Path(candidate).name:
                 external_path = candidate
 
-        current_path: str | None = external_path
+        current_path: str | None = external_path or pending_path
+        pending_path = None
         body: list[str] = []
 
         def flush() -> None:
