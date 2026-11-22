@@ -439,7 +439,14 @@ def _cal_service(authorization: str | None = Header(default=None)):
         raise HTTPException(401, "CAL service bearer token required")
 
 
-def _receipt(value: str, expected_type: str, product_id: str) -> dict:
+def _receipt(
+    value: str,
+    expected_type: str,
+    product_id: str,
+    *,
+    context_key: str | None = None,
+    candidate_id: str | None = None,
+) -> dict:
     key_name = "CIL_CONSENT_RECEIPT_KEY" if expected_type == "consent" else "CIL_CAL_RECEIPT_KEY"
     key = os.getenv(key_name, "").encode()
     if len(key) < 32:
@@ -462,8 +469,15 @@ def _receipt(value: str, expected_type: str, product_id: str) -> dict:
         raise HTTPException(403, "Receipt expired")
     if expected_type == "consent" and payload.get("purpose") != "recommendation_outcome_learning":
         raise HTTPException(403, "Consent is not scoped to outcome learning")
-    if expected_type == "cal" and payload.get("verdict") != "SHOW":
-        raise HTTPException(403, "CAL receipt must authorize SHOW")
+    if expected_type == "cal":
+        if payload.get("verdict") != "SHOW":
+            raise HTTPException(403, "CAL receipt must authorize SHOW")
+        if not context_key or payload.get("context_key") != context_key:
+            raise HTTPException(403, "CAL receipt context does not match the outcome")
+        if not candidate_id or payload.get("candidate_id") != candidate_id:
+            raise HTTPException(403, "CAL receipt candidate does not match the outcome")
+        if not isinstance(payload.get("decision_id"), str) or not payload["decision_id"].strip():
+            raise HTTPException(403, "CAL receipt must identify the exact decision")
     return payload
 
 
@@ -1370,7 +1384,13 @@ def record_outcome(
     db: Session = Depends(get_db),
 ):
     consent = _receipt(payload.consent_receipt, "consent", payload.product_id)
-    cal = _receipt(payload.cal_decision_receipt, "cal", payload.product_id)
+    cal = _receipt(
+        payload.cal_decision_receipt,
+        "cal",
+        payload.product_id,
+        context_key=payload.context_key,
+        candidate_id=payload.candidate_id,
+    )
     if consent.get("subject_token") != payload.contributor_token:
         raise HTTPException(403, "Consent subject does not match the pseudonymous contributor")
     if cal.get("candidate_id") != payload.candidate_id:
