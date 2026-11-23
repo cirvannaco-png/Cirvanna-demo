@@ -42,7 +42,7 @@ sessions = Table(
 attestations = Table(
     "identity_age_threshold_attestations", metadata,
     Column("jti", String(36), primary_key=True),
-    Column("session_id", String(36), ForeignKey("identity_private.identity_age_verification_sessions.session_id", ondelete="CASCADE"), nullable=False),
+    Column("session_id", String(36), ForeignKey("identity_private.identity_age_verification_sessions.session_id", ondelete="CASCADE"), nullable=False, unique=True),
     Column("subject_id", String(128), nullable=False),
     Column("request_id", String(128), nullable=False),
     Column("purpose", String(80), nullable=False),
@@ -210,6 +210,14 @@ class AgeEvidenceStore:
         )
         with self.engine.begin() as conn:
             result = conn.execute(update(attestations).where(predicate).values(consumed_at=now))
+            return result.rowcount == 1
+
+    def fail_session(self, session_id: str, *, now: datetime | None = None) -> bool:
+        now = _aware(now or utcnow())
+        with self.engine.begin() as conn:
+            result = conn.execute(update(sessions).where(
+                and_(sessions.c.session_id == session_id, sessions.c.state == "created")
+            ).values(state="failed", updated_at=now))
             return result.rowcount == 1
 
     def revoke_session(self, session_id: str, *, now: datetime | None = None) -> bool:
