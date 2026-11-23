@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS catacaci_decision_receipts (
     arbitration_contract_version TEXT NOT NULL,
     pipeline_contract_version TEXT NOT NULL,
     candidate_snapshot_sha256 CHAR(64) NOT NULL,
+    catalog_version INTEGER NULL CHECK (catalog_version IS NULL OR catalog_version > 0),
     evaluated_signals JSONB NOT NULL,
     reasons JSONB NOT NULL,
     receipt_sha256 CHAR(64) NOT NULL,
