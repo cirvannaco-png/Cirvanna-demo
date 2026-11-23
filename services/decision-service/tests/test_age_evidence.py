@@ -160,6 +160,26 @@ class YotiAdapterTests(unittest.TestCase):
             client=http_client,
         )
 
+    def test_client_rejects_untrusted_yoti_api_origins_and_timeouts(self):
+        with self.assertRaises(ValueError):
+            YotiAVSClient(
+                "yoti-test-api-key-with-more-than-32-bytes",
+                "12345678-1234-4234-8234-123456789012",
+                base_url="https://attacker.example",
+            )
+        with self.assertRaises(ValueError):
+            YotiAVSClient(
+                "yoti-test-api-key-with-more-than-32-bytes",
+                "12345678-1234-4234-8234-123456789012",
+                base_url="http://age.yoti.com",
+            )
+        with self.assertRaises(ValueError):
+            YotiAVSClient(
+                "yoti-test-api-key-with-more-than-32-bytes",
+                "12345678-1234-4234-8234-123456789012",
+                timeout_seconds=0,
+            )
+
     def test_session_uses_digital_id_only_and_disables_age_estimation(self):
         captured = {}
         def handler(request):
