@@ -436,6 +436,14 @@ async def callback(request: Request) -> Response:
     session_id, max_age, _ = await _store_session(tokens)
     response = RedirectResponse(_post_login_redirect(), status_code=303)
     _cookie(response, session_id, max_age=max_age)
+    if provider != "email":
+        response.delete_cookie(
+            OAUTH_STATE_COOKIE,
+            path="/",
+            secure=True,
+            httponly=True,
+            samesite="lax",
+        )
     response.headers["Cache-Control"] = "no-store"
     response.headers["Referrer-Policy"] = "no-referrer"
     return response
