@@ -79,3 +79,14 @@ def resolve_cal_policy(policy_id: str, policy_version: str) -> CALPolicy:
         maximum_fit_confidence_disagreement=float(entry["maximum_fit_confidence_disagreement"]),
         minimum_alignment_score=float(entry["minimum_alignment_score"]),
     )
+
+def resolve_configured_cal_policy() -> CALPolicy:
+    """Resolve the sole active policy selected by trusted server configuration."""
+    policy_id = os.getenv("CATACACI_POLICY_ID", "").strip()
+    if not policy_id:
+        raise CALPolicyRegistryError("server CAL policy ID is not configured")
+    registry = validate_registry()
+    entry = registry.get(policy_id)
+    if not isinstance(entry, dict):
+        raise CALPolicyRegistryError("configured CAL policy ID is not registered")
+    return resolve_cal_policy(policy_id, entry["policy_version"])
