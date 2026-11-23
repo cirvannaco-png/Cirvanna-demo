@@ -400,3 +400,58 @@ if __name__ == "__main__":
         self.assertEqual(resolved.policy_version, "adult-v4")
         self.assertEqual(resolved.minimum_age, 18)
         self.assertEqual(resolved.allowed_locations, ["KE"])
+
+
+class ServerOwnedEEPLPolicyTests(unittest.TestCase):
+    def test_active_policy_is_resolved_from_server_registry(self):
+        import json
+        import os
+        from unittest.mock import patch
+        from age_evidence.policy import resolve_active_policy
+
+        registry = {
+            "adult-market": {
+                "policy_version": "adult-v4", "minimum_age": 18, "maximum_age": None,
+                "allowed_locations": ["KE"], "allowed_occasions": ["everyday"],
+                "allowed_climates": ["warm"], "required_context": ["location", "occasion", "climate"],
+            },
+            "youth-market": {
+                "policy_version": "youth-v1", "minimum_age": 13, "maximum_age": None,
+                "allowed_locations": [], "allowed_occasions": [],
+                "allowed_climates": [], "required_context": [],
+            },
+        }
+        with patch.dict(os.environ, {
+            "EEPL_POLICY_ID": "adult-market",
+            "EEPL_POLICY_REGISTRY_JSON": json.dumps(registry),
+        }, clear=False):
+            active = resolve_active_policy()
+        self.assertEqual(active["policy_id"], "adult-market")
+        self.assertEqual(active["minimum_age"], 18)
+
+    def test_duplicate_registry_keys_are_rejected(self):
+        import os
+        from unittest.mock import patch
+        from age_evidence.policy import PolicyRegistryError, resolve_active_policy
+
+        raw = '{"adult":{"policy_version":"v1","minimum_age":18,"maximum_age":null,"allowed_locations":[],"allowed_occasions":[],"allowed_climates":[],"required_context":[]},"adult":{"policy_version":"v2","minimum_age":13,"maximum_age":null,"allowed_locations":[],"allowed_occasions":[],"allowed_climates":[],"required_context":[]}}'
+        with patch.dict(os.environ, {"EEPL_POLICY_ID": "adult", "EEPL_POLICY_REGISTRY_JSON": raw}, clear=False):
+            with self.assertRaises(PolicyRegistryError):
+                resolve_active_policy()
+
+    def test_invalid_context_fields_and_duplicate_allowlist_entries_are_rejected(self):
+        import json
+        import os
+        from unittest.mock import patch
+        from age_evidence.policy import PolicyRegistryError, resolve_active_policy
+
+        entry = {
+            "policy_version": "v1", "minimum_age": 18, "maximum_age": None,
+            "allowed_locations": ["KE", "KE"], "allowed_occasions": [],
+            "allowed_climates": [], "required_context": ["location", "untrusted"],
+        }
+        with patch.dict(os.environ, {
+            "EEPL_POLICY_ID": "adult", "EEPL_POLICY_REGISTRY_JSON": json.dumps({"adult": entry}),
+        }, clear=False):
+            with self.assertRaises(PolicyRegistryError):
+                resolve_active_policy()
