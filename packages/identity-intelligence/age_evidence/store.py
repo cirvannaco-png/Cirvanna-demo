@@ -12,7 +12,7 @@ from typing import Any
 
 from sqlalchemy import (
     Boolean, Column, DateTime, ForeignKey, Integer, MetaData, String, Table,
-    and_, create_engine, exists, insert, select, update,
+    and_, create_engine, exists, insert, select, update, UniqueConstraint, IntegrityError,
 )
 
 metadata = MetaData()
@@ -37,6 +37,7 @@ sessions = Table(
     Column("updated_at", DateTime(timezone=True), nullable=False),
     Column("verified_at", DateTime(timezone=True)),
     Column("revoked_at", DateTime(timezone=True)),
+    UniqueConstraint("subject_id", "request_id", "purpose", "policy_id", "policy_version", name="uq_identity_age_session_request_policy"),
     schema="identity_private",
 )
 attestations = Table(
@@ -69,6 +70,10 @@ def _aware(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+class AgeEvidenceConflict(RuntimeError):
+    pass
+
+
 class AgeEvidenceStore:
     """Transactional lifecycle store; redemption is a single conditional UPDATE."""
 
@@ -92,15 +97,18 @@ class AgeEvidenceStore:
             raise ValueError("threshold must be an integer from 13 to 125")
         now = _aware(now or utcnow())
         session_id = str(uuid.uuid4())
-        with self.engine.begin() as conn:
-            conn.execute(insert(sessions).values(
-                session_id=session_id, subject_id=subject_id, request_id=request_id,
-                purpose=purpose, policy_id=policy_id, policy_version=policy_version,
-                threshold=threshold, provider="yoti",
-                provider_reference=provider_reference,
-                provider_reference_sha256=hashlib.sha256(provider_reference.encode()).hexdigest(),
-                state="created", created_at=now, updated_at=now,
-            ))
+        try:
+            with self.engine.begin() as conn:
+                conn.execute(insert(sessions).values(
+                    session_id=session_id, subject_id=subject_id, request_id=request_id,
+                    purpose=purpose, policy_id=policy_id, policy_version=policy_version,
+                    threshold=threshold, provider="yoti",
+                    provider_reference=provider_reference,
+                    provider_reference_sha256=hashlib.sha256(provider_reference.encode()).hexdigest(),
+                    state="created", created_at=now, updated_at=now,
+                ))
+        except IntegrityError as exc:
+            raise AgeEvidenceConflict("a verification session already exists for this request and policy") from exc
         return session_id
 
     def attach_provider_session(
