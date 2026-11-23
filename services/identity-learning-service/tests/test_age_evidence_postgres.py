@@ -15,6 +15,18 @@ DATABASE_URL = os.getenv("AGE_EVIDENCE_TEST_DATABASE_URL", "")
 pytestmark = pytest.mark.skipif(not DATABASE_URL, reason="PostgreSQL migration integration URL not configured")
 
 
+def attestation_payload_for(store, session_id, jti):
+    row = store.get_session(session_id)
+    return {
+        "jti": jti, "subject_id": row["subject_id"], "request_id": row["request_id"],
+        "purpose": row["purpose"], "policy_id": row["policy_id"],
+        "policy_version": row["policy_version"], "threshold": row["threshold"],
+        "threshold_met": row["threshold_met"],
+        "provider_session_id": str(row["provider_session_id"]),
+        "provider_evidence_id": row["provider_evidence_id"],
+    }
+
+
 def test_postgres_age_evidence_session_redemption_and_revocation_are_atomic():
     store = AgeEvidenceStore(DATABASE_URL)
     now = datetime.now(timezone.utc)
@@ -40,7 +52,7 @@ def test_postgres_age_evidence_session_redemption_and_revocation_are_atomic():
     sid = verified_session()
     jti = str(uuid.uuid4())
     store.issue_attestation(
-        session_id=sid, jti=jti, signature=signature, attestation_payload={"jti": jti},
+        session_id=sid, jti=jti, signature=signature, attestation_payload=attestation_payload_for(store, sid, jti),
         issued_at=now, expires_at=now + timedelta(minutes=5), now=now,
     )
     row = store.get_session(sid)
@@ -55,7 +67,7 @@ def test_postgres_age_evidence_session_redemption_and_revocation_are_atomic():
     sid_concurrent = verified_session()
     jti_concurrent = str(uuid.uuid4())
     store.issue_attestation(
-        session_id=sid_concurrent, jti=jti_concurrent, signature=signature, attestation_payload={"jti": jti_concurrent},
+        session_id=sid_concurrent, jti=jti_concurrent, signature=signature, attestation_payload=attestation_payload_for(store, sid_concurrent, jti_concurrent),
         issued_at=now, expires_at=now + timedelta(minutes=5), now=now,
     )
     row_concurrent = store.get_session(sid_concurrent)
@@ -72,7 +84,7 @@ def test_postgres_age_evidence_session_redemption_and_revocation_are_atomic():
     sid2 = verified_session()
     jti2 = str(uuid.uuid4())
     store.issue_attestation(
-        session_id=sid2, jti=jti2, signature=signature, attestation_payload={"jti": jti2},
+        session_id=sid2, jti=jti2, signature=signature, attestation_payload=attestation_payload_for(store, sid2, jti2),
         issued_at=now, expires_at=now + timedelta(minutes=5), now=now,
     )
     row2 = store.get_session(sid2)
