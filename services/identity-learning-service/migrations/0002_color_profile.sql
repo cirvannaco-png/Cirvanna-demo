@@ -1,3 +1,5 @@
+SET search_path TO identity_private;
+
 -- Structured, user-declared personal colour preferences for the Style Desk.
 -- Objective complexion/undertone analysis is deliberately not stored as a preference.
 CREATE TABLE IF NOT EXISTS identity_usi_color_profiles (
