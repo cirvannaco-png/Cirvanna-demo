@@ -73,18 +73,37 @@ def _redact(value: Any, key: str = "") -> Any:
 
 
 def _json_path(document: Any, path: str) -> Any:
-    """Resolve a deliberately small JSONPath subset: $.a.b[0].c."""
+    """Resolve $.a.b[0].c and wildcard collection paths such as $.items[*].image_url."""
     if not path.startswith("$."):
         raise MatrixError(f"JSON assertion path must start with '$.': {path}")
-    current = document
+    current: Any = document
     for part in path[2:].split("."):
-        match = re.fullmatch(r"([A-Za-z0-9_-]+)(?:\\[(\\d+)\\])?", part)
+        match = re.fullmatch(r"([A-Za-z0-9_-]+)(?:\\[(\\d+|\\*)\\])?", part)
         if not match:
             raise MatrixError(f"unsupported JSON assertion path: {path}")
         key, index = match.groups()
-        if not isinstance(current, dict) or key not in current:
-            return _MISSING
-        current = current[key]
+        if index == "*":
+            if not isinstance(current, dict) or key not in current or not isinstance(current[key], list):
+                return _MISSING
+            collected = []
+            for item in current[key]:
+                if isinstance(item, dict) and key is not None:
+                    continue
+            # The wildcard selects the array; the next path segment maps over its items.
+            current = current[key]
+            continue
+        if isinstance(current, list):
+            values = []
+            for item in current:
+                if isinstance(item, dict) and key in item:
+                    values.append(item[key])
+            if not values:
+                return _MISSING
+            current = values
+        else:
+            if not isinstance(current, dict) or key not in current:
+                return _MISSING
+            current = current[key]
         if index is not None:
             if not isinstance(current, list) or int(index) >= len(current):
                 return _MISSING
@@ -251,7 +270,8 @@ def run(config: dict[str, Any], timeout: int = 20) -> int:
                 "cache_control": response.headers.get("cache-control"),
                 "failures": len(surface_failures),
             })
-        # A scenario may require a real revocation step after the initial surface pass.
+        # Revoke while the fixture is live, then repeat the shopper requests to
+        # detect stale browser/API/CDN state after the authoritative mutation.
         revoke = scenario.get("revoke")
         if revoke:
             revoke_spec = _render(revoke, variables)
@@ -262,6 +282,28 @@ def run(config: dict[str, Any], timeout: int = 20) -> int:
             }, timeout)
             if revoke_result.status not in revoke_spec.get("accepted_status", [200, 204]):
                 failures.append(f"{scenario_id}: revocation step returned HTTP {revoke_result.status}")
+            elif scenario.get("recheck_after_revoke", False):
+                for surface in sorted(REQUIRED_SURFACES):
+                    spec = _render(config["surfaces"][surface], variables)
+                    response = _http({
+                        "url": spec["url"], "method": spec["method"],
+                        "headers": spec.get("headers", {}), "token_env": spec.get("token_env"),
+                        "body": spec.get("body"),
+                    }, timeout)
+                    assertion = scenario.get("post_revoke_assertions", {}).get(
+                        surface, scenario.get("assertions", {}).get(surface, spec.get("assertions", {}))
+                    )
+                    label = f"{scenario_id}/post-revoke/{surface}"
+                    surface_failures = _assert_response(response, assertion, label)
+                    failures.extend(surface_failures)
+                    results.append({
+                        "scenario": scenario_id + "/post-revoke",
+                        "surface": surface,
+                        "status": response.status,
+                        "elapsed_ms": response.elapsed_ms,
+                        "cache_control": response.headers.get("cache-control"),
+                        "failures": len(surface_failures),
+                    })
         # Teardown must be explicit and provider-confirmed by the fixture control plane.
         deactivated = _http({
             "url": control["url"].rstrip("/") + "/v1/scenarios/" + scenario_id + "/deactivate",
