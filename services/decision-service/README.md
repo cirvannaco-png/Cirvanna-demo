@@ -28,6 +28,12 @@ The service does not contain or claim to train/run an FCI predictor. A separatel
 
 The service independently canonicalizes and verifies the signature before evaluating CAL. An uncalibrated but validly signed estimate becomes UNKNOWN in FCI and must result in REVIEW, not SHOW. The HMAC proves the payload came from a holder of the trusted key; it does not prove the provider's science or calibration quality. A production provider still needs empirical calibration, model governance and access controls.
 
+## Server-authoritative EEPL policy
+
+The request may identify a policy by `policy_id` and `policy_version`, but the Decision Service ignores request-body age thresholds, maximum ages, location/occasion/climate allowlists and required-context rules. It resolves the complete policy from `EEPL_POLICY_REGISTRY_JSON` in server configuration. An unknown or stale policy version fails closed with `SERVER_POLICY_UNAVAILABLE`. The same registry is used by Identity Learning when creating Yoti sessions, so the provider threshold cannot be selected by the browser or BFF payload.
+
+A verified age attestation must also be redeemed through the private Identity Learning endpoint before it influences EEPL. Configure `AGE_EVIDENCE_REDEMPTION_URL` as the HTTPS URL ending in `/internal/v1/age-evidence/attestations/redeem` and `AGE_EVIDENCE_REDEMPTION_TOKEN` as the separate machine credential. If redemption is unavailable, replayed, revoked or expired, the Decision Service fails closed; a valid HMAC alone is insufficient.
+
 ## Configuration
 
 - DECISION_SERVICE_TOKEN: long random internal bearer token; protect service network access as well.
