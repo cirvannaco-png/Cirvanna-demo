@@ -100,6 +100,19 @@ async def security_headers(request: Request, call_next):
         if request.headers.get("origin") != expected_origin:
             return JSONResponse(status_code=403, content={"detail": {"code": "AUTH_CSRF_ORIGIN_REJECTED"}})
     response = await call_next(request)
+    refreshed_cookie_age = getattr(request.state, "auth_session_refresh_max_age", None)
+    if isinstance(refreshed_cookie_age, int) and refreshed_cookie_age > 0:
+        session_handle = request.cookies.get(COOKIE_NAME)
+        if session_handle:
+            response.set_cookie(
+                COOKIE_NAME,
+                session_handle,
+                max_age=refreshed_cookie_age,
+                httponly=True,
+                secure=True,
+                samesite="lax",
+                path="/",
+            )
     # Every API response, including framework-generated 4xx/5xx errors, can
     # contain account- or authorization-dependent state. Route-level headers
     # are easy to omit on exceptional paths, so enforce the cache boundary here.
