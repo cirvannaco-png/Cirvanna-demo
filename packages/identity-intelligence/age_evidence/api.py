@@ -6,6 +6,8 @@ import os
 from typing import Annotated
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import inspect
+from .store import metadata as age_evidence_metadata
 
 from .core import AgeEvidenceError
 from .policy import PolicyRegistryError, resolve_active_policy
@@ -92,6 +94,22 @@ def _service() -> AgeEvidenceService:
     except (ValueError, AgeEvidenceError) as exc:
         store.engine.dispose()
         raise HTTPException(503, detail={"code": "AGE_EVIDENCE_PROVIDER_CONFIGURATION_INVALID"}) from exc
+
+
+def schema_ready() -> bool:
+    """Check all age-evidence tables through the store's dialect-aware schema mapping."""
+    store = None
+    try:
+        store = _store()
+        schema = None if store.engine.dialect.name == "sqlite" else "identity_private"
+        existing = set(inspect(store.engine).get_table_names(schema=schema))
+        required = {table.name for table in age_evidence_metadata.sorted_tables}
+        return required.issubset(existing)
+    except Exception:
+        return False
+    finally:
+        if store is not None:
+            store.engine.dispose()
 
 
 def provider_configuration_ready() -> bool:
