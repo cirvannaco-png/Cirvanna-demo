@@ -77,6 +77,9 @@ def engine_for_url(url: str):
     kwargs = {"pool_pre_ping": True}
     if url.startswith("sqlite"):
         kwargs["connect_args"] = {"check_same_thread": False}
+    else:
+        # Keep service-owned tables out of Supabase exposed schemas and public.
+        kwargs["connect_args"] = {"options": "-csearch_path=identity_private"}
     return create_engine(url, **kwargs)
 
 
