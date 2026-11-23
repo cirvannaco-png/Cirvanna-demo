@@ -6,6 +6,8 @@ Internal service for persistent User Style Index profiles and consented Temporal
 
 This service is the canonical API owner for explicit positive style preferences and consented temporal observations. It uses its own table namespace (`identity_usi_*` and `identity_tal_*`) in the existing managed PostgreSQL database. Point `IDENTITY_DATABASE_URL` at the existing approved database instance (for example the Commerce Postgres instance); do not create a second database merely for this service. No Commerce tables are read or modified by this service.
 
+The namespace is physically isolated in the non-exposed `identity_private` schema. PostgreSQL connections are pinned to `search_path=identity_private` by the service engine; migrations create/use that schema explicitly. Do not add `identity_private` to Supabase API Exposed Schemas. The current application connection still requires a database login with the documented schema privileges; a dedicated least-privilege login/credential must be provisioned before deployment and must not be replaced by the broad project `postgres` credential.
+
 The API is internal-only. The API Gateway must first resolve the end-user bearer token through Commerce `GET /me`, then pass the verified subject ID using its machine credential. A caller-supplied subject ID is not proof of identity.
 
 
