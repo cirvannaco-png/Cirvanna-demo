@@ -4085,22 +4085,26 @@ def test_appearance_source_renewal_requires_explicit_source_storage_acceptance(c
     assert len(fake.calls) == 2
 
 
-def test_developer_token_entry_requires_explicit_nonproduction_opt_in(client, monkeypatch):
+def test_developer_token_entry_is_removed_even_when_nonproduction_opt_in_is_set(client, monkeypatch):
     monkeypatch.setenv("MARKETPLACE_ENVIRONMENT", "development")
     monkeypatch.setenv("MARKETPLACE_ENABLE_DEVELOPER_TOKEN_INPUT", "true")
     response = client.get("/")
     assert response.status_code == 200
-    assert 'allowDeveloperTokenInput:true' in response.text
-    assert "Signed customer test token" in response.text
+    assert "allowDeveloperTokenInput" not in response.text
+    assert 'id="commerceToken"' not in response.text
+    assert 'data-auth-provider="google"' in response.text
+    assert 'data-auth-provider="apple"' in response.text
+    assert 'data-auth-provider="microsoft"' in response.text
+    assert 'id="emailOtpForm"' in response.text
 
 def test_production_never_renders_developer_token_entry_even_when_opted_in(client, monkeypatch):
     monkeypatch.setenv("MARKETPLACE_ENVIRONMENT", "production")
     monkeypatch.setenv("MARKETPLACE_ENABLE_DEVELOPER_TOKEN_INPUT", "true")
     response = client.get("/")
     assert response.status_code == 200
-    assert 'allowDeveloperTokenInput:false' in response.text
-    assert "Signed customer test token" in response.text
-    assert "Account sign-in is unavailable" in response.text
+    assert "allowDeveloperTokenInput" not in response.text
+    assert 'id="commerceToken"' not in response.text
+    assert 'data-auth-provider="apple"' in response.text
 
 def test_cart_proxy_requires_bearer_before_cal_readiness_probe(client, monkeypatch):
     configure_upstreams(monkeypatch)
