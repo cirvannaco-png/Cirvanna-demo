@@ -28,9 +28,13 @@ CREATE TABLE IF NOT EXISTS identity_private.identity_age_verification_sessions (
   verified_at timestamptz,
   revoked_at timestamptz,
   UNIQUE (subject_id, request_id, purpose, policy_id, policy_version),
-  CHECK ((state = 'verified') = (threshold_met IS NOT NULL AND verified_at IS NOT NULL)
-         OR state IN ('revoked','expired','failed'))
+  CHECK (
+    (state IN ('verified','denied') AND threshold_met IS NOT NULL AND verified_at IS NOT NULL)
+    OR (state NOT IN ('verified','denied') AND verified_at IS NULL)
+    OR state = 'revoked'
+  )
 );
+
 CREATE INDEX IF NOT EXISTS ix_identity_age_sessions_subject_created
   ON identity_private.identity_age_verification_sessions(subject_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS ix_identity_age_sessions_state_expiry
@@ -46,7 +50,7 @@ CREATE TABLE IF NOT EXISTS identity_private.identity_age_threshold_attestations 
   policy_version varchar(64) NOT NULL,
   threshold integer NOT NULL CHECK (threshold BETWEEN 13 AND 125),
   threshold_met boolean NOT NULL,
-  signature_sha256 varchar(64) NOT NULL CHECK (signature_sha256 ~ '^[0-9a-f]{64}
+  signature_sha256 varchar(64) NOT NULL CHECK (signature_sha256 ~ '^[0-9a-f]{64}$'),
   issued_at timestamptz NOT NULL,
   expires_at timestamptz NOT NULL,
   consumed_at timestamptz,
@@ -54,34 +58,7 @@ CREATE TABLE IF NOT EXISTS identity_private.identity_age_threshold_attestations 
   CHECK (expires_at > issued_at),
   CHECK (expires_at <= issued_at + interval '15 minutes')
 );
-CREATE INDEX IF NOT EXISTS ix_identity_age_attestations_subject_expiry
-  ON identity_private.identity_age_threshold_attestations(subject_id, expires_at);
-CREATE INDEX IF NOT EXISTS ix_identity_age_attestations_session
-  ON identity_private.identity_age_threshold_attestations(session_id);
 
-ALTER TABLE identity_private.identity_age_verification_sessions ENABLE ROW LEVEL SECURITY;
-ALTER TABLE identity_private.identity_age_threshold_attestations ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON identity_private.identity_age_verification_sessions FROM anon, authenticated;
-REVOKE ALL ON identity_private.identity_age_threshold_attestations FROM anon, authenticated;
-GRANT SELECT, INSERT, UPDATE, DELETE ON identity_private.identity_age_verification_sessions TO identity_learning_service;
-GRANT SELECT, INSERT, UPDATE, DELETE ON identity_private.identity_age_threshold_attestations TO identity_learning_service;
-
-DROP POLICY IF EXISTS identity_age_sessions_service_only ON identity_private.identity_age_verification_sessions;
-CREATE POLICY identity_age_sessions_service_only ON identity_private.identity_age_verification_sessions
-  FOR ALL TO identity_learning_service USING (true) WITH CHECK (true);
-DROP POLICY IF EXISTS identity_age_attestations_service_only ON identity_private.identity_age_threshold_attestations;
-CREATE POLICY identity_age_attestations_service_only ON identity_private.identity_age_threshold_attestations
-  FOR ALL TO identity_learning_service USING (true) WITH CHECK (true);
-
-COMMIT;
-),
-  issued_at timestamptz NOT NULL,
-  expires_at timestamptz NOT NULL,
-  consumed_at timestamptz,
-  revoked_at timestamptz,
-  CHECK (expires_at > issued_at),
-  CHECK (expires_at <= issued_at + interval '15 minutes')
-);
 CREATE INDEX IF NOT EXISTS ix_identity_age_attestations_subject_expiry
   ON identity_private.identity_age_threshold_attestations(subject_id, expires_at);
 CREATE INDEX IF NOT EXISTS ix_identity_age_attestations_session
