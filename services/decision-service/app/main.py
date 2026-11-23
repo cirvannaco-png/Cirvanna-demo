@@ -32,6 +32,7 @@ for package in (
 from catacaci import DecisionSignal, DecisionVerdict, SignalKind, SignalState  # noqa: E402
 from catacaci.pipeline import evaluate_candidate  # noqa: E402
 from eepl import ContextField, EEPLContext, EEPLPolicy  # noqa: E402
+from age_evidence import AgeEvidenceError, verify_threshold_attestation  # noqa: E402
 from fci import FitConfidenceEstimate  # noqa: E402
 from cultural_identity import CulturalRequirement, RequirementKind, canonical_cultural_evidence_payload  # noqa: E402
 from npl import NegativePreference, PreferenceSource, TargetType, canonical_npl_evidence_payload  # noqa: E402
@@ -165,6 +166,10 @@ class UpstreamSignalIn(StrictModel):
 class EligibilityRequest(StrictModel):
     request_id: str = Field(min_length=1, max_length=128)
     candidate_id: str = Field(min_length=1, max_length=128)
+    # Only a separately signed, purpose-bound provider attestation can influence EEPL.
+    # Request-body context.age_years is retained for compatibility but is never trusted.
+    age_attestation: dict | None = None
+    age_attestation_signature: str | None = Field(default=None, min_length=64, max_length=128)
     policy_version: str = Field(default="decision-pipeline-1.0.0", min_length=1, max_length=100)
     context: ContextIn
     eepl_policy: PolicyIn
@@ -293,6 +298,38 @@ def _apply_cil_cal_feedback_veto(result_json: dict, review: dict | None) -> dict
             ),
         })
     return result_json
+
+
+def _verified_age_threshold(payload: "EligibilityRequest") -> tuple[int, bool] | None:
+    attestation = payload.age_attestation
+    signature = payload.age_attestation_signature
+    if attestation is None and signature is None:
+        return None
+    if not isinstance(attestation, dict) or not isinstance(signature, str):
+        raise HTTPException(401, detail={"code": "AGE_EVIDENCE_SIGNATURE_MISSING"})
+    policy = payload.eepl_policy
+    # A threshold-only OVER proof cannot establish a maximum-age rule or a
+    # different threshold. Such policies remain REVIEW until richer evidence exists.
+    if policy.minimum_age is None or policy.maximum_age is not None:
+        raise HTTPException(422, detail={"code": "AGE_EVIDENCE_POLICY_UNSUPPORTED"})
+    secret = _required_env("AGE_EVIDENCE_HMAC_SECRET")
+    try:
+        valid = verify_threshold_attestation(
+            attestation,
+            signature,
+            secret,
+            subject_id=payload.context.user_id,
+            request_id=payload.request_id,
+            purpose="shopper_eligibility",
+            policy_id=policy.policy_id,
+            policy_version=policy.policy_version,
+            threshold=policy.minimum_age,
+        )
+    except AgeEvidenceError as exc:
+        raise HTTPException(401, detail={"code": "INVALID_AGE_EVIDENCE"}) from exc
+    if not valid:
+        raise HTTPException(401, detail={"code": "AGE_EVIDENCE_BINDING_OR_SIGNATURE_INVALID"})
+    return attestation["threshold"], attestation["threshold_met"]
 
 
 def canonical_fit_payload(fit: FitEvidenceIn) -> bytes:
@@ -490,12 +527,16 @@ def evaluate_eligibility(payload: EligibilityRequest) -> dict:
             allowed_climates=tuple(payload.eepl_policy.allowed_climates),
             required_context=tuple(ContextField(x) for x in payload.eepl_policy.required_context),
         )
+        verified_age = _verified_age_threshold(payload)
         context = EEPLContext(
             user_id=payload.context.user_id,
-            age_years=payload.context.age_years,
+            # Client-supplied age_years is deliberately ignored.
+            age_years=None,
             location=payload.context.location,
             occasion=payload.context.occasion,
             climate=payload.context.climate,
+            minimum_age_threshold=verified_age[0] if verified_age else None,
+            minimum_age_threshold_met=verified_age[1] if verified_age else None,
         )
         profile = USIProfile(
             profile_id=payload.usi_profile.profile_id,
@@ -544,6 +585,17 @@ def evaluate_eligibility(payload: EligibilityRequest) -> dict:
             minimum_alignment_score=payload.minimum_alignment_score, policy_version=payload.policy_version,
         )
         response_payload = _result_json(result, payload)
+        response_payload["age_evidence"] = {
+            "contract_version": "age-threshold-attestation-v1",
+            "status": (
+                "verified_threshold_met" if verified_age and verified_age[1]
+                else "verified_threshold_not_met" if verified_age
+                else "unverified_client_value" if payload.context.age_years is not None
+                else "missing"
+            ),
+            "used_for_eligibility": verified_age is not None,
+            "threshold": verified_age[0] if verified_age else None,
+        }
         feedback_review = _load_cil_cal_feedback_decision(payload)
         return _apply_cil_cal_feedback_veto(response_payload, feedback_review)
     except ValueError as exc:
