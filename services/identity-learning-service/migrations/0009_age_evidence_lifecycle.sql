@@ -34,7 +34,7 @@ CREATE INDEX IF NOT EXISTS ix_identity_age_sessions_state_expiry
 
 CREATE TABLE IF NOT EXISTS identity_private.identity_age_threshold_attestations (
   jti uuid PRIMARY KEY,
-  session_id uuid NOT NULL REFERENCES identity_private.identity_age_verification_sessions(session_id) ON DELETE CASCADE,
+  session_id uuid NOT NULL UNIQUE REFERENCES identity_private.identity_age_verification_sessions(session_id) ON DELETE CASCADE,
   subject_id varchar(128) NOT NULL,
   request_id varchar(128) NOT NULL,
   purpose varchar(80) NOT NULL,
