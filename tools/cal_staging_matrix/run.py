@@ -9,6 +9,7 @@ the shopper routes are exercised.
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 import re
@@ -225,8 +226,19 @@ def validate_manifest(config: dict[str, Any]) -> None:
         if set(assertions) != REQUIRED_SURFACES:
             raise MatrixError(f"scenario {scenario.get('id')} must define assertions for every shopper surface")
         if scenario.get("id") in {"consent_session_revoked", "cache_after_revocation", "payment_revoked_race"}:
-            if not scenario.get("revoke") or scenario.get("recheck_after_revoke") is not True:
-                raise MatrixError(f"scenario {scenario.get('id')} must revoke and recheck all surfaces")
+            if scenario.get("recheck_after_revoke") is not True:
+                raise MatrixError(f"scenario {scenario.get('id')} must recheck all surfaces after revocation")
+        if scenario.get("id") == "cache_after_revocation" and not scenario.get("revoke"):
+            raise MatrixError("cache_after_revocation requires a sequential revoke step")
+        if scenario.get("id") in {"consent_session_revoked", "payment_revoked_race"}:
+            race = scenario.get("race")
+            if not isinstance(race, dict) or not race.get("revoke") or not race.get("surfaces"):
+                raise MatrixError(f"scenario {scenario.get('id')} requires concurrent race surfaces and revocation")
+            if not set(race["surfaces"]).issubset(REQUIRED_SURFACES):
+                raise MatrixError(f"scenario {scenario.get('id')} race references an unknown shopper surface")
+            race_url = urlsplit(str(race["revoke"].get("url", "")))
+            if race_url.scheme != "https" or race_url.username or race_url.password:
+                raise MatrixError(f"scenario {scenario.get('id')} race revocation URL must be trusted HTTPS")
 
 
 def run(config: dict[str, Any], timeout: int = 20) -> int:
@@ -277,16 +289,52 @@ def run(config: dict[str, Any], timeout: int = 20) -> int:
                 "cache_control": response.headers.get("cache-control"),
                 "failures": len(surface_failures),
             })
+        # Race active shopper requests against a real revocation, then replay every surface.
+        race = scenario.get("race")
+        revoke_result = None
+        revoke_spec = None
+        if race:
+            revoke_spec = _render(race["revoke"], variables)
+            race_jobs = {}
+            with ThreadPoolExecutor(max_workers=len(race["surfaces"]) + 1) as executor:
+                revoke_future = executor.submit(_http, {
+                    "url": revoke_spec["url"], "method": revoke_spec.get("method", "POST"),
+                    "headers": revoke_spec.get("headers", {}), "token_env": revoke_spec.get("token_env"),
+                    "body": revoke_spec.get("body"),
+                }, timeout)
+                for surface in race["surfaces"]:
+                    spec = _render(config["surfaces"][surface], variables)
+                    race_jobs[surface] = executor.submit(_http, {
+                        "url": spec["url"], "method": spec["method"],
+                        "headers": spec.get("headers", {}), "token_env": spec.get("token_env"),
+                        "body": spec.get("body"),
+                    }, timeout)
+                revoke_result = revoke_future.result()
+                for surface, future in race_jobs.items():
+                    response = future.result()
+                    assertion = scenario.get("race_assertions", {}).get(surface, {"status": [200, 401, 403, 503]})
+                    label = f"{scenario_id}/race/{surface}"
+                    surface_failures = _assert_response(response, assertion, label)
+                    failures.extend(surface_failures)
+                    results.append({
+                        "scenario": scenario_id + "/race",
+                        "surface": surface,
+                        "status": response.status,
+                        "elapsed_ms": response.elapsed_ms,
+                        "cache_control": response.headers.get("cache-control"),
+                        "failures": len(surface_failures),
+                    })
         # Revoke while the fixture is live, then repeat the shopper requests to
         # detect stale browser/API/CDN state after the authoritative mutation.
-        revoke = scenario.get("revoke")
+        revoke = scenario.get("revoke") or (race.get("revoke") if race else None)
         if revoke:
-            revoke_spec = _render(revoke, variables)
-            revoke_result = _http({
-                "url": revoke_spec["url"], "method": revoke_spec.get("method", "POST"),
-                "headers": revoke_spec.get("headers", {}), "token_env": revoke_spec.get("token_env"),
-                "body": revoke_spec.get("body"),
-            }, timeout)
+            revoke_spec = revoke_spec or _render(revoke, variables)
+            if revoke_result is None:
+                revoke_result = _http({
+                    "url": revoke_spec["url"], "method": revoke_spec.get("method", "POST"),
+                    "headers": revoke_spec.get("headers", {}), "token_env": revoke_spec.get("token_env"),
+                    "body": revoke_spec.get("body"),
+                }, timeout)
             if revoke_result.status not in revoke_spec.get("accepted_status", [200, 204]):
                 failures.append(f"{scenario_id}: revocation step returned HTTP {revoke_result.status}")
             elif scenario.get("recheck_after_revoke", False):
