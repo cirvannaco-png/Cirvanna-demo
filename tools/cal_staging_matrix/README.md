@@ -8,7 +8,7 @@ This is the single release-candidate runner for the CAL shopper-surface acceptan
 - A dedicated staging fixture-control service is required. It must create isolated synthetic merchant, Catalog, offer, consent, identity and payment fixtures and return opaque fixture/request IDs.
 - Fixture-control credentials and every service token are read from environment variables. Secrets are never printed into the report.
 - Each scenario must exercise all ten shopper surfaces: Marketplace, PNELLY, Wardrobe, Look It, Click It, saved products, comparison, cart, checkout and PNELLY daily looks.
-- Revocation scenarios re-run every surface after the authoritative revocation step. This is how the suite catches stale browser/API/CDN state.
+- Consent/session and payment-race scenarios execute selected shopper requests concurrently with the authoritative revocation, then re-run every surface after revocation. This catches late responses and stale browser/API/CDN state.
 - Fixture teardown must be confirmed. A failed teardown fails the suite.
 - No customer photos, real payment instruments, real customer identities or production merchant accounts belong in the fixture set.
 
@@ -28,7 +28,7 @@ Top-level fields:
 - `fixture_control.url`: HTTPS base URL of the dedicated staging-only fixture controller.
 - `fixture_control.token_env`: environment variable holding a random token of at least 32 bytes.
 - `surfaces`: exactly the ten shopper surfaces below. Each entry has `url`, `method`, optional `headers`, `token_env`, `body` and default `assertions`.
-- `scenarios`: all eight required scenario IDs below. Each scenario provides a synthetic `fixture`, an `exercise_surfaces` list containing all ten surfaces, per-surface `assertions`, and optional `revoke`, `recheck_after_revoke` and `post_revoke_assertions`.
+- `scenarios`: all eight required scenario IDs below. Each scenario provides a synthetic `fixture`, an `exercise_surfaces` list containing all ten surfaces, per-surface `assertions`, and optional `revoke`, `race`, `recheck_after_revoke` and `post_revoke_assertions`. `race.surfaces` names requests to execute concurrently with `race.revoke`.
 
 The fixture controller must implement:
 
@@ -58,9 +58,9 @@ Every denied/reviewed product-display scenario should assert that product name, 
 | `merchant_suspended` | Merchant or operating market suspended/revoked | Suppress details and purchase; saved references must not revive the offer. |
 | `stale_offer` | Expired stock/price snapshot or changed offer hash | REVIEW/BLOCK; no stale display or purchase. |
 | `merchant_disconnected` | Merchant disconnect, deletion and reauthorization variants | No stale token, listing or cache may revive the prior offer. |
-| `consent_session_revoked` | Consent and user session revoked while requests are in flight | No late response, old browser state or prior-session data may appear after revocation. |
+| `consent_session_revoked` | Consent and user session revoked concurrently with PNELLY, Wardrobe and Look It requests | No late response, old browser state or prior-session data may appear after revocation. |
 | `cache_after_revocation` | Warm API/browser/CDN cache, then revoke publication/display authority | Post-revocation probes must not return prior product details; CDN evidence must include cache status and purge verification outside this runner. |
-| `payment_revoked_race` | Display allowed, then purchase authorization revoked during checkout/payment race | No new order/payment authorization; any ambiguous or already-submitted payment must reconcile/compensate idempotently. |
+| `payment_revoked_race` | Cart and checkout requests race a real purchase-authorization revocation | No new order/payment authorization; any ambiguous or already-submitted payment must reconcile/compensate idempotently. |
 
 ## Evidence limitations
 
