@@ -254,7 +254,7 @@ class UpstreamSignalIn(StrictModel):
 class EligibilityRequest(StrictModel):
     request_id: str = Field(min_length=1, max_length=128)
     candidate_id: str = Field(min_length=1, max_length=128)
-    catalog_version: int = Field(ge=1)
+    catalog_version: int = Field(strict=True, ge=1)
     # Only a separately signed, purpose-bound provider attestation can influence EEPL.
     # Request-body context.age_years is retained for compatibility but is never trusted.
     age_attestation: dict | None = None
