@@ -237,3 +237,38 @@ def test_post_login_redirect_rejects_external_redirects(monkeypatch):
     with pytest.raises(HTTPException) as exc:
         auth_sessions._post_login_redirect()
     assert exc.value.status_code == 503
+
+def test_api_session_refresh_marks_cookie_for_sliding_expiry(monkeypatch):
+    user_id = "3f44c3f7-9b9d-44d8-8a56-ef25ab86d5b4"
+    reads = 0
+
+    async def load_session(session_id):
+        nonlocal reads
+        reads += 1
+        expiry = int(time.time()) + (10 if reads == 1 else 3600)
+        return user_id, {"access_token": "access", "refresh_token": "refresh", "expires_at": expiry}
+
+    async def rotate(session_id):
+        return {"user_id": user_id, "app_role": "customer"}, 86400
+
+    monkeypatch.setattr(auth_sessions, "_load_session", load_session)
+    monkeypatch.setattr(auth_sessions, "_rotate", rotate)
+    monkeypatch.setattr(auth_sessions, "_verify_jwt", lambda token: {"sub": user_id, "app_role": "customer"})
+
+    scope = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": "GET",
+        "scheme": "https",
+        "path": "/api/commerce/me",
+        "raw_path": b"/api/commerce/me",
+        "query_string": b"",
+        "headers": [(b"cookie", (auth_sessions.COOKIE_NAME + "=opaque-handle").encode())],
+        "server": ("bff.example.com", 443),
+        "client": ("test-client", 1234),
+    }
+    request = Request(scope)
+    token = asyncio.run(auth_sessions.session_access_token(request))
+    assert token == "access"
+    assert request.state.auth_session_refresh_max_age == 86400
