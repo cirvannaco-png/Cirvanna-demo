@@ -61,8 +61,9 @@ class AgeEvidenceService:
             return {"session_id": session_id, "state": row["state"]}
         if row["state"] == "verified":
             return {"session_id": session_id, "state": "verified", "attestation_issued": True}
+        provider_session_id = str(__import__("uuid").UUID(str(row["provider_session_id"])))
         result = self.yoti.get_threshold_result(
-            session_id=row["provider_session_id"],
+            session_id=provider_session_id,
             expected_reference_id=row["provider_reference"],
             threshold=row["threshold"],
         )
@@ -77,7 +78,7 @@ class AgeEvidenceService:
             return {"session_id": session_id, "state": terminal}
         self.store.record_provider_result(
             session_id, state=result.state, threshold_met=result.threshold_met,
-            evidence_id=result.evidence_id, provider_session_id=row["provider_session_id"],
+            evidence_id=result.evidence_id, provider_session_id=provider_session_id,
             now=now,
         )
         row = self.store.get_session(session_id)
