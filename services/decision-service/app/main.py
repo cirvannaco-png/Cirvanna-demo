@@ -864,6 +864,8 @@ def evaluate_eligibility(payload: EligibilityRequest) -> dict:
             "eepl_policy_version": policy.policy_version,
             "cal_policy_id": cal_policy.policy_id,
             "cal_policy_version": cal_policy.policy_version,
+            "minimum_fit_confidence": cal_policy.minimum_fit_confidence,
+            "maximum_fit_confidence_disagreement": cal_policy.maximum_fit_confidence_disagreement,
             "arbitration_contract_version": result.arbitration.contract_version,
             "pipeline_contract_version": result.contract_version,
             "candidate_snapshot_sha256": hashlib.sha256(snapshot).hexdigest(),
