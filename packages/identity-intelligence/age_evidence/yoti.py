@@ -61,7 +61,7 @@ class YotiAVSClient:
         *,
         threshold: int,
         reference_id: str,
-        callback_url: str,
+        cancel_url: str,
         privacy_policy_url: str,
         terms_url: str,
         ttl_seconds: int = 900,
@@ -70,7 +70,7 @@ class YotiAVSClient:
             raise ValueError("age threshold must be between 13 and 125")
         if not re.fullmatch(r"[A-Za-z0-9_-]{32,96}", reference_id):
             raise ValueError("reference_id must be a random opaque token, not personal data")
-        for value in (callback_url, privacy_policy_url, terms_url):
+        for value in (cancel_url, privacy_policy_url, terms_url):
             parsed = httpx.URL(value)
             if parsed.scheme != "https" or parsed.username or parsed.password:
                 raise ValueError("Yoti callback and policy URLs must use HTTPS")
@@ -89,8 +89,7 @@ class YotiAVSClient:
             "doc_scan": {"allowed": False},
             "ttl": ttl_seconds,
             "reference_id": reference_id,
-            "callback": {"url": callback_url, "auto": True},
-            "cancel_url": callback_url,
+            "cancel_url": cancel_url,
             "privacy_policy": privacy_policy_url,
             "terms_and_conditions": terms_url,
             "block_biometric_consent": False,
