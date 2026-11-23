@@ -9,7 +9,7 @@ This is the single release-candidate runner for the CAL shopper-surface acceptan
 - Fixture-control credentials and every service token are read from environment variables. Secrets are never printed into the report.
 - Each scenario must exercise all ten shopper surfaces: Marketplace, PNELLY, Wardrobe, Look It, Click It, saved products, comparison, cart, checkout and PNELLY daily looks.
 - Consent/session and payment-race scenarios execute selected shopper requests concurrently with the authoritative revocation, then re-run every surface after revocation. This catches late responses and stale browser/API/CDN state.
-- Every raced surface and every post-revocation surface must have explicit semantic JSON assertions; HTTP status alone is insufficient. The runner has no permissive fallback such as treating 200/401/403/503 as interchangeable evidence.
+- Every shopper surface in every scenario, every raced surface and every post-revocation surface must have explicit semantic JSON assertions; HTTP status alone is insufficient. The runner has no permissive fallback such as treating 200/401/403/503 as interchangeable evidence.
 - Fixture teardown must be confirmed. A failed teardown fails the suite.
 - No customer photos, real payment instruments, real customer identities or production merchant accounts belong in the fixture set.
 
@@ -29,7 +29,7 @@ Top-level fields:
 - `fixture_control.url`: HTTPS base URL of the dedicated staging-only fixture controller.
 - `fixture_control.token_env`: environment variable holding a random token of at least 32 bytes.
 - `surfaces`: exactly the ten shopper surfaces below. Each entry has `url`, `method`, optional `headers`, optional `token_env` (omit for intentionally public probes such as the disabled public Click It route), `body` and default `assertions`.
-- `scenarios`: all eight required scenario IDs below. Each scenario provides a synthetic `fixture`, an `exercise_surfaces` list containing all ten surfaces, per-surface `assertions`, and optional `revoke`, `race`, `race_assertions`, `recheck_after_revoke` and `post_revoke_assertions`. Revocation scenarios must provide explicit semantic JSON assertions for all ten post-revocation surfaces. Race scenarios must provide explicit semantic JSON assertions for every raced surface; status-only assertions are rejected. `race.surfaces` names requests to execute concurrently with `race.revoke`. Every revocation request must use HTTPS and a dedicated `token_env`; public shopper probes may omit their token.
+- `scenarios`: all eight required scenario IDs below. Each scenario provides a synthetic `fixture`, an `exercise_surfaces` list containing all ten surfaces, per-surface semantic `assertions`, and optional `revoke`, `race`, `race_assertions`, `recheck_after_revoke` and `post_revoke_assertions`. Revocation scenarios must provide explicit semantic JSON assertions for all ten post-revocation surfaces. Race scenarios must provide explicit semantic JSON assertions for every raced surface; status-only assertions are rejected. `race.surfaces` names requests to execute concurrently with `race.revoke`. Every revocation request must use HTTPS and a dedicated `token_env`; public shopper probes may omit their token.
 
 The fixture controller must implement:
 
