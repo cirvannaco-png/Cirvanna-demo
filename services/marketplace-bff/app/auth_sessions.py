@@ -378,7 +378,6 @@ async def login(provider: str) -> RedirectResponse:
     )
     response.headers["Cache-Control"] = "no-store"
     response.headers["Referrer-Policy"] = "no-referrer"
-    response.delete_cookie(OAUTH_STATE_COOKIE, path="/", secure=True, httponly=True, samesite="lax")
     return response
 
 
