@@ -1181,7 +1181,7 @@ def _eepl_registry():
     return json.dumps({
         "adult-market": {
             "policy_version": "adult-v4", "minimum_age": 18, "maximum_age": None,
-            "allowed_locations": ["KE"], "allowed_occasions": ["everyday"],
+            "allowed_locations": ["Nairobi"], "allowed_occasions": ["everyday"],
             "allowed_climates": ["warm"], "required_context": ["location", "occasion", "climate"],
         },
         "less-restrictive-market": {
