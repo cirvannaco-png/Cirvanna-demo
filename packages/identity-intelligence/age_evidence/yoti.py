@@ -104,6 +104,12 @@ class YotiAVSClient:
             raise YotiProviderError("Yoti returned an invalid session identifier")
         if not isinstance(expires_at, str):
             raise YotiProviderError("Yoti session expiry is missing")
+        try:
+            session_expiry = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise YotiProviderError("Yoti session expiry is invalid") from exc
+        if session_expiry.tzinfo is None or session_expiry <= datetime.now(timezone.utc):
+            raise YotiProviderError("Yoti session expiry must be a future timezone-aware timestamp")
         return YotiSession(
             session_id=session_id,
             expires_at=expires_at,
@@ -114,8 +120,12 @@ class YotiAVSClient:
     def get_threshold_result(
         self, *, session_id: str, expected_reference_id: str, threshold: int,
     ) -> YotiThresholdResult:
-        if not SESSION_ID.fullmatch(session_id):
+        if not isinstance(session_id, str) or not SESSION_ID.fullmatch(session_id):
             raise ValueError("invalid Yoti session identifier")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{32,96}", expected_reference_id):
+            raise ValueError("invalid expected Yoti reference identifier")
+        if isinstance(threshold, bool) or not isinstance(threshold, int) or not 13 <= threshold <= 125:
+            raise ValueError("invalid Yoti age threshold")
         response = self._request("GET", f"/api/v1/sessions/{session_id}/result")
         if response.get("id") != session_id or response.get("sdk_id") != self._sdk_id:
             raise YotiProviderError("Yoti result session or SDK binding mismatch")
@@ -139,6 +149,8 @@ class YotiAVSClient:
             state = "EXPIRED"
         else:
             state = response.get("status")
+        if not isinstance(state, str):
+            raise YotiProviderError("Yoti result status is missing or invalid")
         if state in {"COMPLETE", "FAIL"}:
             if response.get("method") != "DIGITAL_ID":
                 raise YotiProviderError("Yoti did not complete the approved Digital ID method")
@@ -150,6 +162,10 @@ class YotiAVSClient:
         else:
             threshold_met = None
         evidence_id = response.get("evidence_id")
+        if state in {"COMPLETE", "FAIL"} and (
+            not isinstance(evidence_id, str) or not evidence_id.strip()
+        ):
+            raise YotiProviderError("Yoti terminal result is missing its evidence identifier")
         return YotiThresholdResult(
             state=state if isinstance(state, str) else "UNKNOWN",
             threshold_met=threshold_met,
