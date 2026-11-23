@@ -3,13 +3,6 @@
 BEGIN;
 
 CREATE SCHEMA IF NOT EXISTS identity_private;
-DO $
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'identity_learning_service') THEN
-    CREATE ROLE identity_learning_service NOLOGIN;
-  END IF;
-END
-$;
 GRANT USAGE ON SCHEMA identity_private TO identity_learning_service;
 
 CREATE TABLE IF NOT EXISTS identity_private.identity_age_verification_sessions (
