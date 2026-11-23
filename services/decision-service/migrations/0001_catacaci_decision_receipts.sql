@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS catacaci_decision_receipts (
     eepl_policy_version TEXT NOT NULL,
     cal_policy_id TEXT NOT NULL,
     cal_policy_version TEXT NOT NULL,
+    minimum_fit_confidence DOUBLE PRECISION NOT NULL CHECK (minimum_fit_confidence BETWEEN 0 AND 1),
+    maximum_fit_confidence_disagreement DOUBLE PRECISION NOT NULL CHECK (maximum_fit_confidence_disagreement BETWEEN 0 AND 1),
     arbitration_contract_version TEXT NOT NULL,
     pipeline_contract_version TEXT NOT NULL,
     candidate_snapshot_sha256 CHAR(64) NOT NULL,
