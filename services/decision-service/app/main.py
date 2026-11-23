@@ -33,7 +33,7 @@ from catacaci import DecisionSignal, DecisionVerdict, SignalKind, SignalState  #
 from catacaci.pipeline import evaluate_candidate  # noqa: E402
 from eepl import ContextField, EEPLContext, EEPLPolicy  # noqa: E402
 from age_evidence import AgeEvidenceError, verify_threshold_attestation  # noqa: E402
-from policy_registry import PolicyRegistryError, resolve_policy  # noqa: E402
+from age_evidence.policy import PolicyRegistryError, resolve_policy  # noqa: E402
 from fci import FitConfidenceEstimate  # noqa: E402
 from cultural_identity import CulturalRequirement, RequirementKind, canonical_cultural_evidence_payload  # noqa: E402
 from npl import NegativePreference, PreferenceSource, TargetType, canonical_npl_evidence_payload  # noqa: E402
