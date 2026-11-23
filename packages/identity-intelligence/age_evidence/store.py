@@ -138,7 +138,7 @@ class AgeEvidenceStore:
                 raise ValueError("session is missing or no longer active")
             if row["provider_session_id"] != provider_session_id:
                 raise ValueError("provider session binding mismatch")
-            if row["revoked_at"] is not None or row["expires_at"] is None or _aware(row["expires_at"]) <= now:
+            if row["revoked_at"] is not None or row["expires_at"] is None or (row["expires_at"].replace(tzinfo=timezone.utc) if row["expires_at"].tzinfo is None else _aware(row["expires_at"])) <= now:
                 raise ValueError("provider session is revoked or expired")
             if row["state"] == "verified" and (
                 row["threshold_met"] != threshold_met or row["provider_evidence_id"] != evidence_id
