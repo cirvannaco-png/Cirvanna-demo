@@ -28,3 +28,8 @@ The HMAC signing key is a dedicated service-to-service secret, not the Yoti API 
 - independent privacy/security review.
 
 Until those items pass, all age-dependent decisions remain UNKNOWN/REVIEW. Supabase user metadata and self-declared age are not accepted.
+
+
+## Decision Service integration
+
+The Decision Service verifies the signed threshold attestation against the authenticated request subject, request ID, purpose and exact active policy. Client-supplied `age_years` remains untrusted and is ignored. Only minimum-age OVER evidence is currently supported; maximum-age policies remain unsupported by threshold-only evidence. Configure a separate `AGE_EVIDENCE_HMAC_SECRET` in the Decision Service secret manager. This integration is code-level verification only: durable session mapping, attestation revocation lookup, provider onboarding and live staging evidence remain open.
