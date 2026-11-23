@@ -116,12 +116,20 @@ The append-only `catacaci_decision_receipts` table records the request/candidate
 
 ## Durable CAM, privacy-budgeted CIL and VSL approval
 
-Apply migrations in order using the dedicated audit database login:
+Create a dedicated login in the database administration console first; set its password directly in the secret manager and never commit it:
+
+```sql
+CREATE ROLE cirvanna_decision_audit LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+```
+
+Apply migrations in order using an administrative migration connection. The migrations create the private `decision_private` schema, revoke browser/public access, and grant the runtime login only the SELECT/INSERT/UPDATE privileges needed by the receipt, privacy-budget and VSL state machines:
 
 ```bash
-psql "$DECISION_AUDIT_DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0001_catacaci_decision_receipts.sql
-psql "$DECISION_AUDIT_DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0002_catacaci_governance_store.sql
+psql "$DECISION_AUDIT_MIGRATION_URL" -v ON_ERROR_STOP=1 -f migrations/0001_catacaci_decision_receipts.sql
+psql "$DECISION_AUDIT_MIGRATION_URL" -v ON_ERROR_STOP=1 -f migrations/0002_catacaci_governance_store.sql
 ```
+
+Then configure `DECISION_AUDIT_DATABASE_URL` with the dedicated `cirvanna_decision_audit` login, SSL required. Do not use the Supabase `anon`, `authenticated`, or broad `service_role` keys as this database login. The role has no DELETE privilege; append-only triggers protect receipts, CAM audits, CIL releases and VSL events.
 
 - **CAM:** `POST /v1/governance/cam/audits` appends version-bound observed-versus-simulated verdict comparisons. The record explicitly labels the scenario as non-causal. The database rejects mutation/deletion.
 - **CIL:** `POST /v1/governance/cil/contributions` accepts only HMAC-pseudonymous contributor tokens and server-allowlisted low-cardinality cohort keys. `POST /v1/governance/cil/aggregates` releases one monthly aggregate per cohort using independent Laplace noise on the contributor-count/success-count vector. The mechanism assumes one binary contribution per contributor per cohort-month; its L1 sensitivity is 2.0. The minimum release threshold is 30, output is suppressed when the noisy count is below that threshold, and a persistent cohort-month epsilon ledger prevents repeated releases from exceeding the configured budget. This is a technical DP mechanism, not an independent privacy certification; its composition, cohort taxonomy, retention and implementation require privacy review before production use.
