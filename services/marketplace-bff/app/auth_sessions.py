@@ -43,7 +43,7 @@ def _supabase() -> tuple[str, str]:
     base = _required("SUPABASE_URL").rstrip("/")
     key = _required("SUPABASE_PUBLISHABLE_KEY")
     parts = urlsplit(base)
-    if parts.scheme != "https" or not parts.hostname or parts.username or parts.password or parts.query or parts.fragment:
+    if parts.scheme != "https" or not parts.hostname or parts.username or parts.password or parts.query or parts.fragment or parts.path not in {"", "/"}:
         raise HTTPException(503, detail={"code": "SUPABASE_URL_INVALID"})
     return base, key
 
@@ -96,9 +96,34 @@ def _decrypt(value: bytes) -> str:
 def _callback_url() -> str:
     callback = _required("AUTH_CALLBACK_URL")
     parts = urlsplit(callback)
-    if parts.scheme != "https" or not parts.hostname or parts.username or parts.password or parts.fragment:
+    if (
+        parts.scheme != "https"
+        or not parts.hostname
+        or parts.username
+        or parts.password
+        or parts.query
+        or parts.fragment
+        or parts.path != "/auth/callback"
+    ):
         raise HTTPException(503, detail={"code": "AUTH_CALLBACK_URL_INVALID"})
     return callback
+
+
+def _session_ttl() -> int:
+    try:
+        ttl = int(os.getenv("AUTH_SESSION_TTL_SECONDS", "2592000"))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(503, detail={"code": "AUTH_SESSION_TTL_INVALID"}) from exc
+    if ttl < 3600 or ttl > 7776000:
+        raise HTTPException(503, detail={"code": "AUTH_SESSION_TTL_INVALID"})
+    return ttl
+
+
+def _post_login_redirect() -> str:
+    target = os.getenv("AUTH_POST_LOGIN_REDIRECT", "/")
+    if not target.startswith("/") or target.startswith("//") or chr(92) in target:
+        raise HTTPException(503, detail={"code": "AUTH_POST_LOGIN_REDIRECT_INVALID"})
+    return target
 
 
 def _cookie(response: Response, session_id: str, *, max_age: int) -> None:
@@ -163,6 +188,9 @@ def _verify_jwt(token: str) -> dict[str, Any]:
     jwks_url = _required("SUPABASE_JWKS_URL")
     issuer = _required("SUPABASE_JWT_ISSUER")
     audience = os.getenv("SUPABASE_JWT_AUDIENCE", "authenticated").strip()
+    supabase_url, _ = _supabase()
+    if jwks_url != supabase_url + "/auth/v1/.well-known/jwks.json" or issuer != supabase_url + "/auth/v1":
+        raise HTTPException(503, detail={"code": "SUPABASE_JWT_TRUST_CONFIG_INVALID"})
     if _jwks_client is None:
         _jwks_client = jwt.PyJWKClient(jwks_url, cache_jwk_set=True, timeout=5)
     try:
@@ -200,9 +228,7 @@ async def _store_session(tokens: dict[str, Any]) -> tuple[str, int, dict[str, An
         "app_role": claims.get("app_role", "customer"),
     }, separators=(",", ":")))
     pool = await _db()
-    session_ttl = int(os.getenv("AUTH_SESSION_TTL_SECONDS", "2592000"))
-    if session_ttl < 3600 or session_ttl > 7776000:
-        raise HTTPException(503, detail={"code": "AUTH_SESSION_TTL_INVALID"})
+    session_ttl = _session_ttl()
     await pool.execute(
         """INSERT INTO auth_private.sessions(session_hash, user_id, token_ciphertext, expires_at, updated_at)
            VALUES($1, $2, $3, now() + ($4 * interval '1 second'), now())""",
@@ -280,9 +306,7 @@ async def _rotate(session_id: str) -> tuple[dict[str, Any], int]:
                     "user_id": str(user_id),
                     "app_role": claims.get("app_role", "customer"),
                 }, separators=(",", ":")))
-                session_ttl = int(os.getenv("AUTH_SESSION_TTL_SECONDS", "2592000"))
-                if session_ttl < 3600 or session_ttl > 7776000:
-                    raise HTTPException(503, detail={"code": "AUTH_SESSION_TTL_INVALID"})
+                session_ttl = _session_ttl()
                 await conn.execute(
                     """UPDATE auth_private.sessions SET token_ciphertext=$2,
                        expires_at=now()+($3 * interval '1 second'), updated_at=now()
@@ -387,7 +411,7 @@ async def callback(request: Request) -> Response:
             raise HTTPException(400, detail={"code": "AUTH_CALLBACK_CODE_MISSING"})
         tokens = await _exchange_code(code, verifier)
     session_id, max_age, profile = await _store_session(tokens)
-    response = RedirectResponse(os.getenv("AUTH_POST_LOGIN_REDIRECT", "/"), status_code=303)
+    response = RedirectResponse(_post_login_redirect(), status_code=303)
     _cookie(response, session_id, max_age=max_age)
     response.headers["Cache-Control"] = "no-store"
     response.headers["Referrer-Policy"] = "no-referrer"
