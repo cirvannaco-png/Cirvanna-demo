@@ -186,6 +186,7 @@ def test_authorization_rechecks_owner_consent_and_assets(client):
     assert payload["authorized"] is True
     assert payload["source_image_asset_ids"] == [SOURCE]
     assert payload["representation_type"] == "full_body_mesh"
+    assert payload["consent_id"] == "consent-twin-0001"
     assert payload["version"] == 1
     assert foreign_owner.status_code == 403
 
