@@ -49,7 +49,9 @@ for package_root in package_roots:
         break
 else:
     raise RuntimeError("shared age_evidence package is missing from the service image")
-from age_evidence.api import router as age_evidence_router, provider_configuration_ready  # noqa: E402
+from age_evidence.api import (
+    router as age_evidence_router, provider_configuration_ready, schema_ready as age_evidence_schema_ready,
+)  # noqa: E402
 
 SCOPES = {
     "personalization", "style_learning", "profile_storage",
@@ -855,9 +857,7 @@ def readiness(db: Annotated[Session, Depends(get_db)]):
         db.execute(select(CILProviderConsentRevocationOutbox.command_id).limit(1))
         db.execute(select(DSICaptureChallengeRow.challenge_id).limit(1))
         db.execute(select(DSICaptureVerificationReceiptRow.receipt_id).limit(1))
-        from sqlalchemy import text
-        db.execute(text("SELECT 1 FROM identity_private.identity_age_verification_sessions LIMIT 1"))
-        db.execute(text("SELECT 1 FROM identity_private.identity_age_threshold_attestations LIMIT 1"))
+        age_schema_ready = age_evidence_schema_ready()
         age_provider_vars = (
             "YOTI_AVS_API_KEY", "YOTI_AVS_SDK_ID", "AGE_EVIDENCE_HMAC_SECRET",
             "YOTI_AVS_CALLBACK_URL", "YOTI_AVS_CANCEL_URL",
@@ -868,7 +868,7 @@ def readiness(db: Annotated[Session, Depends(get_db)]):
             len(os.getenv("AGE_EVIDENCE_ORCHESTRATOR_TOKEN", "").encode("utf-8")) >= 32
             and len(os.getenv("AGE_EVIDENCE_REDEMPTION_TOKEN", "").encode("utf-8")) >= 32
         )
-        ready = age_provider_configured and age_orchestrator_auth_configured
+        ready = age_schema_ready and age_provider_configured and age_orchestrator_auth_configured
         response = {
             "status": "ready" if ready else "not_ready",
             "service": SERVICE,
@@ -880,7 +880,7 @@ def readiness(db: Annotated[Session, Depends(get_db)]):
             "cil_provider_consent_cleanup_outbox": True,
             "dsi_capture_challenge_state": True,
             "dsi_capture_verification_receipts": True,
-            "age_evidence_schema_ready": True,
+            "age_evidence_schema_ready": age_schema_ready,
             "yoti_provider_configured": age_provider_configured,
             "age_evidence_internal_auth_configured": age_orchestrator_auth_configured,
             "ready": ready,
