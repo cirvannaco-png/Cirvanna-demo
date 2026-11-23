@@ -160,7 +160,7 @@ class MarketplaceBrowserTests(unittest.TestCase):
             headers={"Cache-Control":"no-store"}
         ))
         page.route("**/auth/logout", lambda route: route.fulfill(
-            status=204, body="", headers={"Cache-Control":"no-store"}
+            status=204, headers={"Cache-Control":"no-store"}
         ))
         page.goto(f"{self.base_url}/marketplace.html", wait_until="domcontentloaded")
         page.wait_for_function("document.querySelector('#status').textContent.includes('CAL-GOVERNED LIVE COMMERCE')")
