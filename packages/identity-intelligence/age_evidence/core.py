@@ -68,6 +68,47 @@ def verify_threshold_attestation(
     return True
 
 
+
+def build_threshold_attestation(
+    *,
+    subject_id: str,
+    request_id: str,
+    purpose: str,
+    policy_id: str,
+    policy_version: str,
+    threshold: int,
+    threshold_met: bool,
+    provider_session_id: str,
+    provider_evidence_id: str,
+    issued_at: datetime,
+    expires_at: datetime,
+) -> dict[str, Any]:
+    """Build the minimized attestation only after an authenticated provider result."""
+    if not isinstance(threshold_met, bool):
+        raise AgeEvidenceError("a pending or unknown provider result cannot create an attestation")
+    if issued_at.tzinfo is None or expires_at.tzinfo is None:
+        raise AgeEvidenceError("attestation timestamps must be timezone-aware")
+    payload = {
+        "contract_version": CONTRACT_VERSION,
+        "issuer": "yoti",
+        "subject_id": subject_id,
+        "request_id": request_id,
+        "purpose": purpose,
+        "policy_id": policy_id,
+        "policy_version": policy_version,
+        "threshold": threshold,
+        "threshold_met": threshold_met,
+        "provider_session_id": provider_session_id,
+        "provider_evidence_id": provider_evidence_id,
+        "issued_at": issued_at.astimezone(timezone.utc).isoformat(),
+        "expires_at": expires_at.astimezone(timezone.utc).isoformat(),
+    }
+    validate_threshold_attestation(payload)
+    if expires_at <= issued_at:
+        raise AgeEvidenceError("attestation expiry must follow issuance")
+    return payload
+
+
 def validate_threshold_attestation(payload: dict[str, Any]) -> None:
     required = {
         "contract_version", "issuer", "subject_id", "request_id", "purpose",
