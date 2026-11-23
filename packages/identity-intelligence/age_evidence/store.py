@@ -12,7 +12,7 @@ from typing import Any
 
 from sqlalchemy import (
     Boolean, Column, DateTime, ForeignKey, Integer, MetaData, String, Table,
-    and_, create_engine, exists, insert, select, update, UniqueConstraint, Uuid,
+    and_, create_engine, insert, select, update, UniqueConstraint, Uuid,
 )
 from sqlalchemy.exc import IntegrityError
 
@@ -202,31 +202,59 @@ class AgeEvidenceStore:
         policy_id: str, policy_version: str, threshold: int,
         signature: str, now: datetime | None = None,
     ) -> bool:
-        """Atomically redeem once, only while both attestation and source session remain valid."""
+        """Redeem once while serializing against session revocation.
+
+        Lock order is always session then attestation, matching revoke_session.
+        This makes revocation/redemption linearizable under PostgreSQL.
+        """
         now = _aware(now or utcnow())
+        jti = _uuid_text(jti)
         signature_hash = hashlib.sha256(signature.encode()).hexdigest()
-        active_session = exists(select(sessions.c.session_id).where(and_(
-            sessions.c.session_id == attestations.c.session_id,
-            sessions.c.state.in_({"verified", "denied"}), sessions.c.revoked_at.is_(None),
-            sessions.c.expires_at > now,
-        )))
-        predicate = and_(
-            attestations.c.jti == _uuid_text(jti),
-            attestations.c.subject_id == subject_id,
-            attestations.c.request_id == request_id,
-            attestations.c.purpose == purpose,
-            attestations.c.policy_id == policy_id,
-            attestations.c.policy_version == policy_version,
-            attestations.c.threshold == threshold,
-            attestations.c.signature_sha256 == signature_hash,
-            attestations.c.issued_at <= now,
-            attestations.c.expires_at > now,
-            attestations.c.consumed_at.is_(None),
-            attestations.c.revoked_at.is_(None),
-            active_session,
-        )
         with self.engine.begin() as conn:
-            result = conn.execute(update(attestations).where(predicate).values(consumed_at=now))
+            lookup = conn.execute(select(attestations.c.session_id).where(
+                attestations.c.jti == jti
+            )).first()
+            if lookup is None:
+                return False
+            session = conn.execute(select(sessions).where(
+                sessions.c.session_id == lookup[0]
+            ).with_for_update()).mappings().first()
+            attestation = conn.execute(select(attestations).where(
+                attestations.c.jti == jti
+            ).with_for_update()).mappings().first()
+            if session is None or attestation is None:
+                return False
+            session_expiry = session["expires_at"]
+            if session_expiry is not None and session_expiry.tzinfo is None:
+                session_expiry = session_expiry.replace(tzinfo=timezone.utc)
+            attestation_expiry = attestation["expires_at"]
+            if attestation_expiry.tzinfo is None:
+                attestation_expiry = attestation_expiry.replace(tzinfo=timezone.utc)
+            issued_at = attestation["issued_at"]
+            if issued_at.tzinfo is None:
+                issued_at = issued_at.replace(tzinfo=timezone.utc)
+            if (
+                session["state"] not in {"verified", "denied"}
+                or session["revoked_at"] is not None
+                or session_expiry is None or session_expiry <= now
+                or attestation["session_id"] != session["session_id"]
+                or attestation["subject_id"] != subject_id
+                or attestation["request_id"] != request_id
+                or attestation["purpose"] != purpose
+                or attestation["policy_id"] != policy_id
+                or attestation["policy_version"] != policy_version
+                or attestation["threshold"] != threshold
+                or attestation["signature_sha256"] != signature_hash
+                or issued_at > now or attestation_expiry <= now
+                or attestation["consumed_at"] is not None
+                or attestation["revoked_at"] is not None
+            ):
+                return False
+            result = conn.execute(update(attestations).where(and_(
+                attestations.c.jti == jti,
+                attestations.c.consumed_at.is_(None),
+                attestations.c.revoked_at.is_(None),
+            )).values(consumed_at=now))
             return result.rowcount == 1
 
     def mark_provider_terminal(
