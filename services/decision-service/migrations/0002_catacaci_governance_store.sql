@@ -6,6 +6,8 @@ CREATE TABLE IF NOT EXISTS catacaci_cam_audits (
     observed_verdict TEXT NOT NULL CHECK (observed_verdict IN ('show','block','review')),
     simulated_verdict TEXT NOT NULL CHECK (simulated_verdict IN ('show','block','review')),
     changed_signal_ids JSONB NOT NULL,
+    changed_signal_overrides JSONB NOT NULL,
+    simulated_signal_snapshot_sha256 CHAR(64) NOT NULL,
     policy_version TEXT NOT NULL,
     replay_version TEXT NOT NULL,
     evaluated_at TEXT NOT NULL,
