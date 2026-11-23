@@ -34,15 +34,27 @@ def valid_manifest():
         if scenario_id in {"consent_session_revoked", "cache_after_revocation", "payment_revoked_race"}:
             scenario["revoke"] = {"url": "https://fixture.staging.example.test/revoke", "token_env": "CAL_REVOKE_TOKEN"}
             scenario["recheck_after_revoke"] = True
+            scenario["post_revoke_assertions"] = {
+                name: {"status": [401, 403], "json_equals": {"decision.verdict": "BLOCK"}}
+                for name in runner.REQUIRED_SURFACES
+            }
         if scenario_id == "consent_session_revoked":
             scenario["race"] = {
                 "surfaces": ["pnelly", "wardrobe", "look_it"],
                 "revoke": {"url": "https://fixture.staging.example.test/revoke", "token_env": "CAL_REVOKE_TOKEN"},
             }
+            scenario["race_assertions"] = {
+                name: {"status": [401, 403], "json_equals": {"decision.verdict": "BLOCK"}}
+                for name in scenario["race"]["surfaces"]
+            }
         if scenario_id == "payment_revoked_race":
             scenario["race"] = {
                 "surfaces": ["cart", "checkout"],
                 "revoke": {"url": "https://fixture.staging.example.test/revoke", "token_env": "CAL_REVOKE_TOKEN"},
+            }
+            scenario["race_assertions"] = {
+                name: {"status": [401, 403], "json_equals": {"decision.verdict": "BLOCK"}}
+                for name in scenario["race"]["surfaces"]
             }
         if scenario_id in {"consent_session_revoked", "cache_after_revocation", "payment_revoked_race"}:
             scenario["post_revoke_assertions"] = {
@@ -117,6 +129,20 @@ class CALStagingMatrixContractTests(unittest.TestCase):
         config = valid_manifest()
         scenario = next(item for item in config["scenarios"] if item["id"] == "payment_revoked_race")
         del scenario["race"]
+        with self.assertRaises(runner.MatrixError):
+            runner.validate_manifest(config)
+
+    def test_revocation_race_requires_semantic_assertions(self):
+        config = valid_manifest()
+        scenario = next(item for item in config["scenarios"] if item["id"] == "payment_revoked_race")
+        del scenario["race_assertions"]
+        with self.assertRaises(runner.MatrixError):
+            runner.validate_manifest(config)
+
+    def test_post_revocation_cannot_fall_back_to_status_only(self):
+        config = valid_manifest()
+        scenario = next(item for item in config["scenarios"] if item["id"] == "cache_after_revocation")
+        scenario["post_revoke_assertions"]["marketplace"] = {"status": [403]}
         with self.assertRaises(runner.MatrixError):
             runner.validate_manifest(config)
 
