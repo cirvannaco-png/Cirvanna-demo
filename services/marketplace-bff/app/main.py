@@ -752,7 +752,7 @@ class WardrobeTryOnIn(BaseModel):
 async def _verified_commerce_subject(client: httpx.AsyncClient, request: Request) -> tuple[str, str]:
     authorization = request.headers.get("authorization", "")
     scheme, _, user_token = authorization.partition(" ")
-    if scheme.lower() == "bearer" and user_token.strip():
+    if scheme.lower() == "bearer" and user_token.strip() and user_token.strip() != "server-cookie-session":
         user_token = user_token.strip()
     else:
         # Production browser requests authenticate with the opaque HttpOnly session
