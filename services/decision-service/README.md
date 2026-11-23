@@ -47,7 +47,7 @@ The service independently canonicalizes and verifies the signature before evalua
 
 ## Server-authoritative EEPL policy
 
-The request may identify a policy by `policy_id` and `policy_version`, but the Decision Service ignores request-body age thresholds, maximum ages, location/occasion/climate allowlists and required-context rules. It resolves the complete policy from `EEPL_POLICY_REGISTRY_JSON` in server configuration. An unknown or stale policy version fails closed with `SERVER_POLICY_UNAVAILABLE`. The same registry is used by Identity Learning when creating Yoti sessions, so the provider threshold cannot be selected by the browser or BFF payload.
+The Decision Service resolves the active EEPL policy ID, version, age thresholds, location/occasion/climate allowlists and required-context rules exclusively from `EEPL_POLICY_ID` and `EEPL_POLICY_REGISTRY_JSON` in server configuration. The legacy `eepl_policy` request field is retained temporarily for wire compatibility but is ignored; it cannot select a policy or alter a rule. The same resolver and registry are used by Identity Learning and the API Gateway. An absent, malformed or unregistered active policy fails closed with `SERVER_POLICY_UNAVAILABLE`.
 
 A verified age attestation must also be redeemed through the private Identity Learning endpoint before it influences EEPL. Configure `AGE_EVIDENCE_REDEMPTION_URL` as the HTTPS URL ending in `/internal/v1/age-evidence/attestations/redeem` and `AGE_EVIDENCE_REDEMPTION_TOKEN` as the separate machine credential. If redemption is unavailable, replayed, revoked or expired, the Decision Service fails closed; a valid HMAC alone is insufficient.
 
