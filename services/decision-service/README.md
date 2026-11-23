@@ -54,6 +54,7 @@ A verified age attestation must also be redeemed through the private Identity Le
 ## Configuration
 
 - DECISION_SERVICE_TOKEN: long random internal bearer token; protect service network access as well.
+- `CATACACI_POLICY_REGISTRY_JSON`: server-owned, version-pinned CAL thresholds; the request may select only a registered policy ID/version and cannot supply thresholds.
 - FCI_EVIDENCE_HMAC_SECRET: separate strong secret shared only with the approved fit provider.
 - `CIL_SERVICE_URL`: private HTTPS URL for the Intelligence Service (HTTP only for loopback development).
 - `CIL_SERVICE_TOKEN`: internal token for reading the CIL review queue.
