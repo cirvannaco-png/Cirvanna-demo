@@ -298,6 +298,12 @@ def create_vsl_proposal(
             row = cur.fetchone()
             if row is None or row[0] != digest:
                 raise GovernanceStoreError("VSL proposal ID replay conflicts with existing proposal")
+            cur.execute(
+                """INSERT INTO catacaci_vsl_events
+                (event_id, proposal_id, event_type, actor_id, base_version, resulting_version, created_at)
+                VALUES (%s,%s,'proposed',%s,%s,NULL,%s) ON CONFLICT (event_id) DO NOTHING""",
+                (proposal_id + ":proposed", proposal_id, proposer_id, base_version, datetime.now(timezone.utc)),
+            )
             return {"proposal_id": proposal_id, "status": row[1], "proposal_sha256": digest}
     except GovernanceStoreError:
         raise
@@ -362,6 +368,37 @@ def approve_vsl_proposal(*, proposal_id: str, approver_id: str, approval_event_i
         raise
     except Exception as exc:
         raise GovernanceStoreError("VSL approval failed") from exc
+
+
+def reject_vsl_proposal(*, proposal_id: str, approver_id: str, rejection_event_id: str) -> dict[str, Any]:
+    try:
+        with _connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT base_version, proposer_id, status FROM catacaci_vsl_proposals WHERE proposal_id=%s FOR UPDATE",
+                (proposal_id,),
+            )
+            row = cur.fetchone()
+            if row is None or row[2] != "proposed":
+                raise GovernanceStoreError("VSL proposal is missing or no longer pending")
+            base_version, proposer_id, _ = row
+            if approver_id == proposer_id:
+                raise GovernanceStoreError("VSL proposer and reviewer must be different identities")
+            cur.execute(
+                """UPDATE catacaci_vsl_proposals SET status='rejected', approver_id=%s,
+                approval_event_id=%s, decided_at=%s WHERE proposal_id=%s AND status='proposed'""",
+                (approver_id, rejection_event_id, datetime.now(timezone.utc), proposal_id),
+            )
+            cur.execute(
+                """INSERT INTO catacaci_vsl_events
+                (event_id, proposal_id, event_type, actor_id, base_version, resulting_version, created_at)
+                VALUES (%s,%s,'rejected',%s,%s,NULL,%s)""",
+                (rejection_event_id, proposal_id, approver_id, base_version, datetime.now(timezone.utc)),
+            )
+            return {"proposal_id": proposal_id, "status": "rejected"}
+    except GovernanceStoreError:
+        raise
+    except Exception as exc:
+        raise GovernanceStoreError("VSL rejection failed") from exc
 
 
 def check_governance_store() -> bool:
