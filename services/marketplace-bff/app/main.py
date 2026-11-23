@@ -23,7 +23,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.auth_sessions import COOKIE_NAME, router as auth_router, close_auth_pool, session_access_token
+from app.auth_sessions import COOKIE_NAME, auth_readiness, router as auth_router, close_auth_pool, session_access_token
 from app.observability import install_observability
 from app.pnelly_preferences import (
     PnellyPreferenceMutationIn,
@@ -3559,7 +3559,7 @@ def health() -> dict[str, str]:
 
 
 @app.get("/ready")
-def readiness() -> dict:
+async def readiness() -> dict:
     catalog_configured = bool(os.getenv("CATALOG_API_URL"))
     commerce_configured = bool(os.getenv("COMMERCE_API_URL"))
     catalog_ready = False
@@ -3575,7 +3575,8 @@ def readiness() -> dict:
         commerce_ready = _upstream_ready(commerce_base)
     except HTTPException:
         commerce_ready = False
-    ready = catalog_configured and commerce_configured and catalog_ready and commerce_ready
+    auth_status = await auth_readiness()
+    ready = catalog_configured and commerce_configured and catalog_ready and commerce_ready and auth_status["ready"]
     result = {
         "status": "ready" if ready else "not_ready",
         "service": SERVICE,
@@ -3583,6 +3584,7 @@ def readiness() -> dict:
         "catalog_ready": catalog_ready,
         "commerce_url_configured": commerce_configured,
         "commerce_ready": commerce_ready,
+        "auth": auth_status,
         "ready": ready,
     }
     if not ready:
