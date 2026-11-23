@@ -243,7 +243,15 @@ def test_pnelly_eepl_review_fails_closed_before_profile_or_look_composition(monk
 
 def test_pnelly_eepl_block_suppresses_daily_looks_for_disallowed_climate(monkeypatch):
     monkeypatch.setenv("CIRVANNA_API_TOKEN", GATEWAY_TOKEN)
-    monkeypatch.setenv("CIRVANNA_ALLOWED_CLIMATES", "hot_humid")
+    monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", json.dumps({
+        "adult-market": {
+            "policy_version": "adult-v4", "minimum_age": None, "maximum_age": None,
+            "allowed_locations": ["Nairobi", "Nairobi, Kenya"],
+            "allowed_occasions": ["work", "everyday"],
+            "allowed_climates": ["hot_humid"],
+            "required_context": ["location", "occasion", "climate"],
+        }
+    }))
     monkeypatch.setattr(main, "_resolve_verified_subject", lambda _header: "signed-user-42")
     monkeypatch.setattr(main, "_load_verified_usi_profile", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("profile must not load")))
     body = request_body()
