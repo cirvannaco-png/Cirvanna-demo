@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, ForeignKey, Integer, MetaData, String, Table,
+    Boolean, Column, DateTime, ForeignKey, Integer, MetaData, String, Table, JSON,
     and_, create_engine, insert, select, update, UniqueConstraint, Uuid,
 )
 from sqlalchemy.exc import IntegrityError
@@ -53,6 +53,8 @@ attestations = Table(
     Column("threshold", Integer, nullable=False),
     Column("threshold_met", Boolean, nullable=False),
     Column("signature_sha256", String(64), nullable=False),
+    Column("attestation_payload", JSON, nullable=False),
+    Column("signature", String(128), nullable=False),
     Column("issued_at", DateTime(timezone=True), nullable=False),
     Column("expires_at", DateTime(timezone=True), nullable=False),
     Column("consumed_at", DateTime(timezone=True)),
@@ -171,7 +173,7 @@ class AgeEvidenceStore:
 
     def issue_attestation(
         self, *, session_id: str, jti: str, signature: str,
-        issued_at: datetime, expires_at: datetime, now: datetime | None = None,
+        attestation_payload: dict[str, Any], issued_at: datetime, expires_at: datetime, now: datetime | None = None,
     ) -> None:
         now, issued_at, expires_at = _aware(now or utcnow()), _aware(issued_at), _aware(expires_at)
         if expires_at <= now or issued_at > now or (expires_at - issued_at).total_seconds() > 900:
@@ -194,8 +196,18 @@ class AgeEvidenceStore:
                 policy_id=row["policy_id"], policy_version=row["policy_version"],
                 threshold=row["threshold"], threshold_met=row["threshold_met"],
                 signature_sha256=hashlib.sha256(signature.encode()).hexdigest(),
+                attestation_payload=attestation_payload, signature=signature,
                 issued_at=issued_at, expires_at=expires_at,
             ))
+
+    def get_attestation(self, session_id: str) -> dict[str, Any] | None:
+        with self.engine.connect() as conn:
+            row = conn.execute(select(attestations).where(
+                attestations.c.session_id == _uuid_text(session_id)
+            )).mappings().first()
+            if row is None or row["revoked_at"] is not None:
+                return None
+            return {"attestation": row["attestation_payload"], "signature": row["signature"], "expires_at": row["expires_at"]}
 
     def consume_attestation(
         self, *, jti: str, subject_id: str, request_id: str, purpose: str,
