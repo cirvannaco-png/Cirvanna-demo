@@ -26,7 +26,7 @@ POLICY = {
 }
 FIELDS = [
     "stratum", "ground_truth_face_count", "missed_face_count",
-    "unmasked_face_count", "mask_before_embedding", "uncertain",
+    "unmasked_face_count", "mask_before_embedding", "uncertain", "uncertain_output_rejected",
     "identity_feature_calls", "age_estimation_calls", "child_media",
     "child_processing_performed", "public_publication_allowed",
 ]
@@ -50,6 +50,7 @@ class ClickItPrivacyEvaluationTests(unittest.TestCase):
             "unmasked_face_count": "0",
             "mask_before_embedding": "true",
             "uncertain": "false",
+            "uncertain_output_rejected": "false",
             "identity_feature_calls": "0",
             "age_estimation_calls": "0",
             "child_media": "false",
@@ -90,6 +91,23 @@ class ClickItPrivacyEvaluationTests(unittest.TestCase):
         report = self.score_rows([self.base_row(uncertain="true")])
         self.assertFalse(report["passed"])
         self.assertTrue(any("uncertain detector output" in item for item in report["violations"]))
+
+    def test_uncertain_output_is_safe_only_when_rejected_and_not_published(self):
+        report = self.score_rows([self.base_row(
+            uncertain="true",
+            uncertain_output_rejected="true",
+            public_publication_allowed="false",
+        )])
+        self.assertTrue(report["passed"])
+
+    def test_uncertain_output_cannot_be_published_even_if_rejection_flag_is_set(self):
+        report = self.score_rows([self.base_row(
+            uncertain="true",
+            uncertain_output_rejected="true",
+            public_publication_allowed="true",
+        )])
+        self.assertFalse(report["passed"])
+        self.assertTrue(any("uncertain detector output was allowed to publish" in item for item in report["violations"]))
 
     def test_small_stratum_fails_sample_floor(self):
         report = self.score_rows([self.base_row(ground_truth_face_count="10")])
