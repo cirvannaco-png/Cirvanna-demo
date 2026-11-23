@@ -154,6 +154,18 @@ async def _create_pending(provider: str, verifier: str, state: str) -> None:
     )
 
 
+async def _pending_provider(state: str) -> str:
+    """Read the flow type without consuming state, so browser binding is checked first."""
+    pool = await _db()
+    provider = await pool.fetchval(
+        "SELECT provider FROM auth_private.pending_auth WHERE state_hash=$1 AND expires_at > now()",
+        _hash(state),
+    )
+    if provider is None:
+        raise HTTPException(400, detail={"code": "AUTH_STATE_INVALID_OR_EXPIRED"})
+    return str(provider)
+
+
 async def _consume_pending(state: str) -> tuple[str, str]:
     pool = await _db()
     async with pool.acquire() as conn:
@@ -403,15 +415,18 @@ async def callback(request: Request) -> Response:
         state = parse_qs(supplied.query).get("state", [""])[0]
     if not state:
         raise HTTPException(400, detail={"code": "AUTH_CALLBACK_STATE_MISSING"})
-    provider, verifier = await _consume_pending(state)
-    # Email magic links are mailbox proofs and may legitimately be opened on
-    # another device. OAuth callbacks must also prove possession of the initiating
-    # browser's short-lived, HttpOnly state cookie. Determine the flow from the
-    # server-side pending record, never from caller-controlled query parameters.
-    if provider != "email" and not hmac.compare_digest(
+    # Read the server-side flow type first, but do not consume the one-time
+    # state until the initiating browser has proved possession of its state cookie.
+    # Otherwise a callback from a different browser could burn a valid state and
+    # deny the legitimate user their login.
+    provider_hint = await _pending_provider(state)
+    if provider_hint != "email" and not hmac.compare_digest(
         request.cookies.get(OAUTH_STATE_COOKIE, ""), state
     ):
         raise HTTPException(400, detail={"code": "AUTH_BROWSER_STATE_MISMATCH"})
+    provider, verifier = await _consume_pending(state)
+    if provider != provider_hint:
+        raise HTTPException(400, detail={"code": "AUTH_STATE_INVALID_OR_EXPIRED"})
     if provider == "email":
         token_hash = request.query_params.get("token_hash", "")
         if request.query_params.get("type") != "email" or not token_hash:
