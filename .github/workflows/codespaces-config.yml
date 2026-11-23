@@ -30,7 +30,7 @@ jobs:
       - name: Validate required helper files
         run: |
           test -s .devcontainer/README.md
-          test -x .devcontainer/scripts/post-create.sh || test -s .devcontainer/scripts/post-create.sh
+          test -s .devcontainer/scripts/post-create.sh
           test -s .devcontainer/scripts/test-service.sh
           test -s .devcontainer/scripts/start-postgres.sh
           test -s .devcontainer/scripts/stop-postgres.sh
