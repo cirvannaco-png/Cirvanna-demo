@@ -64,6 +64,11 @@ def score(csv_path: Path, policy: dict) -> dict:
     for key in ("maximum_unmasked_faces", "maximum_identity_feature_calls", "maximum_age_estimation_calls"):
         if not isinstance(policy[key], int) or policy[key] < 0:
             raise EvaluationError(f"{key} must be a non-negative integer")
+        if policy[key] != 0:
+            raise EvaluationError(f"{key} must be zero for the Click It privacy acceptance profile")
+    for key in ("reject_uncertain_outputs", "reject_child_processing", "reject_child_publication"):
+        if policy[key] is not True:
+            raise EvaluationError(f"{key} must be true for the Click It privacy acceptance profile")
 
     strata = defaultdict(lambda: {"faces": 0, "missed": 0, "unmasked": 0, "samples": 0})
     violations = []
