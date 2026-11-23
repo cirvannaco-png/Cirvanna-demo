@@ -79,7 +79,7 @@ Set `COMMERCE_CAL_PURCHASE_PROXY_ENABLED=false` by default. Enable only in a con
 ## Supabase browser authentication and iOS
 
 The BFF authentication router provides:
-- `GET /auth/login/google`, `/auth/login/apple`, and `/auth/login/microsoft` for provider redirects. Microsoft maps to Supabase's `azure` provider. OAuth authorization uses a server-generated PKCE verifier and state; pending verifiers are encrypted and consumed once.
+- `GET /auth/login/google`, `/auth/login/apple`, and `/auth/login/microsoft` for provider redirects. Microsoft maps to Supabase's `azure` provider. OAuth authorization uses a server-generated PKCE verifier and state; pending verifiers are encrypted and consumed once. The short-lived `__Host-cirvanna_oauth_state` HttpOnly/Secure/SameSite=Lax cookie binds the callback to the browser that initiated the OAuth flow; email magic links are separately protected by their one-time mailbox token and may be opened on another device.
 - `POST /auth/email/start` for a one-time email sign-in link. Configure the Supabase email template and redirect allowlist so the one-time `token_hash` returns to `/auth/callback`; the BFF exchanges it server-side.
 - `GET /auth/callback` for one-time code/token confirmation and session creation.
 - `GET /auth/session`, `POST /auth/refresh`, and `POST /auth/logout` for session introspection, serialized refresh-token rotation, and local Supabase session revocation.
