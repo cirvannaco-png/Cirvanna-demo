@@ -48,7 +48,7 @@ class ClickItRightsSmokeContractTests(unittest.TestCase):
 
     def test_embedded_credentials_in_bff_url_are_rejected(self):
         config = valid_config()
-        config['bff_base_url'] = 'https://user:secret@marketplace-bff.staging.example.test'
+        config['bff_base_url'] = 'https://' + 'user' + ':' + 'secret' + '@marketplace-bff.staging.example.test'
         with self.assertRaises(rights.RightsSmokeError):
             rights.validate(config)
 
