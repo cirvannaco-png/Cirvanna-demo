@@ -189,6 +189,8 @@ def _verify_jwt(token: str) -> dict[str, Any]:
     issuer = _required("SUPABASE_JWT_ISSUER")
     audience = os.getenv("SUPABASE_JWT_AUDIENCE", "authenticated").strip()
     supabase_url, _ = _supabase()
+    if audience != "authenticated":
+        raise HTTPException(503, detail={"code": "SUPABASE_JWT_AUDIENCE_INVALID"})
     if jwks_url != supabase_url + "/auth/v1/.well-known/jwks.json" or issuer != supabase_url + "/auth/v1":
         raise HTTPException(503, detail={"code": "SUPABASE_JWT_TRUST_CONFIG_INVALID"})
     if _jwks_client is None:
@@ -567,6 +569,8 @@ async def auth_readiness() -> dict[str, Any]:
             return result
         if os.getenv("SUPABASE_JWT_ISSUER", "").strip() != base + "/auth/v1":
             return result
+        if os.getenv("SUPABASE_JWT_AUDIENCE", "authenticated").strip() != "authenticated":
+            return result
         pool = await _db()
         async with pool.acquire() as conn:
             db = await conn.fetchrow(
@@ -591,9 +595,10 @@ async def auth_readiness() -> dict[str, Any]:
             )
         if jwks_response.status_code == 200:
             keys = jwks_response.json().get("keys", [])
-            result["jwks_ready"] = bool(keys) and any(
+            signing_keys = [item for item in keys if isinstance(item, dict) and item.get("use", "sig") == "sig"]
+            result["jwks_ready"] = bool(signing_keys) and all(
                 item.get("kid") and item.get("alg") in {"ES256", "RS256"}
-                for item in keys if isinstance(item, dict)
+                for item in signing_keys
             )
         if settings_response.status_code == 200:
             external = settings_response.json().get("external", {})
