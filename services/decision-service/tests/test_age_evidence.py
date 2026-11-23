@@ -611,3 +611,26 @@ class CAMCounterfactualReplayTests(unittest.TestCase):
         self.assertEqual(saved["simulated_verdict"], "block")
         self.assertEqual(saved["changed_signal_ids"], ["safety:baseline"])
         self.assertEqual(saved["interpretation"], "counterfactual_scenario_not_observed_causality")
+
+
+class CaTaCaCiGovernanceApiModelTests(unittest.TestCase):
+    def test_cil_outcome_requires_real_boolean(self):
+        from app.main import CILContributionIn
+        with self.assertRaises(Exception):
+            CILContributionIn(
+                event_id="cil-event-model-001",
+                contributor_token="hmac-sha256:" + "a" * 64,
+                cohort_key="market:ke|category:tops",
+                outcome_success="false",
+                observed_at=NOW,
+            )
+
+    def test_cam_caller_cannot_supply_simulated_verdict(self):
+        from app.main import CAMAuditIn
+        with self.assertRaises(Exception):
+            CAMAuditIn(
+                audit_id="cam-audit-model-001", request_id="cam-request-model-001",
+                candidate_id="candidate-1", changed_signals=[
+                    {"signal_id": "safety:1", "state": "block"},
+                ], simulated_verdict="show",
+            )
