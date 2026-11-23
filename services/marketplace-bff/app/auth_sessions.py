@@ -620,6 +620,6 @@ async def providers() -> dict[str, Any]:
     return {
         "email_otp": True,
         "web": ["google", "apple", "microsoft"],
-        "ios": {"apple_native": True, "callback_scheme_required": False, "session_transport": "HttpOnly Secure cookie"},
+        "ios": {"apple_native": True, "microsoft_oauth": True, "callback_scheme_required": True, "apple_native_callback_scheme_required": False, "session_transport": "Supabase Swift SDK session or optional HttpOnly Secure BFF cookie"},
         "microsoft_provider_id": "azure",
     }
