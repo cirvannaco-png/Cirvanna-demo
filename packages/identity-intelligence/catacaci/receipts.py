@@ -36,7 +36,7 @@ def persist_decision_receipt(receipt: dict[str, Any]) -> dict[str, str]:
         "request_id", "candidate_id", "verdict", "may_display", "eepl_policy_id",
         "eepl_policy_version", "cal_policy_id", "cal_policy_version",
         "arbitration_contract_version", "pipeline_contract_version",
-        "candidate_snapshot_sha256", "evaluated_signals", "reasons",
+        "candidate_snapshot_sha256", "catalog_version", "evaluated_signals", "reasons",
     }
     if set(receipt) != required:
         raise DecisionReceiptStoreError("receipt fields do not match the canonical schema")
@@ -44,8 +44,33 @@ def persist_decision_receipt(receipt: dict[str, Any]) -> dict[str, str]:
         raise DecisionReceiptStoreError("invalid final verdict")
     if type(receipt["may_display"]) is not bool or receipt["may_display"] != (receipt["verdict"] == "SHOW"):
         raise DecisionReceiptStoreError("may_display must exactly match final SHOW")
+    if (
+        not isinstance(receipt["candidate_snapshot_sha256"], str)
+        or len(receipt["candidate_snapshot_sha256"]) != 64
+        or any(ch not in "0123456789abcdef" for ch in receipt["candidate_snapshot_sha256"])
+    ):
+        raise DecisionReceiptStoreError("candidate snapshot digest must be lowercase SHA-256")
+    if receipt["catalog_version"] is not None and (
+        type(receipt["catalog_version"]) is not int or receipt["catalog_version"] < 1
+    ):
+        raise DecisionReceiptStoreError("catalog_version must be a positive integer or null")
     if not isinstance(receipt["evaluated_signals"], list) or not isinstance(receipt["reasons"], list):
         raise DecisionReceiptStoreError("signal and reason evidence must be arrays")
+    signal_keys = {"signal_id", "kind", "state", "required", "confidence", "reason_code", "source_version"}
+    for signal in receipt["evaluated_signals"]:
+        if not isinstance(signal, dict) or set(signal) != signal_keys:
+            raise DecisionReceiptStoreError("evaluated signal does not match the canonical schema")
+        if signal["state"] not in {"pass", "block", "unknown"} or type(signal["required"]) is not bool:
+            raise DecisionReceiptStoreError("evaluated signal state/required flag is invalid")
+        if signal["confidence"] is not None and (
+            isinstance(signal["confidence"], bool)
+            or not isinstance(signal["confidence"], (int, float))
+            or not 0 <= signal["confidence"] <= 1
+        ):
+            raise DecisionReceiptStoreError("evaluated signal confidence is invalid")
+    for reason in receipt["reasons"]:
+        if not isinstance(reason, dict) or set(reason) != {"code", "signal_id"}:
+            raise DecisionReceiptStoreError("decision reason does not match the canonical schema")
     body = dict(receipt)
     receipt_hash = hashlib.sha256(_canonical(body)).hexdigest()
     receipt_id = str(uuid.uuid4())
@@ -63,11 +88,11 @@ def persist_decision_receipt(receipt: dict[str, Any]) -> dict[str, str]:
                         receipt_id, request_id, candidate_id, verdict, may_display,
                         eepl_policy_id, eepl_policy_version, cal_policy_id, cal_policy_version,
                         arbitration_contract_version, pipeline_contract_version,
-                        candidate_snapshot_sha256, evaluated_signals, reasons,
+                        candidate_snapshot_sha256, catalog_version, evaluated_signals, reasons,
                         receipt_sha256, created_at
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                        %s::jsonb, %s::jsonb, %s, %s
+                        %s, %s::jsonb, %s::jsonb, %s, %s
                     )
                     ON CONFLICT (request_id, candidate_id) DO NOTHING
                     """,
@@ -77,7 +102,7 @@ def persist_decision_receipt(receipt: dict[str, Any]) -> dict[str, str]:
                         receipt["eepl_policy_id"], receipt["eepl_policy_version"],
                         receipt["cal_policy_id"], receipt["cal_policy_version"],
                         receipt["arbitration_contract_version"], receipt["pipeline_contract_version"],
-                        receipt["candidate_snapshot_sha256"],
+                        receipt["candidate_snapshot_sha256"], receipt["catalog_version"],
                         json.dumps(receipt["evaluated_signals"], separators=(",", ":"), allow_nan=False),
                         json.dumps(receipt["reasons"], separators=(",", ":"), allow_nan=False),
                         receipt_hash, created_at,
