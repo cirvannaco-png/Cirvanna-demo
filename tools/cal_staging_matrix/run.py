@@ -82,28 +82,19 @@ def _json_path(document: Any, path: str) -> Any:
         if not match:
             raise MatrixError(f"unsupported JSON assertion path: {path}")
         key, index = match.groups()
-        if index == "*":
-            if not isinstance(current, dict) or key not in current or not isinstance(current[key], list):
-                return _MISSING
-            collected = []
-            for item in current[key]:
-                if isinstance(item, dict) and key is not None:
-                    continue
-            # The wildcard selects the array; the next path segment maps over its items.
-            current = current[key]
-            continue
         if isinstance(current, list):
-            values = []
-            for item in current:
-                if isinstance(item, dict) and key in item:
-                    values.append(item[key])
+            values = [item[key] for item in current if isinstance(item, dict) and key in item]
             if not values:
-                return _MISSING
+                return []
             current = values
         else:
             if not isinstance(current, dict) or key not in current:
                 return _MISSING
             current = current[key]
+        if index == "*":
+            if not isinstance(current, list):
+                return _MISSING
+            continue
         if index is not None:
             if not isinstance(current, list) or int(index) >= len(current):
                 return _MISSING
@@ -182,7 +173,8 @@ def _assert_response(response: Response, assertion: dict[str, Any], label: str) 
         if _json_path(response.body, path) is _MISSING:
             failures.append(f"{label}: required field {path} is absent")
     for path in assertion.get("json_absent", []):
-        if _json_path(response.body, path) is not _MISSING:
+        actual = _json_path(response.body, path)
+        if actual is not _MISSING and actual not in ([], None):
             failures.append(f"{label}: forbidden field {path} is present")
     for path in assertion.get("json_one_of", []):
         actual = _json_path(response.body, path["path"])
