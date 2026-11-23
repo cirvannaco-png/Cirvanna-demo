@@ -530,6 +530,90 @@ async def ios_apple_sign_in(payload: AppleNativeSignInIn) -> Response:
     return result
 
 
+
+async def auth_readiness() -> dict[str, Any]:
+    """Fail readiness until storage, signing keys, and configured providers are real."""
+    required = [
+        "SUPABASE_URL",
+        "SUPABASE_PUBLISHABLE_KEY",
+        "SUPABASE_JWKS_URL",
+        "SUPABASE_JWT_ISSUER",
+        "AUTH_CALLBACK_URL",
+        "AUTH_SESSION_DATABASE_URL",
+        "AUTH_SESSION_ENCRYPTION_KEY",
+        "AUTH_EMAIL_DELIVERY_VERIFIED",
+    ]
+    missing = [name for name in required if not os.getenv(name, "").strip()]
+    result: dict[str, Any] = {
+        "configured": not missing,
+        "missing_configuration": missing,
+        "database_ready": False,
+        "jwks_ready": False,
+        "providers": {"google": False, "apple": False, "microsoft": False},
+        "email_delivery_verified": os.getenv("AUTH_EMAIL_DELIVERY_VERIFIED", "").lower() == "true",
+        "ready": False,
+    }
+    if missing:
+        return result
+    try:
+        base, key = _supabase()
+        _callback_url()
+        _fernet()
+        _session_ttl()
+        _post_login_redirect()
+        expected_jwks = base + "/auth/v1/.well-known/jwks.json"
+        if os.getenv("SUPABASE_JWKS_URL", "").strip() != expected_jwks:
+            return result
+        if os.getenv("SUPABASE_JWT_ISSUER", "").strip() != base + "/auth/v1":
+            return result
+        pool = await _db()
+        async with pool.acquire() as conn:
+            db = await conn.fetchrow(
+                """SELECT
+                    to_regclass('auth_private.pending_auth') IS NOT NULL AS pending_exists,
+                    to_regclass('auth_private.sessions') IS NOT NULL AS sessions_exists,
+                    has_schema_privilege(current_user, 'auth_private', 'USAGE') AS schema_usage,
+                    has_table_privilege(current_user, 'auth_private.pending_auth', 'SELECT') AS pending_select,
+                    has_table_privilege(current_user, 'auth_private.pending_auth', 'INSERT') AS pending_insert,
+                    has_table_privilege(current_user, 'auth_private.pending_auth', 'DELETE') AS pending_delete,
+                    has_table_privilege(current_user, 'auth_private.sessions', 'SELECT') AS sessions_select,
+                    has_table_privilege(current_user, 'auth_private.sessions', 'INSERT') AS sessions_insert,
+                    has_table_privilege(current_user, 'auth_private.sessions', 'UPDATE') AS sessions_update,
+                    has_table_privilege(current_user, 'auth_private.sessions', 'DELETE') AS sessions_delete"""
+            )
+        result["database_ready"] = bool(db) and all(bool(db[name]) for name in db.keys())
+        async with httpx.AsyncClient(timeout=5, trust_env=False, follow_redirects=False) as client:
+            jwks_response = await client.get(expected_jwks)
+            settings_response = await client.get(
+                base + "/auth/v1/settings",
+                headers={"apikey": key},
+            )
+        if jwks_response.status_code == 200:
+            keys = jwks_response.json().get("keys", [])
+            result["jwks_ready"] = bool(keys) and any(
+                item.get("kid") and item.get("alg") in {"ES256", "RS256"}
+                for item in keys if isinstance(item, dict)
+            )
+        if settings_response.status_code == 200:
+            external = settings_response.json().get("external", {})
+            result["providers"] = {
+                "google": external.get("google") is True,
+                "apple": external.get("apple") is True,
+                "microsoft": external.get("azure") is True,
+            }
+    except (HTTPException, httpx.HTTPError, asyncpg.PostgresError, ValueError, TypeError):
+        pass
+    providers_ready = all(result["providers"].values())
+    result["ready"] = (
+        result["configured"]
+        and result["database_ready"]
+        and result["jwks_ready"]
+        and providers_ready
+        and result["email_delivery_verified"]
+    )
+    return result
+
+
 @router.get("/auth/providers")
 async def providers() -> dict[str, Any]:
     return {
