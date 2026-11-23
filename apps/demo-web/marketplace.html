@@ -629,14 +629,6 @@ footer{
       window.location.assign("/auth/login/"+provider);
       return;
     }
-    if(e.target.id==="commerceConnectBtn"){
-      if(bootstrap.allowDeveloperTokenInput!==true){setStatus("Pasted access tokens are disabled in this environment.",true);return}
-      const token=$("commerceToken").value.trim();
-      if(!token){alert("Enter your signed Cirvanna user session token.");return}
-      if(!bootstrap.publicOffersBase){setStatus("The same-origin Cirvanna Marketplace BFF is not configured on this page.",true);alert("The same-origin Cirvanna Marketplace BFF is not configured.");return}
-      closeDrawer();
-      window.dispatchEvent(new CustomEvent("cirvanna:session-ready",{detail:{accessToken:token,source:"marketplace"}}));
-    }
     if(e.target.id==="checkoutBtn"){
       if(mode!=="commerce"||!config.commerceBase||!config.userToken||!purchaseEnabled){setStatus(purchaseMessage,true);return}
       const marketCountry=$("marketCountry").value.trim().toUpperCase();
