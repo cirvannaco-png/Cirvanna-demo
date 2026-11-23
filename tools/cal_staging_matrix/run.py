@@ -1,0 +1,305 @@
+#!/usr/bin/env python3
+"""Run the unified Cirvanna CAL adversarial matrix against deployed staging services.
+
+This runner deliberately requires an explicit environment-specific manifest. It
+never fabricates service URLs, credentials, fixtures, or a successful provider
+state. A staging fixture-control API must create/revoke real test records before
+the shopper routes are exercised.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import sys
+import time
+import urllib.error
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+REQUIRED_SURFACES = {
+    "marketplace", "pnelly", "wardrobe", "look_it", "click_it",
+    "saved_products", "comparison", "cart", "checkout", "daily_looks",
+}
+REQUIRED_SCENARIOS = {
+    "mapped_approved", "unmapped_candidate", "merchant_suspended",
+    "stale_offer", "merchant_disconnected", "consent_session_revoked",
+    "cache_after_revocation", "payment_revoked_race",
+}
+SECRET_KEY_PATTERN = re.compile(r"(token|secret|password|authorization|api[_-]?key)", re.I)
+ENV_PATTERN = re.compile(r"^\\$\\{([A-Z][A-Z0-9_]*)\\}$")
+
+
+class MatrixError(RuntimeError):
+    pass
+
+
+@dataclass
+class Response:
+    status: int
+    headers: dict[str, str]
+    body: Any
+    elapsed_ms: int
+
+
+def _expand(value: Any) -> Any:
+    if isinstance(value, str):
+        match = ENV_PATTERN.match(value)
+        if match:
+            env_name = match.group(1)
+            result = os.getenv(env_name, "")
+            if not result:
+                raise MatrixError(f"required environment variable {env_name} is not configured")
+            return result
+        return value
+    if isinstance(value, list):
+        return [_expand(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _expand(item) for key, item in value.items()}
+    return value
+
+
+def _redact(value: Any, key: str = "") -> Any:
+    if SECRET_KEY_PATTERN.search(key):
+        return "[REDACTED]"
+    if isinstance(value, dict):
+        return {k: _redact(v, k) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact(v) for v in value]
+    return value
+
+
+def _json_path(document: Any, path: str) -> Any:
+    """Resolve a deliberately small JSONPath subset: $.a.b[0].c."""
+    if not path.startswith("$."):
+        raise MatrixError(f"JSON assertion path must start with '$.': {path}")
+    current = document
+    for part in path[2:].split("."):
+        match = re.fullmatch(r"([A-Za-z0-9_-]+)(?:\\[(\\d+)\\])?", part)
+        if not match:
+            raise MatrixError(f"unsupported JSON assertion path: {path}")
+        key, index = match.groups()
+        if not isinstance(current, dict) or key not in current:
+            return _MISSING
+        current = current[key]
+        if index is not None:
+            if not isinstance(current, list) or int(index) >= len(current):
+                return _MISSING
+            current = current[int(index)]
+    return current
+
+
+_MISSING = object()
+
+
+def _http(request_spec: dict[str, Any], timeout: int) -> Response:
+    method = str(request_spec.get("method", "GET")).upper()
+    url = str(request_spec["url"])
+    headers = {str(k): str(v) for k, v in request_spec.get("headers", {}).items()}
+    token_env = request_spec.get("token_env")
+    if token_env:
+        token = os.getenv(token_env, "")
+        if len(token.encode("utf-8")) < 32:
+            raise MatrixError(f"{token_env} must be configured with at least 32 bytes")
+        headers["Authorization"] = f"Bearer {token}"
+    body = request_spec.get("body")
+    data = None if body is None else json.dumps(body, separators=(",", ":")).encode("utf-8")
+    if data is not None:
+        headers.setdefault("Content-Type", "application/json")
+    request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    started = time.monotonic()
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read()
+            status = response.status
+            response_headers = {k.lower(): v for k, v in response.headers.items()}
+    except urllib.error.HTTPError as exc:
+        raw = exc.read()
+        status = exc.code
+        response_headers = {k.lower(): v for k, v in exc.headers.items()}
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise MatrixError(f"{method} {url} transport failure: {type(exc).__name__}") from exc
+    elapsed = int((time.monotonic() - started) * 1000)
+    try:
+        parsed = json.loads(raw.decode("utf-8")) if raw else None
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        parsed = None
+    return Response(status, response_headers, parsed, elapsed)
+
+
+def _render(value: Any, variables: dict[str, Any]) -> Any:
+    if isinstance(value, str):
+        for name, replacement in variables.items():
+            value = value.replace("{{" + name + "}}", str(replacement))
+        return value
+    if isinstance(value, list):
+        return [_render(item, variables) for item in value]
+    if isinstance(value, dict):
+        return {key: _render(item, variables) for key, item in value.items()}
+    return value
+
+
+def _assert_response(response: Response, assertion: dict[str, Any], label: str) -> list[str]:
+    failures: list[str] = []
+    expected = assertion.get("status", [200])
+    if isinstance(expected, int):
+        expected = [expected]
+    if response.status not in expected:
+        failures.append(f"{label}: HTTP {response.status}, expected one of {expected}")
+    if assertion.get("require_no_store"):
+        cache_control = response.headers.get("cache-control", "").lower()
+        if "no-store" not in cache_control:
+            failures.append(f"{label}: response lacks Cache-Control no-store")
+    if assertion.get("require_json") and response.body is None:
+        failures.append(f"{label}: expected a JSON response")
+    for path, expected_value in assertion.get("json_equals", {}).items():
+        actual = _json_path(response.body, path)
+        if actual != expected_value:
+            failures.append(f"{label}: {path} was {_redact(actual)!r}, expected {_redact(expected_value)!r}")
+    for path in assertion.get("json_present", []):
+        if _json_path(response.body, path) is _MISSING:
+            failures.append(f"{label}: required field {path} is absent")
+    for path in assertion.get("json_absent", []):
+        if _json_path(response.body, path) is not _MISSING:
+            failures.append(f"{label}: forbidden field {path} is present")
+    for path in assertion.get("json_one_of", []):
+        actual = _json_path(response.body, path["path"])
+        if actual not in path["values"]:
+            failures.append(f"{label}: {path['path']} value {_redact(actual)!r} not in allowed set")
+    return failures
+
+
+def validate_manifest(config: dict[str, Any]) -> None:
+    if config.get("environment") != "staging":
+        raise MatrixError("refusing to run: manifest environment must be exactly 'staging'")
+    control = config.get("fixture_control")
+    if not isinstance(control, dict) or not control.get("url") or not control.get("token_env"):
+        raise MatrixError("fixture_control.url and fixture_control.token_env are required")
+    scenarios = config.get("scenarios")
+    if not isinstance(scenarios, list):
+        raise MatrixError("scenarios must be a list")
+    scenario_ids = {item.get("id") for item in scenarios if isinstance(item, dict)}
+    missing_scenarios = REQUIRED_SCENARIOS - scenario_ids
+    if missing_scenarios:
+        raise MatrixError("missing required adversarial scenarios: " + ", ".join(sorted(missing_scenarios)))
+    surfaces = config.get("surfaces")
+    if not isinstance(surfaces, dict):
+        raise MatrixError("surfaces must be an object")
+    missing_surfaces = REQUIRED_SURFACES - set(surfaces)
+    if missing_surfaces:
+        raise MatrixError("missing shopper surfaces: " + ", ".join(sorted(missing_surfaces)))
+    for surface, spec in surfaces.items():
+        if not isinstance(spec, dict) or not spec.get("url") or not spec.get("method"):
+            raise MatrixError(f"surface {surface} requires url and method")
+    for scenario in scenarios:
+        required = set(scenario.get("exercise_surfaces", []))
+        if required != REQUIRED_SURFACES:
+            raise MatrixError(
+                f"scenario {scenario.get('id')} must exercise every surface; "
+                f"missing={sorted(REQUIRED_SURFACES-required)}, extra={sorted(required-REQUIRED_SURFACES)}"
+            )
+
+
+def run(config: dict[str, Any], timeout: int = 20) -> int:
+    validate_manifest(config)
+    control = config["fixture_control"]
+    control_token = os.getenv(control["token_env"], "")
+    if len(control_token.encode("utf-8")) < 32:
+        raise MatrixError(f"{control['token_env']} must be configured with at least 32 bytes")
+    failures: list[str] = []
+    results: list[dict[str, Any]] = []
+    for scenario in config["scenarios"]:
+        scenario_id = scenario["id"]
+        fixture_url = control["url"].rstrip("/") + "/v1/scenarios/" + scenario_id + "/activate"
+        fixture_request = {
+            "url": fixture_url,
+            "method": "POST",
+            "headers": {"Authorization": "Bearer " + control_token},
+            "body": scenario.get("fixture", {}),
+        }
+        activated = _http(fixture_request, timeout)
+        if activated.status not in (200, 201):
+            failures.append(f"{scenario_id}: fixture activation failed with HTTP {activated.status}")
+            continue
+        variables = {
+            "scenario_id": scenario_id,
+            "fixture_id": (activated.body or {}).get("fixture_id", ""),
+            "request_id": (activated.body or {}).get("request_id", ""),
+        }
+        for surface in sorted(REQUIRED_SURFACES):
+            spec = _render(config["surfaces"][surface], variables)
+            request_spec = {
+                "url": spec["url"],
+                "method": spec["method"],
+                "headers": spec.get("headers", {}),
+                "token_env": spec.get("token_env"),
+                "body": spec.get("body"),
+            }
+            response = _http(request_spec, timeout)
+            assertion = scenario.get("assertions", {}).get(surface, spec.get("assertions", {}))
+            label = f"{scenario_id}/{surface}"
+            surface_failures = _assert_response(response, assertion, label)
+            failures.extend(surface_failures)
+            results.append({
+                "scenario": scenario_id,
+                "surface": surface,
+                "status": response.status,
+                "elapsed_ms": response.elapsed_ms,
+                "cache_control": response.headers.get("cache-control"),
+                "failures": len(surface_failures),
+            })
+        # A scenario may require a real revocation step after the initial surface pass.
+        revoke = scenario.get("revoke")
+        if revoke:
+            revoke_spec = _render(revoke, variables)
+            revoke_result = _http({
+                "url": revoke_spec["url"], "method": revoke_spec.get("method", "POST"),
+                "headers": revoke_spec.get("headers", {}), "token_env": revoke_spec.get("token_env"),
+                "body": revoke_spec.get("body"),
+            }, timeout)
+            if revoke_result.status not in revoke_spec.get("accepted_status", [200, 204]):
+                failures.append(f"{scenario_id}: revocation step returned HTTP {revoke_result.status}")
+        # Teardown must be explicit and provider-confirmed by the fixture control plane.
+        deactivated = _http({
+            "url": control["url"].rstrip("/") + "/v1/scenarios/" + scenario_id + "/deactivate",
+            "method": "POST",
+            "headers": {"Authorization": "Bearer " + control_token},
+            "body": {"fixture_id": variables["fixture_id"]},
+        }, timeout)
+        if deactivated.status not in (200, 204):
+            failures.append(f"{scenario_id}: fixture teardown not confirmed (HTTP {deactivated.status})")
+    report = {
+        "schema_version": 1,
+        "environment": "staging",
+        "scenario_count": len(config["scenarios"]),
+        "surface_count": len(REQUIRED_SURFACES),
+        "request_count": len(results),
+        "passed": not failures,
+        "results": results,
+        "failures": failures,
+    }
+    output = Path(config.get("report_path", "cal-staging-matrix-report.json"))
+    output.write_text(json.dumps(_redact(report), indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(_redact(report), indent=2))
+    return 0 if not failures else 1
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--config", required=True, help="environment-specific staging manifest JSON")
+    parser.add_argument("--timeout", type=int, default=20)
+    args = parser.parse_args()
+    try:
+        raw = json.loads(Path(args.config).read_text(encoding="utf-8"))
+        config = _expand(raw)
+        return run(config, timeout=max(1, min(args.timeout, 120)))
+    except (OSError, json.JSONDecodeError, MatrixError, KeyError, TypeError) as exc:
+        print(f"CAL staging matrix blocked: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
