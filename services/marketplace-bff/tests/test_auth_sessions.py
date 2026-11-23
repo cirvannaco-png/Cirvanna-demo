@@ -9,9 +9,16 @@ from urllib.parse import parse_qs, urlsplit
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app import auth_sessions
+
+
+def make_client():
+    app = FastAPI()
+    app.include_router(auth_sessions.router)
+    return TestClient(app)
 
 
 def test_pkce_challenge_uses_sha256_base64url_without_padding():
@@ -21,7 +28,7 @@ def test_pkce_challenge_uses_sha256_base64url_without_padding():
 
 
 def test_provider_contract_exposes_web_and_native_ios_paths():
-    with TestClient(auth_sessions.router) as client:
+    with make_client() as client:
         response = client.get("/auth/providers")
     assert response.status_code == 200
     body = response.json()
@@ -31,7 +38,7 @@ def test_provider_contract_exposes_web_and_native_ios_paths():
     assert body["ios"]["apple_native"] is True
 
 
-def test_unknown_provider_is_rejected(client=None):
+def test_unknown_provider_is_rejected():
     with TestClient(auth_sessions.router) as client:
         response = client.get("/auth/login/facebook", follow_redirects=False)
     assert response.status_code == 404
