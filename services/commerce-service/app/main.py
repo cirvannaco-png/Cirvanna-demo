@@ -636,7 +636,7 @@ def _decode_oidc_actor(token: str) -> Actor:
     try:
         signing_key = _jwks_client(jwks_url).get_signing_key_from_jwt(token)
         claims = pyjwt.decode(
-            token, signing_key.key, algorithms=["RS256"], issuer=issuer, audience=audience,
+            token, signing_key.key, algorithms=["ES256", "RS256"], issuer=issuer, audience=audience,
             options={"require": ["exp", "iss", "aud", "sub"]}, leeway=30,
         )
         return _actor_from_claims(claims, role_claim=role_claim)
