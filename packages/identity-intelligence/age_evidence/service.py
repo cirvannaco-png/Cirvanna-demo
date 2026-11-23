@@ -60,8 +60,11 @@ class AgeEvidenceService:
             raise ValueError("age verification session not found")
         if row["state"] in {"revoked", "expired", "failed", "denied"}:
             return {"session_id": session_id, "state": row["state"]}
-        if row["state"] == "verified":
-            return {"session_id": session_id, "state": "verified", "attestation_issued": True}
+        if row["state"] in {"verified", "denied"}:
+            persisted = self.store.get_attestation(session_id)
+            if persisted is None:
+                raise ValueError("terminal age attestation is missing or revoked")
+            return {"session_id": session_id, "state": row["state"], "attestation": persisted["attestation"], "signature": persisted["signature"], "attestation_issued": True}
         provider_session_id = str(uuid.UUID(str(row["provider_session_id"])))
         result = self.yoti.get_threshold_result(
             session_id=provider_session_id,
@@ -101,7 +104,7 @@ class AgeEvidenceService:
         signature = sign_threshold_attestation(payload, self.signing_secret)
         self.store.issue_attestation(
             session_id=session_id, jti=payload["jti"], signature=signature,
-            issued_at=issued, expires_at=expires, now=issued,
+            attestation_payload=payload, issued_at=issued, expires_at=expires, now=issued,
         )
         return {
             "session_id": session_id, "state": ("verified" if result.state == "COMPLETE" else "denied"),
