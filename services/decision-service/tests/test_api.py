@@ -666,3 +666,13 @@ def test_required_cil_feedback_review_enforcement_fails_closed_when_service_unav
     )
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "CIL_CAL_FEEDBACK_DECISION_UNAVAILABLE"
+
+
+def test_durable_receipt_requires_strict_positive_catalog_version(client):
+    missing = request_body()
+    missing.pop("catalog_version")
+    assert client.post("/v1/eligibility/evaluate", json=missing, headers=headers()).status_code == 422
+    coerced = request_body(catalog_version="7")
+    assert client.post("/v1/eligibility/evaluate", json=coerced, headers=headers()).status_code == 422
+    invalid = request_body(catalog_version=0)
+    assert client.post("/v1/eligibility/evaluate", json=invalid, headers=headers()).status_code == 422
