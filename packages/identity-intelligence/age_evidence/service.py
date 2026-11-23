@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import secrets
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from .core import build_threshold_attestation, sign_threshold_attestation
@@ -61,7 +62,7 @@ class AgeEvidenceService:
             return {"session_id": session_id, "state": row["state"]}
         if row["state"] == "verified":
             return {"session_id": session_id, "state": "verified", "attestation_issued": True}
-        provider_session_id = str(__import__("uuid").UUID(str(row["provider_session_id"])))
+        provider_session_id = str(uuid.UUID(str(row["provider_session_id"])))
         result = self.yoti.get_threshold_result(
             session_id=provider_session_id,
             expected_reference_id=row["provider_reference"],
@@ -73,7 +74,7 @@ class AgeEvidenceService:
         if result.state in {"EXPIRED", "CANCELLED", "ERROR"}:
             terminal = "expired" if result.state == "EXPIRED" else "failed"
             self.store.mark_provider_terminal(
-                session_id, row["provider_session_id"], terminal, now=datetime.now(timezone.utc),
+                session_id, provider_session_id, terminal, now=datetime.now(timezone.utc),
             )
             return {"session_id": session_id, "state": terminal}
         self.store.record_provider_result(
@@ -93,7 +94,7 @@ class AgeEvidenceService:
             subject_id=row["subject_id"], request_id=row["request_id"],
             purpose=row["purpose"], policy_id=row["policy_id"],
             policy_version=row["policy_version"], threshold=row["threshold"],
-            threshold_met=(result.state == "COMPLETE"), provider_session_id=row["provider_session_id"],
+            threshold_met=(result.state == "COMPLETE"), provider_session_id=provider_session_id,
             provider_evidence_id=result.evidence_id, issued_at=issued,
             expires_at=expires,
         )
