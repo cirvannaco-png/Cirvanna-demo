@@ -39,8 +39,8 @@ def seed_attestation(url: str) -> tuple[str, str]:
     jti, signature = str(uuid.uuid4()), "f" * 64
     store.issue_attestation(
         session_id=sid, jti=jti, signature=signature,
-        issued_at=NOW + timedelta(seconds=2), expires_at=NOW + timedelta(minutes=5),
-        now=NOW + timedelta(seconds=2),
+        issued_at=NOW - timedelta(seconds=2), expires_at=NOW + timedelta(minutes=5),
+        now=NOW,
     )
     return jti, signature
 
