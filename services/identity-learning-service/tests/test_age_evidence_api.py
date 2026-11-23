@@ -100,7 +100,8 @@ def test_yoti_session_threshold_is_resolved_server_side(tmp_path, monkeypatch):
         }
     }))
     monkeypatch.setattr(age_api, "_service", lambda: type("Fake", (), {
-        "start": staticmethod(lambda **kwargs: {"threshold": kwargs["threshold"], "policy_id": kwargs["policy_id"]})
+        "start": staticmethod(lambda **kwargs: {"threshold": kwargs["threshold"], "policy_id": kwargs["policy_id"]}),
+        "close": staticmethod(lambda: None),
     })())
     with TestClient(main.app) as client:
         response = client.post(
