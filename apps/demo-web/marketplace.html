@@ -797,8 +797,8 @@ footer{
     load();
     return true;
   }
-  // The host OIDC/session bootstrap and the developer-only test connector use
-  // the same same-origin, server-verified customer-token handoff.
+  // Only a server-verified HttpOnly cookie session can activate live commerce.
+  // JavaScript receives a fixed sentinel, never an access or refresh token.
   window.addEventListener("cirvanna:session-ready",event=>{
     const detail=event&&event.detail;
     if(detail)void acceptMarketplaceSession(detail.accessToken);
