@@ -4,7 +4,7 @@ CREATE SCHEMA IF NOT EXISTS auth_private;
 REVOKE ALL ON SCHEMA auth_private FROM PUBLIC, anon, authenticated;
 CREATE TABLE IF NOT EXISTS auth_private.pending_auth (
     state_hash text PRIMARY KEY,
-    provider text NOT NULL CHECK (provider IN ('google','apple','microsoft')),
+    provider text NOT NULL CHECK (provider IN ('google','apple','microsoft','email')),
     verifier_ciphertext bytea NOT NULL,
     expires_at timestamptz NOT NULL,
     created_at timestamptz NOT NULL DEFAULT now()
