@@ -119,6 +119,11 @@ def test_under_threshold_yoti_result_issues_signed_negative_threshold_evidence(t
     assert result["state"] == "denied"
     assert result["attestation"]["threshold_met"] is False
     assert result["attestation"]["threshold"] == 18
+    again = service.poll(session["session_id"])
+    assert again["state"] == "denied"
+    assert again["attestation"] == result["attestation"]
+    assert again["signature"] == result["signature"]
+    assert fake.calls == 1
     service.close()
 
 
