@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import os
 import uuid
+import sys
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 
 import pytest
+sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "identity-intelligence"))
 from age_evidence.store import AgeEvidenceStore
 
 DATABASE_URL = os.getenv("AGE_EVIDENCE_TEST_DATABASE_URL", "")
