@@ -75,9 +75,7 @@ class AgeEvidenceService:
             now=now,
         )
         row = self.store.get_session(session_id)
-        if result.state == "FAIL":
-            return {"session_id": session_id, "state": "denied"}
-        if result.state != "COMPLETE" or not result.evidence_id:
+        if result.state not in {"COMPLETE", "FAIL"} or not result.evidence_id:
             raise ValueError("provider result is not terminal verified evidence")
         issued = now
         provider_expiry = row["expires_at"]
@@ -88,7 +86,7 @@ class AgeEvidenceService:
             subject_id=row["subject_id"], request_id=row["request_id"],
             purpose=row["purpose"], policy_id=row["policy_id"],
             policy_version=row["policy_version"], threshold=row["threshold"],
-            threshold_met=True, provider_session_id=row["provider_session_id"],
+            threshold_met=(result.state == "COMPLETE"), provider_session_id=row["provider_session_id"],
             provider_evidence_id=result.evidence_id, issued_at=issued,
             expires_at=expires,
         )
@@ -98,7 +96,7 @@ class AgeEvidenceService:
             issued_at=issued, expires_at=expires, now=issued,
         )
         return {
-            "session_id": session_id, "state": "verified",
+            "session_id": session_id, "state": ("verified" if result.state == "COMPLETE" else "denied"),
             "attestation": payload, "signature": signature,
         }
 
