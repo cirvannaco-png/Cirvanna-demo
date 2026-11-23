@@ -455,3 +455,43 @@ class ServerOwnedEEPLPolicyTests(unittest.TestCase):
         }, clear=False):
             with self.assertRaises(PolicyRegistryError):
                 resolve_active_policy()
+
+
+class DecisionReceiptStoreContractTests(unittest.TestCase):
+    def test_receipt_store_fails_closed_when_postgres_is_not_configured(self):
+        import os
+        from unittest.mock import patch
+        from catacaci.receipts import DecisionReceiptStoreError, persist_decision_receipt
+
+        receipt = {
+            "request_id": "receipt-test-request", "candidate_id": "candidate-1",
+            "verdict": "REVIEW", "may_display": False,
+            "eepl_policy_id": "adult-market", "eepl_policy_version": "v2",
+            "cal_policy_id": "standard", "cal_policy_version": "cal-v1",
+            "arbitration_contract_version": "1.1.0", "pipeline_contract_version": "1.0.0",
+            "candidate_snapshot_sha256": "a" * 64, "catalog_version": None,
+            "evaluated_signals": [{
+                "signal_id": "safety:1", "kind": "safety", "state": "unknown",
+                "required": True, "confidence": None, "reason_code": "PROVIDER_MISSING",
+                "source_version": "unavailable",
+            }],
+            "reasons": [{"code": "REQUIRED_SIGNAL_UNKNOWN", "signal_id": "safety:1"}],
+        }
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaises(DecisionReceiptStoreError):
+                persist_decision_receipt(receipt)
+
+    def test_receipt_store_rejects_inconsistent_show_authorization(self):
+        from catacaci.receipts import DecisionReceiptStoreError, persist_decision_receipt
+
+        receipt = {
+            "request_id": "receipt-test-request", "candidate_id": "candidate-1",
+            "verdict": "REVIEW", "may_display": True,
+            "eepl_policy_id": "adult-market", "eepl_policy_version": "v2",
+            "cal_policy_id": "standard", "cal_policy_version": "cal-v1",
+            "arbitration_contract_version": "1.1.0", "pipeline_contract_version": "1.0.0",
+            "candidate_snapshot_sha256": "a" * 64, "catalog_version": None,
+            "evaluated_signals": [], "reasons": [],
+        }
+        with self.assertRaises(DecisionReceiptStoreError):
+            persist_decision_receipt(receipt)
