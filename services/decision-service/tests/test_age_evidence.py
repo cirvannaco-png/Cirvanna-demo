@@ -190,7 +190,7 @@ class YotiAdapterTests(unittest.TestCase):
             "method": "DIGITAL_ID",
             "status": "COMPLETE",
             "evidence_id": "evidence-123",
-            "expires_at": "2026-11-23T12:15:00Z",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
             "updated_at": "2026-11-23T12:01:00Z",
         }
         def handler(request):
@@ -214,7 +214,7 @@ class YotiAdapterTests(unittest.TestCase):
             "digital_id": {"allowed": True, "threshold": 18, "age_estimation_allowed": False},
             "method": "DIGITAL_ID",
             "status": "COMPLETE",
-            "expires_at": "2026-11-23T12:15:00Z",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
         }
         client = self.make_client(lambda request: httpx.Response(200, json=body))
         with self.assertRaises(YotiProviderError):
@@ -232,7 +232,7 @@ class YotiAdapterTests(unittest.TestCase):
             "digital_id": {"allowed": True, "threshold": 18, "age_estimation_allowed": True},
             "method": "AGE_ESTIMATION",
             "status": "COMPLETE",
-            "expires_at": "2026-11-23T12:15:00Z",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
         }
         client = self.make_client(lambda request: httpx.Response(200, json=body))
         with self.assertRaises(YotiProviderError):
