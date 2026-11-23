@@ -76,10 +76,11 @@ def _service() -> AgeEvidenceService:
     }
     if any(not value for value in required.values()):
         raise HTTPException(503, detail={"code": "AGE_EVIDENCE_PROVIDER_NOT_CONFIGURED"})
+    store = _store()
     try:
         yoti = YotiAVSClient(required["YOTI_AVS_API_KEY"], required["YOTI_AVS_SDK_ID"])
         return AgeEvidenceService(
-            store=_store(), yoti=yoti,
+            store=store, yoti=yoti,
             signing_secret=required["AGE_EVIDENCE_HMAC_SECRET"],
             redirect_url=required["YOTI_AVS_CALLBACK_URL"],
             cancel_url=required["YOTI_AVS_CANCEL_URL"],
@@ -87,6 +88,7 @@ def _service() -> AgeEvidenceService:
             terms_url=required["YOTI_AVS_TERMS_URL"],
         )
     except (ValueError, AgeEvidenceError) as exc:
+        store.engine.dispose()
         raise HTTPException(503, detail={"code": "AGE_EVIDENCE_PROVIDER_CONFIGURATION_INVALID"}) from exc
 
 
