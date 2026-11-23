@@ -27,6 +27,7 @@ sessions = Table(
     Column("threshold", Integer, nullable=False),
     Column("provider", String(24), nullable=False),
     Column("provider_session_id", String(36), unique=True),
+    Column("provider_reference", String(96), nullable=False, unique=True),
     Column("provider_reference_sha256", String(64), nullable=False, unique=True),
     Column("provider_evidence_id", String(160)),
     Column("state", String(20), nullable=False),
@@ -96,6 +97,7 @@ class AgeEvidenceStore:
                 session_id=session_id, subject_id=subject_id, request_id=request_id,
                 purpose=purpose, policy_id=policy_id, policy_version=policy_version,
                 threshold=threshold, provider="yoti",
+                provider_reference=provider_reference,
                 provider_reference_sha256=hashlib.sha256(provider_reference.encode()).hexdigest(),
                 state="created", created_at=now, updated_at=now,
             ))
