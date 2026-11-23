@@ -51,6 +51,17 @@ def verify_threshold_attestation(
     expected = hmac.new(secret.encode("utf-8"), canonical_payload(payload), hashlib.sha256).hexdigest()
     if not isinstance(signature, str) or not hmac.compare_digest(expected, signature):
         return False
+    for name, value in {
+        "subject_id": subject_id,
+        "request_id": request_id,
+        "purpose": purpose,
+        "policy_id": policy_id,
+        "policy_version": policy_version,
+    }.items():
+        if not isinstance(value, str) or not value.strip():
+            raise AgeEvidenceError(f"expected {name} binding must be a non-empty string")
+    if not isinstance(threshold, int) or isinstance(threshold, bool) or not 0 <= threshold <= 125:
+        raise AgeEvidenceError("expected threshold binding must be an integer from 0 to 125")
     expected_bindings = {
         "subject_id": subject_id,
         "request_id": request_id,
