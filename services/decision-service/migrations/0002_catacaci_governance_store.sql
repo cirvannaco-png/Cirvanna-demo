@@ -29,7 +29,7 @@ CREATE TABLE IF NOT EXISTS decision_private.catacaci_cil_contributions (
     observed_at TIMESTAMPTZ NOT NULL,
     UNIQUE(cohort_key, period_start, contributor_hash)
 );
-CREATE INDEX IF NOT EXISTS ix_catacaci_cil_cohort_period ON catacaci_cil_contributions(cohort_key, period_start);
+CREATE INDEX IF NOT EXISTS ix_catacaci_cil_cohort_period ON decision_private.catacaci_cil_contributions(cohort_key, period_start);
 
 CREATE TABLE IF NOT EXISTS decision_private.catacaci_cil_privacy_budget (
     cohort_key TEXT NOT NULL,
