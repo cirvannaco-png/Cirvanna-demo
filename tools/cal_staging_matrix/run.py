@@ -322,9 +322,12 @@ def validate_manifest(config: dict[str, Any]) -> None:
                         f"scenario {scenario.get('id')} post-revoke {surface} must require Cache-Control no-store"
                     )
                 forbidden_paths = set(assertion.get("json_absent", []))
+                allowed_denial_statuses = assertion.get("status", [200])
+                if isinstance(allowed_denial_statuses, int):
+                    allowed_denial_statuses = [allowed_denial_statuses]
                 if not forbidden_paths.intersection({
                     "$.products[*].id", "$.items[*].product_id", "$.offers[*].id", "$.recommendations[*].id"
-                }) and not set(assertion.get("status", [])) <= {401, 403, 410}:
+                }) and not set(allowed_denial_statuses) <= {401, 403, 410}:
                     raise MatrixError(
                         f"scenario {scenario.get('id')} post-revoke {surface} must deny access or assert product payload absence"
                     )
@@ -412,10 +415,12 @@ def run(config: dict[str, Any], timeout: int = 20) -> int:
         race = scenario.get("race")
         revoke_result = None
         revoke_spec = None
+        revoke_attempted = False
         if race:
             revoke_spec = _render(race["revoke"], variables)
             race_jobs = {}
             with ThreadPoolExecutor(max_workers=len(race["surfaces"]) + 1) as executor:
+                revoke_attempted = True
                 revoke_future = executor.submit(_http, {
                     "url": revoke_spec["url"], "method": revoke_spec.get("method", "POST"),
                     "headers": revoke_spec.get("headers", {}), "token_env": revoke_spec.get("token_env"),
@@ -455,7 +460,8 @@ def run(config: dict[str, Any], timeout: int = 20) -> int:
         revoke = scenario.get("revoke") or (race.get("revoke") if race else None)
         if revoke:
             revoke_spec = revoke_spec or _render(revoke, variables)
-            if revoke_result is None:
+            if revoke_result is None and not revoke_attempted:
+                revoke_attempted = True
                 revoke_result = _safe_http({
                     "url": revoke_spec["url"], "method": revoke_spec.get("method", "POST"),
                     "headers": revoke_spec.get("headers", {}), "token_env": revoke_spec.get("token_env"),
