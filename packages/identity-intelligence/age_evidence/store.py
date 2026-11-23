@@ -83,7 +83,8 @@ class AgeEvidenceStore:
             if not database_url:
                 raise ValueError("age evidence database URL is required")
             engine = create_engine(database_url, pool_pre_ping=True)
-        self.engine = engine.execution_options(schema_translate_map={"identity_private": None})
+        self.engine = (engine.execution_options(schema_translate_map={"identity_private": None})
+                       if engine.dialect.name == "sqlite" else engine)
 
     def create_session(
         self, *, subject_id: str, request_id: str, purpose: str,
