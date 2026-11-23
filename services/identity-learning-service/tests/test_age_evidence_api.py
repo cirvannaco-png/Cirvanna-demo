@@ -149,3 +149,37 @@ def test_yoti_session_policy_is_selected_only_by_server(tmp_path, monkeypatch):
     }
     assert caller_selected_policy.status_code == 422
     assert caller_selected_threshold.status_code == 422
+
+
+def test_yoti_session_poll_and_revoke_are_bound_to_verified_subject(tmp_path, monkeypatch):
+    url = "sqlite:///" + str(tmp_path / "age-owner.db")
+    monkeypatch.setenv("IDENTITY_DATABASE_URL", url)
+    token = "age-evidence-orchestrator-token-at-least-32-bytes"
+    monkeypatch.setenv("AGE_EVIDENCE_ORCHESTRATOR_TOKEN", token)
+    store = AgeEvidenceStore(url)
+    session_id = store.create_session(
+        subject_id="verified-subject-1", request_id="request-owner-1",
+        purpose="shopper_eligibility", policy_id="adult-market",
+        policy_version="v2", threshold=18,
+        provider_reference="opaque-ref-owner-1", now=NOW,
+    )
+    with TestClient(main.app) as client:
+        denied_poll = client.post(
+            f"/internal/v1/age-evidence/sessions/{session_id}/poll",
+            headers={"Authorization": "Bearer " + token},
+            json={"subject_id": "different-subject"},
+        )
+        denied_revoke = client.post(
+            f"/internal/v1/age-evidence/sessions/{session_id}/revoke",
+            headers={"Authorization": "Bearer " + token},
+            json={"subject_id": "different-subject"},
+        )
+        allowed_revoke = client.post(
+            f"/internal/v1/age-evidence/sessions/{session_id}/revoke",
+            headers={"Authorization": "Bearer " + token},
+            json={"subject_id": "verified-subject-1"},
+        )
+    assert denied_poll.status_code == 404
+    assert denied_revoke.status_code == 404
+    assert allowed_revoke.status_code == 200
+    assert allowed_revoke.json() == {"revoked": True}
