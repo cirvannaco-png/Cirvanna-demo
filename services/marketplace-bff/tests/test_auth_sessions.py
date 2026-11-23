@@ -66,6 +66,9 @@ def test_microsoft_login_uses_supabase_azure_provider_and_pkce(monkeypatch):
     assert len(params["code_challenge"][0]) == 43
     assert params["scopes"] == ["email"]
     assert "state=" in params["redirect_to"][0]
+    cookie = response.headers["set-cookie"].lower()
+    assert "__host-cirvanna_oauth_state=" in cookie
+    assert "httponly" in cookie and "secure" in cookie and "samesite=lax" in cookie
 
 
 def test_jwt_verifier_accepts_only_valid_supabase_es256_claims(monkeypatch):
