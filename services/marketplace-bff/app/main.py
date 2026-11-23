@@ -95,10 +95,11 @@ async def security_headers(request: Request, call_next):
     if auth_write or cookie_api_write:
         callback = urlsplit(os.getenv("AUTH_CALLBACK_URL", ""))
         expected_origin = f"{callback.scheme}://{callback.netloc}" if callback.scheme and callback.netloc else ""
+        private_headers = {"Cache-Control": "no-store, private", "Pragma": "no-cache", "Expires": "0"}
         if not expected_origin:
-            return JSONResponse(status_code=503, content={"detail": {"code": "AUTH_ORIGIN_NOT_CONFIGURED"}})
+            return JSONResponse(status_code=503, content={"detail": {"code": "AUTH_ORIGIN_NOT_CONFIGURED"}}, headers=private_headers)
         if request.headers.get("origin") != expected_origin:
-            return JSONResponse(status_code=403, content={"detail": {"code": "AUTH_CSRF_ORIGIN_REJECTED"}})
+            return JSONResponse(status_code=403, content={"detail": {"code": "AUTH_CSRF_ORIGIN_REJECTED"}}, headers=private_headers)
     response = await call_next(request)
     refreshed_cookie_age = getattr(request.state, "auth_session_refresh_max_age", None)
     if isinstance(refreshed_cookie_age, int) and refreshed_cookie_age > 0:
@@ -778,8 +779,13 @@ async def _verified_commerce_subject(client: httpx.AsyncClient, request: Request
     if scheme.lower() == "bearer" and user_token.strip() and user_token.strip() != "server-cookie-session":
         user_token = user_token.strip()
     else:
-        # Production browser requests authenticate with the opaque HttpOnly session
-        # cookie. Bearer tokens remain accepted for native clients and test bridges.
+        # Preserve the established API error contract for anonymous callers.
+        # Cookie-backed browser sessions are resolved only when the opaque cookie
+        # is actually present; a sentinel header never substitutes for a cookie.
+        if not request.cookies.get(COOKIE_NAME) and not (
+            scheme.lower() == "bearer" and user_token.strip() == "server-cookie-session"
+        ):
+            raise HTTPException(401, detail={"code": "USER_BEARER_REQUIRED"})
         user_token = await session_access_token(request)
     commerce_base = _upstream_base("COMMERCE_API_URL")
     try:
@@ -3538,25 +3544,14 @@ async def marketplace_click_it(request: Request) -> Response:
     )
 
 
-def _developer_token_input_allowed() -> bool:
-    """Allow manual bearer entry only in an explicitly opted-in non-production environment."""
-    environment = os.getenv("MARKETPLACE_ENVIRONMENT", "").strip().lower()
-    if environment in {"production", "prod"}:
-        return False
-    return os.getenv("MARKETPLACE_ENABLE_DEVELOPER_TOKEN_INPUT", "false").strip().lower() == "true"
-
-
 def _page_html() -> str:
     try:
         html = HTML_PATH.read_text(encoding="utf-8")
     except OSError as exc:
         raise HTTPException(status_code=503, detail={"code": "MARKETPLACE_PAGE_UNAVAILABLE"}) from exc
     marker = "<script>\n(() => {"
-    developer_token_input = "true" if _developer_token_input_allowed() else "false"
     bootstrap = (
-        '<script>window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce",allowDeveloperTokenInput:'
-        + developer_token_input
-        + '});</script>\n'
+        '<script>window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({publicOffersBase:"/api/commerce"});</script>\n'
         + "<script>\n(() => {"
     )
     if 'window.CIRVANNA_MARKETPLACE_CONFIG = Object.freeze({' not in html:
