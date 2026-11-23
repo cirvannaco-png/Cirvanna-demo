@@ -44,6 +44,15 @@ def valid_manifest():
                 "surfaces": ["cart", "checkout"],
                 "revoke": {"url": "https://fixture.staging.example.test/revoke", "token_env": "CAL_REVOKE_TOKEN"},
             }
+        if scenario_id in {"consent_session_revoked", "cache_after_revocation", "payment_revoked_race"}:
+            scenario["post_revoke_assertions"] = {
+                name: {
+                    "status": [401, 403, 410],
+                    "require_no_store": True,
+                    "json_absent": ["$.products[*].id", "$.items[*].product_id", "$.offers[*].id", "$.recommendations[*].id"],
+                }
+                for name in runner.REQUIRED_SURFACES
+            }
         scenarios.append(scenario)
     return {
         "environment": "staging",
@@ -87,6 +96,20 @@ class CALStagingMatrixContractTests(unittest.TestCase):
         config = valid_manifest()
         scenario = next(item for item in config["scenarios"] if item["id"] == "cache_after_revocation")
         scenario["recheck_after_revoke"] = False
+        with self.assertRaises(runner.MatrixError):
+            runner.validate_manifest(config)
+
+    def test_revocation_replay_requires_explicit_safe_assertions_for_every_surface(self):
+        config = valid_manifest()
+        scenario = next(item for item in config["scenarios"] if item["id"] == "cache_after_revocation")
+        del scenario["post_revoke_assertions"]["marketplace"]
+        with self.assertRaises(runner.MatrixError):
+            runner.validate_manifest(config)
+
+    def test_revocation_replay_cannot_fall_back_to_pre_revocation_assertions(self):
+        config = valid_manifest()
+        scenario = next(item for item in config["scenarios"] if item["id"] == "cache_after_revocation")
+        scenario["post_revoke_assertions"]["marketplace"] = {"status": [200], "require_no_store": True}
         with self.assertRaises(runner.MatrixError):
             runner.validate_manifest(config)
 
