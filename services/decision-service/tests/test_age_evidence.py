@@ -620,7 +620,6 @@ class CaTaCaCiGovernanceApiModelTests(unittest.TestCase):
                 contributor_token="hmac-sha256:" + "a" * 64,
                 cohort_key="market:ke|category:tops",
                 outcome_success="false",
-                observed_at=NOW,
             )
 
     def test_cam_caller_cannot_supply_simulated_verdict(self):
