@@ -35,6 +35,12 @@ def config(monkeypatch):
         }
     }))
     monkeypatch.setattr(main, "_redeem_age_attestation", lambda payload, signature: None)
+    monkeypatch.setattr(main, "check_receipt_store", lambda: True)
+    monkeypatch.setattr(main, "persist_decision_receipt", lambda receipt: {
+        "receipt_id": "123e4567-e89b-42d3-a456-426614174000",
+        "receipt_sha256": "a" * 64,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
     monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", json.dumps({
         "standard-marketplace": {
             "policy_version": "1.0.0", "minimum_age": None, "maximum_age": None,
