@@ -541,8 +541,12 @@ class AppleNativeSignInIn(BaseModel):
 
 
 @router.post("/auth/ios/apple")
-async def ios_apple_sign_in(payload: AppleNativeSignInIn) -> Response:
+async def ios_apple_sign_in(payload: AppleNativeSignInIn, request: Request) -> Response:
     """Exchange a native Apple ID token; only an opaque HttpOnly session cookie is returned."""
+    # Native URLSession requests do not send Origin. Reject browser-originated
+    # requests so this CSRF-exempt endpoint cannot be abused for login-CSRF.
+    if request.headers.get("origin"):
+        raise HTTPException(403, detail={"code": "AUTH_NATIVE_ORIGIN_REJECTED"})
     base, key = _supabase()
     async with httpx.AsyncClient(timeout=12, trust_env=False, follow_redirects=False) as client:
         response = await client.post(
