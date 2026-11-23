@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from .core import AgeEvidenceError
 from .policy import PolicyRegistryError, resolve_policy
 from .service import AgeEvidenceService
-from .store import AgeEvidenceStore
+from .store import AgeEvidenceConflict, AgeEvidenceStore
 from .yoti import YotiAVSClient
 
 router = APIRouter(prefix="/internal/v1/age-evidence", tags=["internal-age-evidence"])
@@ -102,6 +102,8 @@ def start_session(payload: SessionStart) -> dict:
         return service.start(**payload.model_dump(), threshold=threshold)
     except HTTPException:
         raise
+    except AgeEvidenceConflict as exc:
+        raise HTTPException(409, detail={"code": "AGE_EVIDENCE_SESSION_ALREADY_EXISTS"}) from exc
     except (PolicyRegistryError, ValueError) as exc:
         raise HTTPException(503, detail={"code": "SERVER_POLICY_UNAVAILABLE"}) from exc
     except Exception as exc:
