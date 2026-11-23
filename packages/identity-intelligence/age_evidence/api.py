@@ -26,6 +26,10 @@ class SessionStart(StrictModel):
     purpose: str = Field(default="shopper_eligibility", pattern=r"^shopper_eligibility$")
 
 
+class SessionOwner(StrictModel):
+    subject_id: str = Field(min_length=1, max_length=128)
+
+
 class AttestationRedeem(StrictModel):
     jti: str = Field(min_length=36, max_length=36)
     subject_id: str = Field(min_length=1, max_length=128)
@@ -118,12 +122,22 @@ def start_session(payload: SessionStart) -> dict:
             service.close()
 
 
+def _require_session_owner(store: AgeEvidenceStore, session_id: str, subject_id: str) -> None:
+    row = store.get_session(session_id)
+    if row is None or not hmac.compare_digest(str(row["subject_id"]), subject_id):
+        raise HTTPException(404, detail={"code": "AGE_EVIDENCE_SESSION_NOT_FOUND"})
+
+
 @router.post("/sessions/{session_id}/poll", dependencies=[Depends(require_orchestrator)])
-def poll_session(session_id: str) -> dict:
+def poll_session(session_id: str, payload: SessionOwner) -> dict:
     service = None
+    store = _store()
     try:
+        _require_session_owner(store, session_id, payload.subject_id)
         service = _service()
         return service.poll(session_id)
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise HTTPException(409, detail={"code": "AGE_EVIDENCE_SESSION_NOT_READY"}) from exc
     except Exception as exc:
@@ -131,12 +145,14 @@ def poll_session(session_id: str) -> dict:
     finally:
         if service is not None:
             service.close()
+        store.engine.dispose()
 
 
 @router.post("/sessions/{session_id}/revoke", dependencies=[Depends(require_orchestrator)])
-def revoke_session(session_id: str) -> dict:
+def revoke_session(session_id: str, payload: SessionOwner) -> dict:
     store = _store()
     try:
+        _require_session_owner(store, session_id, payload.subject_id)
         return {"revoked": store.revoke_session(session_id)}
     finally:
         store.engine.dispose()
