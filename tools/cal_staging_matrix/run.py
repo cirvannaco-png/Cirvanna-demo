@@ -254,9 +254,13 @@ def validate_manifest(config: dict[str, Any]) -> None:
     if control_url.scheme != "https" or control_url.username or control_url.password:
         raise MatrixError("fixture_control.url must be trusted HTTPS without embedded credentials")
     scenarios = config.get("scenarios")
-    if not isinstance(scenarios, list):
-        raise MatrixError("scenarios must be a list")
-    scenario_ids = {item.get("id") for item in scenarios if isinstance(item, dict)}
+    if not isinstance(scenarios, list) or not scenarios:
+        raise MatrixError("scenarios must be a non-empty list")
+    if any(not isinstance(item, dict) for item in scenarios):
+        raise MatrixError("every scenario must be an object")
+    scenario_ids = {item.get("id") for item in scenarios}
+    if len(scenario_ids) != len(scenarios):
+        raise MatrixError("scenario IDs must be unique")
     missing_scenarios = REQUIRED_SCENARIOS - scenario_ids
     if missing_scenarios:
         raise MatrixError("missing required adversarial scenarios: " + ", ".join(sorted(missing_scenarios)))
@@ -264,8 +268,12 @@ def validate_manifest(config: dict[str, Any]) -> None:
     if not isinstance(surfaces, dict):
         raise MatrixError("surfaces must be an object")
     missing_surfaces = REQUIRED_SURFACES - set(surfaces)
-    if missing_surfaces:
-        raise MatrixError("missing shopper surfaces: " + ", ".join(sorted(missing_surfaces)))
+    extra_surfaces = set(surfaces) - REQUIRED_SURFACES
+    if missing_surfaces or extra_surfaces:
+        raise MatrixError(
+            "shopper surfaces must be exactly the required ten; "
+            f"missing={sorted(missing_surfaces)}, extra={sorted(extra_surfaces)}"
+        )
     for surface, spec in surfaces.items():
         if not isinstance(spec, dict) or not spec.get("url") or not spec.get("method"):
             raise MatrixError(f"surface {surface} requires url and method")
@@ -273,7 +281,14 @@ def validate_manifest(config: dict[str, Any]) -> None:
         if parsed_url.scheme != "https" or parsed_url.username or parsed_url.password:
             raise MatrixError(f"surface {surface} URL must be trusted HTTPS without embedded credentials")
     for scenario in scenarios:
-        required = set(scenario.get("exercise_surfaces", []))
+        if not isinstance(scenario.get("id"), str) or scenario["id"] not in REQUIRED_SCENARIOS:
+            raise MatrixError("scenario has an unknown or missing adversarial ID")
+        if not isinstance(scenario.get("fixture", {}), dict):
+            raise MatrixError(f"scenario {scenario['id']} fixture must be an object")
+        exercise_surfaces = scenario.get("exercise_surfaces")
+        if not isinstance(exercise_surfaces, list) or any(not isinstance(name, str) for name in exercise_surfaces):
+            raise MatrixError(f"scenario {scenario['id']} exercise_surfaces must be a list of surface names")
+        required = set(exercise_surfaces)
         if required != REQUIRED_SURFACES:
             raise MatrixError(
                 f"scenario {scenario.get('id')} must exercise every surface; "
@@ -307,6 +322,8 @@ def validate_manifest(config: dict[str, Any]) -> None:
         if scenario.get("id") == "cache_after_revocation" and not scenario.get("revoke"):
             raise MatrixError("cache_after_revocation requires a sequential revoke step")
         if scenario.get("revoke"):
+            if not isinstance(scenario["revoke"], dict):
+                raise MatrixError(f"scenario {scenario.get('id')} revoke must be an object")
             revoke_url = urlsplit(str(scenario["revoke"].get("url", "")))
             if revoke_url.scheme != "https" or revoke_url.username or revoke_url.password or not scenario["revoke"].get("token_env"):
                 raise MatrixError(f"scenario {scenario.get('id')} revoke must use HTTPS and a dedicated token_env")
@@ -333,8 +350,12 @@ def validate_manifest(config: dict[str, Any]) -> None:
                     )
         if scenario.get("id") in {"consent_session_revoked", "payment_revoked_race"}:
             race = scenario.get("race")
-            if not isinstance(race, dict) or not race.get("revoke") or not race.get("surfaces"):
-                raise MatrixError(f"scenario {scenario.get('id')} requires concurrent race surfaces and revocation")
+            if not isinstance(race, dict) or not isinstance(race.get("revoke"), dict):
+                raise MatrixError(f"scenario {scenario.get('id')} requires a race object with revocation")
+            if not isinstance(race.get("surfaces"), list) or not race["surfaces"] or any(
+                not isinstance(name, str) for name in race["surfaces"]
+            ):
+                raise MatrixError(f"scenario {scenario.get('id')} race surfaces must be a non-empty list")
             if not set(race["surfaces"]).issubset(REQUIRED_SURFACES):
                 raise MatrixError(f"scenario {scenario.get('id')} race references an unknown shopper surface")
             race_assertions = scenario.get("race_assertions")
