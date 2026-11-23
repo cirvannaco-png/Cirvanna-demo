@@ -62,7 +62,7 @@ def test_attestation_rejects_wrong_subject_request_policy_and_signature():
     sid = verified_session(store)
     jti, sig = str(uuid.uuid4()), "b" * 64
     store.issue_attestation(
-        session_id=sid, jti=jti, signature=sig,
+        session_id=sid, jti=jti, signature=sig, attestation_payload={"jti": jti},
         issued_at=NOW + timedelta(seconds=2), expires_at=NOW + timedelta(minutes=5),
         now=NOW + timedelta(seconds=2),
     )
@@ -84,7 +84,7 @@ def test_revoked_session_invalidates_unredeemed_attestation():
     sid = verified_session(store)
     jti, sig = str(uuid.uuid4()), "d" * 64
     store.issue_attestation(
-        session_id=sid, jti=jti, signature=sig,
+        session_id=sid, jti=jti, signature=sig, attestation_payload={"jti": jti},
         issued_at=NOW + timedelta(seconds=2), expires_at=NOW + timedelta(minutes=5),
         now=NOW + timedelta(seconds=2),
     )
@@ -117,7 +117,7 @@ def test_expired_attestation_cannot_be_redeemed():
     sid = verified_session(store)
     jti, sig = str(uuid.uuid4()), "e" * 64
     store.issue_attestation(
-        session_id=sid, jti=jti, signature=sig,
+        session_id=sid, jti=jti, signature=sig, attestation_payload={"jti": jti},
         issued_at=NOW + timedelta(seconds=2), expires_at=NOW + timedelta(seconds=5),
         now=NOW + timedelta(seconds=2),
     )
