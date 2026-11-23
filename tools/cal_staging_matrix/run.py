@@ -141,10 +141,10 @@ def _http(request_spec: dict[str, Any], timeout: int) -> Response:
         raw = exc.read(MAX_RESPONSE_BYTES + 1)
         status = exc.code
         response_headers = {k.lower(): v for k, v in exc.headers.items()}
-    if len(raw) > MAX_RESPONSE_BYTES:
-        raise MatrixError(f"{method} {url} response exceeded the {MAX_RESPONSE_BYTES}-byte safety limit")
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise MatrixError(f"{method} {url} transport failure: {type(exc).__name__}") from exc
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise MatrixError(f"{method} {url} response exceeded the {MAX_RESPONSE_BYTES}-byte safety limit")
     elapsed = int((time.monotonic() - started) * 1000)
     try:
         parsed = json.loads(raw.decode("utf-8")) if raw else None
