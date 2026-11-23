@@ -26,7 +26,8 @@ NOW = datetime(2026, 11, 23, 12, 0, tzinfo=timezone.utc)
 def payload(**overrides):
     value = {
         "contract_version": CONTRACT_VERSION,
-        "issuer": "yoti",
+        "issuer": "cirvanna-age-evidence-service",
+        "provider": "yoti",
         "subject_id": "subject-opaque-1",
         "request_id": "request-opaque-1",
         "purpose": "age_dependent_eligibility",
