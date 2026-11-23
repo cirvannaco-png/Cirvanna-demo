@@ -49,7 +49,7 @@ for package_root in package_roots:
         break
 else:
     raise RuntimeError("shared age_evidence package is missing from the service image")
-from age_evidence.api import router as age_evidence_router  # noqa: E402
+from age_evidence.api import router as age_evidence_router, provider_configuration_ready  # noqa: E402
 
 SCOPES = {
     "personalization", "style_learning", "profile_storage",
@@ -863,7 +863,7 @@ def readiness(db: Annotated[Session, Depends(get_db)]):
             "YOTI_AVS_CALLBACK_URL", "YOTI_AVS_CANCEL_URL",
             "YOTI_AVS_PRIVACY_POLICY_URL", "YOTI_AVS_TERMS_URL",
         )
-        age_provider_configured = all(bool(os.getenv(name, "").strip()) for name in age_provider_vars)
+        age_provider_configured = provider_configuration_ready()
         age_orchestrator_auth_configured = (
             len(os.getenv("AGE_EVIDENCE_ORCHESTRATOR_TOKEN", "").encode("utf-8")) >= 32
             and len(os.getenv("AGE_EVIDENCE_REDEMPTION_TOKEN", "").encode("utf-8")) >= 32
