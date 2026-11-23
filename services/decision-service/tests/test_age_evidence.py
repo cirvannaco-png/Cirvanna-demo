@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import sys
 import unittest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import httpx
+
+ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(ROOT / "packages" / "identity-intelligence"))
 
 from age_evidence.core import (
     AgeEvidenceError,
@@ -130,7 +135,7 @@ class YotiAdapterTests(unittest.TestCase):
             self.assertTrue(request.headers["Authorization"].startswith("Bearer "))
             return httpx.Response(200, json={
                 "id": "d1234567-1234-4234-8234-123456789012",
-                "expires_at": "2026-11-23T12:15:00Z",
+                "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
             })
         client = self.make_client(handler)
         session = client.create_over_session(
