@@ -386,6 +386,11 @@ def _result_json(result, payload: "EligibilityRequest") -> dict:
                 "model_version": result.fit_estimate.model_version, "calibration_version": result.fit_estimate.calibration_version,
                 "evidence_ids": list(result.fit_estimate.evidence_ids)},
         },
+        "age_evidence": {
+            "contract_version": "age-evidence-unavailable-v1",
+            "status": "unverified_client_value" if payload.context.age_years is not None else "missing",
+            "used_for_eligibility": False,
+        },
         "policy": {"version": result.arbitration.policy_version,
             "minimum_fit_confidence": payload.minimum_fit_confidence,
             "minimum_alignment_score": payload.minimum_alignment_score,
@@ -490,9 +495,13 @@ def evaluate_eligibility(payload: EligibilityRequest) -> dict:
             allowed_climates=tuple(payload.eepl_policy.allowed_climates),
             required_context=tuple(ContextField(x) for x in payload.eepl_policy.required_context),
         )
+        # Internal bearer authentication identifies the caller, not the truth of
+        # an age assertion. Until a dedicated signed age-evidence provider and
+        # verifier exist, ignore all request-body age values. EEPL will REVIEW
+        # whenever the active policy requires age context.
         context = EEPLContext(
             user_id=payload.context.user_id,
-            age_years=payload.context.age_years,
+            age_years=None,
             location=payload.context.location,
             occasion=payload.context.occasion,
             climate=payload.context.climate,
