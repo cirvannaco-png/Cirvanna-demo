@@ -142,6 +142,15 @@ def _http(request_spec: dict[str, Any], timeout: int) -> Response:
     return Response(status, response_headers, parsed, elapsed)
 
 
+
+def _safe_http(request_spec: dict[str, Any], timeout: int, label: str, failures: list[str]) -> Response | None:
+    try:
+        return _http(request_spec, timeout)
+    except MatrixError:
+        failures.append(f"{label}: staging transport failed")
+        return None
+
+
 def _render(value: Any, variables: dict[str, Any]) -> Any:
     if isinstance(value, str):
         for name, replacement in variables.items():
@@ -260,14 +269,21 @@ def run(config: dict[str, Any], timeout: int = 20) -> int:
             "headers": {"Authorization": "Bearer " + control_token},
             "body": scenario.get("fixture", {}),
         }
-        activated = _http(fixture_request, timeout)
+        activated = _safe_http(fixture_request, timeout, f"{scenario_id}/fixture-activate", failures)
+        if activated is None:
+            continue
         if activated.status not in (200, 201):
             failures.append(f"{scenario_id}: fixture activation failed with HTTP {activated.status}")
             continue
+        fixture_id = (activated.body or {}).get("fixture_id") if isinstance(activated.body, dict) else None
+        request_id = (activated.body or {}).get("request_id") if isinstance(activated.body, dict) else None
+        if not isinstance(fixture_id, str) or not fixture_id or not isinstance(request_id, str) or not request_id:
+            failures.append(f"{scenario_id}: fixture controller omitted fixture_id or request_id; teardown cannot be safely addressed")
+            continue
         variables = {
             "scenario_id": scenario_id,
-            "fixture_id": (activated.body or {}).get("fixture_id", ""),
-            "request_id": (activated.body or {}).get("request_id", ""),
+            "fixture_id": fixture_id,
+            "request_id": request_id,
         }
         for surface in sorted(REQUIRED_SURFACES):
             spec = _render(config["surfaces"][surface], variables)
@@ -278,9 +294,11 @@ def run(config: dict[str, Any], timeout: int = 20) -> int:
                 "token_env": spec.get("token_env"),
                 "body": spec.get("body"),
             }
-            response = _http(request_spec, timeout)
-            assertion = scenario.get("assertions", {}).get(surface, spec.get("assertions", {}))
             label = f"{scenario_id}/{surface}"
+            response = _safe_http(request_spec, timeout, label, failures)
+            if response is None:
+                continue
+            assertion = scenario.get("assertions", {}).get(surface, spec.get("assertions", {}))
             surface_failures = _assert_response(response, assertion, label)
             failures.extend(surface_failures)
             results.append({
@@ -311,9 +329,16 @@ def run(config: dict[str, Any], timeout: int = 20) -> int:
                         "headers": spec.get("headers", {}), "token_env": spec.get("token_env"),
                         "body": spec.get("body"),
                     }, timeout)
-                revoke_result = revoke_future.result()
+                try:
+                    revoke_result = revoke_future.result()
+                except MatrixError:
+                    failures.append(f"{scenario_id}/race-revoke: staging transport failed")
                 for surface, future in race_jobs.items():
-                    response = future.result()
+                    try:
+                        response = future.result()
+                    except MatrixError:
+                        failures.append(f"{scenario_id}/race/{surface}: staging transport failed")
+                        continue
                     assertion = scenario.get("race_assertions", {}).get(surface, {"status": [200, 401, 403, 503]})
                     label = f"{scenario_id}/race/{surface}"
                     surface_failures = _assert_response(response, assertion, label)
@@ -332,25 +357,29 @@ def run(config: dict[str, Any], timeout: int = 20) -> int:
         if revoke:
             revoke_spec = revoke_spec or _render(revoke, variables)
             if revoke_result is None:
-                revoke_result = _http({
+                revoke_result = _safe_http({
                     "url": revoke_spec["url"], "method": revoke_spec.get("method", "POST"),
                     "headers": revoke_spec.get("headers", {}), "token_env": revoke_spec.get("token_env"),
                     "body": revoke_spec.get("body"),
-                }, timeout)
-            if revoke_result.status not in revoke_spec.get("accepted_status", [200, 204]):
+                }, timeout, f"{scenario_id}/revoke", failures)
+            if revoke_result is None:
+                pass
+            elif revoke_result.status not in revoke_spec.get("accepted_status", [200, 204]):
                 failures.append(f"{scenario_id}: revocation step returned HTTP {revoke_result.status}")
             elif scenario.get("recheck_after_revoke", False):
                 for surface in sorted(REQUIRED_SURFACES):
                     spec = _render(config["surfaces"][surface], variables)
-                    response = _http({
+                    label = f"{scenario_id}/post-revoke/{surface}"
+                    response = _safe_http({
                         "url": spec["url"], "method": spec["method"],
                         "headers": spec.get("headers", {}), "token_env": spec.get("token_env"),
                         "body": spec.get("body"),
-                    }, timeout)
+                    }, timeout, label, failures)
+                    if response is None:
+                        continue
                     assertion = scenario.get("post_revoke_assertions", {}).get(
                         surface, scenario.get("assertions", {}).get(surface, spec.get("assertions", {}))
                     )
-                    label = f"{scenario_id}/post-revoke/{surface}"
                     surface_failures = _assert_response(response, assertion, label)
                     failures.extend(surface_failures)
                     results.append({
@@ -362,13 +391,15 @@ def run(config: dict[str, Any], timeout: int = 20) -> int:
                         "failures": len(surface_failures),
                     })
         # Teardown must be explicit and provider-confirmed by the fixture control plane.
-        deactivated = _http({
+        deactivated = _safe_http({
             "url": control["url"].rstrip("/") + "/v1/scenarios/" + scenario_id + "/deactivate",
             "method": "POST",
             "headers": {"Authorization": "Bearer " + control_token},
             "body": {"fixture_id": variables["fixture_id"]},
-        }, timeout)
-        if deactivated.status not in (200, 204):
+        }, timeout, f"{scenario_id}/fixture-deactivate", failures)
+        if deactivated is None:
+            failures.append(f"{scenario_id}: fixture teardown not confirmed")
+        elif deactivated.status not in (200, 204):
             failures.append(f"{scenario_id}: fixture teardown not confirmed (HTTP {deactivated.status})")
     report = {
         "schema_version": 1,
