@@ -74,3 +74,42 @@ PNELLY's description and Look It responses contain candidate matches, not displa
 ## CAL purchase-proxy kill switch
 
 Set `COMMERCE_CAL_PURCHASE_PROXY_ENABLED=false` by default. Enable only in a controlled non-production environment after candidate-bound purchase-receipt verification and audit persistence have passed. A missing flag, failed readiness probe, missing receipt signer, stale migration or disabled CAL Gateway keeps cart mutation and checkout fail-closed.
+
+
+## Supabase browser authentication and iOS
+
+The BFF authentication router provides:
+- `GET /auth/login/google`, `/auth/login/apple`, and `/auth/login/microsoft` for provider redirects. Microsoft maps to Supabase's `azure` provider. OAuth authorization uses a server-generated PKCE verifier and state; pending verifiers are encrypted and consumed once.
+- `POST /auth/email/start` for a one-time email sign-in link. Configure the Supabase email template and redirect allowlist so the one-time `token_hash` returns to `/auth/callback`; the BFF exchanges it server-side.
+- `GET /auth/callback` for one-time code/token confirmation and session creation.
+- `GET /auth/session`, `POST /auth/refresh`, and `POST /auth/logout` for session introspection, serialized refresh-token rotation, and local Supabase session revocation.
+- `POST /auth/ios/apple` for native iOS Sign in with Apple ID-token exchange. The iOS client must create a cryptographic nonce, send its SHA-256 hash to Apple, and submit the original nonce with Apple's ID token. Register the iOS bundle ID in Supabase's Apple Client IDs. The BFF returns only an opaque HttpOnly cookie, never the Supabase tokens.
+- `GET /auth/providers` advertises supported sign-in methods.
+
+Access and refresh tokens are encrypted using a dedicated Fernet key and stored in the private `auth_private.sessions` schema. Browser cookies contain only a random opaque session handle, are HttpOnly/Secure/SameSite=Lax and host-only, and use a 30-day sliding server-side session lifetime by default. Refresh requests lock the session row before using the rotating refresh token. The BFF verifies every access token against the configured JWKS and requires the configured issuer, audience, expiry, issued-at and subject claims; only ES256/RS256 are accepted. `app_role` is the application role claim; Supabase's reserved `role=authenticated` is not an app role.
+
+### Required BFF secrets and database grants
+
+Set these only in the Render secret manager after provisioning a dedicated database login:
+- `SUPABASE_URL=https://opmfudcofezmatqqsfho.supabase.co`
+- `SUPABASE_PUBLISHABLE_KEY` (publishable/anon API key; never service_role)
+- `SUPABASE_JWKS_URL=https://opmfudcofezmatqqsfho.supabase.co/auth/v1/.well-known/jwks.json`
+- `SUPABASE_JWT_ISSUER=https://opmfudcofezmatqqsfho.supabase.co/auth/v1`
+- `SUPABASE_JWT_AUDIENCE=authenticated`
+- `AUTH_CALLBACK_URL=https://<approved-bff-host>/auth/callback`
+- `AUTH_SESSION_DATABASE_URL` (dedicated BFF LOGIN user, member of `cirvanna_bff_auth`; never use the Supabase postgres owner credential)
+- `AUTH_SESSION_ENCRYPTION_KEY` (Fernet key generated out-of-band; keep identical across BFF instances)
+- Optional `AUTH_SESSION_TTL_SECONDS` (default 2592000; permitted 3600–7776000)
+- Optional `AUTH_POST_LOGIN_REDIRECT=/`
+
+Apply `supabase/migrations/202611230001_auth_private_sessions.sql`, then create a separate LOGIN role and grant it membership in `cirvanna_bff_auth`. Do not expose `auth_private` through the Supabase Data API. Do not enable the custom access-token hook until its live-issued JWT claims are confirmed.
+
+### Provider setup required outside the repository
+
+- Google: create a Google OAuth web client; add the Supabase Auth callback URL to its authorized redirect URIs; configure its client ID and secret in Supabase Auth.
+- Apple web: configure an Apple Services ID, associated App ID, domain and callback. Apple OAuth client secrets require rotation every six months. For native iOS, enable Sign in with Apple on the App ID and add the bundle ID to Supabase's Apple Client IDs. If both web and native are enabled, place the Services ID first in the Client IDs list.
+- Microsoft: register an application in Microsoft Entra ID, add the Supabase Auth callback URL, choose supported account types deliberately, and configure the client ID/secret in Supabase's Azure provider.
+- Email: verify SMTP delivery, configure the Site URL and exact BFF callback redirect allowlist, and customize the magic-link template to deliver a one-time token hash to the BFF callback.
+- iOS app: use AuthenticationServices for native Apple sign-in, generate a per-request nonce, and use the bundle ID configured above. The repository currently contains the BFF integration contract; a native iOS app target, bundle identifier, Apple Developer credentials and device QA still need to be supplied before claiming a shipped iOS client.
+
+Do not set provider-enabled flags or deploy the public BFF until real provider credentials, callback allowlists, the auth database login, encryption key, live JWKS/signing configuration, upstream services and independent security review are all in place.
