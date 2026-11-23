@@ -19,6 +19,7 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 REQUIRED_SURFACES = {
     "marketplace", "pnelly", "wardrobe", "look_it", "click_it",
@@ -189,6 +190,9 @@ def validate_manifest(config: dict[str, Any]) -> None:
     control = config.get("fixture_control")
     if not isinstance(control, dict) or not control.get("url") or not control.get("token_env"):
         raise MatrixError("fixture_control.url and fixture_control.token_env are required")
+    control_url = urlsplit(str(control["url"]))
+    if control_url.scheme != "https" or control_url.username or control_url.password:
+        raise MatrixError("fixture_control.url must be trusted HTTPS without embedded credentials")
     scenarios = config.get("scenarios")
     if not isinstance(scenarios, list):
         raise MatrixError("scenarios must be a list")
@@ -205,6 +209,11 @@ def validate_manifest(config: dict[str, Any]) -> None:
     for surface, spec in surfaces.items():
         if not isinstance(spec, dict) or not spec.get("url") or not spec.get("method"):
             raise MatrixError(f"surface {surface} requires url and method")
+        parsed_url = urlsplit(str(spec["url"]))
+        if parsed_url.scheme != "https" or parsed_url.username or parsed_url.password:
+            raise MatrixError(f"surface {surface} URL must be trusted HTTPS without embedded credentials")
+        if not spec.get("token_env"):
+            raise MatrixError(f"surface {surface} must use a dedicated token_env")
     for scenario in scenarios:
         required = set(scenario.get("exercise_surfaces", []))
         if required != REQUIRED_SURFACES:
@@ -212,6 +221,12 @@ def validate_manifest(config: dict[str, Any]) -> None:
                 f"scenario {scenario.get('id')} must exercise every surface; "
                 f"missing={sorted(REQUIRED_SURFACES-required)}, extra={sorted(required-REQUIRED_SURFACES)}"
             )
+        assertions = scenario.get("assertions", {})
+        if set(assertions) != REQUIRED_SURFACES:
+            raise MatrixError(f"scenario {scenario.get('id')} must define assertions for every shopper surface")
+        if scenario.get("id") in {"consent_session_revoked", "cache_after_revocation", "payment_revoked_race"}:
+            if not scenario.get("revoke") or scenario.get("recheck_after_revoke") is not True:
+                raise MatrixError(f"scenario {scenario.get('id')} must revoke and recheck all surfaces")
 
 
 def run(config: dict[str, Any], timeout: int = 20) -> int:
