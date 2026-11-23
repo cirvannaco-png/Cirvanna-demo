@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -78,6 +81,45 @@ def valid_manifest():
 
 
 class CALStagingMatrixContractTests(unittest.TestCase):
+    def test_jsonpath_supports_nested_and_wildcard_paths(self):
+        document = {"decision": {"verdict": "BLOCK"}, "products": [{"id": "p1"}, {"id": "p2"}]}
+        self.assertEqual(runner._json_path(document, "$.decision.verdict"), "BLOCK")
+        self.assertEqual(runner._json_path(document, "$.products[*].id"), ["p1", "p2"])
+        self.assertIs(runner._json_path(document, "$.missing.value"), runner._MISSING)
+
+    def test_http_client_does_not_follow_redirects(self):
+        observed = []
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                observed.append(self.headers.get("Authorization"))
+                self.send_response(302)
+                self.send_header("Location", "/credential-capture")
+                self.end_headers()
+            def log_message(self, *_args):
+                pass
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        token_name = "CAL_REDIRECT_TEST_TOKEN"
+        previous = os.environ.get(token_name)
+        os.environ[token_name] = "x" * 40
+        try:
+            response = runner._http({
+                "url": f"http://127.0.0.1:{server.server_port}/start",
+                "method": "GET",
+                "token_env": token_name,
+            }, timeout=3)
+            self.assertEqual(response.status, 302)
+            self.assertEqual(observed, ["Bearer " + "x" * 40])
+        finally:
+            if previous is None:
+                os.environ.pop(token_name, None)
+            else:
+                os.environ[token_name] = previous
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
     def test_complete_staging_manifest_is_accepted(self):
         runner.validate_manifest(valid_manifest())
 
