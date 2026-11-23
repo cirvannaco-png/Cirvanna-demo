@@ -1,0 +1,36 @@
+name: Codespaces configuration checks
+
+on:
+  pull_request:
+    paths:
+      - ".devcontainer/**"
+      - ".github/workflows/codespaces-config.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - ".devcontainer/**"
+      - ".github/workflows/codespaces-config.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate devcontainer JSON
+        run: python -m json.tool .devcontainer/devcontainer.json >/dev/null
+      - name: Validate shell scripts
+        run: bash -n .devcontainer/scripts/*.sh
+      - name: Validate required helper files
+        run: |
+          test -s .devcontainer/README.md
+          test -x .devcontainer/scripts/post-create.sh || test -s .devcontainer/scripts/post-create.sh
+          test -s .devcontainer/scripts/test-service.sh
+          test -s .devcontainer/scripts/start-postgres.sh
+          test -s .devcontainer/scripts/stop-postgres.sh
