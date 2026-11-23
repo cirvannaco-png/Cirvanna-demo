@@ -88,8 +88,6 @@ def request_body(**overrides):
     body = {
         "request_id": "req-eligibility-001",
         "candidate_id": "catalog-product-001",
-        "cal_policy_id": "standard-marketplace",
-        "policy_version": "marketplace-policy-1",
         "context": {
             "user_id": "user-001", "age_years": 21, "location": "Nairobi",
             "occasion": "everyday", "climate": "warm",
@@ -258,15 +256,23 @@ def test_client_cannot_override_server_owned_cal_thresholds(client):
 
 
 @pytest.mark.parametrize(
-    "override",
+    "caller_policy_field",
     [
         {"cal_policy_id": "unregistered-policy"},
         {"policy_version": "stale-policy-version"},
     ],
 )
-def test_unregistered_or_stale_cal_policy_fails_closed(client, override):
-    body = request_body(**override)
+def test_client_cannot_select_cal_policy_or_version(client, caller_policy_field):
+    body = request_body(**caller_policy_field)
     response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 422
+
+
+def test_unregistered_server_cal_policy_fails_closed(client, monkeypatch):
+    monkeypatch.setenv("CATACACi_POLICY_ID", "unregistered-policy")
+    response = client.post(
+        "/v1/eligibility/evaluate", json=request_body(), headers=headers()
+    )
     assert response.status_code == 503
     assert response.json()["detail"]["code"] == "SERVER_CAL_POLICY_UNAVAILABLE"
 
