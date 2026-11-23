@@ -312,6 +312,44 @@ def _server_policy(payload: "EligibilityRequest") -> PolicyIn:
         raise HTTPException(503, detail={"code": "SERVER_POLICY_UNAVAILABLE"}) from exc
 
 
+def _redeem_age_attestation(payload: dict, signature: str) -> None:
+    """Atomically consume a verified JTI in the Identity service before EEPL use."""
+    url = os.getenv("AGE_EVIDENCE_REDEMPTION_URL", "").strip()
+    token = os.getenv("AGE_EVIDENCE_REDEMPTION_TOKEN", "").strip()
+    parsed = urlsplit(url)
+    if (
+        len(token.encode("utf-8")) < 32 or parsed.scheme != "https"
+        or not parsed.hostname or parsed.username or parsed.password
+        or parsed.query or parsed.fragment
+        or not parsed.path.endswith("/internal/v1/age-evidence/attestations/redeem")
+    ):
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_REDEMPTION_NOT_CONFIGURED"})
+    request_body = {
+        "jti": payload["jti"], "subject_id": payload["subject_id"],
+        "request_id": payload["request_id"], "purpose": payload["purpose"],
+        "policy_id": payload["policy_id"], "policy_version": payload["policy_version"],
+        "threshold": payload["threshold"], "signature": signature,
+    }
+    try:
+        with httpx.Client(timeout=httpx.Timeout(5.0), trust_env=False, follow_redirects=False) as client:
+            response = client.post(
+                url, headers={"Authorization": "Bearer " + token, "Accept": "application/json"},
+                json=request_body,
+            )
+    except httpx.HTTPError as exc:
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_REDEMPTION_UNAVAILABLE"}) from exc
+    if response.status_code == 409:
+        raise HTTPException(401, detail={"code": "AGE_EVIDENCE_ALREADY_REDEEMED_OR_REVOKED"})
+    if response.status_code != 200:
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_REDEMPTION_REJECTED"})
+    try:
+        redeemed = response.json()
+    except ValueError as exc:
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_REDEMPTION_INVALID_RESPONSE"}) from exc
+    if not isinstance(redeemed, dict) or redeemed.get("redeemed") is not True:
+        raise HTTPException(503, detail={"code": "AGE_EVIDENCE_REDEMPTION_INVALID_RESPONSE"})
+
+
 def _verified_age_threshold(payload: "EligibilityRequest") -> tuple[int, bool] | None:
     attestation = payload.age_attestation
     signature = payload.age_attestation_signature
@@ -341,6 +379,7 @@ def _verified_age_threshold(payload: "EligibilityRequest") -> tuple[int, bool] |
         raise HTTPException(401, detail={"code": "INVALID_AGE_EVIDENCE"}) from exc
     if not valid:
         raise HTTPException(401, detail={"code": "AGE_EVIDENCE_BINDING_OR_SIGNATURE_INVALID"})
+    _redeem_age_attestation(attestation, signature)
     return attestation["threshold"], attestation["threshold_met"]
 
 
