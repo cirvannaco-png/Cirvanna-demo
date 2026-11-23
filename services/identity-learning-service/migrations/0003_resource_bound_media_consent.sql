@@ -1,3 +1,5 @@
+SET search_path TO identity_private;
+
 -- Resource-bound consent receipts for image, body, Twin and rendering purposes.
 -- Existing receipts become standalone consent bundles so legacy scope behavior is preserved.
 ALTER TABLE identity_tal_consent_receipts
