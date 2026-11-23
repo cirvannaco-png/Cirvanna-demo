@@ -32,6 +32,7 @@ for package in (
 from catacaci import DecisionSignal, DecisionVerdict, SignalKind, SignalState  # noqa: E402
 from catacaci.pipeline import evaluate_candidate  # noqa: E402
 from catacaci.policy import CALPolicy, CALPolicyRegistryError, resolve_configured_cal_policy  # noqa: E402
+from catacaci.receipts import DecisionReceiptStoreError, check_receipt_store, persist_decision_receipt  # noqa: E402
 from eepl import ContextField, EEPLContext, EEPLPolicy  # noqa: E402
 from age_evidence import AgeEvidenceError, verify_threshold_attestation  # noqa: E402
 from age_evidence.policy import PolicyRegistryError, resolve_active_policy  # noqa: E402
@@ -432,7 +433,7 @@ def verify_npl_signature(payload: "EligibilityRequest") -> None:
         raise HTTPException(401, detail={"code": "UNTRUSTED_NPL_EVIDENCE"})
 
 
-def _result_json(result, payload: "EligibilityRequest", cal_policy: CALPolicy) -> dict:
+def _result_json(result, payload: "EligibilityRequest", cal_policy: CALPolicy, eepl_policy: EEPLPolicy) -> dict:
     arbitration = result.arbitration
     return {
         "service": SERVICE,
@@ -474,6 +475,7 @@ def _result_json(result, payload: "EligibilityRequest", cal_policy: CALPolicy) -
                 "model_version": result.fit_estimate.model_version, "calibration_version": result.fit_estimate.calibration_version,
                 "evidence_ids": list(result.fit_estimate.evidence_ids)},
         },
+        "eepl_policy": {"id": eepl_policy.policy_id, "version": eepl_policy.policy_version},
         "policy": {"id": cal_policy.policy_id, "version": cal_policy.policy_version,
             "minimum_fit_confidence": cal_policy.minimum_fit_confidence,
             "maximum_fit_confidence_disagreement": cal_policy.maximum_fit_confidence_disagreement,
@@ -502,15 +504,18 @@ def readiness() -> dict:
         cal_policy_registry_configured = True
     except CALPolicyRegistryError:
         cal_policy_registry_configured = False
+    decision_receipt_store_ready = check_receipt_store()
     ready = (
         internal_configured and fit_key_configured and npl_key_configured
         and cultural_key_configured and cal_policy_registry_configured
+        and decision_receipt_store_ready
     )
     response = {"status": "ready" if ready else "not_ready", "service": SERVICE,
         "internal_auth_configured": internal_configured, "trusted_fit_evidence_configured": fit_key_configured,
         "trusted_npl_evidence_configured": npl_key_configured,
         "trusted_cultural_evidence_configured": cultural_key_configured,
         "catacaci_policy_registry_configured": cal_policy_registry_configured,
+        "decision_receipt_store_ready": decision_receipt_store_ready,
         "fci_prediction_model_available": False, "ready": ready}
     if not ready:
         raise HTTPException(503, detail=response)
@@ -527,7 +532,7 @@ def capabilities() -> dict:
         "persisted_user_preference_store": False, "signed_cultural_evidence_required": True,
         "cil_feedback_review_bridge": bool(os.getenv("CIL_SERVICE_URL") and os.getenv("CIL_SERVICE_TOKEN") and os.getenv("CIL_CAL_SERVICE_TOKEN")),
         "cil_feedback_review_enforcement_required": _cil_cal_review_enforcement_required(),
-        "decision_audit_persistence": False, "click_it_reconstruction": False,
+        "decision_audit_persistence": check_receipt_store(), "click_it_reconstruction": False,
         "virtual_twin_generation": False, "virtual_try_on": False}
 
 
@@ -650,7 +655,7 @@ def evaluate_eligibility(payload: EligibilityRequest) -> dict:
             minimum_alignment_score=cal_policy.minimum_alignment_score,
             policy_version=cal_policy.policy_version,
         )
-        response_payload = _result_json(result, payload, cal_policy)
+        response_payload = _result_json(result, payload, cal_policy, policy)
         response_payload["age_evidence"] = {
             "contract_version": "age-threshold-attestation-v1",
             "status": (
@@ -663,7 +668,53 @@ def evaluate_eligibility(payload: EligibilityRequest) -> dict:
             "threshold": verified_age[0] if verified_age else None,
         }
         feedback_review = _load_cil_cal_feedback_decision(payload)
-        return _apply_cil_cal_feedback_veto(response_payload, feedback_review)
+        final_response = _apply_cil_cal_feedback_veto(response_payload, feedback_review)
+        evaluated_signals = [
+            {
+                "signal_id": signal.signal_id,
+                "kind": signal.kind.value,
+                "state": signal.state.value,
+                "required": signal.required,
+                "confidence": signal.confidence,
+                "reason_code": signal.reason_code,
+                "source_version": signal.source_version,
+            }
+            for signal in result.arbitration.evaluated_signals
+        ]
+        if feedback_review and feedback_review.get("verdict") == "BLOCK":
+            evaluated_signals.append({
+                "signal_id": f"cil-feedback-review:{feedback_review['review_id']}",
+                "kind": "other", "state": "block", "required": True,
+                "confidence": None, "reason_code": "CIL_FEEDBACK_REVIEW_BLOCK",
+                "source_version": str(feedback_review["decision_reference"]),
+            })
+        snapshot = json.dumps(
+            payload.candidate_attributes, ensure_ascii=False, separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8")
+        receipt = {
+            "request_id": payload.request_id,
+            "candidate_id": payload.candidate_id,
+            "verdict": final_response["decision"],
+            "may_display": final_response["may_display"],
+            "eepl_policy_id": policy.policy_id,
+            "eepl_policy_version": policy.policy_version,
+            "cal_policy_id": cal_policy.policy_id,
+            "cal_policy_version": cal_policy.policy_version,
+            "arbitration_contract_version": result.arbitration.contract_version,
+            "pipeline_contract_version": result.contract_version,
+            "candidate_snapshot_sha256": hashlib.sha256(snapshot).hexdigest(),
+            "evaluated_signals": evaluated_signals,
+            "reasons": [
+                {"code": item.get("code"), "signal_id": item.get("signal_id")}
+                for item in final_response.get("arbitration", {}).get("reasons", [])
+            ],
+        }
+        try:
+            persisted = persist_decision_receipt(receipt)
+        except DecisionReceiptStoreError as exc:
+            raise HTTPException(503, detail={"code": "CATACACI_DECISION_RECEIPT_UNAVAILABLE"}) from exc
+        final_response["decision_receipt"] = persisted
+        return final_response
     except CALPolicyRegistryError as exc:
         raise HTTPException(503, detail={"code": "SERVER_CAL_POLICY_UNAVAILABLE"}) from exc
     except ValueError as exc:
