@@ -4624,3 +4624,27 @@ def test_cal_discovery_envelope_requires_authority_request_id_and_complete_count
             main._validate_cal_discovery_envelope(payload, error_code="INVALID")
         assert exc.value.status_code == 502
         assert exc.value.detail["code"] == "INVALID"
+
+def test_cookie_authenticated_writes_reject_cross_origin_requests(client, monkeypatch):
+    monkeypatch.setenv("AUTH_CALLBACK_URL", "https://bff.example.com/auth/callback")
+    response = client.post(
+        "/auth/refresh",
+        cookies={main.COOKIE_NAME: "opaque-session"},
+        headers={"Origin": "https://attacker.example"},
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "AUTH_CSRF_ORIGIN_REJECTED"
+    assert "no-store" in response.headers["cache-control"].casefold()
+
+
+def test_cookie_authenticated_writes_accept_exact_application_origin(client, monkeypatch):
+    monkeypatch.setenv("AUTH_CALLBACK_URL", "https://bff.example.com/auth/callback")
+    response = client.post(
+        "/auth/refresh",
+        cookies={main.COOKIE_NAME: "opaque-session"},
+        headers={"Origin": "https://bff.example.com"},
+    )
+    # The origin guard passes; the request then fails closed because this test
+    # intentionally has no production session database configured.
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "AUTH_SESSION_DATABASE_URL_NOT_CONFIGURED"
