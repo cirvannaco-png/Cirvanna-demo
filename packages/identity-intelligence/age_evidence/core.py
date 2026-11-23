@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -106,6 +107,7 @@ def build_threshold_attestation(
         raise AgeEvidenceError("attestation timestamps must be timezone-aware")
     payload = {
         "contract_version": CONTRACT_VERSION,
+        "jti": str(uuid.uuid4()),
         "issuer": "cirvanna-age-evidence-service",
         "provider": "yoti",
         "subject_id": subject_id,
@@ -130,12 +132,16 @@ def build_threshold_attestation(
 
 def validate_threshold_attestation(payload: dict[str, Any]) -> None:
     required = {
-        "contract_version", "issuer", "provider", "subject_id", "request_id", "purpose",
+        "contract_version", "jti", "issuer", "provider", "subject_id", "request_id", "purpose",
         "policy_id", "policy_version", "threshold", "threshold_met",
         "provider_session_id", "provider_evidence_id", "issued_at", "expires_at",
     }
     if not isinstance(payload, dict) or set(payload) != required:
         raise AgeEvidenceError("age attestation fields do not match the closed contract")
+    try:
+        uuid.UUID(payload["jti"])
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise AgeEvidenceError("jti must be a UUID") from exc
     if payload["contract_version"] != CONTRACT_VERSION:
         raise AgeEvidenceError("unsupported age attestation contract version")
     for key in (
