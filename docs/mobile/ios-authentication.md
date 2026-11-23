@@ -62,9 +62,9 @@ Use the Swift SDK's OAuth flow with the app's registered callback URL and handle
 
 ```swift
 // Provider name is Azure in Supabase, although the user-facing label is Microsoft.
-let session = try await supabase.auth.signInWithOAuth(provider: .azure) { authSession in
-    // Present the supplied URL using ASWebAuthenticationSession.
-    // Return the callback URL to the Supabase SDK for code exchange.
+let session = try await supabase.auth.signInWithOAuth(provider: .azure) { (authSession: ASWebAuthenticationSession) in
+    // Customize the system authentication session if required.
+    authSession.prefersEphemeralWebBrowserSession = false
 }
 ```
 
