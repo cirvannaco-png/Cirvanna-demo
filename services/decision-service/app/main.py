@@ -34,7 +34,7 @@ from catacaci.pipeline import evaluate_candidate  # noqa: E402
 from catacaci.policy import CALPolicy, CALPolicyRegistryError, resolve_configured_cal_policy  # noqa: E402
 from eepl import ContextField, EEPLContext, EEPLPolicy  # noqa: E402
 from age_evidence import AgeEvidenceError, verify_threshold_attestation  # noqa: E402
-from age_evidence.policy import PolicyRegistryError, resolve_policy  # noqa: E402
+from age_evidence.policy import PolicyRegistryError, resolve_active_policy  # noqa: E402
 from fci import FitConfidenceEstimate  # noqa: E402
 from cultural_identity import CulturalRequirement, RequirementKind, canonical_cultural_evidence_payload  # noqa: E402
 from npl import NegativePreference, PreferenceSource, TargetType, canonical_npl_evidence_payload  # noqa: E402
@@ -299,12 +299,14 @@ def _apply_cil_cal_feedback_veto(result_json: dict, review: dict | None) -> dict
     return result_json
 
 
-def _server_policy(payload: "EligibilityRequest") -> PolicyIn:
-    """Resolve only an identifier from the request; all policy rules stay server-side."""
+def _server_policy(payload: "EligibilityRequest" | None = None) -> PolicyIn:
+    """Resolve the active EEPL policy exclusively from trusted service configuration.
+
+    The legacy request field is deliberately ignored for wire compatibility. It
+    cannot select a policy ID/version or alter any eligibility rule.
+    """
     try:
-        registered = resolve_policy(
-            payload.eepl_policy.policy_id, payload.eepl_policy.policy_version,
-        )
+        registered = resolve_active_policy()
         return PolicyIn.model_validate(registered)
     except (PolicyRegistryError, ValueError) as exc:
         raise HTTPException(503, detail={"code": "SERVER_POLICY_UNAVAILABLE"}) from exc
