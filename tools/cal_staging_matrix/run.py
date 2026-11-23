@@ -33,6 +33,7 @@ REQUIRED_SCENARIOS = {
 }
 SECRET_KEY_PATTERN = re.compile(r"(token|secret|password|authorization|api[_-]?key)", re.I)
 ENV_PATTERN = re.compile(r"^\$\{([A-Z][A-Z0-9_]*)\}$")
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 
 
 class MatrixError(RuntimeError):
