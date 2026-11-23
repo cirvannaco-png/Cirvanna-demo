@@ -1,3 +1,6 @@
+CREATE SCHEMA IF NOT EXISTS twin_private;
+SET search_path TO twin_private;
+
 -- Canonical Twin metadata only. Asset bytes remain in private Asset Service.
 CREATE TABLE IF NOT EXISTS twin_registry_twins (
   twin_id varchar(128) PRIMARY KEY,
