@@ -855,8 +855,22 @@ def readiness(db: Annotated[Session, Depends(get_db)]):
         db.execute(select(CILProviderConsentRevocationOutbox.command_id).limit(1))
         db.execute(select(DSICaptureChallengeRow.challenge_id).limit(1))
         db.execute(select(DSICaptureVerificationReceiptRow.receipt_id).limit(1))
-        return {
-            "status": "ready",
+        from sqlalchemy import text
+        db.execute(text("SELECT 1 FROM identity_private.identity_age_verification_sessions LIMIT 1"))
+        db.execute(text("SELECT 1 FROM identity_private.identity_age_threshold_attestations LIMIT 1"))
+        age_provider_vars = (
+            "YOTI_AVS_API_KEY", "YOTI_AVS_SDK_ID", "AGE_EVIDENCE_HMAC_SECRET",
+            "YOTI_AVS_CALLBACK_URL", "YOTI_AVS_CANCEL_URL",
+            "YOTI_AVS_PRIVACY_POLICY_URL", "YOTI_AVS_TERMS_URL",
+        )
+        age_provider_configured = all(bool(os.getenv(name, "").strip()) for name in age_provider_vars)
+        age_orchestrator_auth_configured = (
+            len(os.getenv("AGE_EVIDENCE_ORCHESTRATOR_TOKEN", "").encode("utf-8")) >= 32
+            and len(os.getenv("AGE_EVIDENCE_REDEMPTION_TOKEN", "").encode("utf-8")) >= 32
+        )
+        ready = age_provider_configured and age_orchestrator_auth_configured
+        response = {
+            "status": "ready" if ready else "not_ready",
             "service": SERVICE,
             "database": "reachable",
             "durable_usi": True,
@@ -866,8 +880,14 @@ def readiness(db: Annotated[Session, Depends(get_db)]):
             "cil_provider_consent_cleanup_outbox": True,
             "dsi_capture_challenge_state": True,
             "dsi_capture_verification_receipts": True,
-            "ready": True,
+            "age_evidence_schema_ready": True,
+            "yoti_provider_configured": age_provider_configured,
+            "age_evidence_internal_auth_configured": age_orchestrator_auth_configured,
+            "ready": ready,
         }
+        if not ready:
+            raise HTTPException(503, detail=response)
+        return response
     except SQLAlchemyError:
         raise HTTPException(503, detail={"code": "IDENTITY_SCHEMA_NOT_READY"})
 
