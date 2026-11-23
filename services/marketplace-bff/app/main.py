@@ -23,6 +23,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.auth_sessions import router as auth_router, close_auth_pool
 from app.observability import install_observability
 from app.pnelly_preferences import (
     PnellyPreferenceMutationIn,
@@ -76,6 +77,12 @@ app = FastAPI(
 )
 
 install_observability(app, SERVICE)
+app.include_router(auth_router)
+
+
+@app.on_event("shutdown")
+async def close_auth_session_pool() -> None:
+    await close_auth_pool()
 
 app.mount("/assets", StaticFiles(directory=str(PORTAL_ASSETS_DIR), check_dir=True), name="portal-assets")
 
