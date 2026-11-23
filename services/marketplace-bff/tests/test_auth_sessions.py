@@ -204,6 +204,52 @@ def test_email_magic_link_callback_validates_nested_redirect_and_sets_opaque_coo
     assert "httponly" in cookie and "secure" in cookie
 
 
+def test_oauth_callback_requires_initiating_browser_state_cookie(monkeypatch):
+    async def consume(state):
+        assert state == "oauth-state"
+        return "google", "pkce-verifier"
+
+    monkeypatch.setattr(auth_sessions, "_consume_pending", consume)
+    with make_client() as client:
+        response = client.get(
+            "/auth/callback",
+            params={"state": "oauth-state", "code": "authorization-code"},
+            follow_redirects=False,
+        )
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "AUTH_BROWSER_STATE_MISMATCH"
+
+
+def test_oauth_callback_accepts_matching_browser_state_and_clears_state_cookie(monkeypatch):
+    async def consume(state):
+        assert state == "oauth-state"
+        return "google", "pkce-verifier"
+
+    async def exchange(code, verifier):
+        assert code == "authorization-code"
+        assert verifier == "pkce-verifier"
+        return {"access_token": "verified-access", "refresh_token": "rotated-refresh"}
+
+    async def store(tokens):
+        assert tokens["access_token"] == "verified-access"
+        return "opaque-handle", 3600, {"user_id": "3f44c3f7-9b9d-44d8-8a56-ef25ab86d5b4", "app_role": "customer"}
+
+    monkeypatch.setattr(auth_sessions, "_consume_pending", consume)
+    monkeypatch.setattr(auth_sessions, "_exchange_code", exchange)
+    monkeypatch.setattr(auth_sessions, "_store_session", store)
+    with make_client() as client:
+        client.cookies.set(auth_sessions.OAUTH_STATE_COOKIE, "oauth-state")
+        response = client.get(
+            "/auth/callback",
+            params={"state": "oauth-state", "code": "authorization-code"},
+            follow_redirects=False,
+        )
+    assert response.status_code == 303
+    cookie_headers = response.headers.get_list("set-cookie")
+    assert any("__Host-cirvanna_session=opaque-handle" in item for item in cookie_headers)
+    assert any("__Host-cirvanna_oauth_state=" in item and "Max-Age=0" in item for item in cookie_headers)
+
+
 def test_email_magic_link_callback_rejects_external_next_url(monkeypatch):
     monkeypatch.setattr(auth_sessions, "_callback_url", lambda: "https://bff.example.com/auth/callback")
     with make_client() as client:
