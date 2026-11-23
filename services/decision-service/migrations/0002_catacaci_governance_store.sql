@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS decision_private.catacaci_cil_contributions (
     contributor_hash CHAR(64) NOT NULL,
     outcome_success BOOLEAN NOT NULL,
     observed_at TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
     UNIQUE(cohort_key, period_start, contributor_hash)
 );
 CREATE INDEX IF NOT EXISTS ix_catacaci_cil_cohort_period ON decision_private.catacaci_cil_contributions(cohort_key, period_start);
