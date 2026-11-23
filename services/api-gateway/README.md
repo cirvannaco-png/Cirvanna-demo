@@ -65,6 +65,10 @@ Rejected Complementer suggestions remain soft observations. They do not automati
 
 The rank score is not a probability and never overrides CAL. The CIL serving assessment is mandatory after CAL SHOW; configure `CIL_SERVICE_URL` and the distinct `CIL_CATALOG_SERVICE_TOKEN` before discovery can return details. In the current build the safety and FCI providers are not provisioned, so otherwise eligible candidates remain REVIEW and no product details are returned from discovery. This is intentional fail-closed behavior, not a marketplace ranking failure.
 
+## Age evidence and legal eligibility
+
+The API Gateway never treats request-body `context.age_years` as verified age. It drops that value before EEPL evaluation and emits UNKNOWN for age-dependent legal restrictions unless a trusted server-side age proof is explicitly supplied to the legal gate. This intentionally withholds age-restricted candidates rather than allowing a self-declared age to authorize them. The current gateway does not yet consume the durable Yoti threshold-attestation lifecycle; connecting that provider, redemption/revocation checks and every shopper surface remains a release blocker. Do not enable age-restricted commerce based on the compatibility field.
+
 ## Independent safety and calibrated FCI evidence
 
 Provider adapters call a trusted HTTPS `POST /v1/evaluate` endpoint. Each response is bound to the request ID, Commerce-verified subject, candidate ID and SHA-256 of the canonical Catalog product snapshot. Provider evidence uses an HMAC key distinct from the validation-attestation key.
