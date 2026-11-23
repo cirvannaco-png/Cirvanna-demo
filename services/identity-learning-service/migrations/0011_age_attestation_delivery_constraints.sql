@@ -1,4 +1,6 @@
 -- Enforce complete, signed payload persistence after the additive column migration.
+-- Shape and signature-format CHECK constraints are created by 0010; do not
+-- recreate them here because PostgreSQL rejects duplicate constraint names.
 BEGIN;
 
 DO $$
@@ -16,11 +18,5 @@ $$;
 ALTER TABLE identity_private.identity_age_threshold_attestations
   ALTER COLUMN attestation_payload SET NOT NULL,
   ALTER COLUMN signature SET NOT NULL;
-
-ALTER TABLE identity_private.identity_age_threshold_attestations
-  ADD CONSTRAINT ck_identity_age_attestation_payload_object
-    CHECK (jsonb_typeof(attestation_payload) = 'object'),
-  ADD CONSTRAINT ck_identity_age_attestation_signature_hex
-    CHECK (signature ~ '^[0-9a-f]{64}$');
 
 COMMIT;
