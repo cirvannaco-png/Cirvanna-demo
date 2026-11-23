@@ -1,0 +1,33 @@
+name: Staging Supabase JWKS verification
+
+on:
+  push:
+    branches:
+      - auth/browser-pkce-multi-provider-ios-2026-11-23
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-staging-jwks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Fetch and validate public staging signing keys
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="https://opmfudcofezmatqqsfho.supabase.co/auth/v1/.well-known/jwks.json"
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error --max-time 20 "$url" -o "$RUNNER_TEMP/staging-jwks.json"
+          jq -e '
+            (.keys | type == "array" and length > 0)
+            and all(.keys[];
+              (.kid | type == "string" and length > 0)
+              and (.alg == "ES256" or .alg == "RS256")
+              and (.kty == "EC" or .kty == "RSA")
+              and ((.key_ops // ["verify"]) | index("verify") != null)
+            )
+          ' "$RUNNER_TEMP/staging-jwks.json" >/dev/null
+          echo "Staging JWKS endpoint reachable; trusted public signing keys:"
+          jq -r '.keys[] | "kid=\(.kid) alg=\(.alg) kty=\(.kty) use=\(.use // "sig")"' "$RUNNER_TEMP/staging-jwks.json"
