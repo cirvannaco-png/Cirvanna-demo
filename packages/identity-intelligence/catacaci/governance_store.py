@@ -47,7 +47,8 @@ def _connect():
 def append_cam_audit(audit: dict[str, Any]) -> dict[str, str]:
     required = {
         "audit_id", "request_id", "candidate_id", "observed_verdict",
-        "simulated_verdict", "changed_signal_ids", "policy_version",
+        "simulated_verdict", "changed_signal_ids", "changed_signal_overrides",
+        "simulated_signal_snapshot_sha256", "policy_version",
         "replay_version", "evaluated_at", "interpretation",
     }
     if not isinstance(audit, dict) or set(audit) != required:
@@ -57,18 +58,43 @@ def append_cam_audit(audit: dict[str, Any]) -> dict[str, str]:
     changed = audit["changed_signal_ids"]
     if not isinstance(changed, list) or any(not isinstance(x, str) or not x.strip() for x in changed) or len(changed) != len(set(changed)):
         raise GovernanceStoreError("CAM changed signal IDs must be unique non-empty strings")
+    if not isinstance(audit["changed_signal_overrides"], list) or len(audit["changed_signal_overrides"]) != len(changed):
+        raise GovernanceStoreError("CAM overrides must match changed signal IDs")
+    if (
+        not isinstance(audit["simulated_signal_snapshot_sha256"], str)
+        or len(audit["simulated_signal_snapshot_sha256"]) != 64
+        or any(ch not in "0123456789abcdef" for ch in audit["simulated_signal_snapshot_sha256"])
+    ):
+        raise GovernanceStoreError("CAM simulated signal snapshot digest is invalid")
     digest = _hash(audit)
     try:
         with _connect() as conn, conn.cursor() as cur:
             cur.execute(
+                """SELECT verdict, cal_policy_version, evaluated_signals
+                FROM catacaci_decision_receipts WHERE request_id=%s AND candidate_id=%s""",
+                (audit["request_id"], audit["candidate_id"]),
+            )
+            baseline = cur.fetchone()
+            if baseline is None:
+                raise GovernanceStoreError("CAM observed baseline has no durable decision receipt")
+            stored_signals = baseline[2] if isinstance(baseline[2], list) else json.loads(baseline[2])
+            stored_ids = {item.get("signal_id") for item in stored_signals if isinstance(item, dict)}
+            if (
+                baseline[0].lower() != audit["observed_verdict"]
+                or baseline[1] != audit["policy_version"]
+                or not set(changed).issubset(stored_ids)
+            ):
+                raise GovernanceStoreError("CAM baseline verdict, policy or signal IDs do not match the durable receipt")
+            cur.execute(
                 """INSERT INTO catacaci_cam_audits
                 (audit_id, request_id, candidate_id, observed_verdict, simulated_verdict,
-                 changed_signal_ids, policy_version, replay_version, evaluated_at,
-                 interpretation, audit_sha256)
-                VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s)
+                 changed_signal_ids, changed_signal_overrides, simulated_signal_snapshot_sha256,
+                 policy_version, replay_version, evaluated_at, interpretation, audit_sha256)
+                VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s,%s,%s,%s,%s)
                 ON CONFLICT (audit_id) DO NOTHING""",
                 (audit["audit_id"], audit["request_id"], audit["candidate_id"],
                  audit["observed_verdict"], audit["simulated_verdict"], _json(changed),
+                 _json(audit["changed_signal_overrides"]), audit["simulated_signal_snapshot_sha256"],
                  audit["policy_version"], audit["replay_version"], audit["evaluated_at"],
                  audit["interpretation"], digest),
             )
