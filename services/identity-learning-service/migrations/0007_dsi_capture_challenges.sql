@@ -1,3 +1,5 @@
+SET search_path TO identity_private;
+
 -- DSI server-issued, one-time capture challenges and short-lived verification receipts.
 -- Raw images, raw nonce values, attestation certificates and user media are never stored here.
 BEGIN;
