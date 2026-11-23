@@ -38,7 +38,17 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sess
 SERVICE = "cirvanna-identity-learning-service"
 bearer = HTTPBearer(auto_error=False)
 SUBJECT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$")
-sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "identity-intelligence"))
+source_path = Path(__file__).resolve()
+package_roots = []
+if len(source_path.parents) > 3:
+    package_roots.append(source_path.parents[3] / "packages" / "identity-intelligence")
+package_roots.append(Path("/app"))
+for package_root in package_roots:
+    if (package_root / "age_evidence" / "__init__.py").is_file():
+        sys.path.insert(0, str(package_root))
+        break
+else:
+    raise RuntimeError("shared age_evidence package is missing from the service image")
 from age_evidence.api import router as age_evidence_router  # noqa: E402
 
 SCOPES = {
