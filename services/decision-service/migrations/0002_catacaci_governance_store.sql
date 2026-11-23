@@ -128,7 +128,8 @@ BEFORE UPDATE OR DELETE ON decision_private.catacaci_vsl_events
 FOR EACH ROW EXECUTE FUNCTION decision_private.catacaci_reject_append_only_mutation();
 
 -- Keep the private schema inaccessible to browser-facing Supabase roles.
-DO $$
+REVOKE ALL ON ALL TABLES IN SCHEMA decision_private FROM PUBLIC;
+DO $
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anon') THEN
         REVOKE ALL ON SCHEMA decision_private FROM anon;
@@ -140,7 +141,14 @@ BEGIN
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='cirvanna_decision_audit') THEN
         GRANT USAGE ON SCHEMA decision_private TO cirvanna_decision_audit;
-        GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA decision_private TO cirvanna_decision_audit;
+        GRANT SELECT, INSERT ON decision_private.catacaci_decision_receipts,
+            decision_private.catacaci_cam_audits,
+            decision_private.catacaci_cil_contributions,
+            decision_private.catacaci_cil_aggregates,
+            decision_private.catacaci_vsl_events TO cirvanna_decision_audit;
+        GRANT SELECT, INSERT, UPDATE ON decision_private.catacaci_cil_privacy_budget,
+            decision_private.catacaci_vsl_profiles,
+            decision_private.catacaci_vsl_proposals TO cirvanna_decision_audit;
     END IF;
 END;
 $$;
