@@ -37,6 +37,8 @@ for package_path in (
 
 from catacaci import DecisionSignal, SignalKind, SignalState  # noqa: E402
 from catacaci.pipeline import evaluate_candidate  # noqa: E402
+from catacaci.policy import CALPolicyRegistryError, resolve_configured_cal_policy  # noqa: E402
+from catacaci.receipts import DecisionReceiptStoreError, check_receipt_store, persist_decision_receipt  # noqa: E402
 from age_evidence import AgeEvidenceError, verify_threshold_attestation  # noqa: E402
 from age_evidence.policy import PolicyRegistryError, resolve_active_policy  # noqa: E402
 from cultural_identity import (  # noqa: E402
@@ -1937,8 +1939,39 @@ def _record_audit(
     arbitration_contract_version: str,
     pipeline_contract_version: str,
     policy_version: str,
+    eepl_policy_id: str,
+    eepl_policy_version: str,
+    cal_policy_id: str,
+    evaluated_signals: list[dict[str, Any]],
+    candidate_snapshot_sha256: str,
 ) -> None:
-    """Append minimal decision metadata; omit user IDs, measurements and images."""
+    """Persist full receipts to PostgreSQL in production; SQLite is local-test only."""
+    if os.getenv("CIRVANNA_ENVIRONMENT", "").strip().lower() == "production":
+        receipt = {
+            "request_id": request_id,
+            "candidate_id": product_id,
+            "verdict": verdict.upper(),
+            "may_display": verdict == "show",
+            "eepl_policy_id": eepl_policy_id,
+            "eepl_policy_version": eepl_policy_version,
+            "cal_policy_id": cal_policy_id,
+            "cal_policy_version": policy_version,
+            "arbitration_contract_version": arbitration_contract_version,
+            "pipeline_contract_version": pipeline_contract_version,
+            "candidate_snapshot_sha256": candidate_snapshot_sha256,
+            "catalog_version": catalog_version,
+            "evaluated_signals": evaluated_signals,
+            "reasons": [
+                {"code": item.get("code"), "signal_id": item.get("signal_id")}
+                for item in reasons
+            ],
+        }
+        try:
+            persist_decision_receipt(receipt)
+            return
+        except DecisionReceiptStoreError as exc:
+            raise RuntimeError("Durable PostgreSQL CAL receipt persistence failed.") from exc
+
     path = _audit_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
@@ -1979,7 +2012,6 @@ def _record_audit(
             connection.commit()
     except (OSError, sqlite3.Error) as exc:
         raise RuntimeError("Decision audit persistence failed; response cannot be released.") from exc
-
 
 app = FastAPI(
     title="Cirvanna Decision Gateway",
@@ -2133,7 +2165,12 @@ def capabilities() -> dict[str, Any]:
             and len(os.getenv("CULTURAL_IDENTITY_SERVICE_TOKEN", "").encode("utf-8")) >= 32
             and len(os.getenv("CULTURAL_IDENTITY_HMAC_SECRET", "").encode("utf-8")) >= 32
         ),
-        "durable_decision_audit": "sqlite_local_only",
+        "durable_decision_audit": (
+            "postgresql_shared_receipts" if check_receipt_store()
+            else "sqlite_local_only_or_unavailable"
+        ),
+        "server_owned_eepl_policy": bool(os.getenv("EEPL_POLICY_ID") and os.getenv("EEPL_POLICY_REGISTRY_JSON")),
+        "server_owned_cal_policy": bool(os.getenv("CATACACI_POLICY_ID") and os.getenv("CATACACI_POLICY_REGISTRY_JSON")),
         "trained_fit_predictor": False,
         "calibrated_fci_provider": all(
             os.getenv(key, "").strip() for key in (
@@ -2990,6 +3027,13 @@ def evaluate_decisions(
         )
     eepl_policy = _policy()
     verified_age = _verified_age_threshold(payload, request_id, eepl_policy)
+    try:
+        cal_policy = resolve_configured_cal_policy()
+    except CALPolicyRegistryError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"code": "SERVER_CAL_POLICY_UNAVAILABLE"},
+        ) from exc
     context = EEPLContext(
         user_id=payload.user_id,
         # Never trust ContextInput.age_years; Yoti proves only the configured threshold.
@@ -3078,7 +3122,10 @@ def evaluate_decisions(
             fit_required_evidence=fit_required_evidence,
             fit_observed_evidence=fit_observed_evidence,
             upstream_signals=upstream_signals,
-            policy_version=POLICY_VERSION,
+            minimum_fit_confidence=cal_policy.minimum_fit_confidence,
+            maximum_fit_confidence_disagreement=cal_policy.maximum_fit_confidence_disagreement,
+            minimum_alignment_score=cal_policy.minimum_alignment_score,
+            policy_version=cal_policy.policy_version,
         )
         arbitration = result.arbitration
         reasons = [
@@ -3107,6 +3154,22 @@ def evaluate_decisions(
                 arbitration_contract_version=arbitration.contract_version,
                 pipeline_contract_version=result.contract_version,
                 policy_version=arbitration.policy_version,
+                eepl_policy_id=eepl_policy.policy_id,
+                eepl_policy_version=eepl_policy.policy_version,
+                cal_policy_id=cal_policy.policy_id,
+                evaluated_signals=[
+                    {
+                        "signal_id": signal.signal_id,
+                        "kind": signal.kind.value,
+                        "state": signal.state.value,
+                        "required": signal.required,
+                        "confidence": signal.confidence,
+                        "reason_code": signal.reason_code,
+                        "source_version": signal.source_version,
+                    }
+                    for signal in arbitration.evaluated_signals
+                ],
+                candidate_snapshot_sha256=hashlib.sha256(_canonical(product)).hexdigest(),
             )
         except RuntimeError as exc:
             raise HTTPException(
