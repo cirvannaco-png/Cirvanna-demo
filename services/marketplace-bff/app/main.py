@@ -93,7 +93,7 @@ async def security_headers(request: Request, call_next):
     # Every API response, including framework-generated 4xx/5xx errors, can
     # contain account- or authorization-dependent state. Route-level headers
     # are easy to omit on exceptional paths, so enforce the cache boundary here.
-    if request.url.path.startswith("/api/"):
+    if request.url.path.startswith(("/api/", "/auth/")):
         cache_control = response.headers.get("Cache-Control", "").casefold()
         if "no-store" not in cache_control:
             response.headers["Cache-Control"] = "no-store, private"
