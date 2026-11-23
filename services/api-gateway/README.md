@@ -87,7 +87,8 @@ The adapter contract is not a substitute for independent scientific or safety ev
 | `CIRVANNA_API_TOKEN` | Inbound internal gateway bearer token |
 | `CIRVANNA_REQUIRE_VERIFIED_IDENTITY` | Defaults to true; set false only for local/test-only request-scoped demo mode |
 | `CIRVANNA_AUDIT_DB` | Local/staging SQLite audit path; not production managed audit |
-| `CIRVANNA_POLICY_VERSION` | Decision policy version |
+| `EEPL_POLICY_ID` | Server-selected active EEPL policy ID shared with Identity Learning and Decision Service |
+| `EEPL_POLICY_REGISTRY_JSON` | Server-owned versioned EEPL policy registry; no caller-selectable rules |
 | `CIRVANNA_REQUIRED_CONTEXT_FIELDS` | EEPL context requirements |
 | `CIRVANNA_REQUIRED_PRODUCT_ATTRIBUTES` | Required Catalog metadata |
 | `COMMERCE_API_URL` | Trusted Commerce `/me` and internal offers API base URL |
