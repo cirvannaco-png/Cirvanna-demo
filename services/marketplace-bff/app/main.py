@@ -23,7 +23,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from app.auth_sessions import router as auth_router, close_auth_pool, session_access_token
+from app.auth_sessions import COOKIE_NAME, router as auth_router, close_auth_pool, session_access_token
 from app.observability import install_observability
 from app.pnelly_preferences import (
     PnellyPreferenceMutationIn,
@@ -89,6 +89,16 @@ app.mount("/assets", StaticFiles(directory=str(PORTAL_ASSETS_DIR), check_dir=Tru
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
+    unsafe_method = request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
+    auth_write = request.url.path.startswith("/auth/") and unsafe_method and request.url.path != "/auth/ios/apple"
+    cookie_api_write = request.url.path.startswith("/api/") and unsafe_method and bool(request.cookies.get(COOKIE_NAME))
+    if auth_write or cookie_api_write:
+        callback = urlsplit(os.getenv("AUTH_CALLBACK_URL", ""))
+        expected_origin = f"{callback.scheme}://{callback.netloc}" if callback.scheme and callback.netloc else ""
+        if not expected_origin:
+            return JSONResponse(status_code=503, content={"detail": {"code": "AUTH_ORIGIN_NOT_CONFIGURED"}})
+        if request.headers.get("origin") != expected_origin:
+            return JSONResponse(status_code=403, content={"detail": {"code": "AUTH_CSRF_ORIGIN_REJECTED"}})
     response = await call_next(request)
     # Every API response, including framework-generated 4xx/5xx errors, can
     # contain account- or authorization-dependent state. Route-level headers
