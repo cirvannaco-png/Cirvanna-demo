@@ -203,6 +203,45 @@ def _assert_response(response: Response, assertion: dict[str, Any], label: str) 
     return failures
 
 
+def _validate_assertion(assertion: Any, label: str) -> None:
+    if not isinstance(assertion, dict):
+        raise MatrixError(f"{label}: assertion must be an object")
+    allowed = {"status", "require_no_store", "require_json", "json_equals", "json_present", "json_absent", "json_one_of"}
+    unknown = set(assertion) - allowed
+    if unknown:
+        raise MatrixError(f"{label}: unsupported assertion keys: {sorted(unknown)}")
+    status = assertion.get("status", [200])
+    if isinstance(status, int):
+        status = [status]
+    if not isinstance(status, list) or not status or any(
+        not isinstance(code, int) or isinstance(code, bool) or not 100 <= code <= 599 for code in status
+    ):
+        raise MatrixError(f"{label}: status must be an HTTP status or a non-empty list of HTTP statuses")
+    for flag in ("require_no_store", "require_json"):
+        if flag in assertion and not isinstance(assertion[flag], bool):
+            raise MatrixError(f"{label}: {flag} must be boolean")
+    equals = assertion.get("json_equals", {})
+    if not isinstance(equals, dict):
+        raise MatrixError(f"{label}: json_equals must be an object")
+    for path in equals:
+        _json_path({}, path)
+    for key in ("json_present", "json_absent"):
+        paths = assertion.get(key, [])
+        if not isinstance(paths, list) or any(not isinstance(path, str) for path in paths):
+            raise MatrixError(f"{label}: {key} must be a list of JSONPath strings")
+        for path in paths:
+            _json_path({}, path)
+    choices = assertion.get("json_one_of", [])
+    if not isinstance(choices, list):
+        raise MatrixError(f"{label}: json_one_of must be a list")
+    for choice in choices:
+        if not isinstance(choice, dict) or set(choice) != {"path", "values"}:
+            raise MatrixError(f"{label}: each json_one_of item requires exactly path and values")
+        if not isinstance(choice["path"], str) or not isinstance(choice["values"], list) or not choice["values"]:
+            raise MatrixError(f"{label}: json_one_of path and values are invalid")
+        _json_path({}, choice["path"])
+
+
 def validate_manifest(config: dict[str, Any]) -> None:
     if config.get("environment") != "staging":
         raise MatrixError("refusing to run: manifest environment must be exactly 'staging'")
@@ -242,9 +281,8 @@ def validate_manifest(config: dict[str, Any]) -> None:
         if set(assertions) != REQUIRED_SURFACES:
             raise MatrixError(f"scenario {scenario.get('id')} must define assertions for every shopper surface")
         for surface, assertion in assertions.items():
-            if not isinstance(assertion, dict) or not any(
-                assertion.get(key) for key in ("json_equals", "json_one_of", "json_absent", "json_present")
-            ):
+            _validate_assertion(assertion, f"scenario {scenario.get('id')} / {surface}")
+            if not any(assertion.get(key) for key in ("json_equals", "json_one_of", "json_absent", "json_present")):
                 raise MatrixError(
                     f"scenario {scenario.get('id')} assertion for {surface} "
                     "must verify response semantics, not status alone"
@@ -258,9 +296,8 @@ def validate_manifest(config: dict[str, Any]) -> None:
                     f"scenario {scenario.get('id')} must define explicit post-revocation assertions for every surface"
                 )
             for surface, assertion in post_assertions.items():
-                if not isinstance(assertion, dict) or not any(
-                    assertion.get(key) for key in ("json_equals", "json_one_of", "json_absent")
-                ):
+                _validate_assertion(assertion, f"scenario {scenario.get('id')} post-revoke / {surface}")
+                if not any(assertion.get(key) for key in ("json_equals", "json_one_of", "json_absent")):
                     raise MatrixError(
                         f"scenario {scenario.get('id')} post-revocation assertion for {surface} "
                         "must verify response semantics, not status alone"
@@ -301,9 +338,8 @@ def validate_manifest(config: dict[str, Any]) -> None:
                     f"scenario {scenario.get('id')} must define explicit race assertions for every raced surface"
                 )
             for surface, assertion in race_assertions.items():
-                if not isinstance(assertion, dict) or not any(
-                    assertion.get(key) for key in ("json_equals", "json_one_of", "json_absent")
-                ):
+                _validate_assertion(assertion, f"scenario {scenario.get('id')} race / {surface}")
+                if not any(assertion.get(key) for key in ("json_equals", "json_one_of", "json_absent")):
                     raise MatrixError(
                         f"scenario {scenario.get('id')} race assertion for {surface} "
                         "must verify authorization outcome, not status alone"
