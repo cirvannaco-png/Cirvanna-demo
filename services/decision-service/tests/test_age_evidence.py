@@ -1,0 +1,213 @@
+from __future__ import annotations
+
+import unittest
+from datetime import datetime, timedelta, timezone
+
+import httpx
+
+from age_evidence.core import (
+    AgeEvidenceError,
+    CONTRACT_VERSION,
+    sign_threshold_attestation,
+    verify_threshold_attestation,
+)
+from age_evidence.yoti import YotiAVSClient, YotiProviderError
+
+SECRET = "test-age-evidence-signing-key-with-at-least-32-bytes"
+NOW = datetime(2026, 11, 23, 12, 0, tzinfo=timezone.utc)
+
+
+def payload(**overrides):
+    value = {
+        "contract_version": CONTRACT_VERSION,
+        "issuer": "yoti",
+        "subject_id": "subject-opaque-1",
+        "request_id": "request-opaque-1",
+        "purpose": "age_dependent_eligibility",
+        "policy_id": "marketplace-adult",
+        "policy_version": "v3",
+        "threshold": 18,
+        "threshold_met": True,
+        "provider_session_id": "session-opaque-1",
+        "provider_evidence_id": "evidence-opaque-1",
+        "issued_at": (NOW - timedelta(seconds=10)).isoformat(),
+        "expires_at": (NOW + timedelta(minutes=5)).isoformat(),
+    }
+    value.update(overrides)
+    return value
+
+
+class AgeEvidenceContractTests(unittest.TestCase):
+    def test_signed_threshold_attestation_is_bound_to_subject_request_and_policy(self):
+        attestation = payload()
+        signature = sign_threshold_attestation(attestation, SECRET)
+        self.assertTrue(verify_threshold_attestation(
+            attestation, signature, SECRET,
+            subject_id="subject-opaque-1",
+            request_id="request-opaque-1",
+            purpose="age_dependent_eligibility",
+            policy_id="marketplace-adult",
+            policy_version="v3",
+            threshold=18,
+            now=NOW,
+        ))
+
+    def test_wrong_subject_or_policy_cannot_reuse_attestation(self):
+        attestation = payload()
+        signature = sign_threshold_attestation(attestation, SECRET)
+        self.assertFalse(verify_threshold_attestation(
+            attestation, signature, SECRET,
+            subject_id="another-subject",
+            request_id="request-opaque-1",
+            purpose="age_dependent_eligibility",
+            policy_id="marketplace-adult",
+            policy_version="v3",
+            threshold=18,
+            now=NOW,
+        ))
+        self.assertFalse(verify_threshold_attestation(
+            attestation, signature, SECRET,
+            subject_id="subject-opaque-1",
+            request_id="request-opaque-1",
+            purpose="age_dependent_eligibility",
+            policy_id="marketplace-adult",
+            policy_version="v4",
+            threshold=18,
+            now=NOW,
+        ))
+
+    def test_expired_or_future_attestation_is_rejected(self):
+        expired = payload(expires_at=(NOW - timedelta(seconds=1)).isoformat())
+        signature = sign_threshold_attestation(expired, SECRET)
+        self.assertFalse(verify_threshold_attestation(
+            expired, signature, SECRET,
+            subject_id="subject-opaque-1", request_id="request-opaque-1",
+            purpose="age_dependent_eligibility", policy_id="marketplace-adult",
+            policy_version="v3", threshold=18, now=NOW,
+        ))
+        future = payload(issued_at=(NOW + timedelta(minutes=1)).isoformat())
+        signature = sign_threshold_attestation(future, SECRET)
+        self.assertFalse(verify_threshold_attestation(
+            future, signature, SECRET,
+            subject_id="subject-opaque-1", request_id="request-opaque-1",
+            purpose="age_dependent_eligibility", policy_id="marketplace-adult",
+            policy_version="v3", threshold=18, now=NOW,
+        ))
+
+    def test_raw_age_or_identity_fields_are_rejected(self):
+        with self.assertRaises(AgeEvidenceError):
+            sign_threshold_attestation(payload(age_years=21), SECRET)
+        with self.assertRaises(AgeEvidenceError):
+            sign_threshold_attestation(payload(date_of_birth="2000-01-01"), SECRET)
+
+    def test_signature_tampering_is_rejected(self):
+        attestation = payload()
+        signature = sign_threshold_attestation(attestation, SECRET)
+        attestation["threshold_met"] = False
+        self.assertFalse(verify_threshold_attestation(
+            attestation, signature, SECRET,
+            subject_id="subject-opaque-1", request_id="request-opaque-1",
+            purpose="age_dependent_eligibility", policy_id="marketplace-adult",
+            policy_version="v3", threshold=18, now=NOW,
+        ))
+
+
+class YotiAdapterTests(unittest.TestCase):
+    def make_client(self, handler):
+        transport = httpx.MockTransport(handler)
+        http_client = httpx.Client(transport=transport)
+        return YotiAVSClient(
+            "yoti-test-api-key-with-more-than-32-bytes",
+            "12345678-1234-4234-8234-123456789012",
+            client=http_client,
+        )
+
+    def test_session_uses_digital_id_only_and_disables_age_estimation(self):
+        captured = {}
+        def handler(request):
+            captured["body"] = request.read().decode()
+            self.assertEqual(request.headers["Yoti-Sdk-Id"], "12345678-1234-4234-8234-123456789012")
+            self.assertTrue(request.headers["Authorization"].startswith("Bearer "))
+            return httpx.Response(200, json={
+                "id": "d1234567-1234-4234-8234-123456789012",
+                "expires_at": "2026-11-23T12:15:00Z",
+            })
+        client = self.make_client(handler)
+        session = client.create_over_session(
+            threshold=18,
+            reference_id="a" * 48,
+            callback_url="https://cirvanna.example/age/complete",
+            privacy_policy_url="https://cirvanna.example/privacy",
+            terms_url="https://cirvanna.example/terms",
+        )
+        self.assertEqual(session.session_id, "d1234567-1234-4234-8234-123456789012")
+        self.assertNotIn("subject-opaque", session.reference_id)
+        self.assertIn('"age_estimation_allowed":false', captured["body"])
+        self.assertIn('"age_estimation":{"allowed":false}', captured["body"])
+        self.assertIn('"doc_scan":{"allowed":false}', captured["body"])
+        client.close()
+
+    def test_result_requires_exact_session_sdk_reference_and_threshold(self):
+        body = {
+            "id": "d1234567-1234-4234-8234-123456789012",
+            "sdk_id": "12345678-1234-4234-8234-123456789012",
+            "reference_id": "a" * 48,
+            "type": "OVER",
+            "digital_id": {"allowed": True, "threshold": 18, "age_estimation_allowed": False},
+            "method": "DIGITAL_ID",
+            "status": "COMPLETE",
+            "evidence_id": "evidence-123",
+            "expires_at": "2026-11-23T12:15:00Z",
+            "updated_at": "2026-11-23T12:01:00Z",
+        }
+        def handler(request):
+            self.assertTrue(request.url.path.endswith("/result"))
+            return httpx.Response(200, json=body)
+        client = self.make_client(handler)
+        result = client.get_threshold_result(
+            session_id=body["id"], expected_reference_id="a" * 48, threshold=18,
+        )
+        self.assertEqual(result.state, "COMPLETE")
+        self.assertIs(result.threshold_met, True)
+        self.assertEqual(result.evidence_id, "evidence-123")
+        client.close()
+
+    def test_reference_mismatch_is_rejected(self):
+        body = {
+            "id": "d1234567-1234-4234-8234-123456789012",
+            "sdk_id": "12345678-1234-4234-8234-123456789012",
+            "reference_id": "b" * 48,
+            "type": "OVER",
+            "digital_id": {"allowed": True, "threshold": 18, "age_estimation_allowed": False},
+            "method": "DIGITAL_ID",
+            "status": "COMPLETE",
+            "expires_at": "2026-11-23T12:15:00Z",
+        }
+        client = self.make_client(lambda request: httpx.Response(200, json=body))
+        with self.assertRaises(YotiProviderError):
+            client.get_threshold_result(
+                session_id=body["id"], expected_reference_id="a" * 48, threshold=18,
+            )
+        client.close()
+
+    def test_unknown_method_and_age_estimation_fallback_are_rejected(self):
+        body = {
+            "id": "d1234567-1234-4234-8234-123456789012",
+            "sdk_id": "12345678-1234-4234-8234-123456789012",
+            "reference_id": "a" * 48,
+            "type": "OVER",
+            "digital_id": {"allowed": True, "threshold": 18, "age_estimation_allowed": True},
+            "method": "AGE_ESTIMATION",
+            "status": "COMPLETE",
+            "expires_at": "2026-11-23T12:15:00Z",
+        }
+        client = self.make_client(lambda request: httpx.Response(200, json=body))
+        with self.assertRaises(YotiProviderError):
+            client.get_threshold_result(
+                session_id=body["id"], expected_reference_id="a" * 48, threshold=18,
+            )
+        client.close()
+
+
+if __name__ == "__main__":
+    unittest.main()
