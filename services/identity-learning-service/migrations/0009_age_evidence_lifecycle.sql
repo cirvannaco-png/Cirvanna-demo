@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS identity_private.identity_age_verification_sessions (
   updated_at timestamptz NOT NULL DEFAULT now(),
   verified_at timestamptz,
   revoked_at timestamptz,
+  UNIQUE (subject_id, request_id, purpose, policy_id, policy_version),
   CHECK ((state = 'verified') = (threshold_met IS NOT NULL AND verified_at IS NOT NULL)
          OR state IN ('revoked','expired','failed'))
 );
