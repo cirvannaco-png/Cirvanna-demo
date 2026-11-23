@@ -71,7 +71,7 @@ def append_cam_audit(audit: dict[str, Any]) -> dict[str, str]:
         with _connect() as conn, conn.cursor() as cur:
             cur.execute(
                 """SELECT verdict, cal_policy_version, evaluated_signals
-                FROM catacaci_decision_receipts WHERE request_id=%s AND candidate_id=%s""",
+                FROM decision_private.catacaci_decision_receipts WHERE request_id=%s AND candidate_id=%s""",
                 (audit["request_id"], audit["candidate_id"]),
             )
             baseline = cur.fetchone()
@@ -86,7 +86,7 @@ def append_cam_audit(audit: dict[str, Any]) -> dict[str, str]:
             ):
                 raise GovernanceStoreError("CAM baseline verdict, policy or signal IDs do not match the durable receipt")
             cur.execute(
-                """INSERT INTO catacaci_cam_audits
+                """INSERT INTO decision_private.catacaci_cam_audits
                 (audit_id, request_id, candidate_id, observed_verdict, simulated_verdict,
                  changed_signal_ids, changed_signal_overrides, simulated_signal_snapshot_sha256,
                  policy_version, replay_version, evaluated_at, interpretation, audit_sha256)
@@ -98,7 +98,7 @@ def append_cam_audit(audit: dict[str, Any]) -> dict[str, str]:
                  audit["policy_version"], audit["replay_version"], audit["evaluated_at"],
                  audit["interpretation"], digest),
             )
-            cur.execute("SELECT audit_sha256 FROM catacaci_cam_audits WHERE audit_id=%s", (audit["audit_id"],))
+            cur.execute("SELECT audit_sha256 FROM decision_private.catacaci_cam_audits WHERE audit_id=%s", (audit["audit_id"],))
             row = cur.fetchone()
             if row is None or row[0] != digest:
                 raise GovernanceStoreError("CAM audit ID replay conflicts with prior evidence")
@@ -146,7 +146,7 @@ def record_cil_contribution(
     try:
         with _connect() as conn, conn.cursor() as cur:
             cur.execute(
-                """INSERT INTO catacaci_cil_contributions
+                """INSERT INTO decision_private.catacaci_cil_contributions
                 (event_id, cohort_key, period_start, contributor_hash, outcome_success, observed_at)
                 VALUES (%s,%s,%s,%s,%s,%s)
                 ON CONFLICT DO NOTHING RETURNING event_id""",
@@ -156,7 +156,7 @@ def record_cil_contribution(
             if not inserted:
                 cur.execute(
                     """SELECT cohort_key, period_start, contributor_hash, outcome_success
-                    FROM catacaci_cil_contributions WHERE event_id=%s""",
+                    FROM decision_private.catacaci_cil_contributions WHERE event_id=%s""",
                     (event_id,),
                 )
                 existing = cur.fetchone()
@@ -194,7 +194,7 @@ def release_cil_aggregate(
         with _connect() as conn, conn.cursor() as cur:
             cur.execute(
                 """SELECT suppressed, noisy_contributor_count, noisy_success_rate, epsilon
-                FROM catacaci_cil_aggregates WHERE cohort_key=%s AND period_start=%s""",
+                FROM decision_private.catacaci_cil_aggregates WHERE cohort_key=%s AND period_start=%s""",
                 (cohort_key, period),
             )
             existing = cur.fetchone()
@@ -206,13 +206,13 @@ def release_cil_aggregate(
                     "mechanism": "laplace-vector-count-and-successes-v1",
                 }
             cur.execute(
-                """INSERT INTO catacaci_cil_privacy_budget
+                """INSERT INTO decision_private.catacaci_cil_privacy_budget
                 (cohort_key, period_start, epsilon_spent, epsilon_limit)
                 VALUES (%s,%s,0,%s) ON CONFLICT DO NOTHING""",
                 (cohort_key, period, epsilon_limit),
             )
             cur.execute(
-                """SELECT epsilon_spent, epsilon_limit FROM catacaci_cil_privacy_budget
+                """SELECT epsilon_spent, epsilon_limit FROM decision_private.catacaci_cil_privacy_budget
                 WHERE cohort_key=%s AND period_start=%s FOR UPDATE""",
                 (cohort_key, period),
             )
@@ -220,7 +220,7 @@ def release_cil_aggregate(
             # Serialize one release per cohort-month under the locked budget row.
             cur.execute(
                 """SELECT suppressed, noisy_contributor_count, noisy_success_rate, epsilon
-                FROM catacaci_cil_aggregates WHERE cohort_key=%s AND period_start=%s""",
+                FROM decision_private.catacaci_cil_aggregates WHERE cohort_key=%s AND period_start=%s""",
                 (cohort_key, period),
             )
             existing = cur.fetchone()
@@ -235,7 +235,7 @@ def release_cil_aggregate(
                 raise GovernanceStoreError("CIL cohort-period privacy budget is exhausted")
             cur.execute(
                 """SELECT COUNT(*), COALESCE(SUM(CASE WHEN outcome_success THEN 1 ELSE 0 END),0)
-                FROM catacaci_cil_contributions WHERE cohort_key=%s AND period_start=%s""",
+                FROM decision_private.catacaci_cil_contributions WHERE cohort_key=%s AND period_start=%s""",
                 (cohort_key, period),
             )
             count, successes = cur.fetchone()
@@ -249,7 +249,7 @@ def release_cil_aggregate(
             public_rate = None if suppressed else min(1.0, max(0.0, noisy_successes / max(noisy_count, 1.0)))
             aggregate_id = str(uuid.uuid4())
             cur.execute(
-                """INSERT INTO catacaci_cil_aggregates
+                """INSERT INTO decision_private.catacaci_cil_aggregates
                 (aggregate_id, cohort_key, period_start, suppressed, noisy_contributor_count,
                  noisy_success_rate, epsilon, mechanism, created_at)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
@@ -257,7 +257,7 @@ def release_cil_aggregate(
                  float(epsilon), "laplace-vector-count-and-successes-v1", datetime.now(timezone.utc)),
             )
             cur.execute(
-                """UPDATE catacaci_cil_privacy_budget SET epsilon_spent=epsilon_spent+%s
+                """UPDATE decision_private.catacaci_cil_privacy_budget SET epsilon_spent=epsilon_spent+%s
                 WHERE cohort_key=%s AND period_start=%s""",
                 (float(epsilon), cohort_key, period),
             )
@@ -277,7 +277,7 @@ def current_vsl_profile() -> dict[str, Any]:
     try:
         with _connect() as conn, conn.cursor() as cur:
             cur.execute(
-                "SELECT version, priority_order, approved_by, approval_event_id FROM catacaci_vsl_profiles WHERE singleton_id=1"
+                "SELECT version, priority_order, approved_by, approval_event_id FROM decision_private.catacaci_vsl_profiles WHERE singleton_id=1"
             )
             row = cur.fetchone()
             if row is None:
@@ -312,7 +312,7 @@ def create_vsl_proposal(
         })
         with _connect() as conn, conn.cursor() as cur:
             cur.execute(
-                """INSERT INTO catacaci_vsl_proposals
+                """INSERT INTO decision_private.catacaci_vsl_proposals
                 (proposal_id, base_version, proposed_version, proposed_order, rationale,
                  proposer_id, proposal_sha256, status, created_at)
                 VALUES (%s,%s,%s,%s::jsonb,%s,%s,%s,'proposed',%s)
@@ -320,12 +320,12 @@ def create_vsl_proposal(
                 (proposal_id, base_version, proposed_version, _json([x.value for x in order]),
                  rationale, proposer_id, digest, datetime.now(timezone.utc)),
             )
-            cur.execute("SELECT proposal_sha256,status FROM catacaci_vsl_proposals WHERE proposal_id=%s", (proposal_id,))
+            cur.execute("SELECT proposal_sha256,status FROM decision_private.catacaci_vsl_proposals WHERE proposal_id=%s", (proposal_id,))
             row = cur.fetchone()
             if row is None or row[0] != digest:
                 raise GovernanceStoreError("VSL proposal ID replay conflicts with existing proposal")
             cur.execute(
-                """INSERT INTO catacaci_vsl_events
+                """INSERT INTO decision_private.catacaci_vsl_events
                 (event_id, proposal_id, event_type, actor_id, base_version, resulting_version, created_at)
                 VALUES (%s,%s,'proposed',%s,%s,NULL,%s) ON CONFLICT (event_id) DO NOTHING""",
                 (proposal_id + ":proposed", proposal_id, proposer_id, base_version, datetime.now(timezone.utc)),
@@ -342,7 +342,7 @@ def approve_vsl_proposal(*, proposal_id: str, approver_id: str, approval_event_i
         with _connect() as conn, conn.cursor() as cur:
             cur.execute(
                 """SELECT base_version, proposed_version, proposed_order, rationale, proposer_id, status
-                FROM catacaci_vsl_proposals WHERE proposal_id=%s FOR UPDATE""",
+                FROM decision_private.catacaci_vsl_proposals WHERE proposal_id=%s FOR UPDATE""",
                 (proposal_id,),
             )
             row = cur.fetchone()
@@ -350,7 +350,7 @@ def approve_vsl_proposal(*, proposal_id: str, approver_id: str, approval_event_i
                 raise GovernanceStoreError("VSL proposal is missing or no longer pending")
             base_version, proposed_version, proposed_order, rationale, proposer_id, _ = row
             cur.execute(
-                "SELECT version, priority_order FROM catacaci_vsl_profiles WHERE singleton_id=1 FOR UPDATE"
+                "SELECT version, priority_order FROM decision_private.catacaci_vsl_profiles WHERE singleton_id=1 FOR UPDATE"
             )
             current = cur.fetchone()
             if current is None or current[0] != base_version:
@@ -371,18 +371,18 @@ def approve_vsl_proposal(*, proposal_id: str, approver_id: str, approval_event_i
                 approver_id=approver_id, approval_event_id=approval_event_id,
             )
             cur.execute(
-                """UPDATE catacaci_vsl_profiles SET version=%s, priority_order=%s::jsonb,
+                """UPDATE decision_private.catacaci_vsl_profiles SET version=%s, priority_order=%s::jsonb,
                 approved_by=%s, approval_event_id=%s, updated_at=%s WHERE singleton_id=1""",
                 (approved.version, _json([x.value for x in approved.priority_order]),
                  approved.approved_by, approved.approval_event_id, datetime.now(timezone.utc)),
             )
             cur.execute(
-                """UPDATE catacaci_vsl_proposals SET status='approved', approver_id=%s,
+                """UPDATE decision_private.catacaci_vsl_proposals SET status='approved', approver_id=%s,
                 approval_event_id=%s, decided_at=%s WHERE proposal_id=%s AND status='proposed'""",
                 (approver_id, approval_event_id, datetime.now(timezone.utc), proposal_id),
             )
             cur.execute(
-                """INSERT INTO catacaci_vsl_events
+                """INSERT INTO decision_private.catacaci_vsl_events
                 (event_id, proposal_id, event_type, actor_id, base_version, resulting_version, created_at)
                 VALUES (%s,%s,'approved',%s,%s,%s,%s)""",
                 (approval_event_id, proposal_id, approver_id, base_version, approved.version, datetime.now(timezone.utc)),
@@ -400,7 +400,7 @@ def reject_vsl_proposal(*, proposal_id: str, approver_id: str, rejection_event_i
     try:
         with _connect() as conn, conn.cursor() as cur:
             cur.execute(
-                "SELECT base_version, proposer_id, status FROM catacaci_vsl_proposals WHERE proposal_id=%s FOR UPDATE",
+                "SELECT base_version, proposer_id, status FROM decision_private.catacaci_vsl_proposals WHERE proposal_id=%s FOR UPDATE",
                 (proposal_id,),
             )
             row = cur.fetchone()
@@ -410,12 +410,12 @@ def reject_vsl_proposal(*, proposal_id: str, approver_id: str, rejection_event_i
             if approver_id == proposer_id:
                 raise GovernanceStoreError("VSL proposer and reviewer must be different identities")
             cur.execute(
-                """UPDATE catacaci_vsl_proposals SET status='rejected', approver_id=%s,
+                """UPDATE decision_private.catacaci_vsl_proposals SET status='rejected', approver_id=%s,
                 approval_event_id=%s, decided_at=%s WHERE proposal_id=%s AND status='proposed'""",
                 (approver_id, rejection_event_id, datetime.now(timezone.utc), proposal_id),
             )
             cur.execute(
-                """INSERT INTO catacaci_vsl_events
+                """INSERT INTO decision_private.catacaci_vsl_events
                 (event_id, proposal_id, event_type, actor_id, base_version, resulting_version, created_at)
                 VALUES (%s,%s,'rejected',%s,%s,NULL,%s)""",
                 (rejection_event_id, proposal_id, approver_id, base_version, datetime.now(timezone.utc)),
@@ -431,13 +431,13 @@ def check_governance_store() -> bool:
     try:
         with _connect() as conn, conn.cursor() as cur:
             cur.execute(
-                """SELECT to_regclass('catacaci_cam_audits'),
-                to_regclass('catacaci_cil_contributions'),
-                to_regclass('catacaci_cil_aggregates'),
-                to_regclass('catacaci_cil_privacy_budget'),
-                to_regclass('catacaci_vsl_profiles'),
-                to_regclass('catacaci_vsl_proposals'),
-                to_regclass('catacaci_vsl_events')"""
+                """SELECT to_regclass('decision_private.catacaci_cam_audits'),
+                to_regclass('decision_private.catacaci_cil_contributions'),
+                to_regclass('decision_private.catacaci_cil_aggregates'),
+                to_regclass('decision_private.catacaci_cil_privacy_budget'),
+                to_regclass('decision_private.catacaci_vsl_profiles'),
+                to_regclass('decision_private.catacaci_vsl_proposals'),
+                to_regclass('decision_private.catacaci_vsl_events')"""
             )
             row = cur.fetchone()
             return bool(row and all(row))
