@@ -408,8 +408,10 @@ def check_governance_store() -> bool:
                 """SELECT to_regclass('catacaci_cam_audits'),
                 to_regclass('catacaci_cil_contributions'),
                 to_regclass('catacaci_cil_aggregates'),
+                to_regclass('catacaci_cil_privacy_budget'),
                 to_regclass('catacaci_vsl_profiles'),
-                to_regclass('catacaci_vsl_proposals')"""
+                to_regclass('catacaci_vsl_proposals'),
+                to_regclass('catacaci_vsl_events')"""
             )
             row = cur.fetchone()
             return bool(row and all(row))
