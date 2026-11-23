@@ -126,9 +126,6 @@ class YotiAVSClient:
             raise YotiProviderError("Yoti result does not contain the configured Digital ID method")
         if digital_id.get("allowed") is not True or digital_id.get("threshold") != threshold:
             raise YotiProviderError("Yoti result threshold or method configuration mismatch")
-        # Explicitly reject any provider response that indicates an age-estimation fallback.
-        if digital_id.get("age_estimation_allowed") is True or response.get("method") != "DIGITAL_ID":
-            raise YotiProviderError("Yoti did not complete the approved Digital ID method")
         expires_at = response.get("expires_at")
         if not isinstance(expires_at, str):
             raise YotiProviderError("Yoti result expiry is missing")
@@ -142,10 +139,12 @@ class YotiAVSClient:
             state = "EXPIRED"
         else:
             state = response.get("status")
-        if state == "COMPLETE":
-            threshold_met: bool | None = True
-        elif state == "FAIL":
-            threshold_met = False
+        if state in {"COMPLETE", "FAIL"}:
+            if response.get("method") != "DIGITAL_ID":
+                raise YotiProviderError("Yoti did not complete the approved Digital ID method")
+            if response.get("age") != threshold:
+                raise YotiProviderError("Yoti threshold result does not match the configured OVER threshold")
+            threshold_met: bool | None = state == "COMPLETE"
         elif state in {"PENDING", "IN_PROGRESS", "PROCESSING", "ERROR", "CANCELLED", "EXPIRED"}:
             threshold_met = None
         else:
