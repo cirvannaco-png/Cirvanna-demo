@@ -12,14 +12,14 @@ from typing import Any
 
 from sqlalchemy import (
     Boolean, Column, DateTime, ForeignKey, Integer, MetaData, String, Table,
-    and_, create_engine, exists, insert, select, update, UniqueConstraint,
+    and_, create_engine, exists, insert, select, update, UniqueConstraint, Uuid,
 )
 from sqlalchemy.exc import IntegrityError
 
 metadata = MetaData()
 sessions = Table(
     "identity_age_verification_sessions", metadata,
-    Column("session_id", String(36), primary_key=True),
+    Column("session_id", Uuid(as_uuid=False), primary_key=True),
     Column("subject_id", String(128), nullable=False),
     Column("request_id", String(128), nullable=False),
     Column("purpose", String(80), nullable=False),
@@ -27,7 +27,7 @@ sessions = Table(
     Column("policy_version", String(64), nullable=False),
     Column("threshold", Integer, nullable=False),
     Column("provider", String(24), nullable=False),
-    Column("provider_session_id", String(36), unique=True),
+    Column("provider_session_id", Uuid(as_uuid=False), unique=True),
     Column("provider_reference", String(96), nullable=False, unique=True),
     Column("provider_reference_sha256", String(64), nullable=False, unique=True),
     Column("provider_evidence_id", String(160)),
@@ -43,8 +43,8 @@ sessions = Table(
 )
 attestations = Table(
     "identity_age_threshold_attestations", metadata,
-    Column("jti", String(36), primary_key=True),
-    Column("session_id", String(36), ForeignKey("identity_private.identity_age_verification_sessions.session_id", ondelete="CASCADE"), nullable=False, unique=True),
+    Column("jti", Uuid(as_uuid=False), primary_key=True),
+    Column("session_id", Uuid(as_uuid=False), ForeignKey("identity_private.identity_age_verification_sessions.session_id", ondelete="CASCADE"), nullable=False, unique=True),
     Column("subject_id", String(128), nullable=False),
     Column("request_id", String(128), nullable=False),
     Column("purpose", String(80), nullable=False),
