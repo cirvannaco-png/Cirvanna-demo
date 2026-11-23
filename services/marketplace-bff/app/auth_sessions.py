@@ -13,7 +13,7 @@ import os
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 import asyncpg
 import httpx
@@ -341,11 +341,27 @@ async def callback(request: Request) -> Response:
     state = request.query_params.get("state", "")
     code = request.query_params.get("code", "")
     if not state:
+        # Email templates carry the original redirect URL in `next`.
+        next_url = request.query_params.get("next", "")
+        expected = urlsplit(_callback_url())
+        supplied = urlsplit(next_url)
+        if (
+            not next_url
+            or supplied.scheme != expected.scheme
+            or supplied.netloc != expected.netloc
+            or supplied.path != expected.path
+            or supplied.username is not None
+            or supplied.password is not None
+            or supplied.fragment
+        ):
+            raise HTTPException(400, detail={"code": "AUTH_CALLBACK_STATE_MISSING"})
+        state = parse_qs(supplied.query).get("state", [""])[0]
+    if not state:
         raise HTTPException(400, detail={"code": "AUTH_CALLBACK_STATE_MISSING"})
     provider, verifier = await _consume_pending(state)
     if provider == "email":
         token_hash = request.query_params.get("token_hash", "")
-        if not token_hash:
+        if request.query_params.get("type") != "email" or not token_hash:
             raise HTTPException(400, detail={"code": "AUTH_EMAIL_TOKEN_MISSING"})
         base, key = _supabase()
         async with httpx.AsyncClient(timeout=12, trust_env=False, follow_redirects=False) as client:
