@@ -372,6 +372,10 @@ def validate_manifest(config: dict[str, Any]) -> None:
                         f"scenario {scenario.get('id')} race assertion for {surface} "
                         "must verify authorization outcome, not status alone"
                     )
+            if scenario.get("revoke") and scenario["revoke"] != race["revoke"]:
+                raise MatrixError(
+                    f"scenario {scenario.get('id')} sequential and concurrent revocation definitions must match"
+                )
             race_url = urlsplit(str(race["revoke"].get("url", "")))
             if race_url.scheme != "https" or race_url.username or race_url.password or not race["revoke"].get("token_env"):
                 raise MatrixError(f"scenario {scenario.get('id')} race revocation must use HTTPS and a dedicated token_env")
