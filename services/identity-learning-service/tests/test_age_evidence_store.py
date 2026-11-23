@@ -127,3 +127,29 @@ def test_expired_attestation_cannot_be_redeemed():
         policy_version="4", threshold=18, signature=sig,
         now=NOW + timedelta(seconds=6),
     ) is False
+
+
+def test_provider_expiry_and_failure_are_terminal_and_cannot_issue_attestations():
+    store = make_store()
+    sid = store.create_session(
+        subject_id="subject-2", request_id="request-2", purpose="shopper_eligibility",
+        policy_id="adult-market", policy_version="4", threshold=18,
+        provider_reference="opaque-reference-" + uuid.uuid4().hex, now=NOW,
+    )
+    provider_session = str(uuid.uuid4())
+    store.attach_provider_session(sid, provider_session, NOW + timedelta(minutes=15), now=NOW)
+    assert store.mark_provider_terminal(
+        sid, provider_session, "expired", now=NOW + timedelta(seconds=1),
+    ) is True
+    row = store.get_session(sid)
+    assert row["state"] == "expired"
+    try:
+        store.issue_attestation(
+            session_id=sid, jti=str(uuid.uuid4()), signature="a" * 64,
+            issued_at=NOW + timedelta(seconds=2), expires_at=NOW + timedelta(minutes=3),
+            now=NOW + timedelta(seconds=2),
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expired provider sessions must never issue attestations")
