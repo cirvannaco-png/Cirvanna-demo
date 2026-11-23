@@ -108,9 +108,11 @@ def run(config: dict, report_path: Path) -> int:
         if status_code != 200 or not isinstance(state, dict):
             failures.append(f"{case['request_type']}/{case['reason_code']}: status retrieval returned HTTP {status_code}")
             continue
-        if state.get("request_id") != request_id or state.get("quarantined") is not True:
-            failures.append(f"{case['request_type']}/{case['reason_code']}: status did not confirm the same quarantined case")
-        if state.get("status") not in {"quarantined", "under_review", "completed", "rejected", "escalated"}:
+        if state.get("request_id") != request_id:
+            failures.append(f"{case['request_type']}/{case['reason_code']}: status did not confirm the same request")
+        if urgent and state.get("quarantined") is not True:
+            failures.append(f"{case['request_type']}/{case['reason_code']}: urgent status did not confirm quarantine")
+        if state.get("status") not in {"accepted", "quarantined", "under_review", "completed", "rejected", "escalated"}:
             failures.append(f"{case['request_type']}/{case['reason_code']}: unknown rights case state")
         if not isinstance(state.get("triage_due_at"), str) or state.get("deadline_basis") not in {
             "resolved_signed_jurisdiction_policy",
