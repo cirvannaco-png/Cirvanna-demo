@@ -167,7 +167,7 @@ class AgeEvidenceStore:
             row = conn.execute(select(sessions).where(
                 sessions.c.session_id == session_id
             ).with_for_update()).mappings().first()
-            if not row or row["state"] != "verified" or row["revoked_at"] is not None:
+            if not row or row["state"] not in {"verified", "denied"} or row["revoked_at"] is not None:
                 raise ValueError("only active verified sessions can issue attestations")
             if row["expires_at"] is None or (row["expires_at"].replace(tzinfo=timezone.utc) if row["expires_at"].tzinfo is None else _aware(row["expires_at"])) <= now:
                 raise ValueError("verified provider session has expired")
@@ -190,7 +190,7 @@ class AgeEvidenceStore:
         signature_hash = hashlib.sha256(signature.encode()).hexdigest()
         active_session = exists(select(sessions.c.session_id).where(and_(
             sessions.c.session_id == attestations.c.session_id,
-            sessions.c.state == "verified", sessions.c.revoked_at.is_(None),
+            sessions.c.state.in_({"verified", "denied"}), sessions.c.revoked_at.is_(None),
             sessions.c.expires_at > now,
         )))
         predicate = and_(
