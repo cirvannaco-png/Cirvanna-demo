@@ -182,33 +182,42 @@ class AgeEvidenceStore:
             uuid.UUID(jti)
         except (ValueError, TypeError) as exc:
             raise ValueError("jti must be a UUID") from exc
-        with self.engine.begin() as conn:
-            row = conn.execute(select(sessions).where(
-                sessions.c.session_id == session_id
-            ).with_for_update()).mappings().first()
-            if not row or row["state"] not in {"verified", "denied"} or row["revoked_at"] is not None:
-                raise ValueError("only active verified sessions can issue attestations")
-            expected = {
-                "jti": _uuid_text(jti), "subject_id": row["subject_id"],
-                "request_id": row["request_id"], "purpose": row["purpose"],
-                "policy_id": row["policy_id"], "policy_version": row["policy_version"],
-                "threshold": row["threshold"], "threshold_met": row["threshold_met"],
-                "provider_session_id": str(uuid.UUID(str(row["provider_session_id"]))),
-                "provider_evidence_id": row["provider_evidence_id"],
-            }
-            if not isinstance(attestation_payload, dict) or any(attestation_payload.get(k) != v for k, v in expected.items()):
-                raise ValueError("attestation payload does not match durable session bindings")
-            if row["expires_at"] is None or (row["expires_at"].replace(tzinfo=timezone.utc) if row["expires_at"].tzinfo is None else _aware(row["expires_at"])) <= now:
-                raise ValueError("verified provider session has expired")
-            conn.execute(insert(attestations).values(
-                jti=_uuid_text(jti), session_id=_uuid_text(session_id), subject_id=row["subject_id"],
-                request_id=row["request_id"], purpose=row["purpose"],
-                policy_id=row["policy_id"], policy_version=row["policy_version"],
-                threshold=row["threshold"], threshold_met=row["threshold_met"],
-                signature_sha256=hashlib.sha256(signature.encode()).hexdigest(),
-                attestation_payload=attestation_payload, signature=signature,
-                issued_at=issued_at, expires_at=expires_at,
-            ))
+        try:
+            with self.engine.begin() as conn:
+                row = conn.execute(select(sessions).where(
+                        sessions.c.session_id == _uuid_text(session_id)
+                    ).with_for_update()).mappings().first()
+                    if not row or row["state"] not in {"verified", "denied"} or row["revoked_at"] is not None:
+                    raise ValueError("only active verified sessions can issue attestations")
+                expected = {
+                    "jti": _uuid_text(jti), "subject_id": row["subject_id"],
+                    "request_id": row["request_id"], "purpose": row["purpose"],
+                    "policy_id": row["policy_id"], "policy_version": row["policy_version"],
+                    "threshold": row["threshold"], "threshold_met": row["threshold_met"],
+                    "provider_session_id": str(uuid.UUID(str(row["provider_session_id"]))),
+                    "provider_evidence_id": row["provider_evidence_id"],
+                }
+                if not isinstance(attestation_payload, dict) or any(attestation_payload.get(k) != v for k, v in expected.items()):
+                    raise ValueError("attestation payload does not match durable session bindings")
+                if row["expires_at"] is None or (row["expires_at"].replace(tzinfo=timezone.utc) if row["expires_at"].tzinfo is None else _aware(row["expires_at"])) <= now:
+                    raise ValueError("verified provider session has expired")
+                conn.execute(insert(attestations).values(
+                    jti=_uuid_text(jti), session_id=_uuid_text(session_id), subject_id=row["subject_id"],
+                    request_id=row["request_id"], purpose=row["purpose"],
+                    policy_id=row["policy_id"], policy_version=row["policy_version"],
+                    threshold=row["threshold"], threshold_met=row["threshold_met"],
+                    signature_sha256=hashlib.sha256(signature.encode()).hexdigest(),
+                    attestation_payload=attestation_payload, signature=signature,
+                    issued_at=issued_at, expires_at=expires_at,
+                ))
+
+        except IntegrityError as exc:
+            existing = self.get_attestation(session_id)
+            if (existing is not None
+                    and existing["attestation"] == attestation_payload
+                    and existing["signature"] == signature):
+                return
+            raise AgeEvidenceConflict("a different attestation already exists for this session") from exc
 
     def get_attestation(self, session_id: str) -> dict[str, Any] | None:
         with self.engine.connect() as conn:
