@@ -1255,3 +1255,27 @@ def test_gateway_rejects_yoti_attestation_for_non_active_policy(monkeypatch):
     monkeypatch.setattr(main, "verify_threshold_attestation", lambda *args, **kwargs: True)
     with pytest.raises(Exception):
         main._verified_age_threshold(payload, payload.request_id, main._policy())
+
+
+def test_gateway_uses_server_owned_cal_thresholds(monkeypatch):
+    import json
+    monkeypatch.setenv("CATACACI_POLICY_ID", "cal-adult")
+    monkeypatch.setenv("CATACACI_POLICY_REGISTRY_JSON", json.dumps({
+        "cal-adult": {
+            "policy_version": "cal-adult-v7",
+            "minimum_fit_confidence": 0.88,
+            "maximum_fit_confidence_disagreement": 0.04,
+            "minimum_alignment_score": 0.72,
+        },
+        "cal-youth": {
+            "policy_version": "cal-youth-v1",
+            "minimum_fit_confidence": 0.5,
+            "maximum_fit_confidence_disagreement": 0.5,
+            "minimum_alignment_score": 0.2,
+        },
+    }))
+    resolved = main.resolve_configured_cal_policy()
+    assert resolved.policy_id == "cal-adult"
+    assert resolved.policy_version == "cal-adult-v7"
+    assert resolved.minimum_fit_confidence == 0.88
+    assert resolved.minimum_alignment_score == 0.72
