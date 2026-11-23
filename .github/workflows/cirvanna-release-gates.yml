@@ -5,6 +5,9 @@ on:
     paths:
       - "packages/identity-intelligence/age_evidence/**"
       - "packages/identity-intelligence/eepl/**"
+      - "packages/identity-intelligence/catacaci/**"
+      - "services/decision-service/migrations/**"
+      - "services/decision-service/app/policy_registry.py"
       - "services/decision-service/app/main.py"
       - "services/decision-service/tests/test_age_evidence.py"
       - "services/decision-service/tests/test_api.py"
