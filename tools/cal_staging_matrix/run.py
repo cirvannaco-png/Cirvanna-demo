@@ -213,8 +213,6 @@ def validate_manifest(config: dict[str, Any]) -> None:
         parsed_url = urlsplit(str(spec["url"]))
         if parsed_url.scheme != "https" or parsed_url.username or parsed_url.password:
             raise MatrixError(f"surface {surface} URL must be trusted HTTPS without embedded credentials")
-        if not spec.get("token_env"):
-            raise MatrixError(f"surface {surface} must use a dedicated token_env")
     for scenario in scenarios:
         required = set(scenario.get("exercise_surfaces", []))
         if required != REQUIRED_SURFACES:
@@ -230,6 +228,10 @@ def validate_manifest(config: dict[str, Any]) -> None:
                 raise MatrixError(f"scenario {scenario.get('id')} must recheck all surfaces after revocation")
         if scenario.get("id") == "cache_after_revocation" and not scenario.get("revoke"):
             raise MatrixError("cache_after_revocation requires a sequential revoke step")
+        if scenario.get("revoke"):
+            revoke_url = urlsplit(str(scenario["revoke"].get("url", "")))
+            if revoke_url.scheme != "https" or revoke_url.username or revoke_url.password or not scenario["revoke"].get("token_env"):
+                raise MatrixError(f"scenario {scenario.get('id')} revoke must use HTTPS and a dedicated token_env")
         if scenario.get("id") in {"consent_session_revoked", "payment_revoked_race"}:
             race = scenario.get("race")
             if not isinstance(race, dict) or not race.get("revoke") or not race.get("surfaces"):
@@ -237,8 +239,8 @@ def validate_manifest(config: dict[str, Any]) -> None:
             if not set(race["surfaces"]).issubset(REQUIRED_SURFACES):
                 raise MatrixError(f"scenario {scenario.get('id')} race references an unknown shopper surface")
             race_url = urlsplit(str(race["revoke"].get("url", "")))
-            if race_url.scheme != "https" or race_url.username or race_url.password:
-                raise MatrixError(f"scenario {scenario.get('id')} race revocation URL must be trusted HTTPS")
+            if race_url.scheme != "https" or race_url.username or race_url.password or not race["revoke"].get("token_env"):
+                raise MatrixError(f"scenario {scenario.get('id')} race revocation must use HTTPS and a dedicated token_env")
 
 
 def run(config: dict[str, Any], timeout: int = 20) -> int:
