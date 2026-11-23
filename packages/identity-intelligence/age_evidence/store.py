@@ -167,7 +167,7 @@ class AgeEvidenceStore:
             ).with_for_update()).mappings().first()
             if not row or row["state"] != "verified" or row["revoked_at"] is not None:
                 raise ValueError("only active verified sessions can issue attestations")
-            if row["expires_at"] is None or _aware(row["expires_at"]) <= now:
+            if row["expires_at"] is None or (row["expires_at"].replace(tzinfo=timezone.utc) if row["expires_at"].tzinfo is None else _aware(row["expires_at"])) <= now:
                 raise ValueError("verified provider session has expired")
             conn.execute(insert(attestations).values(
                 jti=jti, session_id=session_id, subject_id=row["subject_id"],
