@@ -37,12 +37,12 @@ def valid_manifest():
         if scenario_id == "consent_session_revoked":
             scenario["race"] = {
                 "surfaces": ["pnelly", "wardrobe", "look_it"],
-                "revoke": {"url": "https://fixture.staging.example.test/revoke"},
+                "revoke": {"url": "https://fixture.staging.example.test/revoke", "token_env": "CAL_REVOKE_TOKEN"},
             }
         if scenario_id == "payment_revoked_race":
             scenario["race"] = {
                 "surfaces": ["cart", "checkout"],
-                "revoke": {"url": "https://fixture.staging.example.test/revoke"},
+                "revoke": {"url": "https://fixture.staging.example.test/revoke", "token_env": "CAL_REVOKE_TOKEN"},
             }
         scenarios.append(scenario)
     return {
