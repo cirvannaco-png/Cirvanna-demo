@@ -165,7 +165,7 @@ class AgeEvidenceStore:
                 row["threshold_met"] != threshold_met or row["provider_evidence_id"] != evidence_id
             ):
                 raise ValueError("terminal provider result is immutable")
-            conn.execute(update(sessions).where(sessions.c.session_id == session_id).values(
+            conn.execute(update(sessions).where(sessions.c.session_id == _uuid_text(session_id)).values(
                 state=next_state, threshold_met=threshold_met,
                 provider_evidence_id=evidence_id, updated_at=now,
                 verified_at=now if next_state == "verified" else None,
@@ -188,6 +188,16 @@ class AgeEvidenceStore:
             ).with_for_update()).mappings().first()
             if not row or row["state"] not in {"verified", "denied"} or row["revoked_at"] is not None:
                 raise ValueError("only active verified sessions can issue attestations")
+            expected = {
+                "jti": _uuid_text(jti), "subject_id": row["subject_id"],
+                "request_id": row["request_id"], "purpose": row["purpose"],
+                "policy_id": row["policy_id"], "policy_version": row["policy_version"],
+                "threshold": row["threshold"], "threshold_met": row["threshold_met"],
+                "provider_session_id": str(uuid.UUID(str(row["provider_session_id"]))),
+                "provider_evidence_id": row["provider_evidence_id"],
+            }
+            if not isinstance(attestation_payload, dict) or any(attestation_payload.get(k) != v for k, v in expected.items()):
+                raise ValueError("attestation payload does not match durable session bindings")
             if row["expires_at"] is None or (row["expires_at"].replace(tzinfo=timezone.utc) if row["expires_at"].tzinfo is None else _aware(row["expires_at"])) <= now:
                 raise ValueError("verified provider session has expired")
             conn.execute(insert(attestations).values(
@@ -278,8 +288,8 @@ class AgeEvidenceStore:
         now = _aware(now or utcnow())
         with self.engine.begin() as conn:
             result = conn.execute(update(sessions).where(
-                and_(sessions.c.session_id == session_id,
-                     sessions.c.provider_session_id == provider_session_id,
+                and_(sessions.c.session_id == _uuid_text(session_id),
+                     sessions.c.provider_session_id == _uuid_text(provider_session_id),
                      sessions.c.state == "pending", sessions.c.revoked_at.is_(None))
             ).values(state=state, updated_at=now))
             return result.rowcount == 1
@@ -288,7 +298,7 @@ class AgeEvidenceStore:
         now = _aware(now or utcnow())
         with self.engine.begin() as conn:
             result = conn.execute(update(sessions).where(
-                and_(sessions.c.session_id == session_id, sessions.c.state == "created")
+                and_(sessions.c.session_id == _uuid_text(session_id), sessions.c.state == "created")
             ).values(state="failed", updated_at=now))
             return result.rowcount == 1
 
