@@ -404,14 +404,15 @@ async def callback(request: Request) -> Response:
         state = parse_qs(supplied.query).get("state", [""])[0]
     if not state:
         raise HTTPException(400, detail={"code": "AUTH_CALLBACK_STATE_MISSING"})
+    provider, verifier = await _consume_pending(state)
     # Email magic links are mailbox proofs and may legitimately be opened on
     # another device. OAuth callbacks must also prove possession of the initiating
-    # browser's short-lived, HttpOnly state cookie.
-    if not request.query_params.get("next") and not hmac.compare_digest(
+    # browser's short-lived, HttpOnly state cookie. Determine the flow from the
+    # server-side pending record, never from caller-controlled query parameters.
+    if provider != "email" and not hmac.compare_digest(
         request.cookies.get(OAUTH_STATE_COOKIE, ""), state
     ):
         raise HTTPException(400, detail={"code": "AUTH_BROWSER_STATE_MISMATCH"})
-    provider, verifier = await _consume_pending(state)
     if provider == "email":
         token_hash = request.query_params.get("token_hash", "")
         if request.query_params.get("type") != "email" or not token_hash:
