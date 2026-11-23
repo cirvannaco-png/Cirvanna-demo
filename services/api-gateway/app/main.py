@@ -1954,6 +1954,8 @@ def _record_audit(
     eepl_policy_id: str,
     eepl_policy_version: str,
     cal_policy_id: str,
+    minimum_fit_confidence: float,
+    maximum_fit_confidence_disagreement: float,
     evaluated_signals: list[dict[str, Any]],
     candidate_snapshot_sha256: str,
 ) -> None:
@@ -1968,8 +1970,8 @@ def _record_audit(
             "eepl_policy_version": eepl_policy_version,
             "cal_policy_id": cal_policy_id,
             "cal_policy_version": policy_version,
-            "minimum_fit_confidence": cal_policy.minimum_fit_confidence,
-            "maximum_fit_confidence_disagreement": cal_policy.maximum_fit_confidence_disagreement,
+            "minimum_fit_confidence": minimum_fit_confidence,
+            "maximum_fit_confidence_disagreement": maximum_fit_confidence_disagreement,
             "arbitration_contract_version": arbitration_contract_version,
             "pipeline_contract_version": pipeline_contract_version,
             "candidate_snapshot_sha256": candidate_snapshot_sha256,
@@ -3282,6 +3284,8 @@ def evaluate_decisions(
                 eepl_policy_id=eepl_policy.policy_id,
                 eepl_policy_version=eepl_policy.policy_version,
                 cal_policy_id=cal_policy.policy_id,
+                minimum_fit_confidence=cal_policy.minimum_fit_confidence,
+                maximum_fit_confidence_disagreement=cal_policy.maximum_fit_confidence_disagreement,
                 evaluated_signals=[
                     {
                         "signal_id": signal.signal_id,
