@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 from typing import Annotated, Literal
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -31,9 +31,13 @@ for package in (
     sys.path.insert(0, str(package))
 
 from catacaci import DecisionSignal, DecisionVerdict, SignalKind, SignalState  # noqa: E402
+from catacaci.core import ArbitrationRequest, arbitrate  # noqa: E402
 from catacaci.pipeline import evaluate_candidate  # noqa: E402
 from catacaci.policy import CALPolicy, CALPolicyRegistryError, resolve_configured_cal_policy  # noqa: E402
-from catacaci.receipts import DecisionReceiptStoreError, check_receipt_store, persist_decision_receipt  # noqa: E402
+from catacaci.receipts import (
+    DecisionReceiptStoreError, check_receipt_store, persist_decision_receipt,
+    load_decision_receipt,
+)  # noqa: E402
 from catacaci.governance_store import (
     GovernanceStoreError, append_cam_audit, record_cil_contribution,
     release_cil_aggregate, current_vsl_profile, create_vsl_proposal,
@@ -101,17 +105,19 @@ class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class CAMSignalOverrideIn(StrictModel):
+    signal_id: str = Field(min_length=1, max_length=160)
+    state: Literal["pass", "block", "unknown"]
+    reason_code: str | None = Field(default=None, min_length=1, max_length=100)
+    confidence: float | None = Field(default=None, ge=0, le=1)
+
+
 class CAMAuditIn(StrictModel):
     audit_id: str = Field(min_length=8, max_length=128)
     request_id: str = Field(min_length=8, max_length=128)
     candidate_id: str = Field(min_length=1, max_length=128)
-    observed_verdict: Literal["show", "block", "review"]
-    simulated_verdict: Literal["show", "block", "review"]
-    changed_signal_ids: list[str] = Field(max_length=64)
-    policy_version: str = Field(min_length=1, max_length=64)
-    replay_version: str = Field(min_length=1, max_length=64)
-    evaluated_at: str = Field(min_length=1, max_length=64)
-    interpretation: Literal["counterfactual_scenario_not_observed_causality"] = "counterfactual_scenario_not_observed_causality"
+    changed_signals: list[CAMSignalOverrideIn] = Field(min_length=1, max_length=64)
+    replay_version: Literal["catacaci-cam-replay-v1"] = "catacaci-cam-replay-v1"
 
 
 class CILContributionIn(StrictModel):
@@ -619,8 +625,71 @@ def capabilities() -> dict:
 @app.post("/v1/governance/cam/audits", dependencies=[Depends(require_cam_service)])
 def append_cam_governance_audit(payload: CAMAuditIn) -> dict:
     try:
-        return append_cam_audit(payload.model_dump())
-    except GovernanceStoreError as exc:
+        baseline = load_decision_receipt(payload.request_id, payload.candidate_id)
+        stored = baseline["evaluated_signals"]
+        by_id = {item["signal_id"]: item for item in stored}
+        overrides = [item.model_dump() for item in payload.changed_signals]
+        override_by_id = {item["signal_id"]: item for item in overrides}
+        if len(override_by_id) != len(overrides) or not set(override_by_id).issubset(by_id):
+            raise GovernanceStoreError("CAM may change only unique signal IDs from the durable baseline")
+        simulated = []
+        for item in stored:
+            override = override_by_id.get(item["signal_id"])
+            state = override["state"] if override else item["state"]
+            confidence = (
+                override["confidence"] if override and override["confidence"] is not None
+                else item["confidence"]
+            )
+            reason_code = (
+                override["reason_code"] if override and override["reason_code"]
+                else item["reason_code"]
+            )
+            simulated.append(DecisionSignal(
+                signal_id=item["signal_id"],
+                kind=SignalKind(item["kind"]),
+                state=SignalState(state),
+                reason_code=reason_code,
+                explanation="Counterfactual replay of stored evidence; not a new observation.",
+                required=item["required"],
+                confidence=confidence,
+                source_version=item["source_version"],
+            ))
+        replay = arbitrate(ArbitrationRequest(
+            request_id=payload.request_id,
+            candidate_id=payload.candidate_id,
+            signals=tuple(simulated),
+            minimum_fit_confidence=baseline["minimum_fit_confidence"],
+            maximum_fit_confidence_disagreement=baseline["maximum_fit_confidence_disagreement"],
+            policy_version=baseline["cal_policy_version"],
+        ))
+        simulated_snapshot = [
+            {
+                "signal_id": signal.signal_id, "kind": signal.kind.value,
+                "state": signal.state.value, "required": signal.required,
+                "confidence": signal.confidence, "reason_code": signal.reason_code,
+                "source_version": signal.source_version,
+            }
+            for signal in replay.evaluated_signals
+        ]
+        simulated_digest = hashlib.sha256(json.dumps(
+            simulated_snapshot, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8")).hexdigest()
+        audit = {
+            "audit_id": payload.audit_id,
+            "request_id": payload.request_id,
+            "candidate_id": payload.candidate_id,
+            "observed_verdict": baseline["verdict"].lower(),
+            "simulated_verdict": replay.verdict.value.lower(),
+            "changed_signal_ids": sorted(override_by_id),
+            "changed_signal_overrides": overrides,
+            "simulated_signal_snapshot_sha256": simulated_digest,
+            "policy_version": baseline["cal_policy_version"],
+            "replay_version": payload.replay_version,
+            "evaluated_at": datetime.now(timezone.utc).isoformat(),
+            "interpretation": "counterfactual_scenario_not_observed_causality",
+        }
+        return append_cam_audit(audit)
+    except (GovernanceStoreError, ValueError) as exc:
         raise HTTPException(503, detail={"code": "CATACACI_CAM_PERSISTENCE_FAILED"}) from exc
 
 
