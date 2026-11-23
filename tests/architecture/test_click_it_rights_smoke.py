@@ -46,6 +46,17 @@ class ClickItRightsSmokeContractTests(unittest.TestCase):
         with self.assertRaises(rights.RightsSmokeError):
             rights.validate(config)
 
+    def test_bff_url_query_and_fragment_are_rejected(self):
+        config = valid_config()
+        config['bff_base_url'] += '?token=not-allowed'
+        with self.assertRaises(rights.RightsSmokeError):
+            rights.validate(config)
+
+    def test_status_request_identifiers_reject_path_and_header_injection(self):
+        self.assertIsNotNone(rights.REQUEST_ID_PATTERN.fullmatch('12345678-1234-4234-8234-123456789012'))
+        self.assertIsNone(rights.REQUEST_ID_PATTERN.fullmatch('../admin'))
+        self.assertIsNone(rights.STATUS_TOKEN_PATTERN.fullmatch('x' * 32 + '\\r\\nX-Evil: yes'))
+
     def test_embedded_credentials_in_bff_url_are_rejected(self):
         config = valid_config()
         config['bff_base_url'] = 'https://' + 'user' + ':' + 'secret' + '@marketplace-bff.staging.example.test'
