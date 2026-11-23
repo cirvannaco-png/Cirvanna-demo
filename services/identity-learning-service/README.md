@@ -41,6 +41,24 @@ Run tests:
 - `CIL_SKIN_ANALYSIS_RECEIPT_TTL_SECONDS`: short-lived signed receipt window, 60–900 seconds (default 600).
 - `IDENTITY_AUTO_CREATE_SCHEMA`: local/test only. Must be false in production; apply reviewed SQL migration instead.
 
+## Age evidence lifecycle
+
+The private `/internal/v1/age-evidence` routes own Yoti AVS Digital ID session creation, server-side result polling, revocation and one-time attestation redemption. The browser callback is navigation only; it never supplies an age result. The service polls Yoti over the pinned HTTPS API origin, stores opaque provider/session references and threshold outcomes only, and never persists DOB, raw age, document images, selfies or biometric templates.
+
+- `POST /internal/v1/age-evidence/sessions` requires `AGE_EVIDENCE_ORCHESTRATOR_TOKEN`. It accepts subject/request/purpose and policy ID/version only. The threshold is resolved from the server-side `EEPL_POLICY_REGISTRY_JSON`; request-supplied thresholds are rejected.
+- `POST /internal/v1/age-evidence/sessions/{session_id}/poll` polls Yoti directly. PENDING never produces an attestation. COMPLETE and FAIL produce signed threshold-only results.
+- `POST /internal/v1/age-evidence/sessions/{session_id}/revoke` invalidates the session and all unredeemed attestations.
+- `POST /internal/v1/age-evidence/attestations/redeem` requires the separate `AGE_EVIDENCE_REDEMPTION_TOKEN`; it atomically consumes a JTI once and checks subject, request, purpose, policy/version, threshold, signature digest, expiry and source-session revocation.
+
+Apply `migrations/0009_age_evidence_lifecycle.sql` after `0008_cil_provider_consent_revocation.sql`. The migration enables RLS on the new private tables, grants access only to `identity_learning_service`, and explicitly denies `anon` and `authenticated`. Keep the age orchestration and redemption credentials separate. A revoked provider session may still exist at Yoti until its short TTL ends, but it cannot issue or redeem a Cirvanna attestation.
+
+Required secret-manager variables:
+- `AGE_EVIDENCE_ORCHESTRATOR_TOKEN`: dedicated internal credential held by the trusted BFF/orchestrator only.
+- `AGE_EVIDENCE_REDEMPTION_TOKEN`: separate credential held only by Decision Service.
+- `AGE_EVIDENCE_HMAC_SECRET`: issuer/Decision Service signing key; minimum 32 bytes.
+- `YOTI_AVS_API_KEY`, `YOTI_AVS_SDK_ID`, callback/cancel/privacy-policy/terms URLs.
+- `EEPL_POLICY_REGISTRY_JSON`: server-owned, version-pinned policy map shared with Decision Service.
+
 ## Contracts
 
 - Versioned USI profile upsert with optimistic concurrency (`expected_version`).
