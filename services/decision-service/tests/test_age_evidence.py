@@ -196,6 +196,7 @@ class YotiAdapterTests(unittest.TestCase):
             "type": "OVER",
             "digital_id": {"allowed": True, "threshold": 18, "age_estimation_allowed": False},
             "method": "DIGITAL_ID",
+            "age": 18,
             "status": "COMPLETE",
             "evidence_id": "evidence-123",
             "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
@@ -211,6 +212,43 @@ class YotiAdapterTests(unittest.TestCase):
         self.assertEqual(result.state, "COMPLETE")
         self.assertIs(result.threshold_met, True)
         self.assertEqual(result.evidence_id, "evidence-123")
+        client.close()
+
+    def test_pending_yoti_session_without_method_remains_reviewable(self):
+        body = {
+            "id": "d1234567-1234-4234-8234-123456789012",
+            "sdk_id": "12345678-1234-4234-8234-123456789012",
+            "reference_id": "a" * 48,
+            "type": "OVER",
+            "digital_id": {"allowed": True, "threshold": 18},
+            "status": "PENDING",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
+        }
+        client = self.make_client(lambda request: httpx.Response(200, json=body))
+        result = client.get_threshold_result(
+            session_id=body["id"], expected_reference_id="a" * 48, threshold=18,
+        )
+        self.assertEqual(result.state, "PENDING")
+        self.assertIsNone(result.threshold_met)
+        client.close()
+
+    def test_complete_result_from_non_digital_id_method_is_rejected(self):
+        body = {
+            "id": "d1234567-1234-4234-8234-123456789012",
+            "sdk_id": "12345678-1234-4234-8234-123456789012",
+            "reference_id": "a" * 48,
+            "type": "OVER",
+            "digital_id": {"allowed": True, "threshold": 18},
+            "method": "AGE_ESTIMATION",
+            "age": 18,
+            "status": "COMPLETE",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
+        }
+        client = self.make_client(lambda request: httpx.Response(200, json=body))
+        with self.assertRaises(YotiProviderError):
+            client.get_threshold_result(
+                session_id=body["id"], expected_reference_id="a" * 48, threshold=18,
+            )
         client.close()
 
     def test_reference_mismatch_is_rejected(self):
