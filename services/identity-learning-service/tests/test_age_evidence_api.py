@@ -156,6 +156,9 @@ def test_yoti_session_poll_and_revoke_are_bound_to_verified_subject(tmp_path, mo
     monkeypatch.setenv("IDENTITY_DATABASE_URL", url)
     token = "age-evidence-orchestrator-token-at-least-32-bytes"
     monkeypatch.setenv("AGE_EVIDENCE_ORCHESTRATOR_TOKEN", token)
+    engine = create_engine(url)
+    metadata.create_all(engine.execution_options(schema_translate_map={"identity_private": None}))
+    engine.dispose()
     store = AgeEvidenceStore(url)
     session_id = store.create_session(
         subject_id="verified-subject-1", request_id="request-owner-1",
