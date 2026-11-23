@@ -568,3 +568,46 @@ class CaTaCaCiGovernanceStoreBoundaryTests(unittest.TestCase):
             approve_change(
                 current, proposal, approver_id="operator-a", approval_event_id="approval-0001",
             )
+
+
+class CAMCounterfactualReplayTests(unittest.TestCase):
+    def test_cam_replays_from_stored_receipt_and_derives_verdict_server_side(self):
+        from unittest.mock import patch
+        from app import main
+
+        baseline_signals = []
+        for kind in (
+            "safety", "legal_eligibility", "user_hard_constraint", "npl_hard_negative",
+            "cultural_requirement", "context_eligibility", "identity_alignment",
+        ):
+            baseline_signals.append({
+                "signal_id": kind + ":baseline", "kind": kind, "state": "pass",
+                "required": True, "confidence": None, "reason_code": kind.upper() + "_PASS",
+                "source_version": "fixture-v1",
+            })
+        baseline_signals.append({
+            "signal_id": "fit:baseline", "kind": "fit_confidence", "state": "pass",
+            "required": True, "confidence": 0.95, "reason_code": "FIT_CONFIDENCE_PASS",
+            "source_version": "fci-fixture-v1",
+        })
+        baseline = {
+            "request_id": "cam-request-0001", "candidate_id": "candidate-1",
+            "verdict": "SHOW", "cal_policy_version": "cal-v1",
+            "minimum_fit_confidence": 0.7,
+            "maximum_fit_confidence_disagreement": 0.1,
+            "evaluated_signals": baseline_signals,
+        }
+        saved = {}
+        with patch.object(main, "load_decision_receipt", return_value=baseline), patch.object(
+            main, "append_cam_audit", side_effect=lambda audit: saved.update(audit) or {"audit_id": audit["audit_id"]}
+        ):
+            response = main.append_cam_governance_audit(main.CAMAuditIn(
+                audit_id="cam-audit-0001", request_id="cam-request-0001",
+                candidate_id="candidate-1",
+                changed_signals=[{"signal_id": "safety:baseline", "state": "block"}],
+            ))
+        self.assertEqual(response, {"audit_id": "cam-audit-0001"})
+        self.assertEqual(saved["observed_verdict"], "show")
+        self.assertEqual(saved["simulated_verdict"], "block")
+        self.assertEqual(saved["changed_signal_ids"], ["safety:baseline"])
+        self.assertEqual(saved["interpretation"], "counterfactual_scenario_not_observed_causality")
