@@ -328,7 +328,8 @@ async def session_access_token(request: Request) -> str:
     user_id, tokens = await _load_session(session_id)
     now = int(datetime.now(timezone.utc).timestamp())
     if tokens["expires_at"] - now < 90:
-        await _rotate(session_id)
+        _, max_age = await _rotate(session_id)
+        request.state.auth_session_refresh_max_age = max_age
         user_id, tokens = await _load_session(session_id)
     claims = await asyncio.to_thread(_verify_jwt, tokens["access_token"])
     if claims.get("sub") != user_id:
