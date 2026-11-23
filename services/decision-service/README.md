@@ -69,3 +69,10 @@ The decision endpoint also requires `NPL_EVIDENCE_HMAC_SECRET`, shared only with
 ## Trusted cultural declaration evidence
 
 The decision endpoint requires `CULTURAL_IDENTITY_HMAC_SECRET` and verifies a candidate-bound Cultural Identity evidence envelope before evaluation. The signature binds request ID, user ID, candidate ID, normalized candidate attributes, metadata completeness and the active declaration requirement set. Modified or foreign-user declaration evidence fails before CAL runs. The service key must be shared only with the trusted Cultural Identity service/consumer chain; an internal API token alone does not prove that a cultural declaration is genuine.
+
+
+## Verified threshold age evidence
+
+The eligibility endpoint never uses request-body `context.age_years`. It accepts age evidence only as a separately HMAC-signed, closed-contract threshold attestation from the age-evidence service. The verifier binds subject ID, request ID, the fixed `shopper_eligibility` purpose, exact EEPL policy ID/version and minimum-age threshold, and enforces the attestation freshness/maximum TTL contract. A valid OVER result supplies only the threshold and boolean outcome to EEPL; an under-threshold result blocks, while missing/untrusted evidence routes to REVIEW. Threshold-only evidence cannot satisfy a maximum-age policy and is rejected for that policy shape.
+
+Set `AGE_EVIDENCE_HMAC_SECRET` in the Decision Service secret manager to the dedicated age-evidence signing key (minimum 32 bytes). Do not reuse the Yoti API key or the general internal bearer token. The signed envelope must be delivered only over the authenticated internal service path. The durable Yoti session mapping, revocation lookup, provider onboarding and live staging acceptance remain separate release gates; this code does not claim those have been completed.
