@@ -16,6 +16,7 @@ import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 from typing import Annotated, Literal
+from datetime import date, datetime
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -33,6 +34,11 @@ from catacaci import DecisionSignal, DecisionVerdict, SignalKind, SignalState  #
 from catacaci.pipeline import evaluate_candidate  # noqa: E402
 from catacaci.policy import CALPolicy, CALPolicyRegistryError, resolve_configured_cal_policy  # noqa: E402
 from catacaci.receipts import DecisionReceiptStoreError, check_receipt_store, persist_decision_receipt  # noqa: E402
+from catacaci.governance_store import (
+    GovernanceStoreError, append_cam_audit, record_cil_contribution,
+    release_cil_aggregate, current_vsl_profile, create_vsl_proposal,
+    approve_vsl_proposal, check_governance_store,
+)  # noqa: E402
 from eepl import ContextField, EEPLContext, EEPLPolicy  # noqa: E402
 from age_evidence import AgeEvidenceError, verify_threshold_attestation  # noqa: E402
 from age_evidence.policy import PolicyRegistryError, resolve_active_policy  # noqa: E402
@@ -59,6 +65,32 @@ def require_internal_token(credentials: Annotated[HTTPAuthorizationCredentials |
         raise HTTPException(401, detail="Valid internal bearer authentication is required.", headers={"WWW-Authenticate": "Bearer"})
 
 
+def _require_named_token(credentials: HTTPAuthorizationCredentials | None, token_name: str) -> None:
+    expected = _required_env(token_name)
+    if credentials is None or not hmac.compare_digest(credentials.credentials, expected):
+        raise HTTPException(401, detail={"code": token_name + "_AUTH_REQUIRED"}, headers={"WWW-Authenticate": "Bearer"})
+
+
+def require_cam_service(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]) -> None:
+    _require_named_token(credentials, "CATACACI_CAM_SERVICE_TOKEN")
+
+
+def require_cil_service(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]) -> None:
+    _require_named_token(credentials, "CATACACI_CIL_SERVICE_TOKEN")
+
+
+def require_cil_aggregator(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]) -> None:
+    _require_named_token(credentials, "CATACACI_CIL_AGGREGATE_TOKEN")
+
+
+def require_vsl_proposer(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]) -> None:
+    _require_named_token(credentials, "CATACACI_VSL_PROPOSER_TOKEN")
+
+
+def require_vsl_approver(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]) -> None:
+    _require_named_token(credentials, "CATACACI_VSL_APPROVER_TOKEN")
+
+
 def require_cal_review_operator(credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)]) -> None:
     expected = _required_env("CAL_REVIEW_OPERATOR_TOKEN")
     if credentials is None or not hmac.compare_digest(credentials.credentials, expected):
@@ -67,6 +99,44 @@ def require_cal_review_operator(credentials: Annotated[HTTPAuthorizationCredenti
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class CAMAuditIn(StrictModel):
+    audit_id: str = Field(min_length=8, max_length=128)
+    request_id: str = Field(min_length=8, max_length=128)
+    candidate_id: str = Field(min_length=1, max_length=128)
+    observed_verdict: Literal["show", "block", "review"]
+    simulated_verdict: Literal["show", "block", "review"]
+    changed_signal_ids: list[str] = Field(max_length=64)
+    policy_version: str = Field(min_length=1, max_length=64)
+    replay_version: str = Field(min_length=1, max_length=64)
+    evaluated_at: str = Field(min_length=1, max_length=64)
+    interpretation: Literal["counterfactual_scenario_not_observed_causality"] = "counterfactual_scenario_not_observed_causality"
+
+
+class CILContributionIn(StrictModel):
+    event_id: str = Field(min_length=8, max_length=128)
+    contributor_token: str = Field(min_length=76, max_length=76)
+    cohort_key: str = Field(min_length=2, max_length=128)
+    outcome_success: bool
+    observed_at: datetime
+
+
+class CILAggregateIn(StrictModel):
+    cohort_key: str = Field(min_length=2, max_length=128)
+    period_start: date
+
+
+class VSLProposalIn(StrictModel):
+    proposal_id: str = Field(min_length=8, max_length=128)
+    base_version: str = Field(min_length=1, max_length=64)
+    proposed_version: str = Field(min_length=1, max_length=64)
+    proposed_order: list[Literal[
+        "safety", "legal_eligibility", "user_hard_constraint", "npl_hard_negative",
+        "cultural_requirement", "context_eligibility", "identity_alignment",
+        "fit_confidence", "other",
+    ]] = Field(min_length=9, max_length=9)
+    rationale: str = Field(min_length=10, max_length=2000)
 
 
 class CALFeedbackDecisionIn(StrictModel):
@@ -505,10 +575,11 @@ def readiness() -> dict:
     except CALPolicyRegistryError:
         cal_policy_registry_configured = False
     decision_receipt_store_ready = check_receipt_store()
+    governance_store_ready = check_governance_store()
     ready = (
         internal_configured and fit_key_configured and npl_key_configured
         and cultural_key_configured and cal_policy_registry_configured
-        and decision_receipt_store_ready
+        and decision_receipt_store_ready and governance_store_ready
     )
     response = {"status": "ready" if ready else "not_ready", "service": SERVICE,
         "internal_auth_configured": internal_configured, "trusted_fit_evidence_configured": fit_key_configured,
@@ -516,6 +587,7 @@ def readiness() -> dict:
         "trusted_cultural_evidence_configured": cultural_key_configured,
         "catacaci_policy_registry_configured": cal_policy_registry_configured,
         "decision_receipt_store_ready": decision_receipt_store_ready,
+        "catacaci_governance_store_ready": governance_store_ready,
         "fci_prediction_model_available": False, "ready": ready}
     if not ready:
         raise HTTPException(503, detail=response)
@@ -532,8 +604,82 @@ def capabilities() -> dict:
         "persisted_user_preference_store": False, "signed_cultural_evidence_required": True,
         "cil_feedback_review_bridge": bool(os.getenv("CIL_SERVICE_URL") and os.getenv("CIL_SERVICE_TOKEN") and os.getenv("CIL_CAL_SERVICE_TOKEN")),
         "cil_feedback_review_enforcement_required": _cil_cal_review_enforcement_required(),
-        "decision_audit_persistence": check_receipt_store(), "click_it_reconstruction": False,
+        "decision_audit_persistence": check_receipt_store(),
+        "catacaci_cam_durable_audit": check_governance_store(),
+        "catacaci_cil_differential_privacy_release": check_governance_store(),
+        "catacaci_vsl_two_person_approval": check_governance_store(),
+        "click_it_reconstruction": False,
         "virtual_twin_generation": False, "virtual_try_on": False}
+
+
+@app.post("/v1/governance/cam/audits", dependencies=[Depends(require_cam_service)])
+def append_cam_governance_audit(payload: CAMAuditIn) -> dict:
+    try:
+        return append_cam_audit(payload.model_dump())
+    except GovernanceStoreError as exc:
+        raise HTTPException(503, detail={"code": "CATACACI_CAM_PERSISTENCE_FAILED"}) from exc
+
+
+@app.post("/v1/governance/cil/contributions", dependencies=[Depends(require_cil_service)])
+def append_cil_contribution(payload: CILContributionIn) -> dict:
+    try:
+        inserted = record_cil_contribution(**payload.model_dump())
+        return {"recorded": inserted}
+    except GovernanceStoreError as exc:
+        raise HTTPException(503, detail={"code": "CATACACI_CIL_CONTRIBUTION_REJECTED"}) from exc
+
+
+@app.post("/v1/governance/cil/aggregates", dependencies=[Depends(require_cil_aggregator)])
+def publish_cil_aggregate(payload: CILAggregateIn) -> dict:
+    try:
+        epsilon = float(os.getenv("CATACACI_CIL_RELEASE_EPSILON", "0.5"))
+        budget = float(os.getenv("CATACACI_CIL_EPSILON_BUDGET", "1.0"))
+        return release_cil_aggregate(
+            cohort_key=payload.cohort_key,
+            period_start=payload.period_start.isoformat(),
+            epsilon=epsilon,
+            minimum_contributors=30,
+            epsilon_limit=budget,
+        )
+    except (GovernanceStoreError, ValueError) as exc:
+        raise HTTPException(503, detail={"code": "CATACACI_CIL_AGGREGATE_UNAVAILABLE"}) from exc
+
+
+@app.get("/v1/governance/vsl/profile", dependencies=[Depends(require_internal_token)])
+def get_vsl_governance_profile() -> dict:
+    try:
+        return current_vsl_profile()
+    except GovernanceStoreError as exc:
+        raise HTTPException(503, detail={"code": "CATACACI_VSL_PROFILE_UNAVAILABLE"}) from exc
+
+
+@app.post("/v1/governance/vsl/proposals", dependencies=[Depends(require_vsl_proposer)])
+def propose_vsl_change(payload: VSLProposalIn) -> dict:
+    proposer_id = os.getenv("CATACACI_VSL_PROPOSER_ID", "").strip()
+    if not proposer_id:
+        raise HTTPException(503, detail={"code": "CATACACI_VSL_PROPOSER_ID_NOT_CONFIGURED"})
+    try:
+        return create_vsl_proposal(
+            **payload.model_dump(exclude={"proposed_order"}),
+            proposed_order=payload.proposed_order,
+            proposer_id=proposer_id,
+        )
+    except GovernanceStoreError as exc:
+        raise HTTPException(409, detail={"code": "CATACACI_VSL_PROPOSAL_REJECTED"}) from exc
+
+
+@app.post("/v1/governance/vsl/proposals/{proposal_id}/approve", dependencies=[Depends(require_vsl_approver)])
+def approve_vsl_change(proposal_id: str, approval_event_id: str = Field(min_length=8, max_length=128)) -> dict:
+    approver_id = os.getenv("CATACACI_VSL_APPROVER_ID", "").strip()
+    if not approver_id:
+        raise HTTPException(503, detail={"code": "CATACACI_VSL_APPROVER_ID_NOT_CONFIGURED"})
+    try:
+        return approve_vsl_proposal(
+            proposal_id=proposal_id, approver_id=approver_id,
+            approval_event_id=approval_event_id,
+        )
+    except GovernanceStoreError as exc:
+        raise HTTPException(409, detail={"code": "CATACACI_VSL_APPROVAL_REJECTED"}) from exc
 
 
 @app.get("/v1/cal/feedback-reviews", dependencies=[Depends(require_internal_token)])
