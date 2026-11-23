@@ -703,6 +703,7 @@ def evaluate_eligibility(payload: EligibilityRequest) -> dict:
             "arbitration_contract_version": result.arbitration.contract_version,
             "pipeline_contract_version": result.contract_version,
             "candidate_snapshot_sha256": hashlib.sha256(snapshot).hexdigest(),
+            "catalog_version": None,
             "evaluated_signals": evaluated_signals,
             "reasons": [
                 {"code": item.get("code"), "signal_id": item.get("signal_id")}
