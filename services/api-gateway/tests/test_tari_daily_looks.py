@@ -4,6 +4,7 @@ import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 from npl import NegativePreference, PreferenceSource, TargetType
