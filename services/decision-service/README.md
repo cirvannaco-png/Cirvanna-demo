@@ -111,7 +111,7 @@ Every eligibility evaluation must persist its final CAL verdict before the respo
 psql "$DECISION_AUDIT_DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0001_catacaci_decision_receipts.sql
 ```
 
-The append-only `catacaci_decision_receipts` table records the request/candidate, final SHOW/BLOCK/REVIEW, EEPL and CAL policy IDs/versions, contract versions, candidate snapshot digest, typed evaluated signal states/reason codes/source versions, reason references and a canonical receipt SHA-256. It deliberately excludes user IDs, raw measurements, images and free-text explanations. Replays are idempotent only when the canonical receipt hash matches; changed evidence under the same request/candidate is rejected. Readiness remains 503 until the PostgreSQL table is reachable. SQLite is not an accepted production receipt store.
+The append-only `catacaci_decision_receipts` table records the request/candidate, required positive Catalog version, final SHOW/BLOCK/REVIEW, EEPL and CAL policy IDs/versions, contract versions, a digest over candidate ID, Catalog version, candidate attributes and completeness, typed evaluated signal states/reason codes/source versions, reason references and a canonical receipt SHA-256. The internal Decision Service API rejects requests without a real positive integer Catalog version. It deliberately excludes user IDs, raw measurements, images and free-text explanations. Replays are idempotent only when the canonical receipt hash matches; changed evidence under the same request/candidate is rejected. Readiness remains 503 until the PostgreSQL table is reachable. SQLite is not an accepted production receipt store.
 
 
 ## Durable CAM, privacy-budgeted CIL and VSL approval
