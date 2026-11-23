@@ -251,6 +251,47 @@ class YotiAdapterTests(unittest.TestCase):
             )
         client.close()
 
+    def test_under_threshold_digital_id_result_is_false_not_unknown(self):
+        body = {
+            "id": "d1234567-1234-4234-8234-123456789012",
+            "sdk_id": "12345678-1234-4234-8234-123456789012",
+            "reference_id": "a" * 48,
+            "type": "OVER",
+            "digital_id": {"allowed": True, "threshold": 18},
+            "method": "DIGITAL_ID",
+            "age": 18,
+            "status": "FAIL",
+            "evidence_id": "evidence-under-18",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
+        }
+        client = self.make_client(lambda request: httpx.Response(200, json=body))
+        result = client.get_threshold_result(
+            session_id=body["id"], expected_reference_id="a" * 48, threshold=18,
+        )
+        self.assertEqual(result.state, "FAIL")
+        self.assertIs(result.threshold_met, False)
+        client.close()
+
+    def test_terminal_result_with_wrong_threshold_value_is_rejected(self):
+        body = {
+            "id": "d1234567-1234-4234-8234-123456789012",
+            "sdk_id": "12345678-1234-4234-8234-123456789012",
+            "reference_id": "a" * 48,
+            "type": "OVER",
+            "digital_id": {"allowed": True, "threshold": 18},
+            "method": "DIGITAL_ID",
+            "age": 21,
+            "status": "COMPLETE",
+            "evidence_id": "evidence-123",
+            "expires_at": (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat(),
+        }
+        client = self.make_client(lambda request: httpx.Response(200, json=body))
+        with self.assertRaises(YotiProviderError):
+            client.get_threshold_result(
+                session_id=body["id"], expected_reference_id="a" * 48, threshold=18,
+            )
+        client.close()
+
     def test_reference_mismatch_is_rejected(self):
         body = {
             "id": "d1234567-1234-4234-8234-123456789012",
