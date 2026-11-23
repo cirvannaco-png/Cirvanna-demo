@@ -98,6 +98,8 @@ def start_session(payload: SessionStart) -> dict:
         if type(threshold) is not int or policy.get("maximum_age") is not None:
             raise HTTPException(422, detail={"code": "AGE_EVIDENCE_POLICY_UNSUPPORTED"})
         return _service().start(**payload.model_dump(), threshold=threshold)
+    except HTTPException:
+        raise
     except (PolicyRegistryError, ValueError) as exc:
         raise HTTPException(503, detail={"code": "SERVER_POLICY_UNAVAILABLE"}) from exc
     except Exception as exc:
