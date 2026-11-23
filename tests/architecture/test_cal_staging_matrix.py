@@ -146,6 +146,20 @@ class CALStagingMatrixContractTests(unittest.TestCase):
         with self.assertRaises(runner.MatrixError):
             runner.validate_manifest(config)
 
+    def test_malformed_jsonpath_is_rejected_before_fixture_activation(self):
+        config = valid_manifest()
+        scenario = config["scenarios"][0]
+        scenario["assertions"]["marketplace"] = {"json_present": ["$.missing.bad path"]}
+        with self.assertRaises(runner.MatrixError):
+            runner.validate_manifest(config)
+
+    def test_post_revoke_assertions_require_cache_protection(self):
+        config = valid_manifest()
+        scenario = next(item for item in config["scenarios"] if item["id"] == "cache_after_revocation")
+        scenario["post_revoke_assertions"]["marketplace"]["require_no_store"] = False
+        with self.assertRaises(runner.MatrixError):
+            runner.validate_manifest(config)
+
     def test_surface_assertions_cannot_be_status_only(self):
         config = valid_manifest()
         scenario = config["scenarios"][0]
