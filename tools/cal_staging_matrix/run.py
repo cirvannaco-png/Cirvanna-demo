@@ -80,7 +80,7 @@ def _json_path(document: Any, path: str) -> Any:
         raise MatrixError(f"JSON assertion path must start with '$.': {path}")
     parsed_parts = []
     for part in path[2:].split("."):
-        match = re.fullmatch(r"([A-Za-z0-9_-]+)(?:\\[(\\d+|\\*)\\])?", part)
+        match = re.fullmatch(r"([A-Za-z0-9_-]+)(?:\[(\d+|\*)\])?", part)
         if not match:
             raise MatrixError(f"unsupported JSON assertion path: {path}")
         parsed_parts.append(match.groups())
