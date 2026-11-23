@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from .core import AgeEvidenceError
-from .policy import PolicyRegistryError, resolve_policy
+from .policy import PolicyRegistryError, resolve_active_policy
 from .service import AgeEvidenceService
 from .store import AgeEvidenceConflict, AgeEvidenceStore
 from .yoti import YotiAVSClient
@@ -24,8 +24,6 @@ class SessionStart(StrictModel):
     subject_id: str = Field(min_length=1, max_length=128)
     request_id: str = Field(min_length=1, max_length=128)
     purpose: str = Field(default="shopper_eligibility", pattern=r"^shopper_eligibility$")
-    policy_id: str = Field(min_length=1, max_length=100)
-    policy_version: str = Field(min_length=1, max_length=64)
 
 
 class AttestationRedeem(StrictModel):
@@ -96,12 +94,17 @@ def _service() -> AgeEvidenceService:
 def start_session(payload: SessionStart) -> dict:
     service = None
     try:
-        policy = resolve_policy(payload.policy_id, payload.policy_version)
+        policy = resolve_active_policy()
         threshold = policy.get("minimum_age")
         if type(threshold) is not int or policy.get("maximum_age") is not None:
             raise HTTPException(422, detail={"code": "AGE_EVIDENCE_POLICY_UNSUPPORTED"})
         service = _service()
-        return service.start(**payload.model_dump(), threshold=threshold)
+        return service.start(
+            **payload.model_dump(),
+            policy_id=policy["policy_id"],
+            policy_version=policy["policy_version"],
+            threshold=threshold,
+        )
     except HTTPException:
         raise
     except AgeEvidenceConflict as exc:
