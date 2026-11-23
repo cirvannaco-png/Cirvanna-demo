@@ -69,3 +69,8 @@ The decision endpoint also requires `NPL_EVIDENCE_HMAC_SECRET`, shared only with
 ## Trusted cultural declaration evidence
 
 The decision endpoint requires `CULTURAL_IDENTITY_HMAC_SECRET` and verifies a candidate-bound Cultural Identity evidence envelope before evaluation. The signature binds request ID, user ID, candidate ID, normalized candidate attributes, metadata completeness and the active declaration requirement set. Modified or foreign-user declaration evidence fails before CAL runs. The service key must be shared only with the trusted Cultural Identity service/consumer chain; an internal API token alone does not prove that a cultural declaration is genuine.
+
+
+## Age evidence boundary
+
+`ContextIn.age_years` is retained only for request compatibility; it is an untrusted assertion and is never passed into EEPL. The internal bearer token authenticates the calling service but does not establish the user's age. When an EEPL policy has a minimum age, maximum age or explicitly requires age, the Decision Service supplies unknown age and EEPL returns REVIEW. The response records `age_evidence.status` as `unverified_client_value` or `missing`, with `used_for_eligibility=false`. This adapter does not currently accept verified age evidence. Do not infer age from photographs, faces, names, appearance or style profiles. A future provider must introduce a separately versioned, signed, subject- and purpose-bound evidence contract with freshness checks before age may affect eligibility.
