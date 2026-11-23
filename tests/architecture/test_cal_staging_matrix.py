@@ -60,6 +60,11 @@ class CALStagingMatrixContractTests(unittest.TestCase):
     def test_complete_staging_manifest_is_accepted(self):
         runner.validate_manifest(valid_manifest())
 
+    def test_public_click_it_probe_may_omit_service_token(self):
+        config = valid_manifest()
+        config["surfaces"]["click_it"].pop("token_env")
+        runner.validate_manifest(config)
+
     def test_non_staging_environment_is_rejected(self):
         config = valid_manifest()
         config["environment"] = "production"
