@@ -1181,7 +1181,7 @@ def _eepl_registry():
     return json.dumps({
         "adult-market": {
             "policy_version": "adult-v4", "minimum_age": 18, "maximum_age": None,
-            "allowed_locations": ["Nairobi"], "allowed_occasions": ["everyday"],
+            "allowed_locations": ["Nairobi", "KE"], "allowed_occasions": ["everyday"],
             "allowed_climates": ["warm"], "required_context": ["location", "occasion", "climate"],
         },
         "less-restrictive-market": {
@@ -1199,7 +1199,7 @@ def test_gateway_resolves_the_shared_active_eepl_policy(monkeypatch):
     assert policy.policy_id == "adult-market"
     assert policy.policy_version == "adult-v4"
     assert policy.minimum_age == 18
-    assert policy.allowed_locations == ("KE",)
+    assert policy.allowed_locations == ("Nairobi", "KE")
 
 
 def test_gateway_does_not_accept_self_declared_age_as_eligibility(monkeypatch):
