@@ -163,3 +163,6 @@ Do not claim production readiness from unit tests, signed test fixtures, a passi
 ## Consent scope expiry
 
 The `/v1/me/consents` request accepts an optional timezone-aware `expires_at`. For `skin_analysis`, the Gateway requires both a resource-bound `resource_id` and a future `expires_at`; it forwards them to Identity Learning. The browser cannot provide a CIL pseudonym, provider credential, signed provider receipt or adult-verification assertion. Those are issued only by trusted server-side services.
+
+
+In production, every Gateway candidate evaluation writes the same append-only PostgreSQL receipt schema as the Decision Service before returning a decision. Apply `services/decision-service/migrations/0001_catacaci_decision_receipts.sql` to the shared managed database and provision `DECISION_AUDIT_DATABASE_URL` with an insert/select-only role. The Gateway and Decision Service both use the active EEPL and CAL policy registries; legacy `CIRVANNA_*` EEPL threshold variables are not policy authority.
