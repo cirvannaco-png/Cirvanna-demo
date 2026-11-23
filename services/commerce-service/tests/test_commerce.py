@@ -13,6 +13,7 @@ os.environ.setdefault("COMMERCE_DATABASE_URL", "sqlite:///./test-commerce-import
 os.environ.setdefault("COMMERCE_AUTO_CREATE_SCHEMA", "true")
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select, text
 from sqlalchemy.orm import sessionmaker
