@@ -3,7 +3,9 @@ import hmac
 import json
 import os
 import time
+from datetime import datetime, timedelta, timezone
 
+os.environ.setdefault("AGE_EVIDENCE_HMAC_SECRET", "age-evidence-provider-test-key-minimum-32-bytes")
 os.environ.setdefault("DECISION_SERVICE_TOKEN", "decision-service-test-token-32-bytes-min")
 os.environ.setdefault("FCI_EVIDENCE_HMAC_SECRET", "fci-provider-test-key-minimum-32-bytes")
 os.environ.setdefault("NPL_EVIDENCE_HMAC_SECRET", "npl-provider-test-key-minimum-32-bytes")
@@ -16,6 +18,7 @@ from app import main
 
 @pytest.fixture(autouse=True)
 def config(monkeypatch):
+    monkeypatch.setenv("AGE_EVIDENCE_HMAC_SECRET", "age-evidence-provider-test-key-minimum-32-bytes")
     monkeypatch.setenv("DECISION_SERVICE_TOKEN", "decision-service-test-token-32-bytes-min")
     monkeypatch.setenv("FCI_EVIDENCE_HMAC_SECRET", "fci-provider-test-key-minimum-32-bytes")
     monkeypatch.setenv("NPL_EVIDENCE_HMAC_SECRET", "npl-provider-test-key-minimum-32-bytes")
@@ -65,7 +68,7 @@ def request_body(**overrides):
         },
         "eepl_policy": {
             "policy_id": "standard-marketplace", "policy_version": "1.0.0",
-            "minimum_age": 18, "allowed_locations": ["Nairobi"],
+            "minimum_age": None, "allowed_locations": ["Nairobi"],
             "allowed_occasions": ["everyday"], "allowed_climates": ["warm"],
         },
         "usi_profile": {
@@ -103,6 +106,97 @@ def request_body(**overrides):
     body["npl_evidence_signature"] = signed_npl(body)
     body["cultural_evidence_signature"] = signed_cultural(body)
     return body
+
+
+
+def attach_age_attestation(body: dict, *, threshold_met: bool = True) -> None:
+    from age_evidence import build_threshold_attestation, sign_threshold_attestation
+
+    now = datetime.now(timezone.utc)
+    attestation = build_threshold_attestation(
+        subject_id=body["context"]["user_id"],
+        request_id=body["request_id"],
+        purpose="shopper_eligibility",
+        policy_id=body["eepl_policy"]["policy_id"],
+        policy_version=body["eepl_policy"]["policy_version"],
+        threshold=body["eepl_policy"]["minimum_age"],
+        threshold_met=threshold_met,
+        provider_session_id="yoti-session-123",
+        provider_evidence_id="yoti-evidence-123",
+        issued_at=now,
+        expires_at=now + timedelta(minutes=5),
+    )
+    body["age_attestation"] = attestation
+    body["age_attestation_signature"] = sign_threshold_attestation(
+        attestation, os.environ["AGE_EVIDENCE_HMAC_SECRET"]
+    )
+
+
+def test_unverified_client_age_is_ignored_and_age_policy_routes_to_review(client):
+    body = request_body()
+    body["eepl_policy"]["minimum_age"] = 18
+    body["context"]["age_years"] = 17
+    response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["decision"] == "REVIEW"
+    assert result["may_display"] is False
+    assert result["gates"]["eepl"]["verdict"] == "review"
+    assert "EEPL_REQUIRED_CONTEXT_MISSING_AGE" in result["gates"]["eepl"]["reason_codes"]
+    assert result["age_evidence"]["used_for_eligibility"] is False
+    assert result["age_evidence"]["status"] == "unverified_client_value"
+
+
+def test_verified_yoti_threshold_attestation_is_used_by_eepl(client):
+    body = request_body()
+    body["eepl_policy"]["minimum_age"] = 18
+    body["context"]["age_years"] = 16
+    attach_age_attestation(body, threshold_met=True)
+    response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert result["decision"] == "SHOW"
+    assert result["age_evidence"] == {
+        "contract_version": "age-threshold-attestation-v1",
+        "status": "verified_threshold_met",
+        "used_for_eligibility": True,
+        "threshold": 18,
+    }
+
+
+def test_verified_under_threshold_attestation_blocks_eligibility(client):
+    body = request_body()
+    body["eepl_policy"]["minimum_age"] = 18
+    attach_age_attestation(body, threshold_met=False)
+    response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 200, response.text
+    assert response.json()["decision"] == "BLOCK"
+    assert response.json()["age_evidence"]["status"] == "verified_threshold_not_met"
+
+
+def test_age_attestation_subject_binding_mismatch_is_rejected(client):
+    body = request_body()
+    body["eepl_policy"]["minimum_age"] = 18
+    attach_age_attestation(body)
+    body["context"]["user_id"] = "different-user"
+    # Other signed evidence is re-created for the altered request identity.
+    body["fit_estimate"]["user_id"] = "different-user"
+    body["fit_estimate_signature"] = signed_fit(body["fit_estimate"])
+    body["npl_evidence_signature"] = signed_npl(body)
+    body["cultural_evidence_signature"] = signed_cultural(body)
+    response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 401
+    assert response.json()["detail"]["code"] == "AGE_EVIDENCE_BINDING_OR_SIGNATURE_INVALID"
+
+
+def test_threshold_attestation_cannot_satisfy_maximum_age_policy(client):
+    body = request_body()
+    body["eepl_policy"]["minimum_age"] = 18
+    body["eepl_policy"]["maximum_age"] = 65
+    attach_age_attestation(body)
+    response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "AGE_EVIDENCE_POLICY_UNSUPPORTED"
 
 
 def headers():
