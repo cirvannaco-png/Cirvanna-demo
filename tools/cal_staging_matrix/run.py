@@ -232,6 +232,14 @@ def validate_manifest(config: dict[str, Any]) -> None:
         assertions = scenario.get("assertions", {})
         if set(assertions) != REQUIRED_SURFACES:
             raise MatrixError(f"scenario {scenario.get('id')} must define assertions for every shopper surface")
+        for surface, assertion in assertions.items():
+            if not isinstance(assertion, dict) or not any(
+                assertion.get(key) for key in ("json_equals", "json_one_of", "json_absent", "json_present")
+            ):
+                raise MatrixError(
+                    f"scenario {scenario.get('id')} assertion for {surface} "
+                    "must verify response semantics, not status alone"
+                )
         if scenario.get("id") in {"consent_session_revoked", "cache_after_revocation", "payment_revoked_race"}:
             if scenario.get("recheck_after_revoke") is not True:
                 raise MatrixError(f"scenario {scenario.get('id')} must recheck all surfaces after revocation")
