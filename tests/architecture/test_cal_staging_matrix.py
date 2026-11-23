@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 import unittest
 from pathlib import Path
 
@@ -9,6 +10,7 @@ RUNNER_PATH = ROOT / "tools" / "cal_staging_matrix" / "run.py"
 SPEC = importlib.util.spec_from_file_location("cal_staging_matrix_runner", RUNNER_PATH)
 runner = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
+sys.modules[SPEC.name] = runner
 SPEC.loader.exec_module(runner)
 
 
