@@ -406,13 +406,21 @@ async def logout(request: Request) -> Response:
     session_id = request.cookies.get(COOKIE_NAME)
     if session_id:
         try:
-            user_id, tokens = await _load_session(session_id)
-            base, key = _supabase()
-            async with httpx.AsyncClient(timeout=8, trust_env=False, follow_redirects=False) as client:
-                await client.post(
-                    base + "/auth/v1/logout?scope=local",
-                    headers={"apikey": key, "Authorization": "Bearer " + tokens["access_token"]},
-                )
+            try:
+                _, tokens = await _load_session(session_id)
+            except HTTPException:
+                tokens = None
+            if tokens:
+                try:
+                    base, key = _supabase()
+                    async with httpx.AsyncClient(timeout=8, trust_env=False, follow_redirects=False) as client:
+                        await client.post(
+                            base + "/auth/v1/logout?scope=local",
+                            headers={"apikey": key, "Authorization": "Bearer " + tokens["access_token"]},
+                        )
+                except (httpx.HTTPError, HTTPException):
+                    # Local revocation is authoritative for this BFF session even if Auth is unavailable.
+                    pass
         finally:
             await _revoke(session_id)
     response = Response(status_code=204)
