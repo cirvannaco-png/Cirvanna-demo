@@ -4688,3 +4688,33 @@ def test_wardrobe_try_on_fails_closed_when_twin_registry_denies_owner(client, mo
     assert response.status_code == 404
     assert response.json()["detail"]["code"] == "TWIN_NOT_FOUND_OR_NOT_AUTHORIZED"
     assert len(fake.calls) == 2
+
+
+def test_wardrobe_try_on_rejects_ambiguous_multi_image_twin_source(client, monkeypatch):
+    monkeypatch.setenv("COMMERCE_API_URL", "https://commerce.example.test")
+    monkeypatch.setenv("TWIN_REGISTRY_API_URL", "https://registry.example.test")
+    monkeypatch.setenv("TWIN_REGISTRY_API_TOKEN", "twin-registry-internal-token-more-than-32-bytes")
+    fake = FakeAsyncClient([
+        FakeResponse({"user_id": "signed-user-42"}),
+        FakeResponse({
+            "authorized": True, "active": True, "subject_id": "signed-user-42",
+            "twin_id": "persistent-twin-42", "representation_type": "full_body_mesh",
+            "source_image_asset_ids": [
+                "5e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d",
+                "6e7a22a4-2f3b-4fb7-86a2-4a0e83dcf26d",
+            ],
+            "consent_id": "registry-consent-1234",
+        }),
+    ])
+    monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
+    response = client.post(
+        "/api/wardrobe/items/closet-item-1/try-on",
+        headers={"Authorization": "Bearer signed-session"},
+        json={
+            "wardrobe_item_id": "closet-item-1", "twin_id": "persistent-twin-42",
+            "consent_image_processing": True, "consent_virtual_try_on": True,
+        },
+    )
+    assert response.status_code == 403
+    assert response.json()["detail"]["code"] == "TWIN_NOT_AUTHORIZED_FOR_TRY_ON"
+    assert len(fake.calls) == 2
