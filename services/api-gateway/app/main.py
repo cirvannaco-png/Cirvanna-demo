@@ -195,6 +195,9 @@ class PurchaseAuthorizationItem(BaseModel):
 class PurchaseAuthorizationRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     user_id: str = Field(min_length=1, max_length=128)
+    request_id: str | None = Field(default=None, min_length=8, max_length=128)
+    age_attestation: dict[str, Any] | None = None
+    age_attestation_signature: str | None = Field(default=None, min_length=64, max_length=128)
     authorizations: list[PurchaseAuthorizationItem] = Field(min_length=1, max_length=100)
 
     @field_validator("user_id")
@@ -210,6 +213,9 @@ class DiscoveryRequest(BaseModel):
     """Live Catalog/Commerce search; all returned products are gated by candidate-bound CAL."""
     model_config = ConfigDict(extra="forbid")
     user_id: str = Field(min_length=1, max_length=128)
+    request_id: str | None = Field(default=None, min_length=8, max_length=128)
+    age_attestation: dict[str, Any] | None = None
+    age_attestation_signature: str | None = Field(default=None, min_length=64, max_length=128)
     # Empty query means browse the active merchant offers in the selected market.
     query: str = Field(default="", max_length=160)
     category: str | None = Field(default=None, max_length=80)
@@ -2069,6 +2075,9 @@ def authorize_purchase_candidates(
     decision_request = DecisionRequest(
         user_id=subject,
         product_ids=product_ids,
+        request_id=payload.request_id,
+        age_attestation=payload.age_attestation,
+        age_attestation_signature=payload.age_attestation_signature,
         allow_without_profile_consent=True,
     )
     decisions = evaluate_decisions(decision_request, end_user_authorization)
@@ -3014,6 +3023,9 @@ def discover_marketplace(
     decision_request = DecisionRequest(
         user_id=subject,
         product_ids=[item[0] for item in ranked],
+        request_id=payload.request_id,
+        age_attestation=payload.age_attestation,
+        age_attestation_signature=payload.age_attestation_signature,
         context=eepl_context,
         use_wardrobe_context=payload.use_wardrobe_context,
         style_preferences=[],
