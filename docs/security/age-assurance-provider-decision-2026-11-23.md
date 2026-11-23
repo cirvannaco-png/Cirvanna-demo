@@ -8,7 +8,7 @@ Select **Yoti Age Verification Service (AVS)** as Cirvanna's preferred age-assur
 
 The initial integration profile should request a threshold result (OVER) rather than a full age value. Prefer the Yoti Digital ID method with the threshold configured by Cirvanna's active policy. Do not enable facial age estimation. Document scan should remain disabled unless its subprocessor retention and deletion terms are explicitly accepted in the executed DPA. If the user cannot complete the approved method, the evidence state remains UNKNOWN and age-dependent EEPL returns REVIEW.
 
-Yoti's public developer documentation describes a server-side session API, threshold-based OVER/UNDER checks, a server-side result endpoint and signed notifications. It describes age verification as data-minimizing and says the relying party receives the threshold outcome rather than directly identifying information. This makes it a stronger initial candidate than trusting profile metadata or a client-supplied age. It does not establish that the required method is contractually available to Cirvanna in every target market.
+Yoti's public developer documentation describes a server-side session API, threshold-based OVER/UNDER checks, a server-side result endpoint and signed notifications. It describes age verification as data-minimizing and says the relying party receives the threshold outcome rather than directly identifying information. This makes it a stronger initial candidate than trusting profile metadata or a client-supplied age. It does not establish that the required method is contractually available to Cirvanna in every target market. Yoti describes Digital ID as globally available, but its current supported-documents table lists a Kenyan passport and does not list a Kenyan national ID for Digital ID enrollment. That is a material conversion/accessibility limitation for Kenya: the Digital ID-only profile must not be presented as a complete Kenyan age-assurance solution until Yoti confirms accepted credentials and local onboarding in writing. Keep the fallback outcome UNKNOWN/REVIEW; do not silently enable age estimation or document scan to compensate.
 
 ## Evidence contract Cirvanna must enforce
 
@@ -34,6 +34,7 @@ A provider result is not accepted merely because the browser returns a session I
 ## References
 
 - Yoti AVS methods and regional configuration: https://developers.yoti.com/age-verification/methods
+- Yoti Digital ID supported documents by issuing country: https://developers.yoti.com/digital-id/supported-documents
 - Session creation and API authentication: https://developers.yoti.com/age-verification/create-a-session
 - Authoritative session results: https://developers.yoti.com/age-verification/results
 - Signed notification verification: https://developers.yoti.com/age-verification/notifications
