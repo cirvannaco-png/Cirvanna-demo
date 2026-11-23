@@ -27,8 +27,8 @@ Top-level fields:
 - `environment`: exactly `staging`.
 - `fixture_control.url`: HTTPS base URL of the dedicated staging-only fixture controller.
 - `fixture_control.token_env`: environment variable holding a random token of at least 32 bytes.
-- `surfaces`: exactly the ten shopper surfaces below. Each entry has `url`, `method`, optional `headers`, `token_env`, `body` and default `assertions`.
-- `scenarios`: all eight required scenario IDs below. Each scenario provides a synthetic `fixture`, an `exercise_surfaces` list containing all ten surfaces, per-surface `assertions`, and optional `revoke`, `race`, `recheck_after_revoke` and `post_revoke_assertions`. `race.surfaces` names requests to execute concurrently with `race.revoke`.
+- `surfaces`: exactly the ten shopper surfaces below. Each entry has `url`, `method`, optional `headers`, optional `token_env` (omit for intentionally public probes such as the disabled public Click It route), `body` and default `assertions`.
+- `scenarios`: all eight required scenario IDs below. Each scenario provides a synthetic `fixture`, an `exercise_surfaces` list containing all ten surfaces, per-surface `assertions`, and optional `revoke`, `race`, `recheck_after_revoke` and `post_revoke_assertions`. `race.surfaces` names requests to execute concurrently with `race.revoke`. Every revocation request must use HTTPS and a dedicated `token_env`; public shopper probes may omit their token.
 
 The fixture controller must implement:
 
