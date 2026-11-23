@@ -29,12 +29,13 @@ class ContextField(str, Enum):
 class EEPLContext:
     user_id: str
     age_years: int | None = None
-    # Trusted, signature-verified threshold result. It contains no raw age or DOB.
-    minimum_age_threshold: int | None = None
-    minimum_age_threshold_met: bool | None = None
     location: str | None = None
     occasion: str | None = None
     climate: str | None = None
+    # Trusted, signature-verified threshold result. It contains no raw age or DOB.
+    # Appended to preserve the existing positional constructor contract.
+    minimum_age_threshold: int | None = None
+    minimum_age_threshold_met: bool | None = None
 
 
 @dataclass(frozen=True)
