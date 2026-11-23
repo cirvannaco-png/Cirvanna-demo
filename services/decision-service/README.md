@@ -47,7 +47,7 @@ The service independently canonicalizes and verifies the signature before evalua
 
 ## Server-authoritative EEPL policy
 
-The Decision Service resolves the active EEPL policy ID, version, age thresholds, location/occasion/climate allowlists and required-context rules exclusively from `EEPL_POLICY_ID` and `EEPL_POLICY_REGISTRY_JSON` in server configuration. The legacy `eepl_policy` request field is retained temporarily for wire compatibility but is ignored; it cannot select a policy or alter a rule. The same resolver and registry are used by Identity Learning and the API Gateway. An absent, malformed or unregistered active policy fails closed with `SERVER_POLICY_UNAVAILABLE`.
+The Decision Service resolves the active EEPL policy ID, version, age thresholds, location/occasion/climate allowlists and required-context rules exclusively from `EEPL_POLICY_ID` and `EEPL_POLICY_REGISTRY_JSON` in server configuration. The legacy `eepl_policy` request field is retained temporarily for wire compatibility but is ignored; it cannot select a policy or alter a rule. The same resolver and registry are used by Identity Learning and the API Gateway. An absent, malformed or unregistered active policy fails closed with `SERVER_POLICY_UNAVAILABLE`. Both Gateway and Decision Service also resolve the active CaTaCaCi policy from `CATACACI_POLICY_ID` / `CATACACI_POLICY_REGISTRY_JSON`; the caller cannot choose fit or alignment thresholds.
 
 A verified age attestation must also be redeemed through the private Identity Learning endpoint before it influences EEPL. Configure `AGE_EVIDENCE_REDEMPTION_URL` as the HTTPS URL ending in `/internal/v1/age-evidence/attestations/redeem` and `AGE_EVIDENCE_REDEMPTION_TOKEN` as the separate machine credential. If redemption is unavailable, replayed, revoked or expired, the Decision Service fails closed; a valid HMAC alone is insufficient.
 
@@ -101,3 +101,14 @@ The decision endpoint requires `CULTURAL_IDENTITY_HMAC_SECRET` and verifies a ca
 The eligibility endpoint never uses request-body `context.age_years`. It accepts age evidence only as a separately HMAC-signed, closed-contract threshold attestation from the age-evidence service. The verifier binds subject ID, request ID, the fixed `shopper_eligibility` purpose, exact EEPL policy ID/version and minimum-age threshold, and enforces the attestation freshness/maximum TTL contract. A valid OVER result supplies only the threshold and boolean outcome to EEPL; an under-threshold result blocks, while missing/untrusted evidence routes to REVIEW. Threshold-only evidence cannot satisfy a maximum-age policy and is rejected for that policy shape.
 
 Set `AGE_EVIDENCE_HMAC_SECRET` in the Decision Service secret manager to the dedicated age-evidence signing key (minimum 32 bytes). Do not reuse the Yoti API key or the general internal bearer token. The signed envelope must be delivered only over the authenticated internal service path. The durable Yoti session mapping, revocation lookup, provider onboarding and live staging acceptance remain separate release gates; this code does not claim those have been completed.
+
+
+## Durable CaTaCaCi decision receipts
+
+Every eligibility evaluation must persist its final CAL verdict before the response is released. Configure `DECISION_AUDIT_DATABASE_URL` with a dedicated least-privileged PostgreSQL login and apply:
+
+```bash
+psql "$DECISION_AUDIT_DATABASE_URL" -v ON_ERROR_STOP=1 -f migrations/0001_catacaci_decision_receipts.sql
+```
+
+The append-only `catacaci_decision_receipts` table records the request/candidate, final SHOW/BLOCK/REVIEW, EEPL and CAL policy IDs/versions, contract versions, candidate snapshot digest, typed evaluated signal states/reason codes/source versions, reason references and a canonical receipt SHA-256. It deliberately excludes user IDs, raw measurements, images and free-text explanations. Replays are idempotent only when the canonical receipt hash matches; changed evidence under the same request/candidate is rejected. Readiness remains 503 until the PostgreSQL table is reachable. SQLite is not an accepted production receipt store.
