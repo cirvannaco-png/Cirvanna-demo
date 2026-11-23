@@ -20,6 +20,17 @@ from app import main
 def config(monkeypatch):
     monkeypatch.setenv("AGE_EVIDENCE_HMAC_SECRET", "age-evidence-provider-test-key-minimum-32-bytes")
     monkeypatch.setenv("DECISION_SERVICE_TOKEN", "decision-service-test-token-32-bytes-min")
+    monkeypatch.setenv("AGE_EVIDENCE_REDEMPTION_URL", "https://identity.example.test/internal/v1/age-evidence/attestations/redeem")
+    monkeypatch.setenv("AGE_EVIDENCE_REDEMPTION_TOKEN", "age-evidence-redemption-test-token-32-bytes")
+    monkeypatch.setenv("CATACACI_CAM_SERVICE_TOKEN", "catacaci-cam-service-test-token-32-bytes")
+    monkeypatch.setenv("CATACACI_CIL_SERVICE_TOKEN", "catacaci-cil-service-test-token-32-bytes")
+    monkeypatch.setenv("CATACACI_CIL_AGGREGATE_TOKEN", "catacaci-cil-aggregate-test-token-32-bytes")
+    monkeypatch.setenv("CATACACI_CIL_RETENTION_TOKEN", "catacaci-cil-retention-test-token-32-bytes")
+    monkeypatch.setenv("CATACACI_VSL_PROPOSER_TOKEN", "catacaci-vsl-proposer-test-token-32-bytes")
+    monkeypatch.setenv("CATACACI_VSL_APPROVER_TOKEN", "catacaci-vsl-approver-test-token-32-bytes")
+    monkeypatch.setenv("CATACACI_VSL_PROPOSER_ID", "proposer-test")
+    monkeypatch.setenv("CATACACI_VSL_APPROVER_ID", "approver-test")
+    monkeypatch.setenv("CATACACI_CIL_ALLOWED_COHORT_KEYS", "market:ke|category:tops")
     monkeypatch.setenv("FCI_EVIDENCE_HMAC_SECRET", "fci-provider-test-key-minimum-32-bytes")
     monkeypatch.setenv("NPL_EVIDENCE_HMAC_SECRET", "npl-provider-test-key-minimum-32-bytes")
     monkeypatch.setenv("CULTURAL_IDENTITY_HMAC_SECRET", "culture-provider-test-key-minimum-32-bytes")
@@ -36,6 +47,7 @@ def config(monkeypatch):
     }))
     monkeypatch.setattr(main, "_redeem_age_attestation", lambda payload, signature: None)
     monkeypatch.setattr(main, "check_receipt_store", lambda: True)
+    monkeypatch.setattr(main, "check_governance_store", lambda: True)
     monkeypatch.setattr(main, "persist_decision_receipt", lambda receipt: {
         "receipt_id": "123e4567-e89b-42d3-a456-426614174000",
         "receipt_sha256": "a" * 64,
