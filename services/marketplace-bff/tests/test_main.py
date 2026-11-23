@@ -4624,3 +4624,41 @@ def test_cal_discovery_envelope_requires_authority_request_id_and_complete_count
             main._validate_cal_discovery_envelope(payload, error_code="INVALID")
         assert exc.value.status_code == 502
         assert exc.value.detail["code"] == "INVALID"
+
+
+def test_age_evidence_request_fields_require_signed_subject_and_request_binding():
+    from starlette.requests import Request
+    attestation = {
+        "subject_id": "buyer-1", "request_id": "age-request-123",
+        "purpose": "shopper_eligibility", "jti": "opaque-jti",
+    }
+    request = Request({
+        "type": "http",
+        "headers": [
+            (b"x-cirvanna-age-attestation", json.dumps(attestation).encode()),
+            (b"x-cirvanna-age-attestation-signature", b"a" * 64),
+            (b"x-cirvanna-age-evidence-request-id", b"age-request-123"),
+        ],
+    })
+    fields = main._age_evidence_request_fields(request, "buyer-1")
+    assert fields["request_id"] == "age-request-123"
+    assert fields["age_attestation"] == attestation
+    assert fields["age_attestation_signature"] == "a" * 64
+
+
+def test_age_evidence_request_fields_reject_wrong_subject():
+    from starlette.requests import Request
+    attestation = {
+        "subject_id": "other-buyer", "request_id": "age-request-123",
+        "purpose": "shopper_eligibility",
+    }
+    request = Request({
+        "type": "http",
+        "headers": [
+            (b"x-cirvanna-age-attestation", json.dumps(attestation).encode()),
+            (b"x-cirvanna-age-attestation-signature", b"a" * 64),
+            (b"x-cirvanna-age-evidence-request-id", b"age-request-123"),
+        ],
+    })
+    with pytest.raises(Exception):
+        main._age_evidence_request_fields(request, "buyer-1")
