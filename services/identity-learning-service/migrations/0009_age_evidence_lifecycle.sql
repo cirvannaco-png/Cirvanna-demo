@@ -75,8 +75,6 @@ CREATE POLICY identity_age_attestations_service_only ON identity_private.identit
 
 COMMIT;
 ),
-  attestation_payload jsonb NOT NULL,
-  signature varchar(128) NOT NULL,
   issued_at timestamptz NOT NULL,
   expires_at timestamptz NOT NULL,
   consumed_at timestamptz,
