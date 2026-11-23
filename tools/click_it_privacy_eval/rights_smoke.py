@@ -48,10 +48,10 @@ def request(url: str, method: str, body: dict | None = None, headers: dict | Non
             raw, status = response.read(MAX_RESPONSE_BYTES + 1), response.status
     except urllib.error.HTTPError as exc:
         raw, status = exc.read(MAX_RESPONSE_BYTES + 1), exc.code
-    if len(raw) > MAX_RESPONSE_BYTES:
-        raise RightsSmokeError("staging response exceeded the safety size limit")
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise RightsSmokeError(f"{method} {url} transport failed: {type(exc).__name__}") from exc
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise RightsSmokeError("staging response exceeded the safety size limit")
     try:
         parsed = json.loads(raw.decode()) if raw else None
     except (UnicodeDecodeError, json.JSONDecodeError):
