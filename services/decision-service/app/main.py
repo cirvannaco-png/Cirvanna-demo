@@ -129,7 +129,7 @@ class CILContributionIn(StrictModel):
     event_id: str = Field(min_length=8, max_length=128)
     contributor_token: str = Field(min_length=76, max_length=76)
     cohort_key: str = Field(min_length=2, max_length=128)
-    outcome_success: bool
+    outcome_success: bool = Field(strict=True)
     observed_at: datetime
 
 
