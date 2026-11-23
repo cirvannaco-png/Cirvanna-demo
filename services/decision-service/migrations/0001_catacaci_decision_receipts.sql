@@ -1,6 +1,9 @@
+CREATE SCHEMA IF NOT EXISTS decision_private;
+REVOKE ALL ON SCHEMA decision_private FROM PUBLIC;
+
 -- Durable, append-only CaTaCaCi/CAL decision receipts.
 -- Apply with a dedicated least-privileged DECISION_AUDIT_DATABASE_URL role.
-CREATE TABLE IF NOT EXISTS catacaci_decision_receipts (
+CREATE TABLE IF NOT EXISTS decision_private.catacaci_decision_receipts (
     receipt_id UUID PRIMARY KEY,
     request_id TEXT NOT NULL,
     candidate_id TEXT NOT NULL,
@@ -24,6 +27,25 @@ CREATE TABLE IF NOT EXISTS catacaci_decision_receipts (
     CONSTRAINT uq_catacaci_receipt_request_candidate UNIQUE (request_id, candidate_id)
 );
 CREATE INDEX IF NOT EXISTS ix_catacaci_receipts_candidate_created
-    ON catacaci_decision_receipts (candidate_id, created_at DESC);
+    ON decision_private.catacaci_decision_receipts (candidate_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS ix_catacaci_receipts_verdict_created
-    ON catacaci_decision_receipts (verdict, created_at DESC);
+    ON decision_private.catacaci_decision_receipts (verdict, created_at DESC);
+
+-- Keep the private schema inaccessible to browser-facing Supabase roles.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anon') THEN
+        REVOKE ALL ON SCHEMA decision_private FROM anon;
+        REVOKE ALL ON ALL TABLES IN SCHEMA decision_private FROM anon;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN
+        REVOKE ALL ON SCHEMA decision_private FROM authenticated;
+        REVOKE ALL ON ALL TABLES IN SCHEMA decision_private FROM authenticated;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='cirvanna_decision_audit') THEN
+        GRANT USAGE ON SCHEMA decision_private TO cirvanna_decision_audit;
+        GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA decision_private TO cirvanna_decision_audit;
+    END IF;
+END;
+$$;
+ALTER DEFAULT PRIVILEGES IN SCHEMA decision_private REVOKE ALL ON TABLES FROM PUBLIC;
