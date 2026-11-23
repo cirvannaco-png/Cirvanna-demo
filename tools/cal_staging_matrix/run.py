@@ -107,6 +107,12 @@ def _json_path(document: Any, path: str) -> Any:
 _MISSING = object()
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Never forward bearer credentials or fixture data to a redirect target.
+        return None
+
+
 def _http(request_spec: dict[str, Any], timeout: int) -> Response:
     method = str(request_spec.get("method", "GET")).upper()
     url = str(request_spec["url"])
@@ -123,15 +129,18 @@ def _http(request_spec: dict[str, Any], timeout: int) -> Response:
         headers.setdefault("Content-Type", "application/json")
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     started = time.monotonic()
+    opener = urllib.request.build_opener(_NoRedirect())
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            raw = response.read()
+        with opener.open(request, timeout=timeout) as response:
+            raw = response.read(MAX_RESPONSE_BYTES + 1)
             status = response.status
             response_headers = {k.lower(): v for k, v in response.headers.items()}
     except urllib.error.HTTPError as exc:
-        raw = exc.read()
+        raw = exc.read(MAX_RESPONSE_BYTES + 1)
         status = exc.code
         response_headers = {k.lower(): v for k, v in exc.headers.items()}
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise MatrixError(f"{method} {url} response exceeded the {MAX_RESPONSE_BYTES}-byte safety limit")
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise MatrixError(f"{method} {url} transport failure: {type(exc).__name__}") from exc
     elapsed = int((time.monotonic() - started) * 1000)
