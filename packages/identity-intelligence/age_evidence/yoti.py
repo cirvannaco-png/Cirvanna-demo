@@ -65,7 +65,7 @@ class YotiAVSClient:
         self._api_key = api_key
         self._sdk_id = sdk_id
         self._base_url = str(parsed).rstrip("/")
-        self._client = client or httpx.Client(timeout=timeout_seconds)
+        self._client = client or httpx.Client(timeout=timeout_seconds, trust_env=False, follow_redirects=False)
 
     def create_over_session(
         self,
