@@ -61,6 +61,13 @@ attestations = Table(
 )
 
 
+def _uuid_text(value: str) -> str:
+    try:
+        return str(uuid.UUID(str(value)))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise ValueError("identifier must be a UUID") from exc
+
+
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -122,9 +129,9 @@ class AgeEvidenceStore:
             raise ValueError("provider session must expire in the future")
         with self.engine.begin() as conn:
             result = conn.execute(update(sessions).where(
-                and_(sessions.c.session_id == session_id, sessions.c.state == "created",
+                and_(sessions.c.session_id == _uuid_text(session_id), sessions.c.state == "created",
                      sessions.c.revoked_at.is_(None))
-            ).values(provider_session_id=provider_session_id, expires_at=expires_at,
+            ).values(provider_session_id=_uuid_text(provider_session_id), expires_at=expires_at,
                      state="pending", updated_at=now))
             if result.rowcount != 1:
                 raise ValueError("session is not in a creatable state")
@@ -144,11 +151,11 @@ class AgeEvidenceStore:
         next_state = {"PENDING": "pending", "COMPLETE": "verified", "FAIL": "denied"}[state]
         with self.engine.begin() as conn:
             row = conn.execute(select(sessions).where(
-                sessions.c.session_id == session_id
+                sessions.c.session_id == _uuid_text(session_id)
             ).with_for_update()).mappings().first()
             if not row or row["state"] not in {"pending", "verified"}:
                 raise ValueError("session is missing or no longer active")
-            if row["provider_session_id"] != provider_session_id:
+            if _uuid_text(row["provider_session_id"]) != _uuid_text(provider_session_id):
                 raise ValueError("provider session binding mismatch")
             if row["revoked_at"] is not None or row["expires_at"] is None or (row["expires_at"].replace(tzinfo=timezone.utc) if row["expires_at"].tzinfo is None else _aware(row["expires_at"])) <= now:
                 raise ValueError("provider session is revoked or expired")
@@ -182,7 +189,7 @@ class AgeEvidenceStore:
             if row["expires_at"] is None or (row["expires_at"].replace(tzinfo=timezone.utc) if row["expires_at"].tzinfo is None else _aware(row["expires_at"])) <= now:
                 raise ValueError("verified provider session has expired")
             conn.execute(insert(attestations).values(
-                jti=jti, session_id=session_id, subject_id=row["subject_id"],
+                jti=_uuid_text(jti), session_id=_uuid_text(session_id), subject_id=row["subject_id"],
                 request_id=row["request_id"], purpose=row["purpose"],
                 policy_id=row["policy_id"], policy_version=row["policy_version"],
                 threshold=row["threshold"], threshold_met=row["threshold_met"],
@@ -204,7 +211,7 @@ class AgeEvidenceStore:
             sessions.c.expires_at > now,
         )))
         predicate = and_(
-            attestations.c.jti == jti,
+            attestations.c.jti == _uuid_text(jti),
             attestations.c.subject_id == subject_id,
             attestations.c.request_id == request_id,
             attestations.c.purpose == purpose,
@@ -249,16 +256,16 @@ class AgeEvidenceStore:
         now = _aware(now or utcnow())
         with self.engine.begin() as conn:
             result = conn.execute(update(sessions).where(
-                and_(sessions.c.session_id == session_id, sessions.c.revoked_at.is_(None))
+                and_(sessions.c.session_id == _uuid_text(session_id), sessions.c.revoked_at.is_(None))
             ).values(state="revoked", revoked_at=now, updated_at=now))
             conn.execute(update(attestations).where(
-                and_(attestations.c.session_id == session_id, attestations.c.revoked_at.is_(None))
+                and_(attestations.c.session_id == _uuid_text(session_id), attestations.c.revoked_at.is_(None))
             ).values(revoked_at=now))
             return result.rowcount == 1
 
     def get_session(self, session_id: str) -> dict[str, Any] | None:
         with self.engine.connect() as conn:
             row = conn.execute(select(sessions).where(
-                sessions.c.session_id == session_id
+                sessions.c.session_id == _uuid_text(session_id)
             )).mappings().first()
             return dict(row) if row else None
