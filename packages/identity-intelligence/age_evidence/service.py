@@ -106,5 +106,9 @@ class AgeEvidenceService:
             "attestation": payload, "signature": signature,
         }
 
+    def close(self) -> None:
+        self.yoti.close()
+        self.store.engine.dispose()
+
     def revoke(self, session_id: str) -> bool:
         return self.store.revoke_session(session_id)
