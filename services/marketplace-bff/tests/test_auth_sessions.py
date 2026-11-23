@@ -119,6 +119,8 @@ def test_jwt_verifier_rejects_wrong_issuer(monkeypatch):
         def get_signing_key_from_jwt(self, supplied):
             return SimpleNamespace(key=private_key.public_key())
 
+    monkeypatch.setenv("SUPABASE_URL", "https://project.supabase.co")
+    monkeypatch.setenv("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test")
     monkeypatch.setenv("SUPABASE_JWKS_URL", "https://project.supabase.co/auth/v1/.well-known/jwks.json")
     monkeypatch.setenv("SUPABASE_JWT_ISSUER", "https://project.supabase.co/auth/v1")
     monkeypatch.setenv("SUPABASE_JWT_AUDIENCE", "authenticated")
