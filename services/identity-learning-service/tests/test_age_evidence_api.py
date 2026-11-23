@@ -99,20 +99,28 @@ def test_redemption_endpoint_requires_dedicated_internal_credential(tmp_path, mo
     assert response.status_code == 401
 
 
-
-def test_yoti_session_threshold_is_resolved_server_side(tmp_path, monkeypatch):
+def test_yoti_session_policy_is_selected_only_by_server(tmp_path, monkeypatch):
     url = "sqlite:///" + str(tmp_path / "age-policy.db")
     monkeypatch.setenv("IDENTITY_DATABASE_URL", url)
     monkeypatch.setenv("AGE_EVIDENCE_ORCHESTRATOR_TOKEN", "age-evidence-orchestrator-token-at-least-32-bytes")
+    monkeypatch.setenv("EEPL_POLICY_ID", "adult-market")
     monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", json.dumps({
         "adult-market": {
             "policy_version": "v2", "minimum_age": 18, "maximum_age": None,
             "allowed_locations": [], "allowed_occasions": [],
             "allowed_climates": [], "required_context": [],
-        }
+        },
+        "youth-market": {
+            "policy_version": "v1", "minimum_age": 13, "maximum_age": None,
+            "allowed_locations": [], "allowed_occasions": [],
+            "allowed_climates": [], "required_context": [],
+        },
     }))
     monkeypatch.setattr(age_api, "_service", lambda: type("Fake", (), {
-        "start": staticmethod(lambda **kwargs: {"threshold": kwargs["threshold"], "policy_id": kwargs["policy_id"]}),
+        "start": staticmethod(lambda **kwargs: {
+            "threshold": kwargs["threshold"], "policy_id": kwargs["policy_id"],
+            "policy_version": kwargs["policy_version"],
+        }),
         "close": staticmethod(lambda: None),
     })())
     with TestClient(main.app) as client:
@@ -120,16 +128,24 @@ def test_yoti_session_threshold_is_resolved_server_side(tmp_path, monkeypatch):
             "/internal/v1/age-evidence/sessions",
             headers={"Authorization": "Bearer age-evidence-orchestrator-token-at-least-32-bytes"},
             json={"subject_id": "subject-1", "request_id": "request-1",
-                  "purpose": "shopper_eligibility", "policy_id": "adult-market",
-                  "policy_version": "v2"},
+                  "purpose": "shopper_eligibility"},
         )
-        forged = client.post(
+        caller_selected_policy = client.post(
             "/internal/v1/age-evidence/sessions",
             headers={"Authorization": "Bearer age-evidence-orchestrator-token-at-least-32-bytes"},
             json={"subject_id": "subject-1", "request_id": "request-2",
-                  "purpose": "shopper_eligibility", "policy_id": "adult-market",
-                  "policy_version": "v2", "threshold": 1},
+                  "purpose": "shopper_eligibility", "policy_id": "youth-market",
+                  "policy_version": "v1"},
+        )
+        caller_selected_threshold = client.post(
+            "/internal/v1/age-evidence/sessions",
+            headers={"Authorization": "Bearer age-evidence-orchestrator-token-at-least-32-bytes"},
+            json={"subject_id": "subject-1", "request_id": "request-3",
+                  "purpose": "shopper_eligibility", "threshold": 1},
         )
     assert response.status_code == 200, response.text
-    assert response.json() == {"threshold": 18, "policy_id": "adult-market"}
-    assert forged.status_code == 422
+    assert response.json() == {
+        "threshold": 18, "policy_id": "adult-market", "policy_version": "v2",
+    }
+    assert caller_selected_policy.status_code == 422
+    assert caller_selected_threshold.status_code == 422
