@@ -49,3 +49,12 @@ For every case, retain the exact candidate ID, Catalog version, market/context, 
 - An independent reviewer verifies no product details escape through an ungoverned route.
 
 Until those criteria are evidenced, CAL is **implemented and locally tested, but not independently production-certified**.
+
+
+## 2026-11-23 unified staging execution harness
+
+The executable black-box runner is `tools/cal_staging_matrix/run.py`. It requires a dedicated staging fixture-control plane and configured HTTPS endpoints for all ten shopper surfaces: Marketplace, PNELLY, Wardrobe, Look It, Click It, saved products, comparison, cart, checkout and PNELLY daily looks. Required adversarial scenarios are mapped/approved, unmapped, merchant suspended, stale offer, merchant disconnected, consent/session revoked, cache after revocation, and payment-revocation race. The consent and payment scenarios race live shopper requests against the revocation operation and then replay every surface. The runner refuses partial manifests and writes a redacted evidence report.
+
+The Click It privacy tools are `tools/click_it_privacy_eval/score.py` (independent annotation metrics with per-stratum FNR confidence bounds) and `tools/click_it_privacy_eval/rights_smoke.py` (deployed staging photographed-person report/removal intake and quarantine/status checks). These tools are harnesses, not test evidence.
+
+**Execution status: BLOCKED — no Cirvanna staging service URLs or fixture-control endpoint are available.** Supabase `cirvanna-staging` is active, but its identity/Twin/Auth-private tables currently contain zero rows and there are no Edge Functions. Neither connected Render workspace has a Cirvanna service or Cirvanna Postgres instance. The public Click It BFF upload remains blocked before multipart parsing. No live CAL matrix, consent/CDN revocation, rights-provider, masking dataset, merchant or payment-provider run is claimed.
