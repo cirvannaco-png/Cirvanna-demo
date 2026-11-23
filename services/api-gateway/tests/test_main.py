@@ -1168,3 +1168,85 @@ def test_discovery_rejects_subject_mismatch_before_catalog_retrieval(client, mon
 
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "REQUEST_SUBJECT_MISMATCH"
+
+
+
+def _eepl_registry():
+    import json
+    return json.dumps({
+        "adult-market": {
+            "policy_version": "adult-v4", "minimum_age": 18, "maximum_age": None,
+            "allowed_locations": ["KE"], "allowed_occasions": ["everyday"],
+            "allowed_climates": ["warm"], "required_context": ["location", "occasion", "climate"],
+        },
+        "less-restrictive-market": {
+            "policy_version": "youth-v1", "minimum_age": 13, "maximum_age": None,
+            "allowed_locations": [], "allowed_occasions": [],
+            "allowed_climates": [], "required_context": [],
+        },
+    })
+
+
+def test_gateway_resolves_the_shared_active_eepl_policy(monkeypatch):
+    monkeypatch.setenv("EEPL_POLICY_ID", "adult-market")
+    monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", _eepl_registry())
+    policy = main._policy()
+    assert policy.policy_id == "adult-market"
+    assert policy.policy_version == "adult-v4"
+    assert policy.minimum_age == 18
+    assert policy.allowed_locations == ("KE",)
+
+
+def test_gateway_does_not_accept_self_declared_age_as_eligibility(monkeypatch):
+    monkeypatch.setenv("EEPL_POLICY_ID", "adult-market")
+    monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", _eepl_registry())
+    signal = main._legal_signal(
+        main.ContextInput(age_years=42),
+        product(attributes={"minimum_age": 18}),
+        policy=main._policy(),
+    )
+    assert signal.state == main.SignalState.UNKNOWN
+    assert signal.reason_code == "LEGAL_AGE_EVIDENCE_MISSING"
+
+
+def test_gateway_yoti_attestation_is_bound_to_active_policy_and_redeemed(monkeypatch):
+    monkeypatch.setenv("EEPL_POLICY_ID", "adult-market")
+    monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", _eepl_registry())
+    monkeypatch.setenv("AGE_EVIDENCE_HMAC_SECRET", "unit-test-age-evidence-key-with-32-bytes")
+    request_id = "shopper-request-2026-11-23-001"
+    attestation = {
+        "jti": "123e4567-e89b-42d3-a456-426614174000",
+        "subject_id": "user-test-1", "request_id": request_id,
+        "purpose": "shopper_eligibility", "policy_id": "adult-market",
+        "policy_version": "adult-v4", "threshold": 18, "threshold_met": True,
+    }
+    calls = []
+    monkeypatch.setattr(main, "verify_threshold_attestation", lambda *args, **kwargs: True)
+    monkeypatch.setattr(main, "_redeem_age_attestation", lambda payload, signature: calls.append((payload, signature)))
+    payload = main.DecisionRequest(
+        user_id="user-test-1", product_ids=[PRODUCT_ID], request_id=request_id,
+        age_attestation=attestation, age_attestation_signature="a" * 64,
+    )
+    result = main._verified_age_threshold(payload, request_id, main._policy())
+    assert result == (18, True)
+    assert calls == [(attestation, "a" * 64)]
+
+
+def test_gateway_rejects_yoti_attestation_for_non_active_policy(monkeypatch):
+    monkeypatch.setenv("EEPL_POLICY_ID", "adult-market")
+    monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", _eepl_registry())
+    monkeypatch.setenv("AGE_EVIDENCE_HMAC_SECRET", "unit-test-age-evidence-key-with-32-bytes")
+    payload = main.DecisionRequest(
+        user_id="user-test-1", product_ids=[PRODUCT_ID],
+        request_id="shopper-request-2026-11-23-002",
+        age_attestation={
+            "jti": "123e4567-e89b-42d3-a456-426614174000",
+            "subject_id": "user-test-1", "request_id": "shopper-request-2026-11-23-002",
+            "purpose": "shopper_eligibility", "policy_id": "less-restrictive-market",
+            "policy_version": "youth-v1", "threshold": 13, "threshold_met": True,
+        },
+        age_attestation_signature="a" * 64,
+    )
+    monkeypatch.setattr(main, "verify_threshold_attestation", lambda *args, **kwargs: True)
+    with pytest.raises(Exception):
+        main._verified_age_threshold(payload, payload.request_id, main._policy())
