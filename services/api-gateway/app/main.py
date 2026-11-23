@@ -2271,9 +2271,17 @@ def readiness() -> dict[str, Any]:
     identity_binding_configured = bool(
         identity_required and identity_ready and commerce_url and _trusted_internal_base_url(commerce_url)
     )
+    redemption_url = os.getenv("AGE_EVIDENCE_REDEMPTION_URL", "").strip()
+    redemption_parts = urlsplit(redemption_url)
     age_evidence_orchestrator_configured = bool(
         identity_url and _trusted_internal_base_url(identity_url)
         and len(os.getenv("AGE_EVIDENCE_ORCHESTRATOR_TOKEN", "").encode("utf-8")) >= 32
+        and len(os.getenv("AGE_EVIDENCE_REDEMPTION_TOKEN", "").encode("utf-8")) >= 32
+        and len(os.getenv("AGE_EVIDENCE_HMAC_SECRET", "").encode("utf-8")) >= 32
+        and redemption_parts.scheme == "https" and redemption_parts.hostname
+        and not redemption_parts.username and not redemption_parts.password
+        and not redemption_parts.query and not redemption_parts.fragment
+        and redemption_parts.path.endswith("/internal/v1/age-evidence/attestations/redeem")
     )
     feedback_review_required = _cil_cal_review_enforcement_required()
     feedback_review_configured = bool(
