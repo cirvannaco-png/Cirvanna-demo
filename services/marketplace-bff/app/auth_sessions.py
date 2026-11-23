@@ -11,7 +11,7 @@ import base64
 import hashlib
 import os
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
 
@@ -410,7 +410,7 @@ async def callback(request: Request) -> Response:
         if not code:
             raise HTTPException(400, detail={"code": "AUTH_CALLBACK_CODE_MISSING"})
         tokens = await _exchange_code(code, verifier)
-    session_id, max_age, profile = await _store_session(tokens)
+    session_id, max_age, _ = await _store_session(tokens)
     response = RedirectResponse(_post_login_redirect(), status_code=303)
     _cookie(response, session_id, max_age=max_age)
     response.headers["Cache-Control"] = "no-store"
