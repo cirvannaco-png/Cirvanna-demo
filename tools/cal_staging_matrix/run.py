@@ -241,6 +241,24 @@ def validate_manifest(config: dict[str, Any]) -> None:
             revoke_url = urlsplit(str(scenario["revoke"].get("url", "")))
             if revoke_url.scheme != "https" or revoke_url.username or revoke_url.password or not scenario["revoke"].get("token_env"):
                 raise MatrixError(f"scenario {scenario.get('id')} revoke must use HTTPS and a dedicated token_env")
+        if scenario.get("recheck_after_revoke") is True:
+            post_assertions = scenario.get("post_revoke_assertions")
+            if not isinstance(post_assertions, dict) or set(post_assertions) != REQUIRED_SURFACES:
+                raise MatrixError(
+                    f"scenario {scenario.get('id')} must define post_revoke_assertions for every shopper surface"
+                )
+            for surface, assertion in post_assertions.items():
+                if not isinstance(assertion, dict) or assertion.get("require_no_store") is not True:
+                    raise MatrixError(
+                        f"scenario {scenario.get('id')} post-revoke {surface} must require Cache-Control no-store"
+                    )
+                forbidden_paths = set(assertion.get("json_absent", []))
+                if not forbidden_paths.intersection({
+                    "$.products[*].id", "$.items[*].product_id", "$.offers[*].id", "$.recommendations[*].id"
+                }) and not set(assertion.get("status", [])) <= {401, 403, 410}:
+                    raise MatrixError(
+                        f"scenario {scenario.get('id')} post-revoke {surface} must deny access or assert product payload absence"
+                    )
         if scenario.get("id") in {"consent_session_revoked", "payment_revoked_race"}:
             race = scenario.get("race")
             if not isinstance(race, dict) or not race.get("revoke") or not race.get("surfaces"):
