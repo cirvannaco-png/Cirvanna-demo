@@ -155,6 +155,9 @@ def test_email_magic_link_callback_validates_nested_redirect_and_sets_opaque_coo
             return {"access_token": "verified-access", "refresh_token": "rotated-refresh"}
 
     class FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
         async def __aenter__(self):
             return self
 
