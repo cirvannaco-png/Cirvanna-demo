@@ -193,6 +193,7 @@ def test_email_magic_link_callback_validates_nested_redirect_and_sets_opaque_coo
         return "opaque-handle", 3600, {"user_id": "3f44c3f7-9b9d-44d8-8a56-ef25ab86d5b4", "app_role": "customer"}
 
     monkeypatch.setattr(auth_sessions, "_callback_url", lambda: "https://bff.example.com/auth/callback")
+    monkeypatch.setattr(auth_sessions, "_pending_provider", lambda state: asyncio.sleep(0, result="email"))
     monkeypatch.setattr(auth_sessions, "_consume_pending", consume)
     monkeypatch.setattr(auth_sessions, "_supabase", lambda: ("https://project.supabase.co", "sb_publishable_test"))
     monkeypatch.setattr(auth_sessions, "_store_session", store)
@@ -216,11 +217,19 @@ def test_email_magic_link_callback_validates_nested_redirect_and_sets_opaque_coo
     assert "httponly" in cookie and "secure" in cookie
 
 
-def test_oauth_callback_requires_initiating_browser_state_cookie(monkeypatch):
-    async def consume(state):
+def test_oauth_callback_requires_initiating_browser_state_cookie_without_consuming_state(monkeypatch):
+    consumed = False
+
+    async def provider(state):
         assert state == "oauth-state"
+        return "google"
+
+    async def consume(state):
+        nonlocal consumed
+        consumed = True
         return "google", "pkce-verifier"
 
+    monkeypatch.setattr(auth_sessions, "_pending_provider", provider)
     monkeypatch.setattr(auth_sessions, "_consume_pending", consume)
     with make_client() as client:
         response = client.get(
@@ -230,9 +239,14 @@ def test_oauth_callback_requires_initiating_browser_state_cookie(monkeypatch):
         )
     assert response.status_code == 400
     assert response.json()["detail"]["code"] == "AUTH_BROWSER_STATE_MISMATCH"
+    assert consumed is False
 
 
 def test_oauth_callback_accepts_matching_browser_state_and_clears_state_cookie(monkeypatch):
+    async def provider(state):
+        assert state == "oauth-state"
+        return "google"
+
     async def consume(state):
         assert state == "oauth-state"
         return "google", "pkce-verifier"
@@ -246,6 +260,7 @@ def test_oauth_callback_accepts_matching_browser_state_and_clears_state_cookie(m
         assert tokens["access_token"] == "verified-access"
         return "opaque-handle", 3600, {"user_id": "3f44c3f7-9b9d-44d8-8a56-ef25ab86d5b4", "app_role": "customer"}
 
+    monkeypatch.setattr(auth_sessions, "_pending_provider", provider)
     monkeypatch.setattr(auth_sessions, "_consume_pending", consume)
     monkeypatch.setattr(auth_sessions, "_exchange_code", exchange)
     monkeypatch.setattr(auth_sessions, "_store_session", store)
