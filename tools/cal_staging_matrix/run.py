@@ -235,6 +235,19 @@ def validate_manifest(config: dict[str, Any]) -> None:
         if scenario.get("id") in {"consent_session_revoked", "cache_after_revocation", "payment_revoked_race"}:
             if scenario.get("recheck_after_revoke") is not True:
                 raise MatrixError(f"scenario {scenario.get('id')} must recheck all surfaces after revocation")
+            post_assertions = scenario.get("post_revoke_assertions")
+            if not isinstance(post_assertions, dict) or set(post_assertions) != REQUIRED_SURFACES:
+                raise MatrixError(
+                    f"scenario {scenario.get('id')} must define explicit post-revocation assertions for every surface"
+                )
+            for surface, assertion in post_assertions.items():
+                if not isinstance(assertion, dict) or not any(
+                    assertion.get(key) for key in ("json_equals", "json_one_of", "json_absent")
+                ):
+                    raise MatrixError(
+                        f"scenario {scenario.get('id')} post-revocation assertion for {surface} "
+                        "must verify response semantics, not status alone"
+                    )
         if scenario.get("id") == "cache_after_revocation" and not scenario.get("revoke"):
             raise MatrixError("cache_after_revocation requires a sequential revoke step")
         if scenario.get("revoke"):
@@ -265,6 +278,19 @@ def validate_manifest(config: dict[str, Any]) -> None:
                 raise MatrixError(f"scenario {scenario.get('id')} requires concurrent race surfaces and revocation")
             if not set(race["surfaces"]).issubset(REQUIRED_SURFACES):
                 raise MatrixError(f"scenario {scenario.get('id')} race references an unknown shopper surface")
+            race_assertions = scenario.get("race_assertions")
+            if not isinstance(race_assertions, dict) or set(race_assertions) != set(race["surfaces"]):
+                raise MatrixError(
+                    f"scenario {scenario.get('id')} must define explicit race assertions for every raced surface"
+                )
+            for surface, assertion in race_assertions.items():
+                if not isinstance(assertion, dict) or not any(
+                    assertion.get(key) for key in ("json_equals", "json_one_of", "json_absent")
+                ):
+                    raise MatrixError(
+                        f"scenario {scenario.get('id')} race assertion for {surface} "
+                        "must verify authorization outcome, not status alone"
+                    )
             race_url = urlsplit(str(race["revoke"].get("url", "")))
             if race_url.scheme != "https" or race_url.username or race_url.password or not race["revoke"].get("token_env"):
                 raise MatrixError(f"scenario {scenario.get('id')} race revocation must use HTTPS and a dedicated token_env")
@@ -357,7 +383,7 @@ def run(config: dict[str, Any], timeout: int = 20) -> int:
                     except MatrixError:
                         failures.append(f"{scenario_id}/race/{surface}: staging transport failed")
                         continue
-                    assertion = scenario.get("race_assertions", {}).get(surface, {"status": [200, 401, 403, 503]})
+                    assertion = scenario["race_assertions"][surface]
                     label = f"{scenario_id}/race/{surface}"
                     surface_failures = _assert_response(response, assertion, label)
                     failures.extend(surface_failures)
@@ -395,9 +421,7 @@ def run(config: dict[str, Any], timeout: int = 20) -> int:
                     }, timeout, label, failures)
                     if response is None:
                         continue
-                    assertion = scenario.get("post_revoke_assertions", {}).get(
-                        surface, scenario.get("assertions", {}).get(surface, spec.get("assertions", {}))
-                    )
+                    assertion = scenario["post_revoke_assertions"][surface]
                     surface_failures = _assert_response(response, assertion, label)
                     failures.extend(surface_failures)
                     results.append({
