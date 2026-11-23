@@ -52,4 +52,5 @@ jobs:
         run: python -m unittest discover -s services/decision-service/tests -p "test_age_evidence.py" -v
 
       - name: Test Decision Service age-evidence integration
-        run: python -m unittest discover -s services/decision-service/tests -p "test_api.py" -v
+        working-directory: services/decision-service
+        run: python -m unittest discover -s tests -p "test_api.py" -v
