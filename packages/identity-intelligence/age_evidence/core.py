@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 CONTRACT_VERSION = "age-threshold-attestation-v1"
+MAX_ATTESTATION_TTL_SECONDS = 900
 
 
 class AgeEvidenceError(ValueError):
@@ -61,9 +62,13 @@ def verify_threshold_attestation(
     if any(payload.get(key) != value for key, value in expected_bindings.items()):
         return False
     current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        raise AgeEvidenceError("verification clock must be timezone-aware")
     issued = _timestamp(payload["issued_at"])
     expires = _timestamp(payload["expires_at"])
     if issued > current or expires <= current or expires <= issued:
+        return False
+    if (expires - issued).total_seconds() > MAX_ATTESTATION_TTL_SECONDS:
         return False
     return True
 
@@ -106,6 +111,8 @@ def build_threshold_attestation(
     validate_threshold_attestation(payload)
     if expires_at <= issued_at:
         raise AgeEvidenceError("attestation expiry must follow issuance")
+    if (expires_at - issued_at).total_seconds() > MAX_ATTESTATION_TTL_SECONDS:
+        raise AgeEvidenceError("attestation lifetime exceeds the 15-minute maximum")
     return payload
 
 
