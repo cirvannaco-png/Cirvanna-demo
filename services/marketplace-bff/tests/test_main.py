@@ -4150,7 +4150,15 @@ def test_cart_and_checkout_proxy_only_when_operator_flag_and_live_cal_readiness_
             FakeResponse({"accepted": True}),
         ])
     monkeypatch.setattr(main.httpx, "AsyncClient", lambda **kwargs: fake)
-    headers = {"Authorization": "Bearer customer-token", "Content-Type": "application/json"}
+    headers = {
+        "Authorization": "Bearer customer-token", "Content-Type": "application/json",
+        "X-Cirvanna-Age-Attestation": json.dumps({
+            "subject_id": "signed-user-42", "request_id": "checkout-age-001",
+            "purpose": "shopper_eligibility", "jti": "opaque-jti",
+        }),
+        "X-Cirvanna-Age-Attestation-Signature": "a" * 64,
+        "X-Cirvanna-Age-Evidence-Request-ID": "checkout-age-001",
+    }
     variant = "123e4567-e89b-12d3-a456-426614174000"
 
     responses = [
@@ -4192,6 +4200,8 @@ def test_cart_and_checkout_proxy_only_when_operator_flag_and_live_cal_readiness_
         "https://commerce.example.test/checkout",
     }]
     assert all(call[2]["headers"]["Authorization"] == "Bearer customer-token" for call in forwarded)
+    assert all(call[2]["headers"]["X-Cirvanna-Age-Attestation-Signature"] == "a" * 64 for call in forwarded)
+    assert all(call[2]["headers"]["X-Cirvanna-Age-Evidence-Request-ID"] == "checkout-age-001" for call in forwarded)
 
 
 def test_cart_and_checkout_remain_blocked_when_live_cal_readiness_is_incomplete(client, monkeypatch):
