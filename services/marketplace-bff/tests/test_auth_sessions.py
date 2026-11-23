@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlsplit
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import ec
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 from app import auth_sessions
@@ -39,7 +39,7 @@ def test_provider_contract_exposes_web_and_native_ios_paths():
 
 
 def test_unknown_provider_is_rejected():
-    with TestClient(auth_sessions.router) as client:
+    with make_client() as client:
         response = client.get("/auth/login/facebook", follow_redirects=False)
     assert response.status_code == 404
     assert response.json()["detail"]["code"] == "AUTH_PROVIDER_NOT_SUPPORTED"
@@ -54,7 +54,7 @@ def test_microsoft_login_uses_supabase_azure_provider_and_pkce(monkeypatch):
     monkeypatch.setattr(auth_sessions, "_create_pending", pending)
     monkeypatch.setattr(auth_sessions, "_supabase", lambda: ("https://project.supabase.co", "sb_publishable_test"))
     monkeypatch.setattr(auth_sessions, "_callback_url", lambda: "https://bff.example.com/auth/callback")
-    with TestClient(auth_sessions.router) as client:
+    with make_client() as client:
         response = client.get("/auth/login/microsoft", follow_redirects=False)
     assert response.status_code == 302
     location = urlsplit(response.headers["location"])
@@ -122,8 +122,9 @@ def test_jwt_verifier_rejects_wrong_issuer(monkeypatch):
     monkeypatch.setenv("SUPABASE_JWT_AUDIENCE", "authenticated")
     monkeypatch.setattr(auth_sessions.jwt, "PyJWKClient", FakeJwks)
     monkeypatch.setattr(auth_sessions, "_jwks_client", None)
-    with pytest.raises(Exception):
+    with pytest.raises(HTTPException) as exc:
         auth_sessions._verify_jwt(token)
+    assert exc.value.status_code == 401
 
 
 def test_auth_cookie_is_httponly_secure_host_only_and_lax():
