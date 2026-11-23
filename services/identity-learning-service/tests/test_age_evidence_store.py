@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "packages" / "ident
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import create_engine
-from age_evidence.store import AgeEvidenceStore, metadata
+from age_evidence.store import AgeEvidenceConflict, AgeEvidenceStore, metadata
 
 NOW = datetime(2026, 11, 23, 12, 0, tzinfo=timezone.utc)
 
@@ -153,3 +153,23 @@ def test_provider_expiry_and_failure_are_terminal_and_cannot_issue_attestations(
         pass
     else:
         raise AssertionError("expired provider sessions must never issue attestations")
+
+
+def test_duplicate_request_cannot_create_multiple_provider_sessions():
+    store = make_store()
+    bindings = dict(
+        subject_id="subject-idempotent", request_id="request-idempotent",
+        purpose="shopper_eligibility", policy_id="adult-market",
+        policy_version="v1", threshold=18,
+    )
+    store.create_session(
+        **bindings, provider_reference="opaque-reference-" + uuid.uuid4().hex, now=NOW,
+    )
+    try:
+        store.create_session(
+            **bindings, provider_reference="opaque-reference-" + uuid.uuid4().hex, now=NOW,
+        )
+    except AgeEvidenceConflict:
+        pass
+    else:
+        raise AssertionError("duplicate request must not create another provider session")
