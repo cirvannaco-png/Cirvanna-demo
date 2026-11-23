@@ -858,11 +858,6 @@ def readiness(db: Annotated[Session, Depends(get_db)]):
         db.execute(select(DSICaptureChallengeRow.challenge_id).limit(1))
         db.execute(select(DSICaptureVerificationReceiptRow.receipt_id).limit(1))
         age_schema_ready = age_evidence_schema_ready()
-        age_provider_vars = (
-            "YOTI_AVS_API_KEY", "YOTI_AVS_SDK_ID", "AGE_EVIDENCE_HMAC_SECRET",
-            "YOTI_AVS_CALLBACK_URL", "YOTI_AVS_CANCEL_URL",
-            "YOTI_AVS_PRIVACY_POLICY_URL", "YOTI_AVS_TERMS_URL",
-        )
         age_provider_configured = provider_configuration_ready()
         age_orchestrator_auth_configured = (
             len(os.getenv("AGE_EVIDENCE_ORCHESTRATOR_TOKEN", "").encode("utf-8")) >= 32
