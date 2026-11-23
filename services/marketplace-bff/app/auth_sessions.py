@@ -21,7 +21,7 @@ import jwt
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse, Response
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, Field
 
 router = APIRouter(tags=["authentication"])
 COOKIE_NAME = "__Host-cirvanna_session"
@@ -365,23 +365,60 @@ async def logout(request: Request) -> Response:
 
 
 class EmailOtpIn(BaseModel):
-    email: EmailStr
+    email: str = Field(min_length=5, max_length=254)
     create_user: bool = True
 
 
 @router.post("/auth/email/start")
 async def email_otp_start(payload: EmailOtpIn) -> JSONResponse:
-    """Start a passwordless email OTP; the email provider must be configured in Supabase."""
+    email = payload.email.strip().lower()
+    if "@" not in email or email.startswith("@") or email.endswith("@") or any(ch.isspace() for ch in email):
+        raise HTTPException(422, detail={"code": "AUTH_EMAIL_INVALID"})
+    verifier = secrets.token_urlsafe(48)
+    state = secrets.token_urlsafe(32)
+    await _create_pending("email", verifier, state)
+    callback = _callback_url() + "?" + urlencode({"state": state})
     base, key = _supabase()
     async with httpx.AsyncClient(timeout=10, trust_env=False, follow_redirects=False) as client:
         response = await client.post(
-            base + "/auth/v1/otp",
+            base + "/auth/v1/otp?" + urlencode({"redirect_to": callback}),
             headers={"apikey": key, "Content-Type": "application/json"},
-            json={"email": str(payload.email), "create_user": payload.create_user},
+            json={
+                "email": email,
+                "create_user": payload.create_user,
+                "code_challenge": _challenge(verifier),
+                "code_challenge_method": "s256",
+            },
         )
     if response.status_code not in {200, 201}:
         raise HTTPException(502, detail={"code": "AUTH_EMAIL_OTP_UNAVAILABLE"})
     return JSONResponse({"status": "verification_sent"}, headers={"Cache-Control": "no-store"})
+
+
+class AppleNativeSignInIn(BaseModel):
+    id_token: str = Field(min_length=100, max_length=12000)
+    nonce: str = Field(min_length=16, max_length=256)
+
+
+@router.post("/auth/ios/apple")
+async def ios_apple_sign_in(payload: AppleNativeSignInIn) -> Response:
+    """Exchange a native Apple ID token; only an opaque HttpOnly session cookie is returned."""
+    base, key = _supabase()
+    async with httpx.AsyncClient(timeout=12, trust_env=False, follow_redirects=False) as client:
+        response = await client.post(
+            base + "/auth/v1/token?grant_type=id_token",
+            headers={"apikey": key, "Content-Type": "application/json"},
+            json={"provider": "apple", "id_token": payload.id_token, "nonce": payload.nonce},
+        )
+    if response.status_code != 200:
+        raise HTTPException(401, detail={"code": "AUTH_APPLE_NATIVE_TOKEN_REJECTED"})
+    tokens = response.json()
+    if not isinstance(tokens, dict) or not tokens.get("access_token") or not tokens.get("refresh_token"):
+        raise HTTPException(502, detail={"code": "AUTH_TOKEN_RESPONSE_INVALID"})
+    session_id, max_age, profile = await _store_session(tokens)
+    result = JSONResponse({"authenticated": True, **profile}, headers={"Cache-Control": "no-store"})
+    _cookie(result, session_id, max_age=max_age)
+    return result
 
 
 @router.get("/auth/providers")
@@ -389,6 +426,6 @@ async def providers() -> dict[str, Any]:
     return {
         "email_otp": True,
         "web": ["google", "apple", "microsoft"],
-        "ios": {"apple_native": True, "callback_scheme_required": True},
+        "ios": {"apple_native": True, "callback_scheme_required": False, "session_transport": "HttpOnly Secure cookie"},
         "microsoft_provider_id": "azure",
     }
