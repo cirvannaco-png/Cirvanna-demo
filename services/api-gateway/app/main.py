@@ -2195,7 +2195,7 @@ def compose_pnelly_daily_looks(
             policy,
             EEPLContext(
                 user_id=subject,
-                age_years=fresh_context.age_years,
+                age_years=None,  # Client-supplied age is unverified; REVIEW age-gated decisions until a trusted provider is integrated.
                 location=fresh_context.location,
                 occasion=fresh_context.occasion,
                 climate=fresh_context.climate,
@@ -2897,7 +2897,7 @@ def evaluate_decisions(
         )
     context = EEPLContext(
         user_id=payload.user_id,
-        age_years=payload.context.age_years,
+        age_years=None,  # Never treat request-body age as verified eligibility evidence.
         location=payload.context.location,
         occasion=payload.context.occasion,
         climate=payload.context.climate,
