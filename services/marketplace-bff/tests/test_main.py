@@ -4201,8 +4201,8 @@ def test_cart_and_checkout_proxy_only_when_operator_flag_and_live_cal_readiness_
     }]
     assert all(call[2]["headers"]["Authorization"] == "Bearer customer-token" for call in forwarded)
     checkout_forward = next(call for call in forwarded if call[1] == "https://commerce.example.test/checkout")
-    assert checkout_forward[2]["headers"]["X-Cirvanna-Age-Attestation-Signature"] == "a" * 64
-    assert checkout_forward[2]["headers"]["X-Cirvanna-Age-Evidence-Request-ID"] == "checkout-age-001"
+    assert checkout_forward[2]["headers"]["x-cirvanna-age-attestation-signature"] == "a" * 64
+    assert checkout_forward[2]["headers"]["x-cirvanna-age-evidence-request-id"] == "checkout-age-001"
     assert all("X-Cirvanna-Age-Attestation-Signature" not in call[2]["headers"] for call in forwarded if call is not checkout_forward)
 
 
