@@ -34,6 +34,16 @@ def valid_manifest():
         if scenario_id in {"consent_session_revoked", "cache_after_revocation", "payment_revoked_race"}:
             scenario["revoke"] = {"url": "https://fixture.staging.example.test/revoke"}
             scenario["recheck_after_revoke"] = True
+        if scenario_id == "consent_session_revoked":
+            scenario["race"] = {
+                "surfaces": ["pnelly", "wardrobe", "look_it"],
+                "revoke": {"url": "https://fixture.staging.example.test/revoke"},
+            }
+        if scenario_id == "payment_revoked_race":
+            scenario["race"] = {
+                "surfaces": ["cart", "checkout"],
+                "revoke": {"url": "https://fixture.staging.example.test/revoke"},
+            }
         scenarios.append(scenario)
     return {
         "environment": "staging",
@@ -72,6 +82,13 @@ class CALStagingMatrixContractTests(unittest.TestCase):
         config = valid_manifest()
         scenario = next(item for item in config["scenarios"] if item["id"] == "cache_after_revocation")
         scenario["recheck_after_revoke"] = False
+        with self.assertRaises(runner.MatrixError):
+            runner.validate_manifest(config)
+
+    def test_concurrent_revocation_scenario_requires_a_race(self):
+        config = valid_manifest()
+        scenario = next(item for item in config["scenarios"] if item["id"] == "payment_revoked_race")
+        del scenario["race"]
         with self.assertRaises(runner.MatrixError):
             runner.validate_manifest(config)
 
