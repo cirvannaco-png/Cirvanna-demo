@@ -24,6 +24,14 @@ def config(monkeypatch):
     monkeypatch.setenv("NPL_EVIDENCE_HMAC_SECRET", "npl-provider-test-key-minimum-32-bytes")
     monkeypatch.setenv("CULTURAL_IDENTITY_HMAC_SECRET", "culture-provider-test-key-minimum-32-bytes")
     monkeypatch.setenv("CAL_REVIEW_OPERATOR_TOKEN", "cal-review-operator-test-token-32-bytes")
+    monkeypatch.setenv("CATACACI_POLICY_REGISTRY_JSON", json.dumps({
+        "standard-marketplace": {
+            "policy_version": "marketplace-policy-1",
+            "minimum_fit_confidence": 0.70,
+            "maximum_fit_confidence_disagreement": 0.10,
+            "minimum_alignment_score": 0.60,
+        }
+    }))
     monkeypatch.setattr(main, "_redeem_age_attestation", lambda payload, signature: None)
     monkeypatch.setenv("EEPL_POLICY_REGISTRY_JSON", json.dumps({
         "standard-marketplace": {
@@ -80,6 +88,7 @@ def request_body(**overrides):
     body = {
         "request_id": "req-eligibility-001",
         "candidate_id": "catalog-product-001",
+        "cal_policy_id": "standard-marketplace",
         "policy_version": "marketplace-policy-1",
         "context": {
             "user_id": "user-001", "age_years": 21, "location": "Nairobi",
@@ -117,8 +126,6 @@ def request_body(**overrides):
             {"signal_id": "hard-001", "kind": "user_hard_constraint", "state": "pass", "reason_code": "HARD",
              "explanation": "Declared hard constraints were checked.", "source_version": "constraints-v1"},
         ],
-        "minimum_fit_confidence": 0.70,
-        "minimum_alignment_score": 0.60,
     }
     body.update(overrides)
     body["fit_estimate_signature"] = signed_fit(body["fit_estimate"])
@@ -232,11 +239,43 @@ def test_health_capabilities_and_readiness_are_factual(client):
     ready = client.get("/ready")
     assert ready.status_code == 200
     assert ready.json()["fci_prediction_model_available"] is False
+    assert ready.json()["catacaci_policy_registry_configured"] is True
     caps = client.get("/capabilities").json()
     assert caps["catacaci_cal_arbitration"] is True
+    assert caps["catacaci_server_owned_policy"] is True
     assert caps["eepl_policy_evaluation"] is True
     assert caps["fci_prediction_model_available"] is False
     assert caps["virtual_twin_generation"] is False
+
+
+
+def test_client_cannot_override_server_owned_cal_thresholds(client):
+    body = request_body()
+    body["minimum_fit_confidence"] = 0.0
+    body["minimum_alignment_score"] = 0.0
+    response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"cal_policy_id": "unregistered-policy"},
+        {"policy_version": "stale-policy-version"},
+    ],
+)
+def test_unregistered_or_stale_cal_policy_fails_closed(client, override):
+    body = request_body(**override)
+    response = client.post("/v1/eligibility/evaluate", json=body, headers=headers())
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "SERVER_CAL_POLICY_UNAVAILABLE"
+
+
+def test_readiness_fails_when_server_cal_policy_registry_is_missing(client, monkeypatch):
+    monkeypatch.delenv("CATACACI_POLICY_REGISTRY_JSON", raising=False)
+    response = client.get("/ready")
+    assert response.status_code == 503
+    assert response.json()["detail"]["catacaci_policy_registry_configured"] is False
 
 
 def test_decision_endpoint_requires_internal_authentication(client):
@@ -262,7 +301,11 @@ def test_full_eligibility_pipeline_calls_real_cal_and_only_show_authorizes_displ
     assert result["gates"]["confidence"]["status"] == "ready"
     assert result["gates"]["confidence"]["coverage_ratio"] == 1.0
     assert result["gates"]["fci"]["calibrated"] is True
+    assert result["policy"]["id"] == "standard-marketplace"
+    assert result["policy"]["version"] == "marketplace-policy-1"
     assert result["policy"]["minimum_fit_confidence"] == 0.70
+    assert result["policy"]["maximum_fit_confidence_disagreement"] == 0.10
+    assert result["policy"]["minimum_alignment_score"] == 0.60
     assert any(signal.startswith("eepl:") for signal in result["arbitration"]["evaluated_signal_ids"])
 
 
