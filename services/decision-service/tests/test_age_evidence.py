@@ -59,6 +59,21 @@ class AgeEvidenceContractTests(unittest.TestCase):
             now=NOW,
         ))
 
+    def test_boolean_threshold_binding_is_rejected(self):
+        attestation = payload()
+        signature = sign_threshold_attestation(attestation, SECRET)
+        with self.assertRaises(AgeEvidenceError):
+            verify_threshold_attestation(
+                attestation, signature, SECRET,
+                subject_id="subject-opaque-1",
+                request_id="request-opaque-1",
+                purpose="age_dependent_eligibility",
+                policy_id="marketplace-adult",
+                policy_version="v3",
+                threshold=True,
+                now=NOW,
+            )
+
     def test_wrong_subject_or_policy_cannot_reuse_attestation(self):
         attestation = payload()
         signature = sign_threshold_attestation(attestation, SECRET)
