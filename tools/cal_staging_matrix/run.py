@@ -31,7 +31,7 @@ REQUIRED_SCENARIOS = {
     "cache_after_revocation", "payment_revoked_race",
 }
 SECRET_KEY_PATTERN = re.compile(r"(token|secret|password|authorization|api[_-]?key)", re.I)
-ENV_PATTERN = re.compile(r"^\\$\\{([A-Z][A-Z0-9_]*)\\}$")
+ENV_PATTERN = re.compile(r"^\$\{([A-Z][A-Z0-9_]*)\}$")
 
 
 class MatrixError(RuntimeError):
@@ -79,7 +79,7 @@ def _json_path(document: Any, path: str) -> Any:
         raise MatrixError(f"JSON assertion path must start with '$.': {path}")
     current: Any = document
     for part in path[2:].split("."):
-        match = re.fullmatch(r"([A-Za-z0-9_-]+)(?:\\[(\\d+|\\*)\\])?", part)
+        match = re.fullmatch(r"([A-Za-z0-9_-]+)(?:\[(\d+|\*)\])?", part)
         if not match:
             raise MatrixError(f"unsupported JSON assertion path: {path}")
         key, index = match.groups()
